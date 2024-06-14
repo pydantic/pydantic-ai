@@ -18,7 +18,7 @@ install: .rye .pre-commit
 .PHONY: format  # Format the code
 format:
 	rye format
-	rye lint --fix
+	rye lint --fix -- --fix-only
 
 .PHONY: lint  # Lint the code
 lint:

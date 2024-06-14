@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import TypeVar, Any, Callable, Generic, ParamSpec, Concatenate, Awaitable
+from typing import Awaitable, Callable, Concatenate, Generic, ParamSpec, TypeVar
 
 AgentContext = TypeVar('AgentContext')
 # retrieval function parameters
@@ -10,6 +10,8 @@ R = TypeVar('R')
 
 @dataclass
 class CallInfo(Generic[AgentContext]):
+    """Information about the current call."""
+
     context: AgentContext
     retry: int
 
@@ -24,8 +26,3 @@ SystemPrompt = (
     | Callable[[], None]
     | Callable[[], Awaitable[None]]
 )
-
-
-@dataclass
-class FallbackArguments:
-    arguments: dict[str, Any]
