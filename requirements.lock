@@ -16,8 +16,12 @@ anyio==4.4.0
 certifi==2024.6.2
     # via httpcore
     # via httpx
+colorama==0.4.6
+    # via griffe
 distro==1.9.0
     # via openai
+griffe==0.45.3
+    # via pydantic-ai
 h11==0.14.0
     # via httpcore
 httpcore==1.0.5

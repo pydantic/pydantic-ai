@@ -36,6 +36,7 @@ dependencies = [
     "typing-extensions >= 4.12.0",
     "openai>=1.33.0",
     "pydantic>=2.7.4",
+    "griffe>=0.45.3",
 ]
 
 [tool.rye]
@@ -43,6 +44,7 @@ managed = true
 dev-dependencies = [
     "pyright>=1.1.366",
     "mypy>=1.10.0",
+    "devtools>=0.12.2",
 ]
 
 [tool.hatch.metadata]
