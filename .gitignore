@@ -1,0 +1,9 @@
+site
+.python-version
+.venv
+dist
+__pycache__
+*.env
+/scratch/
+/.coverage
+env*/

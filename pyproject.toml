@@ -1,0 +1,125 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pydantic-ai"
+version = "0.0.1"
+description = "Shim to use Pydantic with LLMs"
+authors = [
+    { name = "Samuel Colvin", email = "samuel@pydantic.dev" },
+]
+license = "MIT"
+readme = "README.md"
+classifiers = [
+    'Development Status :: 4 - Beta',
+    'Programming Language :: Python',
+    'Programming Language :: Python :: 3',
+    'Programming Language :: Python :: 3 :: Only',
+    'Programming Language :: Python :: 3.8',
+    'Programming Language :: Python :: 3.9',
+    'Programming Language :: Python :: 3.10',
+    'Programming Language :: Python :: 3.11',
+    'Programming Language :: Python :: 3.12',
+    'Intended Audience :: Developers',
+    'Intended Audience :: Information Technology',
+    'Intended Audience :: System Administrators',
+    'License :: OSI Approved :: MIT License',
+    'Operating System :: Unix',
+    'Operating System :: POSIX :: Linux',
+    'Environment :: Console',
+    'Environment :: MacOS X',
+    'Topic :: Software Development :: Libraries :: Python Modules',
+    'Topic :: Internet',
+]
+dependencies = [
+    "typing-extensions >= 4.12.0",
+    "openai>=1.33.0",
+]
+
+[tool.rye]
+managed = true
+dev-dependencies = [
+    "pyright>=1.1.366",
+    "mypy>=1.10.0",
+]
+
+[tool.rye.scripts]
+typecheck = "pyright"
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["pydantic_ai"]
+
+[tool.hatch.build.targets.sdist]
+include = ["/README.md", "/Makefile", "/pydantic_ai", "/tests"]
+
+# https://beta.ruff.rs/docs/configuration/
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+extend-select = [
+    "Q",
+    "RUF100",
+    "C90",
+    "UP",
+    "I",
+    "D",
+]
+flake8-quotes = { inline-quotes = "single", multiline-quotes = "double" }
+isort = { combine-as-imports = true, known-first-party = ["logfire"] }
+mccabe = { max-complexity = 14 }
+ignore = [
+    "D107", # ignore missing docstring in __init__ methods
+    "D100", # ignore missing docstring in module
+    "D104", # ignore missing docstring in public package
+    "D105", # ignore missing docstring in magic methods
+    "C901", # ignore too complex functions, doesn't seem to be worth it
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.format]
+docstring-code-format = true
+quote-style = "single"
+
+[tool.pyright]
+typeCheckingMode = "strict"
+reportUnnecessaryTypeIgnoreComment = true
+reportMissingTypeStubs = false
+exclude = [".venv", "venv*"]
+venvPath = ".venv"
+
+[tool.pytest.ini_options]
+xfail_strict = true
+filterwarnings = [
+    "error",
+]
+
+# https://coverage.readthedocs.io/en/latest/config.html#run
+[tool.coverage.run]
+branch = true
+
+# https://coverage.readthedocs.io/en/latest/config.html#report
+[tool.coverage.report]
+skip_covered = true
+show_missing = true
+ignore_errors = true
+precision = 2
+exclude_lines = [
+    'def __repr__',
+    'pragma: no cover',
+    'raise NotImplementedError',
+    'if TYPE_CHECKING:',
+    'if typing.TYPE_CHECKING:',
+    '@overload',
+    '@typing.overload',
+    '\(Protocol\):$',
+    'typing.assert_never',
+    'assert_never',
+    'if __name__ == .__main__.:',
+]
