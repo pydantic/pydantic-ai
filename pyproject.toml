@@ -35,6 +35,7 @@ classifiers = [
 dependencies = [
     "typing-extensions >= 4.12.0",
     "openai>=1.33.0",
+    "pydantic>=2.7.4",
 ]
 
 [tool.rye]
@@ -43,9 +44,6 @@ dev-dependencies = [
     "pyright>=1.1.366",
     "mypy>=1.10.0",
 ]
-
-[tool.rye.scripts]
-typecheck = "pyright"
 
 [tool.hatch.metadata]
 allow-direct-references = true
@@ -91,7 +89,7 @@ quote-style = "single"
 typeCheckingMode = "strict"
 reportUnnecessaryTypeIgnoreComment = true
 reportMissingTypeStubs = false
-exclude = [".venv", "venv*"]
+exclude = [".venv", "venv*", "env*", "scratch"]
 venvPath = ".venv"
 
 [tool.pytest.ini_options]

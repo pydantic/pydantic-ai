@@ -34,8 +34,9 @@ nodeenv==1.9.1
     # via pyright
 openai==1.33.0
     # via pydantic-ai
-pydantic==2.7.3
+pydantic==2.7.4
     # via openai
+    # via pydantic-ai
 pydantic-core==2.18.4
     # via pydantic
 pyright==1.1.366

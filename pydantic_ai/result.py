@@ -32,7 +32,7 @@ class RunStreamResult(Generic[ResponseType]):
     _streamed: str = ''
 
     def stream(self) -> Iterable[str]:
-        pass
+        raise NotImplementedError()
 
     def response(self) -> ResponseType:
         raise NotImplementedError()
@@ -45,7 +45,7 @@ class AsyncRunStreamResult(Generic[ResponseType]):
     _streamed: str = ''
 
     async def stream(self) -> AsyncIterable[str]:
-        pass
+        raise NotImplementedError()
 
     async def response(self) -> ResponseType:
         raise NotImplementedError()

@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Protocol, TypeVar, Any, Callable, Generic, ParamSpec, Concatenate
+from typing import TypeVar, Any, Callable, Generic, ParamSpec, Concatenate, Awaitable
 
 AgentContext = TypeVar('AgentContext')
 # retrieval function parameters
@@ -14,31 +14,15 @@ class CallInfo(Generic[AgentContext]):
     retry: int
 
 
-RetrieverFunction = Callable[Concatenate[CallInfo[AgentContext], P], R]
+# Usage `Retriever[AgentContext, P, R]`
+Retriever = Callable[Concatenate[CallInfo[AgentContext], P], R]
 
-
-class SystemPromptWithArg(Protocol):
-    def __call__(self, info: CallInfo) -> str: ...
-
-
-class SystemPromptWithoutArg(Protocol):
-    def __call__(self) -> str: ...
-
-
-class AsyncSystemPromptWithArg(Protocol):
-    async def __call__(self, info: CallInfo) -> str: ...
-
-
-class AsyncSystemPromptWithoutArg(Protocol):
-    async def __call__(self) -> str: ...
-
-
-SystemPrompt = TypeVar(
-    'SystemPrompt',
-    SystemPromptWithArg,
-    SystemPromptWithoutArg,
-    AsyncSystemPromptWithArg,
-    AsyncSystemPromptWithoutArg,
+# Usage `SystemPrompt[AgentContext]`
+SystemPrompt = (
+    Callable[[CallInfo[AgentContext]], None]
+    | Callable[[CallInfo[AgentContext]], Awaitable[None]]
+    | Callable[[], None]
+    | Callable[[], Awaitable[None]]
 )
 
 
