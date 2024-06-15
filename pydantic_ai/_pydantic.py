@@ -80,7 +80,7 @@ def _parameters_dict_schema(
     Returns:
         tuple of (generated core schema, description, takes info argument, single arg name).
     """
-    from ..retrievers import CallInfo
+    from .retrievers import CallInfo
 
     sig = signature(function)
 

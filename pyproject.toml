@@ -67,7 +67,8 @@ extend-select = [
     "C90",
     "UP",
     "I",
-    "D",
+    # TODo require docstrings
+    # "D",
 ]
 flake8-quotes = { inline-quotes = "single", multiline-quotes = "double" }
 isort = { combine-as-imports = true, known-first-party = ["logfire"] }
