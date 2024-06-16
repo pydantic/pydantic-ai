@@ -2,12 +2,14 @@ from __future__ import annotations as _annotations
 
 import inspect
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, Awaitable, Callable, Concatenate, Generic, ParamSpec, Self, TypeVar, cast
 
+from pydantic import ValidationError
 from pydantic.json_schema import JsonSchemaValue
 from pydantic_core import SchemaValidator
 
-from . import _pydantic, _utils
+from . import _pydantic, _utils, messages
 
 AgentContext = TypeVar('AgentContext')
 # retrieval function parameters
@@ -19,6 +21,7 @@ class CallInfo(Generic[AgentContext]):
     """Information about the current call."""
 
     context: AgentContext
+    # do we allow retries within functions?
     retry: int
 
 
@@ -38,7 +41,8 @@ class Retriever(Generic[AgentContext, P]):
     single_arg_name: str | None
     validator: SchemaValidator
     json_schema: JsonSchemaValue
-    retries: int
+    max_retries: int
+    _current_retry: int = 0
 
     @classmethod
     def build(cls, function: RetrieverFunc[AgentContext, P], retries: int) -> Self:
@@ -53,21 +57,48 @@ class Retriever(Generic[AgentContext, P]):
             single_arg_name=f['single_arg_name'],
             validator=f['validator'],
             json_schema=f['json_schema'],
-            retries=retries,
+            max_retries=retries,
         )
 
-    async def async_run(self, call_info: CallInfo[AgentContext], json_data: str | bytes) -> str:
-        """Run the retriever function asynchronously."""
-        kwargs = self._call_kwargs(json_data)
-        args = (call_info,) if self.takes_info else ()
-        if self.is_async:
-            return await self.function(*args, **kwargs)  # type: ignore[reportCallIssue]
-        else:
-            f = cast(Callable[Concatenate[CallInfo[AgentContext], P], str], self.function)
-            return await _utils.run_in_executor(f, *args, **kwargs)  # type: ignore[reportCallIssue]
+    def reset(self) -> None:
+        """Reset the current retry count."""
+        self._current_retry = 0
 
-    def _call_kwargs(self, json_data: str | bytes) -> dict[str, Any]:
-        kwargs = self.validator.validate_json(json_data)
+    async def run(self, context: AgentContext, message: messages.FunctionCall) -> messages.Message:
+        """Run the retriever function asynchronously."""
+        try:
+            kwargs = self._call_kwargs(message['arguments'])
+        except ValidationError as e:
+            self._current_retry += 1
+            if self._current_retry > self.max_retries:
+                # TODO custom error
+                raise
+            else:
+                return messages.FunctionValidationError(
+                    role='function-validation-error',
+                    timestamp=datetime.now(),
+                    function_id=message['function_id'],
+                    function_name=message['function_name'],
+                    errors=e.errors(),
+                )
+
+        self._current_retry = 0
+        args = (CallInfo(context, self._current_retry),) if self.takes_info else ()
+        if self.is_async:
+            response_content = await self.function(*args, **kwargs)  # type: ignore[reportCallIssue]
+        else:
+            response_content = await _utils.run_in_executor(self.function, *args, **kwargs)  # type: ignore[reportCallIssue]
+
+        return messages.FunctionResponse(
+            role='function-response',
+            timestamp=datetime.now(),
+            function_id=message['function_id'],
+            function_name=message['function_name'],
+            content=cast(str, response_content),
+        )
+
+    def _call_kwargs(self, json_arguments: str) -> dict[str, Any]:
+        kwargs = self.validator.validate_json(json_arguments)
         if self.single_arg_name:
             return {self.single_arg_name: kwargs}
         else:

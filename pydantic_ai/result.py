@@ -1,8 +1,11 @@
 from dataclasses import dataclass
-from datetime import datetime
-from typing import AsyncIterable, Generic, Literal, TypedDict, TypeVar
+from typing import Any, AsyncIterable, Generic, Self, TypedDict, TypeVar
 
 import pydantic_core
+from pydantic import TypeAdapter
+from pydantic.json_schema import JsonSchemaValue
+
+from . import _utils, messages
 
 
 @dataclass
@@ -12,65 +15,15 @@ class Cost:
     total_cost: int
 
 
-class SystemPrompt(TypedDict):
-    role: Literal['system']
-    content: str
-
-
-class UserPrompt(TypedDict):
-    role: Literal['user']
-    timestamp: datetime
-    content: str
-
-
-class FunctionResponse(TypedDict):
-    role: Literal['function-response']
-    timestamp: datetime
-    function_id: str
-    function_name: str
-    response: str
-
-
-class FunctionValidationError(TypedDict):
-    role: Literal['function-validation-error']
-    timestamp: datetime
-    function_id: str
-    function_name: str
-    errors: list[pydantic_core.ErrorDetails]
-
-
-class LLMResponse(TypedDict):
-    role: Literal['llm-response']
-    timestamp: datetime
-    content: str
-
-
-class FunctionCall(TypedDict):
-    function_id: str
-    function_name: str
-    arguments: str
-
-
-class LLMFunctionCalls(TypedDict):
-    role: Literal['llm-function-calls']
-    timestamp: datetime
-    calls: list[FunctionCall]
-
-
-# TODO FunctionRunError?
-LLMMessage = LLMResponse | LLMFunctionCalls
-Message = SystemPrompt | UserPrompt | FunctionResponse | FunctionValidationError | LLMMessage
-
-
-ResponseType = TypeVar('ResponseType')
+ResultData = TypeVar('ResultData')
 
 
 @dataclass
-class RunResult(Generic[ResponseType]):
+class RunResult(Generic[ResultData]):
     """Result of a run."""
 
-    response: ResponseType
-    message_history: list[Message]
+    response: ResultData
+    message_history: list[messages.Message]
     cost: Cost
 
     def message_history_json(self) -> str:
@@ -79,7 +32,7 @@ class RunResult(Generic[ResponseType]):
 
 
 @dataclass
-class RunStreamResult(Generic[ResponseType]):
+class RunStreamResult(Generic[ResultData]):
     """Result of an async streamed run."""
 
     # history: History
@@ -90,6 +43,52 @@ class RunStreamResult(Generic[ResponseType]):
         """Iterate through the result."""
         raise NotImplementedError()
 
-    async def response(self) -> ResponseType:
+    async def response(self) -> ResultData:
         """Access the combined result - basically the chunks yielded by `stream` concatenated together and validated."""
         raise NotImplementedError()
+
+
+@dataclass
+class ResultSchema(Generic[ResultData]):
+    """Model the final response from an agent run.
+
+    Similar to `Retriever` but for the final response
+    """
+
+    name: str
+    description: str
+    type_adapter: TypeAdapter[Any]
+    json_schema: JsonSchemaValue
+    allow_plain_message: bool
+    outer_typed_dict: bool
+    retries: int
+
+    @classmethod
+    def build(cls, response_type: type[ResultData], name: str, description: str, retries: int) -> Self | None:
+        """Build a ResponseModel dataclass from a response type."""
+        if response_type is str:
+            return None
+
+        if _utils.is_model_like(response_type):
+            type_adapter = TypeAdapter(response_type)
+            outer_typed_dict = False
+        else:
+            # noinspection PyTypedDict
+            response_data_typed_dict = TypedDict('response_data_typed_dict', {'response': response_type})  # noqa
+            type_adapter = TypeAdapter(response_data_typed_dict)
+            outer_typed_dict = True
+
+        return cls(
+            name=name,
+            description=description,
+            type_adapter=type_adapter,
+            json_schema=type_adapter.json_schema(),
+            allow_plain_message=_utils.allow_plain_str(response_type),
+            outer_typed_dict=outer_typed_dict,
+            retries=retries,
+        )
+
+    def validate(self, message: messages.FunctionCall) -> ResultData:
+        """Validate a message."""
+        # TODO retries
+        return self.type_adapter.validate_json(message['arguments'])

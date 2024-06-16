@@ -3,14 +3,27 @@
 The aim here is to make a common interface
 """
 
-from abc import ABC, abstractmethod
-from typing import Literal
+from __future__ import annotations as _annotations
 
-from ..result import LLMMessage, Message
+from abc import ABC, abstractmethod
+from typing import Literal, Protocol
+
+from pydantic.json_schema import JsonSchemaValue
+
+from ..messages import LLMMessage, Message
 
 
 class Model(ABC):
     """Abstract class for a model."""
+
+    @abstractmethod
+    def agent_model(self, allow_plain_message: bool, functions: list[FunctionDefinition]) -> AgentModel:
+        """Create an agent model."""
+        raise NotImplementedError()
+
+
+class AgentModel(ABC):
+    """Model set up for a specific agent."""
 
     @abstractmethod
     async def request(self, messages: list[Message]) -> LLMMessage:
@@ -35,3 +48,11 @@ def infer_model(model: ModelName | Model) -> Model:
         return OpenAIModel(open_ai_model)  # type: ignore[reportArgumentType]
     else:
         raise TypeError(f'Invalid model: {model}')
+
+
+class FunctionDefinition(Protocol):
+    """Abstract definition of a function/tool."""
+
+    name: str
+    description: str
+    json_schema: JsonSchemaValue
