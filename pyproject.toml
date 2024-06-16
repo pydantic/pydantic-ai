@@ -45,6 +45,11 @@ dev-dependencies = [
     "pyright>=1.1.366",
     "mypy>=1.10.0",
     "devtools>=0.12.2",
+    "coverage>=7.5.3",
+    "pytest>=8.2.2",
+    "pytest-pretty>=1.2.0",
+    "inline-snapshot>=0.10.2",
+    "dirty-equals>=0.7.1.post0",
 ]
 
 [tool.hatch.metadata]

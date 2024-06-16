@@ -6,18 +6,21 @@ The aim here is to make a common interface
 from __future__ import annotations as _annotations
 
 from abc import ABC, abstractmethod
-from typing import Literal, Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from pydantic.json_schema import JsonSchemaValue
 
 from ..messages import LLMMessage, Message
+
+if TYPE_CHECKING:
+    from ..agent import KnownModelName
 
 
 class Model(ABC):
     """Abstract class for a model."""
 
     @abstractmethod
-    def agent_model(self, allow_plain_message: bool, functions: list[FunctionDefinition]) -> AgentModel:
+    def agent_model(self, allow_plain_message: bool, tools: list[AbstractToolDefinition]) -> AgentModel:
         """Create an agent model."""
         raise NotImplementedError()
 
@@ -33,10 +36,7 @@ class AgentModel(ABC):
     # TODO streamed response
 
 
-ModelName = Literal['openai:gpt-4o', 'openai:gpt-4-turbo', 'openai:gpt-4', 'openai:gpt-3.5-turbo']
-
-
-def infer_model(model: ModelName | Model) -> Model:
+def infer_model(model: Model | KnownModelName) -> Model:
     """Infer the model from the name."""
     if isinstance(model, Model):
         return model
@@ -48,7 +48,7 @@ def infer_model(model: ModelName | Model) -> Model:
         raise TypeError(f'Invalid model: {model}')
 
 
-class FunctionDefinition(Protocol):
+class AbstractToolDefinition(Protocol):
     """Abstract definition of a function/tool."""
 
     name: str

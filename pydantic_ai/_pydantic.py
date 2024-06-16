@@ -26,8 +26,10 @@ class FunctionSchema(TypedDict):
     validator: SchemaValidator
     json_schema: JsonSchemaValue
     takes_info: bool
-    # if not None, the function takes a single by that name
+    # if not None, the function takes a single by that name (besides potentially `info`)
     single_arg_name: str | None
+    positional_fields: list[str]
+    var_positional_field: str | None
 
 
 def function_schema(function: Callable[..., Any]) -> FunctionSchema:
@@ -44,48 +46,15 @@ def function_schema(function: Callable[..., Any]) -> FunctionSchema:
     config_wrapper = ConfigWrapper(config)
     gen_schema = _generate_schema.GenerateSchema(config_wrapper, namespace)
     core_config = config_wrapper.core_config(None)
-    schema, description, takes_info, single_arg_name = _parameters_dict_schema(function, gen_schema, core_config)
 
-    schema_validator = create_schema_validator(
-        schema,
-        function,
-        function.__module__,
-        function.__qualname__,
-        'validate_call',
-        core_config,
-        config_wrapper.plugin_settings,
-    )
-    json_schema = GenerateJsonSchema().generate(schema)
-    return FunctionSchema(
-        description=description,
-        validator=schema_validator,
-        json_schema=json_schema,
-        takes_info=takes_info,
-        single_arg_name=single_arg_name,
-    )
-
-
-def _parameters_dict_schema(
-    function: Callable[..., Any],
-    gen_schema: _generate_schema.GenerateSchema,
-    core_config: core_schema.CoreConfig,
-) -> tuple[core_schema.CoreSchema, str, bool, str | None]:
-    """Generate a typed dict schema for function parameters.
-
-    Args:
-        function: The function to generate a typed dict schema for.
-        gen_schema: The `GenerateSchema` instance.
-        core_config: The core configuration.
-
-    Returns:
-        tuple of (generated core schema, description, takes info argument, single arg name).
-    """
     sig = signature(function)
 
     type_hints = _typing_extra.get_function_type_hints(function)
 
     var_kwargs_schema: core_schema.CoreSchema | None = None
     fields: dict[str, core_schema.TypedDictField] = {}
+    positional_fields: list[str] = []
+    var_positional_field: str | None = None
     errors: list[str] = []
     decorators = _decorators.DecoratorInfos()
     description, field_descriptions = _doc_descriptions(function, sig)
@@ -103,33 +72,75 @@ def _parameters_dict_schema(
                 continue
 
         field_name = p.name
-        if p.kind in (Parameter.POSITIONAL_OR_KEYWORD, Parameter.KEYWORD_ONLY):
-            field_info = FieldInfo.from_annotation(annotation)  # type: ignore
+        if p.kind == Parameter.VAR_KEYWORD:
+            var_kwargs_schema = gen_schema.generate_schema(annotation)
+        else:
+            if p.kind == Parameter.VAR_POSITIONAL:
+                annotation = list[annotation]
+
+            field_info = FieldInfo.from_annotation(annotation)
             if field_info.description is None:
                 field_info.description = field_descriptions.get(field_name)
 
-            fields[field_name] = gen_schema._generate_td_field_schema(field_name, field_info, decorators)  # type: ignore
-        elif p.kind == Parameter.VAR_KEYWORD:
-            # OK
-            var_kwargs_schema = gen_schema.generate_schema(annotation)
-        elif p.kind == Parameter.POSITIONAL_ONLY:
-            errors.append(f'{p.name}: positional only function parameters are not supported')
-        else:
-            assert p.kind == Parameter.VAR_POSITIONAL, p.kind
-            errors.append(f'{p.name}: *args function parameters are not supported')
+            fields[field_name] = gen_schema._generate_td_field_schema(  # type: ignore[reportPrivateUsage]
+                field_name,
+                field_info,
+                decorators,
+            )
+            if p.kind == Parameter.POSITIONAL_ONLY:
+                positional_fields.append(field_name)
+            elif p.kind == Parameter.VAR_POSITIONAL:
+                var_positional_field = field_name
 
     if errors:
         error_details = '\n  '.join(errors)
         raise ValueError(f'Error generating schema for {function.__qualname__}:\n{error_details}')
 
+    schema, single_arg_name = _build_schema(fields, var_kwargs_schema, gen_schema, core_config)
+    schema_validator = create_schema_validator(
+        schema,
+        function,
+        function.__module__,
+        function.__qualname__,
+        'validate_call',
+        core_config,
+        config_wrapper.plugin_settings,
+    )
+    json_schema = GenerateJsonSchema().generate(schema)
+    return FunctionSchema(
+        description=description,
+        validator=schema_validator,
+        json_schema=json_schema,
+        takes_info=takes_info,
+        single_arg_name=single_arg_name,
+        positional_fields=positional_fields,
+        var_positional_field=var_positional_field,
+    )
+
+
+def _build_schema(
+    fields: dict[str, core_schema.TypedDictField],
+    var_kwargs_schema: core_schema.CoreSchema | None,
+    gen_schema: _generate_schema.GenerateSchema,
+    core_config: core_schema.CoreConfig,
+) -> tuple[core_schema.CoreSchema, str | None]:
+    """Generate a typed dict schema for function parameters.
+
+    Args:
+        fields: The fields to generate a typed dict schema for.
+        var_kwargs_schema: The variable keyword arguments schema.
+        gen_schema: The `GenerateSchema` instance.
+        core_config: The core configuration.
+
+    Returns:
+        tuple of (generated core schema, single arg name).
+    """
     if len(fields) == 1 and var_kwargs_schema is None:
         name = next(iter(fields))
-        # we can only use a single argument if it allows positional use
-        if sig.parameters[name].kind == Parameter.POSITIONAL_OR_KEYWORD:
-            # and it's a model, dataclass or typed dict (so it's JSON Schema is an "object")
-            field_schema = fields[name]['schema']
-            if field_schema['type'] in {'typed-dict', 'model', 'dataclass'}:
-                return field_schema, description, takes_info, name
+        # and it's a model, dataclass or typed dict (so it's JSON Schema is an "object")
+        field_schema = fields[name]['schema']
+        if field_schema['type'] in {'typed-dict', 'model', 'dataclass'}:
+            return field_schema, name
 
     td_schema = core_schema.typed_dict_schema(
         fields,
@@ -137,24 +148,7 @@ def _parameters_dict_schema(
         extras_schema=gen_schema.generate_schema(var_kwargs_schema) if var_kwargs_schema else None,
         extra_behavior='allow' if var_kwargs_schema else 'forbid',
     )
-    return td_schema, description, takes_info, None
-
-
-# @dataclass
-# class _ModifyJsonSchema:
-#     """Add title and description JSON schema."""
-#
-#     title: str
-#     description: str
-#
-#     def __call__(self, schema: core_schema.CoreSchema, handler: GetJsonSchemaHandler) -> JsonSchemaValue:
-#         json_schema = handler(schema)
-#         json_schema = handler.resolve_ref_schema(json_schema)
-#         json_schema.update(
-#             title=self.title,
-#             description=self.description,
-#         )
-#         return json_schema
+    return td_schema, None
 
 
 DocstringStyle = Literal['google', 'numpy', 'sphinx']

@@ -2,14 +2,16 @@ from __future__ import annotations as _annotations
 
 import asyncio
 import inspect
-from datetime import datetime
 from typing import Any, Awaitable, Callable, Generic, Literal, Sequence, assert_never, cast, overload
 
-from . import _utils, llm as _llm, messages as _messages, result as _result, retrievers as _r
+from . import _utils, messages as _messages, models as _models, result as _result, retrievers as _r
 from .result import ResultData
 from .retrievers import AgentContext
 
 __all__ = ('Agent',)
+
+
+KnownModelName = Literal['openai:gpt-4o', 'openai:gpt-4-turbo', 'openai:gpt-4', 'openai:gpt-3.5-turbo']
 
 
 class Agent(Generic[ResultData, AgentContext]):
@@ -17,7 +19,7 @@ class Agent(Generic[ResultData, AgentContext]):
 
     def __init__(
         self,
-        model: _llm.Model | Literal['openai:gpt-4o', 'openai:gpt-4-turbo', 'openai:gpt-4', 'openai:gpt-3.5-turbo'],
+        model: _models.Model | KnownModelName | None = None,
         response_type: type[_result.ResultData] = str,
         *,
         system_prompt: str | Sequence[str] = (),
@@ -28,7 +30,7 @@ class Agent(Generic[ResultData, AgentContext]):
         response_schema_description: str = 'The final response',
         response_retries: int | None = None,
     ):
-        self._model = _llm.infer_model(model)
+        self._model = _models.infer_model(model) if model is not None else None
 
         self._result_schema = _result.ResultSchema[response_type].build(
             response_type,
@@ -47,37 +49,71 @@ class Agent(Generic[ResultData, AgentContext]):
         self._system_prompt_functions: list[Any] = []
 
     async def run(
-        self, user_prompt: str, message_history: list[_messages.Message] | None = None
+        self,
+        user_prompt: str,
+        *,
+        message_history: list[_messages.Message] | None = None,
+        model: _models.Model | KnownModelName | None = None,
     ) -> _result.RunResult[_result.ResultData]:
-        """Run the agent with a user prompt in async mode."""
+        """Run the agent with a user prompt in async mode.
+
+        Args:
+            user_prompt: User input to start/continue the conversation.
+            message_history: History of the conversation so far.
+            model: Optional model to use for this run, required if `model` was not set when creating the agent.
+
+        Returns:
+            The result of the run.
+        """
+        if model is not None:
+            model_ = _models.infer_model(model)
+        elif self._model is not None:
+            model_ = self._model
+        else:
+            raise RuntimeError('`model` must be set either when creating the agent or when calling it.')
+
         if message_history is not None:
             # shallow copy messages
             messages = message_history.copy()
         else:
             messages = await self._init_messages()
 
-        messages.append(_messages.UserPrompt(role='user', timestamp=datetime.now(), content=user_prompt))
+        messages.append(_messages.UserPrompt(user_prompt))
 
-        functions: list[_llm.FunctionDefinition] = list(self._retrievers.values())
+        functions: list[_models.AbstractToolDefinition] = list(self._retrievers.values())
         if self._result_schema is not None:
             functions.append(self._result_schema)
-        agent_model = self._model.agent_model(self._allow_plain_message, functions)
+        agent_model = model_.agent_model(self._allow_plain_message, functions)
 
         for retriever in self._retrievers.values():
             retriever.reset()
 
         while True:
             llm_message = await agent_model.request(messages)
-            opt_result = await self._handle_llm_response(messages, llm_message)
+            opt_result = await self._handle_model_response(messages, llm_message)
             if opt_result is not None:
                 return _result.RunResult(opt_result.value, messages, cost=_result.Cost(0))
 
-    def run_sync(self, user_prompt: str) -> _result.RunResult[_result.ResultData]:
+    def run_sync(
+        self,
+        user_prompt: str,
+        *,
+        message_history: list[_messages.Message] | None = None,
+        model: _models.Model | KnownModelName | None = None,
+    ) -> _result.RunResult[_result.ResultData]:
         """Run the agent with a user prompt synchronously.
 
         This is a convenience method that wraps `self.run` with `asyncio.run()`.
+
+        Args:
+            user_prompt: User input to start/continue the conversation.
+            message_history: History of the conversation so far.
+            model: Optional model to use for this run, required if `model` was not set when creating the agent.
+
+        Returns:
+            The result of the run.
         """
-        return asyncio.run(self.run(user_prompt))
+        return asyncio.run(self.run(user_prompt, message_history=message_history, model=model))
 
     async def stream(self, user_prompt: str) -> _result.RunStreamResult[_result.ResultData]:
         """Run the agent with a user prompt asynchronously and stream the results."""
@@ -128,7 +164,7 @@ class Agent(Generic[ResultData, AgentContext]):
         self._retrievers[retriever.name] = retriever
         return retriever
 
-    async def _handle_llm_response(
+    async def _handle_model_response(
         self, messages: list[_messages.Message], llm_message: _messages.LLMMessage
     ) -> _utils.Option[ResultData]:
         messages.append(llm_message)
@@ -163,12 +199,10 @@ class Agent(Generic[ResultData, AgentContext]):
             assert_never(llm_message)
 
     async def _init_messages(self) -> list[_messages.Message]:
-        messages: list[_messages.Message] = [
-            _messages.SystemPrompt(role='system', content=p) for p in self._system_prompts
-        ]
+        messages: list[_messages.Message] = [_messages.SystemPrompt(p) for p in self._system_prompts]
         for func in self._system_prompt_functions:
             prompt = await self._run_system_prompt_function(func)
-            messages.append(_messages.SystemPrompt(role='system', content=prompt))
+            messages.append(_messages.SystemPrompt(prompt))
         return messages
 
     async def _run_system_prompt_function(self, func: _SystemPromptFunction[AgentContext]) -> str:

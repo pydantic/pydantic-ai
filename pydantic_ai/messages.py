@@ -47,7 +47,7 @@ class PlainResponseForbidden:
 @dataclass
 class LLMResponse:
     content: str
-    timestamp: datetime
+    timestamp: datetime = field(default_factory=datetime.now)
     role: Literal['llm-response'] = 'llm-response'
 
 
@@ -61,7 +61,7 @@ class FunctionCall:
 @dataclass
 class LLMFunctionCalls:
     calls: list[FunctionCall]
-    timestamp: datetime
+    timestamp: datetime = field(default_factory=datetime.now)
     role: Literal['llm-function-calls'] = 'llm-function-calls'
 
 

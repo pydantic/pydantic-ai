@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from datetime import datetime
 from functools import cache
-from typing import assert_never
+from typing import Literal, assert_never
 
 from openai import AsyncClient
 from openai.types import ChatModel
@@ -14,7 +14,7 @@ from ..messages import (
     LLMResponse,
     Message,
 )
-from . import AgentModel, FunctionDefinition, Model, _utils
+from . import AbstractToolDefinition, AgentModel, Model, _utils
 
 
 class OpenAIModel(Model):
@@ -24,12 +24,12 @@ class OpenAIModel(Model):
         self.model_name: ChatModel = model_name
         self.client = client or cached_async_client(api_key)
 
-    def agent_model(self, allow_plain_message: bool, functions: list[FunctionDefinition]) -> AgentModel:
+    def agent_model(self, allow_plain_message: bool, tools: list[AbstractToolDefinition]) -> AgentModel:
         return OpenAIAgentModel(
             self.client,
             self.model_name,
             allow_plain_message,
-            [map_function_definition(f) for f in functions],
+            [map_tool_definition(t) for t in tools],
         )
 
 
@@ -47,9 +47,7 @@ class OpenAIAgentModel(AgentModel):
         if choice.finish_reason == 'tool_calls':
             assert choice.message.tool_calls is not None, choice
             return LLMFunctionCalls(
-                role='llm-function-calls',
-                timestamp=timestamp,
-                calls=[
+                [
                     FunctionCall(
                         function_id=c.id,
                         function_name=c.function.name,
@@ -57,13 +55,21 @@ class OpenAIAgentModel(AgentModel):
                     )
                     for c in choice.message.tool_calls
                 ],
+                timestamp=timestamp,
             )
         else:
             assert choice.message.content is not None, choice
-            return LLMResponse(role='llm-response', timestamp=timestamp, content=choice.message.content)
+            return LLMResponse(choice.message.content, timestamp=timestamp)
 
     async def completions_create(self, messages: list[Message]) -> ChatCompletion:
         # standalone function to make it easier to override
+        if not self.tools:
+            tool_choice: Literal['none', 'required', 'auto'] = 'none'
+        elif not self.allow_plain_message:
+            tool_choice = 'required'
+        else:
+            tool_choice = 'auto'
+
         openai_messages = [map_message(m) for m in messages]
         return await self.client.chat.completions.create(
             model=self.model_name,
@@ -71,7 +77,7 @@ class OpenAIAgentModel(AgentModel):
             n=1,
             parallel_tool_calls=True,
             tools=self.tools,
-            tool_choice='auto' if self.allow_plain_message else 'required',
+            tool_choice=tool_choice,
         )
 
 
@@ -80,7 +86,7 @@ def cached_async_client(api_key: str) -> AsyncClient:
     return AsyncClient(api_key=api_key)
 
 
-def map_function_definition(f: FunctionDefinition) -> ChatCompletionToolParam:
+def map_tool_definition(f: AbstractToolDefinition) -> ChatCompletionToolParam:
     return {
         'type': 'function',
         'function': {

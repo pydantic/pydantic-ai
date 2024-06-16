@@ -38,6 +38,8 @@ class Retriever(Generic[AgentContext, P]):
     is_async: bool
     takes_info: bool
     single_arg_name: str | None
+    positional_fields: list[str]
+    var_positional_field: str | None
     validator: SchemaValidator
     json_schema: JsonSchemaValue
     max_retries: int
@@ -54,6 +56,8 @@ class Retriever(Generic[AgentContext, P]):
             is_async=inspect.iscoroutinefunction(function),
             takes_info=f['takes_info'],
             single_arg_name=f['single_arg_name'],
+            positional_fields=f['positional_fields'],
+            var_positional_field=f['var_positional_field'],
             validator=f['validator'],
             json_schema=f['json_schema'],
             max_retries=retries,
@@ -66,7 +70,7 @@ class Retriever(Generic[AgentContext, P]):
     async def run(self, context: AgentContext, message: messages.FunctionCall) -> messages.Message:
         """Run the retriever function asynchronously."""
         try:
-            kwargs = self._call_kwargs(message.arguments)
+            args_dict = self.validator.validate_json(message.arguments)
         except ValidationError as e:
             self._current_retry += 1
             if self._current_retry > self.max_retries:
@@ -79,8 +83,7 @@ class Retriever(Generic[AgentContext, P]):
                     errors=e.errors(),
                 )
 
-        self._current_retry = 0
-        args = (CallInfo(context, self._current_retry),) if self.takes_info else ()
+        args, kwargs = self._call_args(context, args_dict)
         if self.is_async:
             response_content = await self.function(*args, **kwargs)  # type: ignore[reportCallIssue]
         else:
@@ -90,15 +93,21 @@ class Retriever(Generic[AgentContext, P]):
                 **kwargs,
             )
 
+        self._current_retry = 0
         return messages.FunctionResponse(
             function_id=message.function_id,
             function_name=message.function_name,
             content=cast(str, response_content),
         )
 
-    def _call_kwargs(self, json_arguments: str) -> dict[str, Any]:
-        kwargs = self.validator.validate_json(json_arguments)
+    def _call_args(self, context: AgentContext, args_dict: dict[str, Any]) -> tuple[list[Any], dict[str, Any]]:
         if self.single_arg_name:
-            return {self.single_arg_name: kwargs}
-        else:
-            return kwargs
+            args_dict = {self.single_arg_name: args_dict}
+
+        args = [CallInfo(context, self._current_retry)] if self.takes_info else []
+        for positional_field in self.positional_fields:
+            args.append(args_dict.pop(positional_field))
+        if self.var_positional_field:
+            args.extend(args_dict.pop(self.var_positional_field))
+
+        return args, args_dict
