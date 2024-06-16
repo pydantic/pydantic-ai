@@ -1,65 +1,70 @@
+from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Annotated, Literal, TypedDict
+from typing import Annotated, Literal
 
 import pydantic
 import pydantic_core
 
 
-class SystemPrompt(TypedDict):
-    role: Literal['system']
+@dataclass
+@dataclass
+class SystemPrompt:
     content: str
+    role: Literal['system'] = 'system'
 
 
-class UserPrompt(TypedDict):
-    role: Literal['user']
-    timestamp: datetime
+@dataclass
+class UserPrompt:
     content: str
+    timestamp: datetime = field(default_factory=datetime.now)
+    role: Literal['user'] = 'user'
 
 
-class FunctionResponse(TypedDict):
-    role: Literal['function-response']
-    timestamp: datetime
+@dataclass
+class FunctionResponse:
     function_id: str
     function_name: str
     content: str
+    timestamp: datetime = field(default_factory=datetime.now)
+    role: Literal['function-response'] = 'function-response'
 
 
-class FunctionValidationError(TypedDict):
-    role: Literal['function-validation-error']
-    timestamp: datetime
+@dataclass
+class FunctionValidationError:
     function_id: str
     function_name: str
     errors: list[pydantic_core.ErrorDetails]
+    timestamp: datetime = field(default_factory=datetime.now)
+    role: Literal['function-validation-error'] = 'function-validation-error'
 
 
-class PlainResponseForbidden(TypedDict):
-    role: Literal['plain-response-forbidden']
-    timestamp: datetime
+@dataclass
+class PlainResponseForbidden:
+    timestamp: datetime = field(default_factory=datetime.now)
+    role: Literal['plain-response-forbidden'] = 'plain-response-forbidden'
 
 
-def plain_response_forbidden() -> PlainResponseForbidden:
-    return PlainResponseForbidden(role='plain-response-forbidden', timestamp=datetime.now())
-
-
-class LLMResponse(TypedDict):
-    role: Literal['llm-response']
-    timestamp: datetime
+@dataclass
+class LLMResponse:
     content: str
+    timestamp: datetime
+    role: Literal['llm-response'] = 'llm-response'
 
 
-class FunctionCall(TypedDict):
+@dataclass
+class FunctionCall:
     function_id: str
     function_name: str
     arguments: str
 
 
-class LLMFunctionCalls(TypedDict):
-    role: Literal['llm-function-calls']
-    timestamp: datetime
+@dataclass
+class LLMFunctionCalls:
     calls: list[FunctionCall]
+    timestamp: datetime
+    role: Literal['llm-function-calls'] = 'llm-function-calls'
 
 
-# TODO FunctionRunError?
 LLMMessage = LLMResponse | LLMFunctionCalls
 Message = SystemPrompt | UserPrompt | FunctionResponse | FunctionValidationError | PlainResponseForbidden | LLMMessage
 

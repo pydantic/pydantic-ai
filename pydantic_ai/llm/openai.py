@@ -93,46 +93,43 @@ def map_function_definition(f: FunctionDefinition) -> ChatCompletionToolParam:
 
 def map_message(message: Message) -> ChatCompletionMessageParam:
     """Just maps a `pydantic_ai.Message` to a `openai.types.ChatCompletionMessageParam`."""
-    if message['role'] == 'system':
+    if message.role == 'system':
         # SystemPrompt -> ChatCompletionSystemMessageParam
-        return {'role': 'system', 'content': message['content']}
-    elif message['role'] == 'user':
+        return {'role': 'system', 'content': message.content}
+    elif message.role == 'user':
         # UserPrompt -> ChatCompletionUserMessageParam
-        return {'role': 'user', 'content': message['content']}
-    elif message['role'] == 'function-response':
+        return {'role': 'user', 'content': message.content}
+    elif message.role == 'function-response':
         # FunctionResponse -> ChatCompletionToolMessageParam
         return {
             'role': 'tool',
-            'tool_call_id': message['function_id'],
+            'tool_call_id': message.function_id,
             'content': _utils.function_response_content(message),
         }
-    elif message['role'] == 'function-validation-error':
+    elif message.role == 'function-validation-error':
         # FunctionValidationError -> ChatCompletionUserMessageParam
         return {
             'role': 'tool',
-            'tool_call_id': message['function_id'],
+            'tool_call_id': message.function_id,
             'content': _utils.function_validation_error_content(message),
         }
-    elif message['role'] == 'llm-response':
+    elif message.role == 'llm-response':
         # LLMResponse -> ChatCompletionAssistantMessageParam
-        return {'role': 'assistant', 'content': message['content']}
-    elif message['role'] == 'llm-function-calls':
+        return {'role': 'assistant', 'content': message.content}
+    elif message.role == 'llm-function-calls':
         # LLMFunctionCalls -> ChatCompletionAssistantMessageParam
         return {
             'role': 'assistant',
             'tool_calls': [
                 {
-                    'id': f['function_id'],
+                    'id': f.function_id,
                     'type': 'function',
-                    'function': {
-                        'name': f['function_name'],
-                        'arguments': f['arguments'],
-                    },
+                    'function': {'name': f.function_name, 'arguments': f.arguments},
                 }
-                for f in message['calls']
+                for f in message.calls
             ],
         }
-    elif message['role'] == 'plain-response-forbidden':
+    elif message.role == 'plain-response-forbidden':
         # PlainResponseForbidden -> ChatCompletionUserMessageParam
         return {
             'role': 'user',

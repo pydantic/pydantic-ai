@@ -106,6 +106,7 @@ class Agent(Generic[ResultData, AgentContext]):
         if func is None:
 
             def retriever_decorator(func_: _r.RetrieverFunc[AgentContext, _r.P]) -> _r.Retriever[AgentContext, _r.P]:
+                # noinspection PyTypeChecker
                 return self._register_retriever(func_, retries)
 
             return retriever_decorator
@@ -131,16 +132,16 @@ class Agent(Generic[ResultData, AgentContext]):
         self, messages: list[_messages.Message], llm_message: _messages.LLMMessage
     ) -> _utils.Option[ResultData]:
         messages.append(llm_message)
-        if llm_message['role'] == 'llm-response':
+        if llm_message.role == 'llm-response':
             # plain string response
             if self._allow_plain_message:
-                return _utils.Some(cast(ResultData, llm_message['content']))
+                return _utils.Some(cast(ResultData, llm_message.content))
             else:
-                messages.append(_messages.plain_response_forbidden())
-        elif llm_message['role'] == 'llm-function-calls':
+                messages.append(_messages.PlainResponseForbidden())
+        elif llm_message.role == 'llm-function-calls':
             if self._result_schema is not None:
                 # if there's a result schema, and any of the calls match that name, return the result
-                call = next((c for c in llm_message['calls'] if c['function_name'] == self._result_schema.name), None)
+                call = next((c for c in llm_message.calls if c.function_name == self._result_schema.name), None)
                 if call is not None:
                     either = self._result_schema.validate(call)
                     if result_data := either.left:
@@ -151,11 +152,11 @@ class Agent(Generic[ResultData, AgentContext]):
 
             # otherwise we run all functions in parallel
             coros: list[Awaitable[_messages.Message]] = []
-            for call in llm_message['calls']:
-                retriever = self._retrievers.get(call['function_name'])
+            for call in llm_message.calls:
+                retriever = self._retrievers.get(call.function_name)
                 if retriever is None:
                     # TODO return message?
-                    raise ValueError(f'Unknown function name: {call["function_name"]!r}')
+                    raise ValueError(f'Unknown function name: {call.function_name!r}')
                 coros.append(retriever.run(self._context, call))
             messages += await asyncio.gather(*coros)
         else:

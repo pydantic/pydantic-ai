@@ -2,7 +2,6 @@ from __future__ import annotations as _annotations
 
 import inspect
 from dataclasses import dataclass
-from datetime import datetime
 from typing import Any, Awaitable, Callable, Concatenate, Generic, ParamSpec, Self, TypeVar, cast
 
 from pydantic import ValidationError
@@ -67,7 +66,7 @@ class Retriever(Generic[AgentContext, P]):
     async def run(self, context: AgentContext, message: messages.FunctionCall) -> messages.Message:
         """Run the retriever function asynchronously."""
         try:
-            kwargs = self._call_kwargs(message['arguments'])
+            kwargs = self._call_kwargs(message.arguments)
         except ValidationError as e:
             self._current_retry += 1
             if self._current_retry > self.max_retries:
@@ -75,10 +74,8 @@ class Retriever(Generic[AgentContext, P]):
                 raise
             else:
                 return messages.FunctionValidationError(
-                    role='function-validation-error',
-                    timestamp=datetime.now(),
-                    function_id=message['function_id'],
-                    function_name=message['function_name'],
+                    function_id=message.function_id,
+                    function_name=message.function_name,
                     errors=e.errors(),
                 )
 
@@ -87,13 +84,15 @@ class Retriever(Generic[AgentContext, P]):
         if self.is_async:
             response_content = await self.function(*args, **kwargs)  # type: ignore[reportCallIssue]
         else:
-            response_content = await _utils.run_in_executor(self.function, *args, **kwargs)  # type: ignore[reportCallIssue]
+            response_content = await _utils.run_in_executor(
+                self.function,
+                *args,  # type: ignore[reportCallIssue]
+                **kwargs,
+            )
 
         return messages.FunctionResponse(
-            role='function-response',
-            timestamp=datetime.now(),
-            function_id=message['function_id'],
-            function_name=message['function_name'],
+            function_id=message.function_id,
+            function_name=message.function_name,
             content=cast(str, response_content),
         )
 

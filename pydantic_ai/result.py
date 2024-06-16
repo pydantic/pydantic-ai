@@ -1,5 +1,4 @@
 from dataclasses import dataclass
-from datetime import datetime
 from typing import Any, AsyncIterable, Generic, Self, TypedDict, TypeVar
 
 from pydantic import TypeAdapter, ValidationError
@@ -92,17 +91,15 @@ class ResultSchema(Generic[ResultData]):
     def validate(self, message: messages.FunctionCall) -> _utils.Either[ResultData, messages.FunctionValidationError]:
         """Validate a message."""
         try:
-            result = self.type_adapter.validate_json(message['arguments'])
+            result = self.type_adapter.validate_json(message.arguments)
         except ValidationError as e:
             self._current_retry += 1
             if self._current_retry > self.max_retries:
                 raise
             else:
                 m = messages.FunctionValidationError(
-                    role='function-validation-error',
-                    timestamp=datetime.now(),
-                    function_id=message['function_id'],
-                    function_name=message['function_name'],
+                    function_id=message.function_id,
+                    function_name=message.function_name,
                     errors=e.errors(),
                 )
                 return _utils.Either(right=m)
