@@ -33,19 +33,17 @@ class AgentModel(ABC):
     # TODO streamed response
 
 
-ModelName = Literal['openai-gpt-4o', 'openai-gpt-4-turbo', 'openai-gpt-4', 'openai-gpt-3.5-turbo']
+ModelName = Literal['openai:gpt-4o', 'openai:gpt-4-turbo', 'openai:gpt-4', 'openai:gpt-3.5-turbo']
 
 
 def infer_model(model: ModelName | Model) -> Model:
     """Infer the model from the name."""
     if isinstance(model, Model):
         return model
-    elif model.startswith('openai-'):
-        open_ai_model = model.removeprefix('openai-')
-
+    elif model.startswith('openai:'):
         from .openai import OpenAIModel
 
-        return OpenAIModel(open_ai_model)  # type: ignore[reportArgumentType]
+        return OpenAIModel(model[7:])  # type: ignore[reportArgumentType]
     else:
         raise TypeError(f'Invalid model: {model}')
 

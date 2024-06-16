@@ -1,8 +1,8 @@
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, AsyncIterable, Generic, Self, TypedDict, TypeVar
 
-import pydantic_core
-from pydantic import TypeAdapter
+from pydantic import TypeAdapter, ValidationError
 from pydantic.json_schema import JsonSchemaValue
 
 from . import _utils, messages
@@ -28,7 +28,7 @@ class RunResult(Generic[ResultData]):
 
     def message_history_json(self) -> str:
         """Return the history of messages as a JSON string."""
-        return pydantic_core.to_json(self.message_history).decode()
+        return messages.MessagesTypeAdapter.dump_json(self.message_history).decode()
 
 
 @dataclass
@@ -61,7 +61,8 @@ class ResultSchema(Generic[ResultData]):
     json_schema: JsonSchemaValue
     allow_plain_message: bool
     outer_typed_dict: bool
-    retries: int
+    max_retries: int
+    _current_retry: int = 0
 
     @classmethod
     def build(cls, response_type: type[ResultData], name: str, description: str, retries: int) -> Self | None:
@@ -85,10 +86,25 @@ class ResultSchema(Generic[ResultData]):
             json_schema=type_adapter.json_schema(),
             allow_plain_message=_utils.allow_plain_str(response_type),
             outer_typed_dict=outer_typed_dict,
-            retries=retries,
+            max_retries=retries,
         )
 
-    def validate(self, message: messages.FunctionCall) -> ResultData:
+    def validate(self, message: messages.FunctionCall) -> _utils.Either[ResultData, messages.FunctionValidationError]:
         """Validate a message."""
-        # TODO retries
-        return self.type_adapter.validate_json(message['arguments'])
+        try:
+            result = self.type_adapter.validate_json(message['arguments'])
+        except ValidationError as e:
+            self._current_retry += 1
+            if self._current_retry > self.max_retries:
+                raise
+            else:
+                m = messages.FunctionValidationError(
+                    role='function-validation-error',
+                    timestamp=datetime.now(),
+                    function_id=message['function_id'],
+                    function_name=message['function_name'],
+                    errors=e.errors(),
+                )
+                return _utils.Either(right=m)
+        else:
+            return _utils.Either(left=result)

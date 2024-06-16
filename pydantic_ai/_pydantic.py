@@ -4,7 +4,7 @@ This module has to use numerous internal Pydantic APIs and is therefore brittle 
 """
 
 from inspect import Parameter, Signature, signature
-from typing import Any, Callable, Literal, TypedDict, cast
+from typing import Any, Callable, Literal, TypedDict, cast, get_origin
 
 from griffe.dataclasses import Docstring, Object as GriffeObject
 from griffe.enumerations import DocstringSectionKind
@@ -80,8 +80,6 @@ def _parameters_dict_schema(
     Returns:
         tuple of (generated core schema, description, takes info argument, single arg name).
     """
-    from .retrievers import CallInfo
-
     sig = signature(function)
 
     type_hints = _typing_extra.get_function_type_hints(function)
@@ -100,7 +98,7 @@ def _parameters_dict_schema(
         else:
             annotation = type_hints[name]
 
-            if index == 0 and annotation is CallInfo:
+            if index == 0 and _is_call_info(annotation):
                 takes_info = True
                 continue
 
@@ -202,3 +200,9 @@ def _infer_docstring_style(doc: str) -> DocstringStyle:
     else:
         # fallback to google style
         return 'google'
+
+
+def _is_call_info(annotation: Any) -> bool:
+    from .retrievers import CallInfo
+
+    return annotation is CallInfo or (_typing_extra.is_generic_alias(annotation) and get_origin(annotation) is CallInfo)

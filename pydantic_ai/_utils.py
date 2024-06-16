@@ -1,7 +1,7 @@
 import asyncio
-from dataclasses import is_dataclass
+from dataclasses import dataclass, is_dataclass
 from functools import partial
-from typing import Any, Callable, ParamSpec, TypeVar, get_args, is_typeddict
+from typing import Any, Callable, Generic, ParamSpec, TypeAlias, TypeVar, get_args, is_typeddict, overload
 
 from pydantic import BaseModel
 
@@ -29,3 +29,57 @@ def is_model_like(response_type: Any) -> bool:
     return isinstance(response_type, type) and (
         issubclass(response_type, BaseModel) or is_dataclass(response_type) or is_typeddict(response_type)
     )
+
+
+_T = TypeVar('_T')
+
+
+@dataclass
+class Some(Generic[_T]):
+    """Analogous to Rust's `Option::Some` type."""
+
+    value: _T
+
+
+# Analogous to Rust's `Option` type, usage: `Option[Thing]` is equivalent to `Some[Thing] | None`
+Option: TypeAlias = Some[_T] | None
+
+
+_Left = TypeVar('_Left')
+_Right = TypeVar('_Right')
+
+
+class Either(Generic[_Left, _Right]):
+    """Two member Union that records which member was set.
+
+    Usage:
+
+    ```py
+    if left_thing := either.left:
+        use_left(left_thing)
+    else:
+        use_right(either.right)
+    ```
+    """
+
+    @overload
+    def __init__(self, *, left: _Left) -> None: ...
+
+    @overload
+    def __init__(self, *, right: _Right) -> None: ...
+
+    def __init__(self, *, left: _Left | None = None, right: _Right | None = None) -> None:
+        if (left is not None and right is not None) or (left is None and right is None):
+            raise TypeError('Either must have exactly one value')
+        self._left = left
+        self._right = right
+
+    @property
+    def left(self) -> _Left | None:
+        return self._left
+
+    @property
+    def right(self) -> _Right:
+        if self._right is None:
+            raise TypeError('Right not set')
+        return self._right

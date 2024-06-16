@@ -14,8 +14,7 @@ from ..messages import (
     LLMResponse,
     Message,
 )
-from . import AgentModel, FunctionDefinition, Model
-from .utils import function_response_content, function_validation_error_content
+from . import AgentModel, FunctionDefinition, Model, _utils
 
 
 class OpenAIModel(Model):
@@ -105,14 +104,14 @@ def map_message(message: Message) -> ChatCompletionMessageParam:
         return {
             'role': 'tool',
             'tool_call_id': message['function_id'],
-            'content': function_response_content(message),
+            'content': _utils.function_response_content(message),
         }
     elif message['role'] == 'function-validation-error':
         # FunctionValidationError -> ChatCompletionUserMessageParam
         return {
             'role': 'tool',
             'tool_call_id': message['function_id'],
-            'content': function_validation_error_content(message),
+            'content': _utils.function_validation_error_content(message),
         }
     elif message['role'] == 'llm-response':
         # LLMResponse -> ChatCompletionAssistantMessageParam
