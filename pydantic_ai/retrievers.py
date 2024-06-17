@@ -4,6 +4,7 @@ import inspect
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Concatenate, Generic, ParamSpec, Self, TypeVar, cast
 
+import pydantic_core
 from pydantic import ValidationError
 from pydantic.json_schema import JsonSchemaValue
 from pydantic_core import SchemaValidator
@@ -26,6 +27,14 @@ class CallInfo(Generic[AgentContext]):
 
 # Usage `RetrieverFunc[AgentContext, P]`
 RetrieverFunc = Callable[Concatenate[CallInfo[AgentContext], P], str | Awaitable[str]]
+
+
+class Retry(Exception):
+    """Exception raised when a retriever function should be retried."""
+
+    def __init__(self, message: str):
+        self.message = message
+        super().__init__(message)
 
 
 @dataclass
@@ -72,29 +81,23 @@ class Retriever(Generic[AgentContext, P]):
         try:
             args_dict = self.validator.validate_json(message.arguments)
         except ValidationError as e:
-            self._current_retry += 1
-            if self._current_retry > self.max_retries:
-                # TODO custom error
-                raise
-            else:
-                return messages.FunctionValidationError(
-                    function_id=message.function_id,
-                    function_name=message.function_name,
-                    errors=e.errors(),
-                )
+            return self._on_retry(e.errors(), message)
 
         args, kwargs = self._call_args(context, args_dict)
-        if self.is_async:
-            response_content = await self.function(*args, **kwargs)  # type: ignore[reportCallIssue]
-        else:
-            response_content = await _utils.run_in_executor(
-                self.function,
-                *args,  # type: ignore[reportCallIssue]
-                **kwargs,
-            )
+        try:
+            if self.is_async:
+                response_content = await self.function(*args, **kwargs)  # type: ignore[reportCallIssue]
+            else:
+                response_content = await _utils.run_in_executor(
+                    self.function,
+                    *args,  # type: ignore[reportCallIssue]
+                    **kwargs,
+                )
+        except Retry as e:
+            return self._on_retry(e.message, message)
 
         self._current_retry = 0
-        return messages.FunctionResponse(
+        return messages.FunctionReturn(
             function_id=message.function_id,
             function_name=message.function_name,
             content=cast(str, response_content),
@@ -111,3 +114,17 @@ class Retriever(Generic[AgentContext, P]):
             args.extend(args_dict.pop(self.var_positional_field))
 
         return args, args_dict
+
+    def _on_retry(
+        self, content: list[pydantic_core.ErrorDetails] | str, call_message: messages.FunctionCall
+    ) -> messages.FunctionRetry:
+        self._current_retry += 1
+        if self._current_retry > self.max_retries:
+            # TODO custom error
+            raise
+        else:
+            return messages.FunctionRetry(
+                function_id=call_message.function_id,
+                function_name=call_message.function_name,
+                content=content,
+            )

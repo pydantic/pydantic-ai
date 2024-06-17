@@ -88,7 +88,7 @@ class ResultSchema(Generic[ResultData]):
             max_retries=retries,
         )
 
-    def validate(self, message: messages.FunctionCall) -> _utils.Either[ResultData, messages.FunctionValidationError]:
+    def validate(self, message: messages.FunctionCall) -> _utils.Either[ResultData, messages.FunctionRetry]:
         """Validate a message."""
         try:
             result = self.type_adapter.validate_json(message.arguments)
@@ -97,10 +97,8 @@ class ResultSchema(Generic[ResultData]):
             if self._current_retry > self.max_retries:
                 raise
             else:
-                m = messages.FunctionValidationError(
-                    function_id=message.function_id,
-                    function_name=message.function_name,
-                    errors=e.errors(),
+                m = messages.FunctionRetry(
+                    function_id=message.function_id, function_name=message.function_name, content=e.errors()
                 )
                 return _utils.Either(right=m)
         else:

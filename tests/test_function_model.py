@@ -9,7 +9,7 @@ from inline_snapshot import snapshot
 from pydantic_ai import Agent, CallInfo
 from pydantic_ai.messages import (
     FunctionCall,
-    FunctionResponse,
+    FunctionReturn,
     LLMFunctionCalls,
     LLMMessage,
     LLMResponse,
@@ -94,7 +94,7 @@ def whether_model(messages: list[Message], allow_plain_message: bool, tools: dic
                 )
             ]
         )
-    elif last.role == 'function-response':
+    elif last.role == 'function-return':
         if last.function_name == 'get_location':
             return LLMFunctionCalls(
                 calls=[FunctionCall(function_id='2', function_name='get_whether', arguments=last.content)]
@@ -148,12 +148,12 @@ def test_whether():
                 timestamp=IsNow(),
                 role='llm-function-calls',
             ),
-            FunctionResponse(
+            FunctionReturn(
                 function_id='1',
                 function_name='get_location',
                 content='{"lat": 51, "lng": 0}',
                 timestamp=IsNow(),
-                role='function-response',
+                role='function-return',
             ),
             LLMFunctionCalls(
                 calls=[
@@ -166,12 +166,12 @@ def test_whether():
                 timestamp=IsNow(),
                 role='llm-function-calls',
             ),
-            FunctionResponse(
+            FunctionReturn(
                 function_id='2',
                 function_name='get_whether',
                 content='Raining',
                 timestamp=IsNow(),
-                role='function-response',
+                role='function-return',
             ),
             LLMResponse(
                 content='Raining in London',
@@ -199,7 +199,7 @@ def call_function_model(messages: list[Message], allow_plain_message: bool, tool
                     )
                 ]
             )
-    elif last.role == 'function-response':
+    elif last.role == 'function-return':
         return LLMResponse(pydantic_core.to_json(last).decode())
 
     raise ValueError(f'Unexpected message: {last}')
@@ -222,6 +222,6 @@ def test_var_args():
             'function_name': 'get_var_args',
             'content': '{"args": [1, 2, 3]}',
             'timestamp': IsNow(iso_string=True),
-            'role': 'function-response',
+            'role': 'function-return',
         }
     )

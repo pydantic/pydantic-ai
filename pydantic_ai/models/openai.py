@@ -14,7 +14,7 @@ from ..messages import (
     LLMResponse,
     Message,
 )
-from . import AbstractToolDefinition, AgentModel, Model, _utils
+from . import AbstractToolDefinition, AgentModel, Model
 
 
 class OpenAIModel(Model):
@@ -105,19 +105,12 @@ def map_message(message: Message) -> ChatCompletionMessageParam:
     elif message.role == 'user':
         # UserPrompt -> ChatCompletionUserMessageParam
         return {'role': 'user', 'content': message.content}
-    elif message.role == 'function-response':
-        # FunctionResponse -> ChatCompletionToolMessageParam
+    elif message.role == 'function-return' or message.role == 'function-retry':
+        # FunctionResponse or FunctionRetry -> ChatCompletionToolMessageParam
         return {
             'role': 'tool',
             'tool_call_id': message.function_id,
-            'content': _utils.function_response_content(message),
-        }
-    elif message.role == 'function-validation-error':
-        # FunctionValidationError -> ChatCompletionUserMessageParam
-        return {
-            'role': 'tool',
-            'tool_call_id': message.function_id,
-            'content': _utils.function_validation_error_content(message),
+            'content': message.llm_response(),
         }
     elif message.role == 'llm-response':
         # LLMResponse -> ChatCompletionAssistantMessageParam
