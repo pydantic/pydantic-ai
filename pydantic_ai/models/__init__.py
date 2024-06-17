@@ -8,11 +8,10 @@ from __future__ import annotations as _annotations
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Protocol
 
-from pydantic.json_schema import JsonSchemaValue
-
 from ..messages import LLMMessage, Message
 
 if TYPE_CHECKING:
+    from .._utils import ObjectJsonSchema
     from ..agent import KnownModelName
 
 
@@ -53,4 +52,4 @@ class AbstractToolDefinition(Protocol):
 
     name: str
     description: str
-    json_schema: JsonSchemaValue
+    json_schema: ObjectJsonSchema

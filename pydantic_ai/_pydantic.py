@@ -3,6 +3,8 @@
 This module has to use numerous internal Pydantic APIs and is therefore brittle to changes in Pydantic.
 """
 
+from __future__ import annotations as _annotations
+
 from inspect import Parameter, Signature, signature
 from typing import Any, Callable, Literal, TypedDict, cast, get_origin
 
@@ -12,9 +14,11 @@ from pydantic._internal import _decorators, _generate_schema, _typing_extra
 from pydantic._internal._config import ConfigWrapper
 from pydantic.config import ConfigDict
 from pydantic.fields import FieldInfo
-from pydantic.json_schema import GenerateJsonSchema, JsonSchemaValue
+from pydantic.json_schema import GenerateJsonSchema
 from pydantic.plugin._schema_validator import create_schema_validator
 from pydantic_core import SchemaValidator, core_schema
+
+from ._utils import ObjectJsonSchema, check_object_json_schema, is_model_like
 
 __all__ = ('function_schema',)
 
@@ -24,7 +28,7 @@ class FunctionSchema(TypedDict):
 
     description: str
     validator: SchemaValidator
-    json_schema: JsonSchemaValue
+    json_schema: ObjectJsonSchema
     takes_info: bool
     # if not None, the function takes a single by that name (besides potentially `info`)
     single_arg_name: str | None
@@ -82,11 +86,12 @@ def function_schema(function: Callable[..., Any]) -> FunctionSchema:
             if field_info.description is None:
                 field_info.description = field_descriptions.get(field_name)
 
-            fields[field_name] = gen_schema._generate_td_field_schema(  # type: ignore[reportPrivateUsage]
+            fields[field_name] = td_schema = gen_schema._generate_td_field_schema(  # type: ignore[reportPrivateUsage]
                 field_name,
                 field_info,
                 decorators,
             )
+            td_schema['metadata'] = {'is_model_like': is_model_like(annotation)}
             if p.kind == Parameter.POSITIONAL_ONLY:
                 positional_fields.append(field_name)
             elif p.kind == Parameter.VAR_POSITIONAL:
@@ -110,7 +115,7 @@ def function_schema(function: Callable[..., Any]) -> FunctionSchema:
     return FunctionSchema(
         description=description,
         validator=schema_validator,
-        json_schema=json_schema,
+        json_schema=check_object_json_schema(json_schema),
         takes_info=takes_info,
         single_arg_name=single_arg_name,
         positional_fields=positional_fields,
@@ -137,10 +142,9 @@ def _build_schema(
     """
     if len(fields) == 1 and var_kwargs_schema is None:
         name = next(iter(fields))
-        # and it's a model, dataclass or typed dict (so it's JSON Schema is an "object")
-        field_schema = fields[name]['schema']
-        if field_schema['type'] in {'typed-dict', 'model', 'dataclass'}:
-            return field_schema, name
+        td_field = fields[name]
+        if td_field['metadata']['is_model_like']:  # type: ignore
+            return td_field['schema'], name
 
     td_schema = core_schema.typed_dict_schema(
         fields,

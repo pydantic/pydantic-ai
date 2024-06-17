@@ -32,18 +32,18 @@ class Agent(Generic[ResultData, AgentContext]):
     ):
         self._model = _models.infer_model(model) if model is not None else None
 
-        self._result_schema = _result.ResultSchema[response_type].build(
+        self.result_schema = _result.ResultSchema[response_type].build(
             response_type,
             response_schema_name,
             response_schema_description,
             response_retries if response_retries is not None else retries,
         )
-        self._allow_plain_message = self._result_schema is None or self._result_schema.allow_plain_message
+        self._allow_plain_message = self.result_schema is None or self.result_schema.allow_plain_message
 
         self._system_prompts = (system_prompt,) if isinstance(system_prompt, str) else tuple(system_prompt)
         self._retrievers: dict[str, _r.Retriever[AgentContext, Any]] = {r_.name: r_ for r_ in retrievers}
-        if self._result_schema and self._result_schema.name in self._retrievers:
-            raise ValueError(f'Retriever name conflicts with response schema: {self._result_schema.name!r}')
+        if self.result_schema and self.result_schema.name in self._retrievers:
+            raise ValueError(f'Retriever name conflicts with response schema: {self.result_schema.name!r}')
         self._context = context
         self._default_retries = retries
         self._system_prompt_functions: list[Any] = []
@@ -81,8 +81,8 @@ class Agent(Generic[ResultData, AgentContext]):
         messages.append(_messages.UserPrompt(user_prompt))
 
         functions: list[_models.AbstractToolDefinition] = list(self._retrievers.values())
-        if self._result_schema is not None:
-            functions.append(self._result_schema)
+        if self.result_schema is not None:
+            functions.append(self.result_schema)
         agent_model = model_.agent_model(self._allow_plain_message, functions)
 
         for retriever in self._retrievers.values():
@@ -155,7 +155,7 @@ class Agent(Generic[ResultData, AgentContext]):
         retries_ = retries if retries is not None else self._default_retries
         retriever = _r.Retriever[AgentContext, _r.P].build(func, retries_)
 
-        if self._result_schema and self._result_schema.name == retriever.name:
+        if self.result_schema and self.result_schema.name == retriever.name:
             raise ValueError(f'Retriever name conflicts with response schema name: {retriever.name!r}')
 
         if retriever.name in self._retrievers:
@@ -175,11 +175,11 @@ class Agent(Generic[ResultData, AgentContext]):
             else:
                 messages.append(_messages.PlainResponseForbidden())
         elif llm_message.role == 'llm-function-calls':
-            if self._result_schema is not None:
+            if self.result_schema is not None:
                 # if there's a result schema, and any of the calls match that name, return the result
-                call = next((c for c in llm_message.calls if c.function_name == self._result_schema.name), None)
+                call = next((c for c in llm_message.calls if c.function_name == self.result_schema.name), None)
                 if call is not None:
-                    either = self._result_schema.validate(call)
+                    either = self.result_schema.validate(call)
                     if result_data := either.left:
                         return _utils.Some(result_data)
                     else:

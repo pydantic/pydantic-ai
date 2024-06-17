@@ -2,7 +2,6 @@ from dataclasses import dataclass
 from typing import Any, AsyncIterable, Generic, Self, TypedDict, TypeVar
 
 from pydantic import TypeAdapter, ValidationError
-from pydantic.json_schema import JsonSchemaValue
 
 from . import _utils, messages
 
@@ -57,7 +56,7 @@ class ResultSchema(Generic[ResultData]):
     name: str
     description: str
     type_adapter: TypeAdapter[Any]
-    json_schema: JsonSchemaValue
+    json_schema: _utils.ObjectJsonSchema
     allow_plain_message: bool
     outer_typed_dict: bool
     max_retries: int
@@ -82,7 +81,7 @@ class ResultSchema(Generic[ResultData]):
             name=name,
             description=description,
             type_adapter=type_adapter,
-            json_schema=type_adapter.json_schema(),
+            json_schema=_utils.check_object_json_schema(type_adapter.json_schema()),
             allow_plain_message=_utils.allow_plain_str(response_type),
             outer_typed_dict=outer_typed_dict,
             max_retries=retries,

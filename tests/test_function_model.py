@@ -106,10 +106,10 @@ def whether_model(messages: list[Message], allow_plain_message: bool, tools: dic
     raise ValueError(f'Unexpected message: {last}')
 
 
-whether_agent = Agent(FunctionModel(whether_model))
+weather_agent = Agent(FunctionModel(whether_model))
 
 
-@whether_agent.retriever
+@weather_agent.retriever
 async def get_location(_: CallInfo[None], location_description: str) -> str:
     if location_description == 'London':
         lat_lng = {'lat': 51, 'lng': 0}
@@ -118,7 +118,7 @@ async def get_location(_: CallInfo[None], location_description: str) -> str:
     return json.dumps(lat_lng)
 
 
-@whether_agent.retriever
+@weather_agent.retriever
 async def get_whether(_: CallInfo[None], lat: int, lng: int):
     if (lat, lng) == (51, 0):
         # it always rains in London
@@ -128,7 +128,7 @@ async def get_whether(_: CallInfo[None], lat: int, lng: int):
 
 
 def test_whether():
-    result = whether_agent.run_sync('London')
+    result = weather_agent.run_sync('London')
     assert result.response == 'Raining in London'
     assert result.message_history == snapshot(
         [
@@ -181,7 +181,7 @@ def test_whether():
         ]
     )
 
-    result = whether_agent.run_sync('Ipswich')
+    result = weather_agent.run_sync('Ipswich')
     assert result.response == 'Sunny in Ipswich'
 
 

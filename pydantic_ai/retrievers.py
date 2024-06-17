@@ -6,7 +6,6 @@ from typing import Any, Awaitable, Callable, Concatenate, Generic, ParamSpec, Se
 
 import pydantic_core
 from pydantic import ValidationError
-from pydantic.json_schema import JsonSchemaValue
 from pydantic_core import SchemaValidator
 
 from . import _pydantic, _utils, messages
@@ -50,7 +49,7 @@ class Retriever(Generic[AgentContext, P]):
     positional_fields: list[str]
     var_positional_field: str | None
     validator: SchemaValidator
-    json_schema: JsonSchemaValue
+    json_schema: _utils.ObjectJsonSchema
     max_retries: int
     _current_retry: int = 0
 
@@ -81,7 +80,7 @@ class Retriever(Generic[AgentContext, P]):
         try:
             args_dict = self.validator.validate_json(message.arguments)
         except ValidationError as e:
-            return self._on_retry(e.errors(), message)
+            return self._on_error(e.errors(), message)
 
         args, kwargs = self._call_args(context, args_dict)
         try:
@@ -94,7 +93,7 @@ class Retriever(Generic[AgentContext, P]):
                     **kwargs,
                 )
         except Retry as e:
-            return self._on_retry(e.message, message)
+            return self._on_error(e.message, message)
 
         self._current_retry = 0
         return messages.FunctionReturn(
@@ -115,12 +114,12 @@ class Retriever(Generic[AgentContext, P]):
 
         return args, args_dict
 
-    def _on_retry(
+    def _on_error(
         self, content: list[pydantic_core.ErrorDetails] | str, call_message: messages.FunctionCall
     ) -> messages.FunctionRetry:
         self._current_retry += 1
         if self._current_retry > self.max_retries:
-            # TODO custom error
+            # TODO custom error with details of the retriever
             raise
         else:
             return messages.FunctionRetry(

@@ -1,9 +1,23 @@
 import asyncio
 from dataclasses import dataclass, is_dataclass
 from functools import partial
-from typing import Any, Callable, Generic, ParamSpec, TypeAlias, TypeVar, get_args, is_typeddict, overload
+from typing import (
+    Any,
+    Callable,
+    Generic,
+    Literal,
+    ParamSpec,
+    TypeAlias,
+    TypedDict,
+    TypeVar,
+    cast,
+    get_args,
+    is_typeddict,
+    overload,
+)
 
 from pydantic import BaseModel
+from pydantic.json_schema import JsonSchemaValue
 
 _P = ParamSpec('_P')
 _R = TypeVar('_R')
@@ -24,11 +38,27 @@ def allow_plain_str(response_type: Any) -> bool:
     return isinstance(response_type, _UnionType) and any(t is str for t in get_args(response_type))
 
 
-def is_model_like(response_type: Any) -> bool:
-    """Check if the response type is model-like."""
-    return isinstance(response_type, type) and (
-        issubclass(response_type, BaseModel) or is_dataclass(response_type) or is_typeddict(response_type)
-    )
+def is_model_like(type_: Any) -> bool:
+    """Check if something is a pydantic model, dataclass or typedict.
+
+    These should all generate a JSON Schema with `{"type": "object"}` and therefore be usable directly as
+    function parameters.
+    """
+    return isinstance(type_, type) and (issubclass(type_, BaseModel) or is_dataclass(type_) or is_typeddict(type_))
+
+
+class ObjectJsonSchema(TypedDict):
+    type: Literal['object']
+    title: str
+    properties: dict[str, JsonSchemaValue]
+    required: list[str]
+
+
+def check_object_json_schema(schema: JsonSchemaValue) -> ObjectJsonSchema:
+    if schema.get('type') == 'object':
+        return cast(ObjectJsonSchema, schema)
+    else:
+        raise ValueError('Schema must be an object')
 
 
 _T = TypeVar('_T')

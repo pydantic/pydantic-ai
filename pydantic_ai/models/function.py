@@ -1,10 +1,13 @@
 from __future__ import annotations as _annotations
 
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from ..messages import LLMMessage, Message
 from . import AbstractToolDefinition, AgentModel, Model
+
+if TYPE_CHECKING:
+    from .._utils import ObjectJsonSchema
 
 
 class FunctionDef(Protocol):
@@ -15,7 +18,7 @@ class FunctionDef(Protocol):
 class Tool:
     name: str
     description: str
-    json_schema: Any
+    json_schema: ObjectJsonSchema
 
 
 @dataclass

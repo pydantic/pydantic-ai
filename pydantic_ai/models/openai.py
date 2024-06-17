@@ -44,8 +44,7 @@ class OpenAIAgentModel(AgentModel):
         response = await self.completions_create(messages)
         choice = response.choices[0]
         timestamp = datetime.fromtimestamp(response.created)
-        if choice.finish_reason == 'tool_calls':
-            assert choice.message.tool_calls is not None, choice
+        if choice.message.tool_calls is not None:
             return LLMFunctionCalls(
                 [
                     FunctionCall(
@@ -92,7 +91,7 @@ def map_tool_definition(f: AbstractToolDefinition) -> ChatCompletionToolParam:
         'function': {
             'name': f.name,
             'description': f.description,
-            'parameters': f.json_schema,
+            'parameters': f.json_schema,  # type: ignore
         },
     }
 
