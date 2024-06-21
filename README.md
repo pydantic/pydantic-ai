@@ -43,7 +43,7 @@ async def get_location(_: CallInfo[None], location_description: str) -> str:
 
 
 @weather_agent.retriever
-async def get_whether(_: CallInfo[None], lat: float, lng: float):
+async def get_weather(_: CallInfo[None], lat: float, lng: float):
     """
     Get the weather at a location by its latitude and longitude.
     """
