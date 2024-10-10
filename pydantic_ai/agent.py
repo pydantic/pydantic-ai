@@ -2,7 +2,10 @@ from __future__ import annotations as _annotations
 
 import asyncio
 import inspect
-from typing import Any, Awaitable, Callable, Generic, Literal, Sequence, assert_never, cast, overload
+from collections.abc import Awaitable, Sequence
+from typing import Any, Callable, Generic, Literal, Union, cast, overload
+
+from typing_extensions import assert_never
 
 from . import _utils, messages as _messages, models as _models, result as _result, retrievers as _r
 from .result import ResultData
@@ -19,16 +22,16 @@ class Agent(Generic[ResultData, AgentContext]):
 
     def __init__(
         self,
-        model: _models.Model | KnownModelName | None = None,
+        model: Union[_models.Model, KnownModelName, None] = None,
         response_type: type[_result.ResultData] = str,
         *,
-        system_prompt: str | Sequence[str] = (),
+        system_prompt: Union[str, Sequence[str]] = (),
         retrievers: Sequence[_r.Retriever[AgentContext, Any]] = (),
         context: AgentContext = None,
         retries: int = 1,
         response_schema_name: str = 'final_response',
         response_schema_description: str = 'The final response',
-        response_retries: int | None = None,
+        response_retries: Union[int, None] = None,
     ):
         self._model = _models.infer_model(model) if model is not None else None
 
@@ -52,8 +55,8 @@ class Agent(Generic[ResultData, AgentContext]):
         self,
         user_prompt: str,
         *,
-        message_history: list[_messages.Message] | None = None,
-        model: _models.Model | KnownModelName | None = None,
+        message_history: Union[list[_messages.Message], None] = None,
+        model: Union[_models.Model, KnownModelName, None] = None,
     ) -> _result.RunResult[_result.ResultData]:
         """Run the agent with a user prompt in async mode.
 
@@ -98,8 +101,8 @@ class Agent(Generic[ResultData, AgentContext]):
         self,
         user_prompt: str,
         *,
-        message_history: list[_messages.Message] | None = None,
-        model: _models.Model | KnownModelName | None = None,
+        message_history: Union[list[_messages.Message], None] = None,
+        model: Union[_models.Model, KnownModelName, None] = None,
     ) -> _result.RunResult[_result.ResultData]:
         """Run the agent with a user prompt synchronously.
 
@@ -129,14 +132,14 @@ class Agent(Generic[ResultData, AgentContext]):
 
     @overload
     def retriever(
-        self, /, *, retries: int | None = None
+        self, /, *, retries: Union[int, None] = None
     ) -> Callable[
         [_r.RetrieverFunc[AgentContext, _r.P]],
         _r.Retriever[AgentContext, _r.P],
     ]: ...
 
     def retriever(
-        self, func: _r.RetrieverFunc[AgentContext, _r.P] | None = None, /, *, retries: int | None = None
+        self, func: Union[_r.RetrieverFunc[AgentContext, _r.P], None] = None, /, *, retries: Union[int, None] = None
     ) -> Any:
         """Decorator to register a retriever function."""
         if func is None:
@@ -150,7 +153,7 @@ class Agent(Generic[ResultData, AgentContext]):
             return self._register_retriever(func, retries)
 
     def _register_retriever(
-        self, func: _r.RetrieverFunc[AgentContext, _r.P], retries: int | None
+        self, func: _r.RetrieverFunc[AgentContext, _r.P], retries: Union[int, None]
     ) -> _r.Retriever[AgentContext, _r.P]:
         retries_ = retries if retries is not None else self._default_retries
         retriever = _r.Retriever[AgentContext, _r.P].build(func, retries_)
@@ -223,9 +226,9 @@ class Agent(Generic[ResultData, AgentContext]):
 
 # This is basically a function that may or maybe not take `CallInfo` as an argument, and may or may not be async.
 # Usage `SystemPrompt[AgentContext]`
-_SystemPromptFunction = (
-    Callable[[_r.CallInfo[AgentContext]], str]
-    | Callable[[_r.CallInfo[AgentContext]], Awaitable[str]]
-    | Callable[[], str]
-    | Callable[[], Awaitable[str]]
-)
+_SystemPromptFunction = Union[
+    Callable[[_r.CallInfo[AgentContext]], str],
+    Callable[[_r.CallInfo[AgentContext]], Awaitable[str]],
+    Callable[[], str],
+    Callable[[], Awaitable[str]],
+]

@@ -1,8 +1,9 @@
 from __future__ import annotations as _annotations
 
 import inspect
+from collections.abc import Awaitable
 from dataclasses import dataclass
-from typing import Any, Awaitable, Callable, Concatenate, Generic, ParamSpec, Self, TypeVar, cast
+from typing import Any, Callable, Concatenate, Generic, ParamSpec, Self, TypeVar, Union, cast
 
 import pydantic_core
 from pydantic import ValidationError
@@ -25,7 +26,7 @@ class CallInfo(Generic[AgentContext]):
 
 
 # Usage `RetrieverFunc[AgentContext, P]`
-RetrieverFunc = Callable[Concatenate[CallInfo[AgentContext], P], str | Awaitable[str]]
+RetrieverFunc = Callable[Concatenate[CallInfo[AgentContext], P], Union[str, Awaitable[str]]]
 
 
 class Retry(Exception):
@@ -45,9 +46,9 @@ class Retriever(Generic[AgentContext, P]):
     function: RetrieverFunc[AgentContext, P]
     is_async: bool
     takes_info: bool
-    single_arg_name: str | None
+    single_arg_name: Union[str, None]
     positional_fields: list[str]
-    var_positional_field: str | None
+    var_positional_field: Union[str, None]
     validator: SchemaValidator
     json_schema: _utils.ObjectJsonSchema
     max_retries: int
@@ -115,7 +116,7 @@ class Retriever(Generic[AgentContext, P]):
         return args, args_dict
 
     def _on_error(
-        self, content: list[pydantic_core.ErrorDetails] | str, call_message: messages.FunctionCall
+        self, content: Union[list[pydantic_core.ErrorDetails], str], call_message: messages.FunctionCall
     ) -> messages.FunctionRetry:
         self._current_retry += 1
         if self._current_retry > self.max_retries:

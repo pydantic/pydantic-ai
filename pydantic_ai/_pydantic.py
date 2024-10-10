@@ -6,7 +6,7 @@ This module has to use numerous internal Pydantic APIs and is therefore brittle 
 from __future__ import annotations as _annotations
 
 from inspect import Parameter, Signature, signature
-from typing import Any, Callable, Literal, TypedDict, cast, get_origin
+from typing import Any, Callable, Literal, TypedDict, Union, cast, get_origin
 
 from _griffe.enumerations import DocstringSectionKind
 from _griffe.models import Docstring, Object as GriffeObject
@@ -31,9 +31,9 @@ class FunctionSchema(TypedDict):
     json_schema: ObjectJsonSchema
     takes_info: bool
     # if not None, the function takes a single by that name (besides potentially `info`)
-    single_arg_name: str | None
+    single_arg_name: Union[str, None]
     positional_fields: list[str]
-    var_positional_field: str | None
+    var_positional_field: Union[str, None]
 
 
 def function_schema(function: Callable[..., Any]) -> FunctionSchema:
@@ -55,10 +55,10 @@ def function_schema(function: Callable[..., Any]) -> FunctionSchema:
 
     type_hints = _typing_extra.get_function_type_hints(function)
 
-    var_kwargs_schema: core_schema.CoreSchema | None = None
+    var_kwargs_schema: Union[core_schema.CoreSchema, None] = None
     fields: dict[str, core_schema.TypedDictField] = {}
     positional_fields: list[str] = []
-    var_positional_field: str | None = None
+    var_positional_field: Union[str, None] = None
     errors: list[str] = []
     decorators = _decorators.DecoratorInfos()
     description, field_descriptions = _doc_descriptions(function, sig)
@@ -129,10 +129,10 @@ def function_schema(function: Callable[..., Any]) -> FunctionSchema:
 
 def _build_schema(
     fields: dict[str, core_schema.TypedDictField],
-    var_kwargs_schema: core_schema.CoreSchema | None,
+    var_kwargs_schema: Union[core_schema.CoreSchema, None],
     gen_schema: _generate_schema.GenerateSchema,
     core_config: core_schema.CoreConfig,
-) -> tuple[core_schema.CoreSchema, str | None]:
+) -> tuple[core_schema.CoreSchema, Union[str, None]]:
     """Generate a typed dict schema for function parameters.
 
     Args:
@@ -163,7 +163,7 @@ DocstringStyle = Literal['google', 'numpy', 'sphinx']
 
 
 def _doc_descriptions(
-    func: Callable[..., Any], sig: Signature, *, style: DocstringStyle | None = None
+    func: Callable[..., Any], sig: Signature, *, style: Union[DocstringStyle, None] = None
 ) -> tuple[str, dict[str, str]]:
     """Extract the function description and parameter descriptions from a function's docstring.
 
