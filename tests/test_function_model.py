@@ -34,7 +34,7 @@ def return_last(messages: list[Message], _allow_plain_message: bool, _tools: dic
 
 
 def test_simple():
-    agent = Agent(FunctionModel(return_last), deps=())
+    agent = Agent(FunctionModel(return_last), deps=None)
     result = agent.run_sync('Hello')
     assert result.response == snapshot("content='Hello' role='user' message_count=1")
     assert result.message_history == snapshot(

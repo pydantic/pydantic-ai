@@ -3,24 +3,19 @@ from __future__ import annotations as _annotations
 import asyncio
 from collections.abc import Awaitable, Sequence
 from copy import copy
-from typing import Any, Callable, Generic, Literal, Union, cast, overload
+from typing import Any, Callable, Generic, Literal, cast, overload
 
 from typing_extensions import assert_never
 
 from . import _system_prompt, _utils, messages as _messages, models as _models, result as _result, retrievers as _r
 from .result import ResultData
-from .retrievers import AgentDependencies
+from .retrievers import AgentDeps
 
 __all__ = ('Agent',)
-
-
 KnownModelName = Literal['openai:gpt-4o', 'openai:gpt-4-turbo', 'openai:gpt-4', 'openai:gpt-3.5-turbo']
 
-SysPromptContext = Callable[[_r.CallContext[AgentDependencies]], Union[str, Awaitable[str]]]
-SysPromptPlain = Callable[[], Union[str, Awaitable[str]]]
 
-
-class Agent(Generic[AgentDependencies, ResultData]):
+class Agent(Generic[AgentDeps, ResultData]):
     """Main class for creating "agents" - a way to have a specific type of "conversation" with an LLM."""
 
     # slots mostly for my sanity — knowing what attributes are available
@@ -41,8 +36,9 @@ class Agent(Generic[AgentDependencies, ResultData]):
         response_type: type[_result.ResultData] = str,
         *,
         system_prompt: str | Sequence[str] = (),
-        retrievers: Sequence[_r.Retriever[AgentDependencies, Any]] = (),
-        deps: AgentDependencies | tuple[None] = (None,),
+        retrievers: Sequence[_r.Retriever[AgentDeps, Any]] = (),
+        # type here looks odd, but it's required os you can avoid "partially unknown" type errors with `deps=None`
+        deps: AgentDeps | tuple[()] = (),
         retries: int = 1,
         response_schema_name: str = 'final_response',
         response_schema_description: str = 'The final response',
@@ -59,16 +55,16 @@ class Agent(Generic[AgentDependencies, ResultData]):
         self._allow_plain_message = self.result_schema is None or self.result_schema.allow_plain_message
 
         self._system_prompts = (system_prompt,) if isinstance(system_prompt, str) else tuple(system_prompt)
-        self._retrievers: dict[str, _r.Retriever[AgentDependencies, Any]] = {r_.name: r_ for r_ in retrievers}
+        self._retrievers: dict[str, _r.Retriever[AgentDeps, Any]] = {r_.name: r_ for r_ in retrievers}
         if self.result_schema and self.result_schema.name in self._retrievers:
             raise ValueError(f'Retriever name conflicts with response schema: {self.result_schema.name!r}')
-        self._default_deps: AgentDependencies = None if deps == (None,) else deps  # type: ignore
+        self._default_deps: AgentDeps = None if deps == (None,) else deps  # type: ignore
         self._default_retries = retries
-        self._system_prompt_functions: list[_system_prompt.SystemPromptRunner[AgentDependencies]] = []
+        self._system_prompt_functions: list[_system_prompt.SystemPromptRunner[AgentDeps]] = []
 
-    def with_deps(self, deps: AgentDependencies) -> Agent[AgentDependencies, ResultData]:
+    def with_deps(self, deps: AgentDeps) -> Agent[AgentDeps, ResultData]:
         """Return a new agent with the given dependencies."""
-        agent: Agent[AgentDependencies, ResultData] = Agent.__new__(Agent)
+        agent: Agent[AgentDeps, ResultData] = Agent.__new__(Agent)
         for attr in self.__slots__:
             setattr(agent, attr, copy(getattr(self, attr)))
         agent._default_deps = deps
@@ -80,7 +76,7 @@ class Agent(Generic[AgentDependencies, ResultData]):
         *,
         message_history: list[_messages.Message] | None = None,
         model: _models.Model | KnownModelName | None = None,
-        deps: AgentDependencies | None = None,
+        deps: AgentDeps | None = None,
     ) -> _result.RunResult[_result.ResultData]:
         """Run the agent with a user prompt in async mode.
 
@@ -131,7 +127,7 @@ class Agent(Generic[AgentDependencies, ResultData]):
         *,
         message_history: list[_messages.Message] | None = None,
         model: _models.Model | KnownModelName | None = None,
-        deps: AgentDependencies | None = None,
+        deps: AgentDeps | None = None,
     ) -> _result.RunResult[_result.ResultData]:
         """Run the agent with a user prompt synchronously.
 
@@ -153,31 +149,29 @@ class Agent(Generic[AgentDependencies, ResultData]):
         raise NotImplementedError()
 
     def system_prompt(
-        self, func: _system_prompt.SystemPromptFunc[AgentDependencies]
-    ) -> _system_prompt.SystemPromptFunc[AgentDependencies]:
+        self, func: _system_prompt.SystemPromptFunc[AgentDeps]
+    ) -> _system_prompt.SystemPromptFunc[AgentDeps]:
         """Decorator to register a system prompt function that takes `CallContext` as it's only argument."""
         self._system_prompt_functions.append(_system_prompt.SystemPromptRunner(func))
         return func
 
     @overload
-    def retriever_context(
-        self, func: _r.RetrieverContextFunc[AgentDependencies, _r.P], /
-    ) -> _r.Retriever[AgentDependencies, _r.P]: ...
+    def retriever_context(self, func: _r.RetrieverContextFunc[AgentDeps, _r.P], /) -> _r.Retriever[AgentDeps, _r.P]: ...
 
     @overload
     def retriever_context(
         self, /, *, retries: int | None = None
-    ) -> Callable[[_r.RetrieverContextFunc[AgentDependencies, _r.P]], _r.Retriever[AgentDependencies, _r.P]]: ...
+    ) -> Callable[[_r.RetrieverContextFunc[AgentDeps, _r.P]], _r.Retriever[AgentDeps, _r.P]]: ...
 
     def retriever_context(
-        self, func: _r.RetrieverContextFunc[AgentDependencies, _r.P] | None = None, /, *, retries: int | None = None
+        self, func: _r.RetrieverContextFunc[AgentDeps, _r.P] | None = None, /, *, retries: int | None = None
     ) -> Any:
         """Decorator to register a retriever function."""
         if func is None:
 
             def retriever_decorator(
-                func_: _r.RetrieverContextFunc[AgentDependencies, _r.P],
-            ) -> _r.Retriever[AgentDependencies, _r.P]:
+                func_: _r.RetrieverContextFunc[AgentDeps, _r.P],
+            ) -> _r.Retriever[AgentDeps, _r.P]:
                 # noinspection PyTypeChecker
                 return self._register_retriever(func_, True, retries)
 
@@ -186,18 +180,18 @@ class Agent(Generic[AgentDependencies, ResultData]):
             return self._register_retriever(func, True, retries)
 
     @overload
-    def retriever_plain(self, func: _r.RetrieverPlainFunc[_r.P], /) -> _r.Retriever[AgentDependencies, _r.P]: ...
+    def retriever_plain(self, func: _r.RetrieverPlainFunc[_r.P], /) -> _r.Retriever[AgentDeps, _r.P]: ...
 
     @overload
     def retriever_plain(
         self, /, *, retries: int | None = None
-    ) -> Callable[[_r.RetrieverPlainFunc[_r.P]], _r.Retriever[AgentDependencies, _r.P]]: ...
+    ) -> Callable[[_r.RetrieverPlainFunc[_r.P]], _r.Retriever[AgentDeps, _r.P]]: ...
 
     def retriever_plain(self, func: _r.RetrieverPlainFunc[_r.P] | None = None, /, *, retries: int | None = None) -> Any:
         """Decorator to register a retriever function."""
         if func is None:
 
-            def retriever_decorator(func_: _r.RetrieverPlainFunc[_r.P]) -> _r.Retriever[AgentDependencies, _r.P]:
+            def retriever_decorator(func_: _r.RetrieverPlainFunc[_r.P]) -> _r.Retriever[AgentDeps, _r.P]:
                 # noinspection PyTypeChecker
                 return self._register_retriever(func_, False, retries)
 
@@ -206,11 +200,11 @@ class Agent(Generic[AgentDependencies, ResultData]):
             return self._register_retriever(func, False, retries)
 
     def _register_retriever(
-        self, func: _r.RetrieverEitherFunc[AgentDependencies, _r.P], takes_ctx: bool, retries: int | None
-    ) -> _r.Retriever[AgentDependencies, _r.P]:
+        self, func: _r.RetrieverEitherFunc[AgentDeps, _r.P], takes_ctx: bool, retries: int | None
+    ) -> _r.Retriever[AgentDeps, _r.P]:
         """Private utility to register a retriever function."""
         retries_ = retries if retries is not None else self._default_retries
-        retriever = _r.Retriever[AgentDependencies, _r.P](func, takes_ctx, retries_)
+        retriever = _r.Retriever[AgentDeps, _r.P](func, takes_ctx, retries_)
 
         if self.result_schema and self.result_schema.name == retriever.name:
             raise ValueError(f'Retriever name conflicts with response schema name: {retriever.name!r}')
@@ -222,7 +216,7 @@ class Agent(Generic[AgentDependencies, ResultData]):
         return retriever
 
     async def _handle_model_response(
-        self, messages: list[_messages.Message], llm_message: _messages.LLMMessage, deps: AgentDependencies
+        self, messages: list[_messages.Message], llm_message: _messages.LLMMessage, deps: AgentDeps
     ) -> _utils.Option[ResultData]:
         """Process a single response from the model.
 
@@ -260,7 +254,7 @@ class Agent(Generic[AgentDependencies, ResultData]):
         else:
             assert_never(llm_message)
 
-    async def _init_messages(self, deps: AgentDependencies) -> list[_messages.Message]:
+    async def _init_messages(self, deps: AgentDeps) -> list[_messages.Message]:
         """Build the initial messages for the conversation."""
         messages: list[_messages.Message] = [_messages.SystemPrompt(p) for p in self._system_prompts]
         for sys_prompt_runner in self._system_prompt_functions:

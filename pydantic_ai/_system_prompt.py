@@ -6,21 +6,21 @@ from dataclasses import dataclass
 from typing import Callable, Generic, Union
 
 from . import _utils, retrievers as _r
-from .retrievers import AgentDependencies
+from .retrievers import AgentDeps
 
 # This is basically a function that may or maybe not take `CallInfo` as an argument, and may or may not be async.
 # Usage `SystemPromptFunc[AgentDependencies]`
 SystemPromptFunc = Union[
-    Callable[[_r.CallContext[AgentDependencies]], str],
-    Callable[[_r.CallContext[AgentDependencies]], Awaitable[str]],
+    Callable[[_r.CallContext[AgentDeps]], str],
+    Callable[[_r.CallContext[AgentDeps]], Awaitable[str]],
     Callable[[], str],
     Callable[[], Awaitable[str]],
 ]
 
 
 @dataclass
-class SystemPromptRunner(Generic[AgentDependencies]):
-    function: SystemPromptFunc[AgentDependencies]
+class SystemPromptRunner(Generic[AgentDeps]):
+    function: SystemPromptFunc[AgentDeps]
     takes_ctx: bool = False
     is_async: bool = False
 
@@ -28,7 +28,7 @@ class SystemPromptRunner(Generic[AgentDependencies]):
         self.takes_ctx = len(inspect.signature(self.function).parameters) > 0
         self.is_async = inspect.iscoroutinefunction(self.function)
 
-    async def run(self, deps: AgentDependencies) -> str:
+    async def run(self, deps: AgentDeps) -> str:
         if self.takes_ctx:
             args = (_r.CallContext(deps, 0),)
         else:
