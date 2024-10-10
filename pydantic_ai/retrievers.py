@@ -1,12 +1,14 @@
 from __future__ import annotations as _annotations
 
 import inspect
+from collections.abc import Awaitable
 from dataclasses import dataclass
-from typing import Any, Awaitable, Callable, Concatenate, Generic, ParamSpec, Self, TypeVar, cast
+from typing import Any, Callable, Generic, TypeVar, Union, cast
 
 import pydantic_core
 from pydantic import ValidationError
 from pydantic_core import SchemaValidator
+from typing_extensions import Concatenate, ParamSpec, Self
 
 from . import _pydantic, _utils, messages
 
@@ -25,7 +27,7 @@ class CallInfo(Generic[AgentContext]):
 
 
 # Usage `RetrieverFunc[AgentContext, P]`
-RetrieverFunc = Callable[Concatenate[CallInfo[AgentContext], P], str | Awaitable[str]]
+RetrieverFunc = Callable[Concatenate[CallInfo[AgentContext], P], Union[str, Awaitable[str]]]
 
 
 class Retry(Exception):

@@ -1,42 +1,41 @@
 .DEFAULT_GOAL := all
-sources = pydantic_ai
+sources = pydantic_ai tests
 
-.PHONY: .rye  # Check that Rye is installed
-.rye:
-	@rye --version || echo 'Please install Rye: https://rye-up.com/guide/installation/'
+.PHONY: .uv  # Check that uv is installed
+.uv:
+	@uv --version || echo 'Please install uv: https://docs.astral.sh/uv/getting-started/installation/'
 
 .PHONY: .pre-commit  # Check that pre-commit is installed
 .pre-commit:
 	@pre-commit -V || echo 'Please install pre-commit: https://pre-commit.com/'
 
 .PHONY: install  # Install the package, dependencies, and pre-commit for local development
-install: .rye .pre-commit
-	rye show
-	rye sync --no-lock
+install: .uv .pre-commit
+	uv sync --frozen
 	pre-commit install --install-hooks
 
 .PHONY: format  # Format the code
 format:
-	rye format
-	rye lint --fix -- --fix-only
+	uv run ruff format $(sources)
+	uv run ruff check --fix --fix-only $(sources)
 
 .PHONY: lint  # Lint the code
 lint:
-	rye lint
-	rye format --check
+	uv run ruff format --check $(sources)
+	uv run ruff check $(sources)
 
 .PHONY: typecheck  # Run static type checking
 typecheck:
-	rye run pyright
+	uv run pyright
 
 .PHONY: test  # Run tests and collect coverage data
 test:
-	rye run coverage run -m pytest
+	uv run coverage run -m pytest
 
 .PHONY: testcov  # Run tests and generate a coverage report
 testcov: test
 	@echo "building coverage html"
-	@rye run coverage html --show-contexts
+	@uv run coverage html --show-contexts
 
 .PHONY: all
 all: format lint typecheck test

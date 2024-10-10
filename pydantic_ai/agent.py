@@ -2,7 +2,10 @@ from __future__ import annotations as _annotations
 
 import asyncio
 import inspect
-from typing import Any, Awaitable, Callable, Generic, Literal, Sequence, assert_never, cast, overload
+from collections.abc import Awaitable, Sequence
+from typing import Any, Callable, Generic, Literal, Union, cast, overload
+
+from typing_extensions import assert_never
 
 from . import _utils, messages as _messages, models as _models, result as _result, retrievers as _r
 from .result import ResultData
@@ -223,9 +226,9 @@ class Agent(Generic[ResultData, AgentContext]):
 
 # This is basically a function that may or maybe not take `CallInfo` as an argument, and may or may not be async.
 # Usage `SystemPrompt[AgentContext]`
-_SystemPromptFunction = (
-    Callable[[_r.CallInfo[AgentContext]], str]
-    | Callable[[_r.CallInfo[AgentContext]], Awaitable[str]]
-    | Callable[[], str]
-    | Callable[[], Awaitable[str]]
-)
+_SystemPromptFunction = Union[
+    Callable[[_r.CallInfo[AgentContext]], str],
+    Callable[[_r.CallInfo[AgentContext]], Awaitable[str]],
+    Callable[[], str],
+    Callable[[], Awaitable[str]],
+]

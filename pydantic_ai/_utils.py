@@ -1,23 +1,25 @@
+from __future__ import annotations as _annotations
+
 import asyncio
 from dataclasses import dataclass, is_dataclass
 from functools import partial
+from types import GenericAlias
 from typing import (
     Any,
     Callable,
     Generic,
     Literal,
-    ParamSpec,
-    TypeAlias,
     TypedDict,
     TypeVar,
+    Union,
     cast,
     get_args,
-    is_typeddict,
     overload,
 )
 
 from pydantic import BaseModel
 from pydantic.json_schema import JsonSchemaValue
+from typing_extensions import ParamSpec, TypeAlias, is_typeddict
 
 _P = ParamSpec('_P')
 _R = TypeVar('_R')
@@ -30,7 +32,7 @@ async def run_in_executor(func: Callable[_P, _R], *args: _P.args, **kwargs: _P.k
         return await asyncio.get_running_loop().run_in_executor(None, func, *args)  # type: ignore
 
 
-_UnionType = type(int | str)
+_UnionType = type(Union[int, str])
 
 
 def allow_plain_str(response_type: Any) -> bool:
@@ -44,7 +46,11 @@ def is_model_like(type_: Any) -> bool:
     These should all generate a JSON Schema with `{"type": "object"}` and therefore be usable directly as
     function parameters.
     """
-    return isinstance(type_, type) and (issubclass(type_, BaseModel) or is_dataclass(type_) or is_typeddict(type_))
+    return (
+        isinstance(type_, type)
+        and not isinstance(type_, GenericAlias)
+        and (issubclass(type_, BaseModel) or is_dataclass(type_) or is_typeddict(type_))
+    )
 
 
 class ObjectJsonSchema(TypedDict):
@@ -72,7 +78,7 @@ class Some(Generic[_T]):
 
 
 # Analogous to Rust's `Option` type, usage: `Option[Thing]` is equivalent to `Some[Thing] | None`
-Option: TypeAlias = Some[_T] | None
+Option: TypeAlias = Union[Some[_T], None]
 
 
 _Left = TypeVar('_Left')

@@ -4,26 +4,25 @@ repos:
     hooks:
 #      - id: no-commit-to-branch # prevent direct commits to the `main` branch
       - id: check-yaml
-        args: ["--unsafe"]
       - id: check-toml
       - id: end-of-file-fixer
       - id: trailing-whitespace
 
   - repo: local
     hooks:
-      - id: lint
-        name: Lint
-        entry: make
-        args: [lint]
-        types: [python]
-        language: system
-        pass_filenames: false
       - id: format
         name: Format
         entry: make
         args: [format]
         language: system
         types: [python]
+        pass_filenames: false
+      - id: lint
+        name: Lint
+        entry: make
+        args: [lint]
+        types: [python]
+        language: system
         pass_filenames: false
       - id: typecheck
         name: Typecheck

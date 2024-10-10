@@ -1,7 +1,9 @@
+from __future__ import annotations as _annotations
+
 import json
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Annotated, Literal
+from typing import Annotated, Literal, Union
 
 import pydantic
 import pydantic_core
@@ -76,7 +78,7 @@ class LLMFunctionCalls:
     role: Literal['llm-function-calls'] = 'llm-function-calls'
 
 
-LLMMessage = LLMResponse | LLMFunctionCalls
-Message = SystemPrompt | UserPrompt | FunctionReturn | FunctionRetry | PlainResponseForbidden | LLMMessage
+LLMMessage = Union[LLMResponse, LLMFunctionCalls]
+Message = Union[SystemPrompt, UserPrompt, FunctionReturn, FunctionRetry, PlainResponseForbidden, LLMMessage]
 
 MessagesTypeAdapter = pydantic.TypeAdapter(list[Annotated[Message, pydantic.Field(discriminator='role')]])

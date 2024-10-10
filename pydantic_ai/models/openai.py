@@ -1,3 +1,5 @@
+from __future__ import annotations as _annotations
+
 from dataclasses import dataclass
 from datetime import datetime
 from functools import cache

@@ -8,8 +8,8 @@ from __future__ import annotations as _annotations
 from inspect import Parameter, Signature, signature
 from typing import Any, Callable, Literal, TypedDict, cast, get_origin
 
-from griffe.dataclasses import Docstring, Object as GriffeObject
-from griffe.enumerations import DocstringSectionKind
+from _griffe.enumerations import DocstringSectionKind
+from _griffe.models import Docstring, Object as GriffeObject
 from pydantic._internal import _decorators, _generate_schema, _typing_extra
 from pydantic._internal._config import ConfigWrapper
 from pydantic.config import ConfigDict
@@ -45,7 +45,7 @@ def function_schema(function: Callable[..., Any]) -> FunctionSchema:
     Returns:
         A `FunctionSchema` instance.
     """
-    namespace = _typing_extra.add_module_globals(function, None)
+    namespace = _typing_extra.get_module_ns_of(function)
     config = ConfigDict(title=function.__name__)
     config_wrapper = ConfigWrapper(config)
     gen_schema = _generate_schema.GenerateSchema(config_wrapper, namespace)
@@ -82,6 +82,8 @@ def function_schema(function: Callable[..., Any]) -> FunctionSchema:
             if p.kind == Parameter.VAR_POSITIONAL:
                 annotation = list[annotation]
 
+            # FieldInfo.from_annotation expects a type, `annotation` is Any
+            annotation = cast(type[Any], annotation)
             field_info = FieldInfo.from_annotation(annotation)
             if field_info.description is None:
                 field_info.description = field_descriptions.get(field_name)
@@ -111,6 +113,8 @@ def function_schema(function: Callable[..., Any]) -> FunctionSchema:
         core_config,
         config_wrapper.plugin_settings,
     )
+    # PluggableSchemaValidator is api compat with SchemaValidator
+    schema_validator = cast(SchemaValidator, schema_validator)
     json_schema = GenerateJsonSchema().generate(schema)
     return FunctionSchema(
         description=description,
