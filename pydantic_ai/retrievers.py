@@ -8,26 +8,30 @@ from typing import Any, Callable, Generic, TypeVar, Union, cast
 import pydantic_core
 from pydantic import ValidationError
 from pydantic_core import SchemaValidator
-from typing_extensions import Concatenate, ParamSpec, Self
+from typing_extensions import Concatenate, ParamSpec
 
 from . import _pydantic, _utils, messages
 
-AgentContext = TypeVar('AgentContext')
+AgentDependencies = TypeVar('AgentDependencies')
 # retrieval function parameters
 P = ParamSpec('P')
 
 
 @dataclass
-class CallInfo(Generic[AgentContext]):
+class CallContext(Generic[AgentDependencies]):
     """Information about the current call."""
 
-    context: AgentContext
+    deps: AgentDependencies
     # do we allow retries within functions?
     retry: int
 
 
-# Usage `RetrieverFunc[AgentContext, P]`
-RetrieverFunc = Callable[Concatenate[CallInfo[AgentContext], P], Union[str, Awaitable[str]]]
+# Usage `RetrieverContextFunc[AgentDependencies, P]`
+RetrieverContextFunc = Callable[Concatenate[CallContext[AgentDependencies], P], Union[str, Awaitable[str]]]
+# Usage `RetrieverPlainFunc[P]`
+RetrieverPlainFunc = Callable[P, Union[str, Awaitable[str]]]
+# Usage `RetrieverEitherFunc[AgentDependencies, P]`
+RetrieverEitherFunc = Union[RetrieverContextFunc[AgentDependencies, P], RetrieverPlainFunc[P]]
 
 
 class Retry(Exception):
@@ -38,15 +42,15 @@ class Retry(Exception):
         super().__init__(message)
 
 
-@dataclass
-class Retriever(Generic[AgentContext, P]):
+@dataclass(init=False)
+class Retriever(Generic[AgentDependencies, P]):
     """A retriever function for an agent."""
 
     name: str
     description: str
-    function: RetrieverFunc[AgentContext, P]
+    function: RetrieverEitherFunc[AgentDependencies, P]
     is_async: bool
-    takes_info: bool
+    takes_ctx: bool
     single_arg_name: str | None
     positional_fields: list[str]
     var_positional_field: str | None
@@ -55,43 +59,40 @@ class Retriever(Generic[AgentContext, P]):
     max_retries: int
     _current_retry: int = 0
 
-    @classmethod
-    def build(cls, function: RetrieverFunc[AgentContext, P], retries: int) -> Self:
+    def __init__(self, function: RetrieverEitherFunc[AgentDependencies, P], takes_ctx: bool, retries: int):
         """Build a Retriever dataclass from a function."""
-        f = _pydantic.function_schema(function)
-        return cls(
-            name=function.__name__,
-            description=f['description'],
-            function=function,
-            is_async=inspect.iscoroutinefunction(function),
-            takes_info=f['takes_info'],
-            single_arg_name=f['single_arg_name'],
-            positional_fields=f['positional_fields'],
-            var_positional_field=f['var_positional_field'],
-            validator=f['validator'],
-            json_schema=f['json_schema'],
-            max_retries=retries,
-        )
+        f = _pydantic.function_schema(function, takes_ctx)
+        self.name = function.__name__
+        self.description = f['description']
+        self.function = function
+        self.is_async = inspect.iscoroutinefunction(function)
+        self.takes_ctx = takes_ctx
+        self.single_arg_name = f['single_arg_name']
+        self.positional_fields = f['positional_fields']
+        self.var_positional_field = f['var_positional_field']
+        self.validator = f['validator']
+        self.json_schema = f['json_schema']
+        self.max_retries = retries
 
     def reset(self) -> None:
         """Reset the current retry count."""
         self._current_retry = 0
 
-    async def run(self, context: AgentContext, message: messages.FunctionCall) -> messages.Message:
+    async def run(self, deps: AgentDependencies, message: messages.FunctionCall) -> messages.Message:
         """Run the retriever function asynchronously."""
         try:
             args_dict = self.validator.validate_json(message.arguments)
         except ValidationError as e:
             return self._on_error(e.errors(), message)
 
-        args, kwargs = self._call_args(context, args_dict)
+        args, kwargs = self._call_args(deps, args_dict)
         try:
             if self.is_async:
                 response_content = await self.function(*args, **kwargs)  # type: ignore[reportCallIssue]
             else:
                 response_content = await _utils.run_in_executor(
-                    self.function,
-                    *args,  # type: ignore[reportCallIssue]
+                    self.function,  # type: ignore[reportArgumentType]
+                    *args,
                     **kwargs,
                 )
         except Retry as e:
@@ -104,11 +105,11 @@ class Retriever(Generic[AgentContext, P]):
             content=cast(str, response_content),
         )
 
-    def _call_args(self, context: AgentContext, args_dict: dict[str, Any]) -> tuple[list[Any], dict[str, Any]]:
+    def _call_args(self, deps: AgentDependencies, args_dict: dict[str, Any]) -> tuple[list[Any], dict[str, Any]]:
         if self.single_arg_name:
             args_dict = {self.single_arg_name: args_dict}
 
-        args = [CallInfo(context, self._current_retry)] if self.takes_info else []
+        args = [CallContext(deps, self._current_retry)] if self.takes_ctx else []
         for positional_field in self.positional_fields:
             args.append(args_dict.pop(positional_field))
         if self.var_positional_field:

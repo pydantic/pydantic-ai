@@ -5,8 +5,7 @@ Shim to use Pydantic with LLMs.
 ## Example of usage
 
 ```py
-from pydantic_ai import Agent, CallInfo
-
+from pydantic_ai import Agent, CallContext
 
 # An agent that can tell users about the weather in a particular location.
 # Agents combine a system prompt, a response type (here `str`) and one or more
@@ -18,8 +17,8 @@ weather_agent = Agent(
 
 
 # retrievers let you register "tools" which the LLM can call while trying to respond to a user.
-@weather_agent.retriever(retries=2)
-async def get_location(_: CallInfo[None], location_description: str) -> str:
+@weather_agent.retriever_context(retries=2)
+async def get_location(_: CallContext[None], location_description: str) -> str:
     """
     Get the latitude and longitude of a location by its description.
 
@@ -42,8 +41,8 @@ async def get_location(_: CallInfo[None], location_description: str) -> str:
     return json.dumps(lat_lng)
 
 
-@weather_agent.retriever
-async def get_weather(_: CallInfo[None], lat: float, lng: float):
+@weather_agent.retriever_context
+async def get_weather(_: CallContext[None], lat: float, lng: float):
     """
     Get the weather at a location by its latitude and longitude.
     """
@@ -59,7 +58,7 @@ async def get_weather(_: CallInfo[None], lat: float, lng: float):
 # (internally agents are all async, `run_sync` is a helper using `asyncio.run`)
 result = weather_agent.run_sync('What is the weather like in West London and in Wiltshire?')
 print(result.response)
-#> 'The weather in West London is raining, while in Wiltshire it is sunny.'
+# > 'The weather in West London is raining, while in Wiltshire it is sunny.'
 
 # `result.message_history` details of messages exchanged, useful if you want to continue
 # the conversation later, via the `message_history` argument of `run_sync`.

@@ -1,4 +1,4 @@
 from .agent import Agent
-from .retrievers import CallInfo, Retry
+from .retrievers import CallContext, Retry
 
-__all__ = 'Agent', 'CallInfo', 'Retry'
+__all__ = 'Agent', 'CallContext', 'Retry'

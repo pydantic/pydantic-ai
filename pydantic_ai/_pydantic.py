@@ -29,18 +29,18 @@ class FunctionSchema(TypedDict):
     description: str
     validator: SchemaValidator
     json_schema: ObjectJsonSchema
-    takes_info: bool
     # if not None, the function takes a single by that name (besides potentially `info`)
     single_arg_name: str | None
     positional_fields: list[str]
     var_positional_field: str | None
 
 
-def function_schema(function: Callable[..., Any]) -> FunctionSchema:
+def function_schema(function: Callable[..., Any], takes_ctx: bool) -> FunctionSchema:
     """Build a Pydantic validator and JSON schema from a function.
 
     Args:
         function: The function to build a validator and JSON schema for.
+        takes_ctx: Whether the function is expected to take a `CallContext` instance as its first argument.
 
     Returns:
         A `FunctionSchema` instance.
@@ -62,17 +62,26 @@ def function_schema(function: Callable[..., Any]) -> FunctionSchema:
     errors: list[str] = []
     decorators = _decorators.DecoratorInfos()
     description, field_descriptions = _doc_descriptions(function, sig)
-    takes_info = False
 
     for index, (name, p) in enumerate(sig.parameters.items()):
         if p.annotation is sig.empty:
+            if takes_ctx and index == 0:
+                # should be the `context` argument, skip
+                continue
             # TODO warn?
             annotation = Any
         else:
             annotation = type_hints[name]
 
-            if index == 0 and _is_call_info(annotation):
-                takes_info = True
+            if index == 0 and takes_ctx:
+                if not _is_call_ctx(annotation):
+                    errors.append('First argument must be a CallContext instance when using `.retriever_context`')
+                continue
+            elif not takes_ctx and _is_call_ctx(annotation):
+                errors.append('CallContext instance can only be used with `.retriever_context`')
+                continue
+            elif index != 0 and _is_call_ctx(annotation):
+                errors.append('CallContext instance can only be used as the first argument')
                 continue
 
         field_name = p.name
@@ -120,7 +129,6 @@ def function_schema(function: Callable[..., Any]) -> FunctionSchema:
         description=description,
         validator=schema_validator,
         json_schema=check_object_json_schema(json_schema),
-        takes_info=takes_info,
         single_arg_name=single_arg_name,
         positional_fields=positional_fields,
         var_positional_field=var_positional_field,
@@ -204,7 +212,9 @@ def _infer_docstring_style(doc: str) -> DocstringStyle:
         return 'google'
 
 
-def _is_call_info(annotation: Any) -> bool:
-    from .retrievers import CallInfo
+def _is_call_ctx(annotation: Any) -> bool:
+    from .retrievers import CallContext
 
-    return annotation is CallInfo or (_typing_extra.is_generic_alias(annotation) and get_origin(annotation) is CallInfo)
+    return annotation is CallContext or (
+        _typing_extra.is_generic_alias(annotation) and get_origin(annotation) is CallContext
+    )

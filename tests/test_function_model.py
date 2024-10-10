@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any
 import pydantic_core
 from inline_snapshot import snapshot
 
-from pydantic_ai import Agent, CallInfo
+from pydantic_ai import Agent, CallContext
 from pydantic_ai.messages import (
     FunctionCall,
     FunctionReturn,
@@ -109,8 +109,8 @@ def whether_model(messages: list[Message], allow_plain_message: bool, tools: dic
 weather_agent = Agent(FunctionModel(whether_model))
 
 
-@weather_agent.retriever
-async def get_location(_: CallInfo[None], location_description: str) -> str:
+@weather_agent.retriever_context
+async def get_location(_: CallContext[None], location_description: str) -> str:
     if location_description == 'London':
         lat_lng = {'lat': 51, 'lng': 0}
     else:
@@ -118,8 +118,8 @@ async def get_location(_: CallInfo[None], location_description: str) -> str:
     return json.dumps(lat_lng)
 
 
-@weather_agent.retriever
-async def get_whether(_: CallInfo[None], lat: int, lng: int):
+@weather_agent.retriever_context
+async def get_whether(_: CallContext[None], lat: int, lng: int):
     if (lat, lng) == (51, 0):
         # it always rains in London
         return 'Raining'
@@ -208,8 +208,8 @@ def call_function_model(messages: list[Message], allow_plain_message: bool, tool
 var_args_agent = Agent(FunctionModel(call_function_model))
 
 
-@var_args_agent.retriever
-def get_var_args(_: CallInfo[None], *args: int):
+@var_args_agent.retriever_context
+def get_var_args(_: CallContext[None], *args: int):
     return json.dumps({'args': args})
 
 

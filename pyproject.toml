@@ -50,6 +50,7 @@ dev-dependencies = [
     "inline-snapshot>=0.13.3",
     "ruff>=0.6.9",
     "coverage>=7.6.2",
+    "devtools>=0.12.2",
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -95,7 +96,7 @@ quote-style = "single"
 typeCheckingMode = "strict"
 reportUnnecessaryTypeIgnoreComment = true
 reportMissingTypeStubs = false
-include = ["pydantic_ai"]
+include = ["pydantic_ai", "tests", "demos"]
 venvPath = ".venv"
 
 [tool.pytest.ini_options]

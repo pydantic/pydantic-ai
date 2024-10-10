@@ -2,18 +2,18 @@ import json
 
 from devtools import debug
 
-from pydantic_ai import Agent, CallInfo
+from pydantic_ai import Agent
 
 weather_agent = Agent('openai:gpt-4o')
 
 
 @weather_agent.system_prompt
-def system_prompt(_: CallInfo[None]):
+def system_prompt():
     return 'Be concise, reply with one sentence.'
 
 
-@weather_agent.retriever
-async def get_location(_: CallInfo[None], location_description: str) -> str:
+@weather_agent.retriever_plain
+async def get_location(location_description: str) -> str:
     if 'london' in location_description.lower():
         lat_lng = {'lat': 51.1, 'lng': -0.1}
     elif 'wiltshire' in location_description.lower():
@@ -23,8 +23,8 @@ async def get_location(_: CallInfo[None], location_description: str) -> str:
     return json.dumps(lat_lng)
 
 
-@weather_agent.retriever
-async def get_whether(_: CallInfo[None], lat: float, lng: float):
+@weather_agent.retriever_plain
+async def get_whether(lat: float, lng: float):
     if abs(lat - 51.1) < 0.1 and abs(lng + 0.1) < 0.1:
         # it always rains in London
         return 'Raining'

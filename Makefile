@@ -32,6 +32,10 @@ typecheck:
 test:
 	uv run coverage run -m pytest
 
+.PHONY: test-mypy  # Run type tests with mypy
+test-mypy:
+	uv run mypy --strict tests/typed_agent.py
+
 .PHONY: testcov  # Run tests and generate a coverage report
 testcov: test
 	@echo "building coverage html"

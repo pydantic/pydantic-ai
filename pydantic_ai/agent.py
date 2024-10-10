@@ -1,23 +1,25 @@
 from __future__ import annotations as _annotations
 
 import asyncio
-import inspect
 from collections.abc import Awaitable, Sequence
 from typing import Any, Callable, Generic, Literal, Union, cast, overload
 
 from typing_extensions import assert_never
 
-from . import _utils, messages as _messages, models as _models, result as _result, retrievers as _r
+from . import _system_prompt, _utils, messages as _messages, models as _models, result as _result, retrievers as _r
 from .result import ResultData
-from .retrievers import AgentContext
+from .retrievers import AgentDependencies
 
 __all__ = ('Agent',)
 
 
 KnownModelName = Literal['openai:gpt-4o', 'openai:gpt-4-turbo', 'openai:gpt-4', 'openai:gpt-3.5-turbo']
 
+SysPromptContext = Callable[[_r.CallContext[AgentDependencies]], Union[str, Awaitable[str]]]
+SysPromptPlain = Callable[[], Union[str, Awaitable[str]]]
 
-class Agent(Generic[ResultData, AgentContext]):
+
+class Agent(Generic[ResultData, AgentDependencies]):
     """Main class for creating "agents" - a way to have a specific type of "conversation" with an LLM."""
 
     def __init__(
@@ -26,8 +28,8 @@ class Agent(Generic[ResultData, AgentContext]):
         response_type: type[_result.ResultData] = str,
         *,
         system_prompt: str | Sequence[str] = (),
-        retrievers: Sequence[_r.Retriever[AgentContext, Any]] = (),
-        context: AgentContext = None,
+        retrievers: Sequence[_r.Retriever[AgentDependencies, Any]] = (),
+        deps: AgentDependencies = None,
         retries: int = 1,
         response_schema_name: str = 'final_response',
         response_schema_description: str = 'The final response',
@@ -44,12 +46,12 @@ class Agent(Generic[ResultData, AgentContext]):
         self._allow_plain_message = self.result_schema is None or self.result_schema.allow_plain_message
 
         self._system_prompts = (system_prompt,) if isinstance(system_prompt, str) else tuple(system_prompt)
-        self._retrievers: dict[str, _r.Retriever[AgentContext, Any]] = {r_.name: r_ for r_ in retrievers}
+        self._retrievers: dict[str, _r.Retriever[AgentDependencies, Any]] = {r_.name: r_ for r_ in retrievers}
         if self.result_schema and self.result_schema.name in self._retrievers:
             raise ValueError(f'Retriever name conflicts with response schema: {self.result_schema.name!r}')
-        self._context = context
+        self._deps = deps
         self._default_retries = retries
-        self._system_prompt_functions: list[Any] = []
+        self._system_prompt_functions: list[_system_prompt.SystemPromptRunner[AgentDependencies]] = []
 
     async def run(
         self,
@@ -122,41 +124,65 @@ class Agent(Generic[ResultData, AgentContext]):
         """Run the agent with a user prompt asynchronously and stream the results."""
         raise NotImplementedError()
 
-    def system_prompt(self, func: _SystemPromptFunction[AgentContext]) -> _SystemPromptFunction[AgentContext]:
-        """Decorator to register a system prompt function."""
-        self._system_prompt_functions.append(func)
+    def system_prompt(
+        self, func: _system_prompt.SystemPromptFunc[AgentDependencies]
+    ) -> _system_prompt.SystemPromptFunc[AgentDependencies]:
+        """Decorator to register a system prompt function that takes `CallContext` as it's only argument."""
+        self._system_prompt_functions.append(_system_prompt.SystemPromptRunner(func))
         return func
 
     @overload
-    def retriever(self, func: _r.RetrieverFunc[AgentContext, _r.P], /) -> _r.Retriever[AgentContext, _r.P]: ...
+    def retriever_context(
+        self, func: _r.RetrieverContextFunc[AgentDependencies, _r.P], /
+    ) -> _r.Retriever[AgentDependencies, _r.P]: ...
 
     @overload
-    def retriever(
+    def retriever_context(
         self, /, *, retries: int | None = None
-    ) -> Callable[
-        [_r.RetrieverFunc[AgentContext, _r.P]],
-        _r.Retriever[AgentContext, _r.P],
-    ]: ...
+    ) -> Callable[[_r.RetrieverContextFunc[AgentDependencies, _r.P]], _r.Retriever[AgentDependencies, _r.P]]: ...
 
-    def retriever(
-        self, func: _r.RetrieverFunc[AgentContext, _r.P] | None = None, /, *, retries: int | None = None
+    def retriever_context(
+        self, func: _r.RetrieverContextFunc[AgentDependencies, _r.P] | None = None, /, *, retries: int | None = None
     ) -> Any:
         """Decorator to register a retriever function."""
         if func is None:
 
-            def retriever_decorator(func_: _r.RetrieverFunc[AgentContext, _r.P]) -> _r.Retriever[AgentContext, _r.P]:
+            def retriever_decorator(
+                func_: _r.RetrieverContextFunc[AgentDependencies, _r.P],
+            ) -> _r.Retriever[AgentDependencies, _r.P]:
                 # noinspection PyTypeChecker
-                return self._register_retriever(func_, retries)
+                return self._register_retriever(func_, True, retries)
 
             return retriever_decorator
         else:
-            return self._register_retriever(func, retries)
+            return self._register_retriever(func, True, retries)
+
+    @overload
+    def retriever_plain(self, func: _r.RetrieverPlainFunc[_r.P], /) -> _r.Retriever[AgentDependencies, _r.P]: ...
+
+    @overload
+    def retriever_plain(
+        self, /, *, retries: int | None = None
+    ) -> Callable[[_r.RetrieverPlainFunc[_r.P]], _r.Retriever[AgentDependencies, _r.P]]: ...
+
+    def retriever_plain(self, func: _r.RetrieverPlainFunc[_r.P] | None = None, /, *, retries: int | None = None) -> Any:
+        """Decorator to register a retriever function."""
+        if func is None:
+
+            def retriever_decorator(func_: _r.RetrieverPlainFunc[_r.P]) -> _r.Retriever[AgentDependencies, _r.P]:
+                # noinspection PyTypeChecker
+                return self._register_retriever(func_, False, retries)
+
+            return retriever_decorator
+        else:
+            return self._register_retriever(func, False, retries)
 
     def _register_retriever(
-        self, func: _r.RetrieverFunc[AgentContext, _r.P], retries: int | None
-    ) -> _r.Retriever[AgentContext, _r.P]:
+        self, func: _r.RetrieverEitherFunc[AgentDependencies, _r.P], takes_ctx: bool, retries: int | None
+    ) -> _r.Retriever[AgentDependencies, _r.P]:
+        """Private utility to register a retriever function."""
         retries_ = retries if retries is not None else self._default_retries
-        retriever = _r.Retriever[AgentContext, _r.P].build(func, retries_)
+        retriever = _r.Retriever[AgentDependencies, _r.P](func, takes_ctx, retries_)
 
         if self.result_schema and self.result_schema.name == retriever.name:
             raise ValueError(f'Retriever name conflicts with response schema name: {retriever.name!r}')
@@ -170,6 +196,11 @@ class Agent(Generic[ResultData, AgentContext]):
     async def _handle_model_response(
         self, messages: list[_messages.Message], llm_message: _messages.LLMMessage
     ) -> _utils.Option[ResultData]:
+        """Process a single response from the model.
+
+        Returns:
+            Return `None` to continue the conversation, or a result to end it.
+        """
         messages.append(llm_message)
         if llm_message.role == 'llm-response':
             # plain string response
@@ -196,39 +227,15 @@ class Agent(Generic[ResultData, AgentContext]):
                 if retriever is None:
                     # TODO return message?
                     raise ValueError(f'Unknown function name: {call.function_name!r}')
-                coros.append(retriever.run(self._context, call))
+                coros.append(retriever.run(self._deps, call))
             messages += await asyncio.gather(*coros)
         else:
             assert_never(llm_message)
 
     async def _init_messages(self) -> list[_messages.Message]:
+        """Build the initial messages for the conversation."""
         messages: list[_messages.Message] = [_messages.SystemPrompt(p) for p in self._system_prompts]
-        for func in self._system_prompt_functions:
-            prompt = await self._run_system_prompt_function(func)
+        for sys_prompt_runner in self._system_prompt_functions:
+            prompt = await sys_prompt_runner.run(self._deps)
             messages.append(_messages.SystemPrompt(prompt))
         return messages
-
-    async def _run_system_prompt_function(self, func: _SystemPromptFunction[AgentContext]) -> str:
-        takes_call_info = len(inspect.signature(func).parameters) == 1
-        if asyncio.iscoroutinefunction(func):
-            if takes_call_info:
-                return await func(_r.CallInfo(self._context, 0))
-            else:
-                return await func()
-        else:
-            if takes_call_info:
-                f = cast(Callable[[_r.CallInfo[AgentContext]], str], func)
-                return await _utils.run_in_executor(f, _r.CallInfo(self._context, 0))
-            else:
-                f = cast(Callable[[], str], func)
-                return await _utils.run_in_executor(f)
-
-
-# This is basically a function that may or maybe not take `CallInfo` as an argument, and may or may not be async.
-# Usage `SystemPrompt[AgentContext]`
-_SystemPromptFunction = Union[
-    Callable[[_r.CallInfo[AgentContext]], str],
-    Callable[[_r.CallInfo[AgentContext]], Awaitable[str]],
-    Callable[[], str],
-    Callable[[], Awaitable[str]],
-]
