@@ -34,7 +34,7 @@ def return_last(messages: list[Message], _allow_plain_message: bool, _tools: dic
 
 
 def test_simple():
-    agent = Agent(FunctionModel(return_last))
+    agent = Agent(FunctionModel(return_last), deps=())
     result = agent.run_sync('Hello')
     assert result.response == snapshot("content='Hello' role='user' message_count=1")
     assert result.message_history == snapshot(
@@ -106,7 +106,7 @@ def whether_model(messages: list[Message], allow_plain_message: bool, tools: dic
     raise ValueError(f'Unexpected message: {last}')
 
 
-weather_agent = Agent(FunctionModel(whether_model))
+weather_agent: Agent[None, str] = Agent(FunctionModel(whether_model))
 
 
 @weather_agent.retriever_context
@@ -205,11 +205,12 @@ def call_function_model(messages: list[Message], allow_plain_message: bool, tool
     raise ValueError(f'Unexpected message: {last}')
 
 
-var_args_agent = Agent(FunctionModel(call_function_model))
+var_args_agent = Agent(FunctionModel(call_function_model), deps=123)
 
 
 @var_args_agent.retriever_context
-def get_var_args(_: CallContext[None], *args: int):
+def get_var_args(ctx: CallContext[int], *args: int):
+    assert ctx.deps == 123
     return json.dumps({'args': args})
 
 

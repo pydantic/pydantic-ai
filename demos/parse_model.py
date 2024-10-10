@@ -9,7 +9,7 @@ class MyModel(BaseModel):
     country: str
 
 
-agent = Agent('openai:gpt-4o', response_type=MyModel)
+agent = Agent('openai:gpt-4o', response_type=MyModel, deps=None)
 
 # debug(agent.result_schema.json_schema)
 result = agent.run_sync('The windy city in the US of A.')

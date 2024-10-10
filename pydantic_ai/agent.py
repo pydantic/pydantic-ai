@@ -2,6 +2,7 @@ from __future__ import annotations as _annotations
 
 import asyncio
 from collections.abc import Awaitable, Sequence
+from copy import copy
 from typing import Any, Callable, Generic, Literal, Union, cast, overload
 
 from typing_extensions import assert_never
@@ -19,8 +20,20 @@ SysPromptContext = Callable[[_r.CallContext[AgentDependencies]], Union[str, Awai
 SysPromptPlain = Callable[[], Union[str, Awaitable[str]]]
 
 
-class Agent(Generic[ResultData, AgentDependencies]):
+class Agent(Generic[AgentDependencies, ResultData]):
     """Main class for creating "agents" - a way to have a specific type of "conversation" with an LLM."""
+
+    # slots mostly for my sanity — knowing what attributes are available
+    __slots__ = (
+        '_model',
+        'result_schema',
+        '_allow_plain_message',
+        '_system_prompts',
+        '_retrievers',
+        '_default_retries',
+        '_system_prompt_functions',
+        '_default_deps',
+    )
 
     def __init__(
         self,
@@ -29,7 +42,7 @@ class Agent(Generic[ResultData, AgentDependencies]):
         *,
         system_prompt: str | Sequence[str] = (),
         retrievers: Sequence[_r.Retriever[AgentDependencies, Any]] = (),
-        deps: AgentDependencies = None,
+        deps: AgentDependencies | tuple[None] = (None,),
         retries: int = 1,
         response_schema_name: str = 'final_response',
         response_schema_description: str = 'The final response',
@@ -49,9 +62,17 @@ class Agent(Generic[ResultData, AgentDependencies]):
         self._retrievers: dict[str, _r.Retriever[AgentDependencies, Any]] = {r_.name: r_ for r_ in retrievers}
         if self.result_schema and self.result_schema.name in self._retrievers:
             raise ValueError(f'Retriever name conflicts with response schema: {self.result_schema.name!r}')
-        self._deps = deps
+        self._default_deps: AgentDependencies = None if deps == (None,) else deps  # type: ignore
         self._default_retries = retries
         self._system_prompt_functions: list[_system_prompt.SystemPromptRunner[AgentDependencies]] = []
+
+    def with_deps(self, deps: AgentDependencies) -> Agent[AgentDependencies, ResultData]:
+        """Return a new agent with the given dependencies."""
+        agent: Agent[AgentDependencies, ResultData] = Agent.__new__(Agent)
+        for attr in self.__slots__:
+            setattr(agent, attr, copy(getattr(self, attr)))
+        agent._default_deps = deps
+        return agent
 
     async def run(
         self,
@@ -59,6 +80,7 @@ class Agent(Generic[ResultData, AgentDependencies]):
         *,
         message_history: list[_messages.Message] | None = None,
         model: _models.Model | KnownModelName | None = None,
+        deps: AgentDependencies | None = None,
     ) -> _result.RunResult[_result.ResultData]:
         """Run the agent with a user prompt in async mode.
 
@@ -66,6 +88,7 @@ class Agent(Generic[ResultData, AgentDependencies]):
             user_prompt: User input to start/continue the conversation.
             message_history: History of the conversation so far.
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
+            deps: Optional dependencies to use for this run.
 
         Returns:
             The result of the run.
@@ -77,11 +100,14 @@ class Agent(Generic[ResultData, AgentDependencies]):
         else:
             raise RuntimeError('`model` must be set either when creating the agent or when calling it.')
 
+        if deps is None:
+            deps = self._default_deps
+
         if message_history is not None:
             # shallow copy messages
             messages = message_history.copy()
         else:
-            messages = await self._init_messages()
+            messages = await self._init_messages(deps)
 
         messages.append(_messages.UserPrompt(user_prompt))
 
@@ -95,7 +121,7 @@ class Agent(Generic[ResultData, AgentDependencies]):
 
         while True:
             llm_message = await agent_model.request(messages)
-            opt_result = await self._handle_model_response(messages, llm_message)
+            opt_result = await self._handle_model_response(messages, llm_message, deps)
             if opt_result is not None:
                 return _result.RunResult(opt_result.value, messages, cost=_result.Cost(0))
 
@@ -105,6 +131,7 @@ class Agent(Generic[ResultData, AgentDependencies]):
         *,
         message_history: list[_messages.Message] | None = None,
         model: _models.Model | KnownModelName | None = None,
+        deps: AgentDependencies | None = None,
     ) -> _result.RunResult[_result.ResultData]:
         """Run the agent with a user prompt synchronously.
 
@@ -114,11 +141,12 @@ class Agent(Generic[ResultData, AgentDependencies]):
             user_prompt: User input to start/continue the conversation.
             message_history: History of the conversation so far.
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
+            deps: Optional dependencies to use for this run.
 
         Returns:
             The result of the run.
         """
-        return asyncio.run(self.run(user_prompt, message_history=message_history, model=model))
+        return asyncio.run(self.run(user_prompt, message_history=message_history, model=model, deps=deps))
 
     async def stream(self, user_prompt: str) -> _result.RunStreamResult[_result.ResultData]:
         """Run the agent with a user prompt asynchronously and stream the results."""
@@ -194,7 +222,7 @@ class Agent(Generic[ResultData, AgentDependencies]):
         return retriever
 
     async def _handle_model_response(
-        self, messages: list[_messages.Message], llm_message: _messages.LLMMessage
+        self, messages: list[_messages.Message], llm_message: _messages.LLMMessage, deps: AgentDependencies
     ) -> _utils.Option[ResultData]:
         """Process a single response from the model.
 
@@ -227,15 +255,15 @@ class Agent(Generic[ResultData, AgentDependencies]):
                 if retriever is None:
                     # TODO return message?
                     raise ValueError(f'Unknown function name: {call.function_name!r}')
-                coros.append(retriever.run(self._deps, call))
+                coros.append(retriever.run(deps, call))
             messages += await asyncio.gather(*coros)
         else:
             assert_never(llm_message)
 
-    async def _init_messages(self) -> list[_messages.Message]:
+    async def _init_messages(self, deps: AgentDependencies) -> list[_messages.Message]:
         """Build the initial messages for the conversation."""
         messages: list[_messages.Message] = [_messages.SystemPrompt(p) for p in self._system_prompts]
         for sys_prompt_runner in self._system_prompt_functions:
-            prompt = await sys_prompt_runner.run(self._deps)
+            prompt = await sys_prompt_runner.run(deps)
             messages.append(_messages.SystemPrompt(prompt))
         return messages
