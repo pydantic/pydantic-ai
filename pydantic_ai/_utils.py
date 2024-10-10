@@ -1,6 +1,7 @@
 import asyncio
 from dataclasses import dataclass, is_dataclass
 from functools import partial
+from types import GenericAlias
 from typing import (
     Any,
     Callable,
@@ -43,7 +44,11 @@ def is_model_like(type_: Any) -> bool:
     These should all generate a JSON Schema with `{"type": "object"}` and therefore be usable directly as
     function parameters.
     """
-    return isinstance(type_, type) and (issubclass(type_, BaseModel) or is_dataclass(type_) or is_typeddict(type_))
+    return (
+        isinstance(type_, type)
+        and not isinstance(type_, GenericAlias)
+        and (issubclass(type_, BaseModel) or is_dataclass(type_) or is_typeddict(type_))
+    )
 
 
 class ObjectJsonSchema(TypedDict):

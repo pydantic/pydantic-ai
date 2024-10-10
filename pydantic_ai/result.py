@@ -1,8 +1,9 @@
 from collections.abc import AsyncIterable
 from dataclasses import dataclass
-from typing import Any, Generic, Self, TypedDict, TypeVar, Union
+from typing import Any, Generic, TypedDict, TypeVar, Union
 
 from pydantic import TypeAdapter, ValidationError
+from typing_extensions import Self
 
 from . import _utils, messages
 

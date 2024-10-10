@@ -3,11 +3,12 @@ from __future__ import annotations as _annotations
 import inspect
 from collections.abc import Awaitable
 from dataclasses import dataclass
-from typing import Any, Callable, Concatenate, Generic, ParamSpec, Self, TypeVar, Union, cast
+from typing import Any, Callable, Generic, TypeVar, Union, cast
 
 import pydantic_core
 from pydantic import ValidationError
 from pydantic_core import SchemaValidator
+from typing_extensions import Concatenate, ParamSpec, Self
 
 from . import _pydantic, _utils, messages
 
