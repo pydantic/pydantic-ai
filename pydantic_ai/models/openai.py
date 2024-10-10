@@ -1,7 +1,9 @@
+from __future__ import annotations as _annotations
+
 from dataclasses import dataclass
 from datetime import datetime
 from functools import cache
-from typing import Literal, Union, assert_never
+from typing import Literal, assert_never
 
 from openai import AsyncClient
 from openai.types import ChatModel
@@ -18,9 +20,7 @@ from . import AbstractToolDefinition, AgentModel, Model
 
 
 class OpenAIModel(Model):
-    def __init__(
-        self, model_name: ChatModel, *, api_key: Union[str, None] = None, client: Union[AsyncClient, None] = None
-    ):
+    def __init__(self, model_name: ChatModel, *, api_key: str | None = None, client: AsyncClient | None = None):
         if model_name not in ChatModel.__args__:
             raise ValueError(f'Invalid model name: {model_name}')
         self.model_name: ChatModel = model_name

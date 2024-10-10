@@ -6,7 +6,7 @@ The aim here is to make a common interface
 from __future__ import annotations as _annotations
 
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Protocol, Union
+from typing import TYPE_CHECKING, Protocol
 
 from ..messages import LLMMessage, Message
 
@@ -35,7 +35,7 @@ class AgentModel(ABC):
     # TODO streamed response
 
 
-def infer_model(model: Union[Model, KnownModelName]) -> Model:
+def infer_model(model: Model | KnownModelName) -> Model:
     """Infer the model from the name."""
     if isinstance(model, Model):
         return model

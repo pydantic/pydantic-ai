@@ -1,3 +1,5 @@
+from __future__ import annotations as _annotations
+
 import asyncio
 from dataclasses import dataclass, is_dataclass
 from functools import partial
@@ -102,14 +104,14 @@ class Either(Generic[_Left, _Right]):
     @overload
     def __init__(self, *, right: _Right) -> None: ...
 
-    def __init__(self, *, left: Union[_Left, None] = None, right: Union[_Right, None] = None) -> None:
+    def __init__(self, *, left: _Left | None = None, right: _Right | None = None) -> None:
         if (left is not None and right is not None) or (left is None and right is None):
             raise TypeError('Either must have exactly one value')
         self._left = left
         self._right = right
 
     @property
-    def left(self) -> Union[_Left, None]:
+    def left(self) -> _Left | None:
         return self._left
 
     @property

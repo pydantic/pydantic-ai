@@ -1,3 +1,5 @@
+from __future__ import annotations as _annotations
+
 import json
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -37,7 +39,7 @@ class FunctionReturn:
 class FunctionRetry:
     function_id: str
     function_name: str
-    content: Union[list[pydantic_core.ErrorDetails], str]
+    content: list[pydantic_core.ErrorDetails] | str
     timestamp: datetime = field(default_factory=datetime.now)
     role: Literal['function-retry'] = 'function-retry'
 

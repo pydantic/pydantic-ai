@@ -1,6 +1,8 @@
+from __future__ import annotations as _annotations
+
 from collections.abc import AsyncIterable
 from dataclasses import dataclass
-from typing import Any, Generic, TypedDict, TypeVar, Union
+from typing import Any, Generic, TypedDict, TypeVar
 
 from pydantic import TypeAdapter, ValidationError
 from typing_extensions import Self
@@ -65,7 +67,7 @@ class ResultSchema(Generic[ResultData]):
     _current_retry: int = 0
 
     @classmethod
-    def build(cls, response_type: type[ResultData], name: str, description: str, retries: int) -> Union[Self, None]:
+    def build(cls, response_type: type[ResultData], name: str, description: str, retries: int) -> Self | None:
         """Build a ResponseModel dataclass from a response type."""
         if response_type is str:
             return None

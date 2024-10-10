@@ -91,10 +91,6 @@ convention = "google"
 docstring-code-format = true
 quote-style = "single"
 
-[tool.ruff.lint.pyupgrade]
-# Preserve types, even if a file imports `from __future__ import annotations`.
-keep-runtime-typing = true
-
 [tool.pyright]
 typeCheckingMode = "strict"
 reportUnnecessaryTypeIgnoreComment = true

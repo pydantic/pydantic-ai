@@ -47,9 +47,9 @@ class Retriever(Generic[AgentContext, P]):
     function: RetrieverFunc[AgentContext, P]
     is_async: bool
     takes_info: bool
-    single_arg_name: Union[str, None]
+    single_arg_name: str | None
     positional_fields: list[str]
-    var_positional_field: Union[str, None]
+    var_positional_field: str | None
     validator: SchemaValidator
     json_schema: _utils.ObjectJsonSchema
     max_retries: int
@@ -117,7 +117,7 @@ class Retriever(Generic[AgentContext, P]):
         return args, args_dict
 
     def _on_error(
-        self, content: Union[list[pydantic_core.ErrorDetails], str], call_message: messages.FunctionCall
+        self, content: list[pydantic_core.ErrorDetails] | str, call_message: messages.FunctionCall
     ) -> messages.FunctionRetry:
         self._current_retry += 1
         if self._current_retry > self.max_retries:
