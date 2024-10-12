@@ -98,7 +98,7 @@ class Agent(Generic[AgentDeps, ResultData]):
 
         messages.append(_messages.UserPrompt(user_prompt))
 
-        functions: list[_models.AbstractToolDefinition] = list(self._retrievers.values())
+        functions: list[_models.AbstractRetrieverDefinition] = list(self._retrievers.values())
         if self.result_schema is not None:
             functions.append(self.result_schema)
         agent_model = model_.agent_model(self._allow_plain_message, functions)

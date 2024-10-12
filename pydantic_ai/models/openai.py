@@ -16,7 +16,7 @@ from ..messages import (
     LLMResponse,
     Message,
 )
-from . import AbstractToolDefinition, AgentModel, Model
+from . import AbstractRetrieverDefinition, AgentModel, Model
 
 
 class OpenAIModel(Model):
@@ -26,12 +26,12 @@ class OpenAIModel(Model):
         self.model_name: ChatModel = model_name
         self.client = client or cached_async_client(api_key)
 
-    def agent_model(self, allow_plain_message: bool, tools: list[AbstractToolDefinition]) -> AgentModel:
+    def agent_model(self, allow_plain_message: bool, retrievers: list[AbstractRetrieverDefinition]) -> AgentModel:
         return OpenAIAgentModel(
             self.client,
             self.model_name,
             allow_plain_message,
-            [map_tool_definition(t) for t in tools],
+            [map_retriever_definition(t) for t in retrievers],
         )
 
 
@@ -87,7 +87,7 @@ def cached_async_client(api_key: str) -> AsyncClient:
     return AsyncClient(api_key=api_key)
 
 
-def map_tool_definition(f: AbstractToolDefinition) -> ChatCompletionToolParam:
+def map_retriever_definition(f: AbstractRetrieverDefinition) -> ChatCompletionToolParam:
     return {
         'type': 'function',
         'function': {

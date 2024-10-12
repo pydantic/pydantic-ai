@@ -66,6 +66,10 @@ class LLMResponse:
 
 @dataclass
 class FunctionCall:
+    """
+    Either a retriever/tool call or structure response from the agent.
+    """
+
     function_id: str
     function_name: str
     arguments: str

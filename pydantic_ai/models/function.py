@@ -4,18 +4,20 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
 from ..messages import LLMMessage, Message
-from . import AbstractToolDefinition, AgentModel, Model
+from . import AbstractRetrieverDefinition, AgentModel, Model
 
 if TYPE_CHECKING:
     from .._utils import ObjectJsonSchema
 
 
 class FunctionDef(Protocol):
-    def __call__(self, messages: list[Message], allow_plain_message: bool, tools: dict[str, Tool], /) -> LLMMessage: ...
+    def __call__(
+        self, messages: list[Message], allow_plain_message: bool, retrievers: dict[str, RetrieverDescription], /
+    ) -> LLMMessage: ...
 
 
 @dataclass
-class Tool:
+class RetrieverDescription:
     name: str
     description: str
     json_schema: ObjectJsonSchema
@@ -28,9 +30,11 @@ class FunctionModel(Model):
 
     function: FunctionDef
 
-    def agent_model(self, allow_plain_message: bool, tools: list[AbstractToolDefinition]) -> AgentModel:
+    def agent_model(self, allow_plain_message: bool, retrievers: list[AbstractRetrieverDefinition]) -> AgentModel:
         return TestAgentModel(
-            self.function, allow_plain_message, {t.name: Tool(t.name, t.description, t.json_schema) for t in tools}
+            self.function,
+            allow_plain_message,
+            {r.name: RetrieverDescription(r.name, r.description, r.json_schema) for r in retrievers},
         )
 
 
@@ -38,7 +42,7 @@ class FunctionModel(Model):
 class TestAgentModel(AgentModel):
     function: FunctionDef
     allow_plain_message: bool
-    tools: dict[str, Tool]
+    retrievers: dict[str, RetrieverDescription]
 
     async def request(self, messages: list[Message]) -> LLMMessage:
-        return self.function(messages, self.allow_plain_message, self.tools)
+        return self.function(messages, self.allow_plain_message, self.retrievers)

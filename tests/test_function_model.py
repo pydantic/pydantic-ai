@@ -18,7 +18,7 @@ from pydantic_ai.messages import (
     Message,
     UserPrompt,
 )
-from pydantic_ai.models.function import FunctionModel, Tool
+from pydantic_ai.models.function import FunctionModel, RetrieverDescription
 
 if TYPE_CHECKING:
 
@@ -27,7 +27,9 @@ else:
     from dirty_equals import IsNow
 
 
-def return_last(messages: list[Message], _allow_plain_message: bool, _tools: dict[str, Tool]) -> LLMMessage:
+def return_last(
+    messages: list[Message], _allow_plain_message: bool, _retrievers: dict[str, RetrieverDescription]
+) -> LLMMessage:
     last = messages[-1]
     response = asdict(last)
     response.pop('timestamp', None)
@@ -82,9 +84,11 @@ def test_simple():
     )
 
 
-def whether_model(messages: list[Message], allow_plain_message: bool, tools: dict[str, Tool]) -> LLMMessage:
+def whether_model(
+    messages: list[Message], allow_plain_message: bool, retrievers: dict[str, RetrieverDescription]
+) -> LLMMessage:
     assert allow_plain_message
-    assert tools.keys() == {'get_location', 'get_whether'}
+    assert retrievers.keys() == {'get_location', 'get_whether'}
     last = messages[-1]
     if last.role == 'user':
         return LLMFunctionCalls(
@@ -187,7 +191,9 @@ def test_whether():
     assert result.response == 'Sunny in Ipswich'
 
 
-def call_function_model(messages: list[Message], allow_plain_message: bool, tools: dict[str, Tool]) -> LLMMessage:
+def call_function_model(
+    messages: list[Message], allow_plain_message: bool, retrievers: dict[str, RetrieverDescription]
+) -> LLMMessage:
     last = messages[-1]
     if last.role == 'user':
         if last.content.startswith('{'):
@@ -230,11 +236,13 @@ def test_var_args():
     )
 
 
-def call_retriever(messages: list[Message], _allow_plain_message: bool, tools: dict[str, Tool]) -> LLMMessage:
+def call_retriever(
+    messages: list[Message], _allow_plain_message: bool, retrievers: dict[str, RetrieverDescription]
+) -> LLMMessage:
     if len(messages) == 1:
-        assert len(tools) == 1
-        tool_id = next(iter(tools.keys()))
-        return LLMFunctionCalls(calls=[FunctionCall(function_id='1', function_name=tool_id, arguments='{}')])
+        assert len(retrievers) == 1
+        retriever_id = next(iter(retrievers.keys()))
+        return LLMFunctionCalls(calls=[FunctionCall(function_id='1', function_name=retriever_id, arguments='{}')])
     else:
         return LLMResponse('final response')
 
@@ -281,11 +289,13 @@ def test_deps_init():
 
 
 def test_result_schema_tuple():
-    def return_tuple(_: list[Message], __: bool, tools: dict[str, Tool]) -> LLMMessage:
-        assert len(tools) == 1
-        tool_id = next(iter(tools.keys()))
+    def return_tuple(_: list[Message], __: bool, retrievers: dict[str, RetrieverDescription]) -> LLMMessage:
+        assert len(retrievers) == 1
+        retriever_key = next(iter(retrievers.keys()))
         tuple_json = '{"response": ["foo", "bar"]}'
-        return LLMFunctionCalls(calls=[FunctionCall(function_id='1', function_name=tool_id, arguments=tuple_json)])
+        return LLMFunctionCalls(
+            calls=[FunctionCall(function_id='1', function_name=retriever_key, arguments=tuple_json)]
+        )
 
     agent = Agent(FunctionModel(return_tuple), deps=None, response_type=tuple[str, str])
 
@@ -298,11 +308,13 @@ def test_result_schema_pydantic_model():
         a: int
         b: str
 
-    def return_tuple(_: list[Message], __: bool, tools: dict[str, Tool]) -> LLMMessage:
-        assert len(tools) == 1
-        tool_id = next(iter(tools.keys()))
+    def return_tuple(_: list[Message], __: bool, retrievers: dict[str, RetrieverDescription]) -> LLMMessage:
+        assert len(retrievers) == 1
+        retriever_key = next(iter(retrievers.keys()))
         tuple_json = '{"a": 1, "b": "foo"}'
-        return LLMFunctionCalls(calls=[FunctionCall(function_id='1', function_name=tool_id, arguments=tuple_json)])
+        return LLMFunctionCalls(
+            calls=[FunctionCall(function_id='1', function_name=retriever_key, arguments=tuple_json)]
+        )
 
     agent = Agent(FunctionModel(return_tuple), deps=None, response_type=Foo)
 
@@ -349,8 +361,12 @@ def spam() -> str:
 
 
 def test_register_all():
-    def f(messages: list[Message], allow_plain_message: bool, tools: dict[str, Tool]) -> LLMMessage:
-        return LLMResponse(f'messages={len(messages)} allow_plain_message={allow_plain_message} tools={len(tools)}')
+    def f(
+        messages: list[Message], allow_plain_message: bool, retrievers: dict[str, RetrieverDescription]
+    ) -> LLMMessage:
+        return LLMResponse(
+            f'messages={len(messages)} allow_plain_message={allow_plain_message} retrievers={len(retrievers)}'
+        )
 
     result = agent_all.run_sync('Hello', model=FunctionModel(f))
-    assert result.response == snapshot('messages=2 allow_plain_message=True tools=4')
+    assert result.response == snapshot('messages=2 allow_plain_message=True retrievers=4')
