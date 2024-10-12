@@ -21,7 +21,7 @@ class Agent(Generic[AgentDeps, ResultData]):
     __slots__ = (
         '_model',
         'result_schema',
-        '_allow_plain_message',
+        '_allow_plain_response',
         '_system_prompts',
         '_retrievers',
         '_default_retries',
@@ -51,7 +51,7 @@ class Agent(Generic[AgentDeps, ResultData]):
             response_schema_description,
             response_retries if response_retries is not None else retries,
         )
-        self._allow_plain_message = self.result_schema is None or self.result_schema.allow_plain_message
+        self._allow_plain_response = self.result_schema is None or self.result_schema.allow_plain_message
 
         self._system_prompts = (system_prompt,) if isinstance(system_prompt, str) else tuple(system_prompt)
         self._retrievers: dict[str, _r.Retriever[AgentDeps, Any]] = {r_.name: r_ for r_ in retrievers}
@@ -98,10 +98,10 @@ class Agent(Generic[AgentDeps, ResultData]):
 
         messages.append(_messages.UserPrompt(user_prompt))
 
-        functions: list[_models.AbstractRetrieverDefinition] = list(self._retrievers.values())
+        functions: list[_models.AbstractToolDefinition] = list(self._retrievers.values())
         if self.result_schema is not None:
             functions.append(self.result_schema)
-        agent_model = model_.agent_model(self._allow_plain_message, functions)
+        agent_model = model_.agent_model(self._allow_plain_response, functions)
 
         for retriever in self._retrievers.values():
             retriever.reset()
@@ -217,7 +217,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         messages.append(llm_message)
         if llm_message.role == 'llm-response':
             # plain string response
-            if self._allow_plain_message:
+            if self._allow_plain_response:
                 return _utils.Some(cast(ResultData, llm_message.content))
             else:
                 messages.append(_messages.PlainResponseForbidden())
