@@ -107,7 +107,11 @@ def function_schema(either_function: _r.RetrieverEitherFunc[_r.AgentDeps, _r.P])
                 field_info,
                 decorators,
             )
-            td_schema['metadata'] = {'is_model_like': is_model_like(annotation)}
+            extra_metadata = {'is_model_like': is_model_like(annotation)}
+            if metadata := td_schema.get('metadata'):
+                metadata.update(extra_metadata)
+            else:
+                td_schema['metadata'] = extra_metadata
             if p.kind == Parameter.POSITIONAL_ONLY:
                 positional_fields.append(field_name)
             elif p.kind == Parameter.VAR_POSITIONAL:
@@ -130,6 +134,11 @@ def function_schema(either_function: _r.RetrieverEitherFunc[_r.AgentDeps, _r.P])
     # PluggableSchemaValidator is api compat with SchemaValidator
     schema_validator = cast(SchemaValidator, schema_validator)
     json_schema = GenerateJsonSchema().generate(schema)
+
+    # instead of passing `description` through in core_schema, we just add it here
+    if description:
+        json_schema = {'description': description} | json_schema
+
     return FunctionSchema(
         description=description,
         validator=schema_validator,

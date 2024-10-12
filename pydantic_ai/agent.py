@@ -51,7 +51,7 @@ class Agent(Generic[AgentDeps, ResultData]):
             response_schema_description,
             response_retries if response_retries is not None else retries,
         )
-        self._allow_plain_response = self.result_schema is None or self.result_schema.allow_plain_message
+        self._allow_plain_response = self.result_schema is None or self.result_schema.allow_plain_response
 
         self._system_prompts = (system_prompt,) if isinstance(system_prompt, str) else tuple(system_prompt)
         self._retrievers: dict[str, _r.Retriever[AgentDeps, Any]] = {r_.name: r_ for r_ in retrievers}
