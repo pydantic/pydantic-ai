@@ -5,7 +5,7 @@ Shim to use Pydantic with LLMs.
 ## Example of usage
 
 ```py
-from pydantic_ai import Agent, CallContext
+from pydantic_ai import Agent
 
 # An agent that can tell users about the weather in a particular location.
 # Agents combine a system prompt, a response type (here `str`) and one or more
@@ -17,8 +17,8 @@ weather_agent = Agent(
 
 
 # retrievers let you register "tools" which the LLM can call while trying to respond to a user.
-@weather_agent.retriever_context(retries=2)
-async def get_location(_: CallContext[None], location_description: str) -> str:
+@weather_agent.retriever_plain(retries=2)
+async def get_location(location_description: str) -> str:
     """
     Get the latitude and longitude of a location by its description.
 
@@ -41,8 +41,8 @@ async def get_location(_: CallContext[None], location_description: str) -> str:
     return json.dumps(lat_lng)
 
 
-@weather_agent.retriever_context
-async def get_weather(_: CallContext[None], lat: float, lng: float):
+@weather_agent.retriever_plain
+async def get_weather(lat: float, lng: float):
     """
     Get the weather at a location by its latitude and longitude.
     """

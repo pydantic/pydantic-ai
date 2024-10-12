@@ -2,10 +2,10 @@ from __future__ import annotations as _annotations
 
 from collections.abc import AsyncIterable
 from dataclasses import dataclass
-from typing import Any, Generic, TypedDict, TypeVar
+from typing import Any, Generic, TypeVar
 
 from pydantic import TypeAdapter, ValidationError
-from typing_extensions import Self
+from typing_extensions import Self, TypedDict
 
 from . import _utils, messages
 
