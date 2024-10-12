@@ -12,26 +12,26 @@ from typing_extensions import Concatenate, ParamSpec
 
 from . import _pydantic, _utils, messages
 
-AgentDependencies = TypeVar('AgentDependencies')
+AgentDeps = TypeVar('AgentDeps')
 # retrieval function parameters
 P = ParamSpec('P')
 
 
 @dataclass
-class CallContext(Generic[AgentDependencies]):
+class CallContext(Generic[AgentDeps]):
     """Information about the current call."""
 
-    deps: AgentDependencies
+    deps: AgentDeps
     # do we allow retries within functions?
     retry: int
 
 
 # Usage `RetrieverContextFunc[AgentDependencies, P]`
-RetrieverContextFunc = Callable[Concatenate[CallContext[AgentDependencies], P], Union[str, Awaitable[str]]]
+RetrieverContextFunc = Callable[Concatenate[CallContext[AgentDeps], P], Union[str, Awaitable[str]]]
 # Usage `RetrieverPlainFunc[P]`
 RetrieverPlainFunc = Callable[P, Union[str, Awaitable[str]]]
 # Usage `RetrieverEitherFunc[AgentDependencies, P]`
-RetrieverEitherFunc = Union[RetrieverContextFunc[AgentDependencies, P], RetrieverPlainFunc[P]]
+RetrieverEitherFunc = Union[RetrieverContextFunc[AgentDeps, P], RetrieverPlainFunc[P]]
 
 
 class Retry(Exception):
@@ -43,12 +43,12 @@ class Retry(Exception):
 
 
 @dataclass(init=False)
-class Retriever(Generic[AgentDependencies, P]):
+class Retriever(Generic[AgentDeps, P]):
     """A retriever function for an agent."""
 
     name: str
     description: str
-    function: RetrieverEitherFunc[AgentDependencies, P]
+    function: RetrieverEitherFunc[AgentDeps, P]
     is_async: bool
     takes_ctx: bool
     single_arg_name: str | None
@@ -59,7 +59,7 @@ class Retriever(Generic[AgentDependencies, P]):
     max_retries: int
     _current_retry: int = 0
 
-    def __init__(self, function: RetrieverEitherFunc[AgentDependencies, P], takes_ctx: bool, retries: int):
+    def __init__(self, function: RetrieverEitherFunc[AgentDeps, P], takes_ctx: bool, retries: int):
         """Build a Retriever dataclass from a function."""
         f = _pydantic.function_schema(function, takes_ctx)
         self.name = function.__name__
@@ -78,7 +78,7 @@ class Retriever(Generic[AgentDependencies, P]):
         """Reset the current retry count."""
         self._current_retry = 0
 
-    async def run(self, deps: AgentDependencies, message: messages.FunctionCall) -> messages.Message:
+    async def run(self, deps: AgentDeps, message: messages.FunctionCall) -> messages.Message:
         """Run the retriever function asynchronously."""
         try:
             args_dict = self.validator.validate_json(message.arguments)
@@ -88,10 +88,10 @@ class Retriever(Generic[AgentDependencies, P]):
         args, kwargs = self._call_args(deps, args_dict)
         try:
             if self.is_async:
-                response_content = await self.function(*args, **kwargs)  # type: ignore[reportCallIssue]
+                response_content = await self.function(*args, **kwargs)  # pyright: ignore[reportCallIssue,reportUnknownVariableType,reportGeneralTypeIssues]
             else:
                 response_content = await _utils.run_in_executor(
-                    self.function,  # type: ignore[reportArgumentType]
+                    self.function,  # pyright: ignore[reportArgumentType,reportCallIssue]
                     *args,
                     **kwargs,
                 )
@@ -105,7 +105,7 @@ class Retriever(Generic[AgentDependencies, P]):
             content=cast(str, response_content),
         )
 
-    def _call_args(self, deps: AgentDependencies, args_dict: dict[str, Any]) -> tuple[list[Any], dict[str, Any]]:
+    def _call_args(self, deps: AgentDeps, args_dict: dict[str, Any]) -> tuple[list[Any], dict[str, Any]]:
         if self.single_arg_name:
             args_dict = {self.single_arg_name: args_dict}
 

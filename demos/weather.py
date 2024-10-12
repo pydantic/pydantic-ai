@@ -4,7 +4,7 @@ from devtools import debug
 
 from pydantic_ai import Agent
 
-weather_agent = Agent('openai:gpt-4o')
+weather_agent: Agent[None, str] = Agent('openai:gpt-4o')
 
 
 @weather_agent.system_prompt

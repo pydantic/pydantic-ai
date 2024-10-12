@@ -30,7 +30,7 @@ jobs:
 
       - run: make lint
       - run: make typecheck
-      - run: make test-mypy
+      - run: make typecheck-mypy
 
   test:
     name: test on ${{ matrix.python-version }}
@@ -77,7 +77,7 @@ jobs:
           merge-multiple: true
           path: coverage
 
-      - run: pip install coverage[toml]
+      - run: pip install coverage[toml] --break-system-packages
       - run: coverage combine coverage
       - run: coverage xml
 #      - uses: codecov/codecov-action@v4

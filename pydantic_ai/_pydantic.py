@@ -97,7 +97,7 @@ def function_schema(function: Callable[..., Any], takes_ctx: bool) -> FunctionSc
             if field_info.description is None:
                 field_info.description = field_descriptions.get(field_name)
 
-            fields[field_name] = td_schema = gen_schema._generate_td_field_schema(  # type: ignore[reportPrivateUsage]
+            fields[field_name] = td_schema = gen_schema._generate_td_field_schema(  # pyright: ignore[reportPrivateUsage]
                 field_name,
                 field_info,
                 decorators,
