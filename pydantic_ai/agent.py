@@ -2,7 +2,6 @@ from __future__ import annotations as _annotations
 
 import asyncio
 from collections.abc import Awaitable, Sequence
-from copy import copy
 from typing import Any, Callable, Generic, Literal, cast, overload
 
 from typing_extensions import assert_never
@@ -61,14 +60,6 @@ class Agent(Generic[AgentDeps, ResultData]):
         self._default_deps = cast(AgentDeps, None if deps == () else deps)
         self._default_retries = retries
         self._system_prompt_functions: list[_system_prompt.SystemPromptRunner[AgentDeps]] = []
-
-    def with_deps(self, deps: AgentDeps) -> Agent[AgentDeps, ResultData]:
-        """Return a new agent with the given dependencies."""
-        agent: Agent[AgentDeps, ResultData] = Agent.__new__(Agent)
-        for attr in self.__slots__:
-            setattr(agent, attr, copy(getattr(self, attr)))
-        agent._default_deps = deps
-        return agent
 
     async def run(
         self,
@@ -173,11 +164,11 @@ class Agent(Generic[AgentDeps, ResultData]):
                 func_: _r.RetrieverContextFunc[AgentDeps, _r.P],
             ) -> _r.Retriever[AgentDeps, _r.P]:
                 # noinspection PyTypeChecker
-                return self._register_retriever(func_, True, retries)
+                return self._register_retriever(_utils.Either(left=func_), retries)
 
             return retriever_decorator
         else:
-            return self._register_retriever(func, True, retries)
+            return self._register_retriever(_utils.Either(left=func), retries)
 
     @overload
     def retriever_plain(self, func: _r.RetrieverPlainFunc[_r.P], /) -> _r.Retriever[AgentDeps, _r.P]: ...
@@ -193,18 +184,18 @@ class Agent(Generic[AgentDeps, ResultData]):
 
             def retriever_decorator(func_: _r.RetrieverPlainFunc[_r.P]) -> _r.Retriever[AgentDeps, _r.P]:
                 # noinspection PyTypeChecker
-                return self._register_retriever(func_, False, retries)
+                return self._register_retriever(_utils.Either(right=func_), retries)
 
             return retriever_decorator
         else:
-            return self._register_retriever(func, False, retries)
+            return self._register_retriever(_utils.Either(right=func), retries)
 
     def _register_retriever(
-        self, func: _r.RetrieverEitherFunc[AgentDeps, _r.P], takes_ctx: bool, retries: int | None
+        self, func: _r.RetrieverEitherFunc[_r.AgentDeps, _r.P], retries: int | None
     ) -> _r.Retriever[AgentDeps, _r.P]:
         """Private utility to register a retriever function."""
         retries_ = retries if retries is not None else self._default_retries
-        retriever = _r.Retriever[AgentDeps, _r.P](func, takes_ctx, retries_)
+        retriever = _r.Retriever[AgentDeps, _r.P](func, retries_)
 
         if self.result_schema and self.result_schema.name == retriever.name:
             raise ValueError(f'Retriever name conflicts with response schema name: {retriever.name!r}')

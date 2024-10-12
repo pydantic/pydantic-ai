@@ -119,3 +119,9 @@ class Either(Generic[_Left, _Right]):
         if self._right is None:
             raise TypeError('Right not set')
         return self._right
+
+    def is_left(self) -> bool:
+        return self._left is not None
+
+    def whichever(self) -> _Left | _Right:
+        return self._left or self.right

@@ -6,7 +6,7 @@ This module has to use numerous internal Pydantic APIs and is therefore brittle 
 from __future__ import annotations as _annotations
 
 from inspect import Parameter, Signature, signature
-from typing import Any, Callable, Literal, TypedDict, cast, get_origin
+from typing import TYPE_CHECKING, Any, Callable, Literal, TypedDict, cast, get_origin
 
 from _griffe.enumerations import DocstringSectionKind
 from _griffe.models import Docstring, Object as GriffeObject
@@ -19,6 +19,10 @@ from pydantic.plugin._schema_validator import create_schema_validator
 from pydantic_core import SchemaValidator, core_schema
 
 from ._utils import ObjectJsonSchema, check_object_json_schema, is_model_like
+
+if TYPE_CHECKING:
+    from . import retrievers as _r
+
 
 __all__ = ('function_schema',)
 
@@ -35,16 +39,17 @@ class FunctionSchema(TypedDict):
     var_positional_field: str | None
 
 
-def function_schema(function: Callable[..., Any], takes_ctx: bool) -> FunctionSchema:
-    """Build a Pydantic validator and JSON schema from a function.
+def function_schema(either_function: _r.RetrieverEitherFunc[_r.AgentDeps, _r.P]) -> FunctionSchema:
+    """Build a Pydantic validator and JSON schema from a retriever function.
 
     Args:
-        function: The function to build a validator and JSON schema for.
-        takes_ctx: Whether the function is expected to take a `CallContext` instance as its first argument.
+        either_function: The function to build a validator and JSON schema for.
 
     Returns:
         A `FunctionSchema` instance.
     """
+    function = either_function.whichever()
+    takes_ctx = either_function.is_left()
     namespace = _typing_extra.get_module_ns_of(function)
     config = ConfigDict(title=function.__name__)
     config_wrapper = ConfigWrapper(config)

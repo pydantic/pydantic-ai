@@ -70,5 +70,5 @@ async def ok_retriever2(ctx: CallContext[MyDeps], x: str) -> str:
 
 
 if never():
-    typed_agent2.with_deps(MyDeps(foo=1, bar=2)).run_sync('testing', model='openai:gpt-4o')
-    typed_agent2.with_deps(123).run_sync('testing')  # type: ignore[arg-type]
+    typed_agent2.run_sync('testing', model='openai:gpt-4o', deps=MyDeps(foo=1, bar=2))
+    typed_agent2.run_sync('testing', deps=123)  # type: ignore[arg-type]

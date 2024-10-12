@@ -105,4 +105,6 @@ class ResultSchema(Generic[ResultData]):
                 )
                 return _utils.Either(right=m)
         else:
+            if self.outer_typed_dict:
+                result = result['response']
             return _utils.Either(left=result)

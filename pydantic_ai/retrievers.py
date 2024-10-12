@@ -31,7 +31,7 @@ RetrieverContextFunc = Callable[Concatenate[CallContext[AgentDeps], P], Union[st
 # Usage `RetrieverPlainFunc[P]`
 RetrieverPlainFunc = Callable[P, Union[str, Awaitable[str]]]
 # Usage `RetrieverEitherFunc[AgentDependencies, P]`
-RetrieverEitherFunc = Union[RetrieverContextFunc[AgentDeps, P], RetrieverPlainFunc[P]]
+RetrieverEitherFunc = _utils.Either[RetrieverContextFunc[AgentDeps, P], RetrieverPlainFunc[P]]
 
 
 class Retry(Exception):
@@ -59,14 +59,14 @@ class Retriever(Generic[AgentDeps, P]):
     max_retries: int
     _current_retry: int = 0
 
-    def __init__(self, function: RetrieverEitherFunc[AgentDeps, P], takes_ctx: bool, retries: int):
+    def __init__(self, function: RetrieverEitherFunc[AgentDeps, P], retries: int):
         """Build a Retriever dataclass from a function."""
-        f = _pydantic.function_schema(function, takes_ctx)
-        self.name = function.__name__
-        self.description = f['description']
         self.function = function
-        self.is_async = inspect.iscoroutinefunction(function)
-        self.takes_ctx = takes_ctx
+        f = _pydantic.function_schema(function)
+        raw_function = function.whichever()
+        self.name = raw_function.__name__
+        self.description = f['description']
+        self.is_async = inspect.iscoroutinefunction(raw_function)
         self.single_arg_name = f['single_arg_name']
         self.positional_fields = f['positional_fields']
         self.var_positional_field = f['var_positional_field']
@@ -86,12 +86,13 @@ class Retriever(Generic[AgentDeps, P]):
             return self._on_error(e.errors(), message)
 
         args, kwargs = self._call_args(deps, args_dict)
+        function = self.function.whichever()
         try:
             if self.is_async:
-                response_content = await self.function(*args, **kwargs)  # pyright: ignore[reportCallIssue,reportUnknownVariableType,reportGeneralTypeIssues]
+                response_content = await function(*args, **kwargs)  # pyright: ignore[reportCallIssue,reportUnknownVariableType,reportGeneralTypeIssues]
             else:
                 response_content = await _utils.run_in_executor(
-                    self.function,  # pyright: ignore[reportArgumentType,reportCallIssue]
+                    function,  # pyright: ignore[reportArgumentType,reportCallIssue]
                     *args,
                     **kwargs,
                 )
@@ -109,7 +110,7 @@ class Retriever(Generic[AgentDeps, P]):
         if self.single_arg_name:
             args_dict = {self.single_arg_name: args_dict}
 
-        args = [CallContext(deps, self._current_retry)] if self.takes_ctx else []
+        args = [CallContext(deps, self._current_retry)] if self.function.is_left() else []
         for positional_field in self.positional_fields:
             args.append(args_dict.pop(positional_field))
         if self.var_positional_field:

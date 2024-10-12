@@ -4,7 +4,9 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 import pydantic_core
+import pytest
 from inline_snapshot import snapshot
+from pydantic import BaseModel
 
 from pydantic_ai import Agent, CallContext
 from pydantic_ai.messages import (
@@ -109,8 +111,8 @@ def whether_model(messages: list[Message], allow_plain_message: bool, tools: dic
 weather_agent: Agent[None, str] = Agent(FunctionModel(whether_model))
 
 
-@weather_agent.retriever_context
-async def get_location(_: CallContext[None], location_description: str) -> str:
+@weather_agent.retriever_plain
+async def get_location(location_description: str) -> str:
     if location_description == 'London':
         lat_lng = {'lat': 51, 'lng': 0}
     else:
@@ -276,3 +278,79 @@ def test_deps_init():
     called = False
     agent.run_sync('Hello', deps=('foo', 'bar'))
     assert called
+
+
+def test_result_schema_tuple():
+    def return_tuple(_: list[Message], __: bool, tools: dict[str, Tool]) -> LLMMessage:
+        assert len(tools) == 1
+        tool_id = next(iter(tools.keys()))
+        tuple_json = '{"response": ["foo", "bar"]}'
+        return LLMFunctionCalls(calls=[FunctionCall(function_id='1', function_name=tool_id, arguments=tuple_json)])
+
+    agent = Agent(FunctionModel(return_tuple), deps=None, response_type=tuple[str, str])
+
+    result = agent.run_sync('Hello')
+    assert result.response == ('foo', 'bar')
+
+
+def test_result_schema_pydantic_model():
+    class Foo(BaseModel):
+        a: int
+        b: str
+
+    def return_tuple(_: list[Message], __: bool, tools: dict[str, Tool]) -> LLMMessage:
+        assert len(tools) == 1
+        tool_id = next(iter(tools.keys()))
+        tuple_json = '{"a": 1, "b": "foo"}'
+        return LLMFunctionCalls(calls=[FunctionCall(function_id='1', function_name=tool_id, arguments=tuple_json)])
+
+    agent = Agent(FunctionModel(return_tuple), deps=None, response_type=Foo)
+
+    result = agent.run_sync('Hello')
+    assert isinstance(result.response, Foo)
+    assert result.response.model_dump() == {'a': 1, 'b': 'foo'}
+
+
+def test_model_arg():
+    agent = Agent(deps=None)
+    result = agent.run_sync('Hello', model=FunctionModel(return_last))
+    assert result.response == snapshot("content='Hello' role='user' message_count=1")
+
+    with pytest.raises(RuntimeError, match='`model` must be set either when creating the agent or when calling it.'):
+        agent.run_sync('Hello')
+
+
+agent_all = Agent(deps=None)
+
+
+@agent_all.retriever_context
+async def foo(_: CallContext[None], x: int) -> str:
+    return str(x * 2)
+
+
+@agent_all.retriever_context(retries=3)
+def bar(_: CallContext[None], x: int) -> str:
+    return str(x * 3)
+
+
+@agent_all.retriever_plain
+async def baz(x: int) -> str:
+    return str(x * 4)
+
+
+@agent_all.retriever_plain(retries=1)
+def qux(x: int) -> str:
+    return str(x * 5)
+
+
+@agent_all.system_prompt
+def spam() -> str:
+    return 'foobar'
+
+
+def test_register_all():
+    def f(messages: list[Message], allow_plain_message: bool, tools: dict[str, Tool]) -> LLMMessage:
+        return LLMResponse(f'messages={len(messages)} allow_plain_message={allow_plain_message} tools={len(tools)}')
+
+    result = agent_all.run_sync('Hello', model=FunctionModel(f))
+    assert result.response == snapshot('messages=2 allow_plain_message=True tools=4')
