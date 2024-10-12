@@ -35,9 +35,9 @@ class SystemPromptRunner(Generic[AgentDeps]):
             args = ()
 
         if self.is_async:
-            return await self.function(*args)  # type: ignore[reportGeneralTypeIssues]
+            return await self.function(*args)  # pyright: ignore[reportGeneralTypeIssues,reportUnknownVariableType]
         else:
             return await _utils.run_in_executor(
-                self.function,  # type: ignore[reportArgumentType]
+                self.function,  # pyright: ignore[reportArgumentType,reportReturnType]
                 *args,
             )

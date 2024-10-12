@@ -24,17 +24,20 @@ lint:
 	uv run ruff format --check $(sources)
 	uv run ruff check $(sources)
 
-.PHONY: typecheck  # Run static type checking
-typecheck:
+.PHONY: typecheck-pyright
+typecheck-pyright:
 	uv run pyright
+
+.PHONY: typecheck-mypy
+typecheck-mypy:
+	uv run mypy --strict tests/typed_agent.py
+
+.PHONY: typecheck  # Run static type checking
+typecheck: typecheck-pyright
 
 .PHONY: test  # Run tests and collect coverage data
 test:
 	uv run coverage run -m pytest
-
-.PHONY: test-mypy  # Run type tests with mypy
-test-mypy:
-	uv run mypy --strict tests/typed_agent.py
 
 .PHONY: testcov  # Run tests and generate a coverage report
 testcov: test

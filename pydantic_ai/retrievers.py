@@ -88,10 +88,10 @@ class Retriever(Generic[AgentDeps, P]):
         args, kwargs = self._call_args(deps, args_dict)
         try:
             if self.is_async:
-                response_content = await self.function(*args, **kwargs)  # type: ignore[reportCallIssue]
+                response_content = await self.function(*args, **kwargs)  # pyright: ignore[reportCallIssue,reportUnknownVariableType,reportGeneralTypeIssues]
             else:
                 response_content = await _utils.run_in_executor(
-                    self.function,  # type: ignore[reportArgumentType]
+                    self.function,  # pyright: ignore[reportArgumentType,reportCallIssue]
                     *args,
                     **kwargs,
                 )

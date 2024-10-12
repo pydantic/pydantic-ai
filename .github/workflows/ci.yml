@@ -30,7 +30,7 @@ jobs:
 
       - run: make lint
       - run: make typecheck
-      - run: make test-mypy
+      - run: make typecheck-mypy
 
   test:
     name: test on ${{ matrix.python-version }}

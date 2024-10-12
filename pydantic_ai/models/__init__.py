@@ -42,7 +42,7 @@ def infer_model(model: Model | KnownModelName) -> Model:
     elif model.startswith('openai:'):
         from .openai import OpenAIModel
 
-        return OpenAIModel(model[7:])  # type: ignore[reportArgumentType]
+        return OpenAIModel(model[7:])  # pyright: ignore[reportArgumentType]
     else:
         raise TypeError(f'Invalid model: {model}')
 

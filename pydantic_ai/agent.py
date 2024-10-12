@@ -58,7 +58,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         self._retrievers: dict[str, _r.Retriever[AgentDeps, Any]] = {r_.name: r_ for r_ in retrievers}
         if self.result_schema and self.result_schema.name in self._retrievers:
             raise ValueError(f'Retriever name conflicts with response schema: {self.result_schema.name!r}')
-        self._default_deps: AgentDeps = None if deps == (None,) else deps  # type: ignore
+        self._default_deps = cast(AgentDeps, None if deps == () else deps)
         self._default_retries = retries
         self._system_prompt_functions: list[_system_prompt.SystemPromptRunner[AgentDeps]] = []
 

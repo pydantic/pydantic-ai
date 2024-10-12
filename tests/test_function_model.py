@@ -226,3 +226,53 @@ def test_var_args():
             'role': 'function-return',
         }
     )
+
+
+def call_retriever(messages: list[Message], _allow_plain_message: bool, tools: dict[str, Tool]) -> LLMMessage:
+    if len(messages) == 1:
+        assert len(tools) == 1
+        tool_id = next(iter(tools.keys()))
+        return LLMFunctionCalls(calls=[FunctionCall(function_id='1', function_name=tool_id, arguments='{}')])
+    else:
+        return LLMResponse('final response')
+
+
+def test_deps_none():
+    agent = Agent(FunctionModel(call_retriever), deps=None)
+
+    @agent.retriever_context
+    async def get_none(ctx: CallContext[None]):  # pyright: ignore[reportUnusedFunction]
+        nonlocal called
+
+        called = True
+        assert ctx.deps is None
+        return ''
+
+    called = False
+    agent.run_sync('Hello')
+    assert called
+
+    called = False
+    agent.run_sync('Hello', deps=None)
+    assert called
+
+
+def test_deps_init():
+    def get_check_foobar(ctx: CallContext[tuple[str, str]]) -> str:
+        nonlocal called
+
+        called = True
+        assert ctx.deps == ('foo', 'bar')
+        return ''
+
+    agent = Agent(FunctionModel(call_retriever), deps=('foo', 'bar'))
+    agent.retriever_context(get_check_foobar)
+    called = False
+    agent.run_sync('Hello')
+    assert called
+
+    agent: Agent[tuple[str, str], str] = Agent(FunctionModel(call_retriever))
+    agent.retriever_context(get_check_foobar)
+    called = False
+    agent.run_sync('Hello', deps=('foo', 'bar'))
+    assert called
