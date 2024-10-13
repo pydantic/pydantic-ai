@@ -7,3 +7,4 @@ __pycache__
 /scratch/
 /.coverage
 env*/
+/TODO.md

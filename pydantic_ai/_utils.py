@@ -91,7 +91,7 @@ _Right = TypeVar('_Right')
 
 
 class Either(Generic[_Left, _Right]):
-    """Two member Union that records which member was set.
+    """Two member Union that records which member was set, this is analogous to Rust enums with two variants.
 
     Usage:
 
@@ -109,14 +109,19 @@ class Either(Generic[_Left, _Right]):
     @overload
     def __init__(self, *, right: _Right) -> None: ...
 
-    def __init__(self, *, left: _Left | None = None, right: _Right | None = None) -> None:
-        if (left is not None and right is not None) or (left is None and right is None):
-            raise TypeError('Either must have exactly one value')
-        self._left = left
-        self._right = right
+    def __init__(self, **kwargs: Any) -> None:
+        keys = set(kwargs.keys())
+        if keys == {'left'}:
+            self._left: Option[_Left] = Some(kwargs['left'])
+            self._right: _Right | None = None
+        elif keys == {'right'}:
+            self._left = None
+            self._right = kwargs['right']
+        else:
+            raise TypeError('Either must receive exactly one value - `left` or `right`')
 
     @property
-    def left(self) -> _Left | None:
+    def left(self) -> Option[_Left]:
         return self._left
 
     @property
@@ -129,4 +134,4 @@ class Either(Generic[_Left, _Right]):
         return self._left is not None
 
     def whichever(self) -> _Left | _Right:
-        return self._left or self.right
+        return self._left.value if self._left is not None else self.right

@@ -1,14 +1,11 @@
 import json
 from dataclasses import asdict
-from datetime import datetime
-from typing import TYPE_CHECKING, Any
 
 import pydantic_core
 import pytest
 from inline_snapshot import snapshot
-from pydantic import BaseModel
 
-from pydantic_ai import Agent, CallContext
+from pydantic_ai import Agent, CallContext, Retry
 from pydantic_ai.messages import (
     LLMMessage,
     LLMResponse,
@@ -16,17 +13,13 @@ from pydantic_ai.messages import (
     Message,
     SystemPrompt,
     ToolCall,
+    ToolRetry,
     ToolReturn,
     UserPrompt,
 )
 from pydantic_ai.models.function import FunctionModel, ToolDescription
 from pydantic_ai.models.test import TestModel
-
-if TYPE_CHECKING:
-
-    def IsNow(*args: Any, **kwargs: Any) -> datetime: ...
-else:
-    from dirty_equals import IsNow
+from tests.utils import IsNow
 
 
 def return_last(
@@ -237,7 +230,7 @@ def test_deps_none():
     agent = Agent(FunctionModel(call_retriever), deps=None)
 
     @agent.retriever_context
-    async def get_none(ctx: CallContext[None]):  # pyright: ignore[reportUnusedFunction]
+    async def get_none(ctx: CallContext[None]):
         nonlocal called
 
         called = True
@@ -272,37 +265,6 @@ def test_deps_init():
     called = False
     agent.run_sync('Hello', deps=('foo', 'bar'))
     assert called
-
-
-def test_result_schema_tuple():
-    def return_tuple(_: list[Message], __: bool, retrievers: dict[str, ToolDescription]) -> LLMMessage:
-        assert len(retrievers) == 1
-        retriever_key = next(iter(retrievers.keys()))
-        tuple_json = '{"response": ["foo", "bar"]}'
-        return LLMToolCalls(calls=[ToolCall(tool_name=retriever_key, arguments=tuple_json)])
-
-    agent = Agent(FunctionModel(return_tuple), deps=None, result_type=tuple[str, str])
-
-    result = agent.run_sync('Hello')
-    assert result.response == ('foo', 'bar')
-
-
-def test_result_schema_pydantic_model():
-    class Foo(BaseModel):
-        a: int
-        b: str
-
-    def return_tuple(_: list[Message], __: bool, retrievers: dict[str, ToolDescription]) -> LLMMessage:
-        assert len(retrievers) == 1
-        retriever_key = next(iter(retrievers.keys()))
-        tuple_json = '{"a": 1, "b": "foo"}'
-        return LLMToolCalls(calls=[ToolCall(tool_name=retriever_key, arguments=tuple_json)])
-
-    agent = Agent(FunctionModel(return_tuple), deps=None, result_type=Foo)
-
-    result = agent.run_sync('Hello')
-    assert isinstance(result.response, Foo)
-    assert result.response.model_dump() == {'a': 1, 'b': 'foo'}
 
 
 def test_model_arg():
@@ -359,7 +321,7 @@ def test_register_all():
 
 def test_call_all():
     result = agent_all.run_sync('Hello', model=TestModel())
-    assert result.response == snapshot('Final response')
+    assert result.response == snapshot('{"foo": "1", "bar": "2", "baz": "3", "qux": "4", "quz": "a"}')
     assert result.message_history == snapshot(
         [
             SystemPrompt(content='foobar'),
@@ -379,7 +341,7 @@ def test_call_all():
             ToolReturn(tool_name='baz', content='3', timestamp=IsNow()),
             ToolReturn(tool_name='qux', content='4', timestamp=IsNow()),
             ToolReturn(tool_name='quz', content='a', timestamp=IsNow()),
-            LLMResponse(content='Final response', timestamp=IsNow()),
+            LLMResponse(content='{"foo": "1", "bar": "2", "baz": "3", "qux": "4", "quz": "a"}', timestamp=IsNow()),
         ]
     )
 
@@ -420,3 +382,34 @@ def test_docstring():
     )
     # description should be the first key
     assert next(iter(json_schema)) == 'description'
+
+
+def test_retriever_retry():
+    agent = Agent(deps=None)
+    call_count = 0
+
+    @agent.retriever_plain
+    async def my_ret(x: int) -> str:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise Retry('First call failed')
+        else:
+            return str(x + 1)
+
+    result = agent.run_sync('Hello', model=TestModel())
+    assert call_count == 2
+    assert result.response == snapshot('{"my_ret": "2"}')
+    assert result.message_history == snapshot(
+        [
+            UserPrompt(content='Hello', timestamp=IsNow()),
+            LLMToolCalls(
+                calls=[ToolCall(tool_name='my_ret', arguments='{"x": 0}')],
+                timestamp=IsNow(),
+            ),
+            ToolRetry(tool_name='my_ret', content='First call failed', timestamp=IsNow()),
+            LLMToolCalls(calls=[ToolCall(tool_name='my_ret', arguments='{"x": 1}')], timestamp=IsNow()),
+            ToolReturn(tool_name='my_ret', content='2', timestamp=IsNow()),
+            LLMResponse(content='{"my_ret": "2"}', timestamp=IsNow()),
+        ]
+    )

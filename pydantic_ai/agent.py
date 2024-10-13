@@ -2,11 +2,13 @@ from __future__ import annotations as _annotations
 
 import asyncio
 from collections.abc import Awaitable, Sequence
+from dataclasses import dataclass
 from typing import Any, Callable, Generic, Literal, cast, overload
 
 from typing_extensions import assert_never
 
 from . import _system_prompt, _utils, messages as _messages, models as _models, result as _result, retrievers as _r
+from .models import Model
 from .result import ResultData
 from .retrievers import AgentDeps
 
@@ -14,20 +16,22 @@ __all__ = ('Agent',)
 KnownModelName = Literal['openai:gpt-4o', 'openai:gpt-4-turbo', 'openai:gpt-4', 'openai:gpt-3.5-turbo']
 
 
+@dataclass(init=False)
 class Agent(Generic[AgentDeps, ResultData]):
     """Main class for creating "agents" - a way to have a specific type of "conversation" with an LLM."""
 
     # slots mostly for my sanity — knowing what attributes are available
-    __slots__ = (
-        '_model',
-        '_result_tool',
-        '_allow_text_result',
-        '_system_prompts',
-        '_retrievers',
-        '_default_retries',
-        '_system_prompt_functions',
-        '_default_deps',
-    )
+    _model: Model | None
+    _result_tool: _result.ResultSchema[ResultData] | None
+    _result_validators: list[_result.ResultValidator[AgentDeps, ResultData]]
+    _allow_text_result: bool
+    _system_prompts: tuple[str, ...]
+    _retrievers: dict[str, _r.Retriever[AgentDeps, Any]]
+    _default_retries: int
+    _system_prompt_functions: list[_system_prompt.SystemPromptRunner[AgentDeps]]
+    _default_deps: AgentDeps
+    _max_result_retries: int
+    _current_result_retry: int
 
     def __init__(
         self,
@@ -45,10 +49,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         self._model = _models.infer_model(model) if model is not None else None
 
         self._result_tool = _result.ResultSchema[result_type].build(
-            result_type,
-            result_tool_name,
-            result_tool_description,
-            result_retries if result_retries is not None else retries,
+            result_type, result_tool_name, result_tool_description
         )
         # if the result tool is None, or its schema allows `str`, we allow plain text results
         self._allow_text_result = self._result_tool is None or self._result_tool.allow_text_result
@@ -57,7 +58,10 @@ class Agent(Generic[AgentDeps, ResultData]):
         self._retrievers: dict[str, _r.Retriever[AgentDeps, Any]] = {}
         self._default_deps = cast(AgentDeps, None if deps == () else deps)
         self._default_retries = retries
-        self._system_prompt_functions: list[_system_prompt.SystemPromptRunner[AgentDeps]] = []
+        self._system_prompt_functions = []
+        self._max_result_retries = result_retries if result_retries is not None else retries
+        self._current_result_retry = 0
+        self._result_validators = []
 
     async def run(
         self,
@@ -140,6 +144,13 @@ class Agent(Generic[AgentDeps, ResultData]):
     ) -> _system_prompt.SystemPromptFunc[AgentDeps]:
         """Decorator to register a system prompt function that takes `CallContext` as it's only argument."""
         self._system_prompt_functions.append(_system_prompt.SystemPromptRunner(func))
+        return func
+
+    def result_validator(
+        self, func: _result.ResultValidatorFunc[AgentDeps, ResultData]
+    ) -> _result.ResultValidatorFunc[AgentDeps, ResultData]:
+        """Decorator to register a result validator function."""
+        self._result_validators.append(_result.ResultValidator(func))
         return func
 
     @overload
@@ -225,8 +236,12 @@ class Agent(Generic[AgentDeps, ResultData]):
                 if call is not None:
                     either = self._result_tool.validate(call)
                     if result_data := either.left:
-                        return _utils.Some(result_data)
+                        either = await self._validate_result(result_data.value, deps, call)
+
+                    if result_data := either.left:
+                        return _utils.Some(result_data.value)
                     else:
+                        self._incr_result_retry()
                         messages.append(either.right)
                         return None
 
@@ -241,6 +256,22 @@ class Agent(Generic[AgentDeps, ResultData]):
             messages += await asyncio.gather(*coros)
         else:
             assert_never(llm_message)
+
+    async def _validate_result(
+        self, result: ResultData, deps: AgentDeps, tool_call: _messages.ToolCall
+    ) -> _utils.Either[ResultData, _messages.ToolRetry]:
+        for validator in self._result_validators:
+            either = await validator.validate(result, deps, self._current_result_retry, tool_call)
+            if either.left:
+                result = either.left.value
+            else:
+                return either
+        return _utils.Either(left=result)
+
+    def _incr_result_retry(self) -> None:
+        self._current_result_retry += 1
+        if self._current_result_retry > self._max_result_retries:
+            raise RuntimeError(f'Exceeded maximum retries ({self._max_result_retries}) for result validation')
 
     async def _init_messages(self, deps: AgentDeps) -> list[_messages.Message]:
         """Build the initial messages for the conversation."""

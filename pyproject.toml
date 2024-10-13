@@ -98,6 +98,11 @@ reportUnnecessaryTypeIgnoreComment = true
 reportMissingTypeStubs = false
 include = ["pydantic_ai", "tests", "demos"]
 venvPath = ".venv"
+# see https://github.com/microsoft/pyright/issues/7771, we don't want to error on decorated functions in tests
+# which are not otherwise used
+executionEnvironments = [
+  { root = "tests", reportUnusedFunction = false },
+]
 
 [tool.pytest.ini_options]
 xfail_strict = true

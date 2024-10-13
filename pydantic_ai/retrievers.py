@@ -83,7 +83,7 @@ class Retriever(Generic[AgentDeps, P]):
         try:
             args_dict = self.validator.validate_json(message.arguments)
         except ValidationError as e:
-            return self._on_error(e.errors(), message)
+            return self._on_error(e.errors(include_url=False), message)
 
         args, kwargs = self._call_args(deps, args_dict)
         function = self.function.whichever()
