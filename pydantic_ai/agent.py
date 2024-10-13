@@ -20,8 +20,8 @@ class Agent(Generic[AgentDeps, ResultData]):
     # slots mostly for my sanity — knowing what attributes are available
     __slots__ = (
         '_model',
-        'result_schema',
-        '_allow_plain_response',
+        '_result_tool',
+        '_allow_text_result',
         '_system_prompts',
         '_retrievers',
         '_default_retries',
@@ -32,31 +32,29 @@ class Agent(Generic[AgentDeps, ResultData]):
     def __init__(
         self,
         model: _models.Model | KnownModelName | None = None,
-        response_type: type[_result.ResultData] = str,
+        result_type: type[_result.ResultData] = str,
         *,
         system_prompt: str | Sequence[str] = (),
-        retrievers: Sequence[_r.Retriever[AgentDeps, Any]] = (),
         # type here looks odd, but it's required os you can avoid "partially unknown" type errors with `deps=None`
         deps: AgentDeps | tuple[()] = (),
         retries: int = 1,
-        response_schema_name: str = 'final_response',
-        response_schema_description: str = 'The final response',
-        response_retries: int | None = None,
+        result_tool_name: str = 'final_result',
+        result_tool_description: str = 'The final response which ends this conversation',
+        result_retries: int | None = None,
     ):
         self._model = _models.infer_model(model) if model is not None else None
 
-        self.result_schema = _result.ResultSchema[response_type].build(
-            response_type,
-            response_schema_name,
-            response_schema_description,
-            response_retries if response_retries is not None else retries,
+        self._result_tool = _result.ResultSchema[result_type].build(
+            result_type,
+            result_tool_name,
+            result_tool_description,
+            result_retries if result_retries is not None else retries,
         )
-        self._allow_plain_response = self.result_schema is None or self.result_schema.allow_plain_response
+        # if the result tool is None, or its schema allows `str`, we allow plain text results
+        self._allow_text_result = self._result_tool is None or self._result_tool.allow_text_result
 
         self._system_prompts = (system_prompt,) if isinstance(system_prompt, str) else tuple(system_prompt)
-        self._retrievers: dict[str, _r.Retriever[AgentDeps, Any]] = {r_.name: r_ for r_ in retrievers}
-        if self.result_schema and self.result_schema.name in self._retrievers:
-            raise ValueError(f'Retriever name conflicts with response schema: {self.result_schema.name!r}')
+        self._retrievers: dict[str, _r.Retriever[AgentDeps, Any]] = {}
         self._default_deps = cast(AgentDeps, None if deps == () else deps)
         self._default_retries = retries
         self._system_prompt_functions: list[_system_prompt.SystemPromptRunner[AgentDeps]] = []
@@ -99,9 +97,11 @@ class Agent(Generic[AgentDeps, ResultData]):
         messages.append(_messages.UserPrompt(user_prompt))
 
         functions: list[_models.AbstractToolDefinition] = list(self._retrievers.values())
-        if self.result_schema is not None:
-            functions.append(self.result_schema)
-        agent_model = model_.agent_model(self._allow_plain_response, functions)
+        if self._result_tool is not None:
+            functions.append(self._result_tool)
+
+        result_tool_name = self._result_tool and self._result_tool.name
+        agent_model = model_.agent_model(self._allow_text_result, functions, result_tool_name)
 
         for retriever in self._retrievers.values():
             retriever.reset()
@@ -134,10 +134,6 @@ class Agent(Generic[AgentDeps, ResultData]):
             The result of the run.
         """
         return asyncio.run(self.run(user_prompt, message_history=message_history, model=model, deps=deps))
-
-    async def stream(self, user_prompt: str) -> _result.RunStreamResult[_result.ResultData]:
-        """Run the agent with a user prompt asynchronously and stream the results."""
-        raise NotImplementedError()
 
     def system_prompt(
         self, func: _system_prompt.SystemPromptFunc[AgentDeps]
@@ -197,8 +193,8 @@ class Agent(Generic[AgentDeps, ResultData]):
         retries_ = retries if retries is not None else self._default_retries
         retriever = _r.Retriever[AgentDeps, _r.P](func, retries_)
 
-        if self.result_schema and self.result_schema.name == retriever.name:
-            raise ValueError(f'Retriever name conflicts with response schema name: {retriever.name!r}')
+        if self._result_tool and self._result_tool.name == retriever.name:
+            raise ValueError(f'Retriever name conflicts with result schema name: {retriever.name!r}')
 
         if retriever.name in self._retrievers:
             raise ValueError(f'Retriever name conflicts with existing retriever: {retriever.name!r}')
@@ -217,16 +213,17 @@ class Agent(Generic[AgentDeps, ResultData]):
         messages.append(llm_message)
         if llm_message.role == 'llm-response':
             # plain string response
-            if self._allow_plain_response:
+            if self._allow_text_result:
                 return _utils.Some(cast(ResultData, llm_message.content))
             else:
                 messages.append(_messages.PlainResponseForbidden())
-        elif llm_message.role == 'llm-function-calls':
-            if self.result_schema is not None:
+        elif llm_message.role == 'llm-tool-calls':
+            if self._result_tool is not None:
                 # if there's a result schema, and any of the calls match that name, return the result
-                call = next((c for c in llm_message.calls if c.function_name == self.result_schema.name), None)
+                # NOTE: this means we ignore any other tools called here
+                call = next((c for c in llm_message.calls if c.tool_name == self._result_tool.name), None)
                 if call is not None:
-                    either = self.result_schema.validate(call)
+                    either = self._result_tool.validate(call)
                     if result_data := either.left:
                         return _utils.Some(result_data)
                     else:
@@ -236,10 +233,10 @@ class Agent(Generic[AgentDeps, ResultData]):
             # otherwise we run all functions in parallel
             coros: list[Awaitable[_messages.Message]] = []
             for call in llm_message.calls:
-                retriever = self._retrievers.get(call.function_name)
+                retriever = self._retrievers.get(call.tool_name)
                 if retriever is None:
                     # TODO return message?
-                    raise ValueError(f'Unknown function name: {call.function_name!r}')
+                    raise ValueError(f'Unknown function name: {call.tool_name!r}')
                 coros.append(retriever.run(deps, call))
             messages += await asyncio.gather(*coros)
         else:

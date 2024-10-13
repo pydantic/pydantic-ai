@@ -78,7 +78,7 @@ class Retriever(Generic[AgentDeps, P]):
         """Reset the current retry count."""
         self._current_retry = 0
 
-    async def run(self, deps: AgentDeps, message: messages.FunctionCall) -> messages.Message:
+    async def run(self, deps: AgentDeps, message: messages.ToolCall) -> messages.Message:
         """Run the retriever function asynchronously."""
         try:
             args_dict = self.validator.validate_json(message.arguments)
@@ -100,10 +100,10 @@ class Retriever(Generic[AgentDeps, P]):
             return self._on_error(e.message, message)
 
         self._current_retry = 0
-        return messages.FunctionReturn(
-            function_id=message.function_id,
-            function_name=message.function_name,
+        return messages.ToolReturn(
+            tool_name=message.tool_name,
             content=cast(str, response_content),
+            tool_id=message.tool_id,
         )
 
     def _call_args(self, deps: AgentDeps, args_dict: dict[str, Any]) -> tuple[list[Any], dict[str, Any]]:
@@ -119,15 +119,15 @@ class Retriever(Generic[AgentDeps, P]):
         return args, args_dict
 
     def _on_error(
-        self, content: list[pydantic_core.ErrorDetails] | str, call_message: messages.FunctionCall
-    ) -> messages.FunctionRetry:
+        self, content: list[pydantic_core.ErrorDetails] | str, call_message: messages.ToolCall
+    ) -> messages.ToolRetry:
         self._current_retry += 1
         if self._current_retry > self.max_retries:
             # TODO custom error with details of the retriever
             raise
         else:
-            return messages.FunctionRetry(
-                function_id=call_message.function_id,
-                function_name=call_message.function_name,
+            return messages.ToolRetry(
+                tool_name=call_message.tool_name,
                 content=content,
+                tool_id=call_message.tool_id,
             )

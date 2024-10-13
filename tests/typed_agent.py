@@ -15,7 +15,7 @@ class MyDeps:
     bar: int
 
 
-typed_agent1 = Agent(response_type=str, deps=MyDeps(foo=1, bar=2))
+typed_agent1 = Agent(result_type=str, deps=MyDeps(foo=1, bar=2))
 
 
 @contextmanager

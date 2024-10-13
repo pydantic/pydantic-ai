@@ -23,12 +23,12 @@ class UserPrompt:
 
 
 @dataclass
-class FunctionReturn:
-    function_id: str
-    function_name: str
+class ToolReturn:
+    tool_name: str
     content: str
+    tool_id: str | None = None
     timestamp: datetime = field(default_factory=datetime.now)
-    role: Literal['function-return'] = 'function-return'
+    role: Literal['tool-return'] = 'tool-return'
 
     def llm_response(self) -> str:
         # return f'Response from calling {m.function_name}: {m.content}'
@@ -36,12 +36,12 @@ class FunctionReturn:
 
 
 @dataclass
-class FunctionRetry:
-    function_id: str
-    function_name: str
+class ToolRetry:
+    tool_name: str
     content: list[pydantic_core.ErrorDetails] | str
+    tool_id: str | None = None
     timestamp: datetime = field(default_factory=datetime.now)
-    role: Literal['function-retry'] = 'function-retry'
+    role: Literal['tool-retry'] = 'tool-retry'
 
     def llm_response(self) -> str:
         if isinstance(self.content, str):
@@ -65,24 +65,24 @@ class LLMResponse:
 
 
 @dataclass
-class FunctionCall:
+class ToolCall:
     """
     Either a retriever/tool call or structure response from the agent.
     """
 
-    function_id: str
-    function_name: str
+    tool_name: str
     arguments: str
+    tool_id: str | None = None
 
 
 @dataclass
-class LLMFunctionCalls:
-    calls: list[FunctionCall]
+class LLMToolCalls:
+    calls: list[ToolCall]
     timestamp: datetime = field(default_factory=datetime.now)
-    role: Literal['llm-function-calls'] = 'llm-function-calls'
+    role: Literal['llm-tool-calls'] = 'llm-tool-calls'
 
 
-LLMMessage = Union[LLMResponse, LLMFunctionCalls]
-Message = Union[SystemPrompt, UserPrompt, FunctionReturn, FunctionRetry, PlainResponseForbidden, LLMMessage]
+LLMMessage = Union[LLMResponse, LLMToolCalls]
+Message = Union[SystemPrompt, UserPrompt, ToolReturn, ToolRetry, PlainResponseForbidden, LLMMessage]
 
 MessagesTypeAdapter = pydantic.TypeAdapter(list[Annotated[Message, pydantic.Field(discriminator='role')]])

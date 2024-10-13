@@ -1,6 +1,5 @@
 from __future__ import annotations as _annotations
 
-from collections.abc import AsyncIterable
 from dataclasses import dataclass
 from typing import Any, Generic, TypeVar
 
@@ -34,41 +33,24 @@ class RunResult(Generic[ResultData]):
 
 
 @dataclass
-class RunStreamResult(Generic[ResultData]):
-    """Result of an async streamed run."""
-
-    # history: History
-    cost: Cost
-    _streamed: str = ''
-
-    async def stream(self) -> AsyncIterable[str]:
-        """Iterate through the result."""
-        raise NotImplementedError()
-
-    async def response(self) -> ResultData:
-        """Access the combined result - basically the chunks yielded by `stream` concatenated together and validated."""
-        raise NotImplementedError()
-
-
-@dataclass
 class ResultSchema(Generic[ResultData]):
     """Model the final response from an agent run.
 
-    Similar to `Retriever` but for the final response
+    Similar to `Retriever` but for the final result of running an agent.
     """
 
     name: str
     description: str
     type_adapter: TypeAdapter[Any]
     json_schema: _utils.ObjectJsonSchema
-    allow_plain_response: bool
+    allow_text_result: bool
     outer_typed_dict: bool
     max_retries: int
     _current_retry: int = 0
 
     @classmethod
     def build(cls, response_type: type[ResultData], name: str, description: str, retries: int) -> Self | None:
-        """Build a ResponseModel dataclass from a response type."""
+        """Build a ResultSchema dataclass from a response type."""
         if response_type is str:
             return None
 
@@ -86,13 +68,13 @@ class ResultSchema(Generic[ResultData]):
             description=description,
             type_adapter=type_adapter,
             json_schema=_utils.check_object_json_schema(type_adapter.json_schema()),
-            allow_plain_response=_utils.allow_plain_str(response_type),
+            allow_text_result=_utils.allow_plain_str(response_type),
             outer_typed_dict=outer_typed_dict,
             max_retries=retries,
         )
 
-    def validate(self, message: messages.FunctionCall) -> _utils.Either[ResultData, messages.FunctionRetry]:
-        """Validate a message."""
+    def validate(self, message: messages.ToolCall) -> _utils.Either[ResultData, messages.ToolRetry]:
+        """Validate a result message."""
         try:
             result = self.type_adapter.validate_json(message.arguments)
         except ValidationError as e:
@@ -100,8 +82,10 @@ class ResultSchema(Generic[ResultData]):
             if self._current_retry > self.max_retries:
                 raise
             else:
-                m = messages.FunctionRetry(
-                    function_id=message.function_id, function_name=message.function_name, content=e.errors()
+                m = messages.ToolRetry(
+                    tool_name=message.tool_name,
+                    content=e.errors(),
+                    tool_id=message.tool_id,
                 )
                 return _utils.Either(right=m)
         else:

@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from .. import _utils
-from ..messages import FunctionCall, LLMFunctionCalls, LLMMessage, LLMResponse, Message
+from ..messages import LLMMessage, LLMResponse, LLMToolCalls, Message, ToolCall
 from . import AbstractToolDefinition, AgentModel, Model
 
 
@@ -31,31 +31,31 @@ class TestModel(Model):
     __test__ = False
 
     call_retrievers: list[str] | Literal['all'] = 'all'
-    custom_response_text: str | None = None
-    custom_response_args: Any | None = None
+    custom_result_text: str | None = None
+    custom_result_args: Any | None = None
 
-    def agent_model(self, allow_plain_response: bool, tools: list[AbstractToolDefinition]) -> AgentModel:
+    def agent_model(
+        self, allow_text_result: bool, tools: list[AbstractToolDefinition], result_tool_name: str | None
+    ) -> AgentModel:
         if self.call_retrievers == 'all':
             retriever_calls = [(r.name, gen_retriever_args(r)) for r in tools if r.name != 'response']
         else:
             lookup = {r.name: r for r in tools}
             retriever_calls = [(name, gen_retriever_args(lookup[name])) for name in self.call_retrievers]
 
-        if self.custom_response_text is not None:
-            if not allow_plain_response:
-                raise ValueError('Plain response not allowed, but `custom_response_text` is set.')
-            final_response: _utils.Either[str, str] = _utils.Either(left=self.custom_response_text)
-        elif self.custom_response_args is not None:
-            response_def = next((r for r in tools if r.name == 'response'), None)
-            if response_def is None:
-                raise ValueError('Custom response arguments provided, but no response tool found.')
-            final_response = _utils.Either(right=self.custom_response_args)
+        if self.custom_result_text is not None:
+            if not allow_text_result:
+                raise ValueError('Plain response not allowed, but `custom_result_text` is set.')
+            result: _utils.Either[str, str] = _utils.Either(left=self.custom_result_text)
+        elif self.custom_result_args is not None:
+            assert result_tool_name is not None, 'No result tool name provided, but `custom_result_args` is set.'
+            result = _utils.Either(right=self.custom_result_args)
+        elif result_tool_name is not None:
+            response_def = next(r for r in tools if r.name == result_tool_name)
+            result = _utils.Either(right=gen_retriever_args(response_def))
         else:
-            if response_def := next((r for r in tools if r.name == 'response'), None):
-                final_response = _utils.Either(right=gen_retriever_args(response_def))
-            else:
-                final_response = _utils.Either(left='Final response')
-        return TestAgentModel(retriever_calls, final_response)
+            result = _utils.Either(left='Final response')
+        return TestAgentModel(retriever_calls, result, result_tool_name)
 
 
 @dataclass
@@ -64,28 +64,23 @@ class TestAgentModel(AgentModel):
     __test__ = False
 
     retriever_calls: list[tuple[str, str]]
-    # left means the final response is plain text, right means it's a function call
-    final_response: _utils.Either[str, str]
+    # left means the text is plain text, right means it's a function call
+    result: _utils.Either[str, str]
+    result_tool_name: str | None
     step: int = 0
 
     async def request(self, messages: list[Message]) -> LLMMessage:
         if self.step == 0:
             self.step += 1
-            return LLMFunctionCalls(
-                calls=[
-                    FunctionCall(function_id=name, function_name=name, arguments=args)
-                    for name, args in self.retriever_calls
-                ]
-            )
+            return LLMToolCalls(calls=[ToolCall(tool_name=name, arguments=args) for name, args in self.retriever_calls])
         elif self.step == 1:
             self.step += 1
-            if response_text := self.final_response.left:
+            if response_text := self.result.left:
                 return LLMResponse(content=response_text)
             else:
-                response_args = self.final_response.right
-                return LLMFunctionCalls(
-                    calls=[FunctionCall(function_id='response', function_name='response', arguments=response_args)]
-                )
+                assert self.result_tool_name is not None, 'No result tool name provided'
+                response_args = self.result.right
+                return LLMToolCalls(calls=[ToolCall(tool_name=self.result_tool_name, arguments=response_args)])
         else:
             raise ValueError('Invalid step')
 

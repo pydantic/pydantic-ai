@@ -19,18 +19,24 @@ class Model(ABC):
     """Abstract class for a model."""
 
     @abstractmethod
-    def agent_model(self, allow_plain_response: bool, tools: list[AbstractToolDefinition]) -> AgentModel:
+    def agent_model(
+        self, allow_text_result: bool, tools: list[AbstractToolDefinition], result_tool_name: str | None
+    ) -> AgentModel:
         """Create an agent model.
 
         Args:
-            allow_plain_response: Whether plain text final response is permitted.
+            allow_text_result: Whether a plain text final response/result is permitted.
             tools: The tools available to the agent.
+            result_tool_name: The name of the tool that will be used to generate the final result if there is one.
+
+        Returns:
+            An agent model.
         """
         raise NotImplementedError()
 
 
 class AgentModel(ABC):
-    """Model set up for a specific agent."""
+    """Model configured for a specific agent."""
 
     @abstractmethod
     async def request(self, messages: list[Message]) -> LLMMessage:
@@ -38,6 +44,7 @@ class AgentModel(ABC):
         raise NotImplementedError()
 
     # TODO streamed response
+    # TODO support for non JSON tool calls
 
 
 def infer_model(model: Model | KnownModelName) -> Model:

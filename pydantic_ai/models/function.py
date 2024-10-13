@@ -12,7 +12,7 @@ if TYPE_CHECKING:
 
 class FunctionDef(Protocol):
     def __call__(
-        self, messages: list[Message], allow_plain_response: bool, tools: dict[str, ToolDescription], /
+        self, messages: list[Message], allow_text_result: bool, tools: dict[str, ToolDescription], /
     ) -> LLMMessage: ...
 
 
@@ -30,10 +30,12 @@ class FunctionModel(Model):
 
     function: FunctionDef
 
-    def agent_model(self, allow_plain_response: bool, tools: list[AbstractToolDefinition]) -> AgentModel:
+    def agent_model(
+        self, allow_text_result: bool, tools: list[AbstractToolDefinition], result_tool_name: str | None
+    ) -> AgentModel:
         return FunctionAgentModel(
             self.function,
-            allow_plain_response,
+            allow_text_result,
             {r.name: ToolDescription(r.name, r.description, r.json_schema) for r in tools},
         )
 
@@ -43,8 +45,8 @@ class FunctionAgentModel(AgentModel):
     __test__ = False
 
     function: FunctionDef
-    allow_plain_response: bool
+    allow_text_result: bool
     tools: dict[str, ToolDescription]
 
     async def request(self, messages: list[Message]) -> LLMMessage:
-        return self.function(messages, self.allow_plain_response, self.tools)
+        return self.function(messages, self.allow_text_result, self.tools)

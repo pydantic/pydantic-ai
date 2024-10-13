@@ -8,7 +8,7 @@ class MyModel(BaseModel):
     country: str
 
 
-agent = Agent('openai:gpt-4o', response_type=MyModel, deps=None)
+agent = Agent('openai:gpt-4o', result_type=MyModel, deps=None)
 
 result = agent.run_sync('The windy city in the US of A.')
 

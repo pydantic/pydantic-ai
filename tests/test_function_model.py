@@ -10,13 +10,13 @@ from pydantic import BaseModel
 
 from pydantic_ai import Agent, CallContext
 from pydantic_ai.messages import (
-    FunctionCall,
-    FunctionReturn,
-    LLMFunctionCalls,
     LLMMessage,
     LLMResponse,
+    LLMToolCalls,
     Message,
     SystemPrompt,
+    ToolCall,
+    ToolReturn,
     UserPrompt,
 )
 from pydantic_ai.models.function import FunctionModel, ToolDescription
@@ -30,7 +30,7 @@ else:
 
 
 def return_last(
-    messages: list[Message], _allow_plain_response: bool, _retrievers: dict[str, ToolDescription]
+    messages: list[Message], _allow_text_result: bool, _retrievers: dict[str, ToolDescription]
 ) -> LLMMessage:
     last = messages[-1]
     response = asdict(last)
@@ -87,27 +87,24 @@ def test_simple():
 
 
 def whether_model(
-    messages: list[Message], allow_plain_response: bool, retrievers: dict[str, ToolDescription]
+    messages: list[Message], allow_text_result: bool, retrievers: dict[str, ToolDescription]
 ) -> LLMMessage:  # pragma: no cover
-    assert allow_plain_response
+    assert allow_text_result
     assert retrievers.keys() == {'get_location', 'get_whether'}
     last = messages[-1]
     if last.role == 'user':
-        return LLMFunctionCalls(
+        return LLMToolCalls(
             calls=[
-                FunctionCall(
-                    function_id='1',
-                    function_name='get_location',
+                ToolCall(
+                    tool_name='get_location',
                     arguments=json.dumps({'location_description': last.content}),
                 )
             ]
         )
-    elif last.role == 'function-return':
-        if last.function_name == 'get_location':
-            return LLMFunctionCalls(
-                calls=[FunctionCall(function_id='2', function_name='get_whether', arguments=last.content)]
-            )
-        elif last.function_name == 'get_whether':
+    elif last.role == 'tool-return':
+        if last.tool_name == 'get_location':
+            return LLMToolCalls(calls=[ToolCall(tool_name='get_whether', arguments=last.content)])
+        elif last.tool_name == 'get_whether':
             location_name = next(m.content for m in messages if m.role == 'user')
             return LLMResponse(f'{last.content} in {location_name}')
 
@@ -145,41 +142,29 @@ def test_whether():
                 timestamp=IsNow(),
                 role='user',
             ),
-            LLMFunctionCalls(
-                calls=[
-                    FunctionCall(
-                        function_id='1',
-                        function_name='get_location',
-                        arguments='{"location_description": "London"}',
-                    )
-                ],
+            LLMToolCalls(
+                calls=[ToolCall(tool_name='get_location', arguments='{"location_description": "London"}')],
                 timestamp=IsNow(),
-                role='llm-function-calls',
+                role='llm-tool-calls',
             ),
-            FunctionReturn(
-                function_id='1',
-                function_name='get_location',
-                content='{"lat": 51, "lng": 0}',
-                timestamp=IsNow(),
-                role='function-return',
+            ToolReturn(
+                tool_name='get_location', content='{"lat": 51, "lng": 0}', timestamp=IsNow(), role='tool-return'
             ),
-            LLMFunctionCalls(
+            LLMToolCalls(
                 calls=[
-                    FunctionCall(
-                        function_id='2',
-                        function_name='get_whether',
+                    ToolCall(
+                        tool_name='get_whether',
                         arguments='{"lat": 51, "lng": 0}',
                     )
                 ],
                 timestamp=IsNow(),
-                role='llm-function-calls',
+                role='llm-tool-calls',
             ),
-            FunctionReturn(
-                function_id='2',
-                function_name='get_whether',
+            ToolReturn(
+                tool_name='get_whether',
                 content='Raining',
                 timestamp=IsNow(),
-                role='function-return',
+                role='tool-return',
             ),
             LLMResponse(
                 content='Raining in London',
@@ -194,22 +179,21 @@ def test_whether():
 
 
 def call_function_model(
-    messages: list[Message], _allow_plain_response: bool, _tools: dict[str, ToolDescription]
+    messages: list[Message], _allow_text_result: bool, _tools: dict[str, ToolDescription]
 ) -> LLMMessage:  # pragma: no cover
     last = messages[-1]
     if last.role == 'user':
         if last.content.startswith('{'):
             details = json.loads(last.content)
-            return LLMFunctionCalls(
+            return LLMToolCalls(
                 calls=[
-                    FunctionCall(
-                        function_id='1',
-                        function_name=details['function'],
+                    ToolCall(
+                        tool_name=details['function'],
                         arguments=json.dumps(details['arguments']),
                     )
                 ]
             )
-    elif last.role == 'function-return':
+    elif last.role == 'tool-return':
         return LLMResponse(pydantic_core.to_json(last).decode())
 
     raise ValueError(f'Unexpected message: {last}')
@@ -229,22 +213,22 @@ def test_var_args():
     response_data = json.loads(result.response)
     assert response_data == snapshot(
         {
-            'function_id': '1',
-            'function_name': 'get_var_args',
+            'tool_name': 'get_var_args',
             'content': '{"args": [1, 2, 3]}',
+            'tool_id': None,
             'timestamp': IsNow(iso_string=True),
-            'role': 'function-return',
+            'role': 'tool-return',
         }
     )
 
 
 def call_retriever(
-    messages: list[Message], _allow_plain_response: bool, retrievers: dict[str, ToolDescription]
+    messages: list[Message], _allow_text_result: bool, retrievers: dict[str, ToolDescription]
 ) -> LLMMessage:
     if len(messages) == 1:
         assert len(retrievers) == 1
         retriever_id = next(iter(retrievers.keys()))
-        return LLMFunctionCalls(calls=[FunctionCall(function_id='1', function_name=retriever_id, arguments='{}')])
+        return LLMToolCalls(calls=[ToolCall(tool_name=retriever_id, arguments='{}')])
     else:
         return LLMResponse('final response')
 
@@ -295,11 +279,9 @@ def test_result_schema_tuple():
         assert len(retrievers) == 1
         retriever_key = next(iter(retrievers.keys()))
         tuple_json = '{"response": ["foo", "bar"]}'
-        return LLMFunctionCalls(
-            calls=[FunctionCall(function_id='1', function_name=retriever_key, arguments=tuple_json)]
-        )
+        return LLMToolCalls(calls=[ToolCall(tool_name=retriever_key, arguments=tuple_json)])
 
-    agent = Agent(FunctionModel(return_tuple), deps=None, response_type=tuple[str, str])
+    agent = Agent(FunctionModel(return_tuple), deps=None, result_type=tuple[str, str])
 
     result = agent.run_sync('Hello')
     assert result.response == ('foo', 'bar')
@@ -314,11 +296,9 @@ def test_result_schema_pydantic_model():
         assert len(retrievers) == 1
         retriever_key = next(iter(retrievers.keys()))
         tuple_json = '{"a": 1, "b": "foo"}'
-        return LLMFunctionCalls(
-            calls=[FunctionCall(function_id='1', function_name=retriever_key, arguments=tuple_json)]
-        )
+        return LLMToolCalls(calls=[ToolCall(tool_name=retriever_key, arguments=tuple_json)])
 
-    agent = Agent(FunctionModel(return_tuple), deps=None, response_type=Foo)
+    agent = Agent(FunctionModel(return_tuple), deps=None, result_type=Foo)
 
     result = agent.run_sync('Hello')
     assert isinstance(result.response, Foo)
@@ -368,13 +348,13 @@ def spam() -> str:
 
 
 def test_register_all():
-    def f(messages: list[Message], allow_plain_response: bool, retrievers: dict[str, ToolDescription]) -> LLMMessage:
+    def f(messages: list[Message], allow_text_result: bool, retrievers: dict[str, ToolDescription]) -> LLMMessage:
         return LLMResponse(
-            f'messages={len(messages)} allow_plain_response={allow_plain_response} retrievers={len(retrievers)}'
+            f'messages={len(messages)} allow_text_result={allow_text_result} retrievers={len(retrievers)}'
         )
 
     result = agent_all.run_sync('Hello', model=FunctionModel(f))
-    assert result.response == snapshot('messages=2 allow_plain_response=True retrievers=5')
+    assert result.response == snapshot('messages=2 allow_text_result=True retrievers=5')
 
 
 def test_call_all():
@@ -384,21 +364,21 @@ def test_call_all():
         [
             SystemPrompt(content='foobar'),
             UserPrompt(content='Hello', timestamp=IsNow()),
-            LLMFunctionCalls(
+            LLMToolCalls(
                 calls=[
-                    FunctionCall(function_id='foo', function_name='foo', arguments='{"x": 0}'),
-                    FunctionCall(function_id='bar', function_name='bar', arguments='{"x": 0}'),
-                    FunctionCall(function_id='baz', function_name='baz', arguments='{"x": 0}'),
-                    FunctionCall(function_id='qux', function_name='qux', arguments='{"x": 0}'),
-                    FunctionCall(function_id='quz', function_name='quz', arguments='{"x": "a"}'),
+                    ToolCall(tool_name='foo', arguments='{"x": 0}'),
+                    ToolCall(tool_name='bar', arguments='{"x": 0}'),
+                    ToolCall(tool_name='baz', arguments='{"x": 0}'),
+                    ToolCall(tool_name='qux', arguments='{"x": 0}'),
+                    ToolCall(tool_name='quz', arguments='{"x": "a"}'),
                 ],
                 timestamp=IsNow(),
             ),
-            FunctionReturn(function_id='foo', function_name='foo', content='1', timestamp=IsNow()),
-            FunctionReturn(function_id='bar', function_name='bar', content='2', timestamp=IsNow()),
-            FunctionReturn(function_id='baz', function_name='baz', content='3', timestamp=IsNow()),
-            FunctionReturn(function_id='qux', function_name='qux', content='4', timestamp=IsNow()),
-            FunctionReturn(function_id='quz', function_name='quz', content='a', timestamp=IsNow()),
+            ToolReturn(tool_name='foo', content='1', timestamp=IsNow()),
+            ToolReturn(tool_name='bar', content='2', timestamp=IsNow()),
+            ToolReturn(tool_name='baz', content='3', timestamp=IsNow()),
+            ToolReturn(tool_name='qux', content='4', timestamp=IsNow()),
+            ToolReturn(tool_name='quz', content='a', timestamp=IsNow()),
             LLMResponse(content='Final response', timestamp=IsNow()),
         ]
     )
@@ -416,7 +396,7 @@ async def do_foobar(foo: int, bar: str) -> str:
 
 
 def test_docstring():
-    def f(_messages: list[Message], _allow_plain_response: bool, retrievers: dict[str, ToolDescription]) -> LLMMessage:
+    def f(_messages: list[Message], _allow_text_result: bool, retrievers: dict[str, ToolDescription]) -> LLMMessage:
         assert len(retrievers) == 1
         r = next(iter(retrievers.values()))
         return LLMResponse(json.dumps(r.json_schema))
