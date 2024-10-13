@@ -21,7 +21,8 @@ from pydantic_core import SchemaValidator, core_schema
 from ._utils import ObjectJsonSchema, check_object_json_schema, is_model_like
 
 if TYPE_CHECKING:
-    from . import retrievers as _r
+    from . import _retriever
+    from .call import AgentDeps
 
 
 __all__ = ('function_schema',)
@@ -39,7 +40,7 @@ class FunctionSchema(TypedDict):
     var_positional_field: str | None
 
 
-def function_schema(either_function: _r.RetrieverEitherFunc[_r.AgentDeps, _r.P]) -> FunctionSchema:
+def function_schema(either_function: _retriever.RetrieverEitherFunc[AgentDeps, _retriever.P]) -> FunctionSchema:
     """Build a Pydantic validator and JSON schema from a retriever function.
 
     Args:
@@ -227,7 +228,7 @@ def _infer_docstring_style(doc: str) -> DocstringStyle:
 
 
 def _is_call_ctx(annotation: Any) -> bool:
-    from .retrievers import CallContext
+    from .call import CallContext
 
     return annotation is CallContext or (
         _typing_extra.is_generic_alias(annotation) and get_origin(annotation) is CallContext

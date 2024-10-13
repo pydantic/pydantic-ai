@@ -3,52 +3,34 @@ from __future__ import annotations as _annotations
 import inspect
 from collections.abc import Awaitable
 from dataclasses import dataclass
-from typing import Any, Callable, Generic, TypeVar, Union, cast
+from typing import Any, Callable, Generic, Union, cast
 
 import pydantic_core
 from pydantic import ValidationError
 from pydantic_core import SchemaValidator
 from typing_extensions import Concatenate, ParamSpec
 
-from . import _pydantic, _utils, messages
+from . import _pydantic, _utils, call, messages
 
-AgentDeps = TypeVar('AgentDeps')
 # retrieval function parameters
 P = ParamSpec('P')
 
 
-@dataclass
-class CallContext(Generic[AgentDeps]):
-    """Information about the current call."""
-
-    deps: AgentDeps
-    # do we allow retries within functions?
-    retry: int
-
-
 # Usage `RetrieverContextFunc[AgentDependencies, P]`
-RetrieverContextFunc = Callable[Concatenate[CallContext[AgentDeps], P], Union[str, Awaitable[str]]]
+RetrieverContextFunc = Callable[Concatenate[call.CallContext[call.AgentDeps], P], Union[str, Awaitable[str]]]
 # Usage `RetrieverPlainFunc[P]`
 RetrieverPlainFunc = Callable[P, Union[str, Awaitable[str]]]
 # Usage `RetrieverEitherFunc[AgentDependencies, P]`
-RetrieverEitherFunc = _utils.Either[RetrieverContextFunc[AgentDeps, P], RetrieverPlainFunc[P]]
-
-
-class Retry(Exception):
-    """Exception raised when a retriever function should be retried."""
-
-    def __init__(self, message: str):
-        self.message = message
-        super().__init__(message)
+RetrieverEitherFunc = _utils.Either[RetrieverContextFunc[call.AgentDeps, P], RetrieverPlainFunc[P]]
 
 
 @dataclass(init=False)
-class Retriever(Generic[AgentDeps, P]):
+class Retriever(Generic[call.AgentDeps, P]):
     """A retriever function for an agent."""
 
     name: str
     description: str
-    function: RetrieverEitherFunc[AgentDeps, P]
+    function: RetrieverEitherFunc[call.AgentDeps, P]
     is_async: bool
     takes_ctx: bool
     single_arg_name: str | None
@@ -59,7 +41,7 @@ class Retriever(Generic[AgentDeps, P]):
     max_retries: int
     _current_retry: int = 0
 
-    def __init__(self, function: RetrieverEitherFunc[AgentDeps, P], retries: int):
+    def __init__(self, function: RetrieverEitherFunc[call.AgentDeps, P], retries: int):
         """Build a Retriever dataclass from a function."""
         self.function = function
         f = _pydantic.function_schema(function)
@@ -78,7 +60,7 @@ class Retriever(Generic[AgentDeps, P]):
         """Reset the current retry count."""
         self._current_retry = 0
 
-    async def run(self, deps: AgentDeps, message: messages.ToolCall) -> messages.Message:
+    async def run(self, deps: call.AgentDeps, message: messages.ToolCall) -> messages.Message:
         """Run the retriever function asynchronously."""
         try:
             args_dict = self.validator.validate_json(message.arguments)
@@ -86,31 +68,28 @@ class Retriever(Generic[AgentDeps, P]):
             return self._on_error(e.errors(include_url=False), message)
 
         args, kwargs = self._call_args(deps, args_dict)
-        function = self.function.whichever()
         try:
             if self.is_async:
-                response_content = await function(*args, **kwargs)  # pyright: ignore[reportCallIssue,reportUnknownVariableType,reportGeneralTypeIssues]
+                function = cast(Callable[[Any], Awaitable[str]], self.function.whichever())
+                response_content = await function(*args, **kwargs)
             else:
-                response_content = await _utils.run_in_executor(
-                    function,  # pyright: ignore[reportArgumentType,reportCallIssue]
-                    *args,
-                    **kwargs,
-                )
-        except Retry as e:
+                function = cast(Callable[[Any], str], self.function.whichever())
+                response_content = await _utils.run_in_executor(function, *args, **kwargs)
+        except call.Retry as e:
             return self._on_error(e.message, message)
 
         self._current_retry = 0
         return messages.ToolReturn(
             tool_name=message.tool_name,
-            content=cast(str, response_content),
+            content=response_content,
             tool_id=message.tool_id,
         )
 
-    def _call_args(self, deps: AgentDeps, args_dict: dict[str, Any]) -> tuple[list[Any], dict[str, Any]]:
+    def _call_args(self, deps: call.AgentDeps, args_dict: dict[str, Any]) -> tuple[list[Any], dict[str, Any]]:
         if self.single_arg_name:
             args_dict = {self.single_arg_name: args_dict}
 
-        args = [CallContext(deps, self._current_retry)] if self.function.is_left() else []
+        args = [call.CallContext(deps, self._current_retry)] if self.function.is_left() else []
         for positional_field in self.positional_fields:
             args.append(args_dict.pop(positional_field))
         if self.var_positional_field:

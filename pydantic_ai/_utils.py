@@ -86,52 +86,51 @@ class Some(Generic[_T]):
 Option: TypeAlias = Union[Some[_T], None]
 
 
-_Left = TypeVar('_Left')
-_Right = TypeVar('_Right')
+Left = TypeVar('Left')
+Right = TypeVar('Right')
 
 
-class Either(Generic[_Left, _Right]):
+class Either(Generic[Left, Right]):
     """Two member Union that records which member was set, this is analogous to Rust enums with two variants.
 
     Usage:
 
     ```py
     if left_thing := either.left:
-        use_left(left_thing)
+        use_left(left_thing.value)
     else:
         use_right(either.right)
     ```
     """
 
-    @overload
-    def __init__(self, *, left: _Left) -> None: ...
+    __slots__ = '_left', '_right'
 
     @overload
-    def __init__(self, *, right: _Right) -> None: ...
+    def __init__(self, *, left: Left) -> None: ...
+
+    @overload
+    def __init__(self, *, right: Right) -> None: ...
 
     def __init__(self, **kwargs: Any) -> None:
         keys = set(kwargs.keys())
         if keys == {'left'}:
-            self._left: Option[_Left] = Some(kwargs['left'])
-            self._right: _Right | None = None
+            self._left: Option[Left] = Some(kwargs['left'])
         elif keys == {'right'}:
             self._left = None
             self._right = kwargs['right']
         else:
-            raise TypeError('Either must receive exactly one value - `left` or `right`')
+            raise TypeError('Either must receive exactly one argument - `left` or `right`')
 
     @property
-    def left(self) -> Option[_Left]:
+    def left(self) -> Option[Left]:
         return self._left
 
     @property
-    def right(self) -> _Right:
-        if self._right is None:
-            raise TypeError('Right not set')
+    def right(self) -> Right:
         return self._right
 
     def is_left(self) -> bool:
         return self._left is not None
 
-    def whichever(self) -> _Left | _Right:
+    def whichever(self) -> Left | Right:
         return self._left.value if self._left is not None else self.right
