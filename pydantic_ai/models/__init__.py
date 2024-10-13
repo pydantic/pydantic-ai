@@ -19,8 +19,13 @@ class Model(ABC):
     """Abstract class for a model."""
 
     @abstractmethod
-    def agent_model(self, allow_plain_message: bool, retrievers: list[AbstractRetrieverDefinition]) -> AgentModel:
-        """Create an agent model."""
+    def agent_model(self, allow_plain_response: bool, tools: list[AbstractToolDefinition]) -> AgentModel:
+        """Create an agent model.
+
+        Args:
+            allow_plain_response: Whether plain text final response is permitted.
+            tools: The tools available to the agent.
+        """
         raise NotImplementedError()
 
 
@@ -47,8 +52,11 @@ def infer_model(model: Model | KnownModelName) -> Model:
         raise TypeError(f'Invalid model: {model}')
 
 
-class AbstractRetrieverDefinition(Protocol):
-    """Abstract definition of a retriever/function/tool."""
+class AbstractToolDefinition(Protocol):
+    """Abstract definition of a function/tool.
+
+    These are generally retrievers, but can also include the response function if one exists.
+    """
 
     name: str
     description: str

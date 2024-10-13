@@ -61,7 +61,7 @@ class ResultSchema(Generic[ResultData]):
     description: str
     type_adapter: TypeAdapter[Any]
     json_schema: _utils.ObjectJsonSchema
-    allow_plain_message: bool
+    allow_plain_response: bool
     outer_typed_dict: bool
     max_retries: int
     _current_retry: int = 0
@@ -86,7 +86,7 @@ class ResultSchema(Generic[ResultData]):
             description=description,
             type_adapter=type_adapter,
             json_schema=_utils.check_object_json_schema(type_adapter.json_schema()),
-            allow_plain_message=_utils.allow_plain_str(response_type),
+            allow_plain_response=_utils.allow_plain_str(response_type),
             outer_typed_dict=outer_typed_dict,
             max_retries=retries,
         )

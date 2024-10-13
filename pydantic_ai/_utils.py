@@ -53,11 +53,16 @@ def is_model_like(type_: Any) -> bool:
     )
 
 
-class ObjectJsonSchema(TypedDict):
-    type: Literal['object']
-    title: str
-    properties: dict[str, JsonSchemaValue]
-    required: list[str]
+ObjectJsonSchema = TypedDict(
+    'ObjectJsonSchema',
+    {
+        'type': Literal['object'],
+        'title': str,
+        'properties': dict[str, JsonSchemaValue],
+        'required': list[str],
+        '$defs': dict[str, Any],
+    },
+)
 
 
 def check_object_json_schema(schema: JsonSchemaValue) -> ObjectJsonSchema:

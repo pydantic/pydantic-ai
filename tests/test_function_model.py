@@ -16,9 +16,11 @@ from pydantic_ai.messages import (
     LLMMessage,
     LLMResponse,
     Message,
+    SystemPrompt,
     UserPrompt,
 )
-from pydantic_ai.models.function import FunctionModel, RetrieverDescription
+from pydantic_ai.models.function import FunctionModel, ToolDescription
+from pydantic_ai.models.test import TestModel
 
 if TYPE_CHECKING:
 
@@ -28,7 +30,7 @@ else:
 
 
 def return_last(
-    messages: list[Message], _allow_plain_message: bool, _retrievers: dict[str, RetrieverDescription]
+    messages: list[Message], _allow_plain_response: bool, _retrievers: dict[str, ToolDescription]
 ) -> LLMMessage:
     last = messages[-1]
     response = asdict(last)
@@ -85,9 +87,9 @@ def test_simple():
 
 
 def whether_model(
-    messages: list[Message], allow_plain_message: bool, retrievers: dict[str, RetrieverDescription]
-) -> LLMMessage:
-    assert allow_plain_message
+    messages: list[Message], allow_plain_response: bool, retrievers: dict[str, ToolDescription]
+) -> LLMMessage:  # pragma: no cover
+    assert allow_plain_response
     assert retrievers.keys() == {'get_location', 'get_whether'}
     last = messages[-1]
     if last.role == 'user':
@@ -192,8 +194,8 @@ def test_whether():
 
 
 def call_function_model(
-    messages: list[Message], allow_plain_message: bool, retrievers: dict[str, RetrieverDescription]
-) -> LLMMessage:
+    messages: list[Message], _allow_plain_response: bool, _tools: dict[str, ToolDescription]
+) -> LLMMessage:  # pragma: no cover
     last = messages[-1]
     if last.role == 'user':
         if last.content.startswith('{'):
@@ -237,7 +239,7 @@ def test_var_args():
 
 
 def call_retriever(
-    messages: list[Message], _allow_plain_message: bool, retrievers: dict[str, RetrieverDescription]
+    messages: list[Message], _allow_plain_response: bool, retrievers: dict[str, ToolDescription]
 ) -> LLMMessage:
     if len(messages) == 1:
         assert len(retrievers) == 1
@@ -289,7 +291,7 @@ def test_deps_init():
 
 
 def test_result_schema_tuple():
-    def return_tuple(_: list[Message], __: bool, retrievers: dict[str, RetrieverDescription]) -> LLMMessage:
+    def return_tuple(_: list[Message], __: bool, retrievers: dict[str, ToolDescription]) -> LLMMessage:
         assert len(retrievers) == 1
         retriever_key = next(iter(retrievers.keys()))
         tuple_json = '{"response": ["foo", "bar"]}'
@@ -308,7 +310,7 @@ def test_result_schema_pydantic_model():
         a: int
         b: str
 
-    def return_tuple(_: list[Message], __: bool, retrievers: dict[str, RetrieverDescription]) -> LLMMessage:
+    def return_tuple(_: list[Message], __: bool, retrievers: dict[str, ToolDescription]) -> LLMMessage:
         assert len(retrievers) == 1
         retriever_key = next(iter(retrievers.keys()))
         tuple_json = '{"a": 1, "b": "foo"}'
@@ -337,22 +339,27 @@ agent_all = Agent(deps=None)
 
 @agent_all.retriever_context
 async def foo(_: CallContext[None], x: int) -> str:
-    return str(x * 2)
+    return str(x + 1)
 
 
 @agent_all.retriever_context(retries=3)
-def bar(_: CallContext[None], x: int) -> str:
-    return str(x * 3)
+def bar(ctx, x: int) -> str:  # pyright: ignore[reportUnknownParameterType,reportMissingParameterType]
+    return str(x + 2)
 
 
 @agent_all.retriever_plain
 async def baz(x: int) -> str:
-    return str(x * 4)
+    return str(x + 3)
 
 
 @agent_all.retriever_plain(retries=1)
 def qux(x: int) -> str:
-    return str(x * 5)
+    return str(x + 4)
+
+
+@agent_all.retriever_plain  # pyright: ignore[reportUnknownArgumentType]
+def quz(x) -> str:  # pyright: ignore[reportUnknownParameterType,reportMissingParameterType]
+    return str(x)  # pyright: ignore[reportUnknownArgumentType]
 
 
 @agent_all.system_prompt
@@ -361,12 +368,75 @@ def spam() -> str:
 
 
 def test_register_all():
-    def f(
-        messages: list[Message], allow_plain_message: bool, retrievers: dict[str, RetrieverDescription]
-    ) -> LLMMessage:
+    def f(messages: list[Message], allow_plain_response: bool, retrievers: dict[str, ToolDescription]) -> LLMMessage:
         return LLMResponse(
-            f'messages={len(messages)} allow_plain_message={allow_plain_message} retrievers={len(retrievers)}'
+            f'messages={len(messages)} allow_plain_response={allow_plain_response} retrievers={len(retrievers)}'
         )
 
     result = agent_all.run_sync('Hello', model=FunctionModel(f))
-    assert result.response == snapshot('messages=2 allow_plain_message=True retrievers=4')
+    assert result.response == snapshot('messages=2 allow_plain_response=True retrievers=5')
+
+
+def test_call_all():
+    result = agent_all.run_sync('Hello', model=TestModel())
+    assert result.response == snapshot('Final response')
+    assert result.message_history == snapshot(
+        [
+            SystemPrompt(content='foobar'),
+            UserPrompt(content='Hello', timestamp=IsNow()),
+            LLMFunctionCalls(
+                calls=[
+                    FunctionCall(function_id='foo', function_name='foo', arguments='{"x": 0}'),
+                    FunctionCall(function_id='bar', function_name='bar', arguments='{"x": 0}'),
+                    FunctionCall(function_id='baz', function_name='baz', arguments='{"x": 0}'),
+                    FunctionCall(function_id='qux', function_name='qux', arguments='{"x": 0}'),
+                    FunctionCall(function_id='quz', function_name='quz', arguments='{"x": "a"}'),
+                ],
+                timestamp=IsNow(),
+            ),
+            FunctionReturn(function_id='foo', function_name='foo', content='1', timestamp=IsNow()),
+            FunctionReturn(function_id='bar', function_name='bar', content='2', timestamp=IsNow()),
+            FunctionReturn(function_id='baz', function_name='baz', content='3', timestamp=IsNow()),
+            FunctionReturn(function_id='qux', function_name='qux', content='4', timestamp=IsNow()),
+            FunctionReturn(function_id='quz', function_name='quz', content='a', timestamp=IsNow()),
+            LLMResponse(content='Final response', timestamp=IsNow()),
+        ]
+    )
+
+
+async def do_foobar(foo: int, bar: str) -> str:
+    """
+    Do foobar stuff, a lot.
+
+    Args:
+        foo: The foo thing.
+        bar: The bar thing.
+    """
+    return f'{foo} {bar}'
+
+
+def test_docstring():
+    def f(_messages: list[Message], _allow_plain_response: bool, retrievers: dict[str, ToolDescription]) -> LLMMessage:
+        assert len(retrievers) == 1
+        r = next(iter(retrievers.values()))
+        return LLMResponse(json.dumps(r.json_schema))
+
+    agent = Agent(FunctionModel(f), deps=None)
+    agent.retriever_plain(do_foobar)
+
+    result = agent.run_sync('Hello')
+    json_schema = json.loads(result.response)
+    assert json_schema == snapshot(
+        {
+            'description': 'Do foobar stuff, a lot.',
+            'additionalProperties': False,
+            'properties': {
+                'foo': {'description': 'The foo thing.', 'title': 'Foo', 'type': 'integer'},
+                'bar': {'description': 'The bar thing.', 'title': 'Bar', 'type': 'string'},
+            },
+            'required': ['foo', 'bar'],
+            'type': 'object',
+        }
+    )
+    # description should be the first key
+    assert next(iter(json_schema)) == 'description'

@@ -43,6 +43,7 @@ test:
 testcov: test
 	@echo "building coverage html"
 	@uv run coverage html --show-contexts
+	@uv run coverage report
 
 .PHONY: all
 all: format lint typecheck test
