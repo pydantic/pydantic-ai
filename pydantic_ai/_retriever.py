@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 import inspect
 from collections.abc import Awaitable
 from dataclasses import dataclass
-from typing import Any, Callable, Generic, TypeVar, Union, cast
+from typing import Any, Callable, Generic, Union, cast
 
 import pydantic_core
 from pydantic import ValidationError
@@ -11,19 +11,10 @@ from pydantic_core import SchemaValidator
 from typing_extensions import Concatenate, ParamSpec
 
 from . import _pydantic, _utils, messages
+from .call import AgentDeps, CallContext, Retry
 
-AgentDeps = TypeVar('AgentDeps')
 # retrieval function parameters
 P = ParamSpec('P')
-
-
-@dataclass
-class CallContext(Generic[AgentDeps]):
-    """Information about the current call."""
-
-    deps: AgentDeps
-    # do we allow retries within functions?
-    retry: int
 
 
 # Usage `RetrieverContextFunc[AgentDependencies, P]`
@@ -32,14 +23,6 @@ RetrieverContextFunc = Callable[Concatenate[CallContext[AgentDeps], P], Union[st
 RetrieverPlainFunc = Callable[P, Union[str, Awaitable[str]]]
 # Usage `RetrieverEitherFunc[AgentDependencies, P]`
 RetrieverEitherFunc = _utils.Either[RetrieverContextFunc[AgentDeps, P], RetrieverPlainFunc[P]]
-
-
-class Retry(Exception):
-    """Exception raised when a retriever function should be retried."""
-
-    def __init__(self, message: str):
-        self.message = message
-        super().__init__(message)
 
 
 @dataclass(init=False)
@@ -86,23 +69,20 @@ class Retriever(Generic[AgentDeps, P]):
             return self._on_error(e.errors(include_url=False), message)
 
         args, kwargs = self._call_args(deps, args_dict)
-        function = self.function.whichever()
         try:
             if self.is_async:
-                response_content = await function(*args, **kwargs)  # pyright: ignore[reportCallIssue,reportUnknownVariableType,reportGeneralTypeIssues]
+                function = cast(Callable[[Any], Awaitable[str]], self.function.whichever())
+                response_content = await function(*args, **kwargs)
             else:
-                response_content = await _utils.run_in_executor(
-                    function,  # pyright: ignore[reportArgumentType,reportCallIssue]
-                    *args,
-                    **kwargs,
-                )
+                function = cast(Callable[[Any], str], self.function.whichever())
+                response_content = await _utils.run_in_executor(function, *args, **kwargs)
         except Retry as e:
             return self._on_error(e.message, message)
 
         self._current_retry = 0
         return messages.ToolReturn(
             tool_name=message.tool_name,
-            content=cast(str, response_content),
+            content=response_content,
             tool_id=message.tool_id,
         )
 

@@ -9,7 +9,7 @@ from pydantic import TypeAdapter, ValidationError
 from typing_extensions import Self, TypedDict
 
 from . import _utils, messages
-from .retrievers import AgentDeps, CallContext, Retry
+from .call import AgentDeps, CallContext, Retry
 
 ResultData = TypeVar('ResultData')
 
@@ -72,7 +72,7 @@ class ResultSchema(Generic[ResultData]):
             outer_typed_dict=outer_typed_dict,
         )
 
-    def validate(self, tool_call: messages.ToolCall) -> _utils.Either[ResultData, messages.ToolRetry]:
+    def validate(self, tool_call: messages.ToolCall) -> ResultData:
         """Validate a result message.
 
         Returns:
@@ -86,11 +86,11 @@ class ResultSchema(Generic[ResultData]):
                 content=e.errors(include_url=False),
                 tool_id=tool_call.tool_id,
             )
-            return _utils.Either(right=m)
+            raise ToolRetryError(m) from e
         else:
             if self.outer_typed_dict:
                 result = result['response']
-            return _utils.Either(left=result)
+            return result
 
 
 # A function that always takes `ResultData` and returns `ResultData`,
@@ -116,7 +116,7 @@ class ResultValidator(Generic[AgentDeps, ResultData]):
 
     async def validate(
         self, result: ResultData, deps: AgentDeps, retry: int, tool_call: messages.ToolCall
-    ) -> _utils.Either[ResultData, messages.ToolRetry]:
+    ) -> ResultData:
         """Validate a result but calling the function.
 
         Args:
@@ -126,7 +126,7 @@ class ResultValidator(Generic[AgentDeps, ResultData]):
             tool_call: The original tool call message.
 
         Returns:
-            Either the validated result data (left) or a retry message (right).
+            Result of either the validated result data (ok) or a retry message (Err).
         """
         if self._takes_ctx:
             args = CallContext(deps, retry), result
@@ -146,6 +146,12 @@ class ResultValidator(Generic[AgentDeps, ResultData]):
                 content=r.message,
                 tool_id=tool_call.tool_id,
             )
-            return _utils.Either(right=m)
+            raise ToolRetryError(m) from r
         else:
-            return _utils.Either(left=result_data)
+            return result_data
+
+
+class ToolRetryError(Exception):
+    def __init__(self, tool_retry: messages.ToolRetry):
+        self.tool_retry = tool_retry
+        super().__init__()

@@ -7,10 +7,9 @@ from typing import Any, Callable, Generic, Literal, cast, overload
 
 from typing_extensions import assert_never
 
-from . import _system_prompt, _utils, messages as _messages, models as _models, result as _result, retrievers as _r
-from .models import Model
+from . import _retriever as _r, _system_prompt, _utils, messages as _messages, models as _models, result as _result
+from .call import AgentDeps
 from .result import ResultData
-from .retrievers import AgentDeps
 
 __all__ = ('Agent',)
 KnownModelName = Literal['openai:gpt-4o', 'openai:gpt-4-turbo', 'openai:gpt-4', 'openai:gpt-3.5-turbo']
@@ -21,7 +20,7 @@ class Agent(Generic[AgentDeps, ResultData]):
     """Main class for creating "agents" - a way to have a specific type of "conversation" with an LLM."""
 
     # slots mostly for my sanity — knowing what attributes are available
-    _model: Model | None
+    _model: _models.Model | None
     _result_tool: _result.ResultSchema[ResultData] | None
     _result_validators: list[_result.ResultValidator[AgentDeps, ResultData]]
     _allow_text_result: bool
@@ -198,7 +197,7 @@ class Agent(Generic[AgentDeps, ResultData]):
             return self._register_retriever(_utils.Either(right=func), retries)
 
     def _register_retriever(
-        self, func: _r.RetrieverEitherFunc[_r.AgentDeps, _r.P], retries: int | None
+        self, func: _r.RetrieverEitherFunc[AgentDeps, _r.P], retries: int | None
     ) -> _r.Retriever[AgentDeps, _r.P]:
         """Private utility to register a retriever function."""
         retries_ = retries if retries is not None else self._default_retries
@@ -234,18 +233,17 @@ class Agent(Generic[AgentDeps, ResultData]):
                 # NOTE: this means we ignore any other tools called here
                 call = next((c for c in llm_message.calls if c.tool_name == self._result_tool.name), None)
                 if call is not None:
-                    either = self._result_tool.validate(call)
-                    if result_data := either.left:
-                        either = await self._validate_result(result_data.value, deps, call)
-
-                    if result_data := either.left:
-                        return _utils.Some(result_data.value)
-                    else:
+                    try:
+                        result = self._result_tool.validate(call)
+                        result = await self._validate_result(result, deps, call)
+                    except _result.ToolRetryError as e:
                         self._incr_result_retry()
-                        messages.append(either.right)
+                        messages.append(e.tool_retry)
                         return None
+                    else:
+                        return _utils.Some(result)
 
-            # otherwise we run all functions in parallel
+            # otherwise we run all retriever functions in parallel
             coros: list[Awaitable[_messages.Message]] = []
             for call in llm_message.calls:
                 retriever = self._retrievers.get(call.tool_name)
@@ -257,16 +255,10 @@ class Agent(Generic[AgentDeps, ResultData]):
         else:
             assert_never(llm_message)
 
-    async def _validate_result(
-        self, result: ResultData, deps: AgentDeps, tool_call: _messages.ToolCall
-    ) -> _utils.Either[ResultData, _messages.ToolRetry]:
+    async def _validate_result(self, result: ResultData, deps: AgentDeps, tool_call: _messages.ToolCall) -> ResultData:
         for validator in self._result_validators:
-            either = await validator.validate(result, deps, self._current_result_retry, tool_call)
-            if either.left:
-                result = either.left.value
-            else:
-                return either
-        return _utils.Either(left=result)
+            result = await validator.validate(result, deps, self._current_result_retry, tool_call)
+        return result
 
     def _incr_result_retry(self) -> None:
         self._current_result_retry += 1
