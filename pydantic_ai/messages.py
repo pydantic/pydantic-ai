@@ -31,7 +31,6 @@ class ToolReturn:
     role: Literal['tool-return'] = 'tool-return'
 
     def llm_response(self) -> str:
-        # return f'Response from calling {m.function_name}: {m.content}'
         return self.content
 
 
@@ -56,6 +55,10 @@ class PlainResponseForbidden:
     timestamp: datetime = field(default_factory=datetime.now)
     role: Literal['plain-response-forbidden'] = 'plain-response-forbidden'
 
+    @staticmethod
+    def llm_response() -> str:
+        return 'Plain text responses are not allowed, please call one of the functions instead.'
+
 
 @dataclass
 class LLMResponse:
@@ -67,7 +70,7 @@ class LLMResponse:
 @dataclass
 class ToolCall:
     """
-    Either a retriever/tool call or structure response from the agent.
+    Either a retriever/tool call or structured response from the agent.
     """
 
     tool_name: str

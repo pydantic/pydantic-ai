@@ -6,7 +6,11 @@ The aim here is to make a common interface
 from __future__ import annotations as _annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Mapping
+from functools import cache
 from typing import TYPE_CHECKING, Protocol
+
+from httpx import AsyncClient as AsyncHTTPClient
 
 from ..messages import LLMMessage, Message
 
@@ -20,14 +24,17 @@ class Model(ABC):
 
     @abstractmethod
     def agent_model(
-        self, allow_text_result: bool, tools: list[AbstractToolDefinition], result_tool_name: str | None
+        self,
+        retrievers: Mapping[str, AbstractToolDefinition],
+        allow_text_result: bool,
+        result_tool: AbstractToolDefinition | None,
     ) -> AgentModel:
         """Create an agent model.
 
         Args:
+            retrievers: The retrievers available to the agent.
             allow_text_result: Whether a plain text final response/result is permitted.
-            tools: The tools available to the agent.
-            result_tool_name: The name of the tool that will be used to generate the final result if there is one.
+            result_tool: Tool definition for the final result tool, if any.
 
         Returns:
             An agent model.
@@ -68,3 +75,13 @@ class AbstractToolDefinition(Protocol):
     name: str
     description: str
     json_schema: ObjectJsonSchema
+
+
+@cache
+def cached_async_http_client() -> AsyncHTTPClient:
+    """
+    There are good reasons why in production you should use a `AsyncHTTPClient` as an async context manager as
+    described in [encode/httpx#2026](https://github.com/encode/httpx/pull/2026), but when experimenting or showing
+    examples, it's very useful, this allows multiple Agents to use a single client.
+    """
+    return AsyncHTTPClient()

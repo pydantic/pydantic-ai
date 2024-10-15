@@ -20,7 +20,7 @@ class Agent(Generic[AgentDeps, ResultData]):
     """Main class for creating "agents" - a way to have a specific type of "conversation" with an LLM."""
 
     # slots mostly for my sanity — knowing what attributes are available
-    _model: _models.Model | None
+    model: _models.Model | None
     _result_tool: _result.ResultSchema[ResultData] | None
     _result_validators: list[_result.ResultValidator[AgentDeps, ResultData]]
     _allow_text_result: bool
@@ -45,7 +45,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         result_tool_description: str = 'The final response which ends this conversation',
         result_retries: int | None = None,
     ):
-        self._model = _models.infer_model(model) if model is not None else None
+        self.model = _models.infer_model(model) if model is not None else None
 
         self._result_tool = _result.ResultSchema[result_type].build(
             result_type, result_tool_name, result_tool_description
@@ -83,8 +83,8 @@ class Agent(Generic[AgentDeps, ResultData]):
         """
         if model is not None:
             model_ = _models.infer_model(model)
-        elif self._model is not None:
-            model_ = self._model
+        elif self.model is not None:
+            model_ = self.model
         else:
             raise RuntimeError('`model` must be set either when creating the agent or when calling it.')
 
@@ -99,12 +99,7 @@ class Agent(Generic[AgentDeps, ResultData]):
 
         messages.append(_messages.UserPrompt(user_prompt))
 
-        functions: list[_models.AbstractToolDefinition] = list(self._retrievers.values())
-        if self._result_tool is not None:
-            functions.append(self._result_tool)
-
-        result_tool_name = self._result_tool and self._result_tool.name
-        agent_model = model_.agent_model(self._allow_text_result, functions, result_tool_name)
+        agent_model = model_.agent_model(self._retrievers, self._allow_text_result, self._result_tool)
 
         for retriever in self._retrievers.values():
             retriever.reset()
