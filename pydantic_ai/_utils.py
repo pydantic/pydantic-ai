@@ -9,6 +9,7 @@ from typing import (
     Callable,
     Generic,
     Literal,
+    NotRequired,
     TypedDict,
     TypeVar,
     Union,
@@ -59,8 +60,8 @@ ObjectJsonSchema = TypedDict(
         'type': Literal['object'],
         'title': str,
         'properties': dict[str, JsonSchemaValue],
-        'required': list[str],
-        '$defs': dict[str, Any],
+        'required': NotRequired[list[str]],
+        '$defs': NotRequired[dict[str, Any]],
     },
 )
 

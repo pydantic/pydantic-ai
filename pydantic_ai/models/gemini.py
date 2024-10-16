@@ -19,6 +19,7 @@ and just a little bit of Python knowledge.
 from __future__ import annotations as _annotations
 
 import os
+import re
 from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import dataclass
@@ -73,19 +74,21 @@ class GeminiModel(Model):
         retrievers: Mapping[str, AbstractToolDefinition],
         allow_text_result: bool,
         result_tool: AbstractToolDefinition | None,
-    ) -> AgentModel:
-        tools = [GeminiFunction.from_abstract_tool(t) for t in retrievers.values()]
+    ) -> GeminiAgentModel:
+        tools = [_GeminiFunction.from_abstract_tool(t) for t in retrievers.values()]
         if result_tool:
-            tools.append(GeminiFunction.from_abstract_tool(result_tool))
-            tool_config = GeminiToolConfig.call_required([t.name for t in tools])
-        else:
+            tools.append(_GeminiFunction.from_abstract_tool(result_tool))
+
+        if allow_text_result:
             tool_config = None
+        else:
+            tool_config = _GeminiToolConfig.call_required([t.name for t in tools])
 
         return GeminiAgentModel(
             http_client=self.http_client,
             model_name=self.model_name,
             api_key=self.api_key,
-            tools=GeminiTools(function_declarations=tools) if tools else None,
+            tools=_GeminiTools(function_declarations=tools) if tools else None,
             tool_config=tool_config,
         )
 
@@ -95,8 +98,8 @@ class GeminiAgentModel(AgentModel):
     http_client: AsyncHTTPClient
     model_name: GeminiModelName
     api_key: str
-    tools: GeminiTools | None
-    tool_config: GeminiToolConfig | None
+    tools: _GeminiTools | None
+    tool_config: _GeminiToolConfig | None
     # https://ai.google.dev/gemini-api/docs/quickstart?lang=rest#make-first-request
     url_template: str = 'https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent'
 
@@ -104,9 +107,9 @@ class GeminiAgentModel(AgentModel):
         response = await self.make_request(messages)
         return self.process_response(response)
 
-    async def make_request(self, messages: list[Message]) -> GeminiResponse:
-        contents: list[GeminiContent] = []
-        sys_prompt_parts: list[GeminiTextPart] = []
+    async def make_request(self, messages: list[Message]) -> _GeminiResponse:
+        contents: list[_GeminiContent] = []
+        sys_prompt_parts: list[_GeminiTextPart] = []
         for m in messages:
             either_content = self.message_to_gemini(m)
             if left := either_content.left:
@@ -114,13 +117,13 @@ class GeminiAgentModel(AgentModel):
             else:
                 contents.append(either_content.right)
 
-        request_data = GeminiRequest(
+        request_data = _GeminiRequest(
             contents=contents,
-            system_instruction=GeminiTextContent(role='user', parts=sys_prompt_parts) if sys_prompt_parts else None,
+            system_instruction=_GeminiTextContent(role='user', parts=sys_prompt_parts) if sys_prompt_parts else None,
             tools=self.tools if self.tools is not None else None,
             tool_config=self.tool_config if self.tool_config is not None else None,
         )
-        request_json = gemini_request_ta.dump_json(request_data, exclude_none=True, by_alias=True)
+        request_json = _gemini_request_ta.dump_json(request_data, exclude_none=True, by_alias=True)
         # https://cloud.google.com/docs/authentication/api-keys-use#using-with-rest
         headers = {
             'X-Goog-Api-Key': self.api_key,
@@ -131,18 +134,18 @@ class GeminiAgentModel(AgentModel):
         if response.status_code != 200:
             # TODO better custom error
             raise RuntimeError(f'Error {response.status_code}: {response.text}')
-        return gemini_response_ta.validate_json(response.content)
+        return _gemini_response_ta.validate_json(response.content)
 
     @staticmethod
-    def process_response(response: GeminiResponse) -> LLMMessage:
+    def process_response(response: _GeminiResponse) -> LLMMessage:
         assert len(response.candidates) == 1, 'Expected exactly one candidate'
         parts = response.candidates[0].content.parts
-        if all(isinstance(part, GeminiFunctionCallPart) for part in parts):
-            parts = cast(list[GeminiFunctionCallPart], parts)
+        if all(isinstance(part, _GeminiFunctionCallPart) for part in parts):
+            parts = cast(list[_GeminiFunctionCallPart], parts)
             calls = [ToolCall.from_object(part.function_call.name, part.function_call.args) for part in parts]
             return LLMToolCalls(calls)
-        elif all(isinstance(part, GeminiTextPart) for part in parts):
-            parts = cast(list[GeminiTextPart], parts)
+        elif all(isinstance(part, _GeminiTextPart) for part in parts):
+            parts = cast(list[_GeminiTextPart], parts)
             return LLMResponse(content=''.join(part.text for part in parts))
         else:
             raise RuntimeError(
@@ -150,46 +153,46 @@ class GeminiAgentModel(AgentModel):
             )
 
     @staticmethod
-    def message_to_gemini(m: Message) -> _utils.Either[GeminiTextPart, GeminiContent]:
+    def message_to_gemini(m: Message) -> _utils.Either[_GeminiTextPart, _GeminiContent]:
         """
-        Convert a message to a GeminiTextPart for "system_instructions" or GeminiContent for "contents".
+        Convert a message to a _GeminiTextPart for "system_instructions" or _GeminiContent for "contents".
         """
         if m.role == 'system':
             # SystemPrompt ->
-            return _utils.Either(left=GeminiTextPart(text=m.content))
+            return _utils.Either(left=_GeminiTextPart(text=m.content))
         elif m.role == 'user':
             # UserPrompt ->
-            return _utils.Either(right=GeminiContent.user_text(m.content))
+            return _utils.Either(right=_GeminiContent.user_text(m.content))
         elif m.role == 'tool-return':
             # ToolReturn ->
-            return _utils.Either(right=GeminiContent.function_return(m))
+            return _utils.Either(right=_GeminiContent.function_return(m))
         elif m.role == 'tool-retry':
             # ToolRetry ->
-            return _utils.Either(right=GeminiContent.function_retry(m))
+            return _utils.Either(right=_GeminiContent.function_retry(m))
         elif m.role == 'plain-response-forbidden':
-            return _utils.Either(right=GeminiContent.user_text(m.llm_response()))
+            return _utils.Either(right=_GeminiContent.user_text(m.llm_response()))
         elif m.role == 'llm-response':
             # LLMResponse ->
-            return _utils.Either(right=GeminiContent.model_text(m.content))
+            return _utils.Either(right=_GeminiContent.model_text(m.content))
         elif m.role == 'llm-tool-calls':
             # LLMToolCalls ->
-            return _utils.Either(right=GeminiContent.function_call(m))
+            return _utils.Either(right=_GeminiContent.function_call(m))
         else:
             assert_never(m)
 
 
 @dataclass
-class GeminiRequest:
+class _GeminiRequest:
     """Schema for an API request to the Gemini API.
 
     See <https://ai.google.dev/api/generate-content#request-body> for API docs.
     """
 
-    contents: list[GeminiContent]
-    tools: GeminiTools | None = None
-    tool_config: GeminiToolConfig | None = None
+    contents: list[_GeminiContent]
+    tools: _GeminiTools | None = None
+    tool_config: _GeminiToolConfig | None = None
     # we don't implement `generationConfig`, instead we use a named tool for the response
-    system_instruction: GeminiTextContent | None = None
+    system_instruction: _GeminiTextContent | None = None
     """
     Developer generated system instructions, see
     <https://ai.google.dev/gemini-api/docs/system-instructions?lang=rest>
@@ -202,54 +205,54 @@ class GeminiRequest:
 
 
 @dataclass
-class GeminiContent:
+class _GeminiContent:
     role: Literal['user', 'model']
-    parts: list[GeminiPartUnion]
+    parts: list[_GeminiPartUnion]
 
     @classmethod
-    def user_text(cls, text: str) -> GeminiContent:
-        return cls(role='user', parts=[GeminiTextPart(text=text)])
+    def user_text(cls, text: str) -> _GeminiContent:
+        return cls(role='user', parts=[_GeminiTextPart(text=text)])
 
     @classmethod
-    def model_text(cls, text: str) -> GeminiContent:
-        return cls(role='model', parts=[GeminiTextPart(text=text)])
+    def model_text(cls, text: str) -> _GeminiContent:
+        return cls(role='model', parts=[_GeminiTextPart(text=text)])
 
     @classmethod
-    def function_call(cls, m: LLMToolCalls) -> GeminiContent:
-        parts: list[GeminiPartUnion] = [GeminiFunctionCallPart.from_call(t) for t in m.calls]
+    def function_call(cls, m: LLMToolCalls) -> _GeminiContent:
+        parts: list[_GeminiPartUnion] = [_GeminiFunctionCallPart.from_call(t) for t in m.calls]
         return cls(role='model', parts=parts)
 
     @classmethod
-    def function_return(cls, m: ToolReturn) -> GeminiContent:
+    def function_return(cls, m: ToolReturn) -> _GeminiContent:
         # TODO non string responses
         response = {'return_value': m.llm_response()}
-        f_response = GeminiFunctionResponsePart.from_response(m.tool_name, response)
-        return GeminiContent(role='user', parts=[f_response])
+        f_response = _GeminiFunctionResponsePart.from_response(m.tool_name, response)
+        return _GeminiContent(role='user', parts=[f_response])
 
     @classmethod
-    def function_retry(cls, m: ToolRetry) -> GeminiContent:
+    def function_retry(cls, m: ToolRetry) -> _GeminiContent:
         response = {'call_error': m.llm_response()}
-        f_response = GeminiFunctionResponsePart.from_response(m.tool_name, response)
-        return GeminiContent(role='user', parts=[f_response])
+        f_response = _GeminiFunctionResponsePart.from_response(m.tool_name, response)
+        return _GeminiContent(role='user', parts=[f_response])
 
 
 @dataclass
-class GeminiTextPart:
+class _GeminiTextPart:
     text: str
 
 
 @dataclass
-class GeminiFunctionCallPart:
-    function_call: Annotated[GeminiFunctionCall, Field(alias='functionCall')]
+class _GeminiFunctionCallPart:
+    function_call: Annotated[_GeminiFunctionCall, Field(alias='functionCall')]
 
     @classmethod
-    def from_call(cls, tool: ToolCall) -> GeminiFunctionCallPart:
+    def from_call(cls, tool: ToolCall) -> _GeminiFunctionCallPart:
         assert isinstance(tool.args, ArgsObject), f'Expected ArgsObject, got {tool.args}'
-        return cls(function_call=GeminiFunctionCall(name=tool.tool_name, args=tool.args.args_object))
+        return cls(function_call=_GeminiFunctionCall(name=tool.tool_name, args=tool.args.args_object))
 
 
 @dataclass
-class GeminiFunctionCall:
+class _GeminiFunctionCall:
     """See <https://ai.google.dev/api/caching#FunctionCall>"""
 
     name: str
@@ -257,16 +260,16 @@ class GeminiFunctionCall:
 
 
 @dataclass
-class GeminiFunctionResponsePart:
-    function_response: Annotated[GeminiFunctionResponse, Field(alias='functionResponse')]
+class _GeminiFunctionResponsePart:
+    function_response: Annotated[_GeminiFunctionResponse, Field(alias='functionResponse')]
 
     @classmethod
-    def from_response(cls, name: str, response: dict[str, Any]) -> GeminiFunctionResponsePart:
-        return cls(function_response=GeminiFunctionResponse(name=name, response=response))
+    def from_response(cls, name: str, response: dict[str, Any]) -> _GeminiFunctionResponsePart:
+        return cls(function_response=_GeminiFunctionResponse(name=name, response=response))
 
 
 @dataclass
-class GeminiFunctionResponse:
+class _GeminiFunctionResponse:
     """See <https://ai.google.dev/api/caching#FunctionResponse>"""
 
     name: str
@@ -276,36 +279,33 @@ class GeminiFunctionResponse:
 # See <https://ai.google.dev/api/caching#Part>
 # we don't currently support other part types
 # TODO discriminator
-GeminiPartUnion = Union[GeminiTextPart, GeminiFunctionCallPart, GeminiFunctionResponsePart]
+_GeminiPartUnion = Union[_GeminiTextPart, _GeminiFunctionCallPart, _GeminiFunctionResponsePart]
 
 
 @dataclass
-class GeminiTextContent:
+class _GeminiTextContent:
     role: Literal['user', 'model']
-    parts: list[GeminiTextPart]
+    parts: list[_GeminiTextPart]
 
 
 @dataclass
-class GeminiTools:
-    function_declarations: list[GeminiFunction]
+class _GeminiTools:
+    function_declarations: list[_GeminiFunction]
 
 
 @dataclass
-class GeminiFunction:
+class _GeminiFunction:
     name: str
     description: str
-    parameters: _utils.ObjectJsonSchema
+    parameters: dict[str, Any]
     """
     ObjectJsonSchema isn't really true since Gemini only accepts a subset of JSON Schema
     <https://ai.google.dev/gemini-api/docs/function-calling#function_declarations>
     """
 
     @classmethod
-    def from_abstract_tool(cls, tool: AbstractToolDefinition) -> GeminiFunction:
-        json_schema = deepcopy(tool.json_schema)
-        json_schema.pop('title', None)  # pyright: ignore[reportArgumentType]
-        for value in json_schema.get('properties', {}).values():
-            value.pop('title', None)
+    def from_abstract_tool(cls, tool: AbstractToolDefinition) -> _GeminiFunction:
+        json_schema = _GeminiJsonSchema(tool.json_schema).simplify()
         return cls(
             name=tool.name,
             description=tool.description,
@@ -314,49 +314,49 @@ class GeminiFunction:
 
 
 @dataclass
-class GeminiToolConfig:
-    function_calling_config: GeminiFunctionCallingConfig
+class _GeminiToolConfig:
+    function_calling_config: _GeminiFunctionCallingConfig
 
     @classmethod
-    def call_required(cls, function_names: list[str]) -> GeminiToolConfig:
+    def call_required(cls, function_names: list[str]) -> _GeminiToolConfig:
         return cls(
-            function_calling_config=GeminiFunctionCallingConfig(mode='ANY', allowed_function_names=function_names)
+            function_calling_config=_GeminiFunctionCallingConfig(mode='ANY', allowed_function_names=function_names)
         )
 
 
 @dataclass
-class GeminiFunctionCallingConfig:
+class _GeminiFunctionCallingConfig:
     mode: Literal['ANY', 'AUTO']
     allowed_function_names: list[str]
 
 
 @dataclass
-class GeminiResponse:
+class _GeminiResponse:
     """
     Schema for the response from the Gemini API.
 
     See <https://ai.google.dev/api/generate-content#v1beta.GenerateContentResponse>
     """
 
-    candidates: list[GeminiCandidates]
-    usage_metadata: Annotated[GeminiUsageMetaData, Field(alias='usageMetadata')]
-    prompt_feedback: Annotated[GeminiPromptFeedback | None, Field(alias='promptFeedback')] = None
+    candidates: list[_GeminiCandidates]
+    usage_metadata: Annotated[_GeminiUsageMetaData, Field(alias='usageMetadata')]
+    prompt_feedback: Annotated[_GeminiPromptFeedback | None, Field(alias='promptFeedback')] = None
 
 
 @dataclass
-class GeminiCandidates:
-    content: GeminiContent
+class _GeminiCandidates:
+    content: _GeminiContent
     finish_reason: Annotated[Literal['STOP'], Field(alias='finishReason')]
     """
     See https://ai.google.dev/api/generate-content#FinishReason, lots of other values are possible,
     but let's wait until we see them and know what they mean to add them here.
     """
     index: int
-    safety_ratings: Annotated[list[GeminiSafetyRating], Field(alias='safetyRatings')]
+    safety_ratings: Annotated[list[_GeminiSafetyRating], Field(alias='safetyRatings')]
 
 
 @dataclass
-class GeminiUsageMetaData:
+class _GeminiUsageMetaData:
     prompt_token_count: Annotated[int, Field(alias='promptTokenCount')]
     candidates_token_count: Annotated[int, Field(alias='candidatesTokenCount')]
     total_token_count: Annotated[int, Field(alias='totalTokenCount')]
@@ -364,7 +364,7 @@ class GeminiUsageMetaData:
 
 
 @dataclass
-class GeminiSafetyRating:
+class _GeminiSafetyRating:
     """See https://ai.google.dev/gemini-api/docs/safety-settings#safety-filters"""
 
     category: Literal[
@@ -378,12 +378,67 @@ class GeminiSafetyRating:
 
 
 @dataclass
-class GeminiPromptFeedback:
+class _GeminiPromptFeedback:
     """See <https://ai.google.dev/api/generate-content#v1beta.GenerateContentResponse>"""
 
     block_reason: Annotated[str, Field(alias='blockReason')]
-    safety_ratings: Annotated[list[GeminiSafetyRating], Field(alias='safetyRatings')]
+    safety_ratings: Annotated[list[_GeminiSafetyRating], Field(alias='safetyRatings')]
 
 
-gemini_request_ta = TypeAdapter(GeminiRequest)
-gemini_response_ta = TypeAdapter(GeminiResponse)
+_gemini_request_ta = TypeAdapter(_GeminiRequest)
+_gemini_response_ta = TypeAdapter(_GeminiResponse)
+
+
+class _GeminiJsonSchema:
+    """
+    Transforms the JSON Schema from Pydantic to be suitable for Gemini which
+    [support](https://ai.google.dev/gemini-api/docs/function-calling#function_declarations) a subset
+    of OpenAPI v3.0.3.
+
+    Specifically:
+    * gemini doesn't allow the `title` keyword to be set
+    * gemini doesn't allow `$defs` — we need to inline the definitions where possible
+    """
+
+    def __init__(self, schema: _utils.ObjectJsonSchema):
+        self.schema = cast(dict[str, Any], deepcopy(schema))
+        self.defs = self.schema.pop('$defs', {})
+
+    def simplify(self) -> dict[str, Any]:
+        self._simplify(self.schema, allow_ref=True)
+        return self.schema
+
+    def _simplify(self, schema: dict[str, Any], allow_ref: bool) -> None:
+        schema.pop('title', None)
+        if ref := schema.pop('$ref', None):
+            if not allow_ref:
+                raise ValueError('Recursive `$ref`s are not supported by Gemini')
+            key = re.sub(r'^#/\$defs/', '', ref)
+            schema_def = self.defs[key]
+            self._simplify(schema_def, allow_ref=False)
+            schema.update(schema_def)
+            return
+
+        if any_of := schema.get('anyOf'):
+            for schema in any_of:
+                self._simplify(schema, allow_ref)
+
+        type_ = schema.get('type')
+
+        if type_ == 'object':
+            self._object(schema, allow_ref)
+        elif type_ == 'array':
+            return self._array(schema, allow_ref)
+
+    def _object(self, schema: dict[str, Any], allow_ref: bool) -> None:
+        if properties := schema.get('properties'):
+            for value in properties.values():
+                self._simplify(value, allow_ref)
+
+    def _array(self, schema: dict[str, Any], allow_ref: bool) -> None:
+        if prefix_items := schema.get('prefixItems'):
+            # TODO I think this is supported by Gemini, maybe we should raise an error?
+            self._simplify(prefix_items, allow_ref)
+
+        if items_schema := schema.get('items'):
+            self._simplify(items_schema, allow_ref)

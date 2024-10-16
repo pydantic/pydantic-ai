@@ -141,18 +141,21 @@ class _JsonSchemaTestData:
             return enum[0]
         elif examples := schema.get('examples'):
             return examples[0]
+        elif ref := schema.get('$ref'):
+            key = re.sub(r'^#/\$defs/', '', ref)
+            js_def = self.defs[key]
+            return self._gen_any(js_def)
+        elif any_of := schema.get('anyOf'):
+            if {'type': 'null'} in any_of:
+                return None
+            else:
+                return self._gen_any(any_of[0])
 
         type_ = schema.get('type')
         if type_ is None:
-            if ref := schema.get('$ref'):
-                key = re.sub(r'^#/\$defs/', '', ref)
-                js_def = self.defs[key]
-                return self._gen_any(js_def)
-            else:
-                # if there's no type or ref, we can't generate anything
-                return self._char()
-
-        if type_ == 'object':
+            # if there's no type or ref, we can't generate anything
+            return self._char()
+        elif type_ == 'object':
             return self._object_gen(schema)
         elif type_ == 'string':
             return self._str_gen(schema)
@@ -164,6 +167,8 @@ class _JsonSchemaTestData:
             return self._bool_gen()
         elif type_ == 'array':
             return self._array_gen(schema)
+        elif type_ == 'null':
+            return None
         else:
             raise NotImplementedError(f'Unknown type: {type_}, please submit a PR to extend JsonSchemaTestData!')
 

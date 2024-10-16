@@ -130,7 +130,7 @@ class OpenAIAgentModel(AgentModel):
             # ToolReturn or ToolRetry ->
             return chat.ChatCompletionToolMessageParam(
                 role='tool',
-                tool_call_id=guard_tool_id(message),
+                tool_call_id=_guard_tool_id(message),
                 content=message.llm_response(),
             )
         elif message.role == 'llm-response':
@@ -140,7 +140,7 @@ class OpenAIAgentModel(AgentModel):
             # LLMToolCalls ->
             return chat.ChatCompletionAssistantMessageParam(
                 role='assistant',
-                tool_calls=[guard_tool_call(t) for t in message.calls],
+                tool_calls=[_guard_tool_call(t) for t in message.calls],
             )
         elif message.role == 'plain-response-forbidden':
             # PlainResponseForbidden ->
@@ -152,16 +152,16 @@ class OpenAIAgentModel(AgentModel):
             assert_never(message)
 
 
-def guard_tool_id(t: ToolCall | ToolReturn | ToolRetry) -> str:
+def _guard_tool_id(t: ToolCall | ToolReturn | ToolRetry) -> str:
     """Type guard that checks a `tool_id` is not None both for static typing and runtime."""
     assert t.tool_id is not None, f'OpenAI requires `tool_id` to be set: {t}'
     return t.tool_id
 
 
-def guard_tool_call(t: ToolCall) -> chat.ChatCompletionMessageToolCallParam:
+def _guard_tool_call(t: ToolCall) -> chat.ChatCompletionMessageToolCallParam:
     assert isinstance(t.args, ArgsJson), f'Expected ArgsJson, got {t.args}'
     return chat.ChatCompletionMessageToolCallParam(
-        id=guard_tool_id(t),
+        id=_guard_tool_id(t),
         type='function',
         function={'name': t.tool_name, 'arguments': t.args.args_json},
     )
