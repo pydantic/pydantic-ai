@@ -320,11 +320,11 @@ def test_call_all():
             UserPrompt(content='Hello', timestamp=IsNow()),
             LLMToolCalls(
                 calls=[
-                    ToolCall.from_json('foo', '{"x": 0}'),
-                    ToolCall.from_json('bar', '{"x": 0}'),
-                    ToolCall.from_json('baz', '{"x": 0}'),
-                    ToolCall.from_json('qux', '{"x": 0}'),
-                    ToolCall.from_json('quz', '{"x": "a"}'),
+                    ToolCall.from_object('foo', {'x': 0}),
+                    ToolCall.from_object('bar', {'x': 0}),
+                    ToolCall.from_object('baz', {'x': 0}),
+                    ToolCall.from_object('qux', {'x': 0}),
+                    ToolCall.from_object('quz', {'x': 'a'}),
                 ],
                 timestamp=IsNow(),
             ),
@@ -396,11 +396,11 @@ def test_retriever_retry():
         [
             UserPrompt(content='Hello', timestamp=IsNow()),
             LLMToolCalls(
-                calls=[ToolCall.from_json('my_ret', '{"x": 0}')],
+                calls=[ToolCall.from_object('my_ret', {'x': 0})],
                 timestamp=IsNow(),
             ),
             ToolRetry(tool_name='my_ret', content='First call failed', timestamp=IsNow()),
-            LLMToolCalls(calls=[ToolCall.from_json('my_ret', '{"x": 1}')], timestamp=IsNow()),
+            LLMToolCalls(calls=[ToolCall.from_object('my_ret', {'x': 1})], timestamp=IsNow()),
             ToolReturn(tool_name='my_ret', content='2', timestamp=IsNow()),
             LLMResponse(content='{"my_ret": "2"}', timestamp=IsNow()),
         ]
