@@ -74,20 +74,18 @@ class GeminiModel(Model):
         allow_text_result: bool,
         result_tool: AbstractToolDefinition | None,
     ) -> AgentModel:
-        tools_list = [GeminiFunction.from_abstract_tool(t) for t in retrievers.values()]
+        tools = [GeminiFunction.from_abstract_tool(t) for t in retrievers.values()]
         if result_tool:
-            tools_list.append(GeminiFunction.from_abstract_tool(result_tool))
-            tool_names = [t.name for t in tools_list]
-            tool_config = GeminiToolConfig.call_required(tool_names)
-            tools = GeminiTools(function_declarations=tools_list)
+            tools.append(GeminiFunction.from_abstract_tool(result_tool))
+            tool_config = GeminiToolConfig.call_required([t.name for t in tools])
         else:
             tool_config = None
-            tools = None
+
         return GeminiAgentModel(
             http_client=self.http_client,
             model_name=self.model_name,
             api_key=self.api_key,
-            tools=tools,
+            tools=GeminiTools(function_declarations=tools) if tools else None,
             tool_config=tool_config,
         )
 

@@ -4,12 +4,7 @@ from devtools import debug
 
 from pydantic_ai import Agent
 
-weather_agent: Agent[None, str] = Agent('openai:gpt-4o')
-
-
-@weather_agent.system_prompt
-def system_prompt():
-    return 'Be concise, reply with one sentence.'
+weather_agent: Agent[None, str] = Agent('openai:gpt-4o', system_prompt='Be concise, reply with one sentence.')
 
 
 @weather_agent.retriever_plain
