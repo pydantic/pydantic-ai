@@ -11,8 +11,7 @@ from pydantic_core import SchemaValidator
 from typing_extensions import Concatenate, ParamSpec
 
 from . import _pydantic, _utils, messages
-from .call import AgentDeps, CallContext, Retry
-from .messages import ArgsJson
+from .shared import AgentDeps, CallContext, Retry
 
 # retrieval function parameters
 P = ParamSpec('P')
@@ -65,7 +64,7 @@ class Retriever(Generic[AgentDeps, P]):
     async def run(self, deps: AgentDeps, message: messages.ToolCall) -> messages.Message:
         """Run the retriever function asynchronously."""
         try:
-            if isinstance(message.args, ArgsJson):
+            if isinstance(message.args, messages.ArgsJson):
                 args_dict = self.validator.validate_json(message.args.args_json)
             else:
                 args_dict = self.validator.validate_python(message.args.args_object)

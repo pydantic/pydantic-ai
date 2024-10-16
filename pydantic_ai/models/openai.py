@@ -9,6 +9,7 @@ from httpx import AsyncClient as AsyncHTTPClient
 from openai import AsyncOpenAI
 from openai.types import ChatModel, chat
 
+from .. import shared
 from ..messages import (
     ArgsJson,
     LLMMessage,
@@ -36,7 +37,7 @@ class OpenAIModel(Model):
         http_client: AsyncHTTPClient | None = None,
     ):
         if model_name not in ChatModel.__args__:
-            raise ValueError(f'Invalid model name: {model_name}')
+            raise shared.UserError(f'Invalid model name: {model_name}')
         self.model_name: ChatModel = model_name
         if openai_client is not None:
             assert http_client is None, 'Cannot provide both `openai_client` and `http_client`'

@@ -7,11 +7,12 @@ from httpx import AsyncClient
 from inline_snapshot import snapshot
 from pydantic import BaseModel
 
+from pydantic_ai import UserError
 from pydantic_ai._utils import ObjectJsonSchema
 from pydantic_ai.models.gemini import (
+    GeminiModel,
     _GeminiFunction,  # pyright: ignore[reportPrivateUsage]
     _GeminiFunctionCallingConfig,  # pyright: ignore[reportPrivateUsage]
-    GeminiModel,
     _GeminiToolConfig,  # pyright: ignore[reportPrivateUsage]
     _GeminiTools,  # pyright: ignore[reportPrivateUsage]
 )
@@ -31,13 +32,13 @@ def test_api_key_env_var(env: TestEnv):
 
 
 def test_api_key_not_set(env: TestEnv):
-    with pytest.raises(ValueError, match='API key must be provided or set in the GEMINI_API_KEY environment variable'):
+    with pytest.raises(UserError, match='API key must be provided or set in the GEMINI_API_KEY environment variable'):
         GeminiModel('gemini-1.5-flash')
 
 
 def test_api_key_empty(env: TestEnv):
     env.set('GEMINI_API_KEY', '')
-    with pytest.raises(ValueError, match='API key must be provided or set in the GEMINI_API_KEY environment variable'):
+    with pytest.raises(UserError, match='API key must be provided or set in the GEMINI_API_KEY environment variable'):
         GeminiModel('gemini-1.5-flash')
 
 
@@ -289,5 +290,5 @@ def test_json_def_recursive():
         'This is the tool for the final Result',
         json_schema,  # pyright: ignore[reportArgumentType]
     )
-    with pytest.raises(ValueError, match=r'Recursive `\$ref`s are not supported by Gemini'):
+    with pytest.raises(UserError, match=r'Recursive `\$ref`s in JSON Schema are not supported by Gemini'):
         m.agent_model({}, True, result_tool)

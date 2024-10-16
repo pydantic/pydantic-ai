@@ -1,4 +1,4 @@
 from .agent import Agent
-from .call import CallContext, Retry
+from .shared import AgentError, CallContext, Retry, UnexpectedModelBehaviour, UserError
 
-__all__ = 'Agent', 'CallContext', 'Retry'
+__all__ = 'Agent', 'AgentError', 'CallContext', 'Retry', 'UnexpectedModelBehaviour', 'UserError'

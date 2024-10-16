@@ -28,7 +28,7 @@ from typing import Annotated, Any, Literal, Union, assert_never, cast
 from httpx import AsyncClient as AsyncHTTPClient
 from pydantic import Field, TypeAdapter
 
-from .. import _utils
+from .. import _utils, shared
 from ..messages import (
     ArgsObject,
     LLMMessage,
@@ -65,7 +65,7 @@ class GeminiModel(Model):
             if env_api_key := os.getenv('GEMINI_API_KEY'):
                 api_key = env_api_key
             else:
-                raise ValueError('API key must be provided or set in the GEMINI_API_KEY environment variable')
+                raise shared.UserError('API key must be provided or set in the GEMINI_API_KEY environment variable')
         self.api_key = api_key
         self.http_client = http_client or cached_async_http_client()
 
@@ -130,11 +130,10 @@ class GeminiAgentModel(AgentModel):
             'Content-Type': 'application/json',
         }
         url = self.url_template.format(model=self.model_name)
-        response = await self.http_client.post(url, content=request_json, headers=headers)
-        if response.status_code != 200:
-            # TODO better custom error
-            raise RuntimeError(f'Error {response.status_code}: {response.text}')
-        return _gemini_response_ta.validate_json(response.content)
+        r = await self.http_client.post(url, content=request_json, headers=headers)
+        if r.status_code != 200:
+            raise shared.UnexpectedModelBehaviour(f'Unexpected response from gemini {r.status_code}', r.text)
+        return _gemini_response_ta.validate_json(r.content)
 
     @staticmethod
     def process_response(response: _GeminiResponse) -> LLMMessage:
@@ -148,8 +147,8 @@ class GeminiAgentModel(AgentModel):
             parts = cast(list[_GeminiTextPart], parts)
             return LLMResponse(content=''.join(part.text for part in parts))
         else:
-            raise RuntimeError(
-                f'Unexpected response from Gemini, expected all parts to be function calls or text, ' f'got: {parts}'
+            raise shared.UnexpectedModelBehaviour(
+                f'Unexpected response from Gemini, expected all parts to be function calls or text, got: {parts!r}'
             )
 
     @staticmethod
@@ -412,7 +411,7 @@ class _GeminiJsonSchema:
         schema.pop('title', None)
         if ref := schema.pop('$ref', None):
             if not allow_ref:
-                raise ValueError('Recursive `$ref`s are not supported by Gemini')
+                raise shared.UserError('Recursive `$ref`s in JSON Schema are not supported by Gemini')
             key = re.sub(r'^#/\$defs/', '', ref)
             schema_def = self.defs[key]
             self._simplify(schema_def, allow_ref=False)
