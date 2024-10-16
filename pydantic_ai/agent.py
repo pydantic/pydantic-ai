@@ -12,7 +12,9 @@ from .call import AgentDeps
 from .result import ResultData
 
 __all__ = ('Agent',)
-KnownModelName = Literal['openai:gpt-4o', 'openai:gpt-4-turbo', 'openai:gpt-4', 'openai:gpt-3.5-turbo']
+KnownModelName = Literal[
+    'openai:gpt-4o', 'openai:gpt-4-turbo', 'openai:gpt-4', 'openai:gpt-3.5-turbo', 'gemini-1.5-flash', 'gemini-1.5-pro'
+]
 
 
 @dataclass(init=False)

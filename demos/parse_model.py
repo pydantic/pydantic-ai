@@ -10,6 +10,6 @@ class MyModel(BaseModel):
 
 agent = Agent('openai:gpt-4o', result_type=MyModel, deps=None)
 
-result = agent.run_sync('The windy city in the US of A.')
-
-print(result.response)
+if __name__ == '__main__':
+    result = agent.run_sync('The windy city in the US of A.')
+    print(result.response)
