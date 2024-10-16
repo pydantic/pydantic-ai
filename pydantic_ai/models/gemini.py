@@ -18,21 +18,23 @@ and just a little bit of Python knowledge.
 
 from __future__ import annotations as _annotations
 
-import json
 import os
 from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import dataclass
-from typing import Annotated, Any, Literal, Union, assert_never
+from typing import Annotated, Any, Literal, Union, assert_never, cast
 
 from httpx import AsyncClient as AsyncHTTPClient
 from pydantic import Field, TypeAdapter
 
 from .. import _utils
 from ..messages import (
+    ArgsObject,
     LLMMessage,
+    LLMResponse,
     LLMToolCalls,
     Message,
+    ToolCall,
     ToolRetry,
     ToolReturn,
 )
@@ -102,7 +104,6 @@ class GeminiAgentModel(AgentModel):
 
     async def request(self, messages: list[Message]) -> LLMMessage:
         response = await self.make_request(messages)
-        # debug(response)
         return self.process_response(response)
 
     async def make_request(self, messages: list[Message]) -> GeminiResponse:
@@ -134,9 +135,21 @@ class GeminiAgentModel(AgentModel):
             raise RuntimeError(f'Error {response.status_code}: {response.text}')
         return gemini_response_ta.validate_json(response.content)
 
-    def process_response(self, response: GeminiResponse) -> LLMMessage:
-        # TODO
-        raise NotImplementedError()
+    @staticmethod
+    def process_response(response: GeminiResponse) -> LLMMessage:
+        assert len(response.candidates) == 1, 'Expected exactly one candidate'
+        parts = response.candidates[0].content.parts
+        if all(isinstance(part, GeminiFunctionCallPart) for part in parts):
+            parts = cast(list[GeminiFunctionCallPart], parts)
+            calls = [ToolCall.from_object(part.function_call.name, part.function_call.args) for part in parts]
+            return LLMToolCalls(calls)
+        elif all(isinstance(part, GeminiTextPart) for part in parts):
+            parts = cast(list[GeminiTextPart], parts)
+            return LLMResponse(content=''.join(part.text for part in parts))
+        else:
+            raise RuntimeError(
+                f'Unexpected response from Gemini, expected all parts to be function calls or text, ' f'got: {parts}'
+            )
 
     @staticmethod
     def message_to_gemini(m: Message) -> _utils.Either[GeminiTextPart, GeminiContent]:
@@ -165,10 +178,6 @@ class GeminiAgentModel(AgentModel):
             return _utils.Either(right=GeminiContent.function_call(m))
         else:
             assert_never(m)
-
-    @staticmethod
-    def gemini_to_message(gemini: GeminiContent) -> Message:
-        raise NotImplementedError()
 
 
 @dataclass
@@ -209,9 +218,7 @@ class GeminiContent:
 
     @classmethod
     def function_call(cls, m: LLMToolCalls) -> GeminiContent:
-        parts: list[GeminiPartUnion] = [
-            GeminiFunctionCallPart.from_call(t.tool_name, json.loads(t.arguments)) for t in m.calls
-        ]
+        parts: list[GeminiPartUnion] = [GeminiFunctionCallPart.from_call(t) for t in m.calls]
         return cls(role='model', parts=parts)
 
     @classmethod
@@ -238,8 +245,9 @@ class GeminiFunctionCallPart:
     function_call: Annotated[GeminiFunctionCall, Field(alias='functionCall')]
 
     @classmethod
-    def from_call(cls, name: str, args: dict[str, Any]) -> GeminiFunctionCallPart:
-        return cls(function_call=GeminiFunctionCall(name=name, args=args))
+    def from_call(cls, tool: ToolCall) -> GeminiFunctionCallPart:
+        assert isinstance(tool.args, ArgsObject), f'Expected ArgsObject, got {tool.args}'
+        return cls(function_call=GeminiFunctionCall(name=tool.tool_name, args=tool.args.args_object))
 
 
 @dataclass

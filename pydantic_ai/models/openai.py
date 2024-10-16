@@ -10,6 +10,7 @@ from openai import AsyncOpenAI
 from openai.types import ChatModel, chat
 
 from ..messages import (
+    ArgsJson,
     LLMMessage,
     LLMResponse,
     LLMToolCalls,
@@ -90,14 +91,7 @@ class OpenAIAgentModel(AgentModel):
         timestamp = datetime.fromtimestamp(response.created)
         if choice.message.tool_calls is not None:
             return LLMToolCalls(
-                [
-                    ToolCall(
-                        tool_name=c.function.name,
-                        arguments=c.function.arguments,
-                        tool_id=c.id,
-                    )
-                    for c in choice.message.tool_calls
-                ],
+                [ToolCall.from_json(c.function.name, c.function.arguments, c.id) for c in choice.message.tool_calls],
                 timestamp=timestamp,
             )
         else:
@@ -146,14 +140,7 @@ class OpenAIAgentModel(AgentModel):
             # LLMToolCalls ->
             return chat.ChatCompletionAssistantMessageParam(
                 role='assistant',
-                tool_calls=[
-                    chat.ChatCompletionMessageToolCallParam(
-                        id=guard_tool_id(t),
-                        type='function',
-                        function={'name': t.tool_name, 'arguments': t.arguments},
-                    )
-                    for t in message.calls
-                ],
+                tool_calls=[guard_tool_call(t) for t in message.calls],
             )
         elif message.role == 'plain-response-forbidden':
             # PlainResponseForbidden ->
@@ -169,3 +156,12 @@ def guard_tool_id(t: ToolCall | ToolReturn | ToolRetry) -> str:
     """Type guard that checks a `tool_id` is not None both for static typing and runtime."""
     assert t.tool_id is not None, f'OpenAI requires `tool_id` to be set: {t}'
     return t.tool_id
+
+
+def guard_tool_call(t: ToolCall) -> chat.ChatCompletionMessageToolCallParam:
+    assert isinstance(t.args, ArgsJson), f'Expected ArgsJson, got {t.args}'
+    return chat.ChatCompletionMessageToolCallParam(
+        id=guard_tool_id(t),
+        type='function',
+        function={'name': t.tool_name, 'arguments': t.args.args_json},
+    )

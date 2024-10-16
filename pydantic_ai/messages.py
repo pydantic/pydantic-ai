@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 import json
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Annotated, Literal, Union
+from typing import Annotated, Any, Literal, Union
 
 import pydantic
 import pydantic_core
@@ -68,14 +68,32 @@ class LLMResponse:
 
 
 @dataclass
+class ArgsJson:
+    args_json: str
+
+
+@dataclass
+class ArgsObject:
+    args_object: dict[str, Any]
+
+
+@dataclass
 class ToolCall:
     """
     Either a retriever/tool call or structured response from the agent.
     """
 
     tool_name: str
-    arguments: str
+    args: ArgsJson | ArgsObject
     tool_id: str | None = None
+
+    @classmethod
+    def from_json(cls, tool_name: str, args_json: str, tool_id: str | None = None) -> ToolCall:
+        return cls(tool_name, ArgsJson(args_json), tool_id)
+
+    @classmethod
+    def from_object(cls, tool_name: str, args_object: dict[str, Any]) -> ToolCall:
+        return cls(tool_name, ArgsObject(args_object))
 
 
 @dataclass

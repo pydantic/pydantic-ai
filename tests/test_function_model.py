@@ -84,15 +84,15 @@ def whether_model(messages: list[Message], info: AgentInfo) -> LLMMessage:  # pr
     if last.role == 'user':
         return LLMToolCalls(
             calls=[
-                ToolCall(
-                    tool_name='get_location',
-                    arguments=json.dumps({'location_description': last.content}),
+                ToolCall.from_json(
+                    'get_location',
+                    json.dumps({'location_description': last.content}),
                 )
             ]
         )
     elif last.role == 'tool-return':
         if last.tool_name == 'get_location':
-            return LLMToolCalls(calls=[ToolCall(tool_name='get_whether', arguments=last.content)])
+            return LLMToolCalls(calls=[ToolCall.from_json('get_whether', last.content)])
         elif last.tool_name == 'get_whether':
             location_name = next(m.content for m in messages if m.role == 'user')
             return LLMResponse(f'{last.content} in {location_name}')
@@ -132,7 +132,7 @@ def test_whether():
                 role='user',
             ),
             LLMToolCalls(
-                calls=[ToolCall(tool_name='get_location', arguments='{"location_description": "London"}')],
+                calls=[ToolCall.from_json('get_location', '{"location_description": "London"}')],
                 timestamp=IsNow(),
                 role='llm-tool-calls',
             ),
@@ -141,9 +141,9 @@ def test_whether():
             ),
             LLMToolCalls(
                 calls=[
-                    ToolCall(
-                        tool_name='get_whether',
-                        arguments='{"lat": 51, "lng": 0}',
+                    ToolCall.from_json(
+                        'get_whether',
+                        '{"lat": 51, "lng": 0}',
                     )
                 ],
                 timestamp=IsNow(),
@@ -174,9 +174,9 @@ def call_function_model(messages: list[Message], _: AgentInfo) -> LLMMessage:  #
             details = json.loads(last.content)
             return LLMToolCalls(
                 calls=[
-                    ToolCall(
-                        tool_name=details['function'],
-                        arguments=json.dumps(details['arguments']),
+                    ToolCall.from_json(
+                        details['function'],
+                        json.dumps(details['arguments']),
                     )
                 ]
             )
@@ -213,7 +213,7 @@ def call_retriever(messages: list[Message], info: AgentInfo) -> LLMMessage:
     if len(messages) == 1:
         assert len(info.retrievers) == 1
         retriever_id = next(iter(info.retrievers.keys()))
-        return LLMToolCalls(calls=[ToolCall(tool_name=retriever_id, arguments='{}')])
+        return LLMToolCalls(calls=[ToolCall.from_json(retriever_id, '{}')])
     else:
         return LLMResponse('final response')
 
@@ -320,11 +320,11 @@ def test_call_all():
             UserPrompt(content='Hello', timestamp=IsNow()),
             LLMToolCalls(
                 calls=[
-                    ToolCall(tool_name='foo', arguments='{"x": 0}'),
-                    ToolCall(tool_name='bar', arguments='{"x": 0}'),
-                    ToolCall(tool_name='baz', arguments='{"x": 0}'),
-                    ToolCall(tool_name='qux', arguments='{"x": 0}'),
-                    ToolCall(tool_name='quz', arguments='{"x": "a"}'),
+                    ToolCall.from_json('foo', '{"x": 0}'),
+                    ToolCall.from_json('bar', '{"x": 0}'),
+                    ToolCall.from_json('baz', '{"x": 0}'),
+                    ToolCall.from_json('qux', '{"x": 0}'),
+                    ToolCall.from_json('quz', '{"x": "a"}'),
                 ],
                 timestamp=IsNow(),
             ),
@@ -396,11 +396,11 @@ def test_retriever_retry():
         [
             UserPrompt(content='Hello', timestamp=IsNow()),
             LLMToolCalls(
-                calls=[ToolCall(tool_name='my_ret', arguments='{"x": 0}')],
+                calls=[ToolCall.from_json('my_ret', '{"x": 0}')],
                 timestamp=IsNow(),
             ),
             ToolRetry(tool_name='my_ret', content='First call failed', timestamp=IsNow()),
-            LLMToolCalls(calls=[ToolCall(tool_name='my_ret', arguments='{"x": 1}')], timestamp=IsNow()),
+            LLMToolCalls(calls=[ToolCall.from_json('my_ret', '{"x": 1}')], timestamp=IsNow()),
             ToolReturn(tool_name='my_ret', content='2', timestamp=IsNow()),
             LLMResponse(content='{"my_ret": "2"}', timestamp=IsNow()),
         ]

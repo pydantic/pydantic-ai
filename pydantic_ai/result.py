@@ -10,6 +10,7 @@ from typing_extensions import Self, TypedDict
 
 from . import _utils, messages
 from .call import AgentDeps, CallContext, Retry
+from .messages import ArgsJson
 
 ResultData = TypeVar('ResultData')
 
@@ -79,7 +80,10 @@ class ResultSchema(Generic[ResultData]):
             Either the validated result data (left) or a retry message (right).
         """
         try:
-            result = self.type_adapter.validate_json(tool_call.arguments)
+            if isinstance(tool_call.args, ArgsJson):
+                result = self.type_adapter.validate_json(tool_call.args.args_json)
+            else:
+                result = self.type_adapter.validate_python(tool_call.args.args_object)
         except ValidationError as e:
             m = messages.ToolRetry(
                 tool_name=tool_call.tool_name,

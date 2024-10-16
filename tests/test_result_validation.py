@@ -11,7 +11,7 @@ def test_result_tuple():
     def return_tuple(_: list[Message], info: AgentInfo) -> LLMMessage:
         assert info.result_tool is not None
         args_json = '{"response": ["foo", "bar"]}'
-        return LLMToolCalls(calls=[ToolCall(tool_name=info.result_tool.name, arguments=args_json)])
+        return LLMToolCalls(calls=[ToolCall.from_json(info.result_tool.name, args_json)])
 
     agent = Agent(FunctionModel(return_tuple), deps=None, result_type=tuple[str, str])
 
@@ -28,7 +28,7 @@ def test_result_pydantic_model():
     def return_model(_: list[Message], info: AgentInfo) -> LLMMessage:
         assert info.result_tool is not None
         args_json = '{"a": 1, "b": "foo"}'
-        return LLMToolCalls(calls=[ToolCall(tool_name=info.result_tool.name, arguments=args_json)])
+        return LLMToolCalls(calls=[ToolCall.from_json(info.result_tool.name, args_json)])
 
     agent = Agent(FunctionModel(return_model), deps=None, result_type=Foo)
 
@@ -44,7 +44,7 @@ def test_result_pydantic_model_retry():
             args_json = '{"a": "wrong", "b": "foo"}'
         else:
             args_json = '{"a": 42, "b": "foo"}'
-        return LLMToolCalls(calls=[ToolCall(tool_name=info.result_tool.name, arguments=args_json)])
+        return LLMToolCalls(calls=[ToolCall.from_json(info.result_tool.name, args_json)])
 
     agent = Agent(FunctionModel(return_model), deps=None, result_type=Foo)
 
@@ -55,7 +55,7 @@ def test_result_pydantic_model_retry():
         [
             UserPrompt(content='Hello', timestamp=IsNow()),
             LLMToolCalls(
-                calls=[ToolCall(tool_name='final_result', arguments='{"a": "wrong", "b": "foo"}')],
+                calls=[ToolCall.from_json('final_result', '{"a": "wrong", "b": "foo"}')],
                 timestamp=IsNow(),
             ),
             ToolRetry(
@@ -71,7 +71,7 @@ def test_result_pydantic_model_retry():
                 timestamp=IsNow(),
             ),
             LLMToolCalls(
-                calls=[ToolCall(tool_name='final_result', arguments='{"a": 42, "b": "foo"}')],
+                calls=[ToolCall.from_json('final_result', '{"a": 42, "b": "foo"}')],
                 timestamp=IsNow(),
             ),
         ]
@@ -85,7 +85,7 @@ def test_result_validator():
             args_json = '{"a": 41, "b": "foo"}'
         else:
             args_json = '{"a": 42, "b": "foo"}'
-        return LLMToolCalls(calls=[ToolCall(tool_name=info.result_tool.name, arguments=args_json)])
+        return LLMToolCalls(calls=[ToolCall.from_json(info.result_tool.name, args_json)])
 
     agent = Agent(FunctionModel(return_model), deps=None, result_type=Foo)
 
@@ -102,12 +102,8 @@ def test_result_validator():
     assert result.message_history == snapshot(
         [
             UserPrompt(content='Hello', timestamp=IsNow()),
-            LLMToolCalls(
-                calls=[ToolCall(tool_name='final_result', arguments='{"a": 41, "b": "foo"}')], timestamp=IsNow()
-            ),
+            LLMToolCalls(calls=[ToolCall.from_json('final_result', '{"a": 41, "b": "foo"}')], timestamp=IsNow()),
             ToolRetry(tool_name='final_result', content='"a" should be 42', timestamp=IsNow()),
-            LLMToolCalls(
-                calls=[ToolCall(tool_name='final_result', arguments='{"a": 42, "b": "foo"}')], timestamp=IsNow()
-            ),
+            LLMToolCalls(calls=[ToolCall.from_json('final_result', '{"a": 42, "b": "foo"}')], timestamp=IsNow()),
         ]
     )

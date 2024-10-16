@@ -75,9 +75,7 @@ class TestAgentModel(AgentModel):
 
     async def request(self, messages: list[Message]) -> LLMMessage:
         if self.step == 0:
-            calls = [
-                ToolCall(tool_name=name, arguments=self.gen_retriever_args(args)) for name, args in self.retriever_calls
-            ]
+            calls = [ToolCall.from_object(name, self.gen_retriever_args(args)) for name, args in self.retriever_calls]
             self.step += 1
             self.last_message_count = len(messages)
             return LLMToolCalls(calls=calls)
@@ -87,7 +85,7 @@ class TestAgentModel(AgentModel):
         new_retry_names = {m.tool_name for m in new_messages if isinstance(m, ToolRetry)}
         if new_retry_names:
             calls = [
-                ToolCall(tool_name=name, arguments=self.gen_retriever_args(args))
+                ToolCall.from_object(name, self.gen_retriever_args(args))
                 for name, args in self.retriever_calls
                 if name in new_retry_names
             ]
@@ -109,11 +107,11 @@ class TestAgentModel(AgentModel):
                 assert self.result_tool is not None, 'No result tool name provided'
                 response_args = self.gen_retriever_args(self.result.right)
                 self.step += 1
-                return LLMToolCalls(calls=[ToolCall(tool_name=self.result_tool.name, arguments=response_args)])
+                return LLMToolCalls(calls=[ToolCall.from_object(self.result_tool.name, response_args)])
 
-    def gen_retriever_args(self, tool_def: AbstractToolDefinition) -> str:
+    def gen_retriever_args(self, tool_def: AbstractToolDefinition) -> Any:
         """Generate arguments for a retriever."""
-        return _JsonSchemaTestData(tool_def.json_schema, self.step).generate_json()
+        return _JsonSchemaTestData(tool_def.json_schema, self.step).generate()
 
 
 _chars = string.ascii_letters + string.digits + string.punctuation
@@ -134,9 +132,6 @@ class _JsonSchemaTestData:
     def generate(self) -> Any:
         """Generate data for the JSON schema."""
         return self._gen_any(self.schema)  # pyright: ignore[reportArgumentType]
-
-    def generate_json(self) -> str:
-        return json.dumps(self.generate())
 
     def _gen_any(self, schema: dict[str, Any]) -> Any:
         """Generate data for any JSON Schema."""

@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 
 from pydantic_ai import Agent
+from devtools import debug
 
 system_prompt = """\
 Given the following PostgreSQL table of records, your job is to write a SQL query that suits the user's request.
@@ -57,5 +58,6 @@ agent = Agent('gemini-1.5-flash', result_type=Response, system_prompt=system_pro
 
 
 if __name__ == '__main__':
-    result = agent.run_sync('show me logs from yesterday, with level "error"')
-    print('SQL Query:', result.response.sql_query)
+    with debug.timer('SQL Generation'):
+        result = agent.run_sync('show me logs from yesterday, with level "error"')
+    debug(result.response.sql_query)
