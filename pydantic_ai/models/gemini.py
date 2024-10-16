@@ -23,10 +23,11 @@ import re
 from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import dataclass
-from typing import Annotated, Any, Literal, Union, assert_never, cast
+from typing import Annotated, Any, Literal, Union, cast
 
 from httpx import AsyncClient as AsyncHTTPClient
 from pydantic import Field, TypeAdapter
+from typing_extensions import assert_never
 
 from .. import _utils, shared
 from ..messages import (

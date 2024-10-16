@@ -4,23 +4,11 @@ import asyncio
 from dataclasses import dataclass, is_dataclass
 from functools import partial
 from types import GenericAlias
-from typing import (
-    Any,
-    Callable,
-    Generic,
-    Literal,
-    NotRequired,
-    TypedDict,
-    TypeVar,
-    Union,
-    cast,
-    get_args,
-    overload,
-)
+from typing import Any, Callable, Generic, Literal, TypeVar, Union, cast, get_args, overload
 
 from pydantic import BaseModel
 from pydantic.json_schema import JsonSchemaValue
-from typing_extensions import ParamSpec, TypeAlias, is_typeddict
+from typing_extensions import NotRequired, ParamSpec, TypeAlias, TypedDict, is_typeddict
 
 _P = ParamSpec('_P')
 _R = TypeVar('_R')
