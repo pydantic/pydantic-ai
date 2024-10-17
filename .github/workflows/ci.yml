@@ -79,12 +79,12 @@ jobs:
           enable-cache: true
 
       - run: uv run --frozen coverage combine coverage
-      - run: coverage xml
+#      - run: uv run --frozen coverage xml
 #      - uses: codecov/codecov-action@v4
 #        with:
 #          token: ${{ secrets.CODECOV_TOKEN }}
 #          file: ./coverage.xml
-      - run: coverage report --fail-under 70
+      - run: uv run --frozen coverage report --fail-under 70
 
   # https://github.com/marketplace/actions/alls-green#why used for branch protection checks
   check:
