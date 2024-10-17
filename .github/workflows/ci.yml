@@ -17,13 +17,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@v3
+      - uses: astral-sh/setup-uv@v3
         with:
           enable-cache: true
 
-      - name: Set up Python 3.12
-        run: uv python install 3.12
+      - run: uv python install 3.12
 
       - name: Install dependencies
         run: uv sync --python 3.12 --frozen
@@ -44,8 +42,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@v3
+      - uses: astral-sh/setup-uv@v3
         with:
           enable-cache: true
 
@@ -77,8 +74,11 @@ jobs:
           merge-multiple: true
           path: coverage
 
-      - run: pip install coverage[toml] --break-system-packages
-      - run: coverage combine coverage
+      - uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
+      - run: uv run --frozen coverage combine coverage
       - run: coverage xml
 #      - uses: codecov/codecov-action@v4
 #        with:
@@ -109,13 +109,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@v3
+      - uses: astral-sh/setup-uv@v3
         with:
           enable-cache: true
 
-      - name: Set up Python 3.12
-        run: uv python install 3.12
+      - run: uv python install 3.12
 
       - name: check GITHUB_REF matches package version
         uses: samuelcolvin/check-python-version@v4.1

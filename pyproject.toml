@@ -49,7 +49,7 @@ dev-dependencies = [
     "pytest-pretty>=1.2.0",
     "inline-snapshot>=0.13.3",
     "ruff>=0.6.9",
-    "coverage>=7.6.2",
+    "coverage[toml]>=7.6.2",
     "devtools>=0.12.2",
 ]
 
