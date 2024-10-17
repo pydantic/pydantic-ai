@@ -5,24 +5,26 @@ from collections.abc import Awaitable, Sequence
 from dataclasses import dataclass
 from typing import Any, Callable, Generic, Literal, cast, overload
 
+from pydantic import ValidationError
 from typing_extensions import assert_never
 
-from . import _retriever as _r, _system_prompt, _utils, messages as _messages, models as _models, result as _result
-from .call import AgentDeps
-from .result import ResultData
+from . import _result, _retriever as _r, _system_prompt, _utils, messages as _messages, models, result, shared
+from .shared import AgentDeps
 
 __all__ = ('Agent',)
-KnownModelName = Literal['openai:gpt-4o', 'openai:gpt-4-turbo', 'openai:gpt-4', 'openai:gpt-3.5-turbo']
+KnownModelName = Literal[
+    'openai:gpt-4o', 'openai:gpt-4-turbo', 'openai:gpt-4', 'openai:gpt-3.5-turbo', 'gemini-1.5-flash', 'gemini-1.5-pro'
+]
 
 
 @dataclass(init=False)
-class Agent(Generic[AgentDeps, ResultData]):
+class Agent(Generic[AgentDeps, result.ResultData]):
     """Main class for creating "agents" - a way to have a specific type of "conversation" with an LLM."""
 
     # slots mostly for my sanity — knowing what attributes are available
-    _model: _models.Model | None
-    _result_tool: _result.ResultSchema[ResultData] | None
-    _result_validators: list[_result.ResultValidator[AgentDeps, ResultData]]
+    model: models.Model | None
+    _result_tool: result.ResultSchema[result.ResultData] | None
+    _result_validators: list[_result.ResultValidator[AgentDeps, result.ResultData]]
     _allow_text_result: bool
     _system_prompts: tuple[str, ...]
     _retrievers: dict[str, _r.Retriever[AgentDeps, Any]]
@@ -34,8 +36,8 @@ class Agent(Generic[AgentDeps, ResultData]):
 
     def __init__(
         self,
-        model: _models.Model | KnownModelName | None = None,
-        result_type: type[_result.ResultData] = str,
+        model: models.Model | KnownModelName | None = None,
+        result_type: type[result.ResultData] = str,
         *,
         system_prompt: str | Sequence[str] = (),
         # type here looks odd, but it's required os you can avoid "partially unknown" type errors with `deps=None`
@@ -45,9 +47,9 @@ class Agent(Generic[AgentDeps, ResultData]):
         result_tool_description: str = 'The final response which ends this conversation',
         result_retries: int | None = None,
     ):
-        self._model = _models.infer_model(model) if model is not None else None
+        self.model = models.infer_model(model) if model is not None else None
 
-        self._result_tool = _result.ResultSchema[result_type].build(
+        self._result_tool = result.ResultSchema[result_type].build(
             result_type, result_tool_name, result_tool_description
         )
         # if the result tool is None, or its schema allows `str`, we allow plain text results
@@ -67,9 +69,9 @@ class Agent(Generic[AgentDeps, ResultData]):
         user_prompt: str,
         *,
         message_history: list[_messages.Message] | None = None,
-        model: _models.Model | KnownModelName | None = None,
+        model: models.Model | KnownModelName | None = None,
         deps: AgentDeps | None = None,
-    ) -> _result.RunResult[_result.ResultData]:
+    ) -> result.RunResult[result.ResultData]:
         """Run the agent with a user prompt in async mode.
 
         Args:
@@ -82,9 +84,9 @@ class Agent(Generic[AgentDeps, ResultData]):
             The result of the run.
         """
         if model is not None:
-            model_ = _models.infer_model(model)
-        elif self._model is not None:
-            model_ = self._model
+            model_ = models.infer_model(model)
+        elif self.model is not None:
+            model_ = self.model
         else:
             raise RuntimeError('`model` must be set either when creating the agent or when calling it.')
 
@@ -99,30 +101,29 @@ class Agent(Generic[AgentDeps, ResultData]):
 
         messages.append(_messages.UserPrompt(user_prompt))
 
-        functions: list[_models.AbstractToolDefinition] = list(self._retrievers.values())
-        if self._result_tool is not None:
-            functions.append(self._result_tool)
-
-        result_tool_name = self._result_tool and self._result_tool.name
-        agent_model = model_.agent_model(self._allow_text_result, functions, result_tool_name)
+        agent_model = model_.agent_model(self._retrievers, self._allow_text_result, self._result_tool)
 
         for retriever in self._retrievers.values():
             retriever.reset()
 
-        while True:
-            llm_message = await agent_model.request(messages)
-            opt_result = await self._handle_model_response(messages, llm_message, deps)
-            if opt_result is not None:
-                return _result.RunResult(opt_result.value, messages, cost=_result.Cost(0))
+        try:
+            while True:
+                llm_message = await agent_model.request(messages)
+                opt_result = await self._handle_model_response(messages, llm_message, deps)
+                if opt_result is not None:
+                    return result.RunResult(opt_result.value, messages, cost=result.Cost(0))
+        except (ValidationError, shared.UnexpectedModelBehaviour) as e:
+            agent_name = cast(str, self.__name__)  # pyright: ignore[reportUnknownMemberType,reportAttributeAccessIssue]
+            raise shared.AgentError(messages, agent_name) from e
 
     def run_sync(
         self,
         user_prompt: str,
         *,
         message_history: list[_messages.Message] | None = None,
-        model: _models.Model | KnownModelName | None = None,
+        model: models.Model | KnownModelName | None = None,
         deps: AgentDeps | None = None,
-    ) -> _result.RunResult[_result.ResultData]:
+    ) -> result.RunResult[result.ResultData]:
         """Run the agent with a user prompt synchronously.
 
         This is a convenience method that wraps `self.run` with `asyncio.run()`.
@@ -146,8 +147,8 @@ class Agent(Generic[AgentDeps, ResultData]):
         return func
 
     def result_validator(
-        self, func: _result.ResultValidatorFunc[AgentDeps, ResultData]
-    ) -> _result.ResultValidatorFunc[AgentDeps, ResultData]:
+        self, func: _result.ResultValidatorFunc[AgentDeps, result.ResultData]
+    ) -> _result.ResultValidatorFunc[AgentDeps, result.ResultData]:
         """Decorator to register a result validator function."""
         self._result_validators.append(_result.ResultValidator(func))
         return func
@@ -214,7 +215,7 @@ class Agent(Generic[AgentDeps, ResultData]):
 
     async def _handle_model_response(
         self, messages: list[_messages.Message], llm_message: _messages.LLMMessage, deps: AgentDeps
-    ) -> _utils.Option[ResultData]:
+    ) -> _utils.Option[result.ResultData]:
         """Process a single response from the model.
 
         Returns:
@@ -224,7 +225,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         if llm_message.role == 'llm-response':
             # plain string response
             if self._allow_text_result:
-                return _utils.Some(cast(ResultData, llm_message.content))
+                return _utils.Some(cast(result.ResultData, llm_message.content))
             else:
                 messages.append(_messages.PlainResponseForbidden())
         elif llm_message.role == 'llm-tool-calls':
@@ -234,36 +235,39 @@ class Agent(Generic[AgentDeps, ResultData]):
                 call = next((c for c in llm_message.calls if c.tool_name == self._result_tool.name), None)
                 if call is not None:
                     try:
-                        result = self._result_tool.validate(call)
-                        result = await self._validate_result(result, deps, call)
+                        result_data = self._result_tool.validate(call)
+                        result_data = await self._validate_result(result_data, deps, call)
                     except _result.ToolRetryError as e:
                         self._incr_result_retry()
                         messages.append(e.tool_retry)
                         return None
                     else:
-                        return _utils.Some(result)
+                        return _utils.Some(result_data)
 
             # otherwise we run all retriever functions in parallel
             coros: list[Awaitable[_messages.Message]] = []
             for call in llm_message.calls:
                 retriever = self._retrievers.get(call.tool_name)
                 if retriever is None:
-                    # TODO return message?
-                    raise ValueError(f'Unknown function name: {call.tool_name!r}')
+                    raise shared.UnexpectedModelBehaviour(f'Unknown function name: {call.tool_name!r}')
                 coros.append(retriever.run(deps, call))
             messages += await asyncio.gather(*coros)
         else:
             assert_never(llm_message)
 
-    async def _validate_result(self, result: ResultData, deps: AgentDeps, tool_call: _messages.ToolCall) -> ResultData:
+    async def _validate_result(
+        self, result_data: result.ResultData, deps: AgentDeps, tool_call: _messages.ToolCall
+    ) -> result.ResultData:
         for validator in self._result_validators:
-            result = await validator.validate(result, deps, self._current_result_retry, tool_call)
-        return result
+            result_data = await validator.validate(result_data, deps, self._current_result_retry, tool_call)
+        return result_data
 
     def _incr_result_retry(self) -> None:
         self._current_result_retry += 1
         if self._current_result_retry > self._max_result_retries:
-            raise RuntimeError(f'Exceeded maximum retries ({self._max_result_retries}) for result validation')
+            raise shared.UnexpectedModelBehaviour(
+                f'Exceeded maximum retries ({self._max_result_retries}) for result validation'
+            )
 
     async def _init_messages(self, deps: AgentDeps) -> list[_messages.Message]:
         """Build the initial messages for the conversation."""

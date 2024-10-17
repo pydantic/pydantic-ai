@@ -22,7 +22,7 @@ from ._utils import ObjectJsonSchema, check_object_json_schema, is_model_like
 
 if TYPE_CHECKING:
     from . import _retriever
-    from .call import AgentDeps
+    from .shared import AgentDeps
 
 
 __all__ = ('function_schema',)
@@ -228,7 +228,7 @@ def _infer_docstring_style(doc: str) -> DocstringStyle:
 
 
 def _is_call_ctx(annotation: Any) -> bool:
-    from .call import CallContext
+    from .shared import CallContext
 
     return annotation is CallContext or (
         _typing_extra.is_generic_alias(annotation) and get_origin(annotation) is CallContext

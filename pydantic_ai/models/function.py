@@ -1,7 +1,10 @@
 from __future__ import annotations as _annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Callable
+
+from typing_extensions import TypeAlias
 
 from ..messages import LLMMessage, Message
 from . import AbstractToolDefinition, AgentModel, Model
@@ -10,10 +13,16 @@ if TYPE_CHECKING:
     from .._utils import ObjectJsonSchema
 
 
-class FunctionDef(Protocol):
-    def __call__(
-        self, messages: list[Message], allow_text_result: bool, tools: dict[str, ToolDescription], /
-    ) -> LLMMessage: ...
+@dataclass(frozen=True)
+class AgentInfo:
+    """Information about an agent passed to a function."""
+
+    retrievers: Mapping[str, AbstractToolDefinition]
+    allow_text_result: bool
+    result_tool: AbstractToolDefinition | None
+
+
+FunctionDef: TypeAlias = Callable[[list[Message], AgentInfo], LLMMessage]
 
 
 @dataclass
@@ -31,22 +40,18 @@ class FunctionModel(Model):
     function: FunctionDef
 
     def agent_model(
-        self, allow_text_result: bool, tools: list[AbstractToolDefinition], result_tool_name: str | None
+        self,
+        retrievers: Mapping[str, AbstractToolDefinition],
+        allow_text_result: bool,
+        result_tool: AbstractToolDefinition | None,
     ) -> AgentModel:
-        return FunctionAgentModel(
-            self.function,
-            allow_text_result,
-            {r.name: ToolDescription(r.name, r.description, r.json_schema) for r in tools},
-        )
+        return FunctionAgentModel(self.function, AgentInfo(retrievers, allow_text_result, result_tool))
 
 
 @dataclass
 class FunctionAgentModel(AgentModel):
-    __test__ = False
-
     function: FunctionDef
-    allow_text_result: bool
-    tools: dict[str, ToolDescription]
+    agent_info: AgentInfo
 
     async def request(self, messages: list[Message]) -> LLMMessage:
-        return self.function(messages, self.allow_text_result, self.tools)
+        return self.function(messages, self.agent_info)

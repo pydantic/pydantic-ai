@@ -4,12 +4,7 @@ from devtools import debug
 
 from pydantic_ai import Agent
 
-weather_agent: Agent[None, str] = Agent('openai:gpt-4o')
-
-
-@weather_agent.system_prompt
-def system_prompt():
-    return 'Be concise, reply with one sentence.'
+weather_agent: Agent[None, str] = Agent('openai:gpt-4o', system_prompt='Be concise, reply with one sentence.')
 
 
 @weather_agent.retriever_plain
@@ -32,5 +27,6 @@ async def get_whether(lat: float, lng: float):
         return 'Sunny'
 
 
-result = weather_agent.run_sync('What is the weather like in West London and in Wiltshire?')
-debug(result)
+if __name__ == '__main__':
+    result = weather_agent.run_sync('What is the weather like in West London and in Wiltshire?')
+    debug(result)

@@ -8,6 +8,7 @@ from __future__ import annotations as _annotations
 import json
 import re
 import string
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -35,27 +36,29 @@ class TestModel(Model):
     custom_result_args: Any | None = None
 
     def agent_model(
-        self, allow_text_result: bool, tools: list[AbstractToolDefinition], result_tool_name: str | None
+        self,
+        retrievers: Mapping[str, AbstractToolDefinition],
+        allow_text_result: bool,
+        result_tool: AbstractToolDefinition | None,
     ) -> AgentModel:
         if self.call_retrievers == 'all':
-            retriever_calls = [(r.name, r) for r in tools if r.name != 'response']
+            retriever_calls = [(r.name, r) for r in retrievers.values()]
         else:
-            lookup = {r.name: r for r in tools}
-            retriever_calls = [(name, lookup[name]) for name in self.call_retrievers]
+            retrievers_to_call = {retrievers[name] for name in self.call_retrievers}
+            retriever_calls = [(r.name, r) for r in retrievers_to_call]
 
         if self.custom_result_text is not None:
             if not allow_text_result:
                 raise ValueError('Plain response not allowed, but `custom_result_text` is set.')
             result: _utils.Either[str | None, AbstractToolDefinition] = _utils.Either(left=self.custom_result_text)
         elif self.custom_result_args is not None:
-            assert result_tool_name is not None, 'No result tool name provided, but `custom_result_args` is set.'
+            assert result_tool is not None, 'No result tool name provided, but `custom_result_args` is set.'
             result = _utils.Either(right=self.custom_result_args)
-        elif result_tool_name is not None:
-            response_def = next(r for r in tools if r.name == result_tool_name)
-            result = _utils.Either(right=response_def)
+        elif result_tool is not None:
+            result = _utils.Either(right=result_tool)
         else:
             result = _utils.Either(left=None)
-        return TestAgentModel(retriever_calls, result, result_tool_name)
+        return TestAgentModel(retriever_calls, result, result_tool)
 
 
 @dataclass
@@ -64,17 +67,15 @@ class TestAgentModel(AgentModel):
     __test__ = False
 
     retriever_calls: list[tuple[str, AbstractToolDefinition]]
-    # left means the text is plain text, right means it's a function call
+    # left means the text is plain text; right means it's a function call
     result: _utils.Either[str | None, AbstractToolDefinition]
-    result_tool_name: str | None
+    result_tool: AbstractToolDefinition | None
     step: int = 0
     last_message_count: int = 0
 
     async def request(self, messages: list[Message]) -> LLMMessage:
         if self.step == 0:
-            calls = [
-                ToolCall(tool_name=name, arguments=self.gen_retriever_args(args)) for name, args in self.retriever_calls
-            ]
+            calls = [ToolCall.from_object(name, self.gen_retriever_args(args)) for name, args in self.retriever_calls]
             self.step += 1
             self.last_message_count = len(messages)
             return LLMToolCalls(calls=calls)
@@ -84,7 +85,7 @@ class TestAgentModel(AgentModel):
         new_retry_names = {m.tool_name for m in new_messages if isinstance(m, ToolRetry)}
         if new_retry_names:
             calls = [
-                ToolCall(tool_name=name, arguments=self.gen_retriever_args(args))
+                ToolCall.from_object(name, self.gen_retriever_args(args))
                 for name, args in self.retriever_calls
                 if name in new_retry_names
             ]
@@ -103,14 +104,14 @@ class TestAgentModel(AgentModel):
                 else:
                     return LLMResponse(content=response_text.value)
             else:
-                assert self.result_tool_name is not None, 'No result tool name provided'
+                assert self.result_tool is not None, 'No result tool name provided'
                 response_args = self.gen_retriever_args(self.result.right)
                 self.step += 1
-                return LLMToolCalls(calls=[ToolCall(tool_name=self.result_tool_name, arguments=response_args)])
+                return LLMToolCalls(calls=[ToolCall.from_object(self.result_tool.name, response_args)])
 
-    def gen_retriever_args(self, tool_def: AbstractToolDefinition) -> str:
+    def gen_retriever_args(self, tool_def: AbstractToolDefinition) -> Any:
         """Generate arguments for a retriever."""
-        return _JsonSchemaTestData(tool_def.json_schema, self.step).generate_json()
+        return _JsonSchemaTestData(tool_def.json_schema, self.step).generate()
 
 
 _chars = string.ascii_letters + string.digits + string.punctuation
@@ -132,9 +133,6 @@ class _JsonSchemaTestData:
         """Generate data for the JSON schema."""
         return self._gen_any(self.schema)  # pyright: ignore[reportArgumentType]
 
-    def generate_json(self) -> str:
-        return json.dumps(self.generate())
-
     def _gen_any(self, schema: dict[str, Any]) -> Any:
         """Generate data for any JSON Schema."""
         if const := schema.get('const'):
@@ -143,18 +141,21 @@ class _JsonSchemaTestData:
             return enum[0]
         elif examples := schema.get('examples'):
             return examples[0]
+        elif ref := schema.get('$ref'):
+            key = re.sub(r'^#/\$defs/', '', ref)
+            js_def = self.defs[key]
+            return self._gen_any(js_def)
+        elif any_of := schema.get('anyOf'):
+            if {'type': 'null'} in any_of:
+                return None
+            else:
+                return self._gen_any(any_of[0])
 
         type_ = schema.get('type')
         if type_ is None:
-            if ref := schema.get('$ref'):
-                key = re.sub(r'^#/\$defs/', '', ref)
-                js_def = self.defs[key]
-                return self._gen_any(js_def)
-            else:
-                # if there's no type or ref, we can't generate anything
-                return self._char()
-
-        if type_ == 'object':
+            # if there's no type or ref, we can't generate anything
+            return self._char()
+        elif type_ == 'object':
             return self._object_gen(schema)
         elif type_ == 'string':
             return self._str_gen(schema)
@@ -166,6 +167,8 @@ class _JsonSchemaTestData:
             return self._bool_gen()
         elif type_ == 'array':
             return self._array_gen(schema)
+        elif type_ == 'null':
+            return None
         else:
             raise NotImplementedError(f'Unknown type: {type_}, please submit a PR to extend JsonSchemaTestData!')
 
