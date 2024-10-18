@@ -11,7 +11,7 @@ from pydantic_core import SchemaValidator
 from typing_extensions import Concatenate, ParamSpec
 
 from . import _pydantic, _utils, messages
-from .shared import AgentDeps, CallContext, Retry
+from .shared import AgentDeps, CallContext, ModelRetry
 
 # retrieval function parameters
 P = ParamSpec('P')
@@ -79,7 +79,7 @@ class Retriever(Generic[AgentDeps, P]):
             else:
                 function = cast(Callable[[Any], str], self.function.whichever())
                 response_content = await _utils.run_in_executor(function, *args, **kwargs)
-        except Retry as e:
+        except ModelRetry as e:
             return self._on_error(e.message, message)
 
         self._current_retry = 0

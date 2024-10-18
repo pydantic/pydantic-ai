@@ -63,6 +63,9 @@ class OpenAIModel(Model):
             tools,
         )
 
+    def name(self) -> str:
+        return f'openai:{self.model_name}'
+
     @staticmethod
     def map_tool_definition(f: AbstractToolDefinition) -> chat.ChatCompletionToolParam:
         return {

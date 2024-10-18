@@ -5,7 +5,7 @@ import pydantic_core
 import pytest
 from inline_snapshot import snapshot
 
-from pydantic_ai import Agent, CallContext, Retry
+from pydantic_ai import Agent, CallContext, ModelRetry
 from pydantic_ai.messages import (
     LLMMessage,
     LLMResponse,
@@ -19,7 +19,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
-from tests.utils import IsNow
+from tests.conftest import IsNow
 
 
 def return_last(messages: list[Message], _: AgentInfo) -> LLMMessage:
@@ -338,7 +338,7 @@ def test_call_all():
     )
 
 
-async def do_foobar(foo: int, bar: str) -> str:
+async def do_foobar(foo: int, bar: str) -> str:  # pragma: no cover
     """
     Do foobar stuff, a lot.
 
@@ -385,7 +385,7 @@ def test_retriever_retry():
         nonlocal call_count
         call_count += 1
         if call_count == 1:
-            raise Retry('First call failed')
+            raise ModelRetry('First call failed')
         else:
             return str(x + 1)
 

@@ -7,7 +7,7 @@ from typing import Any, Callable, Generic, Union, cast
 
 from . import _utils, messages
 from .result import ResultData
-from .shared import AgentDeps, CallContext, Retry
+from .shared import AgentDeps, CallContext, ModelRetry
 
 # A function that always takes `ResultData` and returns `ResultData`,
 # but may or maybe not take `CallInfo` as a first argument, and may or may not be async.
@@ -56,7 +56,7 @@ class ResultValidator(Generic[AgentDeps, ResultData]):
             else:
                 function = cast(Callable[[Any], ResultData], self.function)
                 result_data = await _utils.run_in_executor(function, *args)
-        except Retry as r:
+        except ModelRetry as r:
             m = messages.ToolRetry(
                 tool_name=tool_call.tool_name,
                 content=r.message,

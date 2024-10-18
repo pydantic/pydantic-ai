@@ -1,22 +1,44 @@
 from __future__ import annotations as _annotations
 
+import json
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
+import httpx
 import pytest
-from httpx import AsyncClient
 from inline_snapshot import snapshot
 from pydantic import BaseModel
+from typing_extensions import TypeAlias
 
-from pydantic_ai import UserError
+from pydantic_ai import Agent, AgentError, ModelRetry, UnexpectedModelBehaviour, UserError
 from pydantic_ai._utils import ObjectJsonSchema
+from pydantic_ai.messages import (
+    ArgsObject,
+    LLMResponse,
+    LLMToolCalls,
+    SystemPrompt,
+    ToolCall,
+    ToolRetry,
+    ToolReturn,
+    UserPrompt,
+)
 from pydantic_ai.models.gemini import (
     GeminiModel,
+    _gemini_response_ta,  # pyright: ignore[reportPrivateUsage]
+    _GeminiCandidates,  # pyright: ignore[reportPrivateUsage]
+    _GeminiContent,  # pyright: ignore[reportPrivateUsage]
     _GeminiFunction,  # pyright: ignore[reportPrivateUsage]
     _GeminiFunctionCallingConfig,  # pyright: ignore[reportPrivateUsage]
+    _GeminiFunctionCallPart,  # pyright: ignore[reportPrivateUsage]
+    _GeminiResponse,  # pyright: ignore[reportPrivateUsage]
+    _GeminiTextPart,  # pyright: ignore[reportPrivateUsage]
     _GeminiToolConfig,  # pyright: ignore[reportPrivateUsage]
     _GeminiTools,  # pyright: ignore[reportPrivateUsage]
+    _GeminiUsageMetaData,  # pyright: ignore[reportPrivateUsage]
 )
-from tests.conftest import TestEnv
+from tests.conftest import IsNow, TestEnv
+
+pytestmark = pytest.mark.anyio
 
 
 def test_api_key_arg(env: TestEnv):
@@ -45,7 +67,7 @@ def test_api_key_empty(env: TestEnv):
 def test_agent_model_simple():
     m = GeminiModel('gemini-1.5-flash', api_key='via-arg')
     agent_model = m.agent_model({}, True, None)
-    assert isinstance(agent_model.http_client, AsyncClient)
+    assert isinstance(agent_model.http_client, httpx.AsyncClient)
     assert agent_model.model_name == 'gemini-1.5-flash'
     assert agent_model.api_key == 'via-arg'
     assert agent_model.tools is None
@@ -292,3 +314,202 @@ def test_json_def_recursive():
     )
     with pytest.raises(UserError, match=r'Recursive `\$ref`s in JSON Schema are not supported by Gemini'):
         m.agent_model({}, True, result_tool)
+
+
+@pytest.fixture
+async def get_gemini_client_handler(env: TestEnv):
+    env.set('GEMINI_API_KEY', 'via-env-var')
+
+    client: httpx.AsyncClient | None = None
+
+    async def create_client(handler: Callable[[httpx.Request], httpx.Response]) -> httpx.AsyncClient:
+        nonlocal client
+        assert client is None, 'get_gemini_client can only be called once'
+        client = httpx.AsyncClient(mounts={'all://': httpx.MockTransport(handler)})
+        return client
+
+    try:
+        yield create_client
+    finally:
+        if client:  # pragma: no cover
+            await client.aclose()
+
+
+GetGeminiClientHandler: TypeAlias = Callable[[Callable[[httpx.Request], httpx.Response]], Awaitable[httpx.AsyncClient]]
+
+
+@pytest.fixture
+async def get_gemini_client(get_gemini_client_handler: GetGeminiClientHandler):
+    async def create_client(response_data: _GeminiResponse | list[_GeminiResponse]) -> httpx.AsyncClient:
+        index = 0
+
+        def handler(_request: httpx.Request) -> httpx.Response:
+            nonlocal index
+
+            if isinstance(response_data, list):
+                r = response_data[index]
+            else:
+                r = response_data
+            index += 1
+
+            content = _gemini_response_ta.dump_json(r, by_alias=True)
+            return httpx.Response(200, content=content, headers={'Content-Type': 'application/json'})
+
+        return await get_gemini_client_handler(handler)
+
+    return create_client
+
+
+GetGeminiClient: TypeAlias = 'Callable[[_GeminiResponse | list[_GeminiResponse]], Awaitable[httpx.AsyncClient]]'
+
+
+def gemini_response(content: _GeminiContent) -> _GeminiResponse:
+    return _GeminiResponse(
+        candidates=[_GeminiCandidates(content=content, finish_reason='STOP', index=0, safety_ratings=[])],
+        usage_metadata=_GeminiUsageMetaData(1, 2, 3),
+    )
+
+
+async def test_request_simple_success(get_gemini_client: GetGeminiClient):
+    response = gemini_response(_GeminiContent.model_text('Hello world'))
+    gemini_client = await get_gemini_client(response)
+    m = GeminiModel('gemini-1.5-flash', http_client=gemini_client)
+    agent = Agent(m, deps=None)
+
+    result = await agent.run('Hello')
+    assert result.response == 'Hello world'
+
+
+async def test_request_structured_response(get_gemini_client: GetGeminiClient):
+    response = gemini_response(
+        _GeminiContent.function_call(
+            LLMToolCalls(calls=[ToolCall.from_object('final_result', {'response': [1, 2, 123]})])
+        )
+    )
+    gemini_client = await get_gemini_client(response)
+    m = GeminiModel('gemini-1.5-flash', http_client=gemini_client)
+    agent = Agent(m, deps=None, result_type=list[int])
+
+    result = await agent.run('Hello')
+    assert result.response == [1, 2, 123]
+    assert result.message_history == snapshot(
+        [
+            UserPrompt(content='Hello', timestamp=IsNow()),
+            LLMToolCalls(
+                calls=[
+                    ToolCall(
+                        tool_name='final_result',
+                        args=ArgsObject(args_object={'response': [1, 2, 123]}),
+                    )
+                ],
+                timestamp=IsNow(),
+            ),
+        ]
+    )
+
+
+async def test_request_tool_call(get_gemini_client: GetGeminiClient):
+    responses = [
+        gemini_response(
+            _GeminiContent.function_call(
+                LLMToolCalls(calls=[ToolCall.from_object('get_location', {'loc_name': 'San Fransisco'})])
+            )
+        ),
+        gemini_response(
+            _GeminiContent.function_call(
+                LLMToolCalls(calls=[ToolCall.from_object('get_location', {'loc_name': 'London'})])
+            )
+        ),
+        gemini_response(_GeminiContent.model_text('final response')),
+    ]
+    gemini_client = await get_gemini_client(responses)
+    m = GeminiModel('gemini-1.5-flash', http_client=gemini_client)
+    agent = Agent(m, deps=None, system_prompt='this is the system prompt')
+
+    @agent.retriever_plain
+    async def get_location(loc_name: str) -> str:
+        if loc_name == 'London':
+            return json.dumps({'lat': 51, 'lng': 0})
+        else:
+            raise ModelRetry('Wrong location, please try again')
+
+    result = await agent.run('Hello')
+    assert result.response == 'final response'
+    assert result.message_history == snapshot(
+        [
+            SystemPrompt(content='this is the system prompt'),
+            UserPrompt(content='Hello', timestamp=IsNow()),
+            LLMToolCalls(
+                calls=[
+                    ToolCall(
+                        tool_name='get_location',
+                        args=ArgsObject(args_object={'loc_name': 'San Fransisco'}),
+                    )
+                ],
+                timestamp=IsNow(),
+            ),
+            ToolRetry(tool_name='get_location', content='Wrong location, please try again', timestamp=IsNow()),
+            LLMToolCalls(
+                calls=[
+                    ToolCall(
+                        tool_name='get_location',
+                        args=ArgsObject(args_object={'loc_name': 'London'}),
+                    )
+                ],
+                timestamp=IsNow(),
+            ),
+            ToolReturn(tool_name='get_location', content='{"lat": 51, "lng": 0}', timestamp=IsNow()),
+            LLMResponse(content='final response', timestamp=IsNow()),
+        ]
+    )
+
+
+async def test_unexpected_response(get_gemini_client_handler: GetGeminiClientHandler):
+    def handler(_: httpx.Request):
+        return httpx.Response(401, content='invalid request')
+
+    gemini_client = await get_gemini_client_handler(handler)
+    m = GeminiModel('gemini-1.5-flash', http_client=gemini_client)
+    agent = Agent(m, deps=None, system_prompt='this is the system prompt')
+
+    with pytest.raises(AgentError, match='Error while running model gemini-1.5-flash') as exc_info:
+        await agent.run('Hello')
+
+    assert str(exc_info.value) == snapshot(
+        'Error while running model gemini-1.5-flash\n'
+        '  caused by unexpected model behavior: Unexpected response from gemini 401'
+    )
+
+    cause = exc_info.value.cause()
+    assert isinstance(cause, UnexpectedModelBehaviour)
+    assert str(cause) == snapshot('Unexpected response from gemini 401, body:\ninvalid request')
+
+
+async def test_heterogeneous_responses(get_gemini_client: GetGeminiClient):
+    response = gemini_response(
+        _GeminiContent(
+            role='model',
+            parts=[
+                _GeminiTextPart(text='foo'),
+                _GeminiFunctionCallPart.from_call(
+                    ToolCall(
+                        tool_name='get_location',
+                        args=ArgsObject(args_object={'loc_name': 'San Fransisco'}),
+                    )
+                ),
+            ],
+        )
+    )
+    gemini_client = await get_gemini_client(response)
+    m = GeminiModel('gemini-1.5-flash', http_client=gemini_client)
+    agent = Agent(m, deps=None)
+    with pytest.raises(AgentError, match='Error while running model gemini-1.5-flash') as exc_info:
+        await agent.run('Hello')
+
+    cause = exc_info.value.cause()
+    assert isinstance(cause, UnexpectedModelBehaviour)
+    assert str(cause) == snapshot(
+        'Unexpected response from Gemini, expected all parts to be function calls or text, got: '
+        "[_GeminiTextPart(text='foo'), _GeminiFunctionCallPart(function_call="
+        "_GeminiFunctionCall(name='get_location', args={'loc_name': 'San Fransisco'}))]"
+    )

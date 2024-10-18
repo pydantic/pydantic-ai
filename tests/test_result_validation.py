@@ -1,10 +1,10 @@
 from inline_snapshot import snapshot
 from pydantic import BaseModel
 
-from pydantic_ai import Agent, Retry
+from pydantic_ai import Agent, ModelRetry
 from pydantic_ai.messages import LLMMessage, LLMToolCalls, Message, ToolCall, ToolRetry, UserPrompt
 from pydantic_ai.models.function import AgentInfo, FunctionModel
-from tests.utils import IsNow
+from tests.conftest import IsNow
 
 
 def test_result_tuple():
@@ -94,7 +94,7 @@ def test_result_validator():
         if r.a == 42:
             return r
         else:
-            raise Retry('"a" should be 42')
+            raise ModelRetry('"a" should be 42')
 
     result = agent.run_sync('Hello')
     assert isinstance(result.response, Foo)

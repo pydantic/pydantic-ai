@@ -60,6 +60,9 @@ class TestModel(Model):
             result = _utils.Either(left=None)
         return TestAgentModel(retriever_calls, result, result_tool)
 
+    def name(self) -> str:
+        return 'test-model'
+
 
 @dataclass
 class TestAgentModel(AgentModel):

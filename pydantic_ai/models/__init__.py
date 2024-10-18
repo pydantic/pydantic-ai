@@ -41,6 +41,10 @@ class Model(ABC):
         """
         raise NotImplementedError()
 
+    @abstractmethod
+    def name(self) -> str:
+        raise NotImplementedError()
+
 
 class AgentModel(ABC):
     """Model configured for a specific agent."""

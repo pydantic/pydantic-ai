@@ -36,6 +36,7 @@ requires-python = ">=3.9"
 dependencies = [
     "eval-type-backport>=0.2.0",
     "griffe>=1.3.2",
+    "httpx>=0.27.2",
     "openai>=1.51.2",
     "pydantic>=2.9.2",
 ]
@@ -51,6 +52,7 @@ dev-dependencies = [
     "ruff>=0.6.9",
     "coverage[toml]>=7.6.2",
     "devtools>=0.12.2",
+    "anyio>=4.5.0",
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -130,6 +132,6 @@ exclude_lines = [
     '@typing.overload',
     '\(Protocol\):$',
     'typing.assert_never',
-    'assert_never',
+    '$\s*assert_never\(',
     'if __name__ == .__main__.:',
 ]
