@@ -21,14 +21,14 @@ jobs:
         with:
           enable-cache: true
 
-      - run: uv python install 3.12
-
       - name: Install dependencies
         run: uv sync --python 3.12 --frozen
 
-      - run: make lint
-      - run: make typecheck
-      - run: make typecheck-mypy
+      - uses: pre-commit/action@v3.0.0
+        with:
+          extra_args: --all-files --verbose
+        env:
+          SKIP: no-commit-to-branch
 
   test:
     name: test on ${{ matrix.python-version }}
@@ -46,13 +46,8 @@ jobs:
         with:
           enable-cache: true
 
-      - name: Set up Python ${{ matrix.python-version }}
-        run: uv python install ${{ matrix.python-version }}
-
-      - run: uv sync --python ${{ matrix.python-version }} --upgrade
-
       - run: mkdir coverage
-      - run: make test
+      - run: uv run --frozen --python ${{ matrix.python-version }} coverage run -m pytest
         env:
           COVERAGE_FILE: coverage/.coverage.${{ runner.os }}-py${{ matrix.python-version }}
       - name: store coverage files
@@ -84,7 +79,7 @@ jobs:
 #        with:
 #          token: ${{ secrets.CODECOV_TOKEN }}
 #          file: ./coverage.xml
-      - run: uv run --frozen coverage report --fail-under 70
+      - run: uv run --frozen coverage report --fail-under 90
 
   # https://github.com/marketplace/actions/alls-green#why used for branch protection checks
   check:
@@ -112,8 +107,6 @@ jobs:
       - uses: astral-sh/setup-uv@v3
         with:
           enable-cache: true
-
-      - run: uv python install 3.12
 
       - name: check GITHUB_REF matches package version
         uses: samuelcolvin/check-python-version@v4.1
