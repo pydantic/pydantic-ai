@@ -9,7 +9,6 @@ from httpx import AsyncClient as AsyncHTTPClient
 from openai import AsyncOpenAI
 from openai.types import ChatModel, chat
 
-from .. import shared
 from ..messages import (
     ArgsJson,
     LLMMessage,
@@ -36,8 +35,6 @@ class OpenAIModel(Model):
         openai_client: AsyncOpenAI | None = None,
         http_client: AsyncHTTPClient | None = None,
     ):
-        if model_name not in ChatModel.__args__:
-            raise shared.UserError(f'Invalid model name: {model_name}')
         self.model_name: ChatModel = model_name
         if openai_client is not None:
             assert http_client is None, 'Cannot provide both `openai_client` and `http_client`'
@@ -144,7 +141,7 @@ class OpenAIAgentModel(AgentModel):
             # LLMToolCalls ->
             return chat.ChatCompletionAssistantMessageParam(
                 role='assistant',
-                tool_calls=[_guard_tool_call(t) for t in message.calls],
+                tool_calls=[_map_tool_call(t) for t in message.calls],
             )
         elif message.role == 'plain-response-forbidden':
             # PlainResponseForbidden ->
@@ -162,7 +159,7 @@ def _guard_tool_id(t: ToolCall | ToolReturn | ToolRetry) -> str:
     return t.tool_id
 
 
-def _guard_tool_call(t: ToolCall) -> chat.ChatCompletionMessageToolCallParam:
+def _map_tool_call(t: ToolCall) -> chat.ChatCompletionMessageToolCallParam:
     assert isinstance(t.args, ArgsJson), f'Expected ArgsJson, got {t.args}'
     return chat.ChatCompletionMessageToolCallParam(
         id=_guard_tool_id(t),
