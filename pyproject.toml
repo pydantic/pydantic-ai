@@ -52,7 +52,6 @@ dev-dependencies = [
     "ruff>=0.6.9",
     "coverage[toml]>=7.6.2",
     "devtools>=0.12.2",
-    "fastapi>=0.115.2",
     "anyio>=4.5.0",
 ]
 
