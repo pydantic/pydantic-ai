@@ -113,8 +113,7 @@ class Agent(Generic[AgentDeps, result.ResultData]):
                 if opt_result is not None:
                     return result.RunResult(opt_result.value, messages, cost=result.Cost(0))
         except (ValidationError, shared.UnexpectedModelBehaviour) as e:
-            agent_name = cast(str, self.__name__)  # pyright: ignore[reportUnknownMemberType,reportAttributeAccessIssue]
-            raise shared.AgentError(messages, agent_name) from e
+            raise shared.AgentError(messages, model_) from e
 
     def run_sync(
         self,

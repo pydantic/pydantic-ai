@@ -1,6 +1,16 @@
 import os
+from datetime import datetime
+from typing import TYPE_CHECKING, Any
 
 import pytest
+
+__all__ = 'IsNow', 'TestEnv'
+
+if TYPE_CHECKING:
+
+    def IsNow(*args: Any, **kwargs: Any) -> datetime: ...
+else:
+    from dirty_equals import IsNow
 
 
 class TestEnv:
@@ -13,7 +23,7 @@ class TestEnv:
         self.envars.add(name)
         os.environ[name] = value
 
-    def pop(self, name: str) -> None:
+    def pop(self, name: str) -> None:  # pragma: no cover
         self.envars.remove(name)
         os.environ.pop(name)
 
@@ -29,3 +39,8 @@ def env():
     yield test_env
 
     test_env.clear()
+
+
+@pytest.fixture
+def anyio_backend():
+    return 'asyncio'

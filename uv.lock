@@ -239,6 +239,20 @@ wheels = [
 ]
 
 [[package]]
+name = "fastapi"
+version = "0.115.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pydantic" },
+    { name = "starlette" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/22/fa/19e3c7c9b31ac291987c82e959f36f88840bea183fa3dc3bb654669f19c1/fastapi-0.115.2.tar.gz", hash = "sha256:3995739e0b09fa12f984bce8fa9ae197b35d433750d3d312422d846e283697ee", size = 299968 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c9/14/bbe7776356ef01f830f8085ca3ac2aea59c73727b6ffaa757abeb7d2900b/fastapi-0.115.2-py3-none-any.whl", hash = "sha256:61704c71286579cc5a598763905928f24ee98bfcc07aabe84cfefb98812bbc86", size = 94650 },
+]
+
+[[package]]
 name = "griffe"
 version = "1.3.2"
 source = { registry = "https://pypi.org/simple" }
@@ -542,15 +556,18 @@ source = { editable = "." }
 dependencies = [
     { name = "eval-type-backport" },
     { name = "griffe" },
+    { name = "httpx" },
     { name = "openai" },
     { name = "pydantic" },
 ]
 
 [package.dev-dependencies]
 dev = [
+    { name = "anyio" },
     { name = "coverage", extra = ["toml"] },
     { name = "devtools" },
     { name = "dirty-equals" },
+    { name = "fastapi" },
     { name = "inline-snapshot" },
     { name = "mypy" },
     { name = "pyright" },
@@ -563,15 +580,18 @@ dev = [
 requires-dist = [
     { name = "eval-type-backport", specifier = ">=0.2.0" },
     { name = "griffe", specifier = ">=1.3.2" },
+    { name = "httpx", specifier = ">=0.27.2" },
     { name = "openai", specifier = ">=1.51.2" },
     { name = "pydantic", specifier = ">=2.9.2" },
 ]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "anyio", specifier = ">=4.5.0" },
     { name = "coverage", extras = ["toml"], specifier = ">=7.6.2" },
     { name = "devtools", specifier = ">=0.12.2" },
     { name = "dirty-equals", specifier = ">=0.8.0" },
+    { name = "fastapi", specifier = ">=0.115.2" },
     { name = "inline-snapshot", specifier = ">=0.13.3" },
     { name = "mypy", specifier = ">=1.11.2" },
     { name = "pyright", specifier = ">=1.1.384" },
@@ -774,6 +794,19 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/a2/87/a6771e1546d97e7e041b6ae58d80074f81b7d5121207425c964ddf5cfdbd/sniffio-1.3.1.tar.gz", hash = "sha256:f4324edc670a0f49750a81b895f35c3adb843cca46f0530f79fc1babb23789dc", size = 20372 }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/e9/44/75a9c9421471a6c4805dbf2356f7c181a29c1879239abab1ea2cc8f38b40/sniffio-1.3.1-py3-none-any.whl", hash = "sha256:2f6da418d1f1e0fddd844478f41680e794e6051915791a034ff65e5f100525a2", size = 10235 },
+]
+
+[[package]]
+name = "starlette"
+version = "0.40.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "anyio" },
+    { name = "typing-extensions", marker = "python_full_version < '3.10'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/4b/cb/244daf0d7be4508099ad5bca3cdfe8b8b5538acd719c5f397f614e569fff/starlette-0.40.0.tar.gz", hash = "sha256:1a3139688fb298ce5e2d661d37046a66ad996ce94be4d4983be019a23a04ea35", size = 2573611 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/0a/0f/64baf7a06492e8c12f5c4b49db286787a7255195df496fc21f5fd9eecffa/starlette-0.40.0-py3-none-any.whl", hash = "sha256:c494a22fae73805376ea6bf88439783ecfba9aac88a43911b48c653437e784c4", size = 73303 },
 ]
 
 [[package]]

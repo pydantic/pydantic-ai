@@ -53,6 +53,7 @@ class GeminiModel(Model):
     model_name: GeminiModelName
     api_key: str
     http_client: AsyncHTTPClient
+    url_template: str
 
     def __init__(
         self,
@@ -60,6 +61,8 @@ class GeminiModel(Model):
         *,
         api_key: str | None = None,
         http_client: AsyncHTTPClient | None = None,
+        # https://ai.google.dev/gemini-api/docs/quickstart?lang=rest#make-first-request
+        url_template: str = 'https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent',
     ):
         self.model_name = model_name
         if api_key is None:
@@ -69,6 +72,7 @@ class GeminiModel(Model):
                 raise shared.UserError('API key must be provided or set in the GEMINI_API_KEY environment variable')
         self.api_key = api_key
         self.http_client = http_client or cached_async_http_client()
+        self.url_template = url_template
 
     def agent_model(
         self,
@@ -91,7 +95,11 @@ class GeminiModel(Model):
             api_key=self.api_key,
             tools=_GeminiTools(function_declarations=tools) if tools else None,
             tool_config=tool_config,
+            url_template=self.url_template,
         )
+
+    def name(self) -> str:
+        return self.model_name
 
 
 @dataclass
@@ -101,8 +109,7 @@ class GeminiAgentModel(AgentModel):
     api_key: str
     tools: _GeminiTools | None
     tool_config: _GeminiToolConfig | None
-    # https://ai.google.dev/gemini-api/docs/quickstart?lang=rest#make-first-request
-    url_template: str = 'https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent'
+    url_template: str
 
     async def request(self, messages: list[Message]) -> LLMMessage:
         response = await self.make_request(messages)
@@ -431,14 +438,15 @@ class _GeminiJsonSchema:
             return self._array(schema, allow_ref)
 
     def _object(self, schema: dict[str, Any], allow_ref: bool) -> None:
-        if properties := schema.get('properties'):
+        if properties := schema.get('properties'):  # pragma: no branch
             for value in properties.values():
                 self._simplify(value, allow_ref)
 
     def _array(self, schema: dict[str, Any], allow_ref: bool) -> None:
         if prefix_items := schema.get('prefixItems'):
-            # TODO I think this is supported by Gemini, maybe we should raise an error?
-            self._simplify(prefix_items, allow_ref)
+            # TODO I think this not is supported by Gemini, maybe we should raise an error?
+            for prefix_item in prefix_items:
+                self._simplify(prefix_item, allow_ref)
 
-        if items_schema := schema.get('items'):
+        if items_schema := schema.get('items'):  # pragma: no branch
             self._simplify(items_schema, allow_ref)

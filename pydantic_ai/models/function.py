@@ -47,6 +47,9 @@ class FunctionModel(Model):
     ) -> AgentModel:
         return FunctionAgentModel(self.function, AgentInfo(retrievers, allow_text_result, result_tool))
 
+    def name(self) -> str:
+        return f'function:{self.function.__name__}'
+
 
 @dataclass
 class FunctionAgentModel(AgentModel):

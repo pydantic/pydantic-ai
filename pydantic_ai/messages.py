@@ -52,6 +52,7 @@ class ToolRetry:
 
 @dataclass
 class PlainResponseForbidden:
+    # TODO remove and replace with ToolRetry
     timestamp: datetime = field(default_factory=datetime.now)
     role: Literal['plain-response-forbidden'] = 'plain-response-forbidden'
 
