@@ -24,9 +24,11 @@ jobs:
       - name: Install dependencies
         run: uv sync --python 3.12 --frozen
 
-      - run: make lint
-      - run: make typecheck
-      - run: make typecheck-mypy
+      - uses: pre-commit/action@v3.0.0
+        with:
+          extra_args: --all-files
+        env:
+          SKIP: no-commit-to-branch
 
   test:
     name: test on ${{ matrix.python-version }}
