@@ -39,29 +39,13 @@ jobs:
         with:
           enable-cache: true
 
-      - run: mkdir coverage-files
+      - run: uv run --frozen --python 3.9 coverage run --data-file .coverage.py39 -m pytest
+      - run: uv run --frozen --python 3.10 coverage run --data-file .coverage.py310 -m pytest
+      - run: uv run --frozen --python 3.11 coverage run --data-file .coverage.py311 -m pytest
+      - run: uv run --frozen --python 3.12 coverage run --data-file .coverage.py312 -m pytest
+      - run: uv run --frozen --python 3.13 coverage run --data-file .coverage.py313 -m pytest
 
-      - run: uv run --python 3.9 coverage run -m pytest
-        env:
-          COVERAGE_FILE: coverage-files/.coverage-py39
-
-      - run: uv run --python 3.10 coverage run -m pytest
-        env:
-          COVERAGE_FILE: coverage-files/.coverage-py310
-
-      - run: uv run --python 3.11 coverage run -m pytest
-        env:
-          COVERAGE_FILE: coverage-files/.coverage-py311
-
-      - run: uv run --python 3.12 coverage run -m pytest
-        env:
-          COVERAGE_FILE: coverage-files/.coverage-py312
-
-      - run: uv run --python 3.13 coverage run -m pytest
-        env:
-          COVERAGE_FILE: coverage-files/.coverage-py313
-
-      - run: uv run --frozen coverage combine coverage-files
+      - run: uv run --frozen coverage combine
 #      - run: uv run --frozen coverage xml
 #      - uses: codecov/codecov-action@v4
 #        with:
