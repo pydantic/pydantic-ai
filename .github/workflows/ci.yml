@@ -31,14 +31,7 @@ jobs:
       - run: make typecheck-mypy
 
   test:
-    name: test on ${{ matrix.python-version }}
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
-    env:
-      PYTHON: ${{ matrix.python-version }}
     steps:
       - uses: actions/checkout@v4
 
@@ -46,39 +39,29 @@ jobs:
         with:
           enable-cache: true
 
-      - name: Set up Python ${{ matrix.python-version }}
-        run: uv python install ${{ matrix.python-version }}
+      - run: mkdir coverage-files
 
-      - run: uv sync --python ${{ matrix.python-version }} --upgrade
-
-      - run: mkdir coverage
-      - run: make test
+      - run: uv run --python 3.9 coverage run -m pytest
         env:
-          COVERAGE_FILE: coverage/.coverage.${{ runner.os }}-py${{ matrix.python-version }}
-      - name: store coverage files
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage-${{ matrix.python-version }}
-          path: coverage
-          include-hidden-files: true
+          COVERAGE_FILE: coverage-files/.coverage-py39
 
-  coverage:
-    runs-on: ubuntu-latest
-    needs: [test]
-    steps:
-      - uses: actions/checkout@v4
+      - run: uv run --python 3.10 coverage run -m pytest
+        env:
+          COVERAGE_FILE: coverage-files/.coverage-py310
 
-      - name: get coverage files
-        uses: actions/download-artifact@v4
-        with:
-          merge-multiple: true
-          path: coverage
+      - run: uv run --python 3.11 coverage run -m pytest
+        env:
+          COVERAGE_FILE: coverage-files/.coverage-py311
 
-      - uses: astral-sh/setup-uv@v3
-        with:
-          enable-cache: true
+      - run: uv run --python 3.12 coverage run -m pytest
+        env:
+          COVERAGE_FILE: coverage-files/.coverage-py312
 
-      - run: uv run --frozen coverage combine coverage
+      - run: uv run --python 3.13 coverage run -m pytest
+        env:
+          COVERAGE_FILE: coverage-files/.coverage-py313
+
+      - run: uv run --frozen coverage combine coverage-files
 #      - run: uv run --frozen coverage xml
 #      - uses: codecov/codecov-action@v4
 #        with:
@@ -89,7 +72,7 @@ jobs:
   # https://github.com/marketplace/actions/alls-green#why used for branch protection checks
   check:
     if: always()
-    needs: [lint, test, coverage]
+    needs: [lint, test]
     runs-on: ubuntu-latest
     steps:
       - name: Decide whether the needed jobs succeeded or failed
