@@ -3,12 +3,12 @@ from __future__ import annotations as _annotations
 import json
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import TypeAlias
 
 import httpx
 import pytest
 from inline_snapshot import snapshot
 from pydantic import BaseModel
+from typing_extensions import TypeAlias
 
 from pydantic_ai import Agent, AgentError, ModelRetry, UnexpectedModelBehaviour, UserError
 from pydantic_ai._utils import ObjectJsonSchema
