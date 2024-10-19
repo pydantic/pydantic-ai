@@ -126,14 +126,15 @@ class Agent(Generic[AgentDeps, result.ResultData]):
                         messages.append(model_response)
 
                         with _logfire.span('handle model response') as handle_span:
-                            tool_responses, opt_result = await self._handle_model_response(model_response, deps)
-                            handle_span.set_attribute('tool_responses', tool_responses)
+                            either = await self._handle_model_response(model_response, deps)
 
-                        messages.extend(tool_responses)
-
-                        if opt_result is not None:
-                            run_span.set_attribute('messages', messages)
-                            return result.RunResult(opt_result.value, messages, cost=result.Cost(0))
+                            if left := either.left:
+                                run_span.set_attribute('messages', messages)
+                                return result.RunResult(left.value, messages, cost=result.Cost(0))
+                            else:
+                                tool_responses = either.right
+                                handle_span.set_attribute('tool_responses', tool_responses)
+                                messages.extend(tool_responses)
             except (ValidationError, shared.UnexpectedModelBehaviour) as e:
                 run_span.set_attribute('messages', messages)
                 raise shared.AgentError(messages, model_) from e
@@ -237,7 +238,7 @@ class Agent(Generic[AgentDeps, result.ResultData]):
 
     async def _handle_model_response(
         self, model_response: _messages.LLMMessage, deps: AgentDeps
-    ) -> tuple[list[_messages.Message], _utils.Option[result.ResultData]]:
+    ) -> _utils.Either[result.ResultData, list[_messages.Message]]:
         """Process a single response from the model.
 
         Returns:
@@ -246,9 +247,9 @@ class Agent(Generic[AgentDeps, result.ResultData]):
         if model_response.role == 'llm-response':
             # plain string response
             if self._allow_text_result:
-                return [], _utils.Some(cast(result.ResultData, model_response.content))
+                return _utils.Either(left=cast(result.ResultData, model_response.content))
             else:
-                return [_messages.PlainResponseForbidden()], None
+                return _utils.Either(right=[_messages.PlainResponseForbidden()])
         elif model_response.role == 'llm-tool-calls':
             if self._result_tool is not None:
                 # if there's a result schema, and any of the calls match that name, return the result
@@ -260,9 +261,9 @@ class Agent(Generic[AgentDeps, result.ResultData]):
                         result_data = await self._validate_result(result_data, deps, call)
                     except _result.ToolRetryError as e:
                         self._incr_result_retry()
-                        return [e.tool_retry], None
+                        return _utils.Either(right=[e.tool_retry])
                     else:
-                        return [], _utils.Some(result_data)
+                        return _utils.Either(left=result_data)
 
             # otherwise we run all retriever functions in parallel
             coros: list[Awaitable[_messages.Message]] = []
@@ -272,7 +273,7 @@ class Agent(Generic[AgentDeps, result.ResultData]):
                     raise shared.UnexpectedModelBehaviour(f'Unknown function name: {call.tool_name!r}')
                 coros.append(retriever.run(deps, call))
             new_messages = await asyncio.gather(*coros)
-            return new_messages, None
+            return _utils.Either(right=new_messages)
         else:
             assert_never(model_response)
 
