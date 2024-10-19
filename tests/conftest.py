@@ -1,8 +1,10 @@
 import os
 from datetime import datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Callable
 
+import httpx
 import pytest
+from typing_extensions import TypeAlias
 
 __all__ = 'IsNow', 'TestEnv'
 
@@ -44,3 +46,23 @@ def env():
 @pytest.fixture
 def anyio_backend():
     return 'asyncio'
+
+
+@pytest.fixture
+async def client_with_handler():
+    client: httpx.AsyncClient | None = None
+
+    def create_client(handler: Callable[[httpx.Request], httpx.Response]) -> httpx.AsyncClient:
+        nonlocal client
+        assert client is None, 'client_with_handler can only be called once'
+        client = httpx.AsyncClient(mounts={'all://': httpx.MockTransport(handler)})
+        return client
+
+    try:
+        yield create_client
+    finally:
+        if client:  # pragma: no cover
+            await client.aclose()
+
+
+ClientWithHandler: TypeAlias = Callable[[Callable[[httpx.Request], httpx.Response]], httpx.AsyncClient]

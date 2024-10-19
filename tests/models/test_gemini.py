@@ -1,7 +1,7 @@
 from __future__ import annotations as _annotations
 
 import json
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable
 from dataclasses import dataclass
 
 import httpx
@@ -36,7 +36,7 @@ from pydantic_ai.models.gemini import (
     _GeminiTools,  # pyright: ignore[reportPrivateUsage]
     _GeminiUsageMetaData,  # pyright: ignore[reportPrivateUsage]
 )
-from tests.conftest import IsNow, TestEnv
+from tests.conftest import ClientWithHandler, IsNow, TestEnv
 
 pytestmark = pytest.mark.anyio
 
@@ -317,30 +317,10 @@ def test_json_def_recursive():
 
 
 @pytest.fixture
-async def get_gemini_client_handler(env: TestEnv):
+async def get_gemini_client(client_with_handler: ClientWithHandler, env: TestEnv):
     env.set('GEMINI_API_KEY', 'via-env-var')
 
-    client: httpx.AsyncClient | None = None
-
-    async def create_client(handler: Callable[[httpx.Request], httpx.Response]) -> httpx.AsyncClient:
-        nonlocal client
-        assert client is None, 'get_gemini_client can only be called once'
-        client = httpx.AsyncClient(mounts={'all://': httpx.MockTransport(handler)})
-        return client
-
-    try:
-        yield create_client
-    finally:
-        if client:  # pragma: no cover
-            await client.aclose()
-
-
-GetGeminiClientHandler: TypeAlias = Callable[[Callable[[httpx.Request], httpx.Response]], Awaitable[httpx.AsyncClient]]
-
-
-@pytest.fixture
-async def get_gemini_client(get_gemini_client_handler: GetGeminiClientHandler):
-    async def create_client(response_data: _GeminiResponse | list[_GeminiResponse]) -> httpx.AsyncClient:
+    def create_client(response_data: _GeminiResponse | list[_GeminiResponse]) -> httpx.AsyncClient:
         index = 0
 
         def handler(_request: httpx.Request) -> httpx.Response:
@@ -355,12 +335,12 @@ async def get_gemini_client(get_gemini_client_handler: GetGeminiClientHandler):
             content = _gemini_response_ta.dump_json(r, by_alias=True)
             return httpx.Response(200, content=content, headers={'Content-Type': 'application/json'})
 
-        return await get_gemini_client_handler(handler)
+        return client_with_handler(handler)
 
     return create_client
 
 
-GetGeminiClient: TypeAlias = 'Callable[[_GeminiResponse | list[_GeminiResponse]], Awaitable[httpx.AsyncClient]]'
+GetGeminiClient: TypeAlias = 'Callable[[_GeminiResponse | list[_GeminiResponse]], httpx.AsyncClient]'
 
 
 def gemini_response(content: _GeminiContent) -> _GeminiResponse:
@@ -372,7 +352,7 @@ def gemini_response(content: _GeminiContent) -> _GeminiResponse:
 
 async def test_request_simple_success(get_gemini_client: GetGeminiClient):
     response = gemini_response(_GeminiContent.model_text('Hello world'))
-    gemini_client = await get_gemini_client(response)
+    gemini_client = get_gemini_client(response)
     m = GeminiModel('gemini-1.5-flash', http_client=gemini_client)
     agent = Agent(m, deps=None)
 
@@ -386,7 +366,7 @@ async def test_request_structured_response(get_gemini_client: GetGeminiClient):
             LLMToolCalls(calls=[ToolCall.from_object('final_result', {'response': [1, 2, 123]})])
         )
     )
-    gemini_client = await get_gemini_client(response)
+    gemini_client = get_gemini_client(response)
     m = GeminiModel('gemini-1.5-flash', http_client=gemini_client)
     agent = Agent(m, deps=None, result_type=list[int])
 
@@ -422,7 +402,7 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
         ),
         gemini_response(_GeminiContent.model_text('final response')),
     ]
-    gemini_client = await get_gemini_client(responses)
+    gemini_client = get_gemini_client(responses)
     m = GeminiModel('gemini-1.5-flash', http_client=gemini_client)
     agent = Agent(m, deps=None, system_prompt='this is the system prompt')
 
@@ -464,11 +444,13 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
     )
 
 
-async def test_unexpected_response(get_gemini_client_handler: GetGeminiClientHandler):
+async def test_unexpected_response(client_with_handler: ClientWithHandler, env: TestEnv):
+    env.set('GEMINI_API_KEY', 'via-env-var')
+
     def handler(_: httpx.Request):
         return httpx.Response(401, content='invalid request')
 
-    gemini_client = await get_gemini_client_handler(handler)
+    gemini_client = client_with_handler(handler)
     m = GeminiModel('gemini-1.5-flash', http_client=gemini_client)
     agent = Agent(m, deps=None, system_prompt='this is the system prompt')
 
@@ -500,7 +482,7 @@ async def test_heterogeneous_responses(get_gemini_client: GetGeminiClient):
             ],
         )
     )
-    gemini_client = await get_gemini_client(response)
+    gemini_client = get_gemini_client(response)
     m = GeminiModel('gemini-1.5-flash', http_client=gemini_client)
     agent = Agent(m, deps=None)
     with pytest.raises(AgentError, match='Error while running model gemini-1.5-flash') as exc_info:
