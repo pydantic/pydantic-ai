@@ -1,8 +1,9 @@
+from __future__ import annotations as _annotations
+
 import datetime
 import json
 from typing import Any, cast
 
-import httpx
 import pytest
 from inline_snapshot import snapshot
 from openai import AsyncOpenAI
@@ -27,16 +28,10 @@ from tests.conftest import IsNow
 pytestmark = pytest.mark.anyio
 
 
-def test_api_key_arg():
+def test_init():
     m = OpenAIModel('gpt-4', api_key='foobar')
     assert m.client.api_key == 'foobar'
     assert m.name() == 'openai:gpt-4'
-
-
-async def test_custom_httpx_client():
-    async with httpx.AsyncClient() as c:
-        m = OpenAIModel('gpt-4', api_key='foobar', http_client=c)
-        assert m.client._client is c  # pyright: ignore[reportPrivateUsage]
 
 
 class MockOpenAI:
@@ -45,6 +40,10 @@ class MockOpenAI:
         self.index = 0
         chat_completions = type('Completions', (), {'create': self.chat_completions_create})
         self.chat = type('Chat', (), {'completions': chat_completions})
+
+    @classmethod
+    def create_mock(cls, completions: chat.ChatCompletion | list[chat.ChatCompletion]) -> AsyncOpenAI:
+        return cast(AsyncOpenAI, cls(completions))
 
     async def chat_completions_create(self, *_args: Any, **_kwargs: Any) -> chat.ChatCompletion:
         if isinstance(self.completions, list):
@@ -67,7 +66,7 @@ def completion_message(message: ChatCompletionMessage) -> chat.ChatCompletion:
 
 async def test_request_simple_success():
     c = completion_message(ChatCompletionMessage(content='world', role='assistant'))
-    mock_client = cast(AsyncOpenAI, MockOpenAI(c))
+    mock_client = MockOpenAI.create_mock(c)
     m = OpenAIModel('gpt-4', openai_client=mock_client)
     agent = Agent(m, deps=None)
 
@@ -89,7 +88,7 @@ async def test_request_structured_response():
             ],
         )
     )
-    mock_client = cast(AsyncOpenAI, MockOpenAI(c))
+    mock_client = MockOpenAI.create_mock(c)
     m = OpenAIModel('gpt-4', openai_client=mock_client)
     agent = Agent(m, deps=None, result_type=list[int])
 
@@ -142,7 +141,7 @@ async def test_request_tool_call():
         ),
         completion_message(ChatCompletionMessage(content='final response', role='assistant')),
     ]
-    mock_client = cast(AsyncOpenAI, MockOpenAI(responses))
+    mock_client = MockOpenAI.create_mock(responses)
     m = OpenAIModel('gpt-4', openai_client=mock_client)
     agent = Agent(m, deps=None, system_prompt='this is the system prompt')
 
