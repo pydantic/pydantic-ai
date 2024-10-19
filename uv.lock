@@ -394,6 +394,15 @@ wheels = [
 ]
 
 [[package]]
+name = "logfire-api"
+version = "1.2.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/bd/34/928b837ef7d8585b441f98713f8509472efff442af7f8dbf7892427f36d8/logfire_api-1.2.0.tar.gz", hash = "sha256:858b46efe3ab6590ce941fe07300de18418e7c19b56f12ddd93a376309d79920", size = 40465 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ef/b3/5966680ea400d903fc8befde79fc6d0a92c97996f5e15d0a0025fb8bb196/logfire_api-1.2.0-py3-none-any.whl", hash = "sha256:778beca435afa5894412ca750f0171f5635288800b26128e469d1a0eeee5fcc1", size = 67272 },
+]
+
+[[package]]
 name = "markdown-it-py"
 version = "3.0.0"
 source = { registry = "https://pypi.org/simple" }
@@ -543,6 +552,7 @@ dependencies = [
     { name = "eval-type-backport" },
     { name = "griffe" },
     { name = "httpx" },
+    { name = "logfire-api" },
     { name = "openai" },
     { name = "pydantic" },
 ]
@@ -566,6 +576,7 @@ requires-dist = [
     { name = "eval-type-backport", specifier = ">=0.2.0" },
     { name = "griffe", specifier = ">=1.3.2" },
     { name = "httpx", specifier = ">=0.27.2" },
+    { name = "logfire-api", specifier = ">=1.2.0" },
     { name = "openai", specifier = ">=1.51.2" },
     { name = "pydantic", specifier = ">=2.9.2" },
 ]

@@ -5,6 +5,7 @@ from collections.abc import Awaitable, Sequence
 from dataclasses import dataclass
 from typing import Any, Callable, Generic, Literal, cast, overload
 
+import logfire_api
 from pydantic import ValidationError
 from typing_extensions import assert_never
 
@@ -15,6 +16,7 @@ __all__ = ('Agent',)
 KnownModelName = Literal[
     'openai:gpt-4o', 'openai:gpt-4-turbo', 'openai:gpt-4', 'openai:gpt-3.5-turbo', 'gemini-1.5-flash', 'gemini-1.5-pro'
 ]
+_logfire = logfire_api.Logfire(otel_scope='pydantic-ai')
 
 
 @dataclass(init=False)
@@ -106,14 +108,15 @@ class Agent(Generic[AgentDeps, result.ResultData]):
         for retriever in self._retrievers.values():
             retriever.reset()
 
-        try:
-            while True:
-                llm_message = await agent_model.request(messages)
-                opt_result = await self._handle_model_response(messages, llm_message, deps)
-                if opt_result is not None:
-                    return result.RunResult(opt_result.value, messages, cost=result.Cost(0))
-        except (ValidationError, shared.UnexpectedModelBehaviour) as e:
-            raise shared.AgentError(messages, model_) from e
+        with _logfire.span('running agent', agent=self, model=model_):
+            try:
+                while True:
+                    llm_message = await agent_model.request(messages)
+                    opt_result = await self._handle_model_response(messages, llm_message, deps)
+                    if opt_result is not None:
+                        return result.RunResult(opt_result.value, messages, cost=result.Cost(0))
+            except (ValidationError, shared.UnexpectedModelBehaviour) as e:
+                raise shared.AgentError(messages, model_) from e
 
     def run_sync(
         self,
