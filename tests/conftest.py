@@ -54,7 +54,7 @@ async def client_with_handler():
 
     def create_client(handler: Callable[[httpx.Request], httpx.Response]) -> httpx.AsyncClient:
         nonlocal client
-        assert client is None, 'get_openai_client can only be called once'
+        assert client is None, 'client_with_handler can only be called once'
         client = httpx.AsyncClient(mounts={'all://': httpx.MockTransport(handler)})
         return client
 

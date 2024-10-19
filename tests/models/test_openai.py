@@ -58,7 +58,7 @@ def completion_message(message: ChatCompletionMessage) -> chat.ChatCompletion:
     return chat.ChatCompletion(
         id='123',
         choices=[Choice(finish_reason='stop', index=0, message=message)],
-        created=1704067200,
+        created=1704067200,  # 2024-01-01
         model='gpt-4',
         object='chat.completion',
     )
