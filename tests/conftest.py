@@ -8,6 +8,13 @@ from typing_extensions import TypeAlias
 
 __all__ = 'IsNow', 'TestEnv'
 
+try:
+    import logfire
+except ImportError:
+    pass
+else:
+    logfire.configure(send_to_logfire=False)
+
 if TYPE_CHECKING:
 
     def IsNow(*args: Any, **kwargs: Any) -> datetime: ...

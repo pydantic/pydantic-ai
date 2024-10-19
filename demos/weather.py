@@ -1,8 +1,11 @@
 import json
 
 from devtools import debug
+import logfire
 
 from pydantic_ai import Agent
+
+logfire.configure()
 
 weather_agent: Agent[None, str] = Agent('openai:gpt-4o', system_prompt='Be concise, reply with one sentence.')
 

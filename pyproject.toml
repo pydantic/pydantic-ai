@@ -42,6 +42,11 @@ dependencies = [
     "pydantic>=2.9.2",
 ]
 
+[project.optional-dependencies]
+logfire = [
+    "logfire>=1.2.0",
+]
+
 [tool.uv]
 dev-dependencies = [
     "dirty-equals>=0.8.0",
@@ -62,7 +67,6 @@ packages = ["pydantic_ai"]
 [tool.hatch.build.targets.sdist]
 include = ["/README.md", "/Makefile", "/pydantic_ai", "/tests"]
 
-# https://beta.ruff.rs/docs/configuration/
 [tool.ruff]
 line-length = 120
 target-version = "py39"
@@ -78,7 +82,7 @@ extend-select = [
     # "D",
 ]
 flake8-quotes = { inline-quotes = "single", multiline-quotes = "double" }
-isort = { combine-as-imports = true, known-first-party = ["logfire"] }
+isort = { combine-as-imports = true, known-first-party = ["pydantic_ai"] }
 mccabe = { max-complexity = 14 }
 ignore = [
     "D107", # ignore missing docstring in __init__ methods

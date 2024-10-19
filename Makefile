@@ -16,34 +16,34 @@ install: .uv .pre-commit
 
 .PHONY: format  # Format the code
 format:
-	uv run --no-sync ruff format $(sources)
-	uv run --no-sync ruff check --fix --fix-only $(sources)
+	uv run ruff format $(sources)
+	uv run ruff check --fix --fix-only $(sources)
 
 .PHONY: lint  # Lint the code
 lint:
-	uv run --no-sync ruff format --check $(sources)
-	uv run --no-sync ruff check $(sources)
+	uv run ruff format --check $(sources)
+	uv run ruff check $(sources)
 
 .PHONY: typecheck-pyright
 typecheck-pyright:
-	uv run --no-sync pyright
+	uv run pyright
 
 .PHONY: typecheck-mypy
 typecheck-mypy:
-	uv run --no-sync mypy --strict tests/typed_agent.py
+	uv run mypy --strict tests/typed_agent.py
 
 .PHONY: typecheck  # Run static type checking
 typecheck: typecheck-pyright
 
 .PHONY: test  # Run tests and collect coverage data
 test:
-	uv run --no-sync coverage run -m pytest
-	@uv run --no-sync coverage report
+	uv run coverage run -m pytest
+	@uv run coverage report
 
 .PHONY: testcov  # Run tests and generate a coverage report
 testcov: test
 	@echo "building coverage html"
-	@uv run --no-sync coverage html
+	@uv run coverage html
 
 .PHONY: all
 all: format lint typecheck testcov
