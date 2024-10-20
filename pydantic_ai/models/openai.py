@@ -10,6 +10,7 @@ from openai import AsyncOpenAI
 from openai.types import ChatModel, chat
 from typing_extensions import assert_never
 
+from .. import shared
 from ..messages import (
     ArgsJson,
     LLMMessage,
@@ -83,9 +84,9 @@ class OpenAIAgentModel(AgentModel):
     allow_text_result: bool
     tools: list[chat.ChatCompletionToolParam]
 
-    async def request(self, messages: list[Message]) -> LLMMessage:
+    async def request(self, messages: list[Message]) -> tuple[LLMMessage, shared.Cost]:
         response = await self.completions_create(messages)
-        return self.process_response(response)
+        return self.process_response(response), _map_cost(response)
 
     @staticmethod
     def process_response(response: chat.ChatCompletion) -> LLMMessage:
@@ -168,3 +169,21 @@ def _map_tool_call(t: ToolCall) -> chat.ChatCompletionMessageToolCallParam:
         type='function',
         function={'name': t.tool_name, 'arguments': t.args.args_json},
     )
+
+
+def _map_cost(response: chat.ChatCompletion) -> shared.Cost:
+    usage = response.usage
+    if usage is None:
+        return shared.Cost()
+    else:
+        details: dict[str, int] = {}
+        if usage.completion_tokens_details is not None:
+            details.update(usage.completion_tokens_details.model_dump(exclude_none=True))
+        if usage.prompt_tokens_details is not None:
+            details.update(usage.prompt_tokens_details.model_dump(exclude_none=True))
+        return shared.Cost(
+            request_tokens=usage.prompt_tokens,
+            response_tokens=usage.completion_tokens,
+            total_tokens=usage.total_tokens,
+            details=details,
+        )

@@ -97,6 +97,7 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary]) -> None:
                     'role': 'llm-tool-calls',
                 }
             ),
+            'cost': IsJson({'request_tokens': None, 'response_tokens': None, 'total_tokens': None, 'details': None}),
             'logfire.msg': 'model request -> llm-tool-calls',
             'logfire.json_schema': IsJson(
                 {
@@ -124,7 +125,8 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary]) -> None:
                                 },
                                 'timestamp': {'type': 'string', 'format': 'date-time'},
                             },
-                        }
+                        },
+                        'cost': {'type': 'object', 'title': 'Cost', 'x-python-datatype': 'dataclass'},
                     },
                 }
             ),
