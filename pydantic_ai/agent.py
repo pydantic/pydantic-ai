@@ -90,7 +90,7 @@ class Agent(Generic[AgentDeps, result.ResultData]):
         elif self.model is not None:
             model_ = self.model
         else:
-            raise RuntimeError('`model` must be set either when creating the agent or when calling it.')
+            raise shared.UserError('`model` must be set either when creating the agent or when calling it.')
 
         if deps is None:
             deps = self._default_deps
