@@ -43,7 +43,7 @@ class ResultSchema(Generic[ResultData]):
     type_adapter: TypeAdapter[Any]
     json_schema: _utils.ObjectJsonSchema
     allow_text_result: bool
-    outer_typed_dict: bool
+    outer_typed_dict_key: str | None
 
     @classmethod
     def build(cls, response_type: type[ResultData], name: str, description: str) -> Self | None:
@@ -53,12 +53,12 @@ class ResultSchema(Generic[ResultData]):
 
         if _utils.is_model_like(response_type):
             type_adapter = TypeAdapter(response_type)
-            outer_typed_dict = False
+            outer_typed_dict_key: str | None = None
         else:
             # noinspection PyTypedDict
             response_data_typed_dict = TypedDict('response_data_typed_dict', {'response': response_type})  # noqa
             type_adapter = TypeAdapter(response_data_typed_dict)
-            outer_typed_dict = True
+            outer_typed_dict_key = 'response'
 
         return cls(
             name=name,
@@ -66,7 +66,7 @@ class ResultSchema(Generic[ResultData]):
             type_adapter=type_adapter,
             json_schema=_utils.check_object_json_schema(type_adapter.json_schema()),
             allow_text_result=_utils.allow_plain_str(response_type),
-            outer_typed_dict=outer_typed_dict,
+            outer_typed_dict_key=outer_typed_dict_key,
         )
 
     def validate(self, tool_call: messages.ToolCall) -> ResultData:
@@ -90,6 +90,6 @@ class ResultSchema(Generic[ResultData]):
             )
             raise ToolRetryError(m) from e
         else:
-            if self.outer_typed_dict:
-                result = result['response']
+            if k := self.outer_typed_dict_key:
+                result = result[k]
             return result

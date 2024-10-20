@@ -40,6 +40,7 @@ class Retriever(Generic[AgentDeps, P]):
     json_schema: _utils.ObjectJsonSchema
     max_retries: int
     _current_retry: int = 0
+    outer_typed_dict_key: str | None = None
 
     def __init__(self, function: RetrieverEitherFunc[AgentDeps, P], retries: int):
         """Build a Retriever dataclass from a function."""

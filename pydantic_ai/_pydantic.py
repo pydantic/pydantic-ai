@@ -108,21 +108,21 @@ def function_schema(either_function: _retriever.RetrieverEitherFunc[AgentDeps, _
                 field_info,
                 decorators,
             )
-            extra_metadata = {'is_model_like': is_model_like(annotation)}
-            if metadata := td_schema.get('metadata'):
-                metadata.update(extra_metadata)
-            else:
-                td_schema['metadata'] = extra_metadata
+            td_schema.setdefault('metadata', {})['is_model_like'] = is_model_like(annotation)
+
             if p.kind == Parameter.POSITIONAL_ONLY:
                 positional_fields.append(field_name)
             elif p.kind == Parameter.VAR_POSITIONAL:
                 var_positional_field = field_name
 
     if errors:
+        from .shared import UserError
+
         error_details = '\n  '.join(errors)
-        raise ValueError(f'Error generating schema for {function.__qualname__}:\n{error_details}')
+        raise UserError(f'Error generating schema for {function.__qualname__}:\n  {error_details}')
 
     schema, single_arg_name = _build_schema(fields, var_kwargs_schema, gen_schema, core_config)
+    schema = gen_schema.clean_schema(schema)
     schema_validator = create_schema_validator(
         schema,
         function,

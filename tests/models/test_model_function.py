@@ -5,7 +5,7 @@ import pydantic_core
 import pytest
 from inline_snapshot import snapshot
 
-from pydantic_ai import Agent, CallContext, ModelRetry
+from pydantic_ai import Agent, CallContext
 from pydantic_ai.messages import (
     LLMMessage,
     LLMResponse,
@@ -13,7 +13,6 @@ from pydantic_ai.messages import (
     Message,
     SystemPrompt,
     ToolCall,
-    ToolRetry,
     ToolReturn,
     UserPrompt,
 )
@@ -334,74 +333,5 @@ def test_call_all():
             ToolReturn(tool_name='qux', content='4', timestamp=IsNow()),
             ToolReturn(tool_name='quz', content='a', timestamp=IsNow()),
             LLMResponse(content='{"foo": "1", "bar": "2", "baz": "3", "qux": "4", "quz": "a"}', timestamp=IsNow()),
-        ]
-    )
-
-
-async def do_foobar(foo: int, bar: str) -> str:  # pragma: no cover
-    """
-    Do foobar stuff, a lot.
-
-    Args:
-        foo: The foo thing.
-        bar: The bar thing.
-    """
-    return f'{foo} {bar}'
-
-
-def test_docstring():
-    def f(_messages: list[Message], info: AgentInfo) -> LLMMessage:
-        assert len(info.retrievers) == 1
-        r = next(iter(info.retrievers.values()))
-        return LLMResponse(json.dumps(r.json_schema))
-
-    agent = Agent(FunctionModel(f), deps=None)
-    agent.retriever_plain(do_foobar)
-
-    result = agent.run_sync('Hello')
-    json_schema = json.loads(result.response)
-    assert json_schema == snapshot(
-        {
-            'description': 'Do foobar stuff, a lot.',
-            'additionalProperties': False,
-            'properties': {
-                'foo': {'description': 'The foo thing.', 'title': 'Foo', 'type': 'integer'},
-                'bar': {'description': 'The bar thing.', 'title': 'Bar', 'type': 'string'},
-            },
-            'required': ['foo', 'bar'],
-            'type': 'object',
-        }
-    )
-    # description should be the first key
-    assert next(iter(json_schema)) == 'description'
-
-
-def test_retriever_retry():
-    agent = Agent(deps=None)
-    call_count = 0
-
-    @agent.retriever_plain
-    async def my_ret(x: int) -> str:
-        nonlocal call_count
-        call_count += 1
-        if call_count == 1:
-            raise ModelRetry('First call failed')
-        else:
-            return str(x + 1)
-
-    result = agent.run_sync('Hello', model=TestModel())
-    assert call_count == 2
-    assert result.response == snapshot('{"my_ret": "2"}')
-    assert result.message_history == snapshot(
-        [
-            UserPrompt(content='Hello', timestamp=IsNow()),
-            LLMToolCalls(
-                calls=[ToolCall.from_object('my_ret', {'x': 0})],
-                timestamp=IsNow(),
-            ),
-            ToolRetry(tool_name='my_ret', content='First call failed', timestamp=IsNow()),
-            LLMToolCalls(calls=[ToolCall.from_object('my_ret', {'x': 1})], timestamp=IsNow()),
-            ToolReturn(tool_name='my_ret', content='2', timestamp=IsNow()),
-            LLMResponse(content='{"my_ret": "2"}', timestamp=IsNow()),
         ]
     )

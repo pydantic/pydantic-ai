@@ -44,18 +44,22 @@ class TestModel(Model):
         if self.call_retrievers == 'all':
             retriever_calls = [(r.name, r) for r in retrievers.values()]
         else:
-            retrievers_to_call = {retrievers[name] for name in self.call_retrievers}
+            retrievers_to_call = (retrievers[name] for name in self.call_retrievers)
             retriever_calls = [(r.name, r) for r in retrievers_to_call]
 
         if self.custom_result_text is not None:
-            if not allow_text_result:
-                raise ValueError('Plain response not allowed, but `custom_result_text` is set.')
-            result: _utils.Either[str | None, AbstractToolDefinition] = _utils.Either(left=self.custom_result_text)
+            assert allow_text_result, 'Plain response not allowed, but `custom_result_text` is set.'
+            assert self.custom_result_args is None, 'Cannot set both `custom_result_text` and `custom_result_args`.'
+            result: _utils.Either[str | None, Any | None] = _utils.Either(left=self.custom_result_text)
         elif self.custom_result_args is not None:
             assert result_tool is not None, 'No result tool name provided, but `custom_result_args` is set.'
-            result = _utils.Either(right=self.custom_result_args)
+
+            if k := result_tool.outer_typed_dict_key:
+                result = _utils.Either(right={k: self.custom_result_args})
+            else:
+                result = _utils.Either(right=self.custom_result_args)
         elif result_tool is not None:
-            result = _utils.Either(right=result_tool)
+            result = _utils.Either(right=None)
         else:
             result = _utils.Either(left=None)
         return TestAgentModel(retriever_calls, result, result_tool)
@@ -71,7 +75,7 @@ class TestAgentModel(AgentModel):
 
     retriever_calls: list[tuple[str, AbstractToolDefinition]]
     # left means the text is plain text; right means it's a function call
-    result: _utils.Either[str | None, AbstractToolDefinition]
+    result: _utils.Either[str | None, Any | None]
     result_tool: AbstractToolDefinition | None
     step: int = 0
     last_message_count: int = 0
@@ -108,9 +112,14 @@ class TestAgentModel(AgentModel):
                     return LLMResponse(content=response_text.value)
             else:
                 assert self.result_tool is not None, 'No result tool name provided'
-                response_args = self.gen_retriever_args(self.result.right)
-                self.step += 1
-                return LLMToolCalls(calls=[ToolCall.from_object(self.result_tool.name, response_args)])
+                custom_result_args = self.result.right
+                if custom_result_args is not None:
+                    self.step += 1
+                    return LLMToolCalls(calls=[ToolCall.from_object(self.result_tool.name, custom_result_args)])
+                else:
+                    response_args = self.gen_retriever_args(self.result_tool)
+                    self.step += 1
+                    return LLMToolCalls(calls=[ToolCall.from_object(self.result_tool.name, response_args)])
 
     def gen_retriever_args(self, tool_def: AbstractToolDefinition) -> Any:
         """Generate arguments for a retriever."""
@@ -189,7 +198,10 @@ class _JsonSchemaTestData:
             add_prop_key = 'additionalProperty'
             while add_prop_key in data:
                 add_prop_key += '_'
-            data[add_prop_key] = self._gen_any(addition_props)
+            if addition_props is True:
+                data[add_prop_key] = self._char()
+            else:
+                data[add_prop_key] = self._gen_any(addition_props)
 
         return data
 
@@ -237,25 +249,24 @@ class _JsonSchemaTestData:
         unique_items = schema.get('uniqueItems')
         if prefix_items := schema.get('prefixItems'):
             for item in prefix_items:
+                data.append(self._gen_any(item))
                 if unique_items:
                     self.seed += 1
-                data.append(self._gen_any(item))
 
         items_schema = schema.get('items', {})
         min_items = schema.get('minItems', 0)
         if min_items > len(data):
             for _ in range(min_items - len(data)):
+                data.append(self._gen_any(items_schema))
                 if unique_items:
                     self.seed += 1
-                data.append(self._gen_any(items_schema))
         elif items_schema:
-            # if there is an `items` schema, add an item if minItems doesn't require it
-            # unless it would break `maxItems` rule
+            # if there is an `items` schema, add an item unless it would break `maxItems` rule
             max_items = schema.get('maxItems')
             if max_items is None or max_items > len(data):
+                data.append(self._gen_any(items_schema))
                 if unique_items:
                     self.seed += 1
-                data.append(self._gen_any(items_schema))
 
         return data
 
@@ -265,7 +276,7 @@ class _JsonSchemaTestData:
         s = ''
         rem = self.seed // chars
         while rem > 0:
-            s += _chars[rem % chars]
+            s += _chars[(rem - 1) % chars]
             rem //= chars
         s += _chars[self.seed % chars]
         return s
