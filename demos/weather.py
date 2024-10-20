@@ -45,5 +45,5 @@ async def get_whether(lat: float, lng: float) -> str:
 
 
 if __name__ == '__main__':
-    result = weather_agent.run_sync('What is the weather like in Snozington?')
+    result = weather_agent.run_sync('What is the weather like in West London and in Wiltshire?')
     debug(result)
