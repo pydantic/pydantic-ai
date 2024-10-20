@@ -51,17 +51,6 @@ class ToolRetry:
 
 
 @dataclass
-class PlainResponseForbidden:
-    # TODO remove and replace with ToolRetry
-    timestamp: datetime = field(default_factory=datetime.now)
-    role: Literal['plain-response-forbidden'] = 'plain-response-forbidden'
-
-    @staticmethod
-    def llm_response() -> str:
-        return 'Plain text responses are not allowed, please call one of the functions instead.'
-
-
-@dataclass
 class LLMResponse:
     content: str
     timestamp: datetime = field(default_factory=datetime.now)
@@ -105,6 +94,6 @@ class LLMToolCalls:
 
 
 LLMMessage = Union[LLMResponse, LLMToolCalls]
-Message = Union[SystemPrompt, UserPrompt, ToolReturn, ToolRetry, PlainResponseForbidden, LLMMessage]
+Message = Union[SystemPrompt, UserPrompt, ToolReturn, ToolRetry, LLMMessage]
 
 MessagesTypeAdapter = pydantic.TypeAdapter(list[Annotated[Message, pydantic.Field(discriminator='role')]])

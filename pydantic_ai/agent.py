@@ -248,7 +248,12 @@ class Agent(Generic[AgentDeps, result.ResultData]):
             if self._allow_text_result:
                 return _utils.Either(left=cast(result.ResultData, model_response.content))
             else:
-                return _utils.Either(right=[_messages.PlainResponseForbidden()])
+                self._incr_result_retry()
+                assert self._result_tool is not None
+                response = _messages.UserPrompt(
+                    content='Plain text responses are not permitted, please call one of the functions instead.',
+                )
+                return _utils.Either(right=[response])
         elif model_response.role == 'llm-tool-calls':
             if self._result_tool is not None:
                 # if there's a result schema, and any of the calls match that name, return the result

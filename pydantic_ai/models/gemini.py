@@ -176,8 +176,6 @@ class GeminiAgentModel(AgentModel):
         elif m.role == 'tool-retry':
             # ToolRetry ->
             return _utils.Either(right=_GeminiContent.function_retry(m))
-        elif m.role == 'plain-response-forbidden':
-            return _utils.Either(right=_GeminiContent.user_text(m.llm_response()))
         elif m.role == 'llm-response':
             # LLMResponse ->
             return _utils.Either(right=_GeminiContent.model_text(m.content))
