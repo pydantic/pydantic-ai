@@ -5,6 +5,7 @@ This module has to use numerous internal Pydantic APIs and is therefore brittle 
 
 from __future__ import annotations as _annotations
 
+import re
 from inspect import Parameter, Signature, signature
 from typing import TYPE_CHECKING, Any, Callable, Literal, TypedDict, cast, get_origin
 
@@ -216,15 +217,91 @@ def _doc_descriptions(
 
 def _infer_docstring_style(doc: str) -> DocstringStyle:
     """Simplistic docstring style inference."""
-    if '  Args:' in doc:
-        return 'google'
-    elif '  :param ' in doc:
-        return 'sphinx'
-    elif '  Parameters' in doc:
-        return 'numpy'
-    else:
-        # fallback to google style
-        return 'google'
+    for pattern, replacements, style in _docstring_style_patterns:
+        matches = (
+            re.search(pattern.format(replacement), doc, re.IGNORECASE | re.MULTILINE) for replacement in replacements
+        )
+        if any(matches):
+            return style
+    # fallback to google style
+    return 'google'
+
+
+# See https://github.com/mkdocstrings/griffe/issues/329#issuecomment-2425017804
+_docstring_style_patterns: list[tuple[str, list[str], DocstringStyle]] = [
+    (
+        r'\n[ \t]*:{0}([ \t]+\w+)*:([ \t]+.+)?\n',
+        [
+            'param',
+            'parameter',
+            'arg',
+            'argument',
+            'key',
+            'keyword',
+            'type',
+            'var',
+            'ivar',
+            'cvar',
+            'vartype',
+            'returns',
+            'return',
+            'rtype',
+            'raises',
+            'raise',
+            'except',
+            'exception',
+        ],
+        'sphinx',
+    ),
+    (
+        r'\n[ \t]*{0}:([ \t]+.+)?\n[ \t]+.+',
+        [
+            'args',
+            'arguments',
+            'params',
+            'parameters',
+            'keyword args',
+            'keyword arguments',
+            'other args',
+            'other arguments',
+            'other params',
+            'other parameters',
+            'raises',
+            'exceptions',
+            'returns',
+            'yields',
+            'receives',
+            'examples',
+            'attributes',
+            'functions',
+            'methods',
+            'classes',
+            'modules',
+            'warns',
+            'warnings',
+        ],
+        'google',
+    ),
+    (
+        r'\n[ \t]*{0}\n[ \t]*---+\n',
+        [
+            'deprecated',
+            'parameters',
+            'other parameters',
+            'returns',
+            'yields',
+            'receives',
+            'raises',
+            'warns',
+            'attributes',
+            'functions',
+            'methods',
+            'classes',
+            'modules',
+        ],
+        'numpy',
+    ),
+]
 
 
 def _is_call_ctx(annotation: Any) -> bool:
