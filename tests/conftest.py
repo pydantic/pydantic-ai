@@ -14,6 +14,16 @@ if TYPE_CHECKING:
 else:
     from dirty_equals import IsNow
 
+try:
+    from logfire.testing import CaptureLogfire
+except ImportError:
+    pass
+else:
+
+    @pytest.fixture(autouse=True)
+    def logfire_disable(capfire: CaptureLogfire):
+        pass
+
 
 class TestEnv:
     __test__ = False

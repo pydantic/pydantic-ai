@@ -1,7 +1,7 @@
 from __future__ import annotations as _annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Literal
 
@@ -26,7 +26,7 @@ from . import AbstractToolDefinition, AgentModel, Model, cached_async_http_clien
 @dataclass(init=False)
 class OpenAIModel(Model):
     model_name: ChatModel
-    client: AsyncOpenAI
+    client: AsyncOpenAI = field(repr=False)
 
     def __init__(
         self,

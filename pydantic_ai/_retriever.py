@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 import inspect
 from collections.abc import Awaitable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Callable, Generic, Union, cast
 
 import pydantic_core
@@ -31,13 +31,12 @@ class Retriever(Generic[AgentDeps, P]):
 
     name: str
     description: str
-    function: RetrieverEitherFunc[AgentDeps, P]
+    function: RetrieverEitherFunc[AgentDeps, P] = field(repr=False)
     is_async: bool
-    takes_ctx: bool
     single_arg_name: str | None
     positional_fields: list[str]
     var_positional_field: str | None
-    validator: SchemaValidator
+    validator: SchemaValidator = field(repr=False)
     json_schema: _utils.ObjectJsonSchema
     max_retries: int
     _current_retry: int = 0

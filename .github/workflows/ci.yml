@@ -22,7 +22,7 @@ jobs:
           enable-cache: true
 
       - name: Install dependencies
-        run: uv sync --python 3.12 --frozen
+        run: uv sync --python 3.12 --frozen --all-extras
 
       - uses: pre-commit/action@v3.0.0
         with:
@@ -50,6 +50,11 @@ jobs:
       - run: uv run --frozen --python ${{ matrix.python-version }} coverage run -m pytest
         env:
           COVERAGE_FILE: coverage/.coverage.${{ runner.os }}-py${{ matrix.python-version }}
+
+      - run: uv run --frozen --all-extras --python ${{ matrix.python-version }} coverage run -m pytest
+        env:
+          COVERAGE_FILE: coverage/.coverage.${{ runner.os }}-py${{ matrix.python-version }}-all-extras
+
       - name: store coverage files
         uses: actions/upload-artifact@v4
         with:

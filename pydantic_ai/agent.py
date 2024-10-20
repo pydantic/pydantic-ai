@@ -5,6 +5,7 @@ from collections.abc import Awaitable, Sequence
 from dataclasses import dataclass
 from typing import Any, Callable, Generic, Literal, cast, overload
 
+import logfire_api
 from pydantic import ValidationError
 from typing_extensions import assert_never
 
@@ -15,6 +16,7 @@ __all__ = ('Agent',)
 KnownModelName = Literal[
     'openai:gpt-4o', 'openai:gpt-4-turbo', 'openai:gpt-4', 'openai:gpt-3.5-turbo', 'gemini-1.5-flash', 'gemini-1.5-pro'
 ]
+_logfire = logfire_api.Logfire(otel_scope='pydantic-ai')
 
 
 @dataclass(init=False)
@@ -88,7 +90,7 @@ class Agent(Generic[AgentDeps, result.ResultData]):
         elif self.model is not None:
             model_ = self.model
         else:
-            raise RuntimeError('`model` must be set either when creating the agent or when calling it.')
+            raise shared.UserError('`model` must be set either when creating the agent or when calling it.')
 
         if deps is None:
             deps = self._default_deps
@@ -106,14 +108,35 @@ class Agent(Generic[AgentDeps, result.ResultData]):
         for retriever in self._retrievers.values():
             retriever.reset()
 
-        try:
-            while True:
-                llm_message = await agent_model.request(messages)
-                opt_result = await self._handle_model_response(messages, llm_message, deps)
-                if opt_result is not None:
-                    return result.RunResult(opt_result.value, messages, cost=result.Cost(0))
-        except (ValidationError, shared.UnexpectedModelBehaviour) as e:
-            raise shared.AgentError(messages, model_) from e
+        with _logfire.span(
+            'agent run {prompt=}', prompt=user_prompt, agent=self, model=model_, model_name=model_.name()
+        ) as run_span:
+            try:
+                while True:
+                    with _logfire.span('model request') as model_request_span:
+                        model_response = await agent_model.request(messages)
+                        model_request_span.set_attribute('model_response', model_response)
+                        model_request_span.message = f'model request -> {model_response.role}'
+
+                    messages.append(model_response)
+
+                    with _logfire.span('handle model response') as handle_span:
+                        either = await self._handle_model_response(model_response, deps)
+
+                        if left := either.left:
+                            run_span.set_attribute('full_messages', messages)
+                            handle_span.set_attribute('result', left.value)
+                            handle_span.message = 'handle model response -> final result'
+                            return result.RunResult(left.value, messages, cost=result.Cost(0))
+                        else:
+                            tool_responses = either.right
+                            handle_span.set_attribute('tool_responses', tool_responses)
+                            response_msgs = ' '.join(m.role for m in tool_responses)
+                            handle_span.message = f'handle model response -> {response_msgs}'
+                            messages.extend(tool_responses)
+            except (ValidationError, shared.UnexpectedModelBehaviour) as e:
+                run_span.set_attribute('messages', messages)
+                raise shared.AgentError(messages, model_) from e
 
     def run_sync(
         self,
@@ -213,46 +236,45 @@ class Agent(Generic[AgentDeps, result.ResultData]):
         return retriever
 
     async def _handle_model_response(
-        self, messages: list[_messages.Message], llm_message: _messages.LLMMessage, deps: AgentDeps
-    ) -> _utils.Option[result.ResultData]:
+        self, model_response: _messages.LLMMessage, deps: AgentDeps
+    ) -> _utils.Either[result.ResultData, list[_messages.Message]]:
         """Process a single response from the model.
 
         Returns:
             Return `None` to continue the conversation, or a result to end it.
         """
-        messages.append(llm_message)
-        if llm_message.role == 'llm-response':
+        if model_response.role == 'llm-response':
             # plain string response
             if self._allow_text_result:
-                return _utils.Some(cast(result.ResultData, llm_message.content))
+                return _utils.Either(left=cast(result.ResultData, model_response.content))
             else:
-                messages.append(_messages.PlainResponseForbidden())
-        elif llm_message.role == 'llm-tool-calls':
+                return _utils.Either(right=[_messages.PlainResponseForbidden()])
+        elif model_response.role == 'llm-tool-calls':
             if self._result_tool is not None:
                 # if there's a result schema, and any of the calls match that name, return the result
                 # NOTE: this means we ignore any other tools called here
-                call = next((c for c in llm_message.calls if c.tool_name == self._result_tool.name), None)
+                call = next((c for c in model_response.calls if c.tool_name == self._result_tool.name), None)
                 if call is not None:
                     try:
                         result_data = self._result_tool.validate(call)
                         result_data = await self._validate_result(result_data, deps, call)
                     except _result.ToolRetryError as e:
                         self._incr_result_retry()
-                        messages.append(e.tool_retry)
-                        return None
+                        return _utils.Either(right=[e.tool_retry])
                     else:
-                        return _utils.Some(result_data)
+                        return _utils.Either(left=result_data)
 
             # otherwise we run all retriever functions in parallel
             coros: list[Awaitable[_messages.Message]] = []
-            for call in llm_message.calls:
+            for call in model_response.calls:
                 retriever = self._retrievers.get(call.tool_name)
                 if retriever is None:
                     raise shared.UnexpectedModelBehaviour(f'Unknown function name: {call.tool_name!r}')
                 coros.append(retriever.run(deps, call))
-            messages += await asyncio.gather(*coros)
+            new_messages = await asyncio.gather(*coros)
+            return _utils.Either(right=new_messages)
         else:
-            assert_never(llm_message)
+            assert_never(model_response)
 
     async def _validate_result(
         self, result_data: result.ResultData, deps: AgentDeps, tool_call: _messages.ToolCall
