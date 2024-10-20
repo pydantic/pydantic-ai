@@ -11,7 +11,7 @@ sources = pydantic_ai tests
 
 .PHONY: install  # Install the package, dependencies, and pre-commit for local development
 install: .uv .pre-commit
-	uv sync --frozen
+	uv sync --frozen --all-extras
 	pre-commit install --install-hooks
 
 .PHONY: format  # Format the code

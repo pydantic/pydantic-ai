@@ -8,18 +8,21 @@ from typing_extensions import TypeAlias
 
 __all__ = 'IsNow', 'TestEnv'
 
-try:
-    import logfire
-except ImportError:
-    pass
-else:
-    logfire.configure(send_to_logfire=False)
-
 if TYPE_CHECKING:
 
     def IsNow(*args: Any, **kwargs: Any) -> datetime: ...
 else:
     from dirty_equals import IsNow
+
+try:
+    from logfire.testing import CaptureLogfire
+except ImportError:
+    pass
+else:
+
+    @pytest.fixture(autouse=True)
+    def logfire_disable(capfire: CaptureLogfire):
+        pass
 
 
 class TestEnv:
