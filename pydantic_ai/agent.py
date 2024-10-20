@@ -108,33 +108,32 @@ class Agent(Generic[AgentDeps, result.ResultData]):
         for retriever in self._retrievers.values():
             retriever.reset()
 
-        step = 0
-        last_msg_index = 0
         with _logfire.span(
             'agent run {prompt=}', prompt=user_prompt, agent=self, model=model_, model_name=model_.name()
         ) as run_span:
             try:
                 while True:
-                    step += 1
-                    new_messages = [m.__class__.__name__ for m in messages[last_msg_index:]]
-                    last_msg_index = len(messages)
-                    with _logfire.span('{step=}: {new_messages}', step=step, new_messages=new_messages):
-                        with _logfire.span('model request') as model_request_span:
-                            model_response = await agent_model.request(messages)
-                            model_request_span.set_attribute('model_response', model_response)
+                    with _logfire.span('model request') as model_request_span:
+                        model_response = await agent_model.request(messages)
+                        model_request_span.set_attribute('model_response', model_response)
+                        model_request_span.message = f'model request -> {model_response.role}'
 
-                        messages.append(model_response)
+                    messages.append(model_response)
 
-                        with _logfire.span('handle model response') as handle_span:
-                            either = await self._handle_model_response(model_response, deps)
+                    with _logfire.span('handle model response') as handle_span:
+                        either = await self._handle_model_response(model_response, deps)
 
-                            if left := either.left:
-                                run_span.set_attribute('messages', messages)
-                                return result.RunResult(left.value, messages, cost=result.Cost(0))
-                            else:
-                                tool_responses = either.right
-                                handle_span.set_attribute('tool_responses', tool_responses)
-                                messages.extend(tool_responses)
+                        if left := either.left:
+                            run_span.set_attribute('full_messages', messages)
+                            handle_span.set_attribute('result', left.value)
+                            handle_span.message = 'handle model response -> final result'
+                            return result.RunResult(left.value, messages, cost=result.Cost(0))
+                        else:
+                            tool_responses = either.right
+                            handle_span.set_attribute('tool_responses', tool_responses)
+                            response_msgs = ' '.join(m.role for m in tool_responses)
+                            handle_span.message = f'handle model response -> {response_msgs}'
+                            messages.extend(tool_responses)
             except (ValidationError, shared.UnexpectedModelBehaviour) as e:
                 run_span.set_attribute('messages', messages)
                 raise shared.AgentError(messages, model_) from e
