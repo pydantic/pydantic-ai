@@ -1,4 +1,5 @@
 import json
+import sys
 from typing import Annotated
 
 import pytest
@@ -106,6 +107,10 @@ def sphinx_style_docstring(foo: int, /) -> str:  # pragma: no cover
     return str(foo)
 
 
+IS_PY313 = sys.version_info[:2] >= (3, 13)
+
+
+@pytest.mark.skipif(IS_PY313, reason='https://github.com/mkdocstrings/griffe/issues/329')
 def test_docstring_sphinx():
     agent = Agent(FunctionModel(get_json_schema), deps=None)
     agent.retriever_plain(sphinx_style_docstring)
@@ -139,6 +144,7 @@ def numpy_style_docstring(*, foo: int, bar: str) -> str:  # pragma: no cover
     return f'{foo} {bar}'
 
 
+@pytest.mark.skipif(IS_PY313, reason='https://github.com/mkdocstrings/griffe/issues/329')
 def test_docstring_numpy():
     agent = Agent(FunctionModel(get_json_schema), deps=None)
     agent.retriever_plain(numpy_style_docstring)
