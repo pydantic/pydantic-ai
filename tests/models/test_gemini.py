@@ -80,6 +80,7 @@ class TestToolDefinition:
     name: str
     description: str
     json_schema: ObjectJsonSchema
+    outer_typed_dict_key: str | None = None
 
 
 def test_agent_model_tools():

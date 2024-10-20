@@ -71,7 +71,9 @@ def infer_model(model: Model | KnownModelName) -> Model:
 
         return GeminiModel(model)  # pyright: ignore[reportArgumentType]
     else:
-        raise TypeError(f'Invalid model: {model}')
+        from ..shared import UserError
+
+        raise UserError(f'Unknown model: {model}')
 
 
 class AbstractToolDefinition(Protocol):
@@ -83,6 +85,8 @@ class AbstractToolDefinition(Protocol):
     name: str
     description: str
     json_schema: ObjectJsonSchema
+    # can only be true for the final result tool
+    outer_typed_dict_key: str | None
 
 
 @cache
