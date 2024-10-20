@@ -8,6 +8,8 @@ from typing import Annotated, Any, Literal, Union
 import pydantic
 import pydantic_core
 
+from . import _pydantic
+
 
 @dataclass
 class SystemPrompt:
@@ -22,16 +24,29 @@ class UserPrompt:
     role: Literal['user'] = 'user'
 
 
+return_value_object = _pydantic.LazyTypeAdapter(dict[str, Any])
+
+
 @dataclass
 class ToolReturn:
     tool_name: str
-    content: str
+    content: str | dict[str, Any]
     tool_id: str | None = None
     timestamp: datetime = field(default_factory=datetime.now)
     role: Literal['tool-return'] = 'tool-return'
 
-    def llm_response(self) -> str:
-        return self.content
+    def model_response_str(self) -> str:
+        if isinstance(self.content, str):
+            return self.content
+        else:
+            content = return_value_object.validate_python(self.content)
+            return return_value_object.dump_json(content).decode()
+
+    def model_response_object(self) -> dict[str, Any]:
+        if isinstance(self.content, str):
+            return {'return_value': self.content}
+        else:
+            return return_value_object.validate_python(self.content)
 
 
 @dataclass
@@ -42,7 +57,7 @@ class ToolRetry:
     timestamp: datetime = field(default_factory=datetime.now)
     role: Literal['tool-retry'] = 'tool-retry'
 
-    def llm_response(self) -> str:
+    def model_response(self) -> str:
         if isinstance(self.content, str):
             description = self.content
         else:

@@ -10,9 +10,9 @@ from typing import TYPE_CHECKING, Any, Callable, Literal, TypedDict, cast, get_o
 
 from _griffe.enumerations import DocstringSectionKind
 from _griffe.models import Docstring, Object as GriffeObject
+from pydantic import ConfigDict, TypeAdapter
 from pydantic._internal import _decorators, _generate_schema, _typing_extra
 from pydantic._internal._config import ConfigWrapper
-from pydantic.config import ConfigDict
 from pydantic.fields import FieldInfo
 from pydantic.json_schema import GenerateJsonSchema
 from pydantic.plugin._schema_validator import create_schema_validator
@@ -25,7 +25,7 @@ if TYPE_CHECKING:
     from .shared import AgentDeps
 
 
-__all__ = ('function_schema',)
+__all__ = 'function_schema', 'LazyTypeAdapter'
 
 
 class FunctionSchema(TypedDict):
@@ -233,3 +233,21 @@ def _is_call_ctx(annotation: Any) -> bool:
     return annotation is CallContext or (
         _typing_extra.is_generic_alias(annotation) and get_origin(annotation) is CallContext
     )
+
+
+if TYPE_CHECKING:
+    LazyTypeAdapter = TypeAdapter
+else:
+
+    class LazyTypeAdapter:
+        __slots__ = '_args', '_kwargs', '_type_adapter'
+
+        def __init__(self, *args, **kwargs):
+            self._args = args
+            self._kwargs = kwargs
+            self._type_adapter = None
+
+        def __getattr__(self, item):
+            if self._type_adapter is None:
+                self._type_adapter = TypeAdapter(*self._args, **self._kwargs)
+            return getattr(self._type_adapter, item)
