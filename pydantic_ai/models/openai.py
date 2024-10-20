@@ -144,12 +144,6 @@ class OpenAIAgentModel(AgentModel):
                 role='assistant',
                 tool_calls=[_map_tool_call(t) for t in message.calls],
             )
-        elif message.role == 'plain-response-forbidden':
-            # PlainResponseForbidden ->
-            return chat.ChatCompletionUserMessageParam(
-                role='user',
-                content=message.llm_response(),
-            )
         else:
             assert_never(message)
 
