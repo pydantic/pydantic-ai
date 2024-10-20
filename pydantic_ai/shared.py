@@ -10,9 +10,40 @@ if TYPE_CHECKING:
     from . import messages
     from .models import Model
 
-__all__ = 'AgentDeps', 'ModelRetry', 'CallContext', 'AgentError', 'UserError', 'UnexpectedModelBehaviour'
+__all__ = (
+    'AgentDeps',
+    'ResultData',
+    'Cost',
+    'RunResult',
+    'ModelRetry',
+    'CallContext',
+    'AgentError',
+    'UserError',
+    'UnexpectedModelBehaviour',
+)
 
 AgentDeps = TypeVar('AgentDeps')
+ResultData = TypeVar('ResultData')
+
+
+@dataclass
+class Cost:
+    """Cost of a run."""
+
+    total_cost: int
+
+
+@dataclass
+class RunResult(Generic[ResultData]):
+    """Result of a run."""
+
+    response: ResultData
+    message_history: list[messages.Message]
+    cost: Cost
+
+    def message_history_json(self) -> str:
+        """Return the history of messages as a JSON string."""
+        return messages.MessagesTypeAdapter.dump_json(self.message_history).decode()
 
 
 @dataclass

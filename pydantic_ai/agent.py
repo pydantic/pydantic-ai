@@ -9,8 +9,8 @@ import logfire_api
 from pydantic import ValidationError
 from typing_extensions import assert_never
 
-from . import _result, _retriever as _r, _system_prompt, _utils, messages as _messages, models, result, shared
-from .shared import AgentDeps
+from . import _result, _retriever as _r, _system_prompt, _utils, messages as _messages, models, shared
+from .shared import AgentDeps, ResultData
 
 __all__ = ('Agent',)
 KnownModelName = Literal[
@@ -20,13 +20,13 @@ _logfire = logfire_api.Logfire(otel_scope='pydantic-ai')
 
 
 @dataclass(init=False)
-class Agent(Generic[AgentDeps, result.ResultData]):
+class Agent(Generic[AgentDeps, ResultData]):
     """Main class for creating "agents" - a way to have a specific type of "conversation" with an LLM."""
 
     # slots mostly for my sanity — knowing what attributes are available
     model: models.Model | None
-    _result_tool: result.ResultSchema[result.ResultData] | None
-    _result_validators: list[_result.ResultValidator[AgentDeps, result.ResultData]]
+    _result_schema: _result.ResultSchema[ResultData] | None
+    _result_validators: list[_result.ResultValidator[AgentDeps, ResultData]]
     _allow_text_result: bool
     _system_prompts: tuple[str, ...]
     _retrievers: dict[str, _r.Retriever[AgentDeps, Any]]
@@ -39,7 +39,7 @@ class Agent(Generic[AgentDeps, result.ResultData]):
     def __init__(
         self,
         model: models.Model | KnownModelName | None = None,
-        result_type: type[result.ResultData] = str,
+        result_type: type[ResultData] = str,
         *,
         system_prompt: str | Sequence[str] = (),
         # type here looks odd, but it's required os you can avoid "partially unknown" type errors with `deps=None`
@@ -51,11 +51,11 @@ class Agent(Generic[AgentDeps, result.ResultData]):
     ):
         self.model = models.infer_model(model) if model is not None else None
 
-        self._result_tool = result.ResultSchema[result_type].build(
+        self._result_schema = _result.ResultSchema[result_type].build(
             result_type, result_tool_name, result_tool_description
         )
         # if the result tool is None, or its schema allows `str`, we allow plain text results
-        self._allow_text_result = self._result_tool is None or self._result_tool.allow_text_result
+        self._allow_text_result = self._result_schema is None or self._result_schema.allow_text_result
 
         self._system_prompts = (system_prompt,) if isinstance(system_prompt, str) else tuple(system_prompt)
         self._retrievers: dict[str, _r.Retriever[AgentDeps, Any]] = {}
@@ -73,7 +73,7 @@ class Agent(Generic[AgentDeps, result.ResultData]):
         message_history: list[_messages.Message] | None = None,
         model: models.Model | KnownModelName | None = None,
         deps: AgentDeps | None = None,
-    ) -> result.RunResult[result.ResultData]:
+    ) -> shared.RunResult[ResultData]:
         """Run the agent with a user prompt in async mode.
 
         Args:
@@ -103,7 +103,7 @@ class Agent(Generic[AgentDeps, result.ResultData]):
 
         messages.append(_messages.UserPrompt(user_prompt))
 
-        agent_model = model_.agent_model(self._retrievers, self._allow_text_result, self._result_tool)
+        agent_model = model_.agent_model(self._retrievers, self._allow_text_result, self._result_schema)
 
         for retriever in self._retrievers.values():
             retriever.reset()
@@ -127,7 +127,7 @@ class Agent(Generic[AgentDeps, result.ResultData]):
                             run_span.set_attribute('full_messages', messages)
                             handle_span.set_attribute('result', left.value)
                             handle_span.message = 'handle model response -> final result'
-                            return result.RunResult(left.value, messages, cost=result.Cost(0))
+                            return shared.RunResult(left.value, messages, cost=shared.Cost(0))
                         else:
                             tool_responses = either.right
                             handle_span.set_attribute('tool_responses', tool_responses)
@@ -145,7 +145,7 @@ class Agent(Generic[AgentDeps, result.ResultData]):
         message_history: list[_messages.Message] | None = None,
         model: models.Model | KnownModelName | None = None,
         deps: AgentDeps | None = None,
-    ) -> result.RunResult[result.ResultData]:
+    ) -> shared.RunResult[ResultData]:
         """Run the agent with a user prompt synchronously.
 
         This is a convenience method that wraps `self.run` with `asyncio.run()`.
@@ -169,8 +169,8 @@ class Agent(Generic[AgentDeps, result.ResultData]):
         return func
 
     def result_validator(
-        self, func: _result.ResultValidatorFunc[AgentDeps, result.ResultData]
-    ) -> _result.ResultValidatorFunc[AgentDeps, result.ResultData]:
+        self, func: _result.ResultValidatorFunc[AgentDeps, ResultData]
+    ) -> _result.ResultValidatorFunc[AgentDeps, ResultData]:
         """Decorator to register a result validator function."""
         self._result_validators.append(_result.ResultValidator(func))
         return func
@@ -226,7 +226,7 @@ class Agent(Generic[AgentDeps, result.ResultData]):
         retries_ = retries if retries is not None else self._default_retries
         retriever = _r.Retriever[AgentDeps, _r.P](func, retries_)
 
-        if self._result_tool and self._result_tool.name == retriever.name:
+        if self._result_schema and self._result_schema.name == retriever.name:
             raise ValueError(f'Retriever name conflicts with result schema name: {retriever.name!r}')
 
         if retriever.name in self._retrievers:
@@ -237,7 +237,7 @@ class Agent(Generic[AgentDeps, result.ResultData]):
 
     async def _handle_model_response(
         self, model_response: _messages.LLMMessage, deps: AgentDeps
-    ) -> _utils.Either[result.ResultData, list[_messages.Message]]:
+    ) -> _utils.Either[ResultData, list[_messages.Message]]:
         """Process a single response from the model.
 
         Returns:
@@ -246,22 +246,22 @@ class Agent(Generic[AgentDeps, result.ResultData]):
         if model_response.role == 'llm-response':
             # plain string response
             if self._allow_text_result:
-                return _utils.Either(left=cast(result.ResultData, model_response.content))
+                return _utils.Either(left=cast(ResultData, model_response.content))
             else:
                 self._incr_result_retry()
-                assert self._result_tool is not None
+                assert self._result_schema is not None
                 response = _messages.UserPrompt(
                     content='Plain text responses are not permitted, please call one of the functions instead.',
                 )
                 return _utils.Either(right=[response])
         elif model_response.role == 'llm-tool-calls':
-            if self._result_tool is not None:
+            if self._result_schema is not None:
                 # if there's a result schema, and any of the calls match that name, return the result
                 # NOTE: this means we ignore any other tools called here
-                call = next((c for c in model_response.calls if c.tool_name == self._result_tool.name), None)
+                call = next((c for c in model_response.calls if c.tool_name == self._result_schema.name), None)
                 if call is not None:
                     try:
-                        result_data = self._result_tool.validate(call)
+                        result_data = self._result_schema.validate(call)
                         result_data = await self._validate_result(result_data, deps, call)
                     except _result.ToolRetryError as e:
                         self._incr_result_retry()
@@ -282,8 +282,8 @@ class Agent(Generic[AgentDeps, result.ResultData]):
             assert_never(model_response)
 
     async def _validate_result(
-        self, result_data: result.ResultData, deps: AgentDeps, tool_call: _messages.ToolCall
-    ) -> result.ResultData:
+        self, result_data: ResultData, deps: AgentDeps, tool_call: _messages.ToolCall
+    ) -> ResultData:
         for validator in self._result_validators:
             result_data = await validator.validate(result_data, deps, self._current_result_retry, tool_call)
         return result_data
