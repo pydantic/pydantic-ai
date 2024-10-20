@@ -31,6 +31,8 @@ jobs:
         env:
           SKIP: no-commit-to-branch
 
+      - run: make typecheck-mypy
+
   test:
     name: test on ${{ matrix.python-version }}
     runs-on: ubuntu-latest

@@ -128,12 +128,19 @@ class OpenAIAgentModel(AgentModel):
         elif message.role == 'user':
             # UserPrompt ->
             return chat.ChatCompletionUserMessageParam(role='user', content=message.content)
-        elif message.role == 'tool-return' or message.role == 'tool-retry':
-            # ToolReturn or ToolRetry ->
+        elif message.role == 'tool-return':
+            # ToolReturn ->
             return chat.ChatCompletionToolMessageParam(
                 role='tool',
                 tool_call_id=_guard_tool_id(message),
-                content=message.llm_response(),
+                content=message.model_response_str(),
+            )
+        elif message.role == 'tool-retry':
+            # ToolRetry ->
+            return chat.ChatCompletionToolMessageParam(
+                role='tool',
+                tool_call_id=_guard_tool_id(message),
+                content=message.model_response(),
             )
         elif message.role == 'llm-response':
             # LLMResponse ->

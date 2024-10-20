@@ -5,12 +5,13 @@ local functions.
 
 from __future__ import annotations as _annotations
 
-import json
 import re
 import string
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Literal
+
+import pydantic_core
 
 from .. import _utils
 from ..messages import LLMMessage, LLMResponse, LLMToolCalls, Message, ToolCall, ToolRetry, ToolReturn
@@ -103,11 +104,11 @@ class TestAgentModel(AgentModel):
                 self.step += 1
                 if response_text.value is None:
                     # build up details of retriever responses
-                    output: dict[str, str] = {}
+                    output: dict[str, Any] = {}
                     for message in messages:
                         if isinstance(message, ToolReturn):
                             output[message.tool_name] = message.content
-                    return LLMResponse(content=json.dumps(output))
+                    return LLMResponse(content=pydantic_core.to_json(output).decode())
                 else:
                     return LLMResponse(content=response_text.value)
             else:

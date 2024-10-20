@@ -66,7 +66,7 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary]) -> None:
         return str(x + 1)
 
     result = agent.run_sync('Hello')
-    assert result.response == snapshot('{"my_ret": "1"}')
+    assert result.response == snapshot('{"my_ret":"1"}')
 
     summary = get_logfire_summary()
     assert summary.traces == snapshot(

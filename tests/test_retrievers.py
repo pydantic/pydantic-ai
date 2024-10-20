@@ -239,7 +239,7 @@ def test_takes_just_model():
     )
 
     result = agent.run_sync('', model=TestModel())
-    assert result.response == snapshot('{"takes_just_model": "0 a"}')
+    assert result.response == snapshot('{"takes_just_model":"0 a"}')
 
 
 def test_takes_model_and_int():
@@ -279,4 +279,4 @@ def test_takes_model_and_int():
     )
 
     result = agent.run_sync('', model=TestModel())
-    assert result.response == snapshot('{"takes_just_model": "0 a 0"}')
+    assert result.response == snapshot('{"takes_just_model":"0 a 0"}')

@@ -38,6 +38,11 @@ async def ok_retriever(ctx: CallContext[MyDeps], x: str) -> str:
     return f'{x} {total}'
 
 
+@typed_agent1.retriever_plain
+def ok_retriever_plain(x: str) -> dict[str, str]:
+    return {'x': x}
+
+
 @typed_agent1.retriever_context
 async def bad_retriever1(ctx: CallContext[MyDeps], x: str) -> str:
     total = ctx.deps.foo + ctx.deps.spam  # type: ignore[attr-defined]
@@ -47,6 +52,11 @@ async def bad_retriever1(ctx: CallContext[MyDeps], x: str) -> str:
 @typed_agent1.retriever_context  # type: ignore[arg-type]
 async def bad_retriever2(ctx: CallContext[int], x: str) -> str:
     return f'{x} {ctx.deps}'
+
+
+@typed_agent1.retriever_plain  # type: ignore[arg-type]
+async def bad_retriever_return(x: int) -> list[int]:
+    return [x]
 
 
 with expect_error(ValueError):

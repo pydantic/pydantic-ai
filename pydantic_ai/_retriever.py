@@ -17,10 +17,11 @@ from .shared import AgentDeps, CallContext, ModelRetry
 P = ParamSpec('P')
 
 
+RetrieverReturnValue = Union[str, Awaitable[str], dict[str, Any], Awaitable[dict[str, Any]]]
 # Usage `RetrieverContextFunc[AgentDependencies, P]`
-RetrieverContextFunc = Callable[Concatenate[CallContext[AgentDeps], P], Union[str, Awaitable[str]]]
+RetrieverContextFunc = Callable[Concatenate[CallContext[AgentDeps], P], RetrieverReturnValue]
 # Usage `RetrieverPlainFunc[P]`
-RetrieverPlainFunc = Callable[P, Union[str, Awaitable[str]]]
+RetrieverPlainFunc = Callable[P, RetrieverReturnValue]
 # Usage `RetrieverEitherFunc[AgentDependencies, P]`
 RetrieverEitherFunc = _utils.Either[RetrieverContextFunc[AgentDeps, P], RetrieverPlainFunc[P]]
 

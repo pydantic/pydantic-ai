@@ -91,7 +91,7 @@ def whether_model(messages: list[Message], info: AgentInfo) -> LLMMessage:  # pr
         )
     elif last.role == 'tool-return':
         if last.tool_name == 'get_location':
-            return LLMToolCalls(calls=[ToolCall.from_json('get_whether', last.content)])
+            return LLMToolCalls(calls=[ToolCall.from_json('get_whether', last.model_response_str())])
         elif last.tool_name == 'get_whether':
             location_name = next(m.content for m in messages if m.role == 'user')
             return LLMResponse(f'{last.content} in {location_name}')
@@ -312,7 +312,7 @@ def test_register_all():
 
 def test_call_all():
     result = agent_all.run_sync('Hello', model=TestModel())
-    assert result.response == snapshot('{"foo": "1", "bar": "2", "baz": "3", "qux": "4", "quz": "a"}')
+    assert result.response == snapshot('{"foo":"1","bar":"2","baz":"3","qux":"4","quz":"a"}')
     assert result.message_history == snapshot(
         [
             SystemPrompt(content='foobar'),
@@ -332,6 +332,6 @@ def test_call_all():
             ToolReturn(tool_name='baz', content='3', timestamp=IsNow()),
             ToolReturn(tool_name='qux', content='4', timestamp=IsNow()),
             ToolReturn(tool_name='quz', content='a', timestamp=IsNow()),
-            LLMResponse(content='{"foo": "1", "bar": "2", "baz": "3", "qux": "4", "quz": "a"}', timestamp=IsNow()),
+            LLMResponse(content='{"foo":"1","bar":"2","baz":"3","qux":"4","quz":"a"}', timestamp=IsNow()),
         ]
     )

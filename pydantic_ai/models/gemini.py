@@ -26,10 +26,10 @@ from dataclasses import dataclass
 from typing import Annotated, Any, Literal, Union, cast
 
 from httpx import AsyncClient as AsyncHTTPClient
-from pydantic import Field, TypeAdapter
+from pydantic import Field
 from typing_extensions import assert_never
 
-from .. import _utils, shared
+from .. import _pydantic, _utils, shared
 from ..messages import (
     ArgsObject,
     LLMMessage,
@@ -229,14 +229,12 @@ class _GeminiContent:
 
     @classmethod
     def function_return(cls, m: ToolReturn) -> _GeminiContent:
-        # TODO non string responses
-        response = {'return_value': m.llm_response()}
-        f_response = _GeminiFunctionResponsePart.from_response(m.tool_name, response)
+        f_response = _GeminiFunctionResponsePart.from_response(m.tool_name, m.model_response_object())
         return _GeminiContent(role='user', parts=[f_response])
 
     @classmethod
     def function_retry(cls, m: ToolRetry) -> _GeminiContent:
-        response = {'call_error': m.llm_response()}
+        response = {'call_error': m.model_response()}
         f_response = _GeminiFunctionResponsePart.from_response(m.tool_name, response)
         return _GeminiContent(role='user', parts=[f_response])
 
@@ -390,8 +388,8 @@ class _GeminiPromptFeedback:
     safety_ratings: Annotated[list[_GeminiSafetyRating], Field(alias='safetyRatings')]
 
 
-_gemini_request_ta = TypeAdapter(_GeminiRequest)
-_gemini_response_ta = TypeAdapter(_GeminiResponse)
+_gemini_request_ta = _pydantic.LazyTypeAdapter(_GeminiRequest)
+_gemini_response_ta = _pydantic.LazyTypeAdapter(_GeminiResponse)
 
 
 class _GeminiJsonSchema:
@@ -436,6 +434,10 @@ class _GeminiJsonSchema:
             return self._array(schema, allow_ref)
 
     def _object(self, schema: dict[str, Any], allow_ref: bool) -> None:
+        ad_props = schema.pop('additionalProperties', None)
+        if ad_props:
+            raise shared.UserError('Additional properties in JSON Schema are not supported by Gemini')
+
         if properties := schema.get('properties'):  # pragma: no branch
             for value in properties.values():
                 self._simplify(value, allow_ref)

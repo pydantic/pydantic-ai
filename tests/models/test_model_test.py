@@ -32,7 +32,7 @@ def test_call_one():
         return f'{x}-b'
 
     result = agent.run_sync('x', model=TestModel(call_retrievers=['ret_a']))
-    assert result.response == snapshot('{"ret_a": "a-a"}')
+    assert result.response == snapshot('{"ret_a":"a-a"}')
     assert calls == ['a']
 
 
@@ -82,7 +82,7 @@ def test_retriever_retry():
 
     result = agent.run_sync('Hello', model=TestModel())
     assert call_count == 2
-    assert result.response == snapshot('{"my_ret": "2"}')
+    assert result.response == snapshot('{"my_ret":"2"}')
     assert result.message_history == snapshot(
         [
             UserPrompt(content='Hello', timestamp=IsNow()),
@@ -93,7 +93,7 @@ def test_retriever_retry():
             ToolRetry(tool_name='my_ret', content='First call failed', timestamp=IsNow()),
             LLMToolCalls(calls=[ToolCall.from_object('my_ret', {'x': 1})], timestamp=IsNow()),
             ToolReturn(tool_name='my_ret', content='2', timestamp=IsNow()),
-            LLMResponse(content='{"my_ret": "2"}', timestamp=IsNow()),
+            LLMResponse(content='{"my_ret":"2"}', timestamp=IsNow()),
         ]
     )
 
