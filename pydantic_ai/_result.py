@@ -70,7 +70,7 @@ class ResultValidator(Generic[AgentDeps, ResultData]):
 
 
 class ToolRetryError(Exception):
-    """Internal exception used to indicate a signal a `ToolRetry` message should be returned to the LLM"""
+    """Internal exception used to indicate a signal a `ToolRetry` message should be returned to the LLM."""
 
     def __init__(self, tool_retry: messages.ToolRetry):
         self.tool_retry = tool_retry

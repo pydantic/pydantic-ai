@@ -1,6 +1,4 @@
-"""
-This file is used to test static typing, it's analyzed with pyright and mypy.
-"""
+"""This file is used to test static typing, it's analyzed with pyright and mypy."""
 
 from collections.abc import Iterator
 from contextlib import contextmanager

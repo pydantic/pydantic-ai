@@ -1,9 +1,10 @@
-"""
+"""Custom interface to the `generativelanguage.googleapis.com` API using HTTPX and Pydantic.
+
 The Google SDK for interacting with the `generativelanguage.googleapis.com` API
 [`google-generativeai`](https://ai.google.dev/gemini-api/docs/quickstart?lang=python) reads like it was written by a
 Java developer who thought they knew everything about OOP, spent 30 minutes trying to learn Python,
 gave up and decided to build the library to prove how horrible Python is. It also doesn't use httpx for HTTP requests,
-and it tries to implement tool calling itself, but doesn't use Pydantic or equivalent for validation.
+and tries to implement tool calling itself, but doesn't use Pydantic or equivalent for validation.
 
 We could also use the Google Vertex SDK,
 [`google-cloud-aiplatform`](https://cloud.google.com/vertex-ai/docs/python-sdk/use-vertex-ai-python-sdk)
@@ -11,9 +12,6 @@ which uses the `*-aiplatform.googleapis.com` API, but that requires a service ac
 which is a faff to set up and manage. The big advantages of `*-aiplatform.googleapis.com` is that it claims API
 compatibility with OpenAI's API, but I suspect Gemini's limited support for JSON Schema means you'd need to
 hack around its limitations anyway for tool calls.
-
-This code is a custom interface to the `generativelanguage.googleapis.com` API using httpx, Pydantic
-and just a little bit of Python knowledge.
 """
 
 from __future__ import annotations as _annotations
@@ -161,9 +159,7 @@ class GeminiAgentModel(AgentModel):
 
     @staticmethod
     def message_to_gemini(m: Message) -> _utils.Either[_GeminiTextPart, _GeminiContent]:
-        """
-        Convert a message to a _GeminiTextPart for "system_instructions" or _GeminiContent for "contents".
-        """
+        """Convert a message to a _GeminiTextPart for "system_instructions" or _GeminiContent for "contents"."""
         if m.role == 'system':
             # SystemPrompt ->
             return _utils.Either(left=_GeminiTextPart(text=m.content))
@@ -256,7 +252,7 @@ class _GeminiFunctionCallPart:
 
 @dataclass
 class _GeminiFunctionCall:
-    """See <https://ai.google.dev/api/caching#FunctionCall>"""
+    """See <https://ai.google.dev/api/caching#FunctionCall>."""
 
     name: str
     args: dict[str, Any]
@@ -273,7 +269,7 @@ class _GeminiFunctionResponsePart:
 
 @dataclass
 class _GeminiFunctionResponse:
-    """See <https://ai.google.dev/api/caching#FunctionResponse>"""
+    """See <https://ai.google.dev/api/caching#FunctionResponse>."""
 
     name: str
     response: dict[str, Any]
@@ -335,8 +331,7 @@ class _GeminiFunctionCallingConfig:
 
 @dataclass
 class _GeminiResponse:
-    """
-    Schema for the response from the Gemini API.
+    """Schema for the response from the Gemini API.
 
     See <https://ai.google.dev/api/generate-content#v1beta.GenerateContentResponse>
     """
@@ -379,7 +374,7 @@ class _GeminiUsageMetaData:
 
 @dataclass
 class _GeminiSafetyRating:
-    """See https://ai.google.dev/gemini-api/docs/safety-settings#safety-filters"""
+    """See <https://ai.google.dev/gemini-api/docs/safety-settings#safety-filters>."""
 
     category: Literal[
         'HARM_CATEGORY_HARASSMENT',
@@ -393,7 +388,7 @@ class _GeminiSafetyRating:
 
 @dataclass
 class _GeminiPromptFeedback:
-    """See <https://ai.google.dev/api/generate-content#v1beta.GenerateContentResponse>"""
+    """See <https://ai.google.dev/api/generate-content#v1beta.GenerateContentResponse>."""
 
     block_reason: Annotated[str, Field(alias='blockReason')]
     safety_ratings: Annotated[list[_GeminiSafetyRating], Field(alias='safetyRatings')]
@@ -404,10 +399,10 @@ _gemini_response_ta = _pydantic.LazyTypeAdapter(_GeminiResponse)
 
 
 class _GeminiJsonSchema:
-    """
-    Transforms the JSON Schema from Pydantic to be suitable for Gemini which
-    [support](https://ai.google.dev/gemini-api/docs/function-calling#function_declarations) a subset
-    of OpenAPI v3.0.3.
+    """Transforms the JSON Schema from Pydantic to be suitable for Gemini.
+
+    Gemini which [supports](https://ai.google.dev/gemini-api/docs/function-calling#function_declarations)
+    a subset of OpenAPI v3.0.3.
 
     Specifically:
     * gemini doesn't allow the `title` keyword to be set

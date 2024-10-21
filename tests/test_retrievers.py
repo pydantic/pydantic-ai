@@ -58,8 +58,7 @@ def test_retriever_context_ctx_second():
 
 
 async def google_style_docstring(foo: int, bar: str) -> str:  # pragma: no cover
-    """
-    Do foobar stuff, a lot.
+    """Do foobar stuff, a lot.
 
     Args:
         foo: The foo thing.
@@ -97,8 +96,7 @@ def test_docstring_google():
 
 
 def sphinx_style_docstring(foo: int, /) -> str:  # pragma: no cover
-    """
-    Sphinx style docstring.
+    """Sphinx style docstring.
 
     :param foo: The foo thing.
     :return: The result.
@@ -126,8 +124,7 @@ def test_docstring_sphinx():
 
 
 def numpy_style_docstring(*, foo: int, bar: str) -> str:  # pragma: no cover
-    """
-    Numpy style docstring.
+    """Numpy style docstring.
 
     Parameters
     ----------
@@ -180,6 +177,7 @@ def test_docstring_unknown():
     )
 
 
+# fmt: off
 async def google_style_docstring_no_body(
     foo: int, bar: Annotated[str, Field(description='from fields')]
 ) -> str:  # pragma: no cover
@@ -188,6 +186,7 @@ async def google_style_docstring_no_body(
         foo: The foo thing.
         bar: The bar thing.
     """
+    # fmt: on
     return f'{foo} {bar}'
 
 

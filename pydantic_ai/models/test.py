@@ -1,6 +1,7 @@
-"""
-Utilities for testing apps build with pydantic_ai, specifically by using a model based which calls
-local functions.
+"""Utilities for testing apps build with pydantic_ai.
+
+Specifically by using a model based which calls all retrievers in the agent by inferring the arguments
+from the JSON schema. Also infers suitable data for the return type.
 """
 
 from __future__ import annotations as _annotations
@@ -20,8 +21,7 @@ from . import AbstractToolDefinition, AgentModel, Model
 
 @dataclass
 class TestModel(Model):
-    """
-    A model specifically for testing purposes.
+    """A model specifically for testing purposes.
 
     This will (by default) call all retrievers in the agent model, then return a tool response if possible,
     otherwise a plain response.
@@ -132,8 +132,7 @@ _chars = string.ascii_letters + string.digits + string.punctuation
 
 
 class _JsonSchemaTestData:
-    """
-    Generate data that matches a JSON schema.
+    """Generate data that matches a JSON schema.
 
     This tries to generate the minimal viable data for the schema.
     """

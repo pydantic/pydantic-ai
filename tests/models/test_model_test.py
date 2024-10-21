@@ -1,6 +1,4 @@
-"""
-This module contains tests for the testing module.
-"""
+"""This module contains tests for the testing module."""
 
 from __future__ import annotations as _annotations
 
