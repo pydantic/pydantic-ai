@@ -90,7 +90,7 @@ async def test_request_simple_usage():
 
     result = await agent.run('Hello')
     assert result.response == 'world'
-    assert result.cost == snapshot(Cost(request_tokens=2, response_tokens=1, total_tokens=3, details={}))
+    assert result.cost == snapshot(Cost(request_tokens=2, response_tokens=1, total_tokens=3))
 
 
 async def test_request_structured_response():

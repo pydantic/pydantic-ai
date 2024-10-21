@@ -28,7 +28,7 @@ ResultData = TypeVar('ResultData')
 
 @dataclass
 class Cost:
-    """Cost of a run."""
+    """Cost of a request or run."""
 
     request_tokens: int | None = None
     response_tokens: int | None = None
@@ -49,7 +49,7 @@ class Cost:
             for key, value in other.details.items():
                 details[key] = details.get(key, 0) + value
 
-        return Cost(**counts, details=details)
+        return Cost(**counts, details=details or None)
 
 
 @dataclass
