@@ -92,9 +92,10 @@ class AbstractToolDefinition(Protocol):
 
 @cache
 def cached_async_http_client() -> AsyncHTTPClient:
-    """
-    There are good reasons why in production you should use a `AsyncHTTPClient` as an async context manager as
+    """Cached HTTPX async client so multiple agents and calls can share the same client.
+
+    There are good reasons why in production you should use a `httpx.AsyncClient` as an async context manager as
     described in [encode/httpx#2026](https://github.com/encode/httpx/pull/2026), but when experimenting or showing
-    examples, it's very useful, this allows multiple Agents to use a single client.
+    examples, it's very useful not to, this allows multiple Agents to use a single client.
     """
     return AsyncHTTPClient()

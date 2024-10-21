@@ -70,6 +70,11 @@ include = ["/README.md", "/Makefile", "/pydantic_ai", "/tests"]
 [tool.ruff]
 line-length = 120
 target-version = "py39"
+include = [
+    "pydantic_ai/**/*.py",
+    "tests/**/*.py",
+    "examples/**/*.py",
+]
 
 [tool.ruff.lint]
 extend-select = [
@@ -78,18 +83,18 @@ extend-select = [
     "C90",
     "UP",
     "I",
-    # TODo require docstrings
-    # "D",
+    "D",
 ]
 flake8-quotes = { inline-quotes = "single", multiline-quotes = "double" }
 isort = { combine-as-imports = true, known-first-party = ["pydantic_ai"] }
-mccabe = { max-complexity = 14 }
+mccabe = { max-complexity = 15 }
 ignore = [
+    "D101", # ignore missing docstring in public class TODO remove
+    "D102", # ignore missing docstring in public method TODO remove
     "D107", # ignore missing docstring in __init__ methods
     "D100", # ignore missing docstring in module
     "D104", # ignore missing docstring in public package
     "D105", # ignore missing docstring in magic methods
-    "C901", # ignore too complex functions, doesn't seem to be worth it
 ]
 
 [tool.ruff.lint.pydocstyle]
@@ -99,13 +104,16 @@ convention = "google"
 docstring-code-format = true
 quote-style = "single"
 
+[tool.ruff.lint.per-file-ignores]
+"tests/**.py" = ["D"]
+
 [tool.pyright]
 typeCheckingMode = "strict"
 reportUnnecessaryTypeIgnoreComment = true
 reportMissingTypeStubs = false
-include = ["pydantic_ai", "tests", "demos"]
+include = ["pydantic_ai", "tests", "examples"]
 venvPath = ".venv"
-# see https://github.com/microsoft/pyright/issues/7771, we don't want to error on decorated functions in tests
+# see https://github.com/microsoft/pyright/issues/7771 - we don't want to error on decorated functions in tests
 # which are not otherwise used
 executionEnvironments = [
   { root = "tests", reportUnusedFunction = false },

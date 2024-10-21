@@ -84,9 +84,7 @@ class ArgsObject:
 
 @dataclass
 class ToolCall:
-    """
-    Either a retriever/tool call or structured response from the agent.
-    """
+    """Either a retriever/tool call or structured response from the agent."""
 
     tool_name: str
     args: ArgsJson | ArgsObject

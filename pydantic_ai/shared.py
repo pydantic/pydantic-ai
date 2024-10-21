@@ -102,9 +102,7 @@ class AgentError(RuntimeError):
         super().__init__(f'Error while running model {self.model_name}')
 
     def cause(self) -> ValidationError | UnexpectedModelBehaviour:
-        """
-        This is really just typing super and improved find-ability for `Exception.__cause__`.
-        """
+        """This is really just typing super and improved find-ability for `Exception.__cause__`."""
         cause = self.__cause__
         if isinstance(cause, (ValidationError, UnexpectedModelBehaviour)):
             return cause
@@ -137,7 +135,7 @@ class UserError(RuntimeError):
 
 
 class UnexpectedModelBehaviour(RuntimeError):
-    """Error caused by unexpected Model behavior, e.g. an unexpected response code"""
+    """Error caused by unexpected Model behavior, e.g. an unexpected response code."""
 
     message: str
     body: str | None
