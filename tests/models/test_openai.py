@@ -8,8 +8,10 @@ import pytest
 from inline_snapshot import snapshot
 from openai import AsyncOpenAI
 from openai.types import chat
-from openai.types.chat.chat_completion import ChatCompletionMessage, Choice  # pyright: ignore[reportPrivateImportUsage]
+from openai.types.chat.chat_completion import Choice
+from openai.types.chat.chat_completion_message import ChatCompletionMessage
 from openai.types.chat.chat_completion_message_tool_call import Function
+from openai.types.completion_usage import CompletionUsage, PromptTokensDetails
 
 from pydantic_ai import Agent, ModelRetry
 from pydantic_ai.messages import (
@@ -23,6 +25,7 @@ from pydantic_ai.messages import (
     UserPrompt,
 )
 from pydantic_ai.models.openai import OpenAIModel
+from pydantic_ai.shared import Cost
 from tests.conftest import IsNow
 
 pytestmark = pytest.mark.anyio
@@ -54,13 +57,14 @@ class MockOpenAI:
         return completion
 
 
-def completion_message(message: ChatCompletionMessage) -> chat.ChatCompletion:
+def completion_message(message: ChatCompletionMessage, *, usage: CompletionUsage | None = None) -> chat.ChatCompletion:
     return chat.ChatCompletion(
         id='123',
         choices=[Choice(finish_reason='stop', index=0, message=message)],
         created=1704067200,  # 2024-01-01
         model='gpt-4',
         object='chat.completion',
+        usage=usage,
     )
 
 
@@ -72,6 +76,21 @@ async def test_request_simple_success():
 
     result = await agent.run('Hello')
     assert result.response == 'world'
+    assert result.cost == snapshot(Cost())
+
+
+async def test_request_simple_usage():
+    c = completion_message(
+        ChatCompletionMessage(content='world', role='assistant'),
+        usage=CompletionUsage(completion_tokens=1, prompt_tokens=2, total_tokens=3),
+    )
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIModel('gpt-4', openai_client=mock_client)
+    agent = Agent(m, deps=None)
+
+    result = await agent.run('Hello')
+    assert result.response == 'world'
+    assert result.cost == snapshot(Cost(request_tokens=2, response_tokens=1, total_tokens=3, details={}))
 
 
 async def test_request_structured_response():
@@ -124,7 +143,13 @@ async def test_request_tool_call():
                         type='function',
                     )
                 ],
-            )
+            ),
+            usage=CompletionUsage(
+                completion_tokens=1,
+                prompt_tokens=2,
+                total_tokens=3,
+                prompt_tokens_details=PromptTokensDetails(cached_tokens=1),
+            ),
         ),
         completion_message(
             ChatCompletionMessage(
@@ -137,7 +162,13 @@ async def test_request_tool_call():
                         type='function',
                     )
                 ],
-            )
+            ),
+            usage=CompletionUsage(
+                completion_tokens=2,
+                prompt_tokens=3,
+                total_tokens=6,
+                prompt_tokens_details=PromptTokensDetails(cached_tokens=2),
+            ),
         ),
         completion_message(ChatCompletionMessage(content='final response', role='assistant')),
     ]
@@ -189,4 +220,7 @@ async def test_request_tool_call():
             ),
             LLMResponse(content='final response', timestamp=datetime.datetime(2024, 1, 1, 0, 0)),
         ]
+    )
+    assert result.cost == snapshot(
+        Cost(request_tokens=5, response_tokens=3, total_tokens=9, details={'cached_tokens': 3})
     )

@@ -36,6 +36,7 @@ from pydantic_ai.models.gemini import (
     _GeminiTools,  # pyright: ignore[reportPrivateUsage]
     _GeminiUsageMetaData,  # pyright: ignore[reportPrivateUsage]
 )
+from pydantic_ai.shared import Cost
 from tests.conftest import ClientWithHandler, IsNow, TestEnv
 
 pytestmark = pytest.mark.anyio
@@ -359,6 +360,13 @@ async def test_request_simple_success(get_gemini_client: GetGeminiClient):
 
     result = await agent.run('Hello')
     assert result.response == 'Hello world'
+    assert result.message_history == snapshot(
+        [
+            UserPrompt(content='Hello', timestamp=IsNow()),
+            LLMResponse(content='Hello world', timestamp=IsNow()),
+        ]
+    )
+    assert result.cost == snapshot(Cost(request_tokens=1, response_tokens=2, total_tokens=3, details={}))
 
 
 async def test_request_structured_response(get_gemini_client: GetGeminiClient):
@@ -443,6 +451,7 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
             LLMResponse(content='final response', timestamp=IsNow()),
         ]
     )
+    assert result.cost == snapshot(Cost(request_tokens=3, response_tokens=6, total_tokens=9, details={}))
 
 
 async def test_unexpected_response(client_with_handler: ClientWithHandler, env: TestEnv):
