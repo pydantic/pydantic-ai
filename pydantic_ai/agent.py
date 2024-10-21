@@ -108,26 +108,31 @@ class Agent(Generic[AgentDeps, ResultData]):
         for retriever in self._retrievers.values():
             retriever.reset()
 
+        cost = shared.Cost()
+
         with _logfire.span(
             'agent run {prompt=}', prompt=user_prompt, agent=self, model=model_, model_name=model_.name()
         ) as run_span:
             try:
                 while True:
                     with _logfire.span('model request') as model_request_span:
-                        model_response = await agent_model.request(messages)
+                        model_response, request_cost = await agent_model.request(messages)
                         model_request_span.set_attribute('model_response', model_response)
+                        model_request_span.set_attribute('cost', request_cost)
                         model_request_span.message = f'model request -> {model_response.role}'
 
                     messages.append(model_response)
+                    cost += request_cost
 
                     with _logfire.span('handle model response') as handle_span:
                         either = await self._handle_model_response(model_response, deps)
 
                         if left := either.left:
                             run_span.set_attribute('full_messages', messages)
+                            run_span.set_attribute('cost', cost)
                             handle_span.set_attribute('result', left.value)
                             handle_span.message = 'handle model response -> final result'
-                            return shared.RunResult(left.value, messages, cost=shared.Cost(0))
+                            return shared.RunResult(left.value, messages, cost=cost)
                         else:
                             tool_responses = either.right
                             handle_span.set_attribute('tool_responses', tool_responses)

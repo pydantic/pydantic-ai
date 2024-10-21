@@ -28,9 +28,28 @@ ResultData = TypeVar('ResultData')
 
 @dataclass
 class Cost:
-    """Cost of a run."""
+    """Cost of a request or run."""
 
-    total_cost: int
+    request_tokens: int | None = None
+    response_tokens: int | None = None
+    total_tokens: int | None = None
+    details: dict[str, int] | None = None
+
+    def __add__(self, other: Cost) -> Cost:
+        counts: dict[str, int] = {}
+        for field in 'request_tokens', 'response_tokens', 'total_tokens':
+            self_value = getattr(self, field)
+            other_value = getattr(other, field)
+            if self_value is not None or other_value is not None:
+                counts[field] = (self_value or 0) + (other_value or 0)
+
+        details = self.details.copy() if self.details is not None else None
+        if other.details is not None:
+            details = details or {}
+            for key, value in other.details.items():
+                details[key] = details.get(key, 0) + value
+
+        return Cost(**counts, details=details or None)
 
 
 @dataclass

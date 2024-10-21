@@ -27,7 +27,7 @@ def test_call_one():
         return f'{x}-a'
 
     @agent.retriever_plain
-    async def ret_b(x: str) -> str:
+    async def ret_b(x: str) -> str:  # pragma: no cover
         calls.append('b')
         return f'{x}-b'
 

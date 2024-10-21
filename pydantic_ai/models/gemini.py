@@ -111,9 +111,9 @@ class GeminiAgentModel(AgentModel):
     tool_config: _GeminiToolConfig | None
     url_template: str
 
-    async def request(self, messages: list[Message]) -> LLMMessage:
+    async def request(self, messages: list[Message]) -> tuple[LLMMessage, shared.Cost]:
         response = await self.make_request(messages)
-        return self.process_response(response)
+        return self.process_response(response), response.usage_metadata.as_cost()
 
     async def make_request(self, messages: list[Message]) -> _GeminiResponse:
         contents: list[_GeminiContent] = []
@@ -364,6 +364,17 @@ class _GeminiUsageMetaData:
     candidates_token_count: Annotated[int, Field(alias='candidatesTokenCount')]
     total_token_count: Annotated[int, Field(alias='totalTokenCount')]
     cached_content_token_count: Annotated[int | None, Field(alias='cachedContentTokenCount')] = None
+
+    def as_cost(self) -> shared.Cost:
+        details: dict[str, int] = {}
+        if self.cached_content_token_count is not None:
+            details['cached_content_token_count'] = self.cached_content_token_count
+        return shared.Cost(
+            request_tokens=self.prompt_token_count,
+            response_tokens=self.candidates_token_count,
+            total_tokens=self.total_token_count,
+            details=details,
+        )
 
 
 @dataclass

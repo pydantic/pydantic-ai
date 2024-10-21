@@ -13,7 +13,7 @@ from typing import Any, Literal
 
 import pydantic_core
 
-from .. import _utils
+from .. import _utils, shared
 from ..messages import LLMMessage, LLMResponse, LLMToolCalls, Message, ToolCall, ToolRetry, ToolReturn
 from . import AbstractToolDefinition, AgentModel, Model
 
@@ -81,12 +81,13 @@ class TestAgentModel(AgentModel):
     step: int = 0
     last_message_count: int = 0
 
-    async def request(self, messages: list[Message]) -> LLMMessage:
+    async def request(self, messages: list[Message]) -> tuple[LLMMessage, shared.Cost]:
+        cost = shared.Cost()
         if self.step == 0:
             calls = [ToolCall.from_object(name, self.gen_retriever_args(args)) for name, args in self.retriever_calls]
             self.step += 1
             self.last_message_count = len(messages)
-            return LLMToolCalls(calls=calls)
+            return LLMToolCalls(calls=calls), cost
 
         new_messages = messages[self.last_message_count :]
         self.last_message_count = len(messages)
@@ -98,7 +99,7 @@ class TestAgentModel(AgentModel):
                 if name in new_retry_names
             ]
             self.step += 1
-            return LLMToolCalls(calls=calls)
+            return LLMToolCalls(calls=calls), cost
         else:
             if response_text := self.result.left:
                 self.step += 1
@@ -108,19 +109,19 @@ class TestAgentModel(AgentModel):
                     for message in messages:
                         if isinstance(message, ToolReturn):
                             output[message.tool_name] = message.content
-                    return LLMResponse(content=pydantic_core.to_json(output).decode())
+                    return LLMResponse(content=pydantic_core.to_json(output).decode()), cost
                 else:
-                    return LLMResponse(content=response_text.value)
+                    return LLMResponse(content=response_text.value), cost
             else:
                 assert self.result_tool is not None, 'No result tool name provided'
                 custom_result_args = self.result.right
                 if custom_result_args is not None:
                     self.step += 1
-                    return LLMToolCalls(calls=[ToolCall.from_object(self.result_tool.name, custom_result_args)])
+                    return LLMToolCalls(calls=[ToolCall.from_object(self.result_tool.name, custom_result_args)]), cost
                 else:
                     response_args = self.gen_retriever_args(self.result_tool)
                     self.step += 1
-                    return LLMToolCalls(calls=[ToolCall.from_object(self.result_tool.name, response_args)])
+                    return LLMToolCalls(calls=[ToolCall.from_object(self.result_tool.name, response_args)]), cost
 
     def gen_retriever_args(self, tool_def: AbstractToolDefinition) -> Any:
         """Generate arguments for a retriever."""

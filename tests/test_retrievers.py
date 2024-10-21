@@ -32,7 +32,7 @@ def test_retriever_plain_with_ctx():
     with pytest.raises(UserError) as exc_info:
 
         @agent.retriever_plain
-        async def invalid_retriever(ctx: CallContext[None]) -> str:
+        async def invalid_retriever(ctx: CallContext[None]) -> str:  # pragma: no cover
             return 'Hello'
 
     assert str(exc_info.value) == snapshot(

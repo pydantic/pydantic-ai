@@ -17,6 +17,7 @@ from ..messages import LLMMessage, Message
 if TYPE_CHECKING:
     from .._utils import ObjectJsonSchema
     from ..agent import KnownModelName
+    from ..shared import Cost
 
 
 class Model(ABC):
@@ -50,7 +51,7 @@ class AgentModel(ABC):
     """Model configured for a specific agent."""
 
     @abstractmethod
-    async def request(self, messages: list[Message]) -> LLMMessage:
+    async def request(self, messages: list[Message]) -> tuple[LLMMessage, Cost]:
         """Request a response from the model."""
         raise NotImplementedError()
 
