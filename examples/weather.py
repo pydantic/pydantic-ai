@@ -14,13 +14,14 @@ import os
 from dataclasses import dataclass
 from typing import Any, cast
 
-# if you don't want to use logfire, just comment out these lines
-import logfire
 from devtools import debug
 from httpx import AsyncClient
 
 from pydantic_ai import Agent, CallContext, ModelRetry
 from pydantic_ai.agent import KnownModelName
+
+# if you don't want to use logfire, just comment out these lines
+import logfire
 
 logfire.configure()
 

@@ -107,7 +107,8 @@ quote-style = "single"
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**.py" = ["D"]
-"examples/**.py" = ["D"]
+# see https://github.com/astral-sh/ruff/issues/13871
+"examples/**.py" = ["D", "I001"]
 
 [tool.pyright]
 typeCheckingMode = "strict"

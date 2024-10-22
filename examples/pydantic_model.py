@@ -8,12 +8,13 @@ Run with:
 import os
 from typing import cast
 
-# if you don't want to use logfire, just comment out these lines
-import logfire
 from pydantic import BaseModel
 
 from pydantic_ai import Agent
 from pydantic_ai.agent import KnownModelName
+
+# if you don't want to use logfire, just comment out these lines
+import logfire
 
 logfire.configure()
 
