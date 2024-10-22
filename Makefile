@@ -1,5 +1,4 @@
 .DEFAULT_GOAL := all
-sources = pydantic_ai tests
 
 .PHONY: .uv  # Check that uv is installed
 .uv:
@@ -16,13 +15,13 @@ install: .uv .pre-commit
 
 .PHONY: format  # Format the code
 format:
-	uv run ruff format $(sources)
-	uv run ruff check --fix --fix-only $(sources)
+	uv run ruff format
+	uv run ruff check --fix --fix-only
 
 .PHONY: lint  # Lint the code
 lint:
-	uv run ruff format --check $(sources)
-	uv run ruff check $(sources)
+	uv run ruff format --check
+	uv run ruff check
 
 .PHONY: typecheck-pyright
 typecheck-pyright:

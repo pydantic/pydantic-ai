@@ -1,49 +1,131 @@
+"""Example of Pydantic AI with multiple tools which the LLM needs to call in turn to answer a question.
+
+In this case the idea is a "weather" agent — the user can ask for the weather in multiple cities,
+the agent will use the `get_lat_lng` tool to get the latitude and longitude of the locations, then use
+the `get_weather` tool to get the weather.
+
+Run with:
+
+    uv run -m examples.weather
+"""
+
+import asyncio
+import os
+from dataclasses import dataclass
+from typing import Any, cast
+
+# if you don't want to use logfire, just comment out these lines
+import logfire
 from devtools import debug
+from httpx import AsyncClient
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, CallContext, ModelRetry
+from pydantic_ai.agent import KnownModelName
 
-try:
-    import logfire
-except ImportError:
-    pass
-else:
-    logfire.configure()
-
-weather_agent: Agent[None, str] = Agent('openai:gpt-4o', system_prompt='Be concise, reply with one sentence.')
+logfire.configure()
 
 
-@weather_agent.retriever_plain
-async def get_lat_lng(location_description: str) -> dict[str, float]:
-    """
-    Get the latitude and longitude of a location.
+@dataclass
+class Deps:
+    client: AsyncClient
+    weather_api_key: str | None
+    geo_api_key: str | None
+
+
+model = cast(KnownModelName, os.getenv('PYDANTIC_AI_MODEL', 'openai:gpt-4o'))
+weather_agent: Agent[Deps, str] = Agent(model, system_prompt='Be concise, reply with one sentence.', retries=2)
+
+
+@weather_agent.retriever_context
+async def get_lat_lng(ctx: CallContext[Deps], location_description: str) -> dict[str, float]:
+    """Get the latitude and longitude of a location.
 
     Args:
+        ctx: The context.
         location_description: A description of a location.
     """
-    if 'london' in location_description.lower():
+    if ctx.deps.geo_api_key is None:
+        # if no API key is provided, return a dummy response (London)
         return {'lat': 51.1, 'lng': -0.1}
-    elif 'wiltshire' in location_description.lower():
-        return {'lat': 51.1, 'lng': -2.11}
-    else:
-        return {'lat': 0, 'lng': 0}
+
+    params = {
+        'q': location_description,
+        'api_key': ctx.deps.geo_api_key,
+    }
+    r = await ctx.deps.client.get('https://geocode.maps.co/search', params=params)
+    r.raise_for_status()
+    data = r.json()
+    if not data:
+        raise ModelRetry('Could not find the location')
+    return {'lat': data[0]['lat'], 'lng': data[0]['lon']}
 
 
-@weather_agent.retriever_plain
-async def get_whether(lat: float, lng: float) -> str:
-    """
-    Get the weather at a location.
+@weather_agent.retriever_context
+async def get_weather(ctx: CallContext[Deps], lat: float, lng: float) -> dict[str, Any]:
+    """Get the weather at a location.
 
     Args:
+        ctx: The context.
         lat: Latitude of the location.
         lng: Longitude of the location.
     """
-    if abs(lat - 51.1) < 0.1 and abs(lng + 0.1) < 0.1:
-        # it always rains in London
-        return 'Raining'
-    else:
-        return 'Sunny'
+    if ctx.deps.weather_api_key is None:
+        # if no API key is provided, return a dummy response
+        return {'temperature': '21 °C', 'description': 'Sunny'}
+
+    params = {
+        'apikey': ctx.deps.weather_api_key,
+        'location': f'{lat},{lng}',
+        'units': 'metric',
+    }
+    r = await ctx.deps.client.get('https://api.tomorrow.io/v4/weather/realtime', params=params)
+    r.raise_for_status()
+    data = r.json()
+    values = data['data']['values']
+    # https://docs.tomorrow.io/reference/data-layers-weather-codes
+    code_lookup = {
+        1000: 'Clear, Sunny',
+        1100: 'Mostly Clear',
+        1101: 'Partly Cloudy',
+        1102: 'Mostly Cloudy',
+        1001: 'Cloudy',
+        2000: 'Fog',
+        2100: 'Light Fog',
+        4000: 'Drizzle',
+        4001: 'Rain',
+        4200: 'Light Rain',
+        4201: 'Heavy Rain',
+        5000: 'Snow',
+        5001: 'Flurries',
+        5100: 'Light Snow',
+        5101: 'Heavy Snow',
+        6000: 'Freezing Drizzle',
+        6001: 'Freezing Rain',
+        6200: 'Light Freezing Rain',
+        6201: 'Heavy Freezing Rain',
+        7000: 'Ice Pellets',
+        7101: 'Heavy Ice Pellets',
+        7102: 'Light Ice Pellets',
+        8000: 'Thunderstorm',
+    }
+    return {
+        'temperature': f'{values['temperatureApparent']:0.0f}°C',
+        'description': code_lookup.get(values['weatherCode'], 'Unknown'),
+    }
+
+
+async def main():
+    async with AsyncClient() as client:
+        logfire.instrument_httpx()
+        # create a free API key at https://www.tomorrow.io/weather-api/
+        weather_api_key = os.getenv('WEATHER_API_KEY')
+        # create a free API key at https://geocode.maps.co/
+        geo_api_key = os.getenv('GEO_API_KEY')
+        deps = Deps(client=client, weather_api_key=weather_api_key, geo_api_key=geo_api_key)
+        result = await weather_agent.run('What is the weather like in London and in Wiltshire?', deps=deps)
+        debug(result)
+        print('Response:', result.response)
 
 
 if __name__ == '__main__':
-    result = weather_agent.run_sync('What is the weather like in West London and in Wiltshire?')
-    debug(result)
+    asyncio.run(main())

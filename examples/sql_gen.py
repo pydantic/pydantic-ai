@@ -1,7 +1,22 @@
+"""Example demonstrating how to use Pydantic AI to generate SQL queries based on user input.
+
+Run with:
+
+    uv run -m examples.sql_gen
+"""
+
+import os
 from dataclasses import dataclass
+from typing import cast
+
+# if you don't want to use logfire, just comment out these lines
+import logfire
+from devtools import debug
 
 from pydantic_ai import Agent
-from devtools import debug
+from pydantic_ai.agent import KnownModelName
+
+logfire.configure()
 
 system_prompt = """\
 Given the following PostgreSQL table of records, your job is to write a SQL query that suits the user's request.
@@ -54,7 +69,8 @@ class Response:
     sql_query: str
 
 
-agent = Agent('gemini-1.5-flash', result_type=Response, system_prompt=system_prompt, deps=None)
+model = cast(KnownModelName, os.getenv('PYDANTIC_AI_MODEL', 'gemini-1.5-flash'))
+agent = Agent(model, result_type=Response, system_prompt=system_prompt, deps=None, retries=2)
 
 
 if __name__ == '__main__':

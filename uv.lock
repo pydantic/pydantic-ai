@@ -532,6 +532,11 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/7d/7f/37d9c3cbed1ef23b467c0c0039f35524595f8fd79f3acb54e647a0ccd590/logfire-1.2.0-py3-none-any.whl", hash = "sha256:edb2b441e418cf31877bd97e24b3755f873bb423f834cca66f315b25bde61ebd", size = 164724 },
 ]
 
+[package.optional-dependencies]
+httpx = [
+    { name = "opentelemetry-instrumentation-httpx" },
+]
+
 [[package]]
 name = "logfire-api"
 version = "1.2.0"
@@ -691,6 +696,21 @@ wheels = [
 ]
 
 [[package]]
+name = "opentelemetry-instrumentation-httpx"
+version = "0.48b0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "opentelemetry-api" },
+    { name = "opentelemetry-instrumentation" },
+    { name = "opentelemetry-semantic-conventions" },
+    { name = "opentelemetry-util-http" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/d3/d9/c65d818607c16d1b7ea8d2de6111c6cecadf8d2fd38c1885a72733a7c6d3/opentelemetry_instrumentation_httpx-0.48b0.tar.gz", hash = "sha256:ee977479e10398931921fb995ac27ccdeea2e14e392cb27ef012fc549089b60a", size = 16931 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c2/fe/f2daa9d6d988c093b8c7b1d35df675761a8ece0b600b035dc04982746c9d/opentelemetry_instrumentation_httpx-0.48b0-py3-none-any.whl", hash = "sha256:d94f9d612c82d09fe22944d1904a30a464c19bea2ba76be656c99a28ad8be8e5", size = 13900 },
+]
+
+[[package]]
 name = "opentelemetry-proto"
 version = "1.27.0"
 source = { registry = "https://pypi.org/simple" }
@@ -727,6 +747,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/0a/89/1724ad69f7411772446067cdfa73b598694c8c91f7f8c922e344d96d81f9/opentelemetry_semantic_conventions-0.48b0.tar.gz", hash = "sha256:12d74983783b6878162208be57c9effcb89dc88691c64992d70bb89dc00daa1a", size = 89445 }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b7/7a/4f0063dbb0b6c971568291a8bc19a4ca70d3c185db2d956230dd67429dfc/opentelemetry_semantic_conventions-0.48b0-py3-none-any.whl", hash = "sha256:a0de9f45c413a8669788a38569c7e0a11ce6ce97861a628cca785deecdc32a1f", size = 149685 },
+]
+
+[[package]]
+name = "opentelemetry-util-http"
+version = "0.48b0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/d6/d7/185c494754340e0a3928fd39fde2616ee78f2c9d66253affaad62d5b7935/opentelemetry_util_http-0.48b0.tar.gz", hash = "sha256:60312015153580cc20f322e5cdc3d3ecad80a71743235bdb77716e742814623c", size = 7863 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ad/2e/36097c0a4d0115b8c7e377c90bab7783ac183bc5cb4071308f8959454311/opentelemetry_util_http-0.48b0-py3-none-any.whl", hash = "sha256:76f598af93aab50328d2a69c786beaedc8b6a7770f7a818cc307eb353debfffb", size = 6946 },
 ]
 
 [[package]]
@@ -820,6 +849,7 @@ dev = [
     { name = "devtools" },
     { name = "dirty-equals" },
     { name = "inline-snapshot" },
+    { name = "logfire", extra = ["httpx"] },
     { name = "mypy" },
     { name = "pyright" },
     { name = "pytest" },
@@ -845,6 +875,7 @@ dev = [
     { name = "devtools", specifier = ">=0.12.2" },
     { name = "dirty-equals", specifier = ">=0.8.0" },
     { name = "inline-snapshot", specifier = ">=0.13.3" },
+    { name = "logfire", extras = ["httpx"], specifier = ">=1.2.0" },
     { name = "mypy", specifier = ">=1.11.2" },
     { name = "pyright", specifier = ">=1.1.384" },
     { name = "pytest", specifier = ">=8.3.3" },

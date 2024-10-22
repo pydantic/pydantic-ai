@@ -59,6 +59,7 @@ dev-dependencies = [
     "coverage[toml]>=7.6.2",
     "devtools>=0.12.2",
     "anyio>=4.5.0",
+    "logfire[httpx]>=1.2.0",
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -106,6 +107,7 @@ quote-style = "single"
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**.py" = ["D"]
+"examples/**.py" = ["D"]
 
 [tool.pyright]
 typeCheckingMode = "strict"
@@ -148,3 +150,6 @@ exclude_lines = [
     '$\s*assert_never\(',
     'if __name__ == .__main__.:',
 ]
+
+[tool.logfire]
+ignore_no_config = true
