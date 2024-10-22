@@ -6,7 +6,7 @@ the `get_weather` tool to get the weather.
 
 Run with:
 
-    uv run -m examples.weather
+    uv run --extra examples -m examples.weather
 """
 
 import asyncio
@@ -14,16 +14,15 @@ import os
 from dataclasses import dataclass
 from typing import Any, cast
 
+import logfire
 from devtools import debug
 from httpx import AsyncClient
 
 from pydantic_ai import Agent, CallContext, ModelRetry
 from pydantic_ai.agent import KnownModelName
 
-# if you don't want to use logfire, just comment out these lines
-import logfire
-
-logfire.configure()
+# 'if-token-present' means nothing will be sent (and the example wil work) if you don't have logfire set up
+logfire.configure(send_to_logfire='if-token-present')
 
 
 @dataclass
@@ -53,12 +52,16 @@ async def get_lat_lng(ctx: CallContext[Deps], location_description: str) -> dict
         'q': location_description,
         'api_key': ctx.deps.geo_api_key,
     }
-    r = await ctx.deps.client.get('https://geocode.maps.co/search', params=params)
-    r.raise_for_status()
-    data = r.json()
-    if not data:
+    with logfire.span('calling geocode API', params=params) as span:
+        r = await ctx.deps.client.get('https://geocode.maps.co/search', params=params)
+        r.raise_for_status()
+        data = r.json()
+        span.set_attribute('response', data)
+
+    if data:
+        return {'lat': data[0]['lat'], 'lng': data[0]['lon']}
+    else:
         raise ModelRetry('Could not find the location')
-    return {'lat': data[0]['lat'], 'lng': data[0]['lon']}
 
 
 @weather_agent.retriever_context
@@ -79,9 +82,12 @@ async def get_weather(ctx: CallContext[Deps], lat: float, lng: float) -> dict[st
         'location': f'{lat},{lng}',
         'units': 'metric',
     }
-    r = await ctx.deps.client.get('https://api.tomorrow.io/v4/weather/realtime', params=params)
-    r.raise_for_status()
-    data = r.json()
+    with logfire.span('calling weather API', params=params) as span:
+        r = await ctx.deps.client.get('https://api.tomorrow.io/v4/weather/realtime', params=params)
+        r.raise_for_status()
+        data = r.json()
+        span.set_attribute('response', data)
+
     values = data['data']['values']
     # https://docs.tomorrow.io/reference/data-layers-weather-codes
     code_lookup = {

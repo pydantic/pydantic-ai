@@ -253,11 +253,18 @@ class Agent(Generic[AgentDeps, ResultData]):
         if model_response.role == 'llm-response':
             # plain string response
             if self._allow_text_result:
-                return _utils.Either(left=cast(ResultData, model_response.content))
+                result_data_input = cast(ResultData, model_response.content)
+                try:
+                    result_data = await self._validate_result(result_data_input, deps, None)
+                except _result.ToolRetryError as e:
+                    self._incr_result_retry()
+                    return _utils.Either(right=[e.tool_retry])
+                else:
+                    return _utils.Either(left=result_data)
             else:
                 self._incr_result_retry()
                 assert self._result_schema is not None
-                response = _messages.UserPrompt(
+                response = _messages.RetryPrompt(
                     content='Plain text responses are not permitted, please call one of the functions instead.',
                 )
                 return _utils.Either(right=[response])
@@ -290,7 +297,7 @@ class Agent(Generic[AgentDeps, ResultData]):
             assert_never(model_response)
 
     async def _validate_result(
-        self, result_data: ResultData, deps: AgentDeps, tool_call: _messages.ToolCall
+        self, result_data: ResultData, deps: AgentDeps, tool_call: _messages.ToolCall | None
     ) -> ResultData:
         for validator in self._result_validators:
             result_data = await validator.validate(result_data, deps, self._current_result_retry, tool_call)

@@ -18,9 +18,9 @@ from pydantic_ai.messages import (
     ArgsJson,
     LLMResponse,
     LLMToolCalls,
+    RetryPrompt,
     SystemPrompt,
     ToolCall,
-    ToolRetry,
     ToolReturn,
     UserPrompt,
 )
@@ -199,7 +199,7 @@ async def test_request_tool_call():
                 ],
                 timestamp=datetime.datetime(2024, 1, 1, 0, 0),
             ),
-            ToolRetry(
+            RetryPrompt(
                 tool_name='get_location', content='Wrong location, please try again', tool_id='1', timestamp=IsNow()
             ),
             LLMToolCalls(

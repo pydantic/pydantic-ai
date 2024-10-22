@@ -33,7 +33,7 @@ class ResultValidator(Generic[AgentDeps, ResultData]):
         self._is_async = inspect.iscoroutinefunction(self.function)
 
     async def validate(
-        self, result: ResultData, deps: AgentDeps, retry: int, tool_call: messages.ToolCall
+        self, result: ResultData, deps: AgentDeps, retry: int, tool_call: messages.ToolCall | None
     ) -> ResultData:
         """Validate a result but calling the function.
 
@@ -41,7 +41,7 @@ class ResultValidator(Generic[AgentDeps, ResultData]):
             result: The result data after Pydantic validation the message content.
             deps: The agent dependencies.
             retry: The current retry number.
-            tool_call: The original tool call message.
+            tool_call: The original tool call message, `None` if there was no tool call.
 
         Returns:
             Result of either the validated result data (ok) or a retry message (Err).
@@ -59,11 +59,10 @@ class ResultValidator(Generic[AgentDeps, ResultData]):
                 function = cast(Callable[[Any], ResultData], self.function)
                 result_data = await _utils.run_in_executor(function, *args)
         except ModelRetry as r:
-            m = messages.ToolRetry(
-                tool_name=tool_call.tool_name,
-                content=r.message,
-                tool_id=tool_call.tool_id,
-            )
+            m = messages.RetryPrompt(content=r.message)
+            if tool_call is not None:
+                m.tool_name = tool_call.tool_name
+                m.tool_id = tool_call.tool_id
             raise ToolRetryError(m) from r
         else:
             return result_data
@@ -72,7 +71,7 @@ class ResultValidator(Generic[AgentDeps, ResultData]):
 class ToolRetryError(Exception):
     """Internal exception used to indicate a signal a `ToolRetry` message should be returned to the LLM."""
 
-    def __init__(self, tool_retry: messages.ToolRetry):
+    def __init__(self, tool_retry: messages.RetryPrompt):
         self.tool_retry = tool_retry
         super().__init__()
 
@@ -127,7 +126,7 @@ class ResultSchema(Generic[ResultData]):
             else:
                 result = self.type_adapter.validate_python(tool_call.args.args_object)
         except ValidationError as e:
-            m = messages.ToolRetry(
+            m = messages.RetryPrompt(
                 tool_name=tool_call.tool_name,
                 content=e.errors(include_url=False),
                 tool_id=tool_call.tool_id,

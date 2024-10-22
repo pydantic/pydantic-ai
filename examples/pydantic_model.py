@@ -2,21 +2,20 @@
 
 Run with:
 
-    uv run -m examples.pydantic_model
+    uv run --extra examples -m examples.pydantic_model
 """
 
 import os
 from typing import cast
 
+import logfire
 from pydantic import BaseModel
 
 from pydantic_ai import Agent
 from pydantic_ai.agent import KnownModelName
 
-# if you don't want to use logfire, just comment out these lines
-import logfire
-
-logfire.configure()
+# 'if-token-present' means nothing will be sent (and the example wil work) if you don't have logfire set up
+logfire.configure(send_to_logfire='if-token-present')
 
 
 class MyModel(BaseModel):

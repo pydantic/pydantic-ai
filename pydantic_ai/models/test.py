@@ -15,7 +15,7 @@ from typing import Any, Literal
 import pydantic_core
 
 from .. import _utils, shared
-from ..messages import LLMMessage, LLMResponse, LLMToolCalls, Message, ToolCall, ToolRetry, ToolReturn
+from ..messages import LLMMessage, LLMResponse, LLMToolCalls, Message, RetryPrompt, ToolCall, ToolReturn
 from . import AbstractToolDefinition, AgentModel, Model
 
 
@@ -91,7 +91,7 @@ class TestAgentModel(AgentModel):
 
         new_messages = messages[self.last_message_count :]
         self.last_message_count = len(messages)
-        new_retry_names = {m.tool_name for m in new_messages if isinstance(m, ToolRetry)}
+        new_retry_names = {m.tool_name for m in new_messages if isinstance(m, RetryPrompt)}
         if new_retry_names:
             calls = [
                 ToolCall.from_object(name, self.gen_retriever_args(args))

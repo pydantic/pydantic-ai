@@ -8,8 +8,8 @@ from pydantic_ai.messages import (
     LLMResponse,
     LLMToolCalls,
     Message,
+    RetryPrompt,
     ToolCall,
-    ToolRetry,
     UserPrompt,
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -67,7 +67,7 @@ def test_result_pydantic_model_retry():
                 calls=[ToolCall.from_json('final_result', '{"a": "wrong", "b": "foo"}')],
                 timestamp=IsNow(),
             ),
-            ToolRetry(
+            RetryPrompt(
                 tool_name='final_result',
                 content=[
                     {
@@ -112,7 +112,7 @@ def test_result_validator():
         [
             UserPrompt(content='Hello', timestamp=IsNow()),
             LLMToolCalls(calls=[ToolCall.from_json('final_result', '{"a": 41, "b": "foo"}')], timestamp=IsNow()),
-            ToolRetry(tool_name='final_result', content='"a" should be 42', timestamp=IsNow()),
+            RetryPrompt(tool_name='final_result', content='"a" should be 42', timestamp=IsNow()),
             LLMToolCalls(calls=[ToolCall.from_json('final_result', '{"a": 42, "b": "foo"}')], timestamp=IsNow()),
         ]
     )
@@ -141,7 +141,7 @@ def test_plain_response():
         [
             UserPrompt(content='Hello', timestamp=IsNow()),
             LLMResponse(content='hello', timestamp=IsNow()),
-            UserPrompt(
+            RetryPrompt(
                 content='Plain text responses are not permitted, please call one of the functions instead.',
                 timestamp=IsNow(),
             ),

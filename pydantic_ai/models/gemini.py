@@ -34,8 +34,8 @@ from ..messages import (
     LLMResponse,
     LLMToolCalls,
     Message,
+    RetryPrompt,
     ToolCall,
-    ToolRetry,
     ToolReturn,
 )
 from . import AbstractToolDefinition, AgentModel, Model, cached_async_http_client
@@ -169,8 +169,8 @@ class GeminiAgentModel(AgentModel):
         elif m.role == 'tool-return':
             # ToolReturn ->
             return _utils.Either(right=_GeminiContent.function_return(m))
-        elif m.role == 'tool-retry':
-            # ToolRetry ->
+        elif m.role == 'retry-prompt':
+            # RetryPrompt ->
             return _utils.Either(right=_GeminiContent.function_retry(m))
         elif m.role == 'llm-response':
             # LLMResponse ->
@@ -226,13 +226,16 @@ class _GeminiContent:
     @classmethod
     def function_return(cls, m: ToolReturn) -> _GeminiContent:
         f_response = _GeminiFunctionResponsePart.from_response(m.tool_name, m.model_response_object())
-        return _GeminiContent(role='user', parts=[f_response])
+        return cls(role='user', parts=[f_response])
 
     @classmethod
-    def function_retry(cls, m: ToolRetry) -> _GeminiContent:
-        response = {'call_error': m.model_response()}
-        f_response = _GeminiFunctionResponsePart.from_response(m.tool_name, response)
-        return _GeminiContent(role='user', parts=[f_response])
+    def function_retry(cls, m: RetryPrompt) -> _GeminiContent:
+        if m.tool_name is None:
+            part = _GeminiTextPart(text=m.model_response())
+        else:
+            response = {'call_error': m.model_response()}
+            part = _GeminiFunctionResponsePart.from_response(m.tool_name, response)
+        return cls(role='user', parts=[part])
 
 
 @dataclass

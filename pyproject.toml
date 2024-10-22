@@ -46,6 +46,10 @@ dependencies = [
 logfire = [
     "logfire>=1.2.0",
 ]
+examples = [
+    "asyncpg>=0.30.0",
+    "logfire>=1.2.0",
+]
 
 [tool.uv]
 dev-dependencies = [
@@ -59,7 +63,6 @@ dev-dependencies = [
     "coverage[toml]>=7.6.2",
     "devtools>=0.12.2",
     "anyio>=4.5.0",
-    "logfire[httpx]>=1.2.0",
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -107,8 +110,7 @@ quote-style = "single"
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**.py" = ["D"]
-# see https://github.com/astral-sh/ruff/issues/13871
-"examples/**.py" = ["D103", "I001"]
+"examples/**.py" = ["D103"]
 
 [tool.pyright]
 typeCheckingMode = "strict"

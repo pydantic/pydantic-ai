@@ -104,13 +104,13 @@ class Retriever(Generic[AgentDeps, P]):
 
     def _on_error(
         self, content: list[pydantic_core.ErrorDetails] | str, call_message: messages.ToolCall
-    ) -> messages.ToolRetry:
+    ) -> messages.RetryPrompt:
         self._current_retry += 1
         if self._current_retry > self.max_retries:
             # TODO custom error with details of the retriever
             raise
         else:
-            return messages.ToolRetry(
+            return messages.RetryPrompt(
                 tool_name=call_message.tool_name,
                 content=content,
                 tool_id=call_message.tool_id,

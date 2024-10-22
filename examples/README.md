@@ -14,32 +14,44 @@ uv run -m examples.<example_module_name>
 
 ### `pydantic_model.py`
 
+(Demonstrates: custom `result_type`)
+
 Simple example of using Pydantic AI to construct a Pydantic model from a text input.
 
 ```bash
-uv run -m examples.pydantic_model
+uv run --extra examples -m examples.pydantic_model
 ```
 
 This examples uses `openai:gpt-4o` by default but it works well with other modesl, e.g. you can run it
 with Gemini using:
 
 ```bash
-PYDANTIC_AI_MODEL=gemini-1.5-pro uv run -m examples.pydantic_model
+PYDANTIC_AI_MODEL=gemini-1.5-pro uv run --extra examples -m examples.pydantic_model
 ```
 
 (or `PYDANTIC_AI_MODEL=gemini-1.5-flash...`)
 
 ### `sql_gen.py`
 
+(Demonstrates: custom `result_type`, dynamic system prompt, result validation, agent deps)
+
 Example demonstrating how to use Pydantic AI to generate SQL queries based on user input.
 
 ```bash
-uv run -m examples.sql_gen
+uv run --extra examples -m examples.sql_gen
+```
+
+or to use a custom prompt:
+
+```bash
+uv run --extra examples -m examples.sql_gen "find me whatever"
 ```
 
 This model uses `gemini-1.5-flash` by default since Gemini is good at single shot queries.
 
 ### `weather.py`
+
+(Demonstrates: retrievers, multiple retrievers, agent deps)
 
 Example of Pydantic AI with multiple tools which the LLM needs to call in turn to answer a question.
 
@@ -54,7 +66,7 @@ To run this example properly, you'll need two extra API keys:
 **(Note if either key is missing, the code will fall back to dummy data.)**
 
 ```bash
-uv run -m examples.weather
+uv run --extra examples -m examples.weather
 ```
 
 This example uses `openai:gpt-4o` by default. Gemini seems to be unable to handle the multiple tool

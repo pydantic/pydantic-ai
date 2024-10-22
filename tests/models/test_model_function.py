@@ -4,8 +4,9 @@ from dataclasses import asdict
 import pydantic_core
 import pytest
 from inline_snapshot import snapshot
+from pydantic import BaseModel
 
-from pydantic_ai import Agent, CallContext
+from pydantic_ai import Agent, CallContext, ModelRetry
 from pydantic_ai.messages import (
     LLMMessage,
     LLMResponse,
@@ -335,3 +336,50 @@ def test_call_all():
             LLMResponse(content='{"foo":"1","bar":"2","baz":"3","qux":"4","quz":"a"}', timestamp=IsNow()),
         ]
     )
+
+
+def test_retry_str():
+    call_count = 0
+
+    def try_again(messages: list[Message], _: AgentInfo) -> LLMMessage:
+        nonlocal call_count
+        call_count += 1
+
+        return LLMResponse(str(call_count))
+
+    agent = Agent(FunctionModel(try_again), deps=None)
+
+    @agent.result_validator
+    async def validate_result(r: str) -> str:
+        if r == '1':
+            raise ModelRetry('Try again')
+        else:
+            return r
+
+    result = agent.run_sync('')
+    assert result.response == snapshot('2')
+
+
+def test_retry_result_type():
+    call_count = 0
+
+    def try_again(messages: list[Message], _: AgentInfo) -> LLMMessage:
+        nonlocal call_count
+        call_count += 1
+
+        return LLMToolCalls(calls=[ToolCall.from_object('final_result', {'x': call_count})])
+
+    class Foo(BaseModel):
+        x: int
+
+    agent = Agent(FunctionModel(try_again), result_type=Foo, deps=None)
+
+    @agent.result_validator
+    async def validate_result(r: Foo) -> Foo:
+        if r.x == 1:
+            raise ModelRetry('Try again')
+        else:
+            return r
+
+    result = agent.run_sync('')
+    assert result.response == snapshot(Foo(x=2))
