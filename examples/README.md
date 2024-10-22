@@ -7,12 +7,12 @@ Examples of how to use Pydantic AI and what it can do.
 To run the examples, run:
 
 ```bash
-uv run -m examples.<example_name>
+uv run -m examples.<example_module_name>
 ```
 
 ## Examples
 
-### `pydantic_model`
+### `pydantic_model.py`
 
 Simple example of using Pydantic AI to construct a Pydantic model from a text input.
 
@@ -27,15 +27,9 @@ with Gemini using:
 PYDANTIC_AI_MODEL=gemini-1.5-pro uv run -m examples.pydantic_model
 ```
 
-or
+(or `PYDANTIC_AI_MODEL=gemini-1.5-flash...`)
 
-```bash
-PYDANTIC_AI_MODEL=gemini-1.5-flash uv run -m examples.pydantic_model
-```
-
-```bash
-
-### `sql_gen`
+### `sql_gen.py`
 
 Example demonstrating how to use Pydantic AI to generate SQL queries based on user input.
 
@@ -45,7 +39,7 @@ uv run -m examples.sql_gen
 
 This model uses `gemini-1.5-flash` by default since Gemini is good at single shot queries.
 
-### `weather`
+### `weather.py`
 
 Example of Pydantic AI with multiple tools which the LLM needs to call in turn to answer a question.
 
