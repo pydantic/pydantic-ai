@@ -22,7 +22,7 @@ Simple example of using Pydantic AI to construct a Pydantic model from a text in
 uv run --extra examples -m examples.pydantic_model
 ```
 
-This examples uses `openai:gpt-4o` by default but it works well with other modesl, e.g. you can run it
+This examples uses `openai:gpt-4o` by default but it works well with other models, e.g. you can run it
 with Gemini using:
 
 ```bash
