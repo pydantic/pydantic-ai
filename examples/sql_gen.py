@@ -1,45 +1,80 @@
-from dataclasses import dataclass
+"""Example demonstrating how to use Pydantic AI to generate SQL queries based on user input.
 
-from pydantic_ai import Agent
+Run with:
+
+    uv run --extra examples -m examples.sql_gen
+"""
+
+import asyncio
+import os
+import sys
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
+from dataclasses import dataclass
+from datetime import date
+from typing import Annotated, Any, cast
+
+import asyncpg
+import logfire
+from annotated_types import MinLen
 from devtools import debug
 
-system_prompt = """\
-Given the following PostgreSQL table of records, your job is to write a SQL query that suits the user's request.
+from pydantic_ai import Agent, CallContext, ModelRetry
+from pydantic_ai.agent import KnownModelName
 
-CREATE TABLE records AS (
-    start_timestamp timestamp with time zone,
-    created_at timestamp with time zone,
+# 'if-token-present' means nothing will be sent (and the example wil work) if you don't have logfire set up
+logfire.configure()
+
+DB_SCHEMA = """
+CREATE TABLE IF NOT EXISTS records (
+    created_at timestamptz,
+    start_timestamp timestamptz,
+    end_timestamp timestamptz,
     trace_id text,
     span_id text,
     parent_span_id text,
-    kind span_kind,
-    end_timestamp timestamp with time zone,
-    level smallint,
+    level log_level,
     span_name text,
     message text,
     attributes_json_schema text,
     attributes jsonb,
     tags text[],
-    otel_links jsonb,
-    otel_events jsonb,
     is_exception boolean,
-    otel_status_code status_code,
     otel_status_message text,
-    otel_scope_name text,
-    otel_scope_version text,
-    otel_scope_attributes jsonb,
-    service_namespace text,
-    service_name text,
-    service_version text,
-    service_instance_id text,
-    process_pid integer
+    service_name text
 );
+"""
 
-today's date = 2024-10-09
+
+@dataclass
+class Response:
+    sql_query: Annotated[str, MinLen(1)]
+
+
+@dataclass
+class Deps:
+    conn: asyncpg.Connection
+
+
+model = cast(KnownModelName, os.getenv('PYDANTIC_AI_MODEL', 'gemini-1.5-flash'))
+agent: Agent[Deps, Response] = Agent(model, result_type=Response)
+
+
+@agent.system_prompt
+async def system_prompt() -> str:
+    return f"""\
+Given the following PostgreSQL table of records, your job is to write a SQL query that suits the user's request.
+
+{DB_SCHEMA}
+
+today's date = {date.today()}
 
 Example
     request: show me records where foobar is false
-    response: SELECT * FROM records WHERE attributes->>'foobar' = false'
+    response: SELECT * FROM records WHERE attributes->>'foobar' = false
+Example
+    request: show me records where attributes include the key "foobar"
+    response: SELECT * FROM records WHERE attributes ? 'foobar'
 Example
     request: show me records from yesterday
     response: SELECT * FROM records WHERE start_timestamp::date > CURRENT_TIMESTAMP - INTERVAL '1 day'
@@ -49,15 +84,59 @@ Example
 """
 
 
-@dataclass
-class Response:
-    sql_query: str
+@agent.result_validator
+async def validate_result(ctx: CallContext[Deps], result: Response) -> Response:
+    result.sql_query = result.sql_query.replace('\\', '')
+    lower_query = result.sql_query.lower()
+    if not lower_query.startswith('select'):
+        raise ModelRetry('Please a SELECT query')
+
+    try:
+        await ctx.deps.conn.execute(f'EXPLAIN {result.sql_query}')
+    except asyncpg.exceptions.PostgresError as e:
+        raise ModelRetry(f'Invalid query: {e}') from e
+    else:
+        return result
 
 
-agent = Agent('gemini-1.5-flash', result_type=Response, system_prompt=system_prompt, deps=None)
+async def main():
+    if len(sys.argv) == 1:
+        prompt = 'show me logs from yesterday, with level "error"'
+    else:
+        prompt = sys.argv[1]
+
+    async with database_connect('postgresql://postgres@localhost', 'pydantic_ai_sql_gen') as conn:
+        deps = Deps(conn)
+        result = await agent.run(prompt, deps=deps)
+    debug(result.response.sql_query)
+
+
+# pyright: reportUnknownMemberType=false
+# pyright: reportUnknownVariableType=false
+@asynccontextmanager
+async def database_connect(server_dsn: str, database: str) -> AsyncGenerator[Any, None]:
+    with logfire.span('check and create DB'):
+        conn = await asyncpg.connect(server_dsn)
+        try:
+            db_exists = await conn.fetchval('SELECT 1 FROM pg_database WHERE datname = $1', database)
+            if not db_exists:
+                await conn.execute(f'CREATE DATABASE {database}')
+        finally:
+            await conn.close()
+
+    conn = await asyncpg.connect(f'{server_dsn}/{database}')
+    try:
+        with logfire.span('create schema'):
+            async with conn.transaction():
+                if not db_exists:
+                    await conn.execute(
+                        "CREATE TYPE log_level AS ENUM ('debug', 'info', 'warning', 'error', 'critical')"
+                    )
+                await conn.execute(DB_SCHEMA)
+        yield conn
+    finally:
+        await conn.close()
 
 
 if __name__ == '__main__':
-    with debug.timer('SQL Generation'):
-        result = agent.run_sync('show me logs from yesterday, with level "error"')
-    debug(result.response.sql_query)
+    asyncio.run(main())

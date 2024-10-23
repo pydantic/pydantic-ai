@@ -50,12 +50,12 @@ class ToolReturn:
 
 
 @dataclass
-class ToolRetry:
-    tool_name: str
+class RetryPrompt:
     content: list[pydantic_core.ErrorDetails] | str
+    tool_name: str | None = None
     tool_id: str | None = None
     timestamp: datetime = field(default_factory=datetime.now)
-    role: Literal['tool-retry'] = 'tool-retry'
+    role: Literal['retry-prompt'] = 'retry-prompt'
 
     def model_response(self) -> str:
         if isinstance(self.content, str):
@@ -107,6 +107,6 @@ class LLMToolCalls:
 
 
 LLMMessage = Union[LLMResponse, LLMToolCalls]
-Message = Union[SystemPrompt, UserPrompt, ToolReturn, ToolRetry, LLMMessage]
+Message = Union[SystemPrompt, UserPrompt, ToolReturn, RetryPrompt, LLMMessage]
 
 MessagesTypeAdapter = pydantic.TypeAdapter(list[Annotated[Message, pydantic.Field(discriminator='role')]])

@@ -4,8 +4,9 @@ from dataclasses import asdict
 import pydantic_core
 import pytest
 from inline_snapshot import snapshot
+from pydantic import BaseModel
 
-from pydantic_ai import Agent, CallContext
+from pydantic_ai import Agent, CallContext, ModelRetry
 from pydantic_ai.messages import (
     LLMMessage,
     LLMResponse,
@@ -76,9 +77,9 @@ def test_simple():
     )
 
 
-def whether_model(messages: list[Message], info: AgentInfo) -> LLMMessage:  # pragma: no cover
+def weather_model(messages: list[Message], info: AgentInfo) -> LLMMessage:  # pragma: no cover
     assert info.allow_text_result
-    assert info.retrievers.keys() == {'get_location', 'get_whether'}
+    assert info.retrievers.keys() == {'get_location', 'get_weather'}
     last = messages[-1]
     if last.role == 'user':
         return LLMToolCalls(
@@ -91,15 +92,15 @@ def whether_model(messages: list[Message], info: AgentInfo) -> LLMMessage:  # pr
         )
     elif last.role == 'tool-return':
         if last.tool_name == 'get_location':
-            return LLMToolCalls(calls=[ToolCall.from_json('get_whether', last.model_response_str())])
-        elif last.tool_name == 'get_whether':
+            return LLMToolCalls(calls=[ToolCall.from_json('get_weather', last.model_response_str())])
+        elif last.tool_name == 'get_weather':
             location_name = next(m.content for m in messages if m.role == 'user')
             return LLMResponse(f'{last.content} in {location_name}')
 
     raise ValueError(f'Unexpected message: {last}')
 
 
-weather_agent: Agent[None, str] = Agent(FunctionModel(whether_model))
+weather_agent: Agent[None, str] = Agent(FunctionModel(weather_model))
 
 
 @weather_agent.retriever_plain
@@ -112,7 +113,7 @@ async def get_location(location_description: str) -> str:
 
 
 @weather_agent.retriever_context
-async def get_whether(_: CallContext[None], lat: int, lng: int):
+async def get_weather(_: CallContext[None], lat: int, lng: int):
     if (lat, lng) == (51, 0):
         # it always rains in London
         return 'Raining'
@@ -120,7 +121,7 @@ async def get_whether(_: CallContext[None], lat: int, lng: int):
         return 'Sunny'
 
 
-def test_whether():
+def test_weather():
     result = weather_agent.run_sync('London')
     assert result.response == 'Raining in London'
     assert result.message_history == snapshot(
@@ -141,7 +142,7 @@ def test_whether():
             LLMToolCalls(
                 calls=[
                     ToolCall.from_json(
-                        'get_whether',
+                        'get_weather',
                         '{"lat": 51, "lng": 0}',
                     )
                 ],
@@ -149,7 +150,7 @@ def test_whether():
                 role='llm-tool-calls',
             ),
             ToolReturn(
-                tool_name='get_whether',
+                tool_name='get_weather',
                 content='Raining',
                 timestamp=IsNow(),
                 role='tool-return',
@@ -335,3 +336,50 @@ def test_call_all():
             LLMResponse(content='{"foo":"1","bar":"2","baz":"3","qux":"4","quz":"a"}', timestamp=IsNow()),
         ]
     )
+
+
+def test_retry_str():
+    call_count = 0
+
+    def try_again(messages: list[Message], _: AgentInfo) -> LLMMessage:
+        nonlocal call_count
+        call_count += 1
+
+        return LLMResponse(str(call_count))
+
+    agent = Agent(FunctionModel(try_again), deps=None)
+
+    @agent.result_validator
+    async def validate_result(r: str) -> str:
+        if r == '1':
+            raise ModelRetry('Try again')
+        else:
+            return r
+
+    result = agent.run_sync('')
+    assert result.response == snapshot('2')
+
+
+def test_retry_result_type():
+    call_count = 0
+
+    def try_again(messages: list[Message], _: AgentInfo) -> LLMMessage:
+        nonlocal call_count
+        call_count += 1
+
+        return LLMToolCalls(calls=[ToolCall.from_object('final_result', {'x': call_count})])
+
+    class Foo(BaseModel):
+        x: int
+
+    agent = Agent(FunctionModel(try_again), result_type=Foo, deps=None)
+
+    @agent.result_validator
+    async def validate_result(r: Foo) -> Foo:
+        if r.x == 1:
+            raise ModelRetry('Try again')
+        else:
+            return r
+
+    result = agent.run_sync('')
+    assert result.response == snapshot(Foo(x=2))

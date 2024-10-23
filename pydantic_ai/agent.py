@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 import asyncio
 from collections.abc import Awaitable, Sequence
 from dataclasses import dataclass
-from typing import Any, Callable, Generic, Literal, cast, overload
+from typing import Any, Callable, Generic, Literal, cast, final, overload
 
 import logfire_api
 from pydantic import ValidationError
@@ -12,18 +12,19 @@ from typing_extensions import assert_never
 from . import _result, _retriever as _r, _system_prompt, _utils, messages as _messages, models, shared
 from .shared import AgentDeps, ResultData
 
-__all__ = ('Agent',)
+__all__ = 'Agent', 'KnownModelName'
 KnownModelName = Literal[
     'openai:gpt-4o', 'openai:gpt-4-turbo', 'openai:gpt-4', 'openai:gpt-3.5-turbo', 'gemini-1.5-flash', 'gemini-1.5-pro'
 ]
 _logfire = logfire_api.Logfire(otel_scope='pydantic-ai')
 
 
+@final
 @dataclass(init=False)
 class Agent(Generic[AgentDeps, ResultData]):
     """Main class for creating "agents" - a way to have a specific type of "conversation" with an LLM."""
 
-    # slots mostly for my sanity — knowing what attributes are available
+    # dataclass fields mostly for my sanity — knowing what attributes are available
     model: models.Model | None
     _result_schema: _result.ResultSchema[ResultData] | None
     _result_validators: list[_result.ResultValidator[AgentDeps, ResultData]]
@@ -86,9 +87,10 @@ class Agent(Generic[AgentDeps, ResultData]):
             The result of the run.
         """
         if model is not None:
-            model_ = models.infer_model(model)
+            custom_model = model_ = models.infer_model(model)
         elif self.model is not None:
             model_ = self.model
+            custom_model = None
         else:
             raise shared.UserError('`model` must be set either when creating the agent or when calling it.')
 
@@ -111,7 +113,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         cost = shared.Cost()
 
         with _logfire.span(
-            'agent run {prompt=}', prompt=user_prompt, agent=self, model=model_, model_name=model_.name()
+            'agent run {prompt=}', prompt=user_prompt, agent=self, custom_model=custom_model, model_name=model_.name()
         ) as run_span:
             try:
                 while True:
@@ -251,11 +253,18 @@ class Agent(Generic[AgentDeps, ResultData]):
         if model_response.role == 'llm-response':
             # plain string response
             if self._allow_text_result:
-                return _utils.Either(left=cast(ResultData, model_response.content))
+                result_data_input = cast(ResultData, model_response.content)
+                try:
+                    result_data = await self._validate_result(result_data_input, deps, None)
+                except _result.ToolRetryError as e:
+                    self._incr_result_retry()
+                    return _utils.Either(right=[e.tool_retry])
+                else:
+                    return _utils.Either(left=result_data)
             else:
                 self._incr_result_retry()
                 assert self._result_schema is not None
-                response = _messages.UserPrompt(
+                response = _messages.RetryPrompt(
                     content='Plain text responses are not permitted, please call one of the functions instead.',
                 )
                 return _utils.Either(right=[response])
@@ -279,6 +288,7 @@ class Agent(Generic[AgentDeps, ResultData]):
             for call in model_response.calls:
                 retriever = self._retrievers.get(call.tool_name)
                 if retriever is None:
+                    # should this be a retry error?
                     raise shared.UnexpectedModelBehaviour(f'Unknown function name: {call.tool_name!r}')
                 coros.append(retriever.run(deps, call))
             new_messages = await asyncio.gather(*coros)
@@ -287,7 +297,7 @@ class Agent(Generic[AgentDeps, ResultData]):
             assert_never(model_response)
 
     async def _validate_result(
-        self, result_data: ResultData, deps: AgentDeps, tool_call: _messages.ToolCall
+        self, result_data: ResultData, deps: AgentDeps, tool_call: _messages.ToolCall | None
     ) -> ResultData:
         for validator in self._result_validators:
             result_data = await validator.validate(result_data, deps, self._current_result_retry, tool_call)

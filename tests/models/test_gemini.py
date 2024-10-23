@@ -16,9 +16,9 @@ from pydantic_ai.messages import (
     ArgsObject,
     LLMResponse,
     LLMToolCalls,
+    RetryPrompt,
     SystemPrompt,
     ToolCall,
-    ToolRetry,
     ToolReturn,
     UserPrompt,
 )
@@ -437,7 +437,7 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
                 ],
                 timestamp=IsNow(),
             ),
-            ToolRetry(tool_name='get_location', content='Wrong location, please try again', timestamp=IsNow()),
+            RetryPrompt(tool_name='get_location', content='Wrong location, please try again', timestamp=IsNow()),
             LLMToolCalls(
                 calls=[
                     ToolCall(

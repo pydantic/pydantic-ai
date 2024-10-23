@@ -10,7 +10,7 @@ from inline_snapshot import snapshot
 from pydantic import BaseModel, Field
 
 from pydantic_ai import Agent, ModelRetry
-from pydantic_ai.messages import LLMResponse, LLMToolCalls, ToolCall, ToolRetry, ToolReturn, UserPrompt
+from pydantic_ai.messages import LLMResponse, LLMToolCalls, RetryPrompt, ToolCall, ToolReturn, UserPrompt
 from pydantic_ai.models.test import TestModel, _chars, _JsonSchemaTestData  # pyright: ignore[reportPrivateUsage]
 from tests.conftest import IsNow
 
@@ -88,7 +88,7 @@ def test_retriever_retry():
                 calls=[ToolCall.from_object('my_ret', {'x': 0})],
                 timestamp=IsNow(),
             ),
-            ToolRetry(tool_name='my_ret', content='First call failed', timestamp=IsNow()),
+            RetryPrompt(tool_name='my_ret', content='First call failed', timestamp=IsNow()),
             LLMToolCalls(calls=[ToolCall.from_object('my_ret', {'x': 1})], timestamp=IsNow()),
             ToolReturn(tool_name='my_ret', content='2', timestamp=IsNow()),
             LLMResponse(content='{"my_ret":"2"}', timestamp=IsNow()),

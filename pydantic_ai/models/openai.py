@@ -17,8 +17,8 @@ from ..messages import (
     LLMResponse,
     LLMToolCalls,
     Message,
+    RetryPrompt,
     ToolCall,
-    ToolRetry,
     ToolReturn,
 )
 from . import AbstractToolDefinition, AgentModel, Model, cached_async_http_client
@@ -136,13 +136,16 @@ class OpenAIAgentModel(AgentModel):
                 tool_call_id=_guard_tool_id(message),
                 content=message.model_response_str(),
             )
-        elif message.role == 'tool-retry':
-            # ToolRetry ->
-            return chat.ChatCompletionToolMessageParam(
-                role='tool',
-                tool_call_id=_guard_tool_id(message),
-                content=message.model_response(),
-            )
+        elif message.role == 'retry-prompt':
+            # RetryPrompt ->
+            if message.tool_name is None:
+                return chat.ChatCompletionUserMessageParam(role='user', content=message.model_response())
+            else:
+                return chat.ChatCompletionToolMessageParam(
+                    role='tool',
+                    tool_call_id=_guard_tool_id(message),
+                    content=message.model_response(),
+                )
         elif message.role == 'llm-response':
             # LLMResponse ->
             return chat.ChatCompletionAssistantMessageParam(role='assistant', content=message.content)
@@ -156,7 +159,7 @@ class OpenAIAgentModel(AgentModel):
             assert_never(message)
 
 
-def _guard_tool_id(t: ToolCall | ToolReturn | ToolRetry) -> str:
+def _guard_tool_id(t: ToolCall | ToolReturn | RetryPrompt) -> str:
     """Type guard that checks a `tool_id` is not None both for static typing and runtime."""
     assert t.tool_id is not None, f'OpenAI requires `tool_id` to be set: {t}'
     return t.tool_id

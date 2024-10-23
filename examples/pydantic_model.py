@@ -1,0 +1,31 @@
+"""Simple example of using Pydantic AI to construct a Pydantic model from a text input.
+
+Run with:
+
+    uv run --extra examples -m examples.pydantic_model
+"""
+
+import os
+from typing import cast
+
+import logfire
+from pydantic import BaseModel
+
+from pydantic_ai import Agent
+from pydantic_ai.agent import KnownModelName
+
+# 'if-token-present' means nothing will be sent (and the example wil work) if you don't have logfire set up
+logfire.configure(send_to_logfire='if-token-present')
+
+
+class MyModel(BaseModel):
+    city: str
+    country: str
+
+
+model = cast(KnownModelName, os.getenv('PYDANTIC_AI_MODEL', 'openai:gpt-4o'))
+agent = Agent(model, result_type=MyModel, deps=None)
+
+if __name__ == '__main__':
+    result = agent.run_sync('The windy city in the US of A.')
+    print(result.response)
