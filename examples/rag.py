@@ -88,9 +88,9 @@ async def run_agent(question: str):
     print(answer.response)
 
 
-########################################################################
-# The rest of this file is dedicated to preparing the search database. #
-########################################################################
+############################################################################################
+# The rest of this file is dedicated to preparing the search database, and some utilities. #
+############################################################################################
 
 # JSON document from https://gist.github.com/samuelcolvin/4b5bb9bb163b1122ff17e29e48c10992
 DOCS_JSON = 'https://gist.githubusercontent.com/samuelcolvin/4b5bb9bb163b1122ff17e29e48c10992/raw/80c5925c42f1442c24963aaf5eb1a324d47afe95/logfire_docs.json'

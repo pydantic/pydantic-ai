@@ -74,6 +74,8 @@ calls.
 
 ### `rag.py`
 
+(Demonstrates: retrievers, agent deps, RAG search)
+
 RAG search example. This demo allows you to ask question of the [logfire](https://pydantic.dev/logfire) documentation.
 
 This is done by creating a database containing each section of the markdown documentation, then registering
