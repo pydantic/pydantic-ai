@@ -48,7 +48,7 @@ logfire = [
 ]
 examples = [
     "asyncpg>=0.30.0",
-    "logfire>=1.2.0",
+    "logfire[asyncpg]>=1.2.0",
 ]
 
 [tool.uv]
