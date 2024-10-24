@@ -422,6 +422,7 @@ class _GeminiJsonSchema:
 
     def _simplify(self, schema: dict[str, Any], allow_ref: bool) -> None:
         schema.pop('title', None)
+        schema.pop('default', None)
         if ref := schema.pop('$ref', None):
             if not allow_ref:
                 raise shared.UserError('Recursive `$ref`s in JSON Schema are not supported by Gemini')

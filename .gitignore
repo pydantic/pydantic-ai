@@ -9,3 +9,4 @@ __pycache__
 env*/
 /TODO.md
 /postgres-data/
+.DS_Store

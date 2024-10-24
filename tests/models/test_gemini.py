@@ -172,7 +172,7 @@ def test_require_response_tool():
 def test_json_def_replaced():
     class Location(BaseModel):
         lat: float
-        lng: float
+        lng: float = 1.1
 
     class Locations(BaseModel):
         locations: list[Location]
@@ -184,9 +184,9 @@ def test_json_def_replaced():
                 'Location': {
                     'properties': {
                         'lat': {'title': 'Lat', 'type': 'number'},
-                        'lng': {'title': 'Lng', 'type': 'number'},
+                        'lng': {'default': 1.1, 'title': 'Lng', 'type': 'number'},
                     },
-                    'required': ['lat', 'lng'],
+                    'required': ['lat'],
                     'title': 'Location',
                     'type': 'object',
                 }
@@ -219,7 +219,7 @@ def test_json_def_replaced():
                                         'lat': {'type': 'number'},
                                         'lng': {'type': 'number'},
                                     },
-                                    'required': ['lat', 'lng'],
+                                    'required': ['lat'],
                                     'type': 'object',
                                 },
                                 'type': 'array',
@@ -267,8 +267,7 @@ def test_json_def_replaced_any_of():
                                         'type': 'object',
                                     },
                                     {'type': 'null'},
-                                ],
-                                'default': None,
+                                ]
                             }
                         },
                         'type': 'object',
