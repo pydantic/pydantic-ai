@@ -24,6 +24,7 @@ from pydantic_ai.agent import KnownModelName
 
 # 'if-token-present' means nothing will be sent (and the example wil work) if you don't have logfire set up
 logfire.configure()
+logfire.instrument_asyncpg()
 
 DB_SCHEMA = """
 CREATE TABLE IF NOT EXISTS records (
