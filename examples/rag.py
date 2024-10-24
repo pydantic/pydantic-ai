@@ -53,6 +53,12 @@ agent: Agent[Deps, str] = Agent(model)
 
 @agent.retriever_context
 async def retrieve(context: CallContext[Deps], search_query: str) -> str:
+    """Retrieve documentation sections based on a search query.
+
+    Args:
+        context: The call context.
+        search_query: The search query.
+    """
     with logfire.span('create embedding for {search_query=}', search_query=search_query):
         embedding = await context.deps.openai.embeddings.create(
             input=search_query,
@@ -70,6 +76,7 @@ async def retrieve(context: CallContext[Deps], search_query: str) -> str:
 
 
 async def run_agent(question: str):
+    """Entry point to run the agent and perform RAG based question answering."""
     openai = AsyncOpenAI()
     logfire.instrument_openai(openai)
 
@@ -81,32 +88,20 @@ async def run_agent(question: str):
     print(answer.response)
 
 
-async def search(openai: AsyncOpenAI, pool: asyncpg.Pool, query: str) -> list[str]:
-    with logfire.span('create embedding for {query=}', query=query):
-        embedding = await openai.embeddings.create(
-            input=query,
-            model='text-embedding-3-small',
-        )
-
-    assert len(embedding.data) == 1, f'Expected 1 embedding, got {len(embedding.data)}, doc query: {query!r}'
-    embedding = embedding.data[0].embedding
-    embedding_json = pydantic_core.to_json(embedding).decode()
-    matches = await pool.fetch(
-        'SELECT url FROM doc_sections ORDER BY embedding <-> $1 LIMIT 5',
-        embedding_json,
-    )
-    return [match[0] for match in matches]
-
-
 # JSON document from https://gist.github.com/samuelcolvin/4b5bb9bb163b1122ff17e29e48c10992
 DOCS_JSON = 'https://gist.githubusercontent.com/samuelcolvin/4b5bb9bb163b1122ff17e29e48c10992/raw/80c5925c42f1442c24963aaf5eb1a324d47afe95/logfire_docs.json'
 
 
 async def build_search_db():
+    """Build the search database.
+
+    The rest of the logic in this file is dedicated to preparing the search database.
+    """
     async with httpx.AsyncClient() as client:
         response = await client.get(DOCS_JSON)
         response.raise_for_status()
     sections = sessions_ta.validate_json(response.content)
+
     openai = AsyncOpenAI()
     logfire.instrument_openai(openai)
 
@@ -119,6 +114,10 @@ async def build_search_db():
 
 
 async def insert_doc_sections(openai: AsyncOpenAI, pool: asyncpg.Pool, sections: list[DocsSection]):
+    """Insert all docs sections into postgres, OpenAI is used to generate embeddings for each section.
+
+    `asyncio.Queue` is used to perform the embedding creating and insertion concurrently.
+    """
     queue = asyncio.Queue()
 
     for section in sections:
