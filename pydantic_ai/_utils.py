@@ -24,9 +24,21 @@ async def run_in_executor(func: Callable[_P, _R], *args: _P.args, **kwargs: _P.k
 _UnionType = type(Union[int, str])
 
 
-def allow_plain_str(response_type: Any) -> bool:
-    """Check if the response type allows plain strings."""
-    return isinstance(response_type, _UnionType) and any(t is str for t in get_args(response_type))
+def extract_str_from_union(response_type: Any) -> Option[Any]:
+    """Extract the string type from a Union, return the remaining union or remaining type."""
+    if isinstance(response_type, _UnionType) and any(t is str for t in get_args(response_type)):
+        remain_args: list[Any] = []
+        includes_str = False
+        for arg in get_args(response_type):
+            if arg is str:
+                includes_str = True
+            else:
+                remain_args.append(arg)
+        if includes_str:
+            if len(remain_args) == 1:
+                return Some(remain_args[0])
+            else:
+                return Some(Union[tuple(remain_args)])
 
 
 def is_model_like(type_: Any) -> bool:
@@ -61,18 +73,18 @@ def check_object_json_schema(schema: JsonSchemaValue) -> ObjectJsonSchema:
         raise ValueError('Schema must be an object')
 
 
-_T = TypeVar('_T')
+T = TypeVar('T')
 
 
 @dataclass
-class Some(Generic[_T]):
+class Some(Generic[T]):
     """Analogous to Rust's `Option::Some` type."""
 
-    value: _T
+    value: T
 
 
-# Analogous to Rust's `Option` type, usage: `Option[Thing]` is equivalent to `Some[Thing] | None`
-Option: TypeAlias = Union[Some[_T], None]
+Option: TypeAlias = Union[Some[T], None]
+"""Analogous to Rust's `Option` type, usage: `Option[Thing]` is equivalent to `Some[Thing] | None`."""
 
 
 Left = TypeVar('Left')

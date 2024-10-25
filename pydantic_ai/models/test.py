@@ -35,6 +35,10 @@ class TestModel(Model):
     call_retrievers: list[str] | Literal['all'] = 'all'
     custom_result_text: str | None = None
     custom_result_args: Any | None = None
+    # these three fields are all set by calling `agent_model`
+    agent_model_retrievers: Mapping[str, AbstractToolDefinition] | None = None
+    agent_model_allow_text_result: bool | None = None
+    agent_model_result_tool: AbstractToolDefinition | None = None
 
     def agent_model(
         self,
@@ -42,6 +46,10 @@ class TestModel(Model):
         allow_text_result: bool,
         result_tool: AbstractToolDefinition | None,
     ) -> AgentModel:
+        self.agent_model_retrievers = retrievers
+        self.agent_model_allow_text_result = allow_text_result
+        self.agent_model_result_tool = result_tool
+
         if self.call_retrievers == 'all':
             retriever_calls = [(r.name, r) for r in retrievers.values()]
         else:
@@ -59,6 +67,8 @@ class TestModel(Model):
                 result = _utils.Either(right={k: self.custom_result_args})
             else:
                 result = _utils.Either(right=self.custom_result_args)
+        elif allow_text_result:
+            result = _utils.Either(left=None)
         elif result_tool is not None:
             result = _utils.Either(right=None)
         else:
