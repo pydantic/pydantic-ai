@@ -6,7 +6,7 @@ The aim here is to make a common interface
 from __future__ import annotations as _annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from functools import cache
 from typing import TYPE_CHECKING, Protocol
 
@@ -28,14 +28,14 @@ class Model(ABC):
         self,
         retrievers: Mapping[str, AbstractToolDefinition],
         allow_text_result: bool,
-        result_tool: AbstractToolDefinition | None,
+        result_tools: Sequence[AbstractToolDefinition] | None,
     ) -> AgentModel:
         """Create an agent model.
 
         Args:
             retrievers: The retrievers available to the agent.
             allow_text_result: Whether a plain text final response/result is permitted.
-            result_tool: Tool definition for the final result tool, if any.
+            result_tools: Tool definitions for the final result tool(s), if any.
 
         Returns:
             An agent model.

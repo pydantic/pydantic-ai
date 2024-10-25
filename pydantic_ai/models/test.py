@@ -8,7 +8,7 @@ from __future__ import annotations as _annotations
 
 import re
 import string
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -17,6 +17,14 @@ import pydantic_core
 from .. import _utils, shared
 from ..messages import LLMMessage, LLMResponse, LLMToolCalls, Message, RetryPrompt, ToolCall, ToolReturn
 from . import AbstractToolDefinition, AgentModel, Model
+
+
+class UnSetType:
+    def __repr__(self):
+        return 'UnSet'
+
+
+UnSet = UnSetType()
 
 
 @dataclass
@@ -38,17 +46,17 @@ class TestModel(Model):
     # these three fields are all set by calling `agent_model`
     agent_model_retrievers: Mapping[str, AbstractToolDefinition] | None = None
     agent_model_allow_text_result: bool | None = None
-    agent_model_result_tool: AbstractToolDefinition | None = None
+    agent_model_result_tools: list[AbstractToolDefinition] | None = None
 
     def agent_model(
         self,
         retrievers: Mapping[str, AbstractToolDefinition],
         allow_text_result: bool,
-        result_tool: AbstractToolDefinition | None,
+        result_tools: Sequence[AbstractToolDefinition] | None,
     ) -> AgentModel:
         self.agent_model_retrievers = retrievers
         self.agent_model_allow_text_result = allow_text_result
-        self.agent_model_result_tool = result_tool
+        self.agent_model_result_tools = list(result_tools) if result_tools is not None else None
 
         if self.call_retrievers == 'all':
             retriever_calls = [(r.name, r) for r in retrievers.values()]
@@ -61,7 +69,8 @@ class TestModel(Model):
             assert self.custom_result_args is None, 'Cannot set both `custom_result_text` and `custom_result_args`.'
             result: _utils.Either[str | None, Any | None] = _utils.Either(left=self.custom_result_text)
         elif self.custom_result_args is not None:
-            assert result_tool is not None, 'No result tool name provided, but `custom_result_args` is set.'
+            assert result_tools is not None, 'No result tools provided, but `custom_result_args` is set.'
+            result_tool = result_tools[0]
 
             if k := result_tool.outer_typed_dict_key:
                 result = _utils.Either(right={k: self.custom_result_args})
@@ -69,11 +78,11 @@ class TestModel(Model):
                 result = _utils.Either(right=self.custom_result_args)
         elif allow_text_result:
             result = _utils.Either(left=None)
-        elif result_tool is not None:
+        elif result_tools is not None:
             result = _utils.Either(right=None)
         else:
             result = _utils.Either(left=None)
-        return TestAgentModel(retriever_calls, result, result_tool)
+        return TestAgentModel(retriever_calls, result, self.agent_model_result_tools)
 
     def name(self) -> str:
         return 'test-model'
@@ -87,7 +96,7 @@ class TestAgentModel(AgentModel):
     retriever_calls: list[tuple[str, AbstractToolDefinition]]
     # left means the text is plain text; right means it's a function call
     result: _utils.Either[str | None, Any | None]
-    result_tool: AbstractToolDefinition | None
+    result_tools: list[AbstractToolDefinition] | None
     step: int = 0
     last_message_count: int = 0
 
@@ -123,15 +132,16 @@ class TestAgentModel(AgentModel):
                 else:
                     return LLMResponse(content=response_text.value), cost
             else:
-                assert self.result_tool is not None, 'No result tool name provided'
+                assert self.result_tools is not None, 'No result tools provided'
                 custom_result_args = self.result.right
+                result_tool = self.result_tools[0]
                 if custom_result_args is not None:
                     self.step += 1
-                    return LLMToolCalls(calls=[ToolCall.from_object(self.result_tool.name, custom_result_args)]), cost
+                    return LLMToolCalls(calls=[ToolCall.from_object(result_tool.name, custom_result_args)]), cost
                 else:
-                    response_args = self.gen_retriever_args(self.result_tool)
+                    response_args = self.gen_retriever_args(result_tool)
                     self.step += 1
-                    return LLMToolCalls(calls=[ToolCall.from_object(self.result_tool.name, response_args)]), cost
+                    return LLMToolCalls(calls=[ToolCall.from_object(result_tool.name, response_args)]), cost
 
     def gen_retriever_args(self, tool_def: AbstractToolDefinition) -> Any:
         """Generate arguments for a retriever."""

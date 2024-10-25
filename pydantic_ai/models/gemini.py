@@ -18,7 +18,7 @@ from __future__ import annotations as _annotations
 
 import os
 import re
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
 from typing import Annotated, Any, Literal, Union, cast
@@ -76,11 +76,11 @@ class GeminiModel(Model):
         self,
         retrievers: Mapping[str, AbstractToolDefinition],
         allow_text_result: bool,
-        result_tool: AbstractToolDefinition | None,
+        result_tools: Sequence[AbstractToolDefinition] | None,
     ) -> GeminiAgentModel:
         tools = [_GeminiFunction.from_abstract_tool(t) for t in retrievers.values()]
-        if result_tool:
-            tools.append(_GeminiFunction.from_abstract_tool(result_tool))
+        if result_tools is not None:
+            tools += [_GeminiFunction.from_abstract_tool(t) for t in result_tools]
 
         if allow_text_result:
             tool_config = None

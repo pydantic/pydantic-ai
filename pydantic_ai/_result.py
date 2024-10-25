@@ -3,12 +3,13 @@ from __future__ import annotations as _annotations
 import inspect
 from collections.abc import Awaitable
 from dataclasses import dataclass
-from typing import Any, Callable, Generic, Union, cast
+from typing import Any, Callable, Generic, Union, cast, get_args
 
 from pydantic import TypeAdapter, ValidationError
 from typing_extensions import Self, TypedDict
 
 from . import _utils, messages
+from .messages import LLMToolCalls, ToolCall
 from .shared import AgentDeps, CallContext, ModelRetry, ResultData
 
 # A function that always takes `ResultData` and returns `ResultData`,
@@ -83,12 +84,8 @@ class ResultSchema(Generic[ResultData]):
     Similar to `Retriever` but for the final result of running an agent.
     """
 
-    name: str
-    description: str
-    type_adapter: TypeAdapter[Any]
-    json_schema: _utils.ObjectJsonSchema
+    tools: dict[str, ResultTool[ResultData]]
     allow_text_result: bool
-    outer_typed_dict_key: str | None
 
     @classmethod
     def build(cls, response_type: type[ResultData], name: str, description: str) -> Self | None:
@@ -96,16 +93,53 @@ class ResultSchema(Generic[ResultData]):
         if response_type is str:
             return None
 
-        allow_text_result = False
+        if response_type_option := extract_str_from_union(response_type):
+            response_type = response_type_option.value
+            allow_text_result = True
+        else:
+            allow_text_result = False
+
+        def _build_tool(a: Any, tool_name: str, descr_append: bool) -> ResultTool[ResultData]:
+            return cast(
+                ResultTool[ResultData],
+                ResultTool.build(a, tool_name, description, descr_append),  # pyright: ignore[reportUnknownMemberType]
+            )
+
+        tools: dict[str, ResultTool[ResultData]] = {}
+        if args := union_args(response_type):
+            for arg in args:
+                tool_name = union_tool_name(name, arg)
+                tools[tool_name] = _build_tool(arg, tool_name, True)
+        else:
+            tools[name] = _build_tool(response_type, name, False)
+
+        return cls(tools=tools, allow_text_result=allow_text_result)
+
+    def find_tool(self, message: LLMToolCalls) -> tuple[ToolCall, ResultTool[ResultData]] | None:
+        """Find a tool that matches one of the calls."""
+        for call in message.calls:
+            if result := self.tools.get(call.tool_name):
+                return call, result
+
+
+@dataclass
+class ResultTool(Generic[ResultData]):
+    name: str
+    description: str
+    type_adapter: TypeAdapter[Any]
+    json_schema: _utils.ObjectJsonSchema
+    outer_typed_dict_key: str | None
+
+    @classmethod
+    def build(cls, response_type: type[ResultData], name: str, description: str, descr_append: bool) -> Self | None:
+        """Build a ResultTool dataclass from a response type."""
+        assert response_type is not str, 'ResultTool does not support str as a response type'
+
         if _utils.is_model_like(response_type):
             type_adapter = TypeAdapter(response_type)
             outer_typed_dict_key: str | None = None
             json_schema = _utils.check_object_json_schema(type_adapter.json_schema())
         else:
-            if response_type_option := _utils.extract_str_from_union(response_type):
-                response_type = response_type_option.value
-                allow_text_result = True
-
             response_data_typed_dict = TypedDict('response_data_typed_dict', {'response': response_type})  # noqa
             type_adapter = TypeAdapter(response_data_typed_dict)
             outer_typed_dict_key = 'response'
@@ -113,12 +147,15 @@ class ResultSchema(Generic[ResultData]):
             # including `response_data_typed_dict` as a title here doesn't add anything and could confuse the LLM
             json_schema.pop('title')  # pyright: ignore[reportCallIssue,reportArgumentType]
 
+        if descr_append:
+            # TODO descr_append
+            pass
+
         return cls(
             name=name,
             description=description,
             type_adapter=type_adapter,
             json_schema=json_schema,
-            allow_text_result=allow_text_result,
             outer_typed_dict_key=outer_typed_dict_key,
         )
 
@@ -144,3 +181,36 @@ class ResultSchema(Generic[ResultData]):
             if k := self.outer_typed_dict_key:
                 result = result[k]
             return result
+
+
+def union_tool_name(base_name: str, union_arg: Any) -> str:
+    # TODO, can we do better?
+    return f'{base_name}_{union_arg.__name__}'
+
+
+_UnionType = type(Union[int, str])
+
+
+def extract_str_from_union(response_type: Any) -> _utils.Option[Any]:
+    """Extract the string type from a Union, return the remaining union or remaining type."""
+    if isinstance(response_type, _UnionType) and any(t is str for t in get_args(response_type)):
+        remain_args: list[Any] = []
+        includes_str = False
+        for arg in get_args(response_type):
+            if arg is str:
+                includes_str = True
+            else:
+                remain_args.append(arg)
+        if includes_str:
+            if len(remain_args) == 1:
+                return _utils.Some(remain_args[0])
+            else:
+                return _utils.Some(Union[tuple(remain_args)])
+
+
+def union_args(response_type: Any) -> tuple[Any, ...]:
+    """Extract the arguments of a Union type if `response_type` is a union, otherwise return an empty union."""
+    if isinstance(response_type, _UnionType):
+        return get_args(response_type)
+    else:
+        return ()
