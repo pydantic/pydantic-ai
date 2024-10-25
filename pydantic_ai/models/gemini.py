@@ -413,7 +413,7 @@ class _GeminiJsonSchema:
     """
 
     def __init__(self, schema: _utils.ObjectJsonSchema):
-        self.schema = cast(dict[str, Any], deepcopy(schema))
+        self.schema = deepcopy(schema)
         self.defs = self.schema.pop('$defs', {})
 
     def simplify(self) -> dict[str, Any]:

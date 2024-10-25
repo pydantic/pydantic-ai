@@ -47,7 +47,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         deps: AgentDeps | tuple[()] = (),
         retries: int = 1,
         result_tool_name: str = 'final_result',
-        result_tool_description: str = 'The final response which ends this conversation',
+        result_tool_description: str | None = None,
         result_retries: int | None = None,
     ):
         self.model = models.infer_model(model) if model is not None else None

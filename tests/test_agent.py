@@ -232,6 +232,8 @@ def test_response_union_allow_str():
 
 
 class Bar(BaseModel):
+    """This is a bar model."""
+
     b: str
 
 
@@ -258,7 +260,7 @@ def test_response_multiple_return_tools():
         [
             {
                 'name': 'final_result_Foo',
-                'description': 'The final response which ends this conversation',
+                'description': 'Foo: The final response which ends this conversation',
                 'json_schema': {
                     'properties': {
                         'a': {'title': 'A', 'type': 'integer'},
@@ -272,7 +274,7 @@ def test_response_multiple_return_tools():
             },
             {
                 'name': 'final_result_Bar',
-                'description': 'The final response which ends this conversation',
+                'description': 'This is a bar model.',
                 'json_schema': {
                     'properties': {'b': {'title': 'B', 'type': 'string'}},
                     'required': ['b'],

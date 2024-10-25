@@ -4,11 +4,11 @@ import asyncio
 from dataclasses import dataclass, is_dataclass
 from functools import partial
 from types import GenericAlias
-from typing import Any, Callable, Generic, Literal, TypeVar, Union, cast, overload
+from typing import Any, Callable, Generic, TypeVar, Union, overload
 
 from pydantic import BaseModel
 from pydantic.json_schema import JsonSchemaValue
-from typing_extensions import NotRequired, ParamSpec, TypeAlias, TypedDict, is_typeddict
+from typing_extensions import ParamSpec, TypeAlias, is_typeddict
 
 _P = ParamSpec('_P')
 _R = TypeVar('_R')
@@ -34,21 +34,12 @@ def is_model_like(type_: Any) -> bool:
     )
 
 
-ObjectJsonSchema = TypedDict(
-    'ObjectJsonSchema',
-    {
-        'type': Literal['object'],
-        'title': str,
-        'properties': dict[str, JsonSchemaValue],
-        'required': NotRequired[list[str]],
-        '$defs': NotRequired[dict[str, Any]],
-    },
-)
+ObjectJsonSchema: TypeAlias = dict[str, Any]
 
 
 def check_object_json_schema(schema: JsonSchemaValue) -> ObjectJsonSchema:
     if schema.get('type') == 'object':
-        return cast(ObjectJsonSchema, schema)
+        return schema
     else:
         raise ValueError('Schema must be an object')
 

@@ -164,7 +164,7 @@ class _JsonSchemaTestData:
 
     def generate(self) -> Any:
         """Generate data for the JSON schema."""
-        return self._gen_any(self.schema)  # pyright: ignore[reportArgumentType]
+        return self._gen_any(self.schema)
 
     def _gen_any(self, schema: dict[str, Any]) -> Any:
         """Generate data for any JSON Schema."""

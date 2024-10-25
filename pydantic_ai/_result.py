@@ -88,7 +88,7 @@ class ResultSchema(Generic[ResultData]):
     allow_text_result: bool
 
     @classmethod
-    def build(cls, response_type: type[ResultData], name: str, description: str) -> Self | None:
+    def build(cls, response_type: type[ResultData], name: str, description: str | None) -> Self | None:
         """Build a ResultSchema dataclass from a response type."""
         if response_type is str:
             return None
@@ -99,10 +99,10 @@ class ResultSchema(Generic[ResultData]):
         else:
             allow_text_result = False
 
-        def _build_tool(a: Any, tool_name: str, descr_append: bool) -> ResultTool[ResultData]:
+        def _build_tool(a: Any, tool_name: str, multiple: bool) -> ResultTool[ResultData]:
             return cast(
                 ResultTool[ResultData],
-                ResultTool.build(a, tool_name, description, descr_append),  # pyright: ignore[reportUnknownMemberType]
+                ResultTool.build(a, tool_name, description, multiple),  # pyright: ignore[reportUnknownMemberType]
             )
 
         tools: dict[str, ResultTool[ResultData]] = {}
@@ -122,6 +122,9 @@ class ResultSchema(Generic[ResultData]):
                 return call, result
 
 
+DEFAULT_DESCRIPTION = 'The final response which ends this conversation'
+
+
 @dataclass
 class ResultTool(Generic[ResultData]):
     name: str
@@ -131,7 +134,7 @@ class ResultTool(Generic[ResultData]):
     outer_typed_dict_key: str | None
 
     @classmethod
-    def build(cls, response_type: type[ResultData], name: str, description: str, descr_append: bool) -> Self | None:
+    def build(cls, response_type: type[ResultData], name: str, description: str | None, multiple: bool) -> Self | None:
         """Build a ResultTool dataclass from a response type."""
         assert response_type is not str, 'ResultTool does not support str as a response type'
 
@@ -145,15 +148,21 @@ class ResultTool(Generic[ResultData]):
             outer_typed_dict_key = 'response'
             json_schema = _utils.check_object_json_schema(type_adapter.json_schema())
             # including `response_data_typed_dict` as a title here doesn't add anything and could confuse the LLM
-            json_schema.pop('title')  # pyright: ignore[reportCallIssue,reportArgumentType]
+            json_schema.pop('title')
 
-        if descr_append:
-            # TODO descr_append
-            pass
+        if json_schema_description := json_schema.pop('description', None):
+            if description is None:
+                tool_description = json_schema_description
+            else:
+                tool_description = f'{description}. {json_schema_description}'
+        else:
+            tool_description = description or DEFAULT_DESCRIPTION
+            if multiple:
+                tool_description = f'{union_arg_name(response_type)}: {tool_description}'
 
         return cls(
             name=name,
-            description=description,
+            description=tool_description,
             type_adapter=type_adapter,
             json_schema=json_schema,
             outer_typed_dict_key=outer_typed_dict_key,
@@ -185,7 +194,11 @@ class ResultTool(Generic[ResultData]):
 
 def union_tool_name(base_name: str, union_arg: Any) -> str:
     # TODO, can we do better?
-    return f'{base_name}_{union_arg.__name__}'
+    return f'{base_name}_{union_arg_name(union_arg)}'
+
+
+def union_arg_name(union_arg: Any) -> str:
+    return union_arg.__name__
 
 
 _UnionType = type(Union[int, str])

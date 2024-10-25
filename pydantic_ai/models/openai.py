@@ -72,7 +72,7 @@ class OpenAIModel(Model):
             'function': {
                 'name': f.name,
                 'description': f.description,
-                'parameters': f.json_schema,  # type: ignore
+                'parameters': f.json_schema,
             },
         }
 

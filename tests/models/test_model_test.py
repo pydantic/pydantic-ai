@@ -137,7 +137,7 @@ def test_json_schema_test_data():
         not_required: str = 'default'
 
     json_schema = TestModel.model_json_schema()
-    data = _JsonSchemaTestData(json_schema).generate()  # pyright: ignore[reportArgumentType]
+    data = _JsonSchemaTestData(json_schema).generate()
     assert data == snapshot(
         {
             'my_str': 'a',
@@ -183,7 +183,7 @@ def test_json_schema_test_data_additional():
         additional_property: str = Field(alias='additionalProperty')
 
     json_schema = TestModel.model_json_schema()
-    data = _JsonSchemaTestData(json_schema).generate()  # pyright: ignore[reportArgumentType]
+    data = _JsonSchemaTestData(json_schema).generate()
     assert data == snapshot({'x': 0, 'additionalProperty': 'a', 'additionalProperty_': 'a'})
     TestModel.model_validate(data)
 
@@ -193,7 +193,7 @@ def test_chars_wrap():
         a: Annotated[set[str], MinLen(4)]
 
     json_schema = TestModel.model_json_schema()
-    data = _JsonSchemaTestData(json_schema, seed=len(_chars) - 2).generate()  # pyright: ignore[reportArgumentType]
+    data = _JsonSchemaTestData(json_schema, seed=len(_chars) - 2).generate()
     assert data == snapshot({'a': ['}', '~', 'aa', 'ab']})
 
 
@@ -203,7 +203,7 @@ def test_prefix_unique():
         'uniqueItems': True,
         'prefixItems': [{'type': 'string'}, {'type': 'string'}],
     }
-    data = _JsonSchemaTestData(json_schema).generate()  # pyright: ignore[reportArgumentType]
+    data = _JsonSchemaTestData(json_schema).generate()
     assert data == snapshot(['a', 'b'])
 
 
@@ -213,5 +213,5 @@ def test_max_items():
         'items': {'type': 'string'},
         'maxItems': 0,
     }
-    data = _JsonSchemaTestData(json_schema).generate()  # pyright: ignore[reportArgumentType]
+    data = _JsonSchemaTestData(json_schema).generate()
     assert data == snapshot([])
