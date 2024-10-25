@@ -3,6 +3,7 @@
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
+from typing import Union
 
 from pydantic_ai import Agent, CallContext
 
@@ -80,3 +81,27 @@ async def ok_retriever2(ctx: CallContext[MyDeps], x: str) -> str:
 if never():
     typed_agent2.run_sync('testing', model='openai:gpt-4o', deps=MyDeps(foo=1, bar=2))
     typed_agent2.run_sync('testing', deps=123)  # type: ignore[arg-type]
+
+
+@dataclass
+class Foo:
+    a: int
+
+
+@dataclass
+class Bar:
+    b: str
+
+
+union_agent: Agent[None, Union[Foo, Bar]] = Agent(
+    result_type=Union[Foo, Bar],  # type: ignore[arg-type]
+)
+
+
+def foo_result(response: Union[Foo, Bar]) -> str:
+    return str(response)
+
+
+if never():
+    result = union_agent.run_sync('testing')
+    foo_result(result.response)

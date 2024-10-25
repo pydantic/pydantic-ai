@@ -96,21 +96,29 @@ class ResultSchema(Generic[ResultData]):
         if response_type is str:
             return None
 
+        allow_text_result = False
         if _utils.is_model_like(response_type):
             type_adapter = TypeAdapter(response_type)
             outer_typed_dict_key: str | None = None
+            json_schema = _utils.check_object_json_schema(type_adapter.json_schema())
         else:
-            # noinspection PyTypedDict
+            if response_type_option := _utils.extract_str_from_union(response_type):
+                response_type = response_type_option.value
+                allow_text_result = True
+
             response_data_typed_dict = TypedDict('response_data_typed_dict', {'response': response_type})  # noqa
             type_adapter = TypeAdapter(response_data_typed_dict)
             outer_typed_dict_key = 'response'
+            json_schema = _utils.check_object_json_schema(type_adapter.json_schema())
+            # including `response_data_typed_dict` as a title here doesn't add anything and could confuse the LLM
+            json_schema.pop('title')  # pyright: ignore[reportCallIssue,reportArgumentType]
 
         return cls(
             name=name,
             description=description,
             type_adapter=type_adapter,
-            json_schema=_utils.check_object_json_schema(type_adapter.json_schema()),
-            allow_text_result=_utils.allow_plain_str(response_type),
+            json_schema=json_schema,
+            allow_text_result=allow_text_result,
             outer_typed_dict_key=outer_typed_dict_key,
         )
 
