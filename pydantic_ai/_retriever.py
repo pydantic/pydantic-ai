@@ -73,7 +73,7 @@ class Retriever(Generic[AgentDeps, P]):
         except ValidationError as e:
             return self._on_error(e.errors(include_url=False), message)
 
-        args, kwargs = self._call_args(deps, args_dict)
+        args, kwargs = self._call_args(deps, args_dict, message)
         try:
             if self.is_async:
                 function = cast(Callable[[Any], Awaitable[str]], self.function.whichever())
@@ -91,11 +91,13 @@ class Retriever(Generic[AgentDeps, P]):
             tool_id=message.tool_id,
         )
 
-    def _call_args(self, deps: AgentDeps, args_dict: dict[str, Any]) -> tuple[list[Any], dict[str, Any]]:
+    def _call_args(
+        self, deps: AgentDeps, args_dict: dict[str, Any], message: messages.ToolCall
+    ) -> tuple[list[Any], dict[str, Any]]:
         if self.single_arg_name:
             args_dict = {self.single_arg_name: args_dict}
 
-        args = [CallContext(deps, self._current_retry)] if self.function.is_left() else []
+        args = [CallContext(deps, self._current_retry, message.tool_name)] if self.function.is_left() else []
         for positional_field in self.positional_fields:
             args.append(args_dict.pop(positional_field))
         if self.var_positional_field:

@@ -4,7 +4,7 @@ import pytest
 from inline_snapshot import snapshot
 from pydantic import BaseModel
 
-from pydantic_ai import Agent, ModelRetry
+from pydantic_ai import Agent, CallContext, ModelRetry
 from pydantic_ai.messages import (
     ArgsJson,
     LLMMessage,
@@ -103,7 +103,8 @@ def test_result_validator():
     agent = Agent(FunctionModel(return_model), deps=None, result_type=Foo)
 
     @agent.result_validator
-    def validate_result(r: Foo) -> Foo:
+    def validate_result(ctx: CallContext[None], r: Foo) -> Foo:
+        assert ctx.tool_name == 'final_result'
         if r.a == 42:
             return r
         else:
