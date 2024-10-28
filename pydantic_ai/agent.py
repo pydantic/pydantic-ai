@@ -47,7 +47,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         deps: AgentDeps | tuple[()] = (),
         retries: int = 1,
         result_tool_name: str = 'final_result',
-        result_tool_description: str = 'The final response which ends this conversation',
+        result_tool_description: str | None = None,
         result_retries: int | None = None,
     ):
         self.model = models.infer_model(model) if model is not None else None
@@ -105,7 +105,8 @@ class Agent(Generic[AgentDeps, ResultData]):
 
         messages.append(_messages.UserPrompt(user_prompt))
 
-        agent_model = model_.agent_model(self._retrievers, self._allow_text_result, self._result_schema)
+        result_tools = list(self._result_schema.tools.values()) if self._result_schema else None
+        agent_model = model_.agent_model(self._retrievers, self._allow_text_result, result_tools)
 
         for retriever in self._retrievers.values():
             retriever.reset()
@@ -233,7 +234,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         retries_ = retries if retries is not None else self._default_retries
         retriever = _r.Retriever[AgentDeps, _r.P](func, retries_)
 
-        if self._result_schema and self._result_schema.name == retriever.name:
+        if self._result_schema and retriever.name in self._result_schema.tools:
             raise ValueError(f'Retriever name conflicts with result schema name: {retriever.name!r}')
 
         if retriever.name in self._retrievers:
@@ -263,19 +264,18 @@ class Agent(Generic[AgentDeps, ResultData]):
                     return _utils.Either(left=result_data)
             else:
                 self._incr_result_retry()
-                assert self._result_schema is not None
                 response = _messages.RetryPrompt(
                     content='Plain text responses are not permitted, please call one of the functions instead.',
                 )
                 return _utils.Either(right=[response])
         elif model_response.role == 'llm-tool-calls':
             if self._result_schema is not None:
-                # if there's a result schema, and any of the calls match that name, return the result
+                # if there's a result schema, and any of the calls match one of its tools, return the result
                 # NOTE: this means we ignore any other tools called here
-                call = next((c for c in model_response.calls if c.tool_name == self._result_schema.name), None)
-                if call is not None:
+                if match := self._result_schema.find_tool(model_response):
+                    call, result_tool = match
                     try:
-                        result_data = self._result_schema.validate(call)
+                        result_data = result_tool.validate(call)
                         result_data = await self._validate_result(result_data, deps, call)
                     except _result.ToolRetryError as e:
                         self._incr_result_retry()

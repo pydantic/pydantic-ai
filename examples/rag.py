@@ -20,13 +20,11 @@ Ask the agent a question with:
 from __future__ import annotations as _annotations
 
 import asyncio
-import os
 import re
 import sys
 import unicodedata
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import cast
 
 import asyncpg
 import httpx
@@ -37,7 +35,7 @@ from pydantic import TypeAdapter
 from typing_extensions import AsyncGenerator
 
 from pydantic_ai import CallContext
-from pydantic_ai.agent import Agent, KnownModelName
+from pydantic_ai.agent import Agent
 
 # 'if-token-present' means nothing will be sent (and the example wil work) if you don't have logfire set up
 logfire.configure()
@@ -50,8 +48,7 @@ class Deps:
     pool: asyncpg.Pool
 
 
-model = cast(KnownModelName, os.getenv('PYDANTIC_AI_MODEL', 'openai:gpt-4o'))
-agent: Agent[Deps, str] = Agent(model)
+agent: Agent[Deps, str] = Agent('openai:gpt-4o')
 
 
 @agent.retriever_context

@@ -2,25 +2,25 @@
 
 Run with:
 
-    uv run --extra examples -m examples.sql_gen
+    uv run --extra examples -m examples.sql_gen "show me logs from yesterday, with level 'error'"
 """
 
 import asyncio
-import os
 import sys
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import date
-from typing import Annotated, Any, cast
+from typing import Annotated, Any, Union
 
 import asyncpg
 import logfire
 from annotated_types import MinLen
 from devtools import debug
+from pydantic import BaseModel, Field
+from typing_extensions import TypeAlias
 
 from pydantic_ai import Agent, CallContext, ModelRetry
-from pydantic_ai.agent import KnownModelName
 
 # 'if-token-present' means nothing will be sent (and the example wil work) if you don't have logfire set up
 logfire.configure()
@@ -48,17 +48,29 @@ CREATE TABLE IF NOT EXISTS records (
 
 
 @dataclass
-class Response:
-    sql_query: Annotated[str, MinLen(1)]
-
-
-@dataclass
 class Deps:
     conn: asyncpg.Connection
 
 
-model = cast(KnownModelName, os.getenv('PYDANTIC_AI_MODEL', 'gemini-1.5-flash'))
-agent: Agent[Deps, Response] = Agent(model, result_type=Response)
+class Success(BaseModel):
+    """Response when SQL could be successfully generated."""
+
+    sql_query: Annotated[str, MinLen(1)]
+    explanation: str = Field(None, description='Explanation of the SQL query, as markdown')
+
+
+class InvalidRequest(BaseModel):
+    """Response the user input didn't include enough information to generate SQL."""
+
+    error_message: str
+
+
+Response: TypeAlias = Union[Success, InvalidRequest]
+agent: Agent[Deps, Response] = Agent(
+    'gemini-1.5-flash',
+    # Type ignore while we wait for PEP-0747, nonetheless unions will work fine everywhere else
+    result_type=Response,  # type: ignore
+)
 
 
 @agent.system_prompt
@@ -87,10 +99,13 @@ Example
 
 @agent.result_validator
 async def validate_result(ctx: CallContext[Deps], result: Response) -> Response:
+    if isinstance(result, InvalidRequest):
+        return result
+
+    # gemini often adds extraneous backslashes to SQL
     result.sql_query = result.sql_query.replace('\\', '')
-    lower_query = result.sql_query.lower()
-    if not lower_query.startswith('select'):
-        raise ModelRetry('Please a SELECT query')
+    if not result.sql_query.upper().startswith('SELECT'):
+        raise ModelRetry('Please create a SELECT query')
 
     try:
         await ctx.deps.conn.execute(f'EXPLAIN {result.sql_query}')
@@ -109,7 +124,7 @@ async def main():
     async with database_connect('postgresql://postgres@localhost', 'pydantic_ai_sql_gen') as conn:
         deps = Deps(conn)
         result = await agent.run(prompt, deps=deps)
-    debug(result.response.sql_query)
+    debug(result.response)
 
 
 # pyright: reportUnknownMemberType=false

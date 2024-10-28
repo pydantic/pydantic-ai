@@ -1,6 +1,6 @@
 from __future__ import annotations as _annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Literal
@@ -50,11 +50,11 @@ class OpenAIModel(Model):
         self,
         retrievers: Mapping[str, AbstractToolDefinition],
         allow_text_result: bool,
-        result_tool: AbstractToolDefinition | None,
+        result_tools: Sequence[AbstractToolDefinition] | None,
     ) -> AgentModel:
         tools = [self.map_tool_definition(r) for r in retrievers.values()]
-        if result_tool is not None:
-            tools.append(self.map_tool_definition(result_tool))
+        if result_tools is not None:
+            tools += [self.map_tool_definition(r) for r in result_tools]
         return OpenAIAgentModel(
             self.client,
             self.model_name,
@@ -72,7 +72,7 @@ class OpenAIModel(Model):
             'function': {
                 'name': f.name,
                 'description': f.description,
-                'parameters': f.json_schema,  # type: ignore
+                'parameters': f.json_schema,
             },
         }
 

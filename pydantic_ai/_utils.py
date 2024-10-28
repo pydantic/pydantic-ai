@@ -4,11 +4,11 @@ import asyncio
 from dataclasses import dataclass, is_dataclass
 from functools import partial
 from types import GenericAlias
-from typing import Any, Callable, Generic, Literal, TypeVar, Union, cast, get_args, overload
+from typing import Any, Callable, Generic, TypeVar, Union, overload
 
 from pydantic import BaseModel
 from pydantic.json_schema import JsonSchemaValue
-from typing_extensions import NotRequired, ParamSpec, TypeAlias, TypedDict, is_typeddict
+from typing_extensions import ParamSpec, TypeAlias, is_typeddict
 
 _P = ParamSpec('_P')
 _R = TypeVar('_R')
@@ -19,26 +19,6 @@ async def run_in_executor(func: Callable[_P, _R], *args: _P.args, **kwargs: _P.k
         return await asyncio.get_running_loop().run_in_executor(None, partial(func, *args, **kwargs))
     else:
         return await asyncio.get_running_loop().run_in_executor(None, func, *args)  # type: ignore
-
-
-_UnionType = type(Union[int, str])
-
-
-def extract_str_from_union(response_type: Any) -> Option[Any]:
-    """Extract the string type from a Union, return the remaining union or remaining type."""
-    if isinstance(response_type, _UnionType) and any(t is str for t in get_args(response_type)):
-        remain_args: list[Any] = []
-        includes_str = False
-        for arg in get_args(response_type):
-            if arg is str:
-                includes_str = True
-            else:
-                remain_args.append(arg)
-        if includes_str:
-            if len(remain_args) == 1:
-                return Some(remain_args[0])
-            else:
-                return Some(Union[tuple(remain_args)])
 
 
 def is_model_like(type_: Any) -> bool:
@@ -54,21 +34,12 @@ def is_model_like(type_: Any) -> bool:
     )
 
 
-ObjectJsonSchema = TypedDict(
-    'ObjectJsonSchema',
-    {
-        'type': Literal['object'],
-        'title': str,
-        'properties': dict[str, JsonSchemaValue],
-        'required': NotRequired[list[str]],
-        '$defs': NotRequired[dict[str, Any]],
-    },
-)
+ObjectJsonSchema: TypeAlias = dict[str, Any]
 
 
 def check_object_json_schema(schema: JsonSchemaValue) -> ObjectJsonSchema:
     if schema.get('type') == 'object':
-        return cast(ObjectJsonSchema, schema)
+        return schema
     else:
         raise ValueError('Schema must be an object')
 

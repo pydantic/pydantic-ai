@@ -1,6 +1,6 @@
 from __future__ import annotations as _annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Callable
 
@@ -20,7 +20,7 @@ class AgentInfo:
 
     retrievers: Mapping[str, AbstractToolDefinition]
     allow_text_result: bool
-    result_tool: AbstractToolDefinition | None
+    result_tools: list[AbstractToolDefinition] | None
 
 
 FunctionDef: TypeAlias = Callable[[list[Message], AgentInfo], LLMMessage]
@@ -44,9 +44,10 @@ class FunctionModel(Model):
         self,
         retrievers: Mapping[str, AbstractToolDefinition],
         allow_text_result: bool,
-        result_tool: AbstractToolDefinition | None,
+        result_tools: Sequence[AbstractToolDefinition] | None,
     ) -> AgentModel:
-        return FunctionAgentModel(self.function, AgentInfo(retrievers, allow_text_result, result_tool))
+        result_tools = list(result_tools) if result_tools is not None else None
+        return FunctionAgentModel(self.function, AgentInfo(retrievers, allow_text_result, result_tools))
 
     def name(self) -> str:
         return f'function:{self.function.__name__}'

@@ -95,7 +95,7 @@ def test_agent_model_tools():
         'apple': TestToolDefinition(
             'apple',
             'This is apple',
-            {  # type: ignore
+            {
                 'type': 'object',
                 'properties': {
                     'banana': {'type': 'array', 'title': 'Banana', 'items': {'type': 'number', 'title': 'Bar'}}
@@ -108,7 +108,7 @@ def test_agent_model_tools():
         'This is the tool for the final Result',
         {'type': 'object', 'title': 'Result', 'properties': {'spam': {'type': 'number'}}, 'required': ['spam']},
     )
-    agent_model = m.agent_model(retrievers, True, result_tool)
+    agent_model = m.agent_model(retrievers, True, [result_tool])
     assert agent_model.tools == snapshot(
         _GeminiTools(
             function_declarations=[
@@ -147,7 +147,7 @@ def test_require_response_tool():
         'This is the tool for the final Result',
         {'type': 'object', 'title': 'Result', 'properties': {'spam': {'type': 'number'}}},
     )
-    agent_model = m.agent_model({}, False, result_tool)
+    agent_model = m.agent_model({}, False, [result_tool])
     assert agent_model.tools == snapshot(
         _GeminiTools(
             function_declarations=[
@@ -202,9 +202,9 @@ def test_json_def_replaced():
     result_tool = TestToolDefinition(
         'result',
         'This is the tool for the final Result',
-        json_schema,  # pyright: ignore[reportArgumentType]
+        json_schema,
     )
-    agent_model = m.agent_model({}, True, result_tool)
+    agent_model = m.agent_model({}, True, [result_tool])
     assert agent_model.tools == snapshot(
         _GeminiTools(
             function_declarations=[
@@ -248,9 +248,9 @@ def test_json_def_replaced_any_of():
     result_tool = TestToolDefinition(
         'result',
         'This is the tool for the final Result',
-        json_schema,  # pyright: ignore[reportArgumentType]
+        json_schema,
     )
-    agent_model = m.agent_model({}, True, result_tool)
+    agent_model = m.agent_model({}, True, [result_tool])
     assert agent_model.tools == snapshot(
         _GeminiTools(
             function_declarations=[
@@ -311,10 +311,10 @@ def test_json_def_recursive():
     result_tool = TestToolDefinition(
         'result',
         'This is the tool for the final Result',
-        json_schema,  # pyright: ignore[reportArgumentType]
+        json_schema,
     )
     with pytest.raises(UserError, match=r'Recursive `\$ref`s in JSON Schema are not supported by Gemini'):
-        m.agent_model({}, True, result_tool)
+        m.agent_model({}, True, [result_tool])
 
 
 @pytest.fixture

@@ -12,14 +12,13 @@ Run with:
 import asyncio
 import os
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import Any
 
 import logfire
 from devtools import debug
 from httpx import AsyncClient
 
 from pydantic_ai import Agent, CallContext, ModelRetry
-from pydantic_ai.agent import KnownModelName
 
 # 'if-token-present' means nothing will be sent (and the example wil work) if you don't have logfire set up
 logfire.configure(send_to_logfire='if-token-present')
@@ -32,8 +31,9 @@ class Deps:
     geo_api_key: str | None
 
 
-model = cast(KnownModelName, os.getenv('PYDANTIC_AI_MODEL', 'openai:gpt-4o'))
-weather_agent: Agent[Deps, str] = Agent(model, system_prompt='Be concise, reply with one sentence.', retries=2)
+weather_agent: Agent[Deps, str] = Agent(
+    'openai:gpt-4o', system_prompt='Be concise, reply with one sentence.', retries=2
+)
 
 
 @weather_agent.retriever_context

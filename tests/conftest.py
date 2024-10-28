@@ -1,3 +1,5 @@
+from __future__ import annotations as _annotations
+
 import os
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Callable
