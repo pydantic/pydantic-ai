@@ -8,7 +8,7 @@ from typing import Any, Callable, Generic, Union, cast, get_args
 from pydantic import TypeAdapter, ValidationError
 from typing_extensions import Self, TypedDict
 
-from . import _utils, messages
+from . import _pydantic, _utils, messages
 from .messages import LLMToolCalls, ToolCall
 from .shared import AgentDeps, CallContext, ModelRetry, ResultData
 
@@ -193,7 +193,6 @@ class ResultTool(Generic[ResultData]):
 
 
 def union_tool_name(base_name: str, union_arg: Any) -> str:
-    # TODO, can we do better?
     return f'{base_name}_{union_arg_name(union_arg)}'
 
 
@@ -201,12 +200,9 @@ def union_arg_name(union_arg: Any) -> str:
     return union_arg.__name__
 
 
-_UnionType = type(Union[int, str])
-
-
 def extract_str_from_union(response_type: Any) -> _utils.Option[Any]:
     """Extract the string type from a Union, return the remaining union or remaining type."""
-    if isinstance(response_type, _UnionType) and any(t is str for t in get_args(response_type)):
+    if _pydantic.is_union(response_type) and any(t is str for t in get_args(response_type)):
         remain_args: list[Any] = []
         includes_str = False
         for arg in get_args(response_type):
@@ -223,7 +219,7 @@ def extract_str_from_union(response_type: Any) -> _utils.Option[Any]:
 
 def union_args(response_type: Any) -> tuple[Any, ...]:
     """Extract the arguments of a Union type if `response_type` is a union, otherwise return an empty union."""
-    if isinstance(response_type, _UnionType):
+    if _pydantic.is_union(response_type):
         return get_args(response_type)
     else:
         return ()

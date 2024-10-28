@@ -1,5 +1,6 @@
-from typing import Union
+from typing import Any, Callable, Union
 
+import pytest
 from inline_snapshot import snapshot
 from pydantic import BaseModel
 
@@ -196,12 +197,19 @@ def test_response_tuple():
     )
 
 
-def test_response_union_allow_str():
+@pytest.mark.parametrize(
+    'input_union_callable',
+    [lambda: Union[str, Foo], lambda: Union[Foo, str], lambda: str | Foo, lambda: Foo | str],
+    ids=['Union[str, Foo]', 'Union[Foo, str]', 'str | Foo', 'Foo | str'],
+)
+def test_response_union_allow_str(input_union_callable: Callable[[], Any]):
+    try:
+        union = input_union_callable()
+    except TypeError:
+        raise pytest.skip('Python version does not support `|` syntax for unions')
+
     m = TestModel()
-    agent: Agent[None, Union[str, Foo]] = Agent(
-        m,
-        result_type=Union[str, Foo],  # pyright: ignore[reportArgumentType]
-    )
+    agent: Agent[None, Union[str, Foo]] = Agent(m, result_type=union)
     assert agent._result_schema.allow_text_result is True  # pyright: ignore[reportPrivateUsage,reportOptionalMemberAccess]
 
     result = agent.run_sync('Hello')
@@ -237,12 +245,17 @@ class Bar(BaseModel):
     b: str
 
 
-def test_response_multiple_return_tools():
+@pytest.mark.parametrize(
+    'input_union_callable', [lambda: Union[Foo, Bar], lambda: Foo | Bar], ids=['Union[Foo, Bar]', 'Foo | Bar']
+)
+def test_response_multiple_return_tools(input_union_callable: Callable[[], Any]):
+    try:
+        union = input_union_callable()
+    except TypeError:
+        raise pytest.skip('Python version does not support `|` syntax for unions')
+
     m = TestModel()
-    agent: Agent[None, Union[Foo, Bar]] = Agent(
-        m,
-        result_type=Union[Foo, Bar],  # pyright: ignore[reportArgumentType]
-    )
+    agent: Agent[None, Union[Foo, Bar]] = Agent(m, result_type=union)
 
     result = agent.run_sync('Hello')
     assert result.response == Foo(a=1, b='b')
