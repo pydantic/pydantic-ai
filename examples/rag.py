@@ -38,7 +38,7 @@ from pydantic_ai import CallContext
 from pydantic_ai.agent import Agent
 
 # 'if-token-present' means nothing will be sent (and the example wil work) if you don't have logfire set up
-logfire.configure()
+logfire.configure(send_to_logfire='if-token-present')
 logfire.instrument_asyncpg()
 
 
