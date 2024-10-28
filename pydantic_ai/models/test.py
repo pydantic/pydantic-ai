@@ -47,6 +47,7 @@ class TestModel(Model):
     agent_model_retrievers: Mapping[str, AbstractToolDefinition] | None = None
     agent_model_allow_text_result: bool | None = None
     agent_model_result_tools: list[AbstractToolDefinition] | None = None
+    seed: int = 0
 
     def agent_model(
         self,
@@ -82,7 +83,7 @@ class TestModel(Model):
             result = _utils.Either(right=None)
         else:
             result = _utils.Either(left=None)
-        return TestAgentModel(retriever_calls, result, self.agent_model_result_tools)
+        return TestAgentModel(retriever_calls, result, self.agent_model_result_tools, self.seed)
 
     def name(self) -> str:
         return 'test-model'
@@ -97,6 +98,7 @@ class TestAgentModel(AgentModel):
     # left means the text is plain text; right means it's a function call
     result: _utils.Either[str | None, Any | None]
     result_tools: list[AbstractToolDefinition] | None
+    seed: int
     step: int = 0
     last_message_count: int = 0
 
@@ -134,7 +136,7 @@ class TestAgentModel(AgentModel):
             else:
                 assert self.result_tools is not None, 'No result tools provided'
                 custom_result_args = self.result.right
-                result_tool = self.result_tools[0]
+                result_tool = self.result_tools[self.seed % len(self.result_tools)]
                 if custom_result_args is not None:
                     self.step += 1
                     return LLMToolCalls(calls=[ToolCall.from_object(result_tool.name, custom_result_args)]), cost
@@ -145,7 +147,7 @@ class TestAgentModel(AgentModel):
 
     def gen_retriever_args(self, tool_def: AbstractToolDefinition) -> Any:
         """Generate arguments for a retriever."""
-        return _JsonSchemaTestData(tool_def.json_schema, self.step).generate()
+        return _JsonSchemaTestData(tool_def.json_schema, self.seed).generate()
 
 
 _chars = string.ascii_letters + string.digits + string.punctuation
@@ -171,18 +173,15 @@ class _JsonSchemaTestData:
         if const := schema.get('const'):
             return const
         elif enum := schema.get('enum'):
-            return enum[0]
+            return enum[self.seed % len(enum)]
         elif examples := schema.get('examples'):
-            return examples[0]
+            return examples[self.seed % len(examples)]
         elif ref := schema.get('$ref'):
             key = re.sub(r'^#/\$defs/', '', ref)
             js_def = self.defs[key]
             return self._gen_any(js_def)
         elif any_of := schema.get('anyOf'):
-            if {'type': 'null'} in any_of:
-                return None
-            else:
-                return self._gen_any(any_of[0])
+            return self._gen_any(any_of[self.seed % len(any_of)])
 
         type_ = schema.get('type')
         if type_ is None:

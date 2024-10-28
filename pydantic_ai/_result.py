@@ -48,7 +48,7 @@ class ResultValidator(Generic[AgentDeps, ResultData]):
             Result of either the validated result data (ok) or a retry message (Err).
         """
         if self._takes_ctx:
-            args = CallContext(deps, retry), result
+            args = CallContext(deps, retry, tool_call.tool_name if tool_call else None), result
         else:
             args = (result,)
 

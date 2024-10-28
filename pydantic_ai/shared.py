@@ -71,6 +71,7 @@ class CallContext(Generic[AgentDeps]):
 
     deps: AgentDeps
     retry: int
+    tool_name: str | None
 
 
 class ModelRetry(Exception):

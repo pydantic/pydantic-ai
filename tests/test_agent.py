@@ -4,7 +4,7 @@ import pytest
 from inline_snapshot import snapshot
 from pydantic import BaseModel
 
-from pydantic_ai import Agent, ModelRetry
+from pydantic_ai import Agent, CallContext, ModelRetry
 from pydantic_ai.messages import (
     ArgsJson,
     LLMMessage,
@@ -103,7 +103,8 @@ def test_result_validator():
     agent = Agent(FunctionModel(return_model), deps=None, result_type=Foo)
 
     @agent.result_validator
-    def validate_result(r: Foo) -> Foo:
+    def validate_result(ctx: CallContext[None], r: Foo) -> Foo:
+        assert ctx.tool_name == 'final_result'
         if r.a == 42:
             return r
         else:
@@ -164,7 +165,7 @@ def test_response_tuple():
     assert agent._result_schema.allow_text_result is False  # pyright: ignore[reportPrivateUsage,reportOptionalMemberAccess]
 
     result = agent.run_sync('Hello')
-    assert result.response == snapshot(('b', 'b'))
+    assert result.response == snapshot(('a', 'a'))
 
     assert m.agent_model_retrievers == snapshot({})
     assert m.agent_model_allow_text_result is False
@@ -210,10 +211,20 @@ def test_response_union_allow_str(input_union_callable: Callable[[], Any]):
 
     m = TestModel()
     agent: Agent[None, Union[str, Foo]] = Agent(m, result_type=union)
+
+    got_tool_call_name = 'unset'
+
+    @agent.result_validator
+    def validate_result(ctx: CallContext[None], r: Any) -> Any:
+        nonlocal got_tool_call_name
+        got_tool_call_name = ctx.tool_name
+        return r
+
     assert agent._result_schema.allow_text_result is True  # pyright: ignore[reportPrivateUsage,reportOptionalMemberAccess]
 
     result = agent.run_sync('Hello')
     assert result.response == snapshot('{}')
+    assert got_tool_call_name == snapshot(None)
 
     assert m.agent_model_retrievers == snapshot({})
     assert m.agent_model_allow_text_result is True
@@ -256,9 +267,17 @@ def test_response_multiple_return_tools(input_union_callable: Callable[[], Any])
 
     m = TestModel()
     agent: Agent[None, Union[Foo, Bar]] = Agent(m, result_type=union)
+    got_tool_call_name = 'unset'
+
+    @agent.result_validator
+    def validate_result(ctx: CallContext[None], r: Any) -> Any:
+        nonlocal got_tool_call_name
+        got_tool_call_name = ctx.tool_name
+        return r
 
     result = agent.run_sync('Hello')
-    assert result.response == Foo(a=1, b='b')
+    assert result.response == Foo(a=0, b='a')
+    assert got_tool_call_name == snapshot('final_result_Foo')
 
     assert m.agent_model_retrievers == snapshot({})
     assert m.agent_model_allow_text_result is False
@@ -298,3 +317,7 @@ def test_response_multiple_return_tools(input_union_callable: Callable[[], Any])
             },
         ]
     )
+
+    result = agent.run_sync('Hello', model=TestModel(seed=1))
+    assert result.response == Bar(b='b')
+    assert got_tool_call_name == snapshot('final_result_Bar')
