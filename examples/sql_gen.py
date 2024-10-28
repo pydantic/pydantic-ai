@@ -23,7 +23,7 @@ from typing_extensions import TypeAlias
 from pydantic_ai import Agent, CallContext, ModelRetry
 
 # 'if-token-present' means nothing will be sent (and the example wil work) if you don't have logfire set up
-logfire.configure()
+logfire.configure(send_to_logfire='if-token-present')
 logfire.instrument_asyncpg()
 
 DB_SCHEMA = """
