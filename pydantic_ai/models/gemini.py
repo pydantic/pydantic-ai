@@ -426,6 +426,7 @@ class _GeminiJsonSchema:
         if ref := schema.pop('$ref', None):
             if not allow_ref:
                 raise shared.UserError('Recursive `$ref`s in JSON Schema are not supported by Gemini')
+            # noinspection PyTypeChecker
             key = re.sub(r'^#/\$defs/', '', ref)
             schema_def = self.defs[key]
             self._simplify(schema_def, allow_ref=False)

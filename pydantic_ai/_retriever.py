@@ -46,6 +46,7 @@ class Retriever(Generic[AgentDeps, P]):
     def __init__(self, function: RetrieverEitherFunc[AgentDeps, P], retries: int):
         """Build a Retriever dataclass from a function."""
         self.function = function
+        # noinspection PyTypeChecker
         f = _pydantic.function_schema(function)
         raw_function = function.whichever()
         self.name = raw_function.__name__

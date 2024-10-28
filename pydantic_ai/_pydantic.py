@@ -115,6 +115,7 @@ def function_schema(either_function: _retriever.RetrieverEitherFunc[AgentDeps, _
                 field_info,
                 decorators,
             )
+            # noinspection PyTypeChecker
             td_schema.setdefault('metadata', {})['is_model_like'] = is_model_like(annotation)
 
             if p.kind == Parameter.POSITIONAL_ONLY:
@@ -130,6 +131,7 @@ def function_schema(either_function: _retriever.RetrieverEitherFunc[AgentDeps, _
 
     schema, single_arg_name = _build_schema(fields, var_kwargs_schema, gen_schema, core_config)
     schema = gen_schema.clean_schema(schema)
+    # noinspection PyUnresolvedReferences
     schema_validator = create_schema_validator(
         schema,
         function,
@@ -139,7 +141,7 @@ def function_schema(either_function: _retriever.RetrieverEitherFunc[AgentDeps, _
         core_config,
         config_wrapper.plugin_settings,
     )
-    # PluggableSchemaValidator is api compat with SchemaValidator
+    # PluggableSchemaValidator is api compatible with SchemaValidator
     schema_validator = cast(SchemaValidator, schema_validator)
     json_schema = GenerateJsonSchema().generate(schema)
 

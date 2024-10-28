@@ -70,7 +70,7 @@ class ResultValidator(Generic[AgentDeps, ResultData]):
 
 
 class ToolRetryError(Exception):
-    """Internal exception used to indicate a signal a `ToolRetry` message should be returned to the LLM."""
+    """Internal exception used to signal a `ToolRetry` message should be returned to the LLM."""
 
     def __init__(self, tool_retry: messages.RetryPrompt):
         self.tool_retry = tool_retry
@@ -99,10 +99,10 @@ class ResultSchema(Generic[ResultData]):
         else:
             allow_text_result = False
 
-        def _build_tool(a: Any, tool_name: str, multiple: bool) -> ResultTool[ResultData]:
+        def _build_tool(a: Any, tool_name_: str, multiple: bool) -> ResultTool[ResultData]:
             return cast(
                 ResultTool[ResultData],
-                ResultTool.build(a, tool_name, description, multiple),  # pyright: ignore[reportUnknownMemberType]
+                ResultTool.build(a, tool_name_, description, multiple),  # pyright: ignore[reportUnknownMemberType]
             )
 
         tools: dict[str, ResultTool[ResultData]] = {}
@@ -141,11 +141,13 @@ class ResultTool(Generic[ResultData]):
         if _utils.is_model_like(response_type):
             type_adapter = TypeAdapter(response_type)
             outer_typed_dict_key: str | None = None
+            # noinspection PyArgumentList
             json_schema = _utils.check_object_json_schema(type_adapter.json_schema())
         else:
             response_data_typed_dict = TypedDict('response_data_typed_dict', {'response': response_type})  # noqa
             type_adapter = TypeAdapter(response_data_typed_dict)
             outer_typed_dict_key = 'response'
+            # noinspection PyArgumentList
             json_schema = _utils.check_object_json_schema(type_adapter.json_schema())
             # including `response_data_typed_dict` as a title here doesn't add anything and could confuse the LLM
             json_schema.pop('title')

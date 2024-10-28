@@ -1,6 +1,7 @@
 """Logic related to making requests to an LLM.
 
-The aim here is to make a common interface
+The aim here is to make a common interface for different LLMs, so that the rest of the code can be agnostic to the
+specific LLM being used.
 """
 
 from __future__ import annotations as _annotations
@@ -52,11 +53,10 @@ class AgentModel(ABC):
 
     @abstractmethod
     async def request(self, messages: list[Message]) -> tuple[LLMMessage, Cost]:
-        """Request a response from the model."""
+        """Make a request to the model."""
         raise NotImplementedError()
 
     # TODO streamed response
-    # TODO support for non JSON tool calls
 
 
 def infer_model(model: Model | KnownModelName) -> Model:
@@ -70,6 +70,7 @@ def infer_model(model: Model | KnownModelName) -> Model:
     elif model.startswith('gemini'):
         from .gemini import GeminiModel
 
+        # noinspection PyTypeChecker
         return GeminiModel(model)  # pyright: ignore[reportArgumentType]
     else:
         from ..shared import UserError

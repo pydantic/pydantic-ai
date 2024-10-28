@@ -8,7 +8,7 @@ from typing import Any, Callable, Generic, Union, cast
 from . import _utils
 from .shared import AgentDeps, CallContext
 
-# A function that may or maybe not take `CallInfo` as an argument, and may or may not be async.
+# A function that may or maybe not take `CallContext` as an argument, and may or may not be async.
 # Usage `SystemPromptFunc[AgentDeps]`
 SystemPromptFunc = Union[
     Callable[[CallContext[AgentDeps]], str],

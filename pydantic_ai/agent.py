@@ -144,6 +144,7 @@ class Agent(Generic[AgentDeps, ResultData]):
                             messages.extend(tool_responses)
             except (ValidationError, shared.UnexpectedModelBehaviour) as e:
                 run_span.set_attribute('messages', messages)
+                # noinspection PyTypeChecker
                 raise shared.AgentError(messages, model_) from e
 
     def run_sync(
@@ -205,6 +206,7 @@ class Agent(Generic[AgentDeps, ResultData]):
 
             return retriever_decorator
         else:
+            # noinspection PyTypeChecker
             return self._register_retriever(_utils.Either(left=func), retries)
 
     @overload
