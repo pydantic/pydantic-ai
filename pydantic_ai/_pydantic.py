@@ -14,7 +14,6 @@ from _griffe.models import Docstring, Object as GriffeObject
 from pydantic import ConfigDict, TypeAdapter
 from pydantic._internal import _decorators, _generate_schema, _typing_extra
 from pydantic._internal._config import ConfigWrapper
-from pydantic._internal._typing_extra import origin_is_union
 from pydantic.fields import FieldInfo
 from pydantic.json_schema import GenerateJsonSchema
 from pydantic.plugin._schema_validator import create_schema_validator
@@ -32,7 +31,7 @@ __all__ = 'function_schema', 'LazyTypeAdapter', 'is_union'
 
 def is_union(tp: Any) -> bool:
     origin = get_origin(tp)
-    return origin_is_union(origin)
+    return _typing_extra.origin_is_union(origin)
 
 
 class FunctionSchema(TypedDict):

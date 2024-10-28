@@ -58,6 +58,8 @@ jobs:
         env:
           COVERAGE_FILE: coverage/.coverage.${{ runner.os }}-py${{ matrix.python-version }}-all-extras
 
+      - run: uv run --frozen --all-extras --python ${{ matrix.python-version }} python tests/import_examples.py
+
       - name: store coverage files
         uses: actions/upload-artifact@v4
         with:

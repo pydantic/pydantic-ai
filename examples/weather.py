@@ -9,6 +9,8 @@ Run with:
     uv run --extra examples -m examples.weather
 """
 
+from __future__ import annotations as _annotations
+
 import asyncio
 import os
 from dataclasses import dataclass
@@ -116,7 +118,7 @@ async def get_weather(ctx: CallContext[Deps], lat: float, lng: float) -> dict[st
         8000: 'Thunderstorm',
     }
     return {
-        'temperature': f'{values['temperatureApparent']:0.0f}°C',
+        'temperature': f'{values["temperatureApparent"]:0.0f}°C',
         'description': code_lookup.get(values['weatherCode'], 'Unknown'),
     }
 

@@ -84,19 +84,17 @@ the search tool as a retriever with the Pydantic AI agent.
 Logic for extracting sections from markdown files and a JSON file with that data is available in
 [this gist](https://gist.github.com/samuelcolvin/4b5bb9bb163b1122ff17e29e48c10992).
 
-[PostgreSQL with pgvector](https://github.com/pgvector/pgvector) is used as the search database.
-
-The easiest way to download and run pgvector is using Docker:
+[PostgreSQL with pgvector](https://github.com/pgvector/pgvector) is used as the search database, the easiest way to download and run pgvector is using Docker:
 
 ```bash
 mkdir postgres-data
 docker run --rm -e POSTGRES_PASSWORD=postgres -p 54320:5432 -v `pwd`/postgres-data:/var/lib/postgresql/data pgvector/pgvector:pg17
 ```
 
-We run postgres port `54320` to avoid conflicts with any other postgres instances you may have running.
+We run postgres on port `54320` to avoid conflicts with any other postgres instances you may have running.
 We also mount the postgresql `data` directory locally to persist the data if you need to stop and restart the container.
 
-Wit that running, we can then build the search database with (**WARNING**: this requires `OPENAI_API_KEY` and will calling the OpenAI embedding API around 300 times to generate embeddings for each section of the documentation):
+With that running, we can build the search database with (**WARNING**: this requires the `OPENAI_API_KEY` env variable and will calling the OpenAI embedding API around 300 times to generate embeddings for each section of the documentation):
 
 ```bash
 uv run --extra examples -m examples.rag build
