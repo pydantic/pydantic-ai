@@ -62,7 +62,7 @@ def test_custom_result_args_model():
 def test_result_type():
     agent = Agent(deps=None, result_type=tuple[str, str])
     result = agent.run_sync('x', model=TestModel())
-    assert result.response == ('b', 'b')
+    assert result.response == ('a', 'a')
 
 
 def test_retriever_retry():
@@ -80,7 +80,7 @@ def test_retriever_retry():
 
     result = agent.run_sync('Hello', model=TestModel())
     assert call_count == 2
-    assert result.response == snapshot('{"my_ret":"2"}')
+    assert result.response == snapshot('{"my_ret":"1"}')
     assert result.message_history == snapshot(
         [
             UserPrompt(content='Hello', timestamp=IsNow()),
@@ -89,9 +89,9 @@ def test_retriever_retry():
                 timestamp=IsNow(),
             ),
             RetryPrompt(tool_name='my_ret', content='First call failed', timestamp=IsNow()),
-            LLMToolCalls(calls=[ToolCall.from_object('my_ret', {'x': 1})], timestamp=IsNow()),
-            ToolReturn(tool_name='my_ret', content='2', timestamp=IsNow()),
-            LLMResponse(content='{"my_ret":"2"}', timestamp=IsNow()),
+            LLMToolCalls(calls=[ToolCall.from_object('my_ret', {'x': 0})], timestamp=IsNow()),
+            ToolReturn(tool_name='my_ret', content='1', timestamp=IsNow()),
+            LLMResponse(content='{"my_ret":"1"}', timestamp=IsNow()),
         ]
     )
 
@@ -167,7 +167,7 @@ def test_json_schema_test_data():
             'my_lit_strs': 'a',
             'my_any': 'g',
             'union': 6,
-            'optional': None,
+            'optional': 'g',
             'with_example': 1234,
             'max_len_zero': '',
             'is_null': None,
