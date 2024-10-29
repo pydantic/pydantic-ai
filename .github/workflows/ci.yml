@@ -97,9 +97,6 @@ jobs:
     needs: [lint, test, coverage]
     runs-on: ubuntu-latest
 
-    outputs:
-      result: ${{ steps.all-green.outputs.result }}
-
     steps:
       - name: Decide whether the needed jobs succeeded or failed
         uses: re-actors/alls-green@release/v1
@@ -108,7 +105,7 @@ jobs:
 
   release:
     needs: [check]
-    if: "needs.check.outputs.result == 'success' && startsWith(github.ref, 'refs/tags/')"
+    if: "success() && startsWith(github.ref, 'refs/tags/')"
     runs-on: ubuntu-latest
     environment: release
 
