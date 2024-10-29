@@ -2,6 +2,7 @@
 
 from __future__ import annotations as _annotations
 
+from datetime import timezone
 from typing import Annotated, Any, Literal
 
 import pytest
@@ -83,15 +84,15 @@ def test_retriever_retry():
     assert result.response == snapshot('{"my_ret":"1"}')
     assert result.message_history == snapshot(
         [
-            UserPrompt(content='Hello', timestamp=IsNow()),
+            UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
             LLMToolCalls(
                 calls=[ToolCall.from_object('my_ret', {'x': 0})],
-                timestamp=IsNow(),
+                timestamp=IsNow(tz=timezone.utc),
             ),
-            RetryPrompt(tool_name='my_ret', content='First call failed', timestamp=IsNow()),
-            LLMToolCalls(calls=[ToolCall.from_object('my_ret', {'x': 0})], timestamp=IsNow()),
-            ToolReturn(tool_name='my_ret', content='1', timestamp=IsNow()),
-            LLMResponse(content='{"my_ret":"1"}', timestamp=IsNow()),
+            RetryPrompt(tool_name='my_ret', content='First call failed', timestamp=IsNow(tz=timezone.utc)),
+            LLMToolCalls(calls=[ToolCall.from_object('my_ret', {'x': 0})], timestamp=IsNow(tz=timezone.utc)),
+            ToolReturn(tool_name='my_ret', content='1', timestamp=IsNow(tz=timezone.utc)),
+            LLMResponse(content='{"my_ret":"1"}', timestamp=IsNow(tz=timezone.utc)),
         ]
     )
 

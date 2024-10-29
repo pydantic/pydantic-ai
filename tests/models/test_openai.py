@@ -115,7 +115,7 @@ async def test_request_structured_response():
     assert result.response == [1, 2, 123]
     assert result.message_history == snapshot(
         [
-            UserPrompt(content='Hello', timestamp=IsNow()),
+            UserPrompt(content='Hello', timestamp=IsNow(tz=datetime.timezone.utc)),
             LLMToolCalls(
                 calls=[
                     ToolCall(
@@ -124,7 +124,7 @@ async def test_request_structured_response():
                         tool_id='123',
                     )
                 ],
-                timestamp=datetime.datetime(2024, 1, 1),
+                timestamp=datetime.datetime(2024, 1, 1, tzinfo=datetime.timezone.utc),
             ),
         ]
     )
@@ -188,7 +188,7 @@ async def test_request_tool_call():
     assert result.message_history == snapshot(
         [
             SystemPrompt(content='this is the system prompt'),
-            UserPrompt(content='Hello', timestamp=IsNow()),
+            UserPrompt(content='Hello', timestamp=IsNow(tz=datetime.timezone.utc)),
             LLMToolCalls(
                 calls=[
                     ToolCall(
@@ -197,10 +197,13 @@ async def test_request_tool_call():
                         tool_id='1',
                     )
                 ],
-                timestamp=datetime.datetime(2024, 1, 1, 0, 0),
+                timestamp=datetime.datetime(2024, 1, 1, 0, 0, tzinfo=datetime.timezone.utc),
             ),
             RetryPrompt(
-                tool_name='get_location', content='Wrong location, please try again', tool_id='1', timestamp=IsNow()
+                tool_name='get_location',
+                content='Wrong location, please try again',
+                tool_id='1',
+                timestamp=IsNow(tz=datetime.timezone.utc),
             ),
             LLMToolCalls(
                 calls=[
@@ -210,15 +213,17 @@ async def test_request_tool_call():
                         tool_id='2',
                     )
                 ],
-                timestamp=datetime.datetime(2024, 1, 1, 0, 0),
+                timestamp=datetime.datetime(2024, 1, 1, 0, 0, tzinfo=datetime.timezone.utc),
             ),
             ToolReturn(
                 tool_name='get_location',
                 content='{"lat": 51, "lng": 0}',
                 tool_id='2',
-                timestamp=IsNow(),
+                timestamp=IsNow(tz=datetime.timezone.utc),
             ),
-            LLMResponse(content='final response', timestamp=datetime.datetime(2024, 1, 1, 0, 0)),
+            LLMResponse(
+                content='final response', timestamp=datetime.datetime(2024, 1, 1, 0, 0, tzinfo=datetime.timezone.utc)
+            ),
         ]
     )
     assert result.cost == snapshot(

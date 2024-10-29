@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 import json
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Annotated, Any, Literal, Union
 
 import pydantic
@@ -20,7 +20,7 @@ class SystemPrompt:
 @dataclass
 class UserPrompt:
     content: str
-    timestamp: datetime = field(default_factory=datetime.now)
+    timestamp: datetime = field(default_factory=lambda: datetime.now(tz=timezone.utc))
     role: Literal['user'] = 'user'
 
 
@@ -32,7 +32,7 @@ class ToolReturn:
     tool_name: str
     content: str | dict[str, Any]
     tool_id: str | None = None
-    timestamp: datetime = field(default_factory=datetime.now)
+    timestamp: datetime = field(default_factory=lambda: datetime.now(tz=timezone.utc))
     role: Literal['tool-return'] = 'tool-return'
 
     def model_response_str(self) -> str:
@@ -54,7 +54,7 @@ class RetryPrompt:
     content: list[pydantic_core.ErrorDetails] | str
     tool_name: str | None = None
     tool_id: str | None = None
-    timestamp: datetime = field(default_factory=datetime.now)
+    timestamp: datetime = field(default_factory=lambda: datetime.now(tz=timezone.utc))
     role: Literal['retry-prompt'] = 'retry-prompt'
 
     def model_response(self) -> str:
@@ -68,7 +68,7 @@ class RetryPrompt:
 @dataclass
 class LLMResponse:
     content: str
-    timestamp: datetime = field(default_factory=datetime.now)
+    timestamp: datetime = field(default_factory=lambda: datetime.now(tz=timezone.utc))
     role: Literal['llm-response'] = 'llm-response'
 
 
@@ -102,7 +102,7 @@ class ToolCall:
 @dataclass
 class LLMToolCalls:
     calls: list[ToolCall]
-    timestamp: datetime = field(default_factory=datetime.now)
+    timestamp: datetime = field(default_factory=lambda: datetime.now(tz=timezone.utc))
     role: Literal['llm-tool-calls'] = 'llm-tool-calls'
 
 
