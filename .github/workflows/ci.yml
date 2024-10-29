@@ -12,6 +12,9 @@ env:
   CI: true
   RICH_COLUMNS: 120
 
+permissions:
+  contents: read
+
 jobs:
   lint:
     runs-on: ubuntu-latest
