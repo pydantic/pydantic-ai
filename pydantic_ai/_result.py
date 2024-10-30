@@ -1,14 +1,16 @@
 from __future__ import annotations as _annotations
 
 import inspect
+import sys
+import types
 from collections.abc import Awaitable
 from dataclasses import dataclass
-from typing import Any, Callable, Generic, Union, cast, get_args
+from typing import Any, Callable, Generic, Union, cast, get_args, get_origin
 
 from pydantic import TypeAdapter, ValidationError
-from typing_extensions import Self, TypedDict
+from typing_extensions import Self, TypeAliasType, TypedDict
 
-from . import _pydantic, _utils, messages
+from . import _utils, messages
 from .messages import LLMToolCalls, ToolCall
 from .shared import AgentDeps, CallContext, ModelRetry, ResultData
 
@@ -106,7 +108,7 @@ class ResultSchema(Generic[ResultData]):
             )
 
         tools: dict[str, ResultTool[ResultData]] = {}
-        if args := union_args(response_type):
+        if args := get_union_args(response_type):
             for arg in args:
                 tool_name = union_tool_name(name, arg)
                 tools[tool_name] = _build_tool(arg, tool_name, True)
@@ -204,10 +206,11 @@ def union_arg_name(union_arg: Any) -> str:
 
 def extract_str_from_union(response_type: Any) -> _utils.Option[Any]:
     """Extract the string type from a Union, return the remaining union or remaining type."""
-    if _pydantic.is_union(response_type) and any(t is str for t in get_args(response_type)):
+    union_args = get_union_args(response_type)
+    if any(t is str for t in union_args):
         remain_args: list[Any] = []
         includes_str = False
-        for arg in get_args(response_type):
+        for arg in union_args:
             if arg is str:
                 includes_str = True
             else:
@@ -219,9 +222,24 @@ def extract_str_from_union(response_type: Any) -> _utils.Option[Any]:
                 return _utils.Some(Union[tuple(remain_args)])
 
 
-def union_args(response_type: Any) -> tuple[Any, ...]:
+def get_union_args(tp: Any) -> tuple[Any, ...]:
     """Extract the arguments of a Union type if `response_type` is a union, otherwise return an empty union."""
-    if _pydantic.is_union(response_type):
-        return get_args(response_type)
+    if isinstance(tp, TypeAliasType):
+        tp = tp.__value__
+
+    origin = get_origin(tp)
+    if origin_is_union(origin):
+        return get_args(tp)
     else:
         return ()
+
+
+if sys.version_info < (3, 10):
+
+    def origin_is_union(tp: type[Any] | None) -> bool:
+        return tp is Union
+
+else:
+
+    def origin_is_union(tp: type[Any] | None) -> bool:
+        return tp is Union or tp is types.UnionType
