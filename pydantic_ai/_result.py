@@ -239,7 +239,6 @@ if sys.version_info < (3, 10):
     def origin_is_union(tp: type[Any] | None) -> bool:
         return tp is Union
 
-
 else:
 
     def origin_is_union(tp: type[Any] | None) -> bool:

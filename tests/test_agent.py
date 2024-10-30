@@ -1,3 +1,4 @@
+import sys
 from datetime import timezone
 from typing import Any, Callable, Union
 
@@ -257,12 +258,23 @@ def test_response_union_allow_str(input_union_callable: Callable[[], Any]):
 
 # pyright: reportUnknownMemberType=false, reportUnknownVariableType=false
 @pytest.mark.parametrize(
-    'union_code', ['ResultType = Union[Foo, Bar]', 'ResultType = Foo | Bar', 'type ResultType = Foo | Bar']
+    'union_code',
+    [
+        pytest.param('ResultType = Union[Foo, Bar]'),
+        pytest.param('ResultType = Foo | Bar', marks=pytest.mark.skipif(sys.version_info < (3, 10), reason='3.10+')),
+        pytest.param(
+            'ResultType: TypeAlias = Foo | Bar',
+            marks=pytest.mark.skipif(sys.version_info < (3, 10), reason='Python 3.10+'),
+        ),
+        pytest.param(
+            'type ResultType = Foo | Bar', marks=pytest.mark.skipif(sys.version_info < (3, 12), reason='3.12+')
+        ),
+    ],
 )
 def test_response_multiple_return_tools(create_module: Callable[[str], Any], union_code: str):
     module_code = f'''
 from pydantic import BaseModel
-from typing import Union
+from typing import Union, TypeAlias
 
 class Foo(BaseModel):
     a: int
@@ -277,10 +289,7 @@ class Bar(BaseModel):
 {union_code}
     '''
 
-    try:
-        mod = create_module(module_code)
-    except (TypeError, SyntaxError):
-        raise pytest.skip(f'Python version does not support `{union_code}` syntax')
+    mod = create_module(module_code)
 
     m = TestModel()
     agent = Agent(m, result_type=mod.ResultType)
