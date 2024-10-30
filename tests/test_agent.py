@@ -274,7 +274,8 @@ def test_response_union_allow_str(input_union_callable: Callable[[], Any]):
 def test_response_multiple_return_tools(create_module: Callable[[str], Any], union_code: str):
     module_code = f'''
 from pydantic import BaseModel
-from typing import Union, TypeAlias
+from typing import Union
+from typing_extensions import TypeAlias
 
 class Foo(BaseModel):
     a: int
