@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Literal
 
 from httpx import AsyncClient as AsyncHTTPClient
@@ -91,7 +91,7 @@ class OpenAIAgentModel(AgentModel):
     @staticmethod
     def process_response(response: chat.ChatCompletion) -> LLMMessage:
         choice = response.choices[0]
-        timestamp = datetime.fromtimestamp(response.created)
+        timestamp = datetime.fromtimestamp(response.created, tz=timezone.utc)
         if choice.message.tool_calls is not None:
             return LLMToolCalls(
                 [ToolCall.from_json(c.function.name, c.function.arguments, c.id) for c in choice.message.tool_calls],

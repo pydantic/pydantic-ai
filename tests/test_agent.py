@@ -1,3 +1,4 @@
+from datetime import timezone
 from typing import Any, Callable, Union
 
 import pytest
@@ -66,10 +67,10 @@ def test_result_pydantic_model_retry():
     assert result.response.model_dump() == {'a': 42, 'b': 'foo'}
     assert result.message_history == snapshot(
         [
-            UserPrompt(content='Hello', timestamp=IsNow()),
+            UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
             LLMToolCalls(
                 calls=[ToolCall.from_json('final_result', '{"a": "wrong", "b": "foo"}')],
-                timestamp=IsNow(),
+                timestamp=IsNow(tz=timezone.utc),
             ),
             RetryPrompt(
                 tool_name='final_result',
@@ -81,11 +82,11 @@ def test_result_pydantic_model_retry():
                         'input': 'wrong',
                     }
                 ],
-                timestamp=IsNow(),
+                timestamp=IsNow(tz=timezone.utc),
             ),
             LLMToolCalls(
                 calls=[ToolCall.from_json('final_result', '{"a": 42, "b": "foo"}')],
-                timestamp=IsNow(),
+                timestamp=IsNow(tz=timezone.utc),
             ),
         ]
     )
@@ -115,10 +116,14 @@ def test_result_validator():
     assert result.response.model_dump() == {'a': 42, 'b': 'foo'}
     assert result.message_history == snapshot(
         [
-            UserPrompt(content='Hello', timestamp=IsNow()),
-            LLMToolCalls(calls=[ToolCall.from_json('final_result', '{"a": 41, "b": "foo"}')], timestamp=IsNow()),
-            RetryPrompt(tool_name='final_result', content='"a" should be 42', timestamp=IsNow()),
-            LLMToolCalls(calls=[ToolCall.from_json('final_result', '{"a": 42, "b": "foo"}')], timestamp=IsNow()),
+            UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
+            LLMToolCalls(
+                calls=[ToolCall.from_json('final_result', '{"a": 41, "b": "foo"}')], timestamp=IsNow(tz=timezone.utc)
+            ),
+            RetryPrompt(tool_name='final_result', content='"a" should be 42', timestamp=IsNow(tz=timezone.utc)),
+            LLMToolCalls(
+                calls=[ToolCall.from_json('final_result', '{"a": 42, "b": "foo"}')], timestamp=IsNow(tz=timezone.utc)
+            ),
         ]
     )
 
@@ -144,15 +149,15 @@ def test_plain_response():
     assert call_index == 2
     assert result.message_history == snapshot(
         [
-            UserPrompt(content='Hello', timestamp=IsNow()),
-            LLMResponse(content='hello', timestamp=IsNow()),
+            UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
+            LLMResponse(content='hello', timestamp=IsNow(tz=timezone.utc)),
             RetryPrompt(
                 content='Plain text responses are not permitted, please call one of the functions instead.',
-                timestamp=IsNow(),
+                timestamp=IsNow(tz=timezone.utc),
             ),
             LLMToolCalls(
                 calls=[ToolCall(tool_name='final_result', args=ArgsJson(args_json='{"response": ["foo", "bar"]}'))],
-                timestamp=IsNow(),
+                timestamp=IsNow(tz=timezone.utc),
             ),
         ]
     )

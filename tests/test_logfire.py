@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 from dataclasses import dataclass
+from datetime import timezone
 from typing import Any, Callable
 
 import pytest
@@ -93,7 +94,7 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary]) -> None:
             'model_response': IsJson(
                 {
                     'calls': [{'tool_name': 'my_ret', 'args': {'args_object': {'x': 0}}, 'tool_id': None}],
-                    'timestamp': IsStr() & IsNow(iso_string=True),
+                    'timestamp': IsStr() & IsNow(iso_string=True, tz=timezone.utc),
                     'role': 'llm-tool-calls',
                 }
             ),

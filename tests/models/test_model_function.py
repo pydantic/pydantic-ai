@@ -1,8 +1,11 @@
 import json
+import re
 from dataclasses import asdict
+from datetime import timezone
 
 import pydantic_core
 import pytest
+from dirty_equals import IsStr
 from inline_snapshot import snapshot
 from pydantic import BaseModel
 
@@ -38,12 +41,12 @@ def test_simple():
         [
             UserPrompt(
                 content='Hello',
-                timestamp=IsNow(),
+                timestamp=IsNow(tz=timezone.utc),
                 role='user',
             ),
             LLMResponse(
                 content="content='Hello' role='user' message_count=1",
-                timestamp=IsNow(),
+                timestamp=IsNow(tz=timezone.utc),
                 role='llm-response',
             ),
         ]
@@ -55,22 +58,22 @@ def test_simple():
         [
             UserPrompt(
                 content='Hello',
-                timestamp=IsNow(),
+                timestamp=IsNow(tz=timezone.utc),
                 role='user',
             ),
             LLMResponse(
                 content="content='Hello' role='user' message_count=1",
-                timestamp=IsNow(),
+                timestamp=IsNow(tz=timezone.utc),
                 role='llm-response',
             ),
             UserPrompt(
                 content='World',
-                timestamp=IsNow(),
+                timestamp=IsNow(tz=timezone.utc),
                 role='user',
             ),
             LLMResponse(
                 content="content='World' role='user' message_count=3",
-                timestamp=IsNow(),
+                timestamp=IsNow(tz=timezone.utc),
                 role='llm-response',
             ),
         ]
@@ -128,16 +131,19 @@ def test_weather():
         [
             UserPrompt(
                 content='London',
-                timestamp=IsNow(),
+                timestamp=IsNow(tz=timezone.utc),
                 role='user',
             ),
             LLMToolCalls(
                 calls=[ToolCall.from_json('get_location', '{"location_description": "London"}')],
-                timestamp=IsNow(),
+                timestamp=IsNow(tz=timezone.utc),
                 role='llm-tool-calls',
             ),
             ToolReturn(
-                tool_name='get_location', content='{"lat": 51, "lng": 0}', timestamp=IsNow(), role='tool-return'
+                tool_name='get_location',
+                content='{"lat": 51, "lng": 0}',
+                timestamp=IsNow(tz=timezone.utc),
+                role='tool-return',
             ),
             LLMToolCalls(
                 calls=[
@@ -146,18 +152,18 @@ def test_weather():
                         '{"lat": 51, "lng": 0}',
                     )
                 ],
-                timestamp=IsNow(),
+                timestamp=IsNow(tz=timezone.utc),
                 role='llm-tool-calls',
             ),
             ToolReturn(
                 tool_name='get_weather',
                 content='Raining',
-                timestamp=IsNow(),
+                timestamp=IsNow(tz=timezone.utc),
                 role='tool-return',
             ),
             LLMResponse(
                 content='Raining in London',
-                timestamp=IsNow(),
+                timestamp=IsNow(tz=timezone.utc),
                 role='llm-response',
             ),
         ]
@@ -198,12 +204,14 @@ def get_var_args(ctx: CallContext[int], *args: int):
 def test_var_args():
     result = var_args_agent.run_sync('{"function": "get_var_args", "arguments": {"args": [1, 2, 3]}}')
     response_data = json.loads(result.response)
+    # Can't parse ISO timestamps with trailing 'Z' in older versions of python:
+    response_data['timestamp'] = re.sub('Z$', '+00:00', response_data['timestamp'])
     assert response_data == snapshot(
         {
             'tool_name': 'get_var_args',
             'content': '{"args": [1, 2, 3]}',
             'tool_id': None,
-            'timestamp': IsNow(iso_string=True),
+            'timestamp': IsStr() & IsNow(iso_string=True, tz=timezone.utc),
             'role': 'tool-return',
         }
     )
@@ -317,7 +325,7 @@ def test_call_all():
     assert result.message_history == snapshot(
         [
             SystemPrompt(content='foobar'),
-            UserPrompt(content='Hello', timestamp=IsNow()),
+            UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
             LLMToolCalls(
                 calls=[
                     ToolCall.from_object('foo', {'x': 0}),
@@ -326,14 +334,16 @@ def test_call_all():
                     ToolCall.from_object('qux', {'x': 0}),
                     ToolCall.from_object('quz', {'x': 'a'}),
                 ],
-                timestamp=IsNow(),
+                timestamp=IsNow(tz=timezone.utc),
             ),
-            ToolReturn(tool_name='foo', content='1', timestamp=IsNow()),
-            ToolReturn(tool_name='bar', content='2', timestamp=IsNow()),
-            ToolReturn(tool_name='baz', content='3', timestamp=IsNow()),
-            ToolReturn(tool_name='qux', content='4', timestamp=IsNow()),
-            ToolReturn(tool_name='quz', content='a', timestamp=IsNow()),
-            LLMResponse(content='{"foo":"1","bar":"2","baz":"3","qux":"4","quz":"a"}', timestamp=IsNow()),
+            ToolReturn(tool_name='foo', content='1', timestamp=IsNow(tz=timezone.utc)),
+            ToolReturn(tool_name='bar', content='2', timestamp=IsNow(tz=timezone.utc)),
+            ToolReturn(tool_name='baz', content='3', timestamp=IsNow(tz=timezone.utc)),
+            ToolReturn(tool_name='qux', content='4', timestamp=IsNow(tz=timezone.utc)),
+            ToolReturn(tool_name='quz', content='a', timestamp=IsNow(tz=timezone.utc)),
+            LLMResponse(
+                content='{"foo":"1","bar":"2","baz":"3","qux":"4","quz":"a"}', timestamp=IsNow(tz=timezone.utc)
+            ),
         ]
     )
 

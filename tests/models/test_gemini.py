@@ -3,6 +3,7 @@ from __future__ import annotations as _annotations
 import json
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import timezone
 
 import httpx
 import pytest
@@ -361,8 +362,8 @@ async def test_request_simple_success(get_gemini_client: GetGeminiClient):
     assert result.response == 'Hello world'
     assert result.message_history == snapshot(
         [
-            UserPrompt(content='Hello', timestamp=IsNow()),
-            LLMResponse(content='Hello world', timestamp=IsNow()),
+            UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
+            LLMResponse(content='Hello world', timestamp=IsNow(tz=timezone.utc)),
         ]
     )
     assert result.cost == snapshot(Cost(request_tokens=1, response_tokens=2, total_tokens=3))
@@ -382,7 +383,7 @@ async def test_request_structured_response(get_gemini_client: GetGeminiClient):
     assert result.response == [1, 2, 123]
     assert result.message_history == snapshot(
         [
-            UserPrompt(content='Hello', timestamp=IsNow()),
+            UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
             LLMToolCalls(
                 calls=[
                     ToolCall(
@@ -390,7 +391,7 @@ async def test_request_structured_response(get_gemini_client: GetGeminiClient):
                         args=ArgsObject(args_object={'response': [1, 2, 123]}),
                     )
                 ],
-                timestamp=IsNow(),
+                timestamp=IsNow(tz=timezone.utc),
             ),
         ]
     )
@@ -426,7 +427,7 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
     assert result.message_history == snapshot(
         [
             SystemPrompt(content='this is the system prompt'),
-            UserPrompt(content='Hello', timestamp=IsNow()),
+            UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
             LLMToolCalls(
                 calls=[
                     ToolCall(
@@ -434,9 +435,11 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
                         args=ArgsObject(args_object={'loc_name': 'San Fransisco'}),
                     )
                 ],
-                timestamp=IsNow(),
+                timestamp=IsNow(tz=timezone.utc),
             ),
-            RetryPrompt(tool_name='get_location', content='Wrong location, please try again', timestamp=IsNow()),
+            RetryPrompt(
+                tool_name='get_location', content='Wrong location, please try again', timestamp=IsNow(tz=timezone.utc)
+            ),
             LLMToolCalls(
                 calls=[
                     ToolCall(
@@ -444,10 +447,10 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
                         args=ArgsObject(args_object={'loc_name': 'London'}),
                     )
                 ],
-                timestamp=IsNow(),
+                timestamp=IsNow(tz=timezone.utc),
             ),
-            ToolReturn(tool_name='get_location', content='{"lat": 51, "lng": 0}', timestamp=IsNow()),
-            LLMResponse(content='final response', timestamp=IsNow()),
+            ToolReturn(tool_name='get_location', content='{"lat": 51, "lng": 0}', timestamp=IsNow(tz=timezone.utc)),
+            LLMResponse(content='final response', timestamp=IsNow(tz=timezone.utc)),
         ]
     )
     assert result.cost == snapshot(Cost(request_tokens=3, response_tokens=6, total_tokens=9))
