@@ -255,23 +255,35 @@ def test_response_union_allow_str(input_union_callable: Callable[[], Any]):
     )
 
 
+# pyright: reportUnknownMemberType=false, reportUnknownVariableType=false
+@pytest.mark.parametrize(
+    'union_code', ['ResultType = Union[Foo, Bar]', 'ResultType = Foo | Bar', 'type ResultType = Foo | Bar']
+)
+def test_response_multiple_return_tools(create_module: Callable[[str], Any], union_code: str):
+    module_code = f'''
+from pydantic import BaseModel
+from typing import Union
+
+class Foo(BaseModel):
+    a: int
+    b: str
+
+
 class Bar(BaseModel):
     """This is a bar model."""
 
     b: str
 
+{union_code}
+    '''
 
-@pytest.mark.parametrize(
-    'input_union_callable', [lambda: Union[Foo, Bar], lambda: Foo | Bar], ids=['Union[Foo, Bar]', 'Foo | Bar']
-)
-def test_response_multiple_return_tools(input_union_callable: Callable[[], Any]):
     try:
-        union = input_union_callable()
-    except TypeError:
-        raise pytest.skip('Python version does not support `|` syntax for unions')
+        mod = create_module(module_code)
+    except (TypeError, SyntaxError):
+        raise pytest.skip(f'Python version does not support `{union_code}` syntax')
 
     m = TestModel()
-    agent: Agent[None, Union[Foo, Bar]] = Agent(m, result_type=union)
+    agent = Agent(m, result_type=mod.ResultType)
     got_tool_call_name = 'unset'
 
     @agent.result_validator
@@ -281,7 +293,7 @@ def test_response_multiple_return_tools(input_union_callable: Callable[[], Any])
         return r
 
     result = agent.run_sync('Hello')
-    assert result.response == Foo(a=0, b='a')
+    assert result.response == mod.Foo(a=0, b='a')
     assert got_tool_call_name == snapshot('final_result_Foo')
 
     assert m.agent_model_retrievers == snapshot({})
@@ -324,5 +336,5 @@ def test_response_multiple_return_tools(input_union_callable: Callable[[], Any])
     )
 
     result = agent.run_sync('Hello', model=TestModel(seed=1))
-    assert result.response == Bar(b='b')
+    assert result.response == mod.Bar(b='b')
     assert got_tool_call_name == snapshot('final_result_Bar')

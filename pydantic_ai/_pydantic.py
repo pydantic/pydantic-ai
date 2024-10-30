@@ -26,12 +26,7 @@ if TYPE_CHECKING:
     from .shared import AgentDeps
 
 
-__all__ = 'function_schema', 'LazyTypeAdapter', 'is_union'
-
-
-def is_union(tp: Any) -> bool:
-    origin = get_origin(tp)
-    return _typing_extra.origin_is_union(origin)
+__all__ = 'function_schema', 'LazyTypeAdapter'
 
 
 class FunctionSchema(TypedDict):

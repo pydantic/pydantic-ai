@@ -417,47 +417,48 @@ class _GeminiJsonSchema:
         self.defs = self.schema.pop('$defs', {})
 
     def simplify(self) -> dict[str, Any]:
-        self._simplify(self.schema, allow_ref=True)
+        self._simplify(self.schema, refs_stack=())
         return self.schema
 
-    def _simplify(self, schema: dict[str, Any], allow_ref: bool) -> None:
+    def _simplify(self, schema: dict[str, Any], refs_stack: tuple[str, ...]) -> None:
         schema.pop('title', None)
         schema.pop('default', None)
         if ref := schema.pop('$ref', None):
-            if not allow_ref:
-                raise shared.UserError('Recursive `$ref`s in JSON Schema are not supported by Gemini')
             # noinspection PyTypeChecker
             key = re.sub(r'^#/\$defs/', '', ref)
+            if key in refs_stack:
+                raise shared.UserError('Recursive `$ref`s in JSON Schema are not supported by Gemini')
+            refs_stack += (key,)
             schema_def = self.defs[key]
-            self._simplify(schema_def, allow_ref=False)
+            self._simplify(schema_def, refs_stack)
             schema.update(schema_def)
             return
 
         if any_of := schema.get('anyOf'):
             for schema in any_of:
-                self._simplify(schema, allow_ref)
+                self._simplify(schema, refs_stack)
 
         type_ = schema.get('type')
 
         if type_ == 'object':
-            self._object(schema, allow_ref)
+            self._object(schema, refs_stack)
         elif type_ == 'array':
-            return self._array(schema, allow_ref)
+            return self._array(schema, refs_stack)
 
-    def _object(self, schema: dict[str, Any], allow_ref: bool) -> None:
+    def _object(self, schema: dict[str, Any], refs_stack: tuple[str, ...]) -> None:
         ad_props = schema.pop('additionalProperties', None)
         if ad_props:
             raise shared.UserError('Additional properties in JSON Schema are not supported by Gemini')
 
         if properties := schema.get('properties'):  # pragma: no branch
             for value in properties.values():
-                self._simplify(value, allow_ref)
+                self._simplify(value, refs_stack)
 
-    def _array(self, schema: dict[str, Any], allow_ref: bool) -> None:
+    def _array(self, schema: dict[str, Any], refs_stack: tuple[str, ...]) -> None:
         if prefix_items := schema.get('prefixItems'):
             # TODO I think this not is supported by Gemini, maybe we should raise an error?
             for prefix_item in prefix_items:
-                self._simplify(prefix_item, allow_ref)
+                self._simplify(prefix_item, refs_stack)
 
         if items_schema := schema.get('items'):  # pragma: no branch
-            self._simplify(items_schema, allow_ref)
+            self._simplify(items_schema, refs_stack)
