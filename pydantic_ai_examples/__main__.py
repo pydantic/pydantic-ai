@@ -2,6 +2,7 @@
 
 See README.md for more information.
 """
+
 import argparse
 import sys
 from pathlib import Path
@@ -10,7 +11,9 @@ from pathlib import Path
 def cli():
     this_dir = Path(__file__).parent
 
-    parser = argparse.ArgumentParser(prog='pydantic_ai_examples', description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
+    parser = argparse.ArgumentParser(
+        prog='pydantic_ai_examples', description=__doc__, formatter_class=argparse.RawTextHelpFormatter
+    )
     parser.add_argument('-v', '--version', action='store_true', help='show the version and exit')
     parser.add_argument('--copy-to', dest='DEST', help='Copy all examples to a new directory')
 

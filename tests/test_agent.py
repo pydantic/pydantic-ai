@@ -9,16 +9,20 @@ from pydantic import BaseModel
 from pydantic_ai import Agent, CallContext, ModelRetry
 from pydantic_ai.messages import (
     ArgsJson,
+    ArgsObject,
     LLMMessage,
     LLMResponse,
     LLMToolCalls,
     Message,
     RetryPrompt,
+    SystemPrompt,
     ToolCall,
+    ToolReturn,
     UserPrompt,
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.shared import Cost, RunResult
 from tests.conftest import IsNow
 
 
@@ -348,3 +352,57 @@ class Bar(BaseModel):
     result = agent.run_sync('Hello', model=TestModel(seed=1))
     assert result.response == mod.Bar(b='b')
     assert got_tool_call_name == snapshot('final_result_Bar')
+
+
+def test_run_with_history():
+    m = TestModel()
+
+    agent = Agent(m, deps=None, system_prompt='Foobar')
+
+    @agent.retriever_plain
+    async def ret_a(x: str) -> str:
+        return f'{x}-apple'
+
+    result = agent.run_sync('Hello')
+    assert result == snapshot(
+        RunResult(
+            response='{"ret_a":"a-apple"}',
+            message_history=[
+                SystemPrompt(content='Foobar'),
+                UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
+                LLMToolCalls(
+                    calls=[ToolCall(tool_name='ret_a', args=ArgsObject(args_object={'x': 'a'}))],
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
+                ToolReturn(tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc)),
+                LLMResponse(content='{"ret_a":"a-apple"}', timestamp=IsNow(tz=timezone.utc)),
+            ],
+            cost=Cost(),
+        )
+    )
+
+    result = agent.run_sync('Hello again', message_history=result.message_history)
+    assert result == snapshot(
+        RunResult(
+            response='{"ret_a":"a-apple"}',
+            message_history=[
+                SystemPrompt(content='Foobar'),
+                UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
+                LLMToolCalls(
+                    calls=[ToolCall(tool_name='ret_a', args=ArgsObject(args_object={'x': 'a'}))],
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
+                ToolReturn(tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc)),
+                LLMResponse(content='{"ret_a":"a-apple"}', timestamp=IsNow(tz=timezone.utc)),
+                # second call, notice no repeated system prompt
+                UserPrompt(content='Hello again', timestamp=IsNow(tz=timezone.utc)),
+                LLMToolCalls(
+                    calls=[ToolCall(tool_name='ret_a', args=ArgsObject(args_object={'x': 'a'}))],
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
+                ToolReturn(tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc)),
+                LLMResponse(content='{"ret_a":"a-apple"}', timestamp=IsNow(tz=timezone.utc)),
+            ],
+            cost=Cost(),
+        )
+    )

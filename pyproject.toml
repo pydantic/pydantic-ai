@@ -48,7 +48,10 @@ logfire = [
 ]
 examples = [
     "asyncpg>=0.30.0",
+    "fastapi>=0.115.4",
     "logfire[asyncpg]>=1.2.0",
+    "python-multipart>=0.0.17",
+    "uvicorn>=0.32.0",
 ]
 
 [dependency-groups]
@@ -77,7 +80,7 @@ target-version = "py39"
 include = [
     "pydantic_ai/**/*.py",
     "tests/**/*.py",
-    "examples/**/*.py",
+    "pydantic_ai_examples/**/*.py",
 ]
 
 [tool.ruff.lint]
@@ -110,7 +113,7 @@ quote-style = "single"
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**.py" = ["D"]
-"examples/**.py" = ["D103"]
+"pydantic_ai_examples/**.py" = ["D103"]
 
 [tool.pyright]
 typeCheckingMode = "strict"

@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from typing import Literal
 
 from httpx import AsyncClient as AsyncHTTPClient
-from openai import AsyncOpenAI
+from openai import NOT_GIVEN, AsyncOpenAI
 from openai.types import ChatModel, chat
 from typing_extensions import assert_never
 
@@ -104,7 +104,7 @@ class OpenAIAgentModel(AgentModel):
     async def completions_create(self, messages: list[Message]) -> chat.ChatCompletion:
         # standalone function to make it easier to override
         if not self.tools:
-            tool_choice: Literal['none', 'required', 'auto'] = 'none'
+            tool_choice: Literal['none', 'required', 'auto'] | None = None
         elif not self.allow_text_result:
             tool_choice = 'required'
         else:
@@ -115,9 +115,9 @@ class OpenAIAgentModel(AgentModel):
             model=self.model_name,
             messages=openai_messages,
             n=1,
-            parallel_tool_calls=True,
-            tools=self.tools,
-            tool_choice=tool_choice,
+            parallel_tool_calls=True if self.tools else NOT_GIVEN,
+            tools=self.tools or NOT_GIVEN,
+            tool_choice=tool_choice or NOT_GIVEN,
         )
 
     @staticmethod

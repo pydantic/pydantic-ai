@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chat App</title>
+  <style>
+    main {
+      font-family: Verdana, sans-serif;
+      max-width: 600px;
+      margin: 40px auto;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      padding: 20px 30px;
+    }
+    input {
+      width: calc(100% - 22px);
+      padding: 10px;
+      margin-top: 10px;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+    }
+    button {
+      margin: 10px 0 0 auto;
+      padding: 8px 15px;
+      background-color: #007bff;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      display: block;
+    }
+    #conversation {
+      margin: 10px 5px;
+    }
+    #conversation div {
+      margin: 10px 0 0;
+      padding-top: 5px;
+      border-top: 1px solid #ccc;
+    }
+    #conversation .user::before {
+      content: 'You asked: ';
+      font-weight: bold;
+      display: block;
+    }
+    #conversation .llm-response::before {
+      content: 'AI Response: ';
+      font-weight: bold;
+      display: block;
+    }
+    .center {
+      display: flex;
+      justify-content: center;
+    }
+    #spinner {
+      opacity: 0;
+      transition: opacity 500ms ease-in;
+      width: 30px;
+      height: 30px;
+      border: 3px solid #444;
+      border-bottom-color: transparent;
+      border-radius: 50%;
+      display: inline-block;
+      box-sizing: border-box;
+      animation: rotation 1s linear infinite;
+    }
+    #spinner.active {
+      opacity: 1;
+    }
+
+    @keyframes rotation {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+    #error {
+      display: none;
+      color: red;
+    }
+  </style>
+</head>
+<body>
+  <main id="main">
+    <h1>Chat App</h1>
+    <p>Ask me anything...</p>
+    <div id="conversation"></div>
+    <div class="center">
+      <div id="spinner"></div>
+    </div>
+    <form action="/chat/" method="post">
+      <input id="prompt-input" name="prompt"/>
+      <button>Send</button>
+    </form>
+    <div id="error">
+      Error occurred, check the console for more information.
+    </div>
+  </main>
+</body>
+</html>
+<script type="module">
+  import { marked } from 'https://cdn.jsdelivr.net/npm/marked/lib/marked.esm.js';
+
+  function renderMessage(message) {
+    if (message.role === 'user' || message.role === 'llm-response') {
+      return `<div class="${message.role}">${marked.parse(message.content)}</div>`;
+    } else {
+      throw new Error(`Unknown message role: ${message.role}`);
+    }
+  }
+
+  function onError(error) {
+    console.error(error);
+    document.getElementById('error').style.display = 'block';
+  }
+
+  async function fetchResponse(response) {
+    if (response.ok) {
+      const messages = await response.json();
+      document.getElementById('conversation').innerHTML = messages.map(renderMessage).join('');
+      let input = document.getElementById('prompt-input')
+      input.value = '';
+      input.focus();
+    } else {
+      const text = await response.text();
+      console.error(`Unexpected response: ${response.status}`, {response, text});
+      throw new Error(`Unexpected response: ${response.status}`);
+    }
+  }
+
+  async function onSubmit(e) {
+    e.preventDefault();
+    const body = new FormData(e.target);
+    const spinner = document.getElementById('spinner');
+    spinner.classList.add('active');
+
+    const response = await fetch(e.target.action, {method: 'POST', body});
+    spinner.classList.remove('active');
+    await fetchResponse(response);
+  }
+
+  document.querySelector('form').addEventListener('submit', (e) => onSubmit(e).catch(onError));
+
+  // load message on page load
+  fetch('/chat/').then(fetchResponse).catch(onError);
+</script>
