@@ -44,14 +44,14 @@ python -m pydantic_ai_examples --copy-to examples/
 Simple example of using Pydantic AI to construct a Pydantic model from a text input.
 
 ```bash
-uv run -m pydantic_ai_examples.pydantic_model
+(uv run/python) -m pydantic_ai_examples.pydantic_model
 ```
 
 This examples uses `openai:gpt-4o` by default, but it works well with other models, e.g. you can run it
 with Gemini using:
 
 ```bash
-PYDANTIC_AI_MODEL=gemini-1.5-pro uv run -m pydantic_ai_examples.pydantic_model
+PYDANTIC_AI_MODEL=gemini-1.5-pro (uv run/python) -m pydantic_ai_examples.pydantic_model
 ```
 
 (or `PYDANTIC_AI_MODEL=gemini-1.5-flash ...`)
@@ -63,13 +63,13 @@ PYDANTIC_AI_MODEL=gemini-1.5-pro uv run -m pydantic_ai_examples.pydantic_model
 Example demonstrating how to use Pydantic AI to generate SQL queries based on user input.
 
 ```bash
-uv run -m pydantic_ai_examples.sql_gen
+(uv run/python) -m pydantic_ai_examples.sql_gen
 ```
 
 or to use a custom prompt:
 
 ```bash
-uv run -m pydantic_ai_examples.sql_gen "find me whatever"
+(uv run/python) -m pydantic_ai_examples.sql_gen "find me whatever"
 ```
 
 This model uses `gemini-1.5-flash` by default since Gemini is good at single shot queries.
@@ -91,7 +91,7 @@ To run this example properly, you'll need two extra API keys:
 **(Note if either key is missing, the code will fall back to dummy data.)**
 
 ```bash
-uv run -m pydantic_ai_examples.weather
+(uv run/python) -m pydantic_ai_examples.weather
 ```
 
 This example uses `openai:gpt-4o` by default. Gemini seems to be unable to handle the multiple tool
@@ -122,7 +122,7 @@ We also mount the postgresql `data` directory locally to persist the data if you
 With that running, we can build the search database with (**WARNING**: this requires the `OPENAI_API_KEY` env variable and will calling the OpenAI embedding API around 300 times to generate embeddings for each section of the documentation):
 
 ```bash
-uv run -m pydantic_ai_examples.rag build
+(uv run/python) -m pydantic_ai_examples.rag build
 ```
 
 (Note building the database doesn't use Pydantic AI right now, instead it uses the OpenAI SDK directly.)
@@ -130,5 +130,5 @@ uv run -m pydantic_ai_examples.rag build
 You can then ask the agent a question with:
 
 ```bash
-uv run -m pydantic_ai_examples.rag search "How do I configure logfire to work with FastAPI?"
+(uv run/python) -m pydantic_ai_examples.rag search "How do I configure logfire to work with FastAPI?"
 ```
