@@ -10,11 +10,11 @@ Run pgvector with:
 
 Build the search DB with:
 
-    uv run --extra examples -m examples.rag build
+    uv run --group examples -m examples.rag build
 
 Ask the agent a question with:
 
-    uv run --extra examples -m examples.rag search "How do I configure logfire to work with FastAPI?"
+    uv run --group examples -m examples.rag search "How do I configure logfire to work with FastAPI?"
 """
 
 from __future__ import annotations as _annotations
@@ -226,5 +226,5 @@ if __name__ == '__main__':
             q = 'How do I configure logfire to work with FastAPI?'
         asyncio.run(run_agent(q))
     else:
-        print('uv run --extra examples -m examples.rag build|search', file=sys.stderr)
+        print('uv run --group examples -m examples.rag build|search', file=sys.stderr)
         sys.exit(1)

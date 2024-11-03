@@ -46,13 +46,9 @@ dependencies = [
 logfire = [
     "logfire>=1.2.0",
 ]
-examples = [
-    "asyncpg>=0.30.0",
-    "logfire[asyncpg]>=1.2.0",
-]
 
-[tool.uv]
-dev-dependencies = [
+[dependency-groups]
+dev = [
     "dirty-equals>=0.8.0",
     "mypy>=1.11.2",
     "pyright>=1.1.384",
@@ -63,6 +59,10 @@ dev-dependencies = [
     "coverage[toml]>=7.6.2",
     "devtools>=0.12.2",
     "anyio>=4.5.0",
+]
+examples = [
+    "asyncpg>=0.30.0",
+    "logfire[asyncpg]>=1.2.0",
 ]
 
 [tool.hatch.build.targets.wheel]

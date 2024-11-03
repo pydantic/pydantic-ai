@@ -2,7 +2,7 @@
 
 Run with:
 
-    uv run --extra examples -m examples.sql_gen "show me logs from yesterday, with level 'error'"
+    uv run --group examples -m examples.sql_gen "show me logs from yesterday, with level 'error'"
 """
 
 import asyncio
