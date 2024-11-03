@@ -42,7 +42,7 @@ All these examples will need to set either:
 * `OPENAI_API_KEY` to use OpenAI models, go to [platform.openai.com](https://platform.openai.com/) and follow your nose until you find how to generate an API key
 * `GEMINI_API_KEY` to use Gemini/Google models, go to [aistudio.google.com](https://aistudio.google.com/) and do the same to generate an API key
 
-Then set the API key as an env variable with:
+Then set the API key as an environment variable with:
 
 ```bash
 export OPENAI_API_KEY=your-api-key
@@ -77,7 +77,7 @@ PYDANTIC_AI_MODEL=gemini-1.5-pro (uv run/python) -m pydantic_ai_examples.pydanti
 
 Example demonstrating how to use Pydantic AI to generate SQL queries based on user input.
 
-The resulting SQL is validated by running it as an `EXPLAIN` query on postgres. To run the example, you first need to run postgres, e.g. via Docker:
+The resulting SQL is validated by running it as an `EXPLAIN` query on PostgreSQL. To run the example, you first need to run PostgreSQL, e.g. via Docker:
 
 ```bash
 docker run --rm -e POSTGRES_PASSWORD=postgres -p 54320:5432 postgres
