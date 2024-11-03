@@ -2,7 +2,7 @@
 
 Run with:
 
-    uv run --extra examples -m examples.pydantic_model
+    uv run -m pydantic_ai_examples.pydantic_model
 """
 
 import os
