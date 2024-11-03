@@ -1,4 +1,4 @@
-"""RAG example with pydantic-ai.
+"""RAG example with pydantic-ai — using vector search to augment a chat agent.
 
 Run pgvector with:
 
@@ -10,11 +10,11 @@ Run pgvector with:
 
 Build the search DB with:
 
-    uv run --group examples -m examples.rag build
+    uv run -m pydantic_ai_examples.rag build
 
 Ask the agent a question with:
 
-    uv run --group examples -m examples.rag search "How do I configure logfire to work with FastAPI?"
+    uv run -m pydantic_ai_examples.rag search "How do I configure logfire to work with FastAPI?"
 """
 
 from __future__ import annotations as _annotations
@@ -226,5 +226,5 @@ if __name__ == '__main__':
             q = 'How do I configure logfire to work with FastAPI?'
         asyncio.run(run_agent(q))
     else:
-        print('uv run --group examples -m examples.rag build|search', file=sys.stderr)
+        print('uv run --extra examples -m pydantic_ai_examples.rag build|search', file=sys.stderr)
         sys.exit(1)

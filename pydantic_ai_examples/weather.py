@@ -6,7 +6,7 @@ the `get_weather` tool to get the weather.
 
 Run with:
 
-    uv run --group examples -m examples.weather
+    uv run -m pydantic_ai_examples.weather
 """
 
 from __future__ import annotations as _annotations

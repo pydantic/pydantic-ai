@@ -2,7 +2,7 @@
 
 Run with:
 
-    uv run --group examples -m examples.sql_gen "show me logs from yesterday, with level 'error'"
+    uv run -m pydantic_ai_examples.sql_gen "show me logs from yesterday, with level 'error'"
 """
 
 import asyncio

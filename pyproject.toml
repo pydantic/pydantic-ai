@@ -46,6 +46,10 @@ dependencies = [
 logfire = [
     "logfire>=1.2.0",
 ]
+examples = [
+    "asyncpg>=0.30.0",
+    "logfire[asyncpg]>=1.2.0",
+]
 
 [dependency-groups]
 dev = [
@@ -60,16 +64,12 @@ dev = [
     "devtools>=0.12.2",
     "anyio>=4.5.0",
 ]
-examples = [
-    "asyncpg>=0.30.0",
-    "logfire[asyncpg]>=1.2.0",
-]
 
 [tool.hatch.build.targets.wheel]
-packages = ["pydantic_ai"]
+packages = ["pydantic_ai", "pydantic_ai_examples"]
 
 [tool.hatch.build.targets.sdist]
-include = ["/README.md", "/Makefile", "/pydantic_ai", "/tests"]
+include = ["/README.md", "/Makefile", "/pydantic_ai", "/pydantic_ai_examples", "/tests"]
 
 [tool.ruff]
 line-length = 120

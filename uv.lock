@@ -897,6 +897,10 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+examples = [
+    { name = "asyncpg" },
+    { name = "logfire", extra = ["asyncpg"] },
+]
 logfire = [
     { name = "logfire" },
 ]
@@ -914,17 +918,15 @@ dev = [
     { name = "pytest-pretty" },
     { name = "ruff" },
 ]
-examples = [
-    { name = "asyncpg" },
-    { name = "logfire", extra = ["asyncpg"] },
-]
 
 [package.metadata]
 requires-dist = [
+    { name = "asyncpg", marker = "extra == 'examples'", specifier = ">=0.30.0" },
     { name = "eval-type-backport", specifier = ">=0.2.0" },
     { name = "griffe", specifier = ">=1.3.2" },
     { name = "httpx", specifier = ">=0.27.2" },
     { name = "logfire", marker = "extra == 'logfire'", specifier = ">=1.2.0" },
+    { name = "logfire", extras = ["asyncpg"], marker = "extra == 'examples'", specifier = ">=1.2.0" },
     { name = "logfire-api", specifier = ">=1.2.0" },
     { name = "openai", specifier = ">=1.51.2" },
     { name = "pydantic", specifier = ">=2.9.2" },
@@ -942,10 +944,6 @@ dev = [
     { name = "pytest", specifier = ">=8.3.3" },
     { name = "pytest-pretty", specifier = ">=1.2.0" },
     { name = "ruff", specifier = ">=0.6.9" },
-]
-examples = [
-    { name = "asyncpg", specifier = ">=0.30.0" },
-    { name = "logfire", extras = ["asyncpg"], specifier = ">=1.2.0" },
 ]
 
 [[package]]
