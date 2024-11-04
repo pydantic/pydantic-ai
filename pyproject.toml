@@ -44,12 +44,12 @@ dependencies = [
 
 [project.optional-dependencies]
 logfire = [
-    "logfire>=1.2.0",
+    "logfire>=2",
 ]
 examples = [
     "asyncpg>=0.30.0",
     "fastapi>=0.115.4",
-    "logfire[asyncpg]>=1.2.0",
+    "logfire[asyncpg,fastapi]>=2",
     "python-multipart>=0.0.17",
     "uvicorn>=0.32.0",
 ]
