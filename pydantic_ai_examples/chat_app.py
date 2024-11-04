@@ -39,7 +39,7 @@ async def post_chat(prompt: Annotated[str, fastapi.Form()]) -> StreamingResponse
         database.add_messages(response.new_messages_json())
         # stream the last message which will be the agent response, we can't just yield `new_messages_json()`
         # since we already stream the user prompt
-        yield MessageTypeAdapter.dump_json(response.all_messages[-1]) + b'\n'
+        yield MessageTypeAdapter.dump_json(response.all_messages()[-1]) + b'\n'
 
     return StreamingResponse(stream_messages(), media_type='text/plain')
 

@@ -70,7 +70,7 @@ def test_result_pydantic_model_retry():
     result = agent.run_sync('Hello')
     assert isinstance(result.response, Foo)
     assert result.response.model_dump() == {'a': 42, 'b': 'foo'}
-    assert result.all_messages == snapshot(
+    assert result.all_messages() == snapshot(
         [
             UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
             LLMToolCalls(
@@ -120,7 +120,7 @@ def test_result_validator():
     result = agent.run_sync('Hello')
     assert isinstance(result.response, Foo)
     assert result.response.model_dump() == {'a': 42, 'b': 'foo'}
-    assert result.all_messages == snapshot(
+    assert result.all_messages() == snapshot(
         [
             UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
             LLMToolCalls(
@@ -153,7 +153,7 @@ def test_plain_response():
     result = agent.run_sync('Hello')
     assert result.response == ('foo', 'bar')
     assert call_index == 2
-    assert result.all_messages == snapshot(
+    assert result.all_messages() == snapshot(
         [
             UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
             LLMResponse(content='hello', timestamp=IsNow(tz=timezone.utc)),
@@ -355,7 +355,7 @@ class Bar(BaseModel):
     assert got_tool_call_name == snapshot('final_result_Bar')
 
 
-def test_run_with_history():
+def test_run_with_history_new():
     m = TestModel()
 
     agent = Agent(m, deps=None, system_prompt='Foobar')
@@ -364,30 +364,25 @@ def test_run_with_history():
     async def ret_a(x: str) -> str:
         return f'{x}-apple'
 
-    result = agent.run_sync('Hello')
-    assert result == snapshot(
-        RunResult(
-            response='{"ret_a":"a-apple"}',
-            all_messages=[
-                SystemPrompt(content='Foobar'),
-                UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
-                LLMToolCalls(
-                    calls=[ToolCall(tool_name='ret_a', args=ArgsObject(args_object={'x': 'a'}))],
-                    timestamp=IsNow(tz=timezone.utc),
-                ),
-                ToolReturn(tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc)),
-                LLMResponse(content='{"ret_a":"a-apple"}', timestamp=IsNow(tz=timezone.utc)),
-            ],
-            new_message_index=1,
-            cost=Cost(),
-        )
+    result1 = agent.run_sync('Hello')
+    assert result1.new_messages() == snapshot(
+        [
+            UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
+            LLMToolCalls(
+                calls=[ToolCall(tool_name='ret_a', args=ArgsObject(args_object={'x': 'a'}))],
+                timestamp=IsNow(tz=timezone.utc),
+            ),
+            ToolReturn(tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc)),
+            LLMResponse(content='{"ret_a":"a-apple"}', timestamp=IsNow(tz=timezone.utc)),
+        ]
     )
 
-    result = agent.run_sync('Hello again', message_history=result.all_messages)
-    assert result == snapshot(
+    # if we pass new_messages, system prompt is inserted before the message_history messages
+    result2 = agent.run_sync('Hello again', message_history=result1.new_messages())
+    assert result2 == snapshot(
         RunResult(
             response='{"ret_a":"a-apple"}',
-            all_messages=[
+            _all_messages=[
                 SystemPrompt(content='Foobar'),
                 UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
                 LLMToolCalls(
@@ -405,10 +400,40 @@ def test_run_with_history():
                 ToolReturn(tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc)),
                 LLMResponse(content='{"ret_a":"a-apple"}', timestamp=IsNow(tz=timezone.utc)),
             ],
-            new_message_index=5,
+            _new_message_index=5,
             cost=Cost(),
         )
     )
-    new_msg_roles = [msg.role for msg in result.new_messages()]
+    new_msg_roles = [msg.role for msg in result2.new_messages()]
     assert new_msg_roles == snapshot(['user', 'llm-tool-calls', 'tool-return', 'llm-response'])
-    assert result.new_messages_json().startswith(b'[{"content":"Hello again",')
+    assert result2.new_messages_json().startswith(b'[{"content":"Hello again",')
+
+    # if we pass all_messages, system prompt is NOT inserted before the message_history messages,
+    # so only one system prompt
+    result3 = agent.run_sync('Hello again', message_history=result1.all_messages())
+    # same as result2 except for datetimes
+    assert result3 == snapshot(
+        RunResult(
+            response='{"ret_a":"a-apple"}',
+            _all_messages=[
+                SystemPrompt(content='Foobar'),
+                UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
+                LLMToolCalls(
+                    calls=[ToolCall(tool_name='ret_a', args=ArgsObject(args_object={'x': 'a'}))],
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
+                ToolReturn(tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc)),
+                LLMResponse(content='{"ret_a":"a-apple"}', timestamp=IsNow(tz=timezone.utc)),
+                # second call, notice no repeated system prompt
+                UserPrompt(content='Hello again', timestamp=IsNow(tz=timezone.utc)),
+                LLMToolCalls(
+                    calls=[ToolCall(tool_name='ret_a', args=ArgsObject(args_object={'x': 'a'}))],
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
+                ToolReturn(tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc)),
+                LLMResponse(content='{"ret_a":"a-apple"}', timestamp=IsNow(tz=timezone.utc)),
+            ],
+            _new_message_index=5,
+            cost=Cost(),
+        )
+    )

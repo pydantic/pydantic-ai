@@ -62,5 +62,5 @@ print(result.response)
 
 # `result.all_messages` includes details of messages exchanged, useful if you want to continue
 # the conversation later, via the `message_history` argument of `run_sync`.
-print(result.all_messages)
+print(result.all_messages())
 ```

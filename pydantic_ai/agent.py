@@ -139,7 +139,7 @@ class Agent(Generic[AgentDeps, ResultData]):
                             run_span.set_attribute('cost', cost)
                             handle_span.set_attribute('result', left.value)
                             handle_span.message = 'handle model response -> final result'
-                            return shared.RunResult(left.value, messages, new_message_index, cost)
+                            return shared.RunResult(left.value, cost, messages, new_message_index)
                         else:
                             tool_responses = either.right
                             handle_span.set_attribute('tool_responses', tool_responses)

@@ -58,20 +58,25 @@ class RunResult(Generic[ResultData]):
     """Result of a run."""
 
     response: ResultData
-    all_messages: list[messages.Message]
-    new_message_index: int
     cost: Cost
+    _all_messages: list[messages.Message]
+    _new_message_index: int
+
+    def all_messages(self) -> list[messages.Message]:
+        """Return the history of messages."""
+        # this is a method to be consistent with the other methods
+        return self._all_messages
 
     def all_messages_json(self) -> bytes:
         """Return the history of messages as JSON bytes."""
-        return messages.MessagesTypeAdapter.dump_json(self.all_messages)
+        return messages.MessagesTypeAdapter.dump_json(self.all_messages())
 
     def new_messages(self) -> list[messages.Message]:
         """Return new messages associated with this run.
 
         System prompts and any messages from older runs are excluded.
         """
-        return self.all_messages[self.new_message_index :]
+        return self.all_messages()[self._new_message_index :]
 
     def new_messages_json(self) -> bytes:
         """Return new messages from [new_messages][] as JSON bytes."""

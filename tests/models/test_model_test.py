@@ -82,7 +82,7 @@ def test_retriever_retry():
     result = agent.run_sync('Hello', model=TestModel())
     assert call_count == 2
     assert result.response == snapshot('{"my_ret":"1"}')
-    assert result.all_messages == snapshot(
+    assert result.all_messages() == snapshot(
         [
             UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
             LLMToolCalls(
