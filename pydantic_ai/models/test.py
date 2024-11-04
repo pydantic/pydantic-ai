@@ -14,7 +14,7 @@ from typing import Any, Literal
 
 import pydantic_core
 
-from .. import _utils, shared
+from .. import _utils, result
 from ..messages import LLMMessage, LLMResponse, LLMToolCalls, Message, RetryPrompt, ToolCall, ToolReturn
 from . import AbstractToolDefinition, AgentModel, Model
 
@@ -102,8 +102,8 @@ class TestAgentModel(AgentModel):
     step: int = 0
     last_message_count: int = 0
 
-    async def request(self, messages: list[Message]) -> tuple[LLMMessage, shared.Cost]:
-        cost = shared.Cost()
+    async def request(self, messages: list[Message]) -> tuple[LLMMessage, result.Cost]:
+        cost = result.Cost()
         if self.step == 0:
             calls = [ToolCall.from_object(name, self.gen_retriever_args(args)) for name, args in self.retriever_calls]
             self.step += 1

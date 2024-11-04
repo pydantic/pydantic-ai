@@ -28,7 +28,7 @@ class UserPrompt:
     role: Literal['user'] = 'user'
 
 
-return_value_object = _pydantic.LazyTypeAdapter(dict[str, Any])
+tool_return_value_object = _pydantic.LazyTypeAdapter(dict[str, Any])
 
 
 @dataclass
@@ -43,14 +43,14 @@ class ToolReturn:
         if isinstance(self.content, str):
             return self.content
         else:
-            content = return_value_object.validate_python(self.content)
-            return return_value_object.dump_json(content).decode()
+            content = tool_return_value_object.validate_python(self.content)
+            return tool_return_value_object.dump_json(content).decode()
 
     def model_response_object(self) -> dict[str, Any]:
         if isinstance(self.content, str):
             return {'return_value': self.content}
         else:
-            return return_value_object.validate_python(self.content)
+            return tool_return_value_object.validate_python(self.content)
 
 
 @dataclass
@@ -113,4 +113,4 @@ class LLMToolCalls:
 LLMMessage = Union[LLMResponse, LLMToolCalls]
 Message = Union[SystemPrompt, UserPrompt, ToolReturn, RetryPrompt, LLMMessage]
 
-MessagesTypeAdapter = pydantic.TypeAdapter(list[Annotated[Message, pydantic.Field(discriminator='role')]])
+MessagesTypeAdapter = _pydantic.LazyTypeAdapter(list[Annotated[Message, pydantic.Field(discriminator='role')]])

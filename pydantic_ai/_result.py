@@ -11,8 +11,10 @@ from pydantic import TypeAdapter, ValidationError
 from typing_extensions import Self, TypeAliasType, TypedDict
 
 from . import _utils, messages
+from .call_typing import AgentDeps, CallContext
+from .exceptions import ModelRetry
 from .messages import LLMToolCalls, ToolCall
-from .shared import AgentDeps, CallContext, ModelRetry, ResultData
+from .result import ResultData
 
 # A function that always takes `ResultData` and returns `ResultData`,
 # but may or maybe not take `CallInfo` as a first argument, and may or may not be async.

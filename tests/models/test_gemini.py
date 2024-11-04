@@ -1,3 +1,4 @@
+# pyright: reportPrivateUsage=false
 from __future__ import annotations as _annotations
 
 import json
@@ -25,19 +26,19 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.gemini import (
     GeminiModel,
-    _gemini_response_ta,  # pyright: ignore[reportPrivateUsage]
-    _GeminiCandidates,  # pyright: ignore[reportPrivateUsage]
-    _GeminiContent,  # pyright: ignore[reportPrivateUsage]
-    _GeminiFunction,  # pyright: ignore[reportPrivateUsage]
-    _GeminiFunctionCallingConfig,  # pyright: ignore[reportPrivateUsage]
-    _GeminiFunctionCallPart,  # pyright: ignore[reportPrivateUsage]
-    _GeminiResponse,  # pyright: ignore[reportPrivateUsage]
-    _GeminiTextPart,  # pyright: ignore[reportPrivateUsage]
-    _GeminiToolConfig,  # pyright: ignore[reportPrivateUsage]
-    _GeminiTools,  # pyright: ignore[reportPrivateUsage]
-    _GeminiUsageMetaData,  # pyright: ignore[reportPrivateUsage]
+    _gemini_response_ta,
+    _GeminiCandidates,
+    _GeminiContent,
+    _GeminiFunction,
+    _GeminiFunctionCallingConfig,
+    _GeminiFunctionCallPart,
+    _GeminiResponse,
+    _GeminiTextPart,
+    _GeminiToolConfig,
+    _GeminiTools,
+    _GeminiUsageMetaData,
 )
-from pydantic_ai.shared import Cost
+from pydantic_ai.result import Cost
 from tests.conftest import ClientWithHandler, IsNow, TestEnv
 
 pytestmark = pytest.mark.anyio

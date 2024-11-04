@@ -9,8 +9,9 @@ import logfire_api
 from pydantic import ValidationError
 from typing_extensions import assert_never
 
-from . import _result, _retriever as _r, _system_prompt, _utils, messages as _messages, models, shared
-from .shared import AgentDeps, ResultData
+from . import _result, _retriever as _r, _system_prompt, _utils, exceptions, messages as _messages, models, result
+from .call_typing import AgentDeps
+from .result import ResultData
 
 __all__ = 'Agent', 'KnownModelName'
 KnownModelName = Literal[
@@ -74,7 +75,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         message_history: list[_messages.Message] | None = None,
         model: models.Model | KnownModelName | None = None,
         deps: AgentDeps | None = None,
-    ) -> shared.RunResult[ResultData]:
+    ) -> result.RunResult[ResultData]:
         """Run the agent with a user prompt in async mode.
 
         Args:
@@ -92,7 +93,7 @@ class Agent(Generic[AgentDeps, ResultData]):
             model_ = self.model
             custom_model = None
         else:
-            raise shared.UserError('`model` must be set either when creating the agent or when calling it.')
+            raise exceptions.UserError('`model` must be set either when creating the agent or when calling it.')
 
         if deps is None:
             deps = self._default_deps
@@ -115,7 +116,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         for retriever in self._retrievers.values():
             retriever.reset()
 
-        cost = shared.Cost()
+        cost = result.Cost()
 
         with _logfire.span(
             'agent run {prompt=}', prompt=user_prompt, agent=self, custom_model=custom_model, model_name=model_.name()
@@ -139,17 +140,17 @@ class Agent(Generic[AgentDeps, ResultData]):
                             run_span.set_attribute('cost', cost)
                             handle_span.set_attribute('result', left.value)
                             handle_span.message = 'handle model response -> final result'
-                            return shared.RunResult(left.value, cost, messages, new_message_index)
+                            return result.RunResult(left.value, cost, messages, new_message_index)
                         else:
                             tool_responses = either.right
                             handle_span.set_attribute('tool_responses', tool_responses)
                             response_msgs = ' '.join(m.role for m in tool_responses)
                             handle_span.message = f'handle model response -> {response_msgs}'
                             messages.extend(tool_responses)
-            except (ValidationError, shared.UnexpectedModelBehaviour) as e:
+            except (ValidationError, exceptions.UnexpectedModelBehaviour) as e:
                 run_span.set_attribute('messages', messages)
                 # noinspection PyTypeChecker
-                raise shared.AgentError(messages, model_) from e
+                raise exceptions.AgentError(messages, model_) from e
 
     def run_sync(
         self,
@@ -158,7 +159,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         message_history: list[_messages.Message] | None = None,
         model: models.Model | KnownModelName | None = None,
         deps: AgentDeps | None = None,
-    ) -> shared.RunResult[ResultData]:
+    ) -> result.RunResult[ResultData]:
         """Run the agent with a user prompt synchronously.
 
         This is a convenience method that wraps `self.run` with `asyncio.run()`.
@@ -295,7 +296,7 @@ class Agent(Generic[AgentDeps, ResultData]):
                 retriever = self._retrievers.get(call.tool_name)
                 if retriever is None:
                     # should this be a retry error?
-                    raise shared.UnexpectedModelBehaviour(f'Unknown function name: {call.tool_name!r}')
+                    raise exceptions.UnexpectedModelBehaviour(f'Unknown function name: {call.tool_name!r}')
                 coros.append(retriever.run(deps, call))
             new_messages = await asyncio.gather(*coros)
             return _utils.Either(right=new_messages)
@@ -312,7 +313,7 @@ class Agent(Generic[AgentDeps, ResultData]):
     def _incr_result_retry(self) -> None:
         self._current_result_retry += 1
         if self._current_result_retry > self._max_result_retries:
-            raise shared.UnexpectedModelBehaviour(
+            raise exceptions.UnexpectedModelBehaviour(
                 f'Exceeded maximum retries ({self._max_result_retries}) for result validation'
             )
 
