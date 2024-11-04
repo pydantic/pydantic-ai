@@ -35,6 +35,21 @@ But you'll probably want to edit examples as well as just running them, so you c
 python -m pydantic_ai_examples --copy-to examples/
 ```
 
+### Setting model environment variables
+
+All these examples will need to set either:
+
+* `OPENAI_API_KEY` to use OpenAI models, go to [platform.openai.com](https://platform.openai.com/) and follow your nose until you find how to generate an API key
+* `GEMINI_API_KEY` to use Gemini/Google models, go to [aistudio.google.com](https://aistudio.google.com/) and do the same to generate an API key
+
+Then set the API key as an environment variable with:
+
+```bash
+export OPENAI_API_KEY=your-api-key
+# or
+export GEMINI_API_KEY=your-api-key
+```
+
 ## Examples
 
 ### `pydantic_model.py`
@@ -61,6 +76,15 @@ PYDANTIC_AI_MODEL=gemini-1.5-pro (uv run/python) -m pydantic_ai_examples.pydanti
 (Demonstrates: custom `result_type`, dynamic system prompt, result validation, agent deps)
 
 Example demonstrating how to use Pydantic AI to generate SQL queries based on user input.
+
+The resulting SQL is validated by running it as an `EXPLAIN` query on PostgreSQL. To run the example, you first need to run PostgreSQL, e.g. via Docker:
+
+```bash
+docker run --rm -e POSTGRES_PASSWORD=postgres -p 54320:5432 postgres
+```
+_(we run postgres on port `54320` to avoid conflicts with any other postgres instances you may have running)_
+
+Then to run the code
 
 ```bash
 (uv run/python) -m pydantic_ai_examples.sql_gen
@@ -116,7 +140,7 @@ mkdir postgres-data
 docker run --rm -e POSTGRES_PASSWORD=postgres -p 54320:5432 -v `pwd`/postgres-data:/var/lib/postgresql/data pgvector/pgvector:pg17
 ```
 
-We run postgres on port `54320` to avoid conflicts with any other postgres instances you may have running.
+As above, we run postgres on port `54320` to avoid conflicts with any other postgres instances you may have running.
 We also mount the postgresql `data` directory locally to persist the data if you need to stop and restart the container.
 
 With that running, we can build the search database with (**WARNING**: this requires the `OPENAI_API_KEY` env variable and will calling the OpenAI embedding API around 300 times to generate embeddings for each section of the documentation):
@@ -132,3 +156,23 @@ You can then ask the agent a question with:
 ```bash
 (uv run/python) -m pydantic_ai_examples.rag search "How do I configure logfire to work with FastAPI?"
 ```
+
+### `chat_app.py`
+
+(Demonstrates: reusing chat history, serializing messages)
+
+**TODO**: stream responses
+
+Simple chat app example build with FastAPI.
+
+This demonstrates storing chat history between requests and using it to give the model context for new responses.
+
+Most of the complex logic here is in `chat_app.html` which includes the page layout and JavaScript to handle the chat.
+
+Run the app with:
+
+```bash
+(uv run/python) -m pydantic_ai_examples.chat_app
+```
+
+Then open the app at [localhost:8000](http://localhost:8000).

@@ -346,14 +346,17 @@ class _GeminiResponse:
 
 @dataclass
 class _GeminiCandidates:
+    """See <https://ai.google.dev/api/generate-content#v1beta.Candidate>."""
+
     content: _GeminiContent
     finish_reason: Annotated[Literal['STOP'], Field(alias='finishReason')]
     """
-    See https://ai.google.dev/api/generate-content#FinishReason, lots of other values are possible,
+    See <https://ai.google.dev/api/generate-content#FinishReason>, lots of other values are possible,
     but let's wait until we see them and know what they mean to add them here.
     """
-    index: int
-    safety_ratings: Annotated[list[_GeminiSafetyRating], Field(alias='safetyRatings')]
+    avg_log_probs: Annotated[float, Field(alias='avgLogProbs')] | None = None
+    index: int | None = None
+    safety_ratings: Annotated[list[_GeminiSafetyRating], Field(alias='safetyRatings')] | None = None
 
 
 @dataclass

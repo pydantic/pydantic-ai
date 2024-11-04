@@ -6,8 +6,9 @@ from typing import TYPE_CHECKING, Generic, TypeVar
 
 from pydantic import ValidationError
 
+from . import messages
+
 if TYPE_CHECKING:
-    from . import messages
     from .models import Model
 
 __all__ = (
@@ -57,12 +58,29 @@ class RunResult(Generic[ResultData]):
     """Result of a run."""
 
     response: ResultData
-    message_history: list[messages.Message]
     cost: Cost
+    _all_messages: list[messages.Message]
+    _new_message_index: int
 
-    def message_history_json(self) -> str:
-        """Return the history of messages as a JSON string."""
-        return messages.MessagesTypeAdapter.dump_json(self.message_history).decode()
+    def all_messages(self) -> list[messages.Message]:
+        """Return the history of messages."""
+        # this is a method to be consistent with the other methods
+        return self._all_messages
+
+    def all_messages_json(self) -> bytes:
+        """Return the history of messages as JSON bytes."""
+        return messages.MessagesTypeAdapter.dump_json(self.all_messages())
+
+    def new_messages(self) -> list[messages.Message]:
+        """Return new messages associated with this run.
+
+        System prompts and any messages from older runs are excluded.
+        """
+        return self.all_messages()[self._new_message_index :]
+
+    def new_messages_json(self) -> bytes:
+        """Return new messages from [new_messages][] as JSON bytes."""
+        return messages.MessagesTypeAdapter.dump_json(self.new_messages())
 
 
 @dataclass

@@ -1,5 +1,10 @@
 """Example demonstrating how to use Pydantic AI to generate SQL queries based on user input.
 
+Run postgres with:
+
+    mkdir postgres-data
+    docker run --rm -e POSTGRES_PASSWORD=postgres -p 54320:5432 postgres
+
 Run with:
 
     uv run -m pydantic_ai_examples.sql_gen "show me logs from yesterday, with level 'error'"
@@ -121,7 +126,7 @@ async def main():
     else:
         prompt = sys.argv[1]
 
-    async with database_connect('postgresql://postgres@localhost', 'pydantic_ai_sql_gen') as conn:
+    async with database_connect('postgresql://postgres:postgres@localhost:54320', 'pydantic_ai_sql_gen') as conn:
         deps = Deps(conn)
         result = await agent.run(prompt, deps=deps)
     debug(result.response)

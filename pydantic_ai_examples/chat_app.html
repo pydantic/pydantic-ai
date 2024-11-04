@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chat App</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <style>
+    main {
+      max-width: 600px;
+    }
+    #conversation .user::before {
+      content: 'You asked: ';
+      font-weight: bold;
+      display: block;
+    }
+    #conversation .llm-response::before {
+      content: 'AI Response: ';
+      font-weight: bold;
+      display: block;
+    }
+    #spinner {
+      opacity: 0;
+      transition: opacity 500ms ease-in;
+      width: 30px;
+      height: 30px;
+      border: 3px solid #222;
+      border-bottom-color: transparent;
+      border-radius: 50%;
+      animation: rotation 1s linear infinite;
+    }
+    @keyframes rotation {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+    #spinner.active {
+      opacity: 1;
+    }
+  </style>
+</head>
+<body>
+  <main class="border rounded mx-auto my-5 p-4">
+    <h1>Chat App</h1>
+    <p>Ask me anything...</p>
+    <div id="conversation" class="px-2"></div>
+    <div class="d-flex justify-content-center mb-3">
+      <div id="spinner"></div>
+    </div>
+    <form method="post">
+      <input id="prompt-input" name="prompt" class="form-control"/>
+      <div class="d-flex justify-content-end">
+        <button class="btn btn-primary mt-2">Send</button>
+      </div>
+    </form>
+    <div id="error" class="d-none text-danger">
+      Error occurred, check the console for more information.
+    </div>
+  </main>
+</body>
+</html>
+<script type="module">
+  import { marked } from 'https://cdn.jsdelivr.net/npm/marked/lib/marked.esm.js';
+
+  function addMessages(lines) {
+    const messages = lines.filter(line => line.length > 1).map((line) => JSON.parse(line))
+    const parent = document.getElementById('conversation');
+    for (const message of messages) {
+      let msgDiv = document.createElement('div');
+      msgDiv.classList.add('border-top', 'pt-2', message.role);
+      msgDiv.innerHTML = marked.parse(message.content);
+      parent.appendChild(msgDiv);
+    }
+  }
+
+  function onError(error) {
+    console.error(error);
+    document.getElementById('error').classList.remove('d-none');
+    document.getElementById('spinner').classList.remove('active');
+  }
+
+  async function fetchResponse(response) {
+    let text = '';
+    if (response.ok) {
+      const reader = response.body.getReader();
+      while (true) {
+        const {done, value} = await reader.read();
+        if (done) {
+          break;
+        }
+        text += new TextDecoder().decode(value);
+        const lines = text.split('\n');
+        if (lines.length > 1) {
+          addMessages(lines.slice(0, -1));
+          text = lines[lines.length - 1];
+        }
+      }
+      addMessages(text.split('\n'));
+      let input = document.getElementById('prompt-input')
+      input.disabled = false;
+      input.focus();
+    } else {
+      const text = await response.text();
+      console.error(`Unexpected response: ${response.status}`, {response, text});
+      throw new Error(`Unexpected response: ${response.status}`);
+    }
+  }
+
+  async function onSubmit(e) {
+    e.preventDefault();
+    const spinner = document.getElementById('spinner');
+    spinner.classList.add('active');
+    const body = new FormData(e.target);
+
+    let input = document.getElementById('prompt-input')
+    input.value = '';
+    input.disabled = true;
+
+    const response = await fetch('/chat/', {method: 'POST', body});
+    await fetchResponse(response);
+    spinner.classList.remove('active');
+  }
+
+  // call onSubmit when form is submitted (e.g. user clicks the send button or hits Enter)
+  document.querySelector('form').addEventListener('submit', (e) => onSubmit(e).catch(onError));
+
+  // load messages on page load
+  fetch('/chat/').then(fetchResponse).catch(onError);
+</script>
