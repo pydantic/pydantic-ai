@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Callable
 
 from typing_extensions import TypeAlias
 
-from .. import shared
+from .. import result
 from ..messages import LLMMessage, Message
 from . import AbstractToolDefinition, AgentModel, Model
 
@@ -58,5 +58,5 @@ class FunctionAgentModel(AgentModel):
     function: FunctionDef
     agent_info: AgentInfo
 
-    async def request(self, messages: list[Message]) -> tuple[LLMMessage, shared.Cost]:
-        return self.function(messages, self.agent_info), shared.Cost()
+    async def request(self, messages: list[Message]) -> tuple[LLMMessage, result.Cost]:
+        return self.function(messages, self.agent_info), result.Cost()

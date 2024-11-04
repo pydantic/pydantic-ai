@@ -15,7 +15,7 @@ import pytest
 from _pytest.assertion.rewrite import AssertionRewritingHook
 from typing_extensions import TypeAlias
 
-__all__ = 'IsNow', 'TestEnv'
+__all__ = 'IsNow', 'TestEnv', 'ClientWithHandler'
 
 if TYPE_CHECKING:
 

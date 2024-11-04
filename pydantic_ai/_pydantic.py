@@ -23,7 +23,7 @@ from ._utils import ObjectJsonSchema, check_object_json_schema, is_model_like
 
 if TYPE_CHECKING:
     from . import _retriever
-    from .shared import AgentDeps
+    from .call_typing import AgentDeps
 
 
 __all__ = 'function_schema', 'LazyTypeAdapter'
@@ -118,7 +118,7 @@ def function_schema(either_function: _retriever.RetrieverEitherFunc[AgentDeps, _
                 var_positional_field = field_name
 
     if errors:
-        from .shared import UserError
+        from .exceptions import UserError
 
         error_details = '\n  '.join(errors)
         raise UserError(f'Error generating schema for {function.__qualname__}:\n  {error_details}')
@@ -307,7 +307,7 @@ _docstring_style_patterns: list[tuple[str, list[str], DocstringStyle]] = [
 
 
 def _is_call_ctx(annotation: Any) -> bool:
-    from .shared import CallContext
+    from .call_typing import CallContext
 
     return annotation is CallContext or (
         _typing_extra.is_generic_alias(annotation) and get_origin(annotation) is CallContext

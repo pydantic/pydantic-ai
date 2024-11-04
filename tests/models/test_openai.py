@@ -25,7 +25,7 @@ from pydantic_ai.messages import (
     UserPrompt,
 )
 from pydantic_ai.models.openai import OpenAIModel
-from pydantic_ai.shared import Cost
+from pydantic_ai.result import Cost
 from tests.conftest import IsNow
 
 pytestmark = pytest.mark.anyio

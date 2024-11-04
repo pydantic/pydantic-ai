@@ -18,7 +18,7 @@ from ..messages import LLMMessage, Message
 if TYPE_CHECKING:
     from .._utils import ObjectJsonSchema
     from ..agent import KnownModelName
-    from ..shared import Cost
+    from ..result import Cost
 
 
 class Model(ABC):
@@ -73,7 +73,7 @@ def infer_model(model: Model | KnownModelName) -> Model:
         # noinspection PyTypeChecker
         return GeminiModel(model)  # pyright: ignore[reportArgumentType]
     else:
-        from ..shared import UserError
+        from ..exceptions import UserError
 
         raise UserError(f'Unknown model: {model}')
 

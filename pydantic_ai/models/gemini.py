@@ -27,7 +27,7 @@ from httpx import AsyncClient as AsyncHTTPClient
 from pydantic import Field
 from typing_extensions import assert_never
 
-from .. import _pydantic, _utils, shared
+from .. import _pydantic, _utils, exceptions, result
 from ..messages import (
     ArgsObject,
     LLMMessage,
@@ -67,7 +67,7 @@ class GeminiModel(Model):
             if env_api_key := os.getenv('GEMINI_API_KEY'):
                 api_key = env_api_key
             else:
-                raise shared.UserError('API key must be provided or set in the GEMINI_API_KEY environment variable')
+                raise exceptions.UserError('API key must be provided or set in the GEMINI_API_KEY environment variable')
         self.api_key = api_key
         self.http_client = http_client or cached_async_http_client()
         self.url_template = url_template
@@ -109,7 +109,7 @@ class GeminiAgentModel(AgentModel):
     tool_config: _GeminiToolConfig | None
     url_template: str
 
-    async def request(self, messages: list[Message]) -> tuple[LLMMessage, shared.Cost]:
+    async def request(self, messages: list[Message]) -> tuple[LLMMessage, result.Cost]:
         response = await self.make_request(messages)
         return self.process_response(response), response.usage_metadata.as_cost()
 
@@ -138,7 +138,7 @@ class GeminiAgentModel(AgentModel):
         url = self.url_template.format(model=self.model_name)
         r = await self.http_client.post(url, content=request_json, headers=headers)
         if r.status_code != 200:
-            raise shared.UnexpectedModelBehaviour(f'Unexpected response from gemini {r.status_code}', r.text)
+            raise exceptions.UnexpectedModelBehaviour(f'Unexpected response from gemini {r.status_code}', r.text)
         return _gemini_response_ta.validate_json(r.content)
 
     @staticmethod
@@ -153,7 +153,7 @@ class GeminiAgentModel(AgentModel):
             parts = cast(list[_GeminiTextPart], parts)
             return LLMResponse(content=''.join(part.text for part in parts))
         else:
-            raise shared.UnexpectedModelBehaviour(
+            raise exceptions.UnexpectedModelBehaviour(
                 f'Unexpected response from Gemini, expected all parts to be function calls or text, got: {parts!r}'
             )
 
@@ -366,11 +366,11 @@ class _GeminiUsageMetaData:
     total_token_count: Annotated[int, Field(alias='totalTokenCount')]
     cached_content_token_count: Annotated[int | None, Field(alias='cachedContentTokenCount')] = None
 
-    def as_cost(self) -> shared.Cost:
+    def as_cost(self) -> result.Cost:
         details: dict[str, int] = {}
         if self.cached_content_token_count is not None:
             details['cached_content_token_count'] = self.cached_content_token_count
-        return shared.Cost(
+        return result.Cost(
             request_tokens=self.prompt_token_count,
             response_tokens=self.candidates_token_count,
             total_tokens=self.total_token_count,
@@ -430,7 +430,7 @@ class _GeminiJsonSchema:
             # noinspection PyTypeChecker
             key = re.sub(r'^#/\$defs/', '', ref)
             if key in refs_stack:
-                raise shared.UserError('Recursive `$ref`s in JSON Schema are not supported by Gemini')
+                raise exceptions.UserError('Recursive `$ref`s in JSON Schema are not supported by Gemini')
             refs_stack += (key,)
             schema_def = self.defs[key]
             self._simplify(schema_def, refs_stack)
@@ -451,7 +451,7 @@ class _GeminiJsonSchema:
     def _object(self, schema: dict[str, Any], refs_stack: tuple[str, ...]) -> None:
         ad_props = schema.pop('additionalProperties', None)
         if ad_props:
-            raise shared.UserError('Additional properties in JSON Schema are not supported by Gemini')
+            raise exceptions.UserError('Additional properties in JSON Schema are not supported by Gemini')
 
         if properties := schema.get('properties'):  # pragma: no branch
             for value in properties.values():

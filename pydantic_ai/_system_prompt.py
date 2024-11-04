@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Generic, Union, cast
 
 from . import _utils
-from .shared import AgentDeps, CallContext
+from .call_typing import AgentDeps, CallContext
 
 # A function that may or maybe not take `CallContext` as an argument, and may or may not be async.
 # Usage `SystemPromptFunc[AgentDeps]`
