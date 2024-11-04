@@ -19,8 +19,7 @@ from pydantic_ai import Agent
 from pydantic_ai.messages import Message, MessagesTypeAdapter, UserPrompt
 
 # 'if-token-present' means nothing will be sent (and the example wil work) if you don't have logfire set up
-# logfire.configure(send_to_logfire='if-token-present')
-logfire.configure()
+logfire.configure(send_to_logfire='if-token-present')
 
 agent = Agent('openai:gpt-4o', deps=None)
 
