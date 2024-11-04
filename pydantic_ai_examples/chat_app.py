@@ -11,15 +11,21 @@ from pathlib import Path
 from typing import Annotated
 
 import fastapi
+import logfire
 from fastapi.responses import HTMLResponse, Response, StreamingResponse
 from pydantic import Field, TypeAdapter
 
 from pydantic_ai import Agent
 from pydantic_ai.messages import Message, MessagesTypeAdapter, UserPrompt
 
+# 'if-token-present' means nothing will be sent (and the example wil work) if you don't have logfire set up
+# logfire.configure(send_to_logfire='if-token-present')
+logfire.configure()
+
 agent = Agent('openai:gpt-4o', deps=None)
 
 app = fastapi.FastAPI()
+logfire.instrument_fastapi(app)
 
 
 @app.get('/')

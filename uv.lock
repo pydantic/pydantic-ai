@@ -30,6 +30,18 @@ wheels = [
 ]
 
 [[package]]
+name = "asgiref"
+version = "3.8.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "typing-extensions", marker = "python_full_version < '3.11'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/29/38/b3395cc9ad1b56d2ddac9970bc8f4141312dbaec28bc7c218b0dfafd0f42/asgiref-3.8.1.tar.gz", hash = "sha256:c343bd80a0bec947a9860adb4c432ffa7db769836c64238fc34bdc3fec84d590", size = 35186 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/39/e3/893e8757be2612e6c266d9bb58ad2e3651524b5b40cf56761e985a28b13e/asgiref-3.8.1-py3-none-any.whl", hash = "sha256:3e1e3ecc849832fe52ccf2cb6686b7a55f82bb1d6aee72a58826471390335e47", size = 23828 },
+]
+
+[[package]]
 name = "asttokens"
 version = "2.4.1"
 source = { registry = "https://pypi.org/simple" }
@@ -593,7 +605,7 @@ wheels = [
 
 [[package]]
 name = "logfire"
-version = "1.2.0"
+version = "2.1.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "executing" },
@@ -605,14 +617,17 @@ dependencies = [
     { name = "tomli", marker = "python_full_version < '3.11'" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/78/85/ce3e4ecc59a0126eaa9802f7d928d6efa837e63619dfec37654fb2d1f1c1/logfire-1.2.0.tar.gz", hash = "sha256:71866c4ce2f604b307ff0cc1a9b1254ea68b3c46f42bffd6ac36fc4db5abb62b", size = 240418 }
+sdist = { url = "https://files.pythonhosted.org/packages/ee/b8/b4f3a741076a9bdce82ed25218a8167d74c9834588710babc03cb587773a/logfire-2.1.1.tar.gz", hash = "sha256:fd0b9a8b3334cd8c7efb52c04297c2360380818a021e8024ca37bae5f32b78aa", size = 244832 }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/7d/7f/37d9c3cbed1ef23b467c0c0039f35524595f8fd79f3acb54e647a0ccd590/logfire-1.2.0-py3-none-any.whl", hash = "sha256:edb2b441e418cf31877bd97e24b3755f873bb423f834cca66f315b25bde61ebd", size = 164724 },
+    { url = "https://files.pythonhosted.org/packages/7e/93/905aef6a938fdd8633cf4937a35ae2438e2830788e8465588e1063ab79b5/logfire-2.1.1-py3-none-any.whl", hash = "sha256:5ead7b0f3edf6cab9bbe9a02e0f6a4c5f3f693411928b32b727ecb3d2b709814", size = 167207 },
 ]
 
 [package.optional-dependencies]
 asyncpg = [
     { name = "opentelemetry-instrumentation-asyncpg" },
+]
+fastapi = [
+    { name = "opentelemetry-instrumentation-fastapi" },
 ]
 
 [[package]]
@@ -779,6 +794,22 @@ wheels = [
 ]
 
 [[package]]
+name = "opentelemetry-instrumentation-asgi"
+version = "0.48b0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "asgiref" },
+    { name = "opentelemetry-api" },
+    { name = "opentelemetry-instrumentation" },
+    { name = "opentelemetry-semantic-conventions" },
+    { name = "opentelemetry-util-http" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/44/ac/fd3d40bab3234ec3f5c052a815100676baaae1832fa1067935f11e5c59c6/opentelemetry_instrumentation_asgi-0.48b0.tar.gz", hash = "sha256:04c32174b23c7fa72ddfe192dad874954968a6a924608079af9952964ecdf785", size = 23435 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/db/74/a0e0d38622856597dd8e630f2bd793760485eb165708e11b8be1696bbb5a/opentelemetry_instrumentation_asgi-0.48b0-py3-none-any.whl", hash = "sha256:ddb1b5fc800ae66e85a4e2eca4d9ecd66367a8c7b556169d9e7b57e10676e44d", size = 15958 },
+]
+
+[[package]]
 name = "opentelemetry-instrumentation-asyncpg"
 version = "0.48b0"
 source = { registry = "https://pypi.org/simple" }
@@ -790,6 +821,22 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/17/6c/fecc5a597cb2059d3388c497b77ef8caa30c2ce6d2caa8f4517b1a9fae9f/opentelemetry_instrumentation_asyncpg-0.48b0.tar.gz", hash = "sha256:c7cf78f50f489779c3ea526d4fe618589b2606c42ea6ad87d15818f7f70f53d3", size = 8577 }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/1e/4f/2c8aa63e65947521344c8bef4028dd4e2261fabcd2cd74d737271f36d4d8/opentelemetry_instrumentation_asyncpg-0.48b0-py3-none-any.whl", hash = "sha256:c9a70241120ada6bf4eafd865254165a24ef9a2d1e44aaeecb836817794781f2", size = 9975 },
+]
+
+[[package]]
+name = "opentelemetry-instrumentation-fastapi"
+version = "0.48b0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "opentelemetry-api" },
+    { name = "opentelemetry-instrumentation" },
+    { name = "opentelemetry-instrumentation-asgi" },
+    { name = "opentelemetry-semantic-conventions" },
+    { name = "opentelemetry-util-http" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/58/20/43477da5850ef2cd3792715d442aecd051e885e0603b6ee5783b2104ba8f/opentelemetry_instrumentation_fastapi-0.48b0.tar.gz", hash = "sha256:21a72563ea412c0b535815aeed75fc580240f1f02ebc72381cfab672648637a2", size = 18497 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ee/50/745ab075a3041b7a5f29a579d2c28eaad54f64b4589d8f9fd364c62cf0f3/opentelemetry_instrumentation_fastapi-0.48b0-py3-none-any.whl", hash = "sha256:afeb820a59e139d3e5d96619600f11ce0187658b8ae9e3480857dd790bc024f2", size = 11777 },
 ]
 
 [[package]]
@@ -829,6 +876,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/0a/89/1724ad69f7411772446067cdfa73b598694c8c91f7f8c922e344d96d81f9/opentelemetry_semantic_conventions-0.48b0.tar.gz", hash = "sha256:12d74983783b6878162208be57c9effcb89dc88691c64992d70bb89dc00daa1a", size = 89445 }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b7/7a/4f0063dbb0b6c971568291a8bc19a4ca70d3c185db2d956230dd67429dfc/opentelemetry_semantic_conventions-0.48b0-py3-none-any.whl", hash = "sha256:a0de9f45c413a8669788a38569c7e0a11ce6ce97861a628cca785deecdc32a1f", size = 149685 },
+]
+
+[[package]]
+name = "opentelemetry-util-http"
+version = "0.48b0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/d6/d7/185c494754340e0a3928fd39fde2616ee78f2c9d66253affaad62d5b7935/opentelemetry_util_http-0.48b0.tar.gz", hash = "sha256:60312015153580cc20f322e5cdc3d3ecad80a71743235bdb77716e742814623c", size = 7863 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ad/2e/36097c0a4d0115b8c7e377c90bab7783ac183bc5cb4071308f8959454311/opentelemetry_util_http-0.48b0-py3-none-any.whl", hash = "sha256:76f598af93aab50328d2a69c786beaedc8b6a7770f7a818cc307eb353debfffb", size = 6946 },
 ]
 
 [[package]]
@@ -914,7 +970,7 @@ dependencies = [
 examples = [
     { name = "asyncpg" },
     { name = "fastapi" },
-    { name = "logfire", extra = ["asyncpg"] },
+    { name = "logfire", extra = ["asyncpg", "fastapi"] },
     { name = "python-multipart" },
     { name = "uvicorn" },
 ]
@@ -943,8 +999,8 @@ requires-dist = [
     { name = "fastapi", marker = "extra == 'examples'", specifier = ">=0.115.4" },
     { name = "griffe", specifier = ">=1.3.2" },
     { name = "httpx", specifier = ">=0.27.2" },
-    { name = "logfire", marker = "extra == 'logfire'", specifier = ">=1.2.0" },
-    { name = "logfire", extras = ["asyncpg"], marker = "extra == 'examples'", specifier = ">=1.2.0" },
+    { name = "logfire", marker = "extra == 'logfire'", specifier = ">=2" },
+    { name = "logfire", extras = ["asyncpg", "fastapi"], marker = "extra == 'examples'", specifier = ">=2" },
     { name = "logfire-api", specifier = ">=1.2.0" },
     { name = "openai", specifier = ">=1.51.2" },
     { name = "pydantic", specifier = ">=2.9.2" },
