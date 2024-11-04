@@ -113,7 +113,7 @@ async def test_request_structured_response():
 
     result = await agent.run('Hello')
     assert result.response == [1, 2, 123]
-    assert result.message_history == snapshot(
+    assert result.all_messages == snapshot(
         [
             UserPrompt(content='Hello', timestamp=IsNow(tz=datetime.timezone.utc)),
             LLMToolCalls(
@@ -185,7 +185,7 @@ async def test_request_tool_call():
 
     result = await agent.run('Hello')
     assert result.response == 'final response'
-    assert result.message_history == snapshot(
+    assert result.all_messages == snapshot(
         [
             SystemPrompt(content='this is the system prompt'),
             UserPrompt(content='Hello', timestamp=IsNow(tz=datetime.timezone.utc)),

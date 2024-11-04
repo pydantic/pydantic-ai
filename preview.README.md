@@ -60,7 +60,7 @@ result = weather_agent.run_sync('What is the weather like in West London and in 
 print(result.response)
 # > 'The weather in West London is raining, while in Wiltshire it is sunny.'
 
-# `result.message_history` details of messages exchanged, useful if you want to continue
+# `result.all_messages` includes details of messages exchanged, useful if you want to continue
 # the conversation later, via the `message_history` argument of `run_sync`.
-print(result.message_history)
+print(result.all_messages)
 ```

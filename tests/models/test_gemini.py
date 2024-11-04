@@ -360,7 +360,7 @@ async def test_request_simple_success(get_gemini_client: GetGeminiClient):
 
     result = await agent.run('Hello')
     assert result.response == 'Hello world'
-    assert result.message_history == snapshot(
+    assert result.all_messages == snapshot(
         [
             UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
             LLMResponse(content='Hello world', timestamp=IsNow(tz=timezone.utc)),
@@ -381,7 +381,7 @@ async def test_request_structured_response(get_gemini_client: GetGeminiClient):
 
     result = await agent.run('Hello')
     assert result.response == [1, 2, 123]
-    assert result.message_history == snapshot(
+    assert result.all_messages == snapshot(
         [
             UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
             LLMToolCalls(
@@ -424,7 +424,7 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
 
     result = await agent.run('Hello')
     assert result.response == 'final response'
-    assert result.message_history == snapshot(
+    assert result.all_messages == snapshot(
         [
             SystemPrompt(content='this is the system prompt'),
             UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),

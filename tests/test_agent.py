@@ -70,7 +70,7 @@ def test_result_pydantic_model_retry():
     result = agent.run_sync('Hello')
     assert isinstance(result.response, Foo)
     assert result.response.model_dump() == {'a': 42, 'b': 'foo'}
-    assert result.message_history == snapshot(
+    assert result.all_messages == snapshot(
         [
             UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
             LLMToolCalls(
@@ -95,6 +95,7 @@ def test_result_pydantic_model_retry():
             ),
         ]
     )
+    assert result.all_messages_json().startswith(b'[{"content":"Hello"')
 
 
 def test_result_validator():
@@ -119,7 +120,7 @@ def test_result_validator():
     result = agent.run_sync('Hello')
     assert isinstance(result.response, Foo)
     assert result.response.model_dump() == {'a': 42, 'b': 'foo'}
-    assert result.message_history == snapshot(
+    assert result.all_messages == snapshot(
         [
             UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
             LLMToolCalls(
@@ -152,7 +153,7 @@ def test_plain_response():
     result = agent.run_sync('Hello')
     assert result.response == ('foo', 'bar')
     assert call_index == 2
-    assert result.message_history == snapshot(
+    assert result.all_messages == snapshot(
         [
             UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
             LLMResponse(content='hello', timestamp=IsNow(tz=timezone.utc)),
@@ -367,7 +368,7 @@ def test_run_with_history():
     assert result == snapshot(
         RunResult(
             response='{"ret_a":"a-apple"}',
-            message_history=[
+            all_messages=[
                 SystemPrompt(content='Foobar'),
                 UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
                 LLMToolCalls(
@@ -377,15 +378,16 @@ def test_run_with_history():
                 ToolReturn(tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc)),
                 LLMResponse(content='{"ret_a":"a-apple"}', timestamp=IsNow(tz=timezone.utc)),
             ],
+            new_message_index=1,
             cost=Cost(),
         )
     )
 
-    result = agent.run_sync('Hello again', message_history=result.message_history)
+    result = agent.run_sync('Hello again', message_history=result.all_messages)
     assert result == snapshot(
         RunResult(
             response='{"ret_a":"a-apple"}',
-            message_history=[
+            all_messages=[
                 SystemPrompt(content='Foobar'),
                 UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
                 LLMToolCalls(
@@ -403,6 +405,10 @@ def test_run_with_history():
                 ToolReturn(tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc)),
                 LLMResponse(content='{"ret_a":"a-apple"}', timestamp=IsNow(tz=timezone.utc)),
             ],
+            new_message_index=5,
             cost=Cost(),
         )
     )
+    new_msg_roles = [msg.role for msg in result.new_messages()]
+    assert new_msg_roles == snapshot(['user', 'llm-tool-calls', 'tool-return', 'llm-response'])
+    assert result.new_messages_json().startswith(b'[{"content":"Hello again",')

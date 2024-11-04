@@ -37,7 +37,7 @@ def test_simple():
     agent = Agent(FunctionModel(return_last), deps=None)
     result = agent.run_sync('Hello')
     assert result.response == snapshot("content='Hello' role='user' message_count=1")
-    assert result.message_history == snapshot(
+    assert result.all_messages == snapshot(
         [
             UserPrompt(
                 content='Hello',
@@ -52,9 +52,9 @@ def test_simple():
         ]
     )
 
-    result2 = agent.run_sync('World', message_history=result.message_history)
+    result2 = agent.run_sync('World', message_history=result.all_messages)
     assert result2.response == snapshot("content='World' role='user' message_count=3")
-    assert result2.message_history == snapshot(
+    assert result2.all_messages == snapshot(
         [
             UserPrompt(
                 content='Hello',
@@ -127,7 +127,7 @@ async def get_weather(_: CallContext[None], lat: int, lng: int):
 def test_weather():
     result = weather_agent.run_sync('London')
     assert result.response == 'Raining in London'
-    assert result.message_history == snapshot(
+    assert result.all_messages == snapshot(
         [
             UserPrompt(
                 content='London',
@@ -322,7 +322,7 @@ def test_register_all():
 def test_call_all():
     result = agent_all.run_sync('Hello', model=TestModel())
     assert result.response == snapshot('{"foo":"1","bar":"2","baz":"3","qux":"4","quz":"a"}')
-    assert result.message_history == snapshot(
+    assert result.all_messages == snapshot(
         [
             SystemPrompt(content='foobar'),
             UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),

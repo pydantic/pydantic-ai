@@ -19,6 +19,7 @@
       margin-top: 10px;
       border: 1px solid #ccc;
       border-radius: 4px;
+      font-size: 1rem;
     }
     button {
       margin: 10px 0 0 auto;
@@ -66,7 +67,6 @@
     #spinner.active {
       opacity: 1;
     }
-
     @keyframes rotation {
       0% { transform: rotate(0deg); }
       100% { transform: rotate(360deg); }
@@ -85,7 +85,7 @@
     <div class="center">
       <div id="spinner"></div>
     </div>
-    <form action="/chat/" method="post">
+    <form method="post">
       <input id="prompt-input" name="prompt"/>
       <button>Send</button>
     </form>
@@ -98,11 +98,14 @@
 <script type="module">
   import { marked } from 'https://cdn.jsdelivr.net/npm/marked/lib/marked.esm.js';
 
-  function renderMessage(message) {
-    if (message.role === 'user' || message.role === 'llm-response') {
-      return `<div class="${message.role}">${marked.parse(message.content)}</div>`;
-    } else {
-      throw new Error(`Unknown message role: ${message.role}`);
+  function addMessages(lines) {
+    const messages = lines.filter(line => line.length > 1).map((line) => JSON.parse(line))
+    const parent = document.getElementById('conversation');
+    for (const message of messages) {
+      let msgDiv = document.createElement('div');
+      msgDiv.classList.add(message.role);
+      msgDiv.innerHTML = marked.parse(message.content);
+      parent.appendChild(msgDiv);
     }
   }
 
@@ -112,11 +115,24 @@
   }
 
   async function fetchResponse(response) {
+    let text = '';
     if (response.ok) {
-      const messages = await response.json();
-      document.getElementById('conversation').innerHTML = messages.map(renderMessage).join('');
+      const reader = response.body.getReader();
+      while (true) {
+        const {done, value} = await reader.read();
+        if (done) {
+          break;
+        }
+        text += new TextDecoder().decode(value);
+        const lines = text.split('\n');
+        if (lines.length > 1) {
+          addMessages(lines.slice(0, -1));
+          text = lines[lines.length - 1];
+        }
+      }
+      addMessages(text.split('\n'));
       let input = document.getElementById('prompt-input')
-      input.value = '';
+      input.disabled = false;
       input.focus();
     } else {
       const text = await response.text();
@@ -127,17 +143,20 @@
 
   async function onSubmit(e) {
     e.preventDefault();
-    const body = new FormData(e.target);
     const spinner = document.getElementById('spinner');
     spinner.classList.add('active');
 
-    const response = await fetch(e.target.action, {method: 'POST', body});
-    spinner.classList.remove('active');
+    let input = document.getElementById('prompt-input')
+    input.value = '';
+    input.disabled = true;
+
+    const response = await fetch('/chat/', {method: 'POST', body: new FormData(e.target)});
     await fetchResponse(response);
+    spinner.classList.remove('active');
   }
 
   document.querySelector('form').addEventListener('submit', (e) => onSubmit(e).catch(onError));
 
-  // load message on page load
+  // load messages on page load
   fetch('/chat/').then(fetchResponse).catch(onError);
 </script>

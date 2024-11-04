@@ -4,11 +4,11 @@ from pathlib import Path
 from typing import Annotated
 
 import fastapi
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, Response, StreamingResponse
 from pydantic import Field, TypeAdapter
 
 from pydantic_ai import Agent
-from pydantic_ai.messages import Message, MessagesTypeAdapter
+from pydantic_ai.messages import Message, MessagesTypeAdapter, UserPrompt
 
 agent = Agent('openai:gpt-4o', deps=None)
 
@@ -21,23 +21,27 @@ async def index() -> HTMLResponse:
 
 
 @app.get('/chat/')
-async def get_chat() -> fastapi.Response:
-    messages = list(database.get_messages())
-    messages = MessagesTypeAdapter.dump_json(messages)
-    return fastapi.Response(content=messages, media_type='application/json')
+async def get_chat() -> Response:
+    msgs = database.get_messages()
+    return Response(b'\n'.join(MessageTypeAdapter.dump_json(m) for m in msgs), media_type='text/plain')
 
 
 @app.post('/chat/')
-async def post_chat(prompt: Annotated[str, fastapi.Form()]) -> fastapi.Response:
-    messages = list(database.get_messages())
-    response = await agent.run(prompt, message_history=messages)
-    response_messages: list[Message] = []
-    for message in response.message_history:
-        if message.role != 'system':
-            database.add_message(message)
-            response_messages.append(message)
-    messages = MessagesTypeAdapter.dump_json(response_messages)
-    return fastapi.Response(content=messages, media_type='application/json')
+async def post_chat(prompt: Annotated[str, fastapi.Form()]) -> StreamingResponse:
+    async def stream_messages():
+        """Streams new line delimited JSON `Message`s to the client."""
+        # stream the user prompt so that can be displayed straight away
+        yield MessageTypeAdapter.dump_json(UserPrompt(content=prompt)) + b'\n'
+        # get the chat history so far to pass as context to the agent
+        messages = list(database.get_messages())
+        response = await agent.run(prompt, message_history=messages)
+        # add new messages (e.g. the user prompt and the agent response in this case) to the database
+        database.add_messages(response.new_messages_json())
+        # stream the last message which will be the agent response, we can't just yield `new_messages_json()`
+        # since we already stream the user prompt
+        yield MessageTypeAdapter.dump_json(response.all_messages[-1]) + b'\n'
+
+    return StreamingResponse(stream_messages(), media_type='text/plain')
 
 
 THIS_DIR = Path(__file__).parent
@@ -48,18 +52,18 @@ MessageTypeAdapter: TypeAdapter[Message] = TypeAdapter(Annotated[Message, Field(
 class Database:
     """Very rudimentary database to store chat messages in a JSON lines file."""
 
-    file: Path = THIS_DIR / '.chat_app_messages.json'
+    file: Path = THIS_DIR / '.chat_app_messages.jsonl'
 
-    def add_message(self, message: Message):
+    def add_messages(self, messages: bytes):
         with self.file.open('ab') as f:
-            f.write(MessageTypeAdapter.dump_json(message) + b'\n')
+            f.write(messages + b'\n')
 
     def get_messages(self) -> Iterator[Message]:
         if self.file.exists():
             with self.file.open('rb') as f:
                 for line in f:
                     if line:
-                        yield MessageTypeAdapter.validate_json(line)
+                        yield from MessagesTypeAdapter.validate_json(line)
 
 
 database = Database()

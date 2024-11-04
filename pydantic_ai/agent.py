@@ -97,12 +97,16 @@ class Agent(Generic[AgentDeps, ResultData]):
         if deps is None:
             deps = self._default_deps
 
-        if message_history is not None:
+        # if message history includes system prompts, we don't want to regenerate them
+        if message_history and any(m.role == 'system' for m in message_history):
             # shallow copy messages
             messages = message_history.copy()
         else:
             messages = await self._init_messages(deps)
+            if message_history:
+                messages += message_history
 
+        new_message_index = len(messages)
         messages.append(_messages.UserPrompt(user_prompt))
 
         result_tools = list(self._result_schema.tools.values()) if self._result_schema else None
@@ -135,7 +139,7 @@ class Agent(Generic[AgentDeps, ResultData]):
                             run_span.set_attribute('cost', cost)
                             handle_span.set_attribute('result', left.value)
                             handle_span.message = 'handle model response -> final result'
-                            return shared.RunResult(left.value, messages, cost=cost)
+                            return shared.RunResult(left.value, messages, new_message_index, cost)
                         else:
                             tool_responses = either.right
                             handle_span.set_attribute('tool_responses', tool_responses)
