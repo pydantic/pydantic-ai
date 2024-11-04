@@ -99,4 +99,4 @@ def cached_async_http_client() -> AsyncHTTPClient:
     described in [encode/httpx#2026](https://github.com/encode/httpx/pull/2026), but when experimenting or showing
     examples, it's very useful not to, this allows multiple Agents to use a single client.
     """
-    return AsyncHTTPClient()
+    return AsyncHTTPClient(timeout=30)

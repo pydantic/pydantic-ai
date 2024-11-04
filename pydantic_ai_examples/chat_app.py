@@ -1,3 +1,10 @@
+"""Simple chat app example build with FastAPI.
+
+Run with:
+
+    uv run -m pydantic_ai_examples.chat_app
+"""
+
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
