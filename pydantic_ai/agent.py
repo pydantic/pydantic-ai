@@ -15,7 +15,13 @@ from .result import ResultData
 
 __all__ = 'Agent', 'KnownModelName'
 KnownModelName = Literal[
-    'openai:gpt-4o', 'openai:gpt-4-turbo', 'openai:gpt-4', 'openai:gpt-3.5-turbo', 'gemini-1.5-flash', 'gemini-1.5-pro'
+    'openai:gpt-4o',
+    'openai:gpt-4o-mini',
+    'openai:gpt-4-turbo',
+    'openai:gpt-4',
+    'openai:gpt-3.5-turbo',
+    'gemini-1.5-flash',
+    'gemini-1.5-pro',
 ]
 _logfire = logfire_api.Logfire(otel_scope='pydantic-ai')
 
@@ -125,7 +131,7 @@ class Agent(Generic[AgentDeps, ResultData]):
                 while True:
                     with _logfire.span('model request') as model_request_span:
                         model_response, request_cost = await agent_model.request(messages)
-                        model_request_span.set_attribute('model_response', model_response)
+                        model_request_span.set_attribute('response', model_response)
                         model_request_span.set_attribute('cost', request_cost)
                         model_request_span.message = f'model request -> {model_response.role}'
 
@@ -136,7 +142,7 @@ class Agent(Generic[AgentDeps, ResultData]):
                         either = await self._handle_model_response(model_response, deps)
 
                         if left := either.left:
-                            run_span.set_attribute('full_messages', messages)
+                            run_span.set_attribute('all_messages', messages)
                             run_span.set_attribute('cost', cost)
                             handle_span.set_attribute('result', left.value)
                             handle_span.message = 'handle model response -> final result'

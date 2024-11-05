@@ -4,7 +4,7 @@ import inspect
 import sys
 import types
 from collections.abc import Awaitable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Callable, Generic, Union, cast, get_args, get_origin
 
 from pydantic import TypeAdapter, ValidationError
@@ -30,8 +30,8 @@ ResultValidatorFunc = Union[
 @dataclass
 class ResultValidator(Generic[AgentDeps, ResultData]):
     function: ResultValidatorFunc[AgentDeps, ResultData]
-    _takes_ctx: bool = False
-    _is_async: bool = False
+    _takes_ctx: bool = field(init=False)
+    _is_async: bool = field(init=False)
 
     def __post_init__(self):
         self._takes_ctx = len(inspect.signature(self.function).parameters) > 1

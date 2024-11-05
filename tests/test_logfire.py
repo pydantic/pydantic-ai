@@ -91,7 +91,7 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary]) -> None:
             'code.lineno': IsInt(),
             'logfire.msg_template': 'model request',
             'logfire.span_type': 'span',
-            'model_response': IsJson(
+            'response': IsJson(
                 {
                     'calls': [{'tool_name': 'my_ret', 'args': {'args_object': {'x': 0}}, 'tool_id': None}],
                     'timestamp': IsStr() & IsNow(iso_string=True, tz=timezone.utc),
@@ -104,7 +104,7 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary]) -> None:
                 {
                     'type': 'object',
                     'properties': {
-                        'model_response': {
+                        'response': {
                             'type': 'object',
                             'title': 'LLMToolCalls',
                             'x-python-datatype': 'dataclass',
