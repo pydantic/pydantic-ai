@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
-from typing import Generic, TypeVar, Union, cast
+from typing import Generic, TypeVar
 
 from . import _result, _utils, exceptions, messages, models
 from .call_typing import AgentDeps
@@ -12,9 +12,7 @@ __all__ = (
     'ResultData',
     'Cost',
     'RunResult',
-    'EitherStreamedRunResult',
-    'StreamedTextRunResult',
-    'StreamedToolCallRunResult',
+    'StreamedRunResult',
 )
 
 ResultData = TypeVar('ResultData')
@@ -90,33 +88,85 @@ class RunResult(_BaseRunResult[ResultData]):
         return self._cost
 
 
-class Auto:
-    pass
-
-
-AUTO = Auto()
-DEFAULT_DEBOUNCE = 0.2
+# @dataclass
+# class StreamedTextRunResult(_BaseRunResult[str], Generic[AgentDeps]):
+#     """Text result of a streamed run."""
+#
+#     cost_so_far: Cost
+#     """Cost up until the last request."""
+#     _stream_response: models.StreamTextResponse
+#     _deps: AgentDeps
+#     _result_validators: list[_result.ResultValidator[AgentDeps, str]]
+#
+#     async def stream(self, text_delta: bool = False, debounce_by: float | None = 0.1) -> AsyncIterator[str]:
+#         """Stream the response text as an async iterable.
+#
+#         Result validators are called on each iteration, if `text_delta=False`.
+#
+#         !!!
+#             Note this means that the result validators will NOT be called on the final result if `text_delta=True`.
+#
+#         Args:
+#             text_delta: if `True`, yield each chunk of text as it is received, if `False` (default), yield the full text
+#                 up to the current point.
+#             debounce_by: by how much (if at all) to debounce/group the response chunks by. if `AUTO` (default),
+#                 the response stream is debounced by 0.1 seconds unless `text_delta` is `True`, in which case it
+#                 doesn't make sense to debounce. `None` means no debouncing. Debouncing is important particularly
+#                 for long structured responses to reduce the overhead of performing validation as each token is received.
+#
+#         Returns: An async iterable of the response data.
+#         """
+#         if text_delta:
+#             async for chunks in _utils.group_by_temporal(self._stream_response, debounce_by):
+#                 yield ''.join(chunks)
+#         else:
+#             # a quick benchmark shows it's faster build up a string with concat when we're yielding at each step
+#             combined = ''
+#             async for chunks in _utils.group_by_temporal(self._stream_response, debounce_by):
+#                 combined += ''.join(chunks)
+#                 combined = await self._validate_result(combined)
+#                 yield combined
+#
+#     async def get_response(self) -> str:
+#         """Stream the whole response, validate and return it."""
+#         text = ''.join([chunk async for chunk in self._stream_response])
+#         return await self._validate_result(text)
+#
+#     def cost(self) -> Cost:
+#         """Return the cost of the whole run.
+#
+#         NOTE: this won't return the full cost until the stream is finished.
+#         """
+#         return self.cost_so_far + self._stream_response.cost()
+#
+#     async def _validate_result(self, text: str) -> str:
+#         for validator in self._result_validators:
+#             text = await validator.validate(text, self._deps, 0, None)
+#         return text
+#
 
 
 @dataclass
-class StreamedTextRunResult(_BaseRunResult[str], Generic[AgentDeps]):
-    """Text result of a streamed run."""
+class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultData]):
+    """Result of a streamed run that returns structured data via a tool call."""
 
     cost_so_far: Cost
     """Cost up until the last request."""
-    _stream_response: models.StreamTextResponse
+    _stream_response: models.StreamTextResponse | models.StreamToolCallResponse
+    _result_schema: _result.ResultSchema[ResultData] | None
     _deps: AgentDeps
-    _result_validators: list[_result.ResultValidator[AgentDeps, str]]
+    _result_validators: list[_result.ResultValidator[AgentDeps, ResultData]]
 
-    async def response_stream(
-        self, text_delta: bool = False, debounce_by: float | None | Auto = AUTO
-    ) -> AsyncIterator[str]:
-        """Stream the response text as an async iterable.
+    async def stream(self, *, text_delta: bool = False, debounce_by: float | None = 0.1) -> AsyncIterator[ResultData]:
+        """Stream the response as an async iterable.
 
-        Result validators are called on each iteration, if `text_delta=False`.
+        Result validators are called on each iteration, if `text_delta=False` (the default) or for structured
+        responses.
 
         !!!
-            Note this means that the result validators will NOT be called on the final result if `text_delta=True`.
+            Note that the result validators will NOT be called on the final text result if `text_delta=True`.
+
+        The pydantic validator for the tool type will be called in [partial mode](#) on each iteration.
 
         Args:
             text_delta: if `True`, yield each chunk of text as it is received, if `False` (default), yield the full text
@@ -128,71 +178,37 @@ class StreamedTextRunResult(_BaseRunResult[str], Generic[AgentDeps]):
 
         Returns: An async iterable of the response data.
         """
-        if text_delta:
-            assert debounce_by is AUTO or debounce_by is None, 'debounce_by must be None or AUTO if text_delta=True'
-            async for chunk in self._stream_response:
-                yield chunk
+        if isinstance(self._stream_response, models.StreamTextResponse):
+            if text_delta:
+                async for chunks in _utils.group_by_temporal(self._stream_response, debounce_by):
+                    yield ''.join(chunks)  # pyright: ignore[reportReturnType]
+            else:
+                # a quick benchmark shows it's faster build up a string with concat when we're yielding at each step
+                combined = ''
+                async for chunks in _utils.group_by_temporal(self._stream_response, debounce_by):
+                    combined += ''.join(chunks)
+                    combined = await self._validate_text_result(combined)
+                    yield combined  # pyright: ignore[reportReturnType]
         else:
-            # a quick benchmark shows it's faster build up a string with concat when we're yielding at each step
-            combined = ''
-            soft_max_interval = DEFAULT_DEBOUNCE if debounce_by is AUTO else cast(float, debounce_by)
-            async for chunks in _utils.group_by_temporal(self._stream_response, soft_max_interval):
-                combined += ''.join(chunks)
-                combined = await self._validate_result(combined)
-                yield combined
-
-    async def get_response(self) -> str:
-        """Stream the whole response, validate and return it."""
-        text = ''.join([chunk async for chunk in self._stream_response])
-        return await self._validate_result(text)
-
-    def cost(self) -> Cost:
-        """Return the cost of the whole run.
-
-        NOTE: this won't return the full cost until the stream is finished.
-        """
-        return self.cost_so_far + self._stream_response.cost()
-
-    async def _validate_result(self, text: str) -> str:
-        for validator in self._result_validators:
-            text = await validator.validate(text, self._deps, 0, None)
-        return text
-
-
-@dataclass
-class StreamedToolCallRunResult(_BaseRunResult[ResultData], Generic[ResultData, AgentDeps]):
-    """Result of a streamed run that returns structured data via a tool call."""
-
-    cost_so_far: Cost
-    """Cost up until the last request."""
-    _stream_response: models.StreamToolCallResponse
-    _result_schema: _result.ResultSchema[ResultData]
-    _deps: AgentDeps
-    _result_validators: list[_result.ResultValidator[AgentDeps, ResultData]]
-
-    async def response_stream(self, debounce_by: float | None = DEFAULT_DEBOUNCE) -> AsyncIterator[ResultData]:
-        """Stream the response structured data as an async iterable.
-
-        The pydantic validator for the tool type will be called in [partial mode](#) on each iteration.
-
-        Args:
-            debounce_by: by how much (if at all) to debounce/group the response chunks by. if `AUTO` (default),
-                the response stream is debounced by 0.2 seconds unless `text_delta` is `True`, in which case it
-                doesn't make sense to debounce. `None` means no debouncing. Debouncing is important particularly
-                for long structured responses to reduce the overhead of performing validation as each token is received.
-
-        Returns: An async iterable of the response data.
-        """
-        async for _ in _utils.group_by_temporal(self._stream_response, debounce_by):
-            tool_message = self._stream_response.get()
-            yield await self._validate_result(tool_message)
+            assert not text_delta, 'Cannot use `text_delta=True` for structured responses'
+            async for _ in _utils.group_by_temporal(self._stream_response, debounce_by):
+                tool_message = self._stream_response.get()
+                yield await self._validate_tool_result(tool_message, True)
 
     async def get_response(self) -> ResultData:
         """Stream the whole response, validate and return it."""
-        async for _ in self._stream_response:
-            pass
-        tool_message = self._stream_response.get()
-        return await self._validate_result(tool_message)
+        if isinstance(self._stream_response, models.StreamTextResponse):
+            text = ''.join([chunk async for chunk in self._stream_response])
+            return await self._validate_text_result(text)  # pyright: ignore[reportReturnType]
+        else:
+            async for _ in self._stream_response:
+                pass
+            tool_message = self._stream_response.get()
+            return await self._validate_tool_result(tool_message, False)
+
+    def is_text(self) -> bool:
+        """Return whether the stream response is text."""
+        return isinstance(self._stream_response, models.StreamTextResponse)
 
     def cost(self) -> Cost:
         """Return the cost of the whole run.
@@ -201,7 +217,18 @@ class StreamedToolCallRunResult(_BaseRunResult[ResultData], Generic[ResultData, 
         """
         return self.cost_so_far + self._stream_response.cost()
 
-    async def _validate_result(self, message: messages.LLMToolCalls) -> ResultData:
+    async def _validate_text_result(self, text: str) -> str:
+        for validator in self._result_validators:
+            text = await validator.validate(  # pyright: ignore[reportAssignmentType]
+                text,  # pyright: ignore[reportArgumentType]
+                self._deps,
+                0,
+                None,
+            )
+        return text
+
+    async def _validate_tool_result(self, message: messages.LLMToolCalls, allow_partial: bool) -> ResultData:
+        assert self._result_schema is not None, 'Expected _result_schema to not be None'
         match = self._result_schema.find_tool(message)
         if match is None:
             raise exceptions.UnexpectedModelBehaviour(
@@ -209,12 +236,8 @@ class StreamedToolCallRunResult(_BaseRunResult[ResultData], Generic[ResultData, 
             )
 
         call, result_tool = match
-        result_data = result_tool.validate(call)
+        result_data = result_tool.validate(call, allow_partial=allow_partial)
 
         for validator in self._result_validators:
             result_data = await validator.validate(result_data, self._deps, 0, call)
         return result_data
-
-
-# Usage `EitherStreamedRunResult[ResultData, AgentDeps]`
-EitherStreamedRunResult = Union[StreamedTextRunResult[AgentDeps], StreamedToolCallRunResult[ResultData, AgentDeps]]

@@ -162,3 +162,6 @@ exclude_lines = [
 
 [tool.logfire]
 ignore_no_config = true
+
+[tool.uv.sources]
+pydantic = { git = "https://github.com/pydantic/pydantic.git" }

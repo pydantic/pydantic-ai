@@ -155,15 +155,22 @@ class OpenAIAgentModel(AgentModel):
         """Process a streamed response, and prepare a streaming response to return."""
         first_chunk = await response.__anext__()
         timestamp = datetime.fromtimestamp(first_chunk.created, tz=timezone.utc)
-        choice = first_chunk.choices[0]
-        if choice.delta.tool_calls is not None:
+        delta = first_chunk.choices[0].delta
+
+        # the first chunk may only contain `role`, so we iterate until we get either `tool_calls` or `content`
+        while delta.tool_calls is None and delta.content is None:
+            next_chunk = await response.__anext__()
+            delta = next_chunk.choices[0].delta
+
+        if delta.tool_calls is not None:
             return OpenAIStreamToolCallResponse(
                 response,
-                {c.index: c for c in choice.delta.tool_calls},
+                {c.index: c for c in delta.tool_calls},
                 timestamp,
                 _map_cost(first_chunk),
             )
         else:
+            assert delta.content is not None, f'Expected delta with content, got {delta}'
             return OpenAIStreamTextResponse(response, timestamp, _map_cost(first_chunk))
 
     @staticmethod

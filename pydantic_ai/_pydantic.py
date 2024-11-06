@@ -52,10 +52,9 @@ def function_schema(either_function: _retriever.RetrieverEitherFunc[AgentDeps, _
     """
     function = either_function.whichever()
     takes_ctx = either_function.is_left()
-    namespace = _typing_extra.get_module_ns_of(function)
     config = ConfigDict(title=function.__name__)
     config_wrapper = ConfigWrapper(config)
-    gen_schema = _generate_schema.GenerateSchema(config_wrapper, namespace)
+    gen_schema = _generate_schema.GenerateSchema(config_wrapper)
     core_config = config_wrapper.core_config(None)
 
     sig = signature(function)

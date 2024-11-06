@@ -175,7 +175,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         message_history: list[_messages.Message] | None = None,
         model: models.Model | KnownModelName | None = None,
         deps: AgentDeps | None = None,
-    ) -> result.EitherStreamedRunResult[AgentDeps, ResultData]:
+    ) -> result.StreamedRunResult[AgentDeps, ResultData]:
         """Run the agent with a user prompt in async mode, returning a streamed response.
 
         Args:
@@ -219,27 +219,15 @@ class Agent(Generic[AgentDeps, ResultData]):
                             run_span.set_attribute('all_messages', messages)
                             handle_span.set_attribute('result_type', left.value)
                             handle_span.message = 'handle model response -> final result'
-                            if isinstance(left.value, models.StreamTextResponse):
-                                return result.StreamedTextRunResult(
-                                    messages,
-                                    new_message_index,
-                                    cost,
-                                    left.value,
-                                    deps,
-                                    # pyright can't know that the ResultData is `str` here
-                                    self._result_validators,  # pyright: ignore[reportArgumentType]
-                                )
-                            else:
-                                assert self._result_schema is not None
-                                return result.StreamedToolCallRunResult(
-                                    messages,
-                                    new_message_index,
-                                    cost,
-                                    left.value,
-                                    self._result_schema,
-                                    deps,
-                                    self._result_validators,
-                                )
+                            return result.StreamedRunResult(
+                                messages,
+                                new_message_index,
+                                cost,
+                                left.value,
+                                self._result_schema,
+                                deps,
+                                self._result_validators,
+                            )
                         else:
                             # right means continue the conversation
                             tool_responses = either.right

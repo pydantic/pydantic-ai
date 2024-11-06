@@ -178,7 +178,7 @@ class ResultTool(Generic[ResultData]):
             outer_typed_dict_key=outer_typed_dict_key,
         )
 
-    def validate(self, tool_call: messages.ToolCall) -> ResultData:
+    def validate(self, tool_call: messages.ToolCall, allow_partial: bool = False) -> ResultData:
         """Validate a result message.
 
         Returns:
@@ -186,9 +186,13 @@ class ResultTool(Generic[ResultData]):
         """
         try:
             if isinstance(tool_call.args, messages.ArgsJson):
-                result = self.type_adapter.validate_json(tool_call.args.args_json)
+                result = self.type_adapter.validate_json(
+                    tool_call.args.args_json, experimental_allow_partial=allow_partial
+                )
             else:
-                result = self.type_adapter.validate_python(tool_call.args.args_object)
+                result = self.type_adapter.validate_python(
+                    tool_call.args.args_object, experimental_allow_partial=allow_partial
+                )
         except ValidationError as e:
             m = messages.RetryPrompt(
                 tool_name=tool_call.tool_name,

@@ -127,6 +127,7 @@ async def group_by_temporal(aiter: AsyncIterator[T], soft_max_interval: float | 
     if soft_max_interval is None:
         async for item in aiter:
             yield [item]
+        return
 
     assert soft_max_interval is not None and soft_max_interval > 0, 'soft_max_interval must be a positive number'
     buffer: list[T] = []
