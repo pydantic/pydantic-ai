@@ -367,7 +367,7 @@ async def test_request_simple_success(get_gemini_client: GetGeminiClient):
             LLMResponse(content='Hello world', timestamp=IsNow(tz=timezone.utc)),
         ]
     )
-    assert result.cost == snapshot(Cost(request_tokens=1, response_tokens=2, total_tokens=3))
+    assert result.cost() == snapshot(Cost(request_tokens=1, response_tokens=2, total_tokens=3))
 
 
 async def test_request_structured_response(get_gemini_client: GetGeminiClient):
@@ -454,7 +454,7 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
             LLMResponse(content='final response', timestamp=IsNow(tz=timezone.utc)),
         ]
     )
-    assert result.cost == snapshot(Cost(request_tokens=3, response_tokens=6, total_tokens=9))
+    assert result.cost() == snapshot(Cost(request_tokens=3, response_tokens=6, total_tokens=9))
 
 
 async def test_unexpected_response(client_with_handler: ClientWithHandler, env: TestEnv):

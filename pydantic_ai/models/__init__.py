@@ -7,9 +7,9 @@ specific LLM being used.
 from __future__ import annotations as _annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterable, AsyncIterator, Mapping, Sequence
+from collections.abc import AsyncIterator, Mapping, Sequence
 from functools import cache
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Protocol, Union
 
 from httpx import AsyncClient as AsyncHTTPClient
 
@@ -56,49 +56,21 @@ class AgentModel(ABC):
         """Make a request to the model."""
         raise NotImplementedError()
 
-    async def request_stream(self, messages: list[Message]) -> StreamToolCallResponse | StreamTextResponse:
+    async def request_stream(self, messages: list[Message]) -> EitherStreamedResponse:
         """Make a request to the model and return a streaming response."""
         raise NotImplementedError(f'Streamed requests not supported by this {self.__class__.__name__}')
-
-
-class StreamToolCallResponse(ABC):
-    """Streamed response from an LLM when calling a tool."""
-
-    def __aiter__(self) -> AsyncIterator[LLMToolCalls]:
-        """Stream the response as an async iterable.
-
-        Each yielded value will be the cumulative response up to that point.
-        """
-        return self
-
-    @abstractmethod
-    async def __anext__(self) -> LLMToolCalls:
-        """Get the next response."""
-        raise NotImplementedError()
-
-    @abstractmethod
-    async def consume(self) -> LLMToolCalls:
-        """Stream the whole response and return the complete tool call."""
-        raise NotImplementedError()
-
-    @abstractmethod
-    def cost(self) -> Cost:
-        """Return the cost of the request.
-
-        NOTE: this won't return the ful cost until the stream is finished.
-        """
-        raise NotImplementedError()
 
 
 class StreamTextResponse(ABC):
     """Streamed response from an LLM when returning text."""
 
-    @abstractmethod
-    async def __aiter__(self) -> AsyncIterable[str]:
-        """Stream the response as an async iterable.
+    def __aiter__(self) -> AsyncIterator[str]:
+        """Stream the response as an async iterable of string chunks."""
+        return self
 
-        Each yielded value will be the cumulative response up to that point
-        """
+    @abstractmethod
+    async def __anext__(self) -> str:
+        """Process the next chunk of the response, and return the string delta."""
         raise NotImplementedError()
 
     @abstractmethod
@@ -108,6 +80,42 @@ class StreamTextResponse(ABC):
         NOTE: this won't return the ful cost until the stream is finished.
         """
         raise NotImplementedError()
+
+
+class StreamToolCallResponse(ABC):
+    """Streamed response from an LLM when calling a tool."""
+
+    def __aiter__(self) -> AsyncIterator[None]:
+        """Stream the response as an async iterable, building up the tool call as it goes.
+
+        This is an async iterator that yields `None` to avoid doing the work of building the final tool call when
+        it will often be thrown away.
+        """
+        return self
+
+    @abstractmethod
+    async def __anext__(self) -> None:
+        """Process the next chunk of the response, see above for why this returns `None`."""
+        raise NotImplementedError()
+
+    @abstractmethod
+    def get(self) -> LLMToolCalls:
+        """Get the `LLMToolCalls` at this point.
+
+        The `LLMToolCalls` may or may not be complete, depending on whether the stream is finished.
+        """
+        raise NotImplementedError()
+
+    @abstractmethod
+    def cost(self) -> Cost:
+        """Get the cost of the request.
+
+        NOTE: this won't return the full cost until the stream is finished.
+        """
+        raise NotImplementedError()
+
+
+EitherStreamedResponse = Union[StreamTextResponse, StreamToolCallResponse]
 
 
 def infer_model(model: Model | KnownModelName) -> Model:

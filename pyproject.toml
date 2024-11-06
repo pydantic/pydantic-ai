@@ -58,7 +58,7 @@ examples = [
 dev = [
     "dirty-equals>=0.8.0",
     "mypy>=1.11.2",
-    "pyright>=1.1.384",
+    "pyright>=1.1.388",
     "pytest>=8.3.3",
     "pytest-pretty>=1.2.0",
     "inline-snapshot>=0.13.3",
@@ -128,6 +128,7 @@ executionEnvironments = [
 ]
 
 [tool.pytest.ini_options]
+testpaths = "tests"
 xfail_strict = true
 filterwarnings = [
     "error",

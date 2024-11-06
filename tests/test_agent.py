@@ -401,7 +401,7 @@ def test_run_with_history_new():
                 LLMResponse(content='{"ret_a":"a-apple"}', timestamp=IsNow(tz=timezone.utc)),
             ],
             _new_message_index=5,
-            cost=Cost(),
+            _cost=Cost(),
         )
     )
     new_msg_roles = [msg.role for msg in result2.new_messages()]
@@ -434,6 +434,6 @@ def test_run_with_history_new():
                 LLMResponse(content='{"ret_a":"a-apple"}', timestamp=IsNow(tz=timezone.utc)),
             ],
             _new_message_index=5,
-            cost=Cost(),
+            _cost=Cost(),
         )
     )

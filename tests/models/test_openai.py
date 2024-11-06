@@ -76,7 +76,7 @@ async def test_request_simple_success():
 
     result = await agent.run('Hello')
     assert result.response == 'world'
-    assert result.cost == snapshot(Cost())
+    assert result.cost() == snapshot(Cost())
 
 
 async def test_request_simple_usage():
@@ -90,7 +90,7 @@ async def test_request_simple_usage():
 
     result = await agent.run('Hello')
     assert result.response == 'world'
-    assert result.cost == snapshot(Cost(request_tokens=2, response_tokens=1, total_tokens=3))
+    assert result.cost() == snapshot(Cost(request_tokens=2, response_tokens=1, total_tokens=3))
 
 
 async def test_request_structured_response():
@@ -226,6 +226,6 @@ async def test_request_tool_call():
             ),
         ]
     )
-    assert result.cost == snapshot(
+    assert result.cost() == snapshot(
         Cost(request_tokens=5, response_tokens=3, total_tokens=9, details={'cached_tokens': 3})
     )

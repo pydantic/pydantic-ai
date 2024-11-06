@@ -1,6 +1,8 @@
 from __future__ import annotations as _annotations
 
 import asyncio
+import time
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, is_dataclass
 from functools import partial
 from types import GenericAlias
@@ -107,3 +109,65 @@ class Either(Generic[Left, Right]):
 
     def whichever(self) -> Left | Right:
         return self._left.value if self._left is not None else self.right
+
+
+async def group_by_temporal(aiter: AsyncIterator[T], soft_max_interval: float | None) -> AsyncIterator[list[T]]:
+    """Group items from an async iterable into lists based on time interval between them.
+
+    Effectively debouncing the iterator.
+
+    Args:
+        aiter: The async iterable to group.
+        soft_max_interval: Maximum interval over which to group items, this should avoid a trickle of items causing
+            a group to never be yielded. It's a soft max in the sense that once we're over this time, we yield items
+            as soon as `aiter.__anext__()` returns. If `None`, no grouping/debouncing is performed
+
+    Returns: An async iterable of lists of items from the input async iterable.
+    """
+    if soft_max_interval is None:
+        async for item in aiter:
+            yield [item]
+
+    assert soft_max_interval is not None and soft_max_interval > 0, 'soft_max_interval must be a positive number'
+    buffer: list[T] = []
+    group_start_time = time.monotonic()
+    # we might wait for the next item more than once, so we store the coros to await next time if any
+    coro: asyncio.Task[T] | None = None
+
+    while True:
+        if group_start_time is None:
+            # group hasn't started, we just wait for the maximum interval
+            wait_time = soft_max_interval
+        else:
+            # wait for the time remaining in the group
+            wait_time = soft_max_interval - (time.monotonic() - group_start_time)
+
+        # if there's no current coroutine, we get the next one
+        if coro is None:
+            # aiter.__anext__() returns an Awaitable[T], not a Coroutine which asyncio.create_task expects
+            # TODO does this matter? It seems to run fine
+            coro = asyncio.create_task(aiter.__anext__())  # pyright: ignore[reportArgumentType]
+
+        # we use asyncio.wait to avoid cancelling the coroutine if it's not done
+        done, _ = await asyncio.wait((coro,), timeout=wait_time)
+
+        if done:
+            # the one task we waited for completed
+            try:
+                item = done.pop().result()
+            except StopAsyncIteration:
+                # if the coro raised StopAsyncIteration, we're done iterating
+                if buffer:
+                    yield buffer
+                break
+            else:
+                # we got an item, add it to the buffer and set coro to None to get the next item
+                buffer.append(item)
+                coro = None
+                # if this is the first item in the group, set the group start time
+                if group_start_time is None:
+                    group_start_time = time.monotonic()
+        elif buffer:
+            yield buffer
+            buffer.clear()
+            group_start_time = None

@@ -125,6 +125,10 @@ class ResultSchema(Generic[ResultData]):
             if result := self.tools.get(call.tool_name):
                 return call, result
 
+    def tool_names(self) -> list[str]:
+        """Return the names of the tools."""
+        return list(self.tools.keys())
+
 
 DEFAULT_DESCRIPTION = 'The final response which ends this conversation'
 

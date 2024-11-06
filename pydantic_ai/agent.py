@@ -93,31 +93,12 @@ class Agent(Generic[AgentDeps, ResultData]):
         Returns:
             The result of the run.
         """
-        if model is not None:
-            custom_model = model_ = models.infer_model(model)
-        elif self.model is not None:
-            model_ = self.model
-            custom_model = None
-        else:
-            raise exceptions.UserError('`model` must be set either when creating the agent or when calling it.')
+        model_used, custom_model, agent_model = await self._get_agent_model(model)
 
         if deps is None:
             deps = self._default_deps
 
-        # if message history includes system prompts, we don't want to regenerate them
-        if message_history and any(m.role == 'system' for m in message_history):
-            # shallow copy messages
-            messages = message_history.copy()
-        else:
-            messages = await self._init_messages(deps)
-            if message_history:
-                messages += message_history
-
-        new_message_index = len(messages)
-        messages.append(_messages.UserPrompt(user_prompt))
-
-        result_tools = list(self._result_schema.tools.values()) if self._result_schema else None
-        agent_model = model_.agent_model(self._retrievers, self._allow_text_result, result_tools)
+        new_message_index, messages = await self._prepare_messages(deps, user_prompt, message_history)
 
         for retriever in self._retrievers.values():
             retriever.reset()
@@ -125,7 +106,11 @@ class Agent(Generic[AgentDeps, ResultData]):
         cost = result.Cost()
 
         with _logfire.span(
-            'agent run {prompt=}', prompt=user_prompt, agent=self, custom_model=custom_model, model_name=model_.name()
+            'agent run {prompt=}',
+            prompt=user_prompt,
+            agent=self,
+            custom_model=custom_model,
+            model_name=model_used.name(),
         ) as run_span:
             try:
                 while True:
@@ -142,12 +127,14 @@ class Agent(Generic[AgentDeps, ResultData]):
                         either = await self._handle_model_response(model_response, deps)
 
                         if left := either.left:
+                            # left means return a streamed result
                             run_span.set_attribute('all_messages', messages)
                             run_span.set_attribute('cost', cost)
                             handle_span.set_attribute('result', left.value)
                             handle_span.message = 'handle model response -> final result'
-                            return result.RunResult(left.value, cost, messages, new_message_index)
+                            return result.RunResult(messages, new_message_index, left.value, cost)
                         else:
+                            # right means continue the conversation
                             tool_responses = either.right
                             handle_span.set_attribute('tool_responses', tool_responses)
                             response_msgs = ' '.join(m.role for m in tool_responses)
@@ -156,7 +143,7 @@ class Agent(Generic[AgentDeps, ResultData]):
             except (ValidationError, exceptions.UnexpectedModelBehaviour) as e:
                 run_span.set_attribute('messages', messages)
                 # noinspection PyTypeChecker
-                raise exceptions.AgentError(messages, model_) from e
+                raise exceptions.AgentError(messages, model_used) from e
 
     def run_sync(
         self,
@@ -180,6 +167,93 @@ class Agent(Generic[AgentDeps, ResultData]):
             The result of the run.
         """
         return asyncio.run(self.run(user_prompt, message_history=message_history, model=model, deps=deps))
+
+    async def run_stream(
+        self,
+        user_prompt: str,
+        *,
+        message_history: list[_messages.Message] | None = None,
+        model: models.Model | KnownModelName | None = None,
+        deps: AgentDeps | None = None,
+    ) -> result.EitherStreamedRunResult[AgentDeps, ResultData]:
+        """Run the agent with a user prompt in async mode, returning a streamed response.
+
+        Args:
+            user_prompt: User input to start/continue the conversation.
+            message_history: History of the conversation so far.
+            model: Optional model to use for this run, required if `model` was not set when creating the agent.
+            deps: Optional dependencies to use for this run.
+
+        Returns:
+            The result of the run.
+        """
+        model_used, custom_model, agent_model = await self._get_agent_model(model)
+
+        if deps is None:
+            deps = self._default_deps
+
+        new_message_index, messages = await self._prepare_messages(deps, user_prompt, message_history)
+
+        for retriever in self._retrievers.values():
+            retriever.reset()
+
+        cost = result.Cost()
+
+        with _logfire.span(
+            'agent run stream {prompt=}',
+            prompt=user_prompt,
+            agent=self,
+            custom_model=custom_model,
+            model_name=model_used.name(),
+        ) as run_span:
+            try:
+                while True:
+                    with _logfire.span('model request'):
+                        model_response = await agent_model.request_stream(messages)
+
+                    with _logfire.span('handle model response') as handle_span:
+                        either = await self._handle_streamed_model_response(model_response, deps)
+
+                        if left := either.left:
+                            # left means return a streamed result
+                            run_span.set_attribute('all_messages', messages)
+                            handle_span.set_attribute('result_type', left.value)
+                            handle_span.message = 'handle model response -> final result'
+                            if isinstance(left.value, models.StreamTextResponse):
+                                return result.StreamedTextRunResult(
+                                    messages,
+                                    new_message_index,
+                                    cost,
+                                    left.value,
+                                    deps,
+                                    # pyright can't know that the ResultData is `str` here
+                                    self._result_validators,  # pyright: ignore[reportArgumentType]
+                                )
+                            else:
+                                assert self._result_schema is not None
+                                return result.StreamedToolCallRunResult(
+                                    messages,
+                                    new_message_index,
+                                    cost,
+                                    left.value,
+                                    self._result_schema,
+                                    deps,
+                                    self._result_validators,
+                                )
+                        else:
+                            # right means continue the conversation
+                            tool_responses = either.right
+                            handle_span.set_attribute('tool_responses', tool_responses)
+                            response_msgs = ' '.join(m.role for m in tool_responses)
+                            handle_span.message = f'handle model response -> {response_msgs}'
+                            messages.extend(tool_responses)
+                            # the model_response should have been fully streamed by now, we can add it's cost
+                            cost += model_response.cost()
+
+            except (ValidationError, exceptions.UnexpectedModelBehaviour) as e:
+                run_span.set_attribute('messages', messages)
+                # noinspection PyTypeChecker
+                raise exceptions.AgentError(messages, model_used) from e
 
     def system_prompt(
         self, func: _system_prompt.SystemPromptFunc[AgentDeps]
@@ -256,13 +330,52 @@ class Agent(Generic[AgentDeps, ResultData]):
         self._retrievers[retriever.name] = retriever
         return retriever
 
+    async def _get_agent_model(
+        self, model: models.Model | KnownModelName | None
+    ) -> tuple[models.Model, models.Model | None, models.AgentModel]:
+        """Create a model configured for this agent.
+
+        Args:
+            model: model to use for this run, required if `model` was not set when creating the agent.
+
+        Returns:
+            a tuple of `(model used, custom_model if any, agent_model)`
+        """
+        model_: models.Model
+        if model is not None:
+            custom_model = model_ = models.infer_model(model)
+        elif self.model is not None:
+            model_ = self.model
+            custom_model = None
+        else:
+            raise exceptions.UserError('`model` must be set either when creating the agent or when calling it.')
+
+        result_tools = list(self._result_schema.tools.values()) if self._result_schema else None
+        return model_, custom_model, model_.agent_model(self._retrievers, self._allow_text_result, result_tools)
+
+    async def _prepare_messages(
+        self, deps: AgentDeps, user_prompt: str, message_history: list[_messages.Message] | None
+    ) -> tuple[int, list[_messages.Message]]:
+        # if message history includes system prompts, we don't want to regenerate them
+        if message_history and any(m.role == 'system' for m in message_history):
+            # shallow copy messages
+            messages = message_history.copy()
+        else:
+            messages = await self._init_messages(deps)
+            if message_history:
+                messages += message_history
+
+        new_message_index = len(messages)
+        messages.append(_messages.UserPrompt(user_prompt))
+        return new_message_index, messages
+
     async def _handle_model_response(
         self, model_response: _messages.LLMMessage, deps: AgentDeps
     ) -> _utils.Either[ResultData, list[_messages.Message]]:
-        """Process a single response from the model.
+        """Process a non-streamed response from the model.
 
         Returns:
-            Return `None` to continue the conversation, or a result to end it.
+            Return `Either` — left: final result data, right: list of messages to send back to the model.
         """
         if model_response.role == 'llm-response':
             # plain string response
@@ -308,6 +421,57 @@ class Agent(Generic[AgentDeps, ResultData]):
             return _utils.Either(right=new_messages)
         else:
             assert_never(model_response)
+
+    async def _handle_streamed_model_response(
+        self, model_response: models.StreamToolCallResponse | models.StreamTextResponse, deps: AgentDeps
+    ) -> _utils.Either[models.EitherStreamedResponse, list[_messages.Message]]:
+        """Process a streamed response from the model.
+
+        Returns:
+            Return `Either` — left: final result data, right: list of messages to send back to the model.
+        """
+        if isinstance(model_response, models.StreamTextResponse):
+            # plain string response
+            if self._allow_text_result:
+                return _utils.Either(left=model_response)
+            else:
+                self._incr_result_retry()
+                response = _messages.RetryPrompt(
+                    content='Plain text responses are not permitted, please call one of the functions instead.',
+                )
+                # stream the response, so cost is correct
+                async for _ in model_response:
+                    pass
+
+                return _utils.Either(right=[response])
+        else:
+            assert isinstance(model_response, models.StreamToolCallResponse)
+            if self._result_schema is not None:
+                # if there's a result schema, iterate over the stream until we find at least one tool
+                # NOTE: this means we ignore any other tools called here
+                tool_call_msg = model_response.get()
+                while not tool_call_msg.calls:
+                    await model_response.__anext__()
+                    tool_call_msg = model_response.get()
+
+                if self._result_schema.find_tool(tool_call_msg):
+                    return _utils.Either(left=model_response)
+
+            # the model is calling a retriever function, consume the response to get the next message
+            async for _ in model_response:
+                pass
+            tool_call_msg = model_response.get()
+            messages: list[_messages.Message] = [tool_call_msg]
+
+            # we now run all retriever functions in parallel
+            coros: list[Awaitable[_messages.Message]] = []
+            for call in tool_call_msg.calls:
+                retriever = self._retrievers.get(call.tool_name)
+                if retriever is None:
+                    raise exceptions.UnexpectedModelBehaviour(f'Unknown function name: {call.tool_name!r}')
+                coros.append(retriever.run(deps, call))
+            messages += await asyncio.gather(*coros)
+            return _utils.Either(right=messages)
 
     async def _validate_result(
         self, result_data: ResultData, deps: AgentDeps, tool_call: _messages.ToolCall | None

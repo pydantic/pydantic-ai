@@ -27,6 +27,7 @@ from ..result import Cost
 from . import (
     AbstractToolDefinition,
     AgentModel,
+    EitherStreamedResponse,
     Model,
     StreamTextResponse,
     StreamToolCallResponse,
@@ -96,9 +97,9 @@ class OpenAIAgentModel(AgentModel):
 
     async def request(self, messages: list[Message]) -> tuple[LLMMessage, result.Cost]:
         response = await self._completions_create(messages, False)
-        return self._process_non_streamed_response(response), _map_cost(response)
+        return self._process_response(response), _map_cost(response)
 
-    async def request_stream(self, messages: list[Message]) -> StreamToolCallResponse | StreamTextResponse:
+    async def request_stream(self, messages: list[Message]) -> EitherStreamedResponse:
         response = await self._completions_create(messages, True)
         return await self._process_streamed_response(response)
 
@@ -136,7 +137,8 @@ class OpenAIAgentModel(AgentModel):
         )
 
     @staticmethod
-    def _process_non_streamed_response(response: chat.ChatCompletion) -> LLMMessage:
+    def _process_response(response: chat.ChatCompletion) -> LLMMessage:
+        """Process a non-streamed response, and prepare a message to return."""
         timestamp = datetime.fromtimestamp(response.created, tz=timezone.utc)
         choice = response.choices[0]
         if choice.message.tool_calls is not None:
@@ -149,9 +151,8 @@ class OpenAIAgentModel(AgentModel):
             return LLMResponse(choice.message.content, timestamp=timestamp)
 
     @staticmethod
-    async def _process_streamed_response(
-        response: AsyncStream[ChatCompletionChunk],
-    ) -> StreamToolCallResponse | StreamTextResponse:
+    async def _process_streamed_response(response: AsyncStream[ChatCompletionChunk]) -> EitherStreamedResponse:
+        """Process a streamed response, and prepare a streaming response to return."""
         first_chunk = await response.__anext__()
         timestamp = datetime.fromtimestamp(first_chunk.created, tz=timezone.utc)
         choice = first_chunk.choices[0]
@@ -163,9 +164,7 @@ class OpenAIAgentModel(AgentModel):
                 _map_cost(first_chunk),
             )
         else:
-            raise NotImplementedError('todo')
-        #     assert choice.message.content is not None, choice
-        #     return LLMResponse(choice.message.content, timestamp=timestamp)
+            return OpenAIStreamTextResponse(response, timestamp, _map_cost(first_chunk))
 
     @staticmethod
     def _map_message(message: Message) -> chat.ChatCompletionMessageParam:
@@ -213,28 +212,20 @@ class OpenAIStreamToolCallResponse(StreamToolCallResponse):
     _timestamp: datetime
     _cost: result.Cost
 
-    async def __anext__(self) -> LLMToolCalls:
-        await self._process_next()
-        return self._map_tool_calls()
-
-    async def consume(self) -> LLMToolCalls:
-        while True:
-            try:
-                await self._process_next()
-            except StopAsyncIteration:
-                break
-        return self._map_tool_calls()
-
-    def cost(self) -> Cost:
-        return self._cost
-
-    async def _process_next(self) -> None:
+    async def __anext__(self) -> None:
         chunk = await self._response.__anext__()
         self._cost += _map_cost(chunk)
-        delta = chunk.choices[0].delta
-        assert delta.tool_calls is not None, f'Expected delta with tool calls, got {delta!r}'
+        try:
+            choice = chunk.choices[0]
+        except IndexError:
+            raise StopAsyncIteration()
 
-        for new in delta.tool_calls:
+        if choice.finish_reason is not None:
+            raise StopAsyncIteration()
+
+        assert choice.delta.tool_calls is not None, f'Expected delta with tool calls, invalid chunk: {chunk!r}'
+
+        for new in choice.delta.tool_calls:
             if current := self._delta_tool_calls.get(new.index):
                 if current.function is None:
                     current.function = new.function
@@ -244,8 +235,8 @@ class OpenAIStreamToolCallResponse(StreamToolCallResponse):
             else:
                 self._delta_tool_calls[new.index] = new
 
-    def _map_tool_calls(self) -> LLMToolCalls:
-        """Map tool call deltas to `LLMToolCalls` where enough information exists."""
+    def get(self) -> LLMToolCalls:
+        """Map tool call deltas to a `LLMToolCalls`."""
         calls: list[ToolCall] = []
         for c in self._delta_tool_calls.values():
             if f := c.function:
@@ -253,6 +244,33 @@ class OpenAIStreamToolCallResponse(StreamToolCallResponse):
                     calls.append(ToolCall.from_json(f.name, f.arguments, c.id))
 
         return LLMToolCalls(calls, timestamp=self._timestamp)
+
+    def cost(self) -> Cost:
+        return self._cost
+
+
+@dataclass
+class OpenAIStreamTextResponse(StreamTextResponse):
+    _response: AsyncStream[ChatCompletionChunk]
+    _timestamp: datetime
+    _cost: result.Cost
+
+    async def __anext__(self) -> str:
+        chunk = await self._response.__anext__()
+        self._cost += _map_cost(chunk)
+        try:
+            choice = chunk.choices[0]
+        except IndexError:
+            raise StopAsyncIteration()
+
+        if choice.finish_reason is not None:
+            raise StopAsyncIteration()
+
+        assert choice.delta.content is not None, f'Expected delta with content, invalid chunk: {chunk!r}'
+        return choice.delta.content
+
+    def cost(self) -> Cost:
+        return self._cost
 
 
 def _add_optional(a: str | None, b: str | None) -> str | None:
