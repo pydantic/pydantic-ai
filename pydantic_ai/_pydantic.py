@@ -41,7 +41,7 @@ class FunctionSchema(TypedDict):
     var_positional_field: str | None
 
 
-def function_schema(either_function: _retriever.RetrieverEitherFunc[AgentDeps, _retriever.P]) -> FunctionSchema:
+def function_schema(either_function: _retriever.RetrieverEitherFunc[AgentDeps, _retriever.P]) -> FunctionSchema:  # noqa: C901
     """Build a Pydantic validator and JSON schema from a retriever function.
 
     Args:
@@ -55,7 +55,6 @@ def function_schema(either_function: _retriever.RetrieverEitherFunc[AgentDeps, _
     config = ConfigDict(title=function.__name__)
     config_wrapper = ConfigWrapper(config)
     gen_schema = _generate_schema.GenerateSchema(config_wrapper)
-    core_config = config_wrapper.core_config(None)
 
     sig = signature(function)
 
@@ -122,6 +121,10 @@ def function_schema(either_function: _retriever.RetrieverEitherFunc[AgentDeps, _
         error_details = '\n  '.join(errors)
         raise UserError(f'Error generating schema for {function.__qualname__}:\n  {error_details}')
 
+    core_config = config_wrapper.core_config(None)
+    # noinspection PyTypedDict
+    core_config['extra_fields_behavior'] = 'allow' if var_kwargs_schema else 'forbid'
+
     schema, single_arg_name = _build_schema(fields, var_kwargs_schema, gen_schema, core_config)
     schema = gen_schema.clean_schema(schema)
     # noinspection PyUnresolvedReferences
@@ -137,6 +140,12 @@ def function_schema(either_function: _retriever.RetrieverEitherFunc[AgentDeps, _
     # PluggableSchemaValidator is api compatible with SchemaValidator
     schema_validator = cast(SchemaValidator, schema_validator)
     json_schema = GenerateJsonSchema().generate(schema)
+
+    # workaround for https://github.com/pydantic/pydantic/issues/10785
+    # if we build a custom TypeDict schema (matches when `single_arg_name` is None), we manually set
+    # `additionalProperties` in the JSON Schema
+    if single_arg_name is None:
+        json_schema['additionalProperties'] = bool(var_kwargs_schema)
 
     # instead of passing `description` through in core_schema, we just add it here
     if description:
@@ -179,7 +188,6 @@ def _build_schema(
         fields,
         config=core_config,
         extras_schema=gen_schema.generate_schema(var_kwargs_schema) if var_kwargs_schema else None,
-        extra_behavior='allow' if var_kwargs_schema else 'forbid',
     )
     return td_schema, None
 
