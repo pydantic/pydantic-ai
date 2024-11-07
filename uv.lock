@@ -941,12 +941,16 @@ wheels = [
 
 [[package]]
 name = "pydantic"
-version = "2.10.0a1"
-source = { git = "https://github.com/pydantic/pydantic.git#f946add590e4b5fb86ef4279de1f03ea9fac46cb" }
+version = "2.10.0b1"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "annotated-types" },
     { name = "pydantic-core" },
     { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/4a/b3/5bc01cb0acb7961da478d85982ba7318dd3810342b1918a0febe1437bd21/pydantic-2.10.0b1.tar.gz", hash = "sha256:ae656221540a46d4207814a8ade469291d932eafff594511907f1eec7bb94ec7", size = 777569 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/59/81/7869ab132a689a0b7d15f48b6233af148c13303c522366a28c517023d26f/pydantic-2.10.0b1-py3-none-any.whl", hash = "sha256:ee50a4f50f15a8aa1f9decf28e22ce508af6b88f505f8f039a8b3e74e676c97a", size = 451151 },
 ]
 
 [[package]]
@@ -999,7 +1003,7 @@ requires-dist = [
     { name = "logfire", extras = ["asyncpg", "fastapi"], marker = "extra == 'examples'", specifier = ">=2" },
     { name = "logfire-api", specifier = ">=1.2.0" },
     { name = "openai", specifier = ">=1.51.2" },
-    { name = "pydantic", git = "https://github.com/pydantic/pydantic.git" },
+    { name = "pydantic", specifier = ">=2.10.0b1" },
     { name = "python-multipart", marker = "extra == 'examples'", specifier = ">=0.0.17" },
     { name = "uvicorn", marker = "extra == 'examples'", specifier = ">=0.32.0" },
 ]
