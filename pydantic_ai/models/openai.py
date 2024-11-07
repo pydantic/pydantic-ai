@@ -230,9 +230,9 @@ class OpenAIStreamToolCallResponse(StreamToolCallResponse):
         if choice.finish_reason is not None:
             raise StopAsyncIteration()
 
-        assert choice.delta.tool_calls is not None, f'Expected delta with tool calls, invalid chunk: {chunk!r}'
+        assert choice.delta.content is None, f'Expected tool calls, got content instead, invalid chunk: {chunk!r}'
 
-        for new in choice.delta.tool_calls:
+        for new in choice.delta.tool_calls or []:
             if current := self._delta_tool_calls.get(new.index):
                 if current.function is None:
                     current.function = new.function

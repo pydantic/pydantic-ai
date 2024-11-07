@@ -178,8 +178,15 @@ class ResultTool(Generic[ResultData]):
             outer_typed_dict_key=outer_typed_dict_key,
         )
 
-    def validate(self, tool_call: messages.ToolCall, allow_partial: bool = False) -> ResultData:
+    def validate(
+        self, tool_call: messages.ToolCall, allow_partial: bool = False, wrap_validation_errors: bool = True
+    ) -> ResultData:
         """Validate a result message.
+
+        Args:
+            tool_call: The tool call from the LLM to validate.
+            allow_partial: If true, allow partial validation.
+            wrap_validation_errors: If true, wrap the validation errors in a retry message.
 
         Returns:
             Either the validated result data (left) or a retry message (right).
@@ -194,12 +201,15 @@ class ResultTool(Generic[ResultData]):
                     tool_call.args.args_object, experimental_allow_partial=allow_partial
                 )
         except ValidationError as e:
-            m = messages.RetryPrompt(
-                tool_name=tool_call.tool_name,
-                content=e.errors(include_url=False),
-                tool_id=tool_call.tool_id,
-            )
-            raise ToolRetryError(m) from e
+            if wrap_validation_errors:
+                m = messages.RetryPrompt(
+                    tool_name=tool_call.tool_name,
+                    content=e.errors(include_url=False),
+                    tool_id=tool_call.tool_id,
+                )
+                raise ToolRetryError(m) from e
+            else:
+                raise
         else:
             if k := self.outer_typed_dict_key:
                 result = result[k]

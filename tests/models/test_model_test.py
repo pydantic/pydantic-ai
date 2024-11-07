@@ -132,7 +132,7 @@ def test_json_schema_test_data():
         nested: NestedModel
         union: int | list[int]
         optional: str | None
-        with_example: int = Field(..., json_schema_extra={'examples': [1234]})
+        with_example: int = Field(json_schema_extra={'examples': [1234]})
         max_len_zero: Annotated[str, MaxLen(0)]
         is_null: None
         not_required: str = 'default'
