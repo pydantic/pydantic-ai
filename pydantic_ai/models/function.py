@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from itertools import chain
-from typing import Callable, cast
+from typing import Callable, Union, cast
 
 from typing_extensions import TypeAlias, overload
 
@@ -37,7 +37,7 @@ class DeltaToolCall:
 DeltaToolCalls = dict[int, DeltaToolCall]
 
 FunctionDef: TypeAlias = Callable[[list[Message], AgentInfo], LLMMessage]
-StreamFunctionDef: TypeAlias = Callable[[list[Message], AgentInfo], Iterable[str] | Iterable[DeltaToolCalls]]
+StreamFunctionDef: TypeAlias = Callable[[list[Message], AgentInfo], Union[Iterable[str], Iterable[DeltaToolCalls]]]
 
 
 @dataclass
