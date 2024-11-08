@@ -5,7 +5,7 @@ from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from functools import cached_property
-from typing import Any, TypedDict, cast
+from typing import Any, cast
 
 import pytest
 from inline_snapshot import snapshot
@@ -21,6 +21,7 @@ from openai.types.chat.chat_completion_chunk import (
 from openai.types.chat.chat_completion_message import ChatCompletionMessage
 from openai.types.chat.chat_completion_message_tool_call import Function
 from openai.types.completion_usage import CompletionUsage, PromptTokensDetails
+from typing_extensions import TypedDict
 
 from pydantic_ai import Agent, ModelRetry
 from pydantic_ai.messages import (
@@ -57,7 +58,7 @@ class MockAsyncStream:
             raise StopAsyncIteration() from e
 
 
-@dataclass(kw_only=True)
+@dataclass
 class MockOpenAI:
     completions: chat.ChatCompletion | list[chat.ChatCompletion] | None = None
     stream: list[chat.ChatCompletionChunk] | list[list[chat.ChatCompletionChunk]] | None = None
