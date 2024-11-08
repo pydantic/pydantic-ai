@@ -12,7 +12,7 @@ from openai.types.chat import ChatCompletionChunk
 from openai.types.chat.chat_completion_chunk import ChoiceDeltaToolCall
 from typing_extensions import assert_never
 
-from .. import UnexpectedModelBehaviour, result
+from .. import UnexpectedModelBehaviour, _utils, result
 from ..messages import (
     ArgsJson,
     LLMMessage,
@@ -273,8 +273,8 @@ class OpenAIStreamToolCallResponse(StreamToolCallResponse):
                 if current.function is None:
                     current.function = new.function
                 elif new.function is not None:
-                    current.function.name = _add_optional(current.function.name, new.function.name)
-                    current.function.arguments = _add_optional(current.function.arguments, new.function.arguments)
+                    current.function.name = _utils.add_optional(current.function.name, new.function.name)
+                    current.function.arguments = _utils.add_optional(current.function.arguments, new.function.arguments)
             else:
                 self._delta_tool_calls[new.index] = new
 
@@ -290,15 +290,6 @@ class OpenAIStreamToolCallResponse(StreamToolCallResponse):
 
     def cost(self) -> Cost:
         return self._cost
-
-
-def _add_optional(a: str | None, b: str | None) -> str | None:
-    if a is None:
-        return b
-    elif b is None:
-        return a
-    else:
-        return a + b
 
 
 def _guard_tool_id(t: ToolCall | ToolReturn | RetryPrompt) -> str:

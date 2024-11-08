@@ -6,7 +6,7 @@ import pytest
 from inline_snapshot import snapshot
 from pydantic import BaseModel
 
-from pydantic_ai import Agent, CallContext, ModelRetry
+from pydantic_ai import Agent, AgentError, CallContext, ModelRetry
 from pydantic_ai.messages import (
     ArgsJson,
     ArgsObject,
@@ -437,3 +437,23 @@ def test_run_with_history_new():
             _cost=Cost(),
         )
     )
+
+
+def test_empty_tool_calls():
+    def empty(_: list[Message], _info: AgentInfo) -> LLMMessage:
+        return LLMToolCalls(calls=[])
+
+    agent = Agent(FunctionModel(empty), deps=None)
+
+    with pytest.raises(AgentError, match='caused by unexpected model behavior: Received empty tool call message'):
+        agent.run_sync('Hello')
+
+
+def test_unknown_retriever():
+    def empty(_: list[Message], _info: AgentInfo) -> LLMMessage:
+        return LLMToolCalls(calls=[ToolCall.from_json('foobar', '{}')])
+
+    agent = Agent(FunctionModel(empty), deps=None)
+
+    with pytest.raises(AgentError, match="caused by unexpected model behavior: Unknown function name: 'foobar'"):
+        agent.run_sync('Hello')

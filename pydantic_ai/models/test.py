@@ -184,10 +184,7 @@ class TestStreamTextResponse(StreamTextResponse):
         self._iter = iter(words)
 
     async def __anext__(self) -> str:
-        try:
-            return next(self._iter)
-        except StopIteration as e:
-            raise StopAsyncIteration() from e
+        return _utils.sync_anext(self._iter)
 
     def cost(self) -> Cost:
         return self._cost
@@ -200,10 +197,7 @@ class TestStreamToolCallResponse(StreamToolCallResponse):
     _iter: Iterator[None] = field(default_factory=lambda: iter([None]))
 
     async def __anext__(self) -> None:
-        try:
-            return next(self._iter)
-        except StopIteration as e:
-            raise StopAsyncIteration() from e
+        return _utils.sync_anext(self._iter)
 
     def get(self) -> LLMToolCalls:
         return self._structured_response

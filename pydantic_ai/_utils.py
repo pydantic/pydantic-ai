@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 import asyncio
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass, is_dataclass
 from functools import partial
 from types import GenericAlias
@@ -183,3 +183,24 @@ async def group_by_temporal(aiter: AsyncIterator[T], soft_max_interval: float | 
             yield buffer
             buffer = []
             group_start_time = None
+
+
+def add_optional(a: str | None, b: str | None) -> str | None:
+    """Add two optional strings."""
+    if a is None:
+        return b
+    elif b is None:
+        return a
+    else:
+        return a + b
+
+
+def sync_anext(iterator: Iterator[T]) -> T:
+    """Get the next item from a sync iterator, raising `StopAsyncIteration` if it's exhausted.
+
+    Useful when iterating over a sync iterator in an async context.
+    """
+    try:
+        return next(iterator)
+    except StopIteration as e:
+        raise StopAsyncIteration() from e

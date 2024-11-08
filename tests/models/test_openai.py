@@ -23,7 +23,7 @@ from openai.types.chat.chat_completion_message_tool_call import Function
 from openai.types.completion_usage import CompletionUsage, PromptTokensDetails
 from typing_extensions import TypedDict
 
-from pydantic_ai import Agent, AgentError, ModelRetry
+from pydantic_ai import Agent, AgentError, ModelRetry, _utils
 from pydantic_ai.messages import (
     ArgsJson,
     LLMResponse,
@@ -52,10 +52,7 @@ class MockAsyncStream:
     _iter: Iterator[chat.ChatCompletionChunk]
 
     async def __anext__(self) -> chat.ChatCompletionChunk:
-        try:
-            return next(self._iter)
-        except StopIteration as e:
-            raise StopAsyncIteration() from e
+        return _utils.sync_anext(self._iter)
 
 
 @dataclass
@@ -87,13 +84,14 @@ class MockOpenAI:
         self, *_args: Any, stream: bool = False, **_kwargs: Any
     ) -> chat.ChatCompletion | MockAsyncStream:
         if stream:
-            assert self.stream is not None
+            assert self.stream is not None, 'you can only used `stream=True` if `stream` is provided'
+            # noinspection PyUnresolvedReferences
             if isinstance(self.stream[0], list):
                 response = MockAsyncStream(iter(self.stream[self.index]))  # type: ignore
             else:
                 response = MockAsyncStream(iter(self.stream))  # type: ignore
         else:
-            assert self.completions is not None
+            assert self.completions is not None, 'you can only used `stream=False` if `completions` are provided'
             if isinstance(self.completions, list):
                 response = self.completions[self.index]
             else:
