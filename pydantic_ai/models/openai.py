@@ -12,7 +12,7 @@ from openai.types.chat import ChatCompletionChunk
 from openai.types.chat.chat_completion_chunk import ChoiceDeltaToolCall
 from typing_extensions import assert_never
 
-from .. import result
+from .. import UnexpectedModelBehaviour, result
 from ..messages import (
     ArgsJson,
     LLMMessage,
@@ -156,21 +156,26 @@ class OpenAIAgentModel(AgentModel):
         first_chunk = await response.__anext__()
         timestamp = datetime.fromtimestamp(first_chunk.created, tz=timezone.utc)
         delta = first_chunk.choices[0].delta
+        first_cost = _map_cost(first_chunk)
 
         # the first chunk may only contain `role`, so we iterate until we get either `tool_calls` or `content`
         while delta.tool_calls is None and delta.content is None:
-            next_chunk = await response.__anext__()
+            try:
+                next_chunk = await response.__anext__()
+            except StopAsyncIteration as e:
+                raise UnexpectedModelBehaviour('Streamed response ended without content or tool calls') from e
             delta = next_chunk.choices[0].delta
+            first_cost += _map_cost(next_chunk)
 
         if delta.content is not None:
-            return OpenAIStreamTextResponse(delta.content, response, timestamp, _map_cost(first_chunk))
+            return OpenAIStreamTextResponse(delta.content, response, timestamp, first_cost)
         else:
             assert delta.tool_calls is not None, f'Expected delta with tool_calls, got {delta}'
             return OpenAIStreamToolCallResponse(
                 response,
                 {c.index: c for c in delta.tool_calls},
                 timestamp,
-                _map_cost(first_chunk),
+                first_cost,
             )
 
     @staticmethod

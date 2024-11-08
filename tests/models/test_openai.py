@@ -5,7 +5,7 @@ from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from functools import cached_property
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 import pytest
 from inline_snapshot import snapshot
@@ -23,7 +23,7 @@ from openai.types.chat.chat_completion_message_tool_call import Function
 from openai.types.completion_usage import CompletionUsage, PromptTokensDetails
 from typing_extensions import TypedDict
 
-from pydantic_ai import Agent, ModelRetry
+from pydantic_ai import Agent, AgentError, ModelRetry
 from pydantic_ai.messages import (
     ArgsJson,
     LLMResponse,
@@ -289,10 +289,15 @@ async def test_request_tool_call():
     )
 
 
-def chunk(delta: list[ChoiceDelta]) -> chat.ChatCompletionChunk:
+FinishReason = Literal['stop', 'length', 'tool_calls', 'content_filter', 'function_call']
+
+
+def chunk(delta: list[ChoiceDelta], finish_reason: FinishReason | None = None) -> chat.ChatCompletionChunk:
     return chat.ChatCompletionChunk(
         id='x',
-        choices=[ChunkChoice(index=index, delta=delta) for index, delta in enumerate(delta)],
+        choices=[
+            ChunkChoice(index=index, delta=delta, finish_reason=finish_reason) for index, delta in enumerate(delta)
+        ],
         created=1704067200,  # 2024-01-01
         model='gpt-4',
         object='chat.completion.chunk',
@@ -300,8 +305,8 @@ def chunk(delta: list[ChoiceDelta]) -> chat.ChatCompletionChunk:
     )
 
 
-def text_chunk(text: str) -> chat.ChatCompletionChunk:
-    return chunk([ChoiceDelta(content=text, role='assistant')])
+def text_chunk(text: str, finish_reason: FinishReason | None = None) -> chat.ChatCompletionChunk:
+    return chunk([ChoiceDelta(content=text, role='assistant')], finish_reason=finish_reason)
 
 
 async def test_stream_text():
@@ -316,9 +321,26 @@ async def test_stream_text():
     assert not result.is_complete
     assert [c async for c in result.stream(debounce_by=None)] == snapshot(['hello ', 'hello world'])
     assert result.is_complete
+    assert result.cost() == snapshot(Cost(request_tokens=6, response_tokens=3, total_tokens=9))
 
 
-def struc_chunk(tool_name: str | None, tool_arguments: str | None) -> chat.ChatCompletionChunk:
+async def test_stream_text_finish_reason():
+    stream = text_chunk('hello '), text_chunk('world'), text_chunk('world', finish_reason='stop')
+    mock_client = MockOpenAI.create_mock_stream(stream)
+    m = OpenAIModel('gpt-4', openai_client=mock_client)
+    agent = Agent(m, deps=None)
+
+    result = await agent.run_stream('')
+
+    assert not result.is_structured()
+    assert not result.is_complete
+    assert [c async for c in result.stream(debounce_by=None)] == snapshot(['hello ', 'hello world'])
+    assert result.is_complete
+
+
+def struc_chunk(
+    tool_name: str | None, tool_arguments: str | None, finish_reason: FinishReason | None = None
+) -> chat.ChatCompletionChunk:
     return chunk(
         [
             ChoiceDelta(
@@ -328,7 +350,8 @@ def struc_chunk(tool_name: str | None, tool_arguments: str | None) -> chat.ChatC
                     )
                 ]
             ),
-        ]
+        ],
+        finish_reason=finish_reason,
     )
 
 
@@ -362,3 +385,38 @@ async def test_stream_structured():
         [{'first': 'One'}, {'first': 'One', 'second': 'Two'}, {'first': 'One', 'second': 'Two'}]
     )
     assert result.is_complete
+    assert result.cost() == snapshot(Cost(request_tokens=20, response_tokens=10, total_tokens=30))
+    # double check cost matches stream count
+    assert result.cost().response_tokens == len(stream)
+
+
+async def test_stream_structured_finish_reason():
+    stream = (
+        struc_chunk('final_result', None),
+        struc_chunk(None, '{"first": "One'),
+        struc_chunk(None, '", "second": "Two"'),
+        struc_chunk(None, '}'),
+        struc_chunk(None, None, finish_reason='stop'),
+    )
+    mock_client = MockOpenAI.create_mock_stream(stream)
+    m = OpenAIModel('gpt-4', openai_client=mock_client)
+    agent = Agent(m, deps=None, result_type=MyTypedDict)
+
+    result = await agent.run_stream('')
+
+    assert result.is_structured()
+    assert not result.is_complete
+    assert [dict(c) async for c in result.stream(debounce_by=None)] == snapshot(
+        [{'first': 'One'}, {'first': 'One', 'second': 'Two'}, {'first': 'One', 'second': 'Two'}]
+    )
+    assert result.is_complete
+
+
+async def test_no_content():
+    stream = chunk([ChoiceDelta()]), chunk([ChoiceDelta()])
+    mock_client = MockOpenAI.create_mock_stream(stream)
+    m = OpenAIModel('gpt-4', openai_client=mock_client)
+    agent = Agent(m, deps=None, result_type=MyTypedDict)
+
+    with pytest.raises(AgentError, match='caused by unexpected model behavior: Streamed response ended without con'):
+        await agent.run_stream('')
