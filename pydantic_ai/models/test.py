@@ -8,15 +8,23 @@ from __future__ import annotations as _annotations
 
 import re
 import string
-from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from collections.abc import Iterator, Mapping, Sequence
+from dataclasses import dataclass, field
 from typing import Any, Literal
 
 import pydantic_core
 
-from .. import _utils, result
+from .. import _utils
 from ..messages import LLMMessage, LLMResponse, LLMToolCalls, Message, RetryPrompt, ToolCall, ToolReturn
-from . import AbstractToolDefinition, AgentModel, Model
+from ..result import Cost
+from . import (
+    AbstractToolDefinition,
+    AgentModel,
+    EitherStreamedResponse,
+    Model,
+    StreamTextResponse,
+    StreamToolCallResponse,
+)
 
 
 class UnSetType:
@@ -102,13 +110,27 @@ class TestAgentModel(AgentModel):
     step: int = 0
     last_message_count: int = 0
 
-    async def request(self, messages: list[Message]) -> tuple[LLMMessage, result.Cost]:
-        cost = result.Cost()
-        if self.step == 0:
+    async def request(self, messages: list[Message]) -> tuple[LLMMessage, Cost]:
+        return self._request(messages), Cost()
+
+    async def request_stream(self, messages: list[Message]) -> EitherStreamedResponse:
+        msg = self._request(messages)
+        cost = Cost()
+        if isinstance(msg, LLMResponse):
+            return TestStreamTextResponse(msg.content, cost)
+        else:
+            return TestStreamToolCallResponse(msg, cost)
+
+    def gen_retriever_args(self, tool_def: AbstractToolDefinition) -> Any:
+        """Generate arguments for a retriever."""
+        return _JsonSchemaTestData(tool_def.json_schema, self.seed).generate()
+
+    def _request(self, messages: list[Message]) -> LLMMessage:
+        if self.step == 0 and self.retriever_calls:
             calls = [ToolCall.from_object(name, self.gen_retriever_args(args)) for name, args in self.retriever_calls]
             self.step += 1
             self.last_message_count = len(messages)
-            return LLMToolCalls(calls=calls), cost
+            return LLMToolCalls(calls=calls)
 
         new_messages = messages[self.last_message_count :]
         self.last_message_count = len(messages)
@@ -120,7 +142,7 @@ class TestAgentModel(AgentModel):
                 if name in new_retry_names
             ]
             self.step += 1
-            return LLMToolCalls(calls=calls), cost
+            return LLMToolCalls(calls=calls)
         else:
             if response_text := self.result.left:
                 self.step += 1
@@ -130,24 +152,64 @@ class TestAgentModel(AgentModel):
                     for message in messages:
                         if isinstance(message, ToolReturn):
                             output[message.tool_name] = message.content
-                    return LLMResponse(content=pydantic_core.to_json(output).decode()), cost
+                    return LLMResponse(content=pydantic_core.to_json(output).decode())
                 else:
-                    return LLMResponse(content=response_text.value), cost
+                    return LLMResponse(content=response_text.value)
             else:
                 assert self.result_tools is not None, 'No result tools provided'
                 custom_result_args = self.result.right
                 result_tool = self.result_tools[self.seed % len(self.result_tools)]
                 if custom_result_args is not None:
                     self.step += 1
-                    return LLMToolCalls(calls=[ToolCall.from_object(result_tool.name, custom_result_args)]), cost
+                    return LLMToolCalls(calls=[ToolCall.from_object(result_tool.name, custom_result_args)])
                 else:
                     response_args = self.gen_retriever_args(result_tool)
                     self.step += 1
-                    return LLMToolCalls(calls=[ToolCall.from_object(result_tool.name, response_args)]), cost
+                    return LLMToolCalls(calls=[ToolCall.from_object(result_tool.name, response_args)])
 
-    def gen_retriever_args(self, tool_def: AbstractToolDefinition) -> Any:
-        """Generate arguments for a retriever."""
-        return _JsonSchemaTestData(tool_def.json_schema, self.seed).generate()
+
+@dataclass
+class TestStreamTextResponse(StreamTextResponse):
+    _text: str
+    _cost: Cost
+    _iter: Iterator[str] = field(init=False)
+
+    def __post_init__(self):
+        *words, last_word = self._text.split(' ')
+        words = [f'{word} ' for word in words]
+        words.append(last_word)
+        if len(words) == 1 and len(self._text) > 2:
+            mid = len(self._text) // 2
+            words = [self._text[:mid], self._text[mid:]]
+        self._iter = iter(words)
+
+    async def __anext__(self) -> str:
+        try:
+            return next(self._iter)
+        except StopIteration as e:
+            raise StopAsyncIteration() from e
+
+    def cost(self) -> Cost:
+        return self._cost
+
+
+@dataclass
+class TestStreamToolCallResponse(StreamToolCallResponse):
+    _structured_response: LLMToolCalls
+    _cost: Cost
+    _iter: Iterator[None] = field(default_factory=lambda: iter([None]))
+
+    async def __anext__(self) -> None:
+        try:
+            return next(self._iter)
+        except StopIteration as e:
+            raise StopAsyncIteration() from e
+
+    def get(self) -> LLMToolCalls:
+        return self._structured_response
+
+    def cost(self) -> Cost:
+        return self._cost
 
 
 _chars = string.ascii_letters + string.digits + string.punctuation

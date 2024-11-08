@@ -6,7 +6,7 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass, is_dataclass
 from functools import partial
 from types import GenericAlias
-from typing import Any, Callable, Generic, TypeVar, Union, overload
+from typing import Any, Callable, Generic, TypeVar, Union, cast, overload
 
 from pydantic import BaseModel
 from pydantic.json_schema import JsonSchemaValue
@@ -37,14 +37,17 @@ def is_model_like(type_: Any) -> bool:
     )
 
 
+# With PEP-728 this should be a TypedDict with `type: Literal['object']`, and `extra_items=Any`
 ObjectJsonSchema: TypeAlias = dict[str, Any]
 
 
 def check_object_json_schema(schema: JsonSchemaValue) -> ObjectJsonSchema:
+    from .exceptions import UserError
+
     if schema.get('type') == 'object':
         return schema
     else:
-        raise ValueError('Schema must be an object')
+        raise UserError('Schema must be an object')
 
 
 T = TypeVar('T')
@@ -63,6 +66,15 @@ Option: TypeAlias = Union[Some[T], None]
 
 Left = TypeVar('Left')
 Right = TypeVar('Right')
+
+
+class Unset:
+    """A singleton to represent an unset value."""
+
+    pass
+
+
+UNSET = Unset()
 
 
 class Either(Generic[Left, Right]):
@@ -86,15 +98,14 @@ class Either(Generic[Left, Right]):
     @overload
     def __init__(self, *, right: Right) -> None: ...
 
-    def __init__(self, **kwargs: Any) -> None:
-        keys = set(kwargs.keys())
-        if keys == {'left'}:
-            self._left: Option[Left] = Some(kwargs['left'])
-        elif keys == {'right'}:
-            self._left = None
-            self._right = kwargs['right']
+    def __init__(self, left: Left | Unset = UNSET, right: Right | Unset = UNSET) -> None:
+        if left is not UNSET:
+            assert right is UNSET, '`Either` must receive exactly one argument - `left` or `right`'
+            self._left: Option[Left] = Some(cast(Left, left))
         else:
-            raise TypeError('Either must receive exactly one argument - `left` or `right`')
+            assert right is not UNSET, '`Either` must receive exactly one argument - `left` or `right`'
+            self._left = None
+            self._right = cast(Right, right)
 
     @property
     def left(self) -> Option[Left]:
@@ -129,7 +140,7 @@ async def group_by_temporal(aiter: AsyncIterator[T], soft_max_interval: float | 
             yield [item]
         return
 
-    assert soft_max_interval is not None and soft_max_interval > 0, 'soft_max_interval must be a positive number'
+    assert soft_max_interval is not None and soft_max_interval >= 0, 'soft_max_interval must be a positive number'
     buffer: list[T] = []
     group_start_time = time.monotonic()
     # we might wait for the next item more than once, so we store the coros to await next time if any
@@ -170,5 +181,5 @@ async def group_by_temporal(aiter: AsyncIterator[T], soft_max_interval: float | 
                     group_start_time = time.monotonic()
         elif buffer:
             yield buffer
-            buffer.clear()
+            buffer = []
             group_start_time = None

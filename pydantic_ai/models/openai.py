@@ -162,16 +162,16 @@ class OpenAIAgentModel(AgentModel):
             next_chunk = await response.__anext__()
             delta = next_chunk.choices[0].delta
 
-        if delta.tool_calls is not None:
+        if delta.content is not None:
+            return OpenAIStreamTextResponse(delta.content, response, timestamp, _map_cost(first_chunk))
+        else:
+            assert delta.tool_calls is not None, f'Expected delta with tool_calls, got {delta}'
             return OpenAIStreamToolCallResponse(
                 response,
                 {c.index: c for c in delta.tool_calls},
                 timestamp,
                 _map_cost(first_chunk),
             )
-        else:
-            assert delta.content is not None, f'Expected delta with content, got {delta}'
-            return OpenAIStreamTextResponse(response, timestamp, _map_cost(first_chunk))
 
     @staticmethod
     def _map_message(message: Message) -> chat.ChatCompletionMessageParam:
@@ -203,6 +203,7 @@ class OpenAIAgentModel(AgentModel):
             # LLMResponse ->
             return chat.ChatCompletionAssistantMessageParam(role='assistant', content=message.content)
         elif message.role == 'llm-tool-calls':
+            assert message.role == 'llm-tool-calls', f'Expected role to be "llm-tool-calls", got {message.role}'
             # LLMToolCalls ->
             return chat.ChatCompletionAssistantMessageParam(
                 role='assistant',
@@ -210,6 +211,36 @@ class OpenAIAgentModel(AgentModel):
             )
         else:
             assert_never(message)
+
+
+@dataclass
+class OpenAIStreamTextResponse(StreamTextResponse):
+    _first: str | None
+    _response: AsyncStream[ChatCompletionChunk]
+    _timestamp: datetime
+    _cost: result.Cost
+
+    async def __anext__(self) -> str:
+        if self._first is not None:
+            first = self._first
+            self._first = None
+            return first
+
+        chunk = await self._response.__anext__()
+        self._cost += _map_cost(chunk)
+        try:
+            choice = chunk.choices[0]
+        except IndexError:
+            raise StopAsyncIteration()
+
+        if choice.finish_reason is not None:
+            raise StopAsyncIteration()
+
+        assert choice.delta.content is not None, f'Expected delta with content, invalid chunk: {chunk!r}'
+        return choice.delta.content
+
+    def cost(self) -> Cost:
+        return self._cost
 
 
 @dataclass
@@ -251,30 +282,6 @@ class OpenAIStreamToolCallResponse(StreamToolCallResponse):
                     calls.append(ToolCall.from_json(f.name, f.arguments, c.id))
 
         return LLMToolCalls(calls, timestamp=self._timestamp)
-
-    def cost(self) -> Cost:
-        return self._cost
-
-
-@dataclass
-class OpenAIStreamTextResponse(StreamTextResponse):
-    _response: AsyncStream[ChatCompletionChunk]
-    _timestamp: datetime
-    _cost: result.Cost
-
-    async def __anext__(self) -> str:
-        chunk = await self._response.__anext__()
-        self._cost += _map_cost(chunk)
-        try:
-            choice = chunk.choices[0]
-        except IndexError:
-            raise StopAsyncIteration()
-
-        if choice.finish_reason is not None:
-            raise StopAsyncIteration()
-
-        assert choice.delta.content is not None, f'Expected delta with content, invalid chunk: {chunk!r}'
-        return choice.delta.content
 
     def cost(self) -> Cost:
         return self._cost

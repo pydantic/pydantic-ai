@@ -471,7 +471,7 @@ async def test_unexpected_response(client_with_handler: ClientWithHandler, env: 
         await agent.run('Hello')
 
     assert str(exc_info.value) == snapshot(
-        'Error while running model gemini-1.5-flash\n'
+        'Error while running model gemini-1.5-flash after 2 messages\n'
         '  caused by unexpected model behavior: Unexpected response from gemini 401'
     )
 

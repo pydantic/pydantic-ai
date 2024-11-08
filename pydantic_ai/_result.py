@@ -194,7 +194,7 @@ class ResultTool(Generic[ResultData]):
         try:
             if isinstance(tool_call.args, messages.ArgsJson):
                 result = self.type_adapter.validate_json(
-                    tool_call.args.args_json, experimental_allow_partial=allow_partial
+                    tool_call.args.args_json or '', experimental_allow_partial=allow_partial
                 )
             else:
                 result = self.type_adapter.validate_python(

@@ -98,6 +98,8 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
     _result_schema: _result.ResultSchema[ResultData] | None
     _deps: AgentDeps
     _result_validators: list[_result.ResultValidator[AgentDeps, ResultData]]
+    is_complete: bool = False
+    """Whether the stream has all been received."""
 
     async def stream(
         self,
@@ -138,9 +140,15 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
                     yield cast(ResultData, combined)
         else:
             assert not text_delta, 'Cannot use `text_delta=True` for structured responses'
+
+            # we should already have a message at this point, yield that first
+            tool_message = self._stream_response.get()
+            yield await self.validate_structured_result(tool_message, allow_partial=True)
+
             async for _ in _utils.group_by_temporal(self._stream_response, debounce_by):
                 tool_message = self._stream_response.get()
                 yield await self.validate_structured_result(tool_message, allow_partial=True)
+        self.is_complete = True
 
     async def stream_structured(self, *, debounce_by: float | None = 0.1) -> AsyncIterator[messages.LLMToolCalls]:
         """Stream the response as an async iterable of Structured LLM Messages.
@@ -157,19 +165,25 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
         if isinstance(self._stream_response, models.StreamTextResponse):
             raise exceptions.UserError('stream_messages() can only be used with structured responses')
         else:
+            # we should already have a message at this point, yield that first
+            yield self._stream_response.get()
+
             async for _ in _utils.group_by_temporal(self._stream_response, debounce_by):
                 yield self._stream_response.get()
+        self.is_complete = True
 
     async def get_response(self) -> ResultData:
         """Stream the whole response, validate and return it."""
         if isinstance(self._stream_response, models.StreamTextResponse):
             text = ''.join([chunk async for chunk in self._stream_response])
             text = await self._validate_text_result(text)
+            self.is_complete = True
             return cast(ResultData, text)
         else:
             async for _ in self._stream_response:
                 pass
             tool_message = self._stream_response.get()
+            self.is_complete = True
             return await self.validate_structured_result(tool_message)
 
     def is_structured(self) -> bool:

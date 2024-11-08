@@ -53,7 +53,9 @@ class AgentError(RuntimeError):
             )
 
     def __str__(self) -> str:
-        msg = super().__str__()
+        count = len(self.history)
+        plural = 's' if count != 1 else ''
+        msg = f'{super().__str__()} after {count} message{plural}'
         cause = self.__cause__
         if isinstance(cause, UnexpectedModelBehaviour):
             return f'{msg}\n  caused by unexpected model behavior: {cause.message}'

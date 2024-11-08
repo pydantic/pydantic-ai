@@ -397,6 +397,9 @@ class Agent(Generic[AgentDeps, ResultData]):
                     else:
                         return _utils.Either(left=result_data)
 
+            if not model_response.calls:
+                raise exceptions.UnexpectedModelBehaviour('Received empty tool call message')
+
             # otherwise we run all retriever functions in parallel
             coros: list[Awaitable[_messages.Message]] = []
             for call in model_response.calls:
@@ -433,13 +436,16 @@ class Agent(Generic[AgentDeps, ResultData]):
 
                 return _utils.Either(right=[response])
         else:
-            assert isinstance(model_response, models.StreamToolCallResponse)
+            assert isinstance(model_response, models.StreamToolCallResponse), f'Unexpected response: {model_response}'
             if self._result_schema is not None:
                 # if there's a result schema, iterate over the stream until we find at least one tool
                 # NOTE: this means we ignore any other tools called here
                 tool_call_msg = model_response.get()
                 while not tool_call_msg.calls:
-                    await model_response.__anext__()
+                    try:
+                        await model_response.__anext__()
+                    except StopAsyncIteration:
+                        break
                     tool_call_msg = model_response.get()
 
                 if self._result_schema.find_tool(tool_call_msg):
@@ -449,6 +455,8 @@ class Agent(Generic[AgentDeps, ResultData]):
             async for _ in model_response:
                 pass
             tool_call_msg = model_response.get()
+            if not tool_call_msg.calls:
+                raise exceptions.UnexpectedModelBehaviour('Received empty tool call message')
             messages: list[_messages.Message] = [tool_call_msg]
 
             # we now run all retriever functions in parallel
