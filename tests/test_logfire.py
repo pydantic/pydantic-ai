@@ -89,7 +89,8 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary]) -> None:
             'code.filepath': 'agent.py',
             'code.function': 'run',
             'code.lineno': IsInt(),
-            'logfire.msg_template': 'model request',
+            'run_step': 1,
+            'logfire.msg_template': 'model request {run_step=}',
             'logfire.span_type': 'span',
             'response': IsJson(
                 {
@@ -104,6 +105,7 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary]) -> None:
                 {
                     'type': 'object',
                     'properties': {
+                        'run_step': {},
                         'response': {
                             'type': 'object',
                             'title': 'LLMToolCalls',

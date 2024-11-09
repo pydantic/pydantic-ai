@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
-from collections.abc import Iterable, Iterator, Mapping, Sequence
+from collections.abc import AsyncIterator, Iterable, Iterator, Mapping, Sequence
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from itertools import chain
 from typing import Callable, Union, cast
@@ -97,7 +98,8 @@ class FunctionAgentModel(AgentModel):
         assert self.function is not None, 'FunctionModel must receive a `function` to support non-streamed requests'
         return self.function(messages, self.agent_info), result.Cost()
 
-    async def request_stream(self, messages: list[Message]) -> EitherStreamedResponse:
+    @asynccontextmanager
+    async def request_stream(self, messages: list[Message]) -> AsyncIterator[EitherStreamedResponse]:
         assert (
             self.stream_function is not None
         ), 'FunctionModel must receive a `stream_function` to support streamed requests'
@@ -109,11 +111,11 @@ class FunctionAgentModel(AgentModel):
 
         if isinstance(first, str):
             text_stream = cast(Iterable[str], response_data)
-            return FunctionStreamTextResponse(iter(chain([first], text_stream)))
+            yield FunctionStreamTextResponse(iter(chain([first], text_stream)))
         else:
             structured_stream = cast(Iterable[DeltaToolCalls], response_data)
             # noinspection PyTypeChecker
-            return FunctionStreamToolCallResponse(iter(chain([first], structured_stream)), {})
+            yield FunctionStreamToolCallResponse(iter(chain([first], structured_stream)), {})
 
 
 @dataclass

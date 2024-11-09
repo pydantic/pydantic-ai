@@ -8,7 +8,8 @@ from __future__ import annotations as _annotations
 
 import re
 import string
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import AsyncIterator, Iterator, Mapping, Sequence
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -113,13 +114,14 @@ class TestAgentModel(AgentModel):
     async def request(self, messages: list[Message]) -> tuple[LLMMessage, Cost]:
         return self._request(messages), Cost()
 
-    async def request_stream(self, messages: list[Message]) -> EitherStreamedResponse:
+    @asynccontextmanager
+    async def request_stream(self, messages: list[Message]) -> AsyncIterator[EitherStreamedResponse]:
         msg = self._request(messages)
         cost = Cost()
         if isinstance(msg, LLMResponse):
-            return TestStreamTextResponse(msg.content, cost)
+            yield TestStreamTextResponse(msg.content, cost)
         else:
-            return TestStreamToolCallResponse(msg, cost)
+            yield TestStreamToolCallResponse(msg, cost)
 
     def gen_retriever_args(self, tool_def: AbstractToolDefinition) -> Any:
         """Generate arguments for a retriever."""

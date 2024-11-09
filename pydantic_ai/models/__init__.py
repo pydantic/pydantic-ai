@@ -8,6 +8,7 @@ from __future__ import annotations as _annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Mapping, Sequence
+from contextlib import asynccontextmanager
 from functools import cache
 from typing import TYPE_CHECKING, Protocol, Union
 
@@ -56,9 +57,13 @@ class AgentModel(ABC):
         """Make a request to the model."""
         raise NotImplementedError()
 
-    async def request_stream(self, messages: list[Message]) -> EitherStreamedResponse:
+    @asynccontextmanager
+    async def request_stream(self, messages: list[Message]) -> AsyncIterator[EitherStreamedResponse]:
         """Make a request to the model and return a streaming response."""
         raise NotImplementedError(f'Streamed requests not supported by this {self.__class__.__name__}')
+        # yield is required to make this a generator for type checking
+        # noinspection PyUnreachableCode
+        yield  # pragma: no cover
 
 
 class StreamTextResponse(ABC):
@@ -80,10 +85,6 @@ class StreamTextResponse(ABC):
         NOTE: this won't return the ful cost until the stream is finished.
         """
         raise NotImplementedError()
-
-    async def close(self) -> None:
-        """Close the response stream."""
-        pass
 
 
 class StreamToolCallResponse(ABC):
@@ -117,10 +118,6 @@ class StreamToolCallResponse(ABC):
         NOTE: this won't return the full cost until the stream is finished.
         """
         raise NotImplementedError()
-
-    async def close(self) -> None:
-        """Close the response stream."""
-        pass
 
 
 EitherStreamedResponse = Union[StreamTextResponse, StreamToolCallResponse]

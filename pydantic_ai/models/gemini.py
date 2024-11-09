@@ -117,6 +117,7 @@ class GeminiAgentModel(AgentModel):
 
     # async def request_stream(self, messages: list[Message]) -> EitherStreamedResponse:
     #     """Make a request to the model and return a streaming response."""
+    #     async with self._make_request(messages, False) as http_response:
     #     response = await self._make_request(messages, False)
 
     @asynccontextmanager

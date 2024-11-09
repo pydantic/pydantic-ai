@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import AsyncIterator, Mapping, Sequence
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Literal, overload
@@ -99,9 +100,13 @@ class OpenAIAgentModel(AgentModel):
         response = await self._completions_create(messages, False)
         return self._process_response(response), _map_cost(response)
 
-    async def request_stream(self, messages: list[Message]) -> EitherStreamedResponse:
+    @asynccontextmanager
+    async def request_stream(self, messages: list[Message]) -> AsyncIterator[EitherStreamedResponse]:
         response = await self._completions_create(messages, True)
-        return await self._process_streamed_response(response)
+        try:
+            yield await self._process_streamed_response(response)
+        finally:
+            await response.close()
 
     @overload
     async def _completions_create(
@@ -247,9 +252,6 @@ class OpenAIStreamTextResponse(StreamTextResponse):
     def cost(self) -> Cost:
         return self._cost
 
-    async def close(self) -> None:
-        await self._response.close()
-
 
 @dataclass
 class OpenAIStreamToolCallResponse(StreamToolCallResponse):
@@ -293,9 +295,6 @@ class OpenAIStreamToolCallResponse(StreamToolCallResponse):
 
     def cost(self) -> Cost:
         return self._cost
-
-    async def close(self) -> None:
-        await self._response.close()
 
 
 def _guard_tool_id(t: ToolCall | ToolReturn | RetryPrompt) -> str:

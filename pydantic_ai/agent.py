@@ -113,13 +113,15 @@ class Agent(Generic[AgentDeps, ResultData]):
             custom_model=custom_model,
             model_name=model_used.name(),
         ) as run_span:
+            run_step = 0
             try:
                 while True:
-                    with _logfire.span('model request') as model_request_span:
+                    run_step += 1
+                    with _logfire.span('model request {run_step=}', run_step=run_step) as model_req_span:
                         model_response, request_cost = await agent_model.request(messages)
-                        model_request_span.set_attribute('response', model_response)
-                        model_request_span.set_attribute('cost', request_cost)
-                        model_request_span.message = f'model request -> {model_response.role}'
+                        model_req_span.set_attribute('response', model_response)
+                        model_req_span.set_attribute('cost', request_cost)
+                        model_req_span.message = f'model request -> {model_response.role}'
 
                     messages.append(model_response)
                     cost += request_cost
@@ -208,42 +210,42 @@ class Agent(Generic[AgentDeps, ResultData]):
             custom_model=custom_model,
             model_name=model_used.name(),
         ) as run_span:
+            run_step = 0
             try:
                 while True:
-                    with _logfire.span('model request'):
-                        model_response = await agent_model.request_stream(messages)
+                    run_step += 1
+                    with _logfire.span('model request {run_step=}', run_step=run_step) as model_req_span:
+                        async with agent_model.request_stream(messages) as model_response:
+                            model_req_span.set_attribute('response_type', model_response.__class__.__name__)
 
-                    with _logfire.span('handle model response') as handle_span:
-                        either = await self._handle_streamed_model_response(model_response, deps)
+                            with _logfire.span('handle model response') as handle_span:
+                                either = await self._handle_streamed_model_response(model_response, deps)
 
-                        if left := either.left:
-                            # left means return a streamed result
-                            result_stream = left.value
-                            run_span.set_attribute('all_messages', messages)
-                            handle_span.set_attribute('result_type', result_stream.__class__.__name__)
-                            handle_span.message = 'handle model response -> final result'
-                            try:
-                                yield result.StreamedRunResult(
-                                    messages,
-                                    new_message_index,
-                                    cost,
-                                    result_stream,
-                                    self._result_schema,
-                                    deps,
-                                    self._result_validators,
-                                )
-                            finally:
-                                await result_stream.close()
-                                return
-                        else:
-                            # right means continue the conversation
-                            tool_responses = either.right
-                            handle_span.set_attribute('tool_responses', tool_responses)
-                            response_msgs = ' '.join(m.role for m in tool_responses)
-                            handle_span.message = f'handle model response -> {response_msgs}'
-                            messages.extend(tool_responses)
-                            # the model_response should have been fully streamed by now, we can add it's cost
-                            cost += model_response.cost()
+                                if left := either.left:
+                                    # left means return a streamed result
+                                    result_stream = left.value
+                                    run_span.set_attribute('all_messages', messages)
+                                    handle_span.set_attribute('result_type', result_stream.__class__.__name__)
+                                    handle_span.message = 'handle model response -> final result'
+                                    yield result.StreamedRunResult(
+                                        messages,
+                                        new_message_index,
+                                        cost,
+                                        result_stream,
+                                        self._result_schema,
+                                        deps,
+                                        self._result_validators,
+                                    )
+                                    return
+                                else:
+                                    # right means continue the conversation
+                                    tool_responses = either.right
+                                    handle_span.set_attribute('tool_responses', tool_responses)
+                                    response_msgs = ' '.join(m.role for m in tool_responses)
+                                    handle_span.message = f'handle model response -> {response_msgs}'
+                                    messages.extend(tool_responses)
+                                    # the model_response should have been fully streamed by now, we can add it's cost
+                                    cost += model_response.cost()
 
             except (ValidationError, exceptions.UnexpectedModelBehaviour) as e:
                 run_span.set_attribute('messages', messages)
