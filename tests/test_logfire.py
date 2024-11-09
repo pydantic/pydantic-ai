@@ -77,9 +77,13 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary]) -> None:
                 'message': 'agent run prompt=Hello',
                 'children': [
                     {'id': 1, 'message': 'model request -> llm-tool-calls'},
-                    {'id': 2, 'message': 'handle model response -> tool-return'},
-                    {'id': 3, 'message': 'model request -> llm-response'},
-                    {'id': 4, 'message': 'handle model response -> final result'},
+                    {
+                        'id': 2,
+                        'message': 'handle model response -> tool-return',
+                        'children': [{'id': 3, 'message': "running tools=['my_ret']"}],
+                    },
+                    {'id': 4, 'message': 'model request -> llm-response'},
+                    {'id': 5, 'message': 'handle model response -> final result'},
                 ],
             }
         ]
@@ -89,9 +93,10 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary]) -> None:
             'code.filepath': 'agent.py',
             'code.function': 'run',
             'code.lineno': IsInt(),
-            'logfire.msg_template': 'model request',
+            'run_step': 1,
+            'logfire.msg_template': 'model request {run_step=}',
             'logfire.span_type': 'span',
-            'model_response': IsJson(
+            'response': IsJson(
                 {
                     'calls': [{'tool_name': 'my_ret', 'args': {'args_object': {'x': 0}}, 'tool_id': None}],
                     'timestamp': IsStr() & IsNow(iso_string=True, tz=timezone.utc),
@@ -104,7 +109,8 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary]) -> None:
                 {
                     'type': 'object',
                     'properties': {
-                        'model_response': {
+                        'run_step': {},
+                        'response': {
                             'type': 'object',
                             'title': 'LLMToolCalls',
                             'x-python-datatype': 'dataclass',

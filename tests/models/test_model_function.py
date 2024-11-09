@@ -1,5 +1,6 @@
 import json
 import re
+from collections.abc import Iterable
 from dataclasses import asdict
 from datetime import timezone
 
@@ -20,9 +21,12 @@ from pydantic_ai.messages import (
     ToolReturn,
     UserPrompt,
 )
-from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.result import Cost
 from tests.conftest import IsNow
+
+pytestmark = pytest.mark.anyio
 
 
 def return_last(messages: list[Message], _: AgentInfo) -> LLMMessage:
@@ -393,3 +397,52 @@ def test_retry_result_type():
 
     result = agent.run_sync('')
     assert result.response == snapshot(Foo(x=2))
+
+
+def stream_text_function(_messages: list[Message], _: AgentInfo) -> Iterable[str]:
+    yield 'hello '
+    yield 'world'
+
+
+async def test_stream_text():
+    agent = Agent(FunctionModel(stream_function=stream_text_function), deps=None)
+    async with agent.run_stream('') as result:
+        assert await result.get_response() == snapshot('hello world')
+        assert result.all_messages() == snapshot(
+            [
+                UserPrompt(content='', timestamp=IsNow(tz=timezone.utc)),
+                LLMResponse(content='hello world', timestamp=IsNow(tz=timezone.utc)),
+            ]
+        )
+        assert result.cost() == snapshot(Cost())
+
+
+class Foo(BaseModel):
+    x: int
+
+
+async def test_stream_structure():
+    def stream_structured_function(_messages: list[Message], agent_info: AgentInfo) -> Iterable[DeltaToolCalls]:
+        assert agent_info.result_tools is not None
+        assert len(agent_info.result_tools) == 1
+        name = agent_info.result_tools[0].name
+        yield {0: DeltaToolCall(name=name)}
+        yield {0: DeltaToolCall(args='{"x": ')}
+        yield {0: DeltaToolCall(args='1}')}
+
+    agent = Agent(FunctionModel(stream_function=stream_structured_function), deps=None, result_type=Foo)
+    async with agent.run_stream('') as result:
+        assert await result.get_response() == snapshot(Foo(x=1))
+        assert result.cost() == snapshot(Cost())
+
+
+async def test_pass_neither():
+    with pytest.raises(TypeError, match='Either `function` or `stream_function` must be provided'):
+        FunctionModel()  # pyright: ignore[reportCallIssue]
+
+
+async def test_return_empty():
+    agent = Agent(FunctionModel(stream_function=lambda _, __: []), deps=None)
+    with pytest.raises(ValueError, match='Stream function must return at least one item'):
+        async with agent.run_stream(''):
+            pass

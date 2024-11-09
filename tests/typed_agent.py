@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Union
 
 from pydantic_ai import Agent, CallContext
+from pydantic_ai.result import RunResult
 
 
 @dataclass
@@ -25,10 +26,6 @@ def expect_error(error_type: type[Exception]) -> Iterator[None]:
         assert isinstance(e, error_type), f'Expected {error_type}, got {type(e)}'
     else:
         raise AssertionError('Expected an error')
-
-
-def never() -> bool:
-    return False
 
 
 @typed_agent1.retriever_context
@@ -65,8 +62,13 @@ with expect_error(ValueError):
         return x
 
 
-if never():
-    typed_agent1.run_sync('testing')
+def run_sync() -> None:
+    _: RunResult[str] = typed_agent1.run_sync('testing')
+
+
+async def run_stream() -> None:
+    async with typed_agent1.run_stream('testing') as streamed_result:
+        _: list[str] = [chunk async for chunk in streamed_result.stream()]
 
 
 typed_agent2: Agent[MyDeps, str] = Agent()
@@ -78,8 +80,8 @@ async def ok_retriever2(ctx: CallContext[MyDeps], x: str) -> str:
     return f'{x} {total}'
 
 
-if never():
-    typed_agent2.run_sync('testing', model='openai:gpt-4o', deps=MyDeps(foo=1, bar=2))
+def run_sync2() -> None:
+    _: RunResult[str] = typed_agent2.run_sync('testing', model='openai:gpt-4o', deps=MyDeps(foo=1, bar=2))
     typed_agent2.run_sync('testing', deps=123)  # type: ignore[arg-type]
 
 
@@ -102,6 +104,6 @@ def foo_result(response: Union[Foo, Bar]) -> str:
     return str(response)
 
 
-if never():
-    result = union_agent.run_sync('testing')
+def run_sync3() -> None:
+    result: RunResult[Union[Foo, Bar]] = union_agent.run_sync('testing')
     foo_result(result.response)

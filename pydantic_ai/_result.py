@@ -4,7 +4,7 @@ import inspect
 import sys
 import types
 from collections.abc import Awaitable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Callable, Generic, Union, cast, get_args, get_origin
 
 from pydantic import TypeAdapter, ValidationError
@@ -30,8 +30,8 @@ ResultValidatorFunc = Union[
 @dataclass
 class ResultValidator(Generic[AgentDeps, ResultData]):
     function: ResultValidatorFunc[AgentDeps, ResultData]
-    _takes_ctx: bool = False
-    _is_async: bool = False
+    _takes_ctx: bool = field(init=False)
+    _is_async: bool = field(init=False)
 
     def __post_init__(self):
         self._takes_ctx = len(inspect.signature(self.function).parameters) > 1
@@ -125,6 +125,10 @@ class ResultSchema(Generic[ResultData]):
             if result := self.tools.get(call.tool_name):
                 return call, result
 
+    def tool_names(self) -> list[str]:
+        """Return the names of the tools."""
+        return list(self.tools.keys())
+
 
 DEFAULT_DESCRIPTION = 'The final response which ends this conversation'
 
@@ -174,24 +178,38 @@ class ResultTool(Generic[ResultData]):
             outer_typed_dict_key=outer_typed_dict_key,
         )
 
-    def validate(self, tool_call: messages.ToolCall) -> ResultData:
+    def validate(
+        self, tool_call: messages.ToolCall, allow_partial: bool = False, wrap_validation_errors: bool = True
+    ) -> ResultData:
         """Validate a result message.
+
+        Args:
+            tool_call: The tool call from the LLM to validate.
+            allow_partial: If true, allow partial validation.
+            wrap_validation_errors: If true, wrap the validation errors in a retry message.
 
         Returns:
             Either the validated result data (left) or a retry message (right).
         """
         try:
             if isinstance(tool_call.args, messages.ArgsJson):
-                result = self.type_adapter.validate_json(tool_call.args.args_json)
+                result = self.type_adapter.validate_json(
+                    tool_call.args.args_json or '', experimental_allow_partial=allow_partial
+                )
             else:
-                result = self.type_adapter.validate_python(tool_call.args.args_object)
+                result = self.type_adapter.validate_python(
+                    tool_call.args.args_object, experimental_allow_partial=allow_partial
+                )
         except ValidationError as e:
-            m = messages.RetryPrompt(
-                tool_name=tool_call.tool_name,
-                content=e.errors(include_url=False),
-                tool_id=tool_call.tool_id,
-            )
-            raise ToolRetryError(m) from e
+            if wrap_validation_errors:
+                m = messages.RetryPrompt(
+                    tool_name=tool_call.tool_name,
+                    content=e.errors(include_url=False),
+                    tool_id=tool_call.tool_id,
+                )
+                raise ToolRetryError(m) from e
+            else:
+                raise
         else:
             if k := self.outer_typed_dict_key:
                 result = result[k]

@@ -61,7 +61,7 @@ class Success(BaseModel):
     """Response when SQL could be successfully generated."""
 
     sql_query: Annotated[str, MinLen(1)]
-    explanation: str = Field(None, description='Explanation of the SQL query, as markdown')
+    explanation: str = Field('', description='Explanation of the SQL query, as markdown')
 
 
 class InvalidRequest(BaseModel):

@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 import inspect
 from collections.abc import Awaitable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Callable, Generic, Union, cast
 
 from . import _utils
@@ -21,8 +21,8 @@ SystemPromptFunc = Union[
 @dataclass
 class SystemPromptRunner(Generic[AgentDeps]):
     function: SystemPromptFunc[AgentDeps]
-    _takes_ctx: bool = False
-    _is_async: bool = False
+    _takes_ctx: bool = field(init=False)
+    _is_async: bool = field(init=False)
 
     def __post_init__(self):
         self._takes_ctx = len(inspect.signature(self.function).parameters) > 0

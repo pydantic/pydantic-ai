@@ -2,17 +2,14 @@ from __future__ import annotations as _annotations
 
 import json
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Annotated, Any, Literal, Union
 
 import pydantic
 import pydantic_core
 
 from . import _pydantic
-
-
-def _now_utc() -> datetime:
-    return datetime.now(tz=timezone.utc)
+from ._utils import now_utc as _now_utc
 
 
 @dataclass
@@ -101,6 +98,12 @@ class ToolCall:
     @classmethod
     def from_object(cls, tool_name: str, args_object: dict[str, Any]) -> ToolCall:
         return cls(tool_name, ArgsObject(args_object))
+
+    def has_content(self) -> bool:
+        if isinstance(self.args, ArgsObject):
+            return any(self.args.args_object.values())
+        else:
+            return bool(self.args.args_json)
 
 
 @dataclass

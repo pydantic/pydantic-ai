@@ -176,3 +176,30 @@ Run the app with:
 ```
 
 Then open the app at [localhost:8000](http://localhost:8000).
+
+### `stream_markdown.py`
+
+(Demonstrates: streaming text responses)
+
+This example shows how to stream markdown from an agent, using the `rich` library to display the markdown.
+
+Run with:
+
+```bash
+(uv run/python) -m pydantic_ai_examples.stream_markdown
+```
+
+### `stream_whales.py`
+
+(Demonstrates: streaming structured responses)
+
+Information about whales — an example of streamed structured response validation.
+
+This script streams structured responses from GPT-4 about whales, validates the data
+and displays it as a dynamic table using Rich as the data is received.
+
+Run with:
+
+```bash
+(uv run/python) -m pydantic_ai_examples.stream_whales
+```

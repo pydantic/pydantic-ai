@@ -18,16 +18,18 @@ from __future__ import annotations as _annotations
 
 import os
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import AsyncIterator, Mapping, Sequence
+from contextlib import asynccontextmanager
 from copy import deepcopy
-from dataclasses import dataclass
-from typing import Annotated, Any, Literal, Union, cast
+from dataclasses import dataclass, field
+from datetime import datetime
+from typing import Annotated, Any, Literal, Union
 
-from httpx import AsyncClient as AsyncHTTPClient
+from httpx import AsyncClient as AsyncHTTPClient, Response as HTTPResponse
 from pydantic import Field
-from typing_extensions import assert_never
+from typing_extensions import NotRequired, TypedDict, TypeGuard, assert_never
 
-from .. import _pydantic, _utils, exceptions, result
+from .. import UnexpectedModelBehaviour, _pydantic, _utils, exceptions, result
 from ..messages import (
     ArgsObject,
     LLMMessage,
@@ -38,7 +40,15 @@ from ..messages import (
     ToolCall,
     ToolReturn,
 )
-from . import AbstractToolDefinition, AgentModel, Model, cached_async_http_client
+from . import (
+    AbstractToolDefinition,
+    AgentModel,
+    EitherStreamedResponse,
+    Model,
+    StreamTextResponse,
+    StreamToolCallResponse,
+    cached_async_http_client,
+)
 
 __all__ = 'GeminiModel', 'GeminiModelName'
 
@@ -60,7 +70,7 @@ class GeminiModel(Model):
         api_key: str | None = None,
         http_client: AsyncHTTPClient | None = None,
         # https://ai.google.dev/gemini-api/docs/quickstart?lang=rest#make-first-request
-        url_template: str = 'https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent',
+        url_template: str = 'https://generativelanguage.googleapis.com/v1beta/models/{model}:{function}',
     ):
         self.model_name = model_name
         if api_key is None:
@@ -78,14 +88,14 @@ class GeminiModel(Model):
         allow_text_result: bool,
         result_tools: Sequence[AbstractToolDefinition] | None,
     ) -> GeminiAgentModel:
-        tools = [_GeminiFunction.from_abstract_tool(t) for t in retrievers.values()]
+        tools = [_function_from_abstract_tool(t) for t in retrievers.values()]
         if result_tools is not None:
-            tools += [_GeminiFunction.from_abstract_tool(t) for t in result_tools]
+            tools += [_function_from_abstract_tool(t) for t in result_tools]
 
         if allow_text_result:
             tool_config = None
         else:
-            tool_config = _GeminiToolConfig.call_required([t.name for t in tools])
+            tool_config = _tool_config([t['name'] for t in tools])
 
         return GeminiAgentModel(
             http_client=self.http_client,
@@ -110,168 +120,293 @@ class GeminiAgentModel(AgentModel):
     url_template: str
 
     async def request(self, messages: list[Message]) -> tuple[LLMMessage, result.Cost]:
-        response = await self.make_request(messages)
-        return self.process_response(response), response.usage_metadata.as_cost()
+        async with self._make_request(messages, False) as http_response:
+            response = _gemini_response_ta.validate_json(await http_response.aread())
+        return self._process_response(response), _metadata_as_cost(response['usage_metadata'])
 
-    async def make_request(self, messages: list[Message]) -> _GeminiResponse:
+    @asynccontextmanager
+    async def request_stream(self, messages: list[Message]) -> AsyncIterator[EitherStreamedResponse]:
+        async with self._make_request(messages, True) as http_response:
+            yield await self._process_streamed_response(http_response)
+
+    @asynccontextmanager
+    async def _make_request(self, messages: list[Message], streamed: bool) -> AsyncIterator[HTTPResponse]:
         contents: list[_GeminiContent] = []
         sys_prompt_parts: list[_GeminiTextPart] = []
         for m in messages:
-            either_content = self.message_to_gemini(m)
+            either_content = self._message_to_gemini(m)
             if left := either_content.left:
                 sys_prompt_parts.append(left.value)
             else:
                 contents.append(either_content.right)
 
-        request_data = _GeminiRequest(
-            contents=contents,
-            system_instruction=_GeminiTextContent(role='user', parts=sys_prompt_parts) if sys_prompt_parts else None,
-            tools=self.tools if self.tools is not None else None,
-            tool_config=self.tool_config if self.tool_config is not None else None,
-        )
-        request_json = _gemini_request_ta.dump_json(request_data, exclude_none=True, by_alias=True)
+        request_data = _GeminiRequest(contents=contents)
+        if sys_prompt_parts:
+            request_data['system_instruction'] = _GeminiTextContent(role='user', parts=sys_prompt_parts)
+        if self.tools is not None:
+            request_data['tools'] = self.tools
+        if self.tool_config is not None:
+            request_data['tool_config'] = self.tool_config
+
+        request_json = _gemini_request_ta.dump_json(request_data, by_alias=True)
         # https://cloud.google.com/docs/authentication/api-keys-use#using-with-rest
         headers = {
             'X-Goog-Api-Key': self.api_key,
             'Content-Type': 'application/json',
         }
-        url = self.url_template.format(model=self.model_name)
-        r = await self.http_client.post(url, content=request_json, headers=headers)
-        if r.status_code != 200:
-            raise exceptions.UnexpectedModelBehaviour(f'Unexpected response from gemini {r.status_code}', r.text)
-        return _gemini_response_ta.validate_json(r.content)
+        url = self.url_template.format(
+            model=self.model_name, function='streamGenerateContent' if streamed else 'generateContent'
+        )
+
+        async with self.http_client.stream('POST', url, content=request_json, headers=headers) as r:
+            if r.status_code != 200:
+                raise exceptions.UnexpectedModelBehaviour(f'Unexpected response from gemini {r.status_code}', r.text)
+            yield r
 
     @staticmethod
-    def process_response(response: _GeminiResponse) -> LLMMessage:
-        assert len(response.candidates) == 1, 'Expected exactly one candidate'
-        parts = response.candidates[0].content.parts
-        if all(isinstance(part, _GeminiFunctionCallPart) for part in parts):
-            parts = cast(list[_GeminiFunctionCallPart], parts)
-            calls = [ToolCall.from_object(part.function_call.name, part.function_call.args) for part in parts]
-            return LLMToolCalls(calls)
-        elif all(isinstance(part, _GeminiTextPart) for part in parts):
-            parts = cast(list[_GeminiTextPart], parts)
-            return LLMResponse(content=''.join(part.text for part in parts))
+    def _process_response(response: _GeminiResponse) -> LLMMessage:
+        either = _extract_response_parts(response)
+        if left := either.left:
+            return _tool_call_from_parts(left.value)
         else:
-            raise exceptions.UnexpectedModelBehaviour(
-                f'Unexpected response from Gemini, expected all parts to be function calls or text, got: {parts!r}'
-            )
+            return LLMResponse(content=''.join(part['text'] for part in either.right))
 
     @staticmethod
-    def message_to_gemini(m: Message) -> _utils.Either[_GeminiTextPart, _GeminiContent]:
+    async def _process_streamed_response(http_response: HTTPResponse) -> EitherStreamedResponse:
+        """Process a streamed response, and prepare a streaming response to return."""
+        aiter_bytes = http_response.aiter_bytes()
+        start_response: _GeminiResponse | None = None
+        content = bytearray()
+
+        async for chunk in aiter_bytes:
+            content.extend(chunk)
+            responses = _gemini_streamed_response_ta.validate_json(
+                content,  # type: ignore # see https://github.com/pydantic/pydantic/pull/10802
+                experimental_allow_partial=True,
+            )
+            if responses:
+                last = responses[-1]
+                if last['candidates'] and last['candidates'][0]['content']['parts']:
+                    start_response = last
+                    break
+
+        if start_response is None:
+            raise UnexpectedModelBehaviour('Streamed response ended without content or tool calls')
+
+        if _extract_response_parts(start_response).is_left():
+            return GeminiStreamToolCallResponse(_content=content, _stream=aiter_bytes)
+        else:
+            return GeminiStreamTextResponse(_first=True, _content=content, _stream=aiter_bytes)
+
+    @staticmethod
+    def _message_to_gemini(m: Message) -> _utils.Either[_GeminiTextPart, _GeminiContent]:
         """Convert a message to a _GeminiTextPart for "system_instructions" or _GeminiContent for "contents"."""
         if m.role == 'system':
             # SystemPrompt ->
             return _utils.Either(left=_GeminiTextPart(text=m.content))
         elif m.role == 'user':
             # UserPrompt ->
-            return _utils.Either(right=_GeminiContent.user_text(m.content))
+            return _utils.Either(right=_content_user_text(m.content))
         elif m.role == 'tool-return':
             # ToolReturn ->
-            return _utils.Either(right=_GeminiContent.function_return(m))
+            return _utils.Either(right=_content_function_return(m))
         elif m.role == 'retry-prompt':
             # RetryPrompt ->
-            return _utils.Either(right=_GeminiContent.function_retry(m))
+            return _utils.Either(right=_content_function_retry(m))
         elif m.role == 'llm-response':
             # LLMResponse ->
-            return _utils.Either(right=_GeminiContent.model_text(m.content))
+            return _utils.Either(right=_content_model_text(m.content))
         elif m.role == 'llm-tool-calls':
             # LLMToolCalls ->
-            return _utils.Either(right=_GeminiContent.function_call(m))
+            return _utils.Either(right=_content_function_call(m))
         else:
             assert_never(m)
 
 
 @dataclass
-class _GeminiRequest:
+class GeminiStreamTextResponse(StreamTextResponse):
+    _first: bool
+    _content: bytearray
+    _stream: AsyncIterator[bytes]
+    _position: int = 0
+    _timestamp: datetime = field(default_factory=_utils.now_utc)
+
+    async def __anext__(self) -> str:
+        if self._first:
+            self._first = False
+        else:
+            chunk = await self._stream.__anext__()
+            self._content.extend(chunk)
+
+        responses = self._responses()
+        new_responses = responses[self._position :]
+        self._position = len(responses)
+        new_text: list[str] = []
+        for r in new_responses:
+            parts = r['candidates'][0]['content']['parts']
+            if all_text_parts(parts):
+                new_text.extend(part['text'] for part in parts)
+            else:
+                raise UnexpectedModelBehaviour(
+                    'Streamed response with unexpected content, expected all parts to be text'
+                )
+        return ''.join(new_text)
+
+    def cost(self) -> result.Cost:
+        cost = result.Cost()
+        for response in self._responses():
+            cost += _metadata_as_cost(response['usage_metadata'])
+        return cost
+
+    def timestamp(self) -> datetime:
+        return self._timestamp
+
+    def _responses(self) -> list[_GeminiResponse]:
+        return _gemini_streamed_response_ta.validate_json(
+            self._content,  # type: ignore # see https://github.com/pydantic/pydantic/pull/10802
+            experimental_allow_partial=True,
+        )
+
+
+@dataclass
+class GeminiStreamToolCallResponse(StreamToolCallResponse):
+    _content: bytearray
+    _stream: AsyncIterator[bytes]
+    _timestamp: datetime = field(default_factory=_utils.now_utc)
+
+    async def __anext__(self) -> None:
+        chunk = await self._stream.__anext__()
+        self._content.extend(chunk)
+
+    def get(self) -> LLMToolCalls:
+        """Get the `LLMToolCalls` at this point.
+
+        NOTE: It's not clear how the stream of responses should be combined because Gemini seems to always
+        reply with a single response, when returning a structured data.
+
+        I'm therefore assuming that each part contains a complete tool call, and not trying to combine data from
+        separate parts.
+        """
+        responses = self._responses()
+        combined_parts: list[_GeminiFunctionCallPart] = []
+        for r in responses:
+            candidate = r['candidates'][0]
+            parts = candidate['content']['parts']
+            if all_function_call_parts(parts):
+                combined_parts.extend(parts)
+            elif not candidate.get('finish_reason'):
+                # you can get an empty text part along with the finish_reason, so we ignore that case
+                raise UnexpectedModelBehaviour(
+                    'Streamed response with unexpected content, expected all parts to be function calls'
+                )
+        return _tool_call_from_parts(combined_parts, timestamp=self._timestamp)
+
+    def cost(self) -> result.Cost:
+        cost = result.Cost()
+        for response in self._responses():
+            cost += _metadata_as_cost(response['usage_metadata'])
+        return cost
+
+    def timestamp(self) -> datetime:
+        return self._timestamp
+
+    def _responses(self) -> list[_GeminiResponse]:
+        return _gemini_streamed_response_ta.validate_json(
+            self._content,  # type: ignore # see https://github.com/pydantic/pydantic/pull/10802
+            experimental_allow_partial=True,
+        )
+
+
+# We use typed dicts to define the Gemini API response schema
+# once Pydantic partial validation supports, dataclasses, we could revert to using them
+# TypeAdapters take care of validation and serialization
+
+
+class _GeminiRequest(TypedDict):
     """Schema for an API request to the Gemini API.
 
     See <https://ai.google.dev/api/generate-content#request-body> for API docs.
     """
 
     contents: list[_GeminiContent]
-    tools: _GeminiTools | None = None
-    tool_config: _GeminiToolConfig | None = None
+    tools: NotRequired[_GeminiTools]
+    tool_config: NotRequired[_GeminiToolConfig]
     # we don't implement `generationConfig`, instead we use a named tool for the response
-    system_instruction: _GeminiTextContent | None = None
+    system_instruction: NotRequired[_GeminiTextContent]
     """
     Developer generated system instructions, see
     <https://ai.google.dev/gemini-api/docs/system-instructions?lang=rest>
     """
 
 
-# We use dataclasses, not typed dicts to define the Gemini API schema
-# so we can include custom constructors etc.
-# TypeAdapters take care of validation and serialization
-
-
-@dataclass
-class _GeminiContent:
+class _GeminiContent(TypedDict):
     role: Literal['user', 'model']
     parts: list[_GeminiPartUnion]
 
-    @classmethod
-    def user_text(cls, text: str) -> _GeminiContent:
-        return cls(role='user', parts=[_GeminiTextPart(text=text)])
 
-    @classmethod
-    def model_text(cls, text: str) -> _GeminiContent:
-        return cls(role='model', parts=[_GeminiTextPart(text=text)])
-
-    @classmethod
-    def function_call(cls, m: LLMToolCalls) -> _GeminiContent:
-        parts: list[_GeminiPartUnion] = [_GeminiFunctionCallPart.from_call(t) for t in m.calls]
-        return cls(role='model', parts=parts)
-
-    @classmethod
-    def function_return(cls, m: ToolReturn) -> _GeminiContent:
-        f_response = _GeminiFunctionResponsePart.from_response(m.tool_name, m.model_response_object())
-        return cls(role='user', parts=[f_response])
-
-    @classmethod
-    def function_retry(cls, m: RetryPrompt) -> _GeminiContent:
-        if m.tool_name is None:
-            part = _GeminiTextPart(text=m.model_response())
-        else:
-            response = {'call_error': m.model_response()}
-            part = _GeminiFunctionResponsePart.from_response(m.tool_name, response)
-        return cls(role='user', parts=[part])
+def _content_user_text(text: str) -> _GeminiContent:
+    return _GeminiContent(role='user', parts=[_GeminiTextPart(text=text)])
 
 
-@dataclass
-class _GeminiTextPart:
+def _content_model_text(text: str) -> _GeminiContent:
+    return _GeminiContent(role='model', parts=[_GeminiTextPart(text=text)])
+
+
+def _content_function_call(m: LLMToolCalls) -> _GeminiContent:
+    parts: list[_GeminiPartUnion] = [_function_call_part_from_call(t) for t in m.calls]
+    return _GeminiContent(role='model', parts=parts)
+
+
+def _content_function_return(m: ToolReturn) -> _GeminiContent:
+    f_response = _response_part_from_response(m.tool_name, m.model_response_object())
+    return _GeminiContent(role='user', parts=[f_response])
+
+
+def _content_function_retry(m: RetryPrompt) -> _GeminiContent:
+    if m.tool_name is None:
+        part = _GeminiTextPart(text=m.model_response())
+    else:
+        response = {'call_error': m.model_response()}
+        part = _response_part_from_response(m.tool_name, response)
+    return _GeminiContent(role='user', parts=[part])
+
+
+class _GeminiTextPart(TypedDict):
     text: str
 
 
-@dataclass
-class _GeminiFunctionCallPart:
+class _GeminiFunctionCallPart(TypedDict):
     function_call: Annotated[_GeminiFunctionCall, Field(alias='functionCall')]
 
-    @classmethod
-    def from_call(cls, tool: ToolCall) -> _GeminiFunctionCallPart:
-        assert isinstance(tool.args, ArgsObject), f'Expected ArgsObject, got {tool.args}'
-        return cls(function_call=_GeminiFunctionCall(name=tool.tool_name, args=tool.args.args_object))
+
+def _function_call_part_from_call(tool: ToolCall) -> _GeminiFunctionCallPart:
+    assert isinstance(tool.args, ArgsObject), f'Expected ArgsObject, got {tool.args}'
+    return _GeminiFunctionCallPart(function_call=_GeminiFunctionCall(name=tool.tool_name, args=tool.args.args_object))
 
 
-@dataclass
-class _GeminiFunctionCall:
+def _tool_call_from_parts(parts: list[_GeminiFunctionCallPart], timestamp: datetime | None = None) -> LLMToolCalls:
+    return LLMToolCalls(
+        calls=[ToolCall.from_object(part['function_call']['name'], part['function_call']['args']) for part in parts],
+        timestamp=timestamp or _utils.now_utc(),
+    )
+
+
+class _GeminiFunctionCall(TypedDict):
     """See <https://ai.google.dev/api/caching#FunctionCall>."""
 
     name: str
     args: dict[str, Any]
 
 
-@dataclass
-class _GeminiFunctionResponsePart:
+class _GeminiFunctionResponsePart(TypedDict):
     function_response: Annotated[_GeminiFunctionResponse, Field(alias='functionResponse')]
 
-    @classmethod
-    def from_response(cls, name: str, response: dict[str, Any]) -> _GeminiFunctionResponsePart:
-        return cls(function_response=_GeminiFunctionResponse(name=name, response=response))
+
+def _response_part_from_response(name: str, response: dict[str, Any]) -> _GeminiFunctionResponsePart:
+    return _GeminiFunctionResponsePart(function_response=_GeminiFunctionResponse(name=name, response=response))
 
 
-@dataclass
-class _GeminiFunctionResponse:
+class _GeminiFunctionResponse(TypedDict):
     """See <https://ai.google.dev/api/caching#FunctionResponse>."""
 
     name: str
@@ -284,19 +419,16 @@ class _GeminiFunctionResponse:
 _GeminiPartUnion = Union[_GeminiTextPart, _GeminiFunctionCallPart, _GeminiFunctionResponsePart]
 
 
-@dataclass
-class _GeminiTextContent:
+class _GeminiTextContent(TypedDict):
     role: Literal['user', 'model']
     parts: list[_GeminiTextPart]
 
 
-@dataclass
-class _GeminiTools:
+class _GeminiTools(TypedDict):
     function_declarations: list[_GeminiFunction]
 
 
-@dataclass
-class _GeminiFunction:
+class _GeminiFunction(TypedDict):
     name: str
     description: str
     parameters: dict[str, Any]
@@ -305,35 +437,32 @@ class _GeminiFunction:
     <https://ai.google.dev/gemini-api/docs/function-calling#function_declarations>
     """
 
-    @classmethod
-    def from_abstract_tool(cls, tool: AbstractToolDefinition) -> _GeminiFunction:
-        json_schema = _GeminiJsonSchema(tool.json_schema).simplify()
-        return cls(
-            name=tool.name,
-            description=tool.description,
-            parameters=json_schema,
-        )
+
+def _function_from_abstract_tool(tool: AbstractToolDefinition) -> _GeminiFunction:
+    json_schema = _GeminiJsonSchema(tool.json_schema).simplify()
+    return _GeminiFunction(
+        name=tool.name,
+        description=tool.description,
+        parameters=json_schema,
+    )
 
 
-@dataclass
-class _GeminiToolConfig:
+class _GeminiToolConfig(TypedDict):
     function_calling_config: _GeminiFunctionCallingConfig
 
-    @classmethod
-    def call_required(cls, function_names: list[str]) -> _GeminiToolConfig:
-        return cls(
-            function_calling_config=_GeminiFunctionCallingConfig(mode='ANY', allowed_function_names=function_names)
-        )
+
+def _tool_config(function_names: list[str]) -> _GeminiToolConfig:
+    return _GeminiToolConfig(
+        function_calling_config=_GeminiFunctionCallingConfig(mode='ANY', allowed_function_names=function_names)
+    )
 
 
-@dataclass
-class _GeminiFunctionCallingConfig:
+class _GeminiFunctionCallingConfig(TypedDict):
     mode: Literal['ANY', 'AUTO']
     allowed_function_names: list[str]
 
 
-@dataclass
-class _GeminiResponse:
+class _GeminiResponse(TypedDict):
     """Schema for the response from the Gemini API.
 
     See <https://ai.google.dev/api/generate-content#v1beta.GenerateContentResponse>
@@ -341,45 +470,76 @@ class _GeminiResponse:
 
     candidates: list[_GeminiCandidates]
     usage_metadata: Annotated[_GeminiUsageMetaData, Field(alias='usageMetadata')]
-    prompt_feedback: Annotated[_GeminiPromptFeedback | None, Field(alias='promptFeedback')] = None
+    prompt_feedback: NotRequired[Annotated[_GeminiPromptFeedback, Field(alias='promptFeedback')]]
 
 
-@dataclass
-class _GeminiCandidates:
+def _extract_response_parts(
+    response: _GeminiResponse,
+) -> _utils.Either[list[_GeminiFunctionCallPart], list[_GeminiTextPart]]:
+    """Extract the parts of the response from the Gemini API.
+
+    Returns Either a list of function calls (Either.left) or a list of text parts (Either.right).
+    """
+    if len(response['candidates']) != 1:
+        raise UnexpectedModelBehaviour('Expected exactly one candidate in Gemini response')
+    parts = response['candidates'][0]['content']['parts']
+    if all_function_call_parts(parts):
+        return _utils.Either(left=parts)
+    elif all_text_parts(parts):
+        return _utils.Either(right=parts)
+    else:
+        raise exceptions.UnexpectedModelBehaviour(
+            f'Unsupported response from Gemini, expected all parts to be function calls or text, got: {parts!r}'
+        )
+
+
+def all_function_call_parts(parts: list[_GeminiPartUnion]) -> TypeGuard[list[_GeminiFunctionCallPart]]:
+    return all('function_call' in part for part in parts)
+
+
+def all_text_parts(parts: list[_GeminiPartUnion]) -> TypeGuard[list[_GeminiTextPart]]:
+    return all('text' in part for part in parts)
+
+
+class _GeminiCandidates(TypedDict):
     """See <https://ai.google.dev/api/generate-content#v1beta.Candidate>."""
 
     content: _GeminiContent
-    finish_reason: Annotated[Literal['STOP'], Field(alias='finishReason')]
+    finish_reason: NotRequired[Annotated[Literal['STOP'], Field(alias='finishReason')]]
     """
     See <https://ai.google.dev/api/generate-content#FinishReason>, lots of other values are possible,
     but let's wait until we see them and know what they mean to add them here.
     """
-    avg_log_probs: Annotated[float, Field(alias='avgLogProbs')] | None = None
-    index: int | None = None
-    safety_ratings: Annotated[list[_GeminiSafetyRating], Field(alias='safetyRatings')] | None = None
+    avg_log_probs: NotRequired[Annotated[float, Field(alias='avgLogProbs')]]
+    index: NotRequired[int]
+    safety_ratings: NotRequired[Annotated[list[_GeminiSafetyRating], Field(alias='safetyRatings')]]
 
 
-@dataclass
-class _GeminiUsageMetaData:
+class _GeminiUsageMetaData(TypedDict, total=False):
+    """See <https://ai.google.dev/api/generate-content#FinishReason>.
+
+    The docs suggest all fields are required, but some are actually not required, so we assume they are all optional.
+    """
+
     prompt_token_count: Annotated[int, Field(alias='promptTokenCount')]
-    candidates_token_count: Annotated[int, Field(alias='candidatesTokenCount')]
+    candidates_token_count: NotRequired[Annotated[int, Field(alias='candidatesTokenCount')]]
     total_token_count: Annotated[int, Field(alias='totalTokenCount')]
-    cached_content_token_count: Annotated[int | None, Field(alias='cachedContentTokenCount')] = None
-
-    def as_cost(self) -> result.Cost:
-        details: dict[str, int] = {}
-        if self.cached_content_token_count is not None:
-            details['cached_content_token_count'] = self.cached_content_token_count
-        return result.Cost(
-            request_tokens=self.prompt_token_count,
-            response_tokens=self.candidates_token_count,
-            total_tokens=self.total_token_count,
-            details=details,
-        )
+    cached_content_token_count: NotRequired[Annotated[int, Field(alias='cachedContentTokenCount')]]
 
 
-@dataclass
-class _GeminiSafetyRating:
+def _metadata_as_cost(metadata: _GeminiUsageMetaData) -> result.Cost:
+    details: dict[str, int] = {}
+    if cached_content_token_count := metadata.get('cached_content_token_count'):
+        details['cached_content_token_count'] = cached_content_token_count
+    return result.Cost(
+        request_tokens=metadata.get('prompt_token_count', 0),
+        response_tokens=metadata.get('candidates_token_count', 0),
+        total_tokens=metadata.get('total_token_count', 0),
+        details=details,
+    )
+
+
+class _GeminiSafetyRating(TypedDict):
     """See <https://ai.google.dev/gemini-api/docs/safety-settings#safety-filters>."""
 
     category: Literal[
@@ -392,8 +552,7 @@ class _GeminiSafetyRating:
     probability: Literal['NEGLIGIBLE', 'LOW', 'MEDIUM', 'HIGH']
 
 
-@dataclass
-class _GeminiPromptFeedback:
+class _GeminiPromptFeedback(TypedDict):
     """See <https://ai.google.dev/api/generate-content#v1beta.GenerateContentResponse>."""
 
     block_reason: Annotated[str, Field(alias='blockReason')]
@@ -402,6 +561,9 @@ class _GeminiPromptFeedback:
 
 _gemini_request_ta = _pydantic.LazyTypeAdapter(_GeminiRequest)
 _gemini_response_ta = _pydantic.LazyTypeAdapter(_GeminiResponse)
+
+# steam requests return a list of https://ai.google.dev/api/generate-content#method:-models.streamgeneratecontent
+_gemini_streamed_response_ta = _pydantic.LazyTypeAdapter(list[_GeminiResponse])
 
 
 class _GeminiJsonSchema:
