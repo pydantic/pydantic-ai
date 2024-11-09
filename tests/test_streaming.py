@@ -7,7 +7,7 @@ from datetime import timezone
 import pytest
 from inline_snapshot import snapshot
 
-from pydantic_ai import Agent, AgentError
+from pydantic_ai import Agent, AgentError, UserError
 from pydantic_ai.messages import ArgsJson, LLMToolCalls, Message, ToolCall, ToolReturn, UserPrompt
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -46,6 +46,27 @@ async def test_streamed_structured_response():
         assert result.is_complete
 
 
+async def test_structured_response_iter():
+    def text_stream(_messages: list[Message], agent_info: AgentInfo) -> Iterable[DeltaToolCalls]:
+        assert agent_info.result_tools is not None
+        assert len(agent_info.result_tools) == 1
+        name = agent_info.result_tools[0].name
+        json_data = json.dumps({'response': [1, 2, 3, 4]})
+        yield {0: DeltaToolCall(name=name)}
+        yield {0: DeltaToolCall(args=json_data[:15])}
+        yield {0: DeltaToolCall(args=json_data[15:])}
+
+    agent = Agent(FunctionModel(stream_function=text_stream), deps=None, result_type=list[int])
+
+    chunks: list[list[int]] = []
+    async with agent.run_stream('') as result:
+        async for structured_response in result.stream_structured(debounce_by=None):
+            response_data = await result.validate_structured_result(structured_response, allow_partial=True)
+            chunks.append(response_data)
+
+    assert chunks == snapshot([[1], [1, 2, 3, 4]])
+
+
 async def test_streamed_text_stream():
     m = TestModel(custom_result_text='The cat sat on the mat.')
 
@@ -76,6 +97,11 @@ async def test_streamed_text_stream():
             ['The ', 'cat ', 'sat ', 'on ', 'the ', 'mat.']
         )
 
+    async with agent.run_stream('Hello') as result:
+        with pytest.raises(UserError, match=r'stream_messages\(\) can only be used with structured responses'):
+            async for _ in result.stream_structured():
+                pass
+
 
 async def test_plain_response():
     call_index = 0
@@ -96,6 +122,7 @@ async def test_plain_response():
         'Error while running model function:stream-text_stream after 2 messages\n'
         '  caused by unexpected model behavior: Exceeded maximum retries (1) for result validation'
     )
+    assert call_index == 2
 
 
 async def test_call_retriever():

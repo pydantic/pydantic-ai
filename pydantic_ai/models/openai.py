@@ -158,10 +158,13 @@ class OpenAIAgentModel(AgentModel):
     @staticmethod
     async def _process_streamed_response(response: AsyncStream[ChatCompletionChunk]) -> EitherStreamedResponse:
         """Process a streamed response, and prepare a streaming response to return."""
-        first_chunk = await response.__anext__()
+        try:
+            first_chunk = await response.__anext__()
+        except StopAsyncIteration as e:  # pragma: no cover
+            raise UnexpectedModelBehaviour('Streamed response ended without content or tool calls') from e
         timestamp = datetime.fromtimestamp(first_chunk.created, tz=timezone.utc)
         delta = first_chunk.choices[0].delta
-        first_cost = _map_cost(first_chunk)
+        start_cost = _map_cost(first_chunk)
 
         # the first chunk may only contain `role`, so we iterate until we get either `tool_calls` or `content`
         while delta.tool_calls is None and delta.content is None:
@@ -170,17 +173,17 @@ class OpenAIAgentModel(AgentModel):
             except StopAsyncIteration as e:
                 raise UnexpectedModelBehaviour('Streamed response ended without content or tool calls') from e
             delta = next_chunk.choices[0].delta
-            first_cost += _map_cost(next_chunk)
+            start_cost += _map_cost(next_chunk)
 
         if delta.content is not None:
-            return OpenAIStreamTextResponse(delta.content, response, timestamp, first_cost)
+            return OpenAIStreamTextResponse(delta.content, response, timestamp, start_cost)
         else:
             assert delta.tool_calls is not None, f'Expected delta with tool_calls, got {delta}'
             return OpenAIStreamToolCallResponse(
                 response,
                 {c.index: c for c in delta.tool_calls},
                 timestamp,
-                first_cost,
+                start_cost,
             )
 
     @staticmethod

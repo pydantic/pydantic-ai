@@ -2,7 +2,7 @@
 from __future__ import annotations as _annotations
 
 import json
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from datetime import timezone
 
@@ -12,8 +12,7 @@ from inline_snapshot import snapshot
 from pydantic import BaseModel
 from typing_extensions import TypeAlias
 
-from pydantic_ai import Agent, AgentError, ModelRetry, UnexpectedModelBehaviour, UserError
-from pydantic_ai._utils import ObjectJsonSchema
+from pydantic_ai import Agent, AgentError, ModelRetry, UnexpectedModelBehaviour, UserError, _utils
 from pydantic_ai.messages import (
     ArgsObject,
     LLMResponse,
@@ -27,6 +26,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.gemini import (
     GeminiModel,
     _gemini_response_ta,
+    _gemini_streamed_response_ta,
     _GeminiCandidates,
     _GeminiContent,
     _GeminiFunction,
@@ -82,7 +82,7 @@ class TestToolDefinition:
     __test__ = False
     name: str
     description: str
-    json_schema: ObjectJsonSchema
+    json_schema: _utils.ObjectJsonSchema
     outer_typed_dict_key: str | None = None
 
 
@@ -319,31 +319,53 @@ def test_json_def_recursive():
         m.agent_model({}, True, [result_tool])
 
 
+@dataclass
+class AsyncByteStreamList(httpx.AsyncByteStream):
+    data: list[bytes]
+
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        for chunk in self.data:
+            yield chunk
+
+
 @pytest.fixture
 async def get_gemini_client(client_with_handler: ClientWithHandler, env: TestEnv):
     env.set('GEMINI_API_KEY', 'via-env-var')
 
-    def create_client(response_data: _GeminiResponse | list[_GeminiResponse]) -> httpx.AsyncClient:
+    def create_client(
+        response_data: _GeminiResponse | httpx.AsyncByteStream | list[_GeminiResponse],
+    ) -> httpx.AsyncClient:
         index = 0
 
         def handler(_request: httpx.Request) -> httpx.Response:
             nonlocal index
+            content: bytes | None = None
+            stream: httpx.AsyncByteStream | None = None
 
             if isinstance(response_data, list):
-                r = response_data[index]
+                content = _gemini_response_ta.dump_json(response_data[index], by_alias=True)
+            elif isinstance(response_data, _GeminiResponse):
+                content = _gemini_response_ta.dump_json(response_data, by_alias=True)
             else:
-                r = response_data
-            index += 1
+                assert isinstance(response_data, httpx.AsyncByteStream)
+                stream = response_data
 
-            content = _gemini_response_ta.dump_json(r, by_alias=True)
-            return httpx.Response(200, content=content, headers={'Content-Type': 'application/json'})
+            index += 1
+            return httpx.Response(
+                200,
+                content=content,
+                stream=stream,
+                headers={'Content-Type': 'application/json'},
+            )
 
         return client_with_handler(handler)
 
     return create_client
 
 
-GetGeminiClient: TypeAlias = 'Callable[[_GeminiResponse | list[_GeminiResponse]], httpx.AsyncClient]'
+GetGeminiClient: TypeAlias = (
+    'Callable[[_GeminiResponse | httpx.AsyncByteStream | list[_GeminiResponse]], httpx.AsyncClient]'
+)
 
 
 def gemini_response(content: _GeminiContent) -> _GeminiResponse:
@@ -353,7 +375,7 @@ def gemini_response(content: _GeminiContent) -> _GeminiResponse:
     )
 
 
-async def test_request_simple_success(get_gemini_client: GetGeminiClient):
+async def test_text_success(get_gemini_client: GetGeminiClient):
     response = gemini_response(_GeminiContent.model_text('Hello world'))
     gemini_client = get_gemini_client(response)
     m = GeminiModel('gemini-1.5-flash', http_client=gemini_client)
@@ -504,7 +526,40 @@ async def test_heterogeneous_responses(get_gemini_client: GetGeminiClient):
     cause = exc_info.value.cause()
     assert isinstance(cause, UnexpectedModelBehaviour)
     assert str(cause) == snapshot(
-        'Unexpected response from Gemini, expected all parts to be function calls or text, got: '
+        'Unsupported response from Gemini, expected all parts to be function calls or text, got: '
         "[_GeminiTextPart(text='foo'), _GeminiFunctionCallPart(function_call="
         "_GeminiFunctionCall(name='get_location', args={'loc_name': 'San Fransisco'}))]"
     )
+
+
+async def test_stream_text(get_gemini_client: GetGeminiClient):
+    responses = [
+        gemini_response(_GeminiContent.model_text('Hello ')),
+        gemini_response(_GeminiContent.model_text('world')),
+    ]
+    json_data = _gemini_streamed_response_ta.dump_json(responses, by_alias=True)
+    stream = AsyncByteStreamList([json_data[:100], json_data[100:200], json_data[200:]])
+    gemini_client = get_gemini_client(stream)
+    m = GeminiModel('gemini-1.5-flash', http_client=gemini_client)
+    agent = Agent(m, deps=None)
+
+    async with agent.run_stream('Hello') as result:
+        chunks = [chunk async for chunk in result.stream(debounce_by=None)]
+        assert chunks == snapshot(['Hello ', 'Hello world'])
+    assert result.cost() == snapshot(Cost(request_tokens=2, response_tokens=4, total_tokens=6))
+
+    async with agent.run_stream('Hello') as result:
+        chunks = [chunk async for chunk in result.stream(text_delta=True, debounce_by=None)]
+        assert chunks == snapshot(['Hello ', 'world'])
+
+
+async def test_stream_text_no_data(get_gemini_client: GetGeminiClient):
+    responses = [_GeminiResponse(candidates=[], usage_metadata=_GeminiUsageMetaData(1, 2, 3))]
+    json_data = _gemini_streamed_response_ta.dump_json(responses, by_alias=True)
+    stream = AsyncByteStreamList([json_data[:100], json_data[100:200], json_data[200:]])
+    gemini_client = get_gemini_client(stream)
+    m = GeminiModel('gemini-1.5-flash', http_client=gemini_client)
+    agent = Agent(m, deps=None)
+    with pytest.raises(AgentError, match='caused by unexpected model behavior: Streamed response ended without con'):
+        async with agent.run_stream('Hello'):
+            pass
