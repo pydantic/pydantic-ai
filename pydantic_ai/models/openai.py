@@ -254,6 +254,9 @@ class OpenAIStreamTextResponse(StreamTextResponse):
     def cost(self) -> Cost:
         return self._cost
 
+    def timestamp(self) -> datetime:
+        return self._timestamp
+
 
 @dataclass
 class OpenAIStreamToolCallResponse(StreamToolCallResponse):
@@ -297,6 +300,9 @@ class OpenAIStreamToolCallResponse(StreamToolCallResponse):
 
     def cost(self) -> Cost:
         return self._cost
+
+    def timestamp(self) -> datetime:
+        return self._timestamp
 
 
 def _guard_tool_id(t: ToolCall | ToolReturn | RetryPrompt) -> str:

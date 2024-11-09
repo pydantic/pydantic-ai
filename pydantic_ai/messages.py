@@ -2,17 +2,14 @@ from __future__ import annotations as _annotations
 
 import json
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Annotated, Any, Literal, Union
 
 import pydantic
 import pydantic_core
 
 from . import _pydantic
-
-
-def _now_utc() -> datetime:
-    return datetime.now(tz=timezone.utc)
+from ._utils import now_utc as _now_utc
 
 
 @dataclass

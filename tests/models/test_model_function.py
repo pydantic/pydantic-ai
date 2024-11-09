@@ -408,7 +408,12 @@ async def test_stream_text():
     agent = Agent(FunctionModel(stream_function=stream_text_function), deps=None)
     async with agent.run_stream('') as result:
         assert await result.get_response() == snapshot('hello world')
-        assert result.all_messages() == snapshot([UserPrompt(content='', timestamp=IsNow(tz=timezone.utc))])
+        assert result.all_messages() == snapshot(
+            [
+                UserPrompt(content='', timestamp=IsNow(tz=timezone.utc)),
+                LLMResponse(content='hello world', timestamp=IsNow(tz=timezone.utc)),
+            ]
+        )
         assert result.cost() == snapshot(Cost())
 
 

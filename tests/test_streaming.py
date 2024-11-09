@@ -8,7 +8,16 @@ import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, AgentError, UserError
-from pydantic_ai.messages import ArgsJson, LLMToolCalls, Message, ToolCall, ToolReturn, UserPrompt
+from pydantic_ai.messages import (
+    ArgsJson,
+    ArgsObject,
+    LLMResponse,
+    LLMToolCalls,
+    Message,
+    ToolCall,
+    ToolReturn,
+    UserPrompt,
+)
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from tests.conftest import IsNow
@@ -28,9 +37,30 @@ async def test_streamed_text_response():
     async with agent.run_stream('Hello') as result:
         assert not result.is_structured()
         assert not result.is_complete
+        assert result.all_messages() == snapshot(
+            [
+                UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
+                LLMToolCalls(
+                    calls=[ToolCall(tool_name='ret_a', args=ArgsObject(args_object={'x': 'a'}))],
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
+                ToolReturn(tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc)),
+            ]
+        )
         response = await result.get_response()
         assert response == snapshot('{"ret_a":"a-apple"}')
         assert result.is_complete
+        assert result.all_messages() == snapshot(
+            [
+                UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
+                LLMToolCalls(
+                    calls=[ToolCall(tool_name='ret_a', args=ArgsObject(args_object={'x': 'a'}))],
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
+                ToolReturn(tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc)),
+                LLMResponse(content='{"ret_a":"a-apple"}', timestamp=IsNow(tz=timezone.utc)),
+            ]
+        )
 
 
 async def test_streamed_structured_response():
@@ -158,6 +188,16 @@ async def test_call_retriever():
         return f'{x} world'
 
     async with agent.run_stream('hello') as result:
+        assert result.all_messages() == snapshot(
+            [
+                UserPrompt(content='hello', timestamp=IsNow(tz=timezone.utc)),
+                LLMToolCalls(
+                    calls=[ToolCall(tool_name='ret_a', args=ArgsJson(args_json='{"x": "hello"}'))],
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
+                ToolReturn(tool_name='ret_a', content='hello world', timestamp=IsNow(tz=timezone.utc)),
+            ]
+        )
         assert await result.get_response() == snapshot(('hello world', 2))
         assert result.all_messages() == snapshot(
             [
@@ -167,6 +207,15 @@ async def test_call_retriever():
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 ToolReturn(tool_name='ret_a', content='hello world', timestamp=IsNow(tz=timezone.utc)),
+                LLMToolCalls(
+                    calls=[
+                        ToolCall(
+                            tool_name='final_result',
+                            args=ArgsJson(args_json='{"response": ["hello world", 2]}'),
+                        )
+                    ],
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
             ]
         )
 

@@ -2,7 +2,8 @@ from __future__ import annotations as _annotations
 
 from collections.abc import AsyncIterator, Iterable, Iterator, Mapping, Sequence
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import datetime
 from itertools import chain
 from typing import Callable, Union, cast
 
@@ -122,6 +123,7 @@ class FunctionAgentModel(AgentModel):
 @dataclass
 class FunctionStreamTextResponse(StreamTextResponse):
     _iter: Iterator[str]
+    _timestamp: datetime = field(default_factory=_utils.now_utc)
 
     async def __anext__(self) -> str:
         return _utils.sync_anext(self._iter)
@@ -129,11 +131,15 @@ class FunctionStreamTextResponse(StreamTextResponse):
     def cost(self) -> result.Cost:
         return result.Cost()
 
+    def timestamp(self) -> datetime:
+        return self._timestamp
+
 
 @dataclass
 class FunctionStreamToolCallResponse(StreamToolCallResponse):
     _iter: Iterator[DeltaToolCalls]
     _delta_tool_calls: dict[int, DeltaToolCall]
+    _timestamp: datetime = field(default_factory=_utils.now_utc)
 
     async def __anext__(self) -> None:
         tool_call = _utils.sync_anext(self._iter)
@@ -152,7 +158,10 @@ class FunctionStreamToolCallResponse(StreamToolCallResponse):
             if c.name is not None and c.args is not None:
                 calls.append(ToolCall.from_json(c.name, c.args))
 
-        return LLMToolCalls(calls)
+        return LLMToolCalls(calls, timestamp=self._timestamp)
 
     def cost(self) -> result.Cost:
         return result.Cost()
+
+    def timestamp(self) -> datetime:
+        return self._timestamp

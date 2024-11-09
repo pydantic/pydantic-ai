@@ -9,6 +9,7 @@ from __future__ import annotations as _annotations
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Mapping, Sequence
 from contextlib import asynccontextmanager
+from datetime import datetime
 from functools import cache
 from typing import TYPE_CHECKING, Protocol, Union
 
@@ -86,6 +87,11 @@ class StreamTextResponse(ABC):
         """
         raise NotImplementedError()
 
+    @abstractmethod
+    def timestamp(self) -> datetime:
+        """Get the timestamp of the response."""
+        raise NotImplementedError()
+
 
 class StreamToolCallResponse(ABC):
     """Streamed response from an LLM when calling a tool."""
@@ -117,6 +123,11 @@ class StreamToolCallResponse(ABC):
 
         NOTE: this won't return the full cost until the stream is finished.
         """
+        raise NotImplementedError()
+
+    @abstractmethod
+    def timestamp(self) -> datetime:
+        """Get the timestamp of the response."""
         raise NotImplementedError()
 
 

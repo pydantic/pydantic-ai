@@ -11,6 +11,7 @@ import string
 from collections.abc import AsyncIterator, Iterator, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any, Literal
 
 import pydantic_core
@@ -175,6 +176,7 @@ class TestStreamTextResponse(StreamTextResponse):
     _text: str
     _cost: Cost
     _iter: Iterator[str] = field(init=False)
+    _timestamp: datetime = field(default_factory=_utils.now_utc)
 
     def __post_init__(self):
         *words, last_word = self._text.split(' ')
@@ -191,12 +193,16 @@ class TestStreamTextResponse(StreamTextResponse):
     def cost(self) -> Cost:
         return self._cost
 
+    def timestamp(self) -> datetime:
+        return self._timestamp
+
 
 @dataclass
 class TestStreamToolCallResponse(StreamToolCallResponse):
     _structured_response: LLMToolCalls
     _cost: Cost
     _iter: Iterator[None] = field(default_factory=lambda: iter([None]))
+    _timestamp: datetime = field(default_factory=_utils.now_utc)
 
     async def __anext__(self) -> None:
         return _utils.sync_anext(self._iter)
@@ -206,6 +212,9 @@ class TestStreamToolCallResponse(StreamToolCallResponse):
 
     def cost(self) -> Cost:
         return self._cost
+
+    def timestamp(self) -> datetime:
+        return self._timestamp
 
 
 _chars = string.ascii_letters + string.digits + string.punctuation

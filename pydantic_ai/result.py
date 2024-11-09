@@ -147,7 +147,7 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
                             combined = await self._validate_text_result(combined)
                             yield cast(ResultData, combined)
                     lf_span.set_attribute('combined_text', combined)
-                self.is_complete = True
+                    self._marked_completed(text=combined)
         else:
             assert not text_delta, 'Cannot use `text_delta=True` for structured responses'
             async for tool_message in self.stream_structured(debounce_by=debounce_by):
@@ -179,20 +179,20 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
                         if any(call.has_content() for call in msg.calls):
                             yield msg
                 lf_span.set_attribute('structured_response', msg)
-            self.is_complete = True
+            self._marked_completed(structured_message=msg)
 
     async def get_response(self) -> ResultData:
         """Stream the whole response, validate and return it."""
         if isinstance(self._stream_response, models.StreamTextResponse):
             text = ''.join([chunk async for chunk in self._stream_response])
             text = await self._validate_text_result(text)
-            self.is_complete = True
+            self._marked_completed(text=text)
             return cast(ResultData, text)
         else:
             async for _ in self._stream_response:
                 pass
             tool_message = self._stream_response.get()
-            self.is_complete = True
+            self._marked_completed(structured_message=tool_message)
             return await self.validate_structured_result(tool_message)
 
     def is_structured(self) -> bool:
@@ -232,3 +232,14 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
                 None,
             )
         return text
+
+    def _marked_completed(
+        self, *, text: str | None = None, structured_message: messages.LLMToolCalls | None = None
+    ) -> None:
+        self.is_complete = True
+        if text is not None:
+            assert structured_message is None, 'Either text or structured_message should provided, not both'
+            self._all_messages.append(messages.LLMResponse(content=text, timestamp=self._stream_response.timestamp()))
+        else:
+            assert structured_message is not None, 'Either text or structured_message should provided, not both'
+            self._all_messages.append(structured_message)

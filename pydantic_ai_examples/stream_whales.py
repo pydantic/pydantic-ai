@@ -1,7 +1,7 @@
 """Information about whales — an example of streamed structured response validation.
 
 This script streams structured responses from GPT-4 about whales, validates the data
-and displays it as a dynamic table using Rich.
+and displays it as a dynamic table using Rich as the data is received.
 
 Run with:
 

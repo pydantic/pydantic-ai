@@ -1,3 +1,10 @@
+"""This example shows how to stream markdown from an agent, using the `rich` library to display the markdown.
+
+Run with:
+
+    uv run -m pydantic_ai_examples.stream_markdown
+"""
+
 import asyncio
 import os
 

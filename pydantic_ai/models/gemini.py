@@ -21,7 +21,8 @@ import re
 from collections.abc import AsyncIterator, Mapping, Sequence
 from contextlib import asynccontextmanager
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Annotated, Any, Literal, Union
 
 from httpx import AsyncClient as AsyncHTTPClient, Response as HTTPResponse
@@ -228,6 +229,7 @@ class GeminiStreamTextResponse(StreamTextResponse):
     _content: bytearray
     _stream: AsyncIterator[bytes]
     _position: int = 0
+    _timestamp: datetime = field(default_factory=_utils.now_utc)
 
     async def __anext__(self) -> str:
         if self._first:
@@ -256,6 +258,9 @@ class GeminiStreamTextResponse(StreamTextResponse):
             cost += _metadata_as_cost(response['usage_metadata'])
         return cost
 
+    def timestamp(self) -> datetime:
+        return self._timestamp
+
     def _responses(self) -> list[_GeminiResponse]:
         return _gemini_streamed_response_ta.validate_json(
             self._content,  # type: ignore # see https://github.com/pydantic/pydantic/pull/10802
@@ -267,6 +272,7 @@ class GeminiStreamTextResponse(StreamTextResponse):
 class GeminiStreamToolCallResponse(StreamToolCallResponse):
     _content: bytearray
     _stream: AsyncIterator[bytes]
+    _timestamp: datetime = field(default_factory=_utils.now_utc)
 
     async def __anext__(self) -> None:
         chunk = await self._stream.__anext__()
@@ -293,13 +299,16 @@ class GeminiStreamToolCallResponse(StreamToolCallResponse):
                 raise UnexpectedModelBehaviour(
                     'Streamed response with unexpected content, expected all parts to be function calls'
                 )
-        return _tool_call_from_parts(combined_parts)
+        return _tool_call_from_parts(combined_parts, timestamp=self._timestamp)
 
     def cost(self) -> result.Cost:
         cost = result.Cost()
         for response in self._responses():
             cost += _metadata_as_cost(response['usage_metadata'])
         return cost
+
+    def timestamp(self) -> datetime:
+        return self._timestamp
 
     def _responses(self) -> list[_GeminiResponse]:
         return _gemini_streamed_response_ta.validate_json(
@@ -375,9 +384,10 @@ def _function_call_part_from_call(tool: ToolCall) -> _GeminiFunctionCallPart:
     return _GeminiFunctionCallPart(function_call=_GeminiFunctionCall(name=tool.tool_name, args=tool.args.args_object))
 
 
-def _tool_call_from_parts(parts: list[_GeminiFunctionCallPart]) -> LLMToolCalls:
+def _tool_call_from_parts(parts: list[_GeminiFunctionCallPart], timestamp: datetime | None = None) -> LLMToolCalls:
     return LLMToolCalls(
-        calls=[ToolCall.from_object(part['function_call']['name'], part['function_call']['args']) for part in parts]
+        calls=[ToolCall.from_object(part['function_call']['name'], part['function_call']['args']) for part in parts],
+        timestamp=timestamp or _utils.now_utc(),
     )
 
 

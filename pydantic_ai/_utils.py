@@ -5,6 +5,7 @@ import time
 from collections.abc import AsyncIterable, AsyncIterator, Iterator
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, is_dataclass
+from datetime import datetime, timezone
 from functools import partial
 from types import GenericAlias
 from typing import Any, Callable, Generic, TypeVar, Union, cast, overload
@@ -225,3 +226,7 @@ def sync_anext(iterator: Iterator[T]) -> T:
         return next(iterator)
     except StopIteration as e:
         raise StopAsyncIteration() from e
+
+
+def now_utc() -> datetime:
+    return datetime.now(tz=timezone.utc)
