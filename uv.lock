@@ -972,6 +972,7 @@ examples = [
     { name = "fastapi" },
     { name = "logfire", extra = ["asyncpg", "fastapi"] },
     { name = "python-multipart" },
+    { name = "rich" },
     { name = "uvicorn" },
 ]
 logfire = [
@@ -1005,6 +1006,7 @@ requires-dist = [
     { name = "openai", specifier = ">=1.51.2" },
     { name = "pydantic", specifier = ">=2.10.0b1" },
     { name = "python-multipart", marker = "extra == 'examples'", specifier = ">=0.0.17" },
+    { name = "rich", marker = "extra == 'examples'", specifier = ">=13.9.2" },
     { name = "uvicorn", marker = "extra == 'examples'", specifier = ">=0.32.0" },
 ]
 

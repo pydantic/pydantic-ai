@@ -247,7 +247,8 @@ class OpenAIStreamTextResponse(StreamTextResponse):
             raise StopAsyncIteration()
 
         if choice.finish_reason is not None:
-            raise StopAsyncIteration()
+            # we don't raise StopAsyncIteration on the last chunk because usage comes after this
+            return ''
 
         assert choice.delta.content is not None, f'Expected delta with content, invalid chunk: {chunk!r}'
         return choice.delta.content

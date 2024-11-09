@@ -23,20 +23,18 @@ from pydantic_ai.messages import (
     ToolReturn,
     UserPrompt,
 )
+from pydantic_ai.models import gemini
 from pydantic_ai.models.gemini import (
     GeminiModel,
     _gemini_response_ta,
     _gemini_streamed_response_ta,
-    _GeminiCandidates,
     _GeminiContent,
     _GeminiFunction,
     _GeminiFunctionCallingConfig,
-    _GeminiFunctionCallPart,
     _GeminiResponse,
     _GeminiTextPart,
     _GeminiToolConfig,
     _GeminiTools,
-    _GeminiUsageMetaData,
 )
 from pydantic_ai.result import Cost
 from tests.conftest import ClientWithHandler, IsNow, TestEnv
@@ -344,11 +342,10 @@ async def get_gemini_client(client_with_handler: ClientWithHandler, env: TestEnv
 
             if isinstance(response_data, list):
                 content = _gemini_response_ta.dump_json(response_data[index], by_alias=True)
-            elif isinstance(response_data, _GeminiResponse):
-                content = _gemini_response_ta.dump_json(response_data, by_alias=True)
-            else:
-                assert isinstance(response_data, httpx.AsyncByteStream)
+            elif isinstance(response_data, httpx.AsyncByteStream):
                 stream = response_data
+            else:
+                content = _gemini_response_ta.dump_json(response_data, by_alias=True)
 
             index += 1
             return httpx.Response(
@@ -370,13 +367,17 @@ GetGeminiClient: TypeAlias = (
 
 def gemini_response(content: _GeminiContent) -> _GeminiResponse:
     return _GeminiResponse(
-        candidates=[_GeminiCandidates(content=content, finish_reason='STOP', index=0, safety_ratings=[])],
-        usage_metadata=_GeminiUsageMetaData(1, 2, 3),
+        candidates=[gemini._GeminiCandidates(content=content, finish_reason='STOP', index=0, safety_ratings=[])],
+        usage_metadata=example_usage(),
     )
 
 
+def example_usage() -> gemini._GeminiUsageMetaData:
+    return gemini._GeminiUsageMetaData(prompt_token_count=1, candidates_token_count=2, total_token_count=3)
+
+
 async def test_text_success(get_gemini_client: GetGeminiClient):
-    response = gemini_response(_GeminiContent.model_text('Hello world'))
+    response = gemini_response(gemini._content_model_text('Hello world'))
     gemini_client = get_gemini_client(response)
     m = GeminiModel('gemini-1.5-flash', http_client=gemini_client)
     agent = Agent(m, deps=None)
@@ -394,7 +395,7 @@ async def test_text_success(get_gemini_client: GetGeminiClient):
 
 async def test_request_structured_response(get_gemini_client: GetGeminiClient):
     response = gemini_response(
-        _GeminiContent.function_call(
+        gemini._content_function_call(
             LLMToolCalls(calls=[ToolCall.from_object('final_result', {'response': [1, 2, 123]})])
         )
     )
@@ -423,16 +424,16 @@ async def test_request_structured_response(get_gemini_client: GetGeminiClient):
 async def test_request_tool_call(get_gemini_client: GetGeminiClient):
     responses = [
         gemini_response(
-            _GeminiContent.function_call(
+            gemini._content_function_call(
                 LLMToolCalls(calls=[ToolCall.from_object('get_location', {'loc_name': 'San Fransisco'})])
             )
         ),
         gemini_response(
-            _GeminiContent.function_call(
+            gemini._content_function_call(
                 LLMToolCalls(calls=[ToolCall.from_object('get_location', {'loc_name': 'London'})])
             )
         ),
-        gemini_response(_GeminiContent.model_text('final response')),
+        gemini_response(gemini._content_model_text('final response')),
     ]
     gemini_client = get_gemini_client(responses)
     m = GeminiModel('gemini-1.5-flash', http_client=gemini_client)
@@ -508,7 +509,7 @@ async def test_heterogeneous_responses(get_gemini_client: GetGeminiClient):
             role='model',
             parts=[
                 _GeminiTextPart(text='foo'),
-                _GeminiFunctionCallPart.from_call(
+                gemini._function_call_part_from_call(
                     ToolCall(
                         tool_name='get_location',
                         args=ArgsObject(args_object={'loc_name': 'San Fransisco'}),
@@ -527,15 +528,14 @@ async def test_heterogeneous_responses(get_gemini_client: GetGeminiClient):
     assert isinstance(cause, UnexpectedModelBehaviour)
     assert str(cause) == snapshot(
         'Unsupported response from Gemini, expected all parts to be function calls or text, got: '
-        "[_GeminiTextPart(text='foo'), _GeminiFunctionCallPart(function_call="
-        "_GeminiFunctionCall(name='get_location', args={'loc_name': 'San Fransisco'}))]"
+        "[{'text': 'foo'}, {'function_call': {'name': 'get_location', 'args': {'loc_name': 'San Fransisco'}}}]"
     )
 
 
 async def test_stream_text(get_gemini_client: GetGeminiClient):
     responses = [
-        gemini_response(_GeminiContent.model_text('Hello ')),
-        gemini_response(_GeminiContent.model_text('world')),
+        gemini_response(gemini._content_model_text('Hello ')),
+        gemini_response(gemini._content_model_text('world')),
     ]
     json_data = _gemini_streamed_response_ta.dump_json(responses, by_alias=True)
     stream = AsyncByteStreamList([json_data[:100], json_data[100:200], json_data[200:]])
@@ -554,7 +554,7 @@ async def test_stream_text(get_gemini_client: GetGeminiClient):
 
 
 async def test_stream_text_no_data(get_gemini_client: GetGeminiClient):
-    responses = [_GeminiResponse(candidates=[], usage_metadata=_GeminiUsageMetaData(1, 2, 3))]
+    responses = [_GeminiResponse(candidates=[], usage_metadata=example_usage())]
     json_data = _gemini_streamed_response_ta.dump_json(responses, by_alias=True)
     stream = AsyncByteStreamList([json_data[:100], json_data[100:200], json_data[200:]])
     gemini_client = get_gemini_client(stream)

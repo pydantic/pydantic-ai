@@ -51,6 +51,7 @@ examples = [
     "fastapi>=0.115.4",
     "logfire[asyncpg,fastapi]>=2",
     "python-multipart>=0.0.17",
+    "rich>=13.9.2",
     "uvicorn>=0.32.0",
 ]
 
