@@ -406,10 +406,10 @@ def stream_text_function(_messages: list[Message], _: AgentInfo) -> Iterable[str
 
 async def test_stream_text():
     agent = Agent(FunctionModel(stream_function=stream_text_function), deps=None)
-    result = await agent.run_stream('')
-    assert await result.get_response() == snapshot('hello world')
-    assert result.all_messages() == snapshot([UserPrompt(content='', timestamp=IsNow(tz=timezone.utc))])
-    assert result.cost() == snapshot(Cost())
+    async with agent.run_stream('') as result:
+        assert await result.get_response() == snapshot('hello world')
+        assert result.all_messages() == snapshot([UserPrompt(content='', timestamp=IsNow(tz=timezone.utc))])
+        assert result.cost() == snapshot(Cost())
 
 
 class Foo(BaseModel):
@@ -426,9 +426,9 @@ async def test_stream_structure():
         yield {0: DeltaToolCall(args='1}')}
 
     agent = Agent(FunctionModel(stream_function=stream_structured_function), deps=None, result_type=Foo)
-    result = await agent.run_stream('')
-    assert await result.get_response() == snapshot(Foo(x=1))
-    assert result.cost() == snapshot(Cost())
+    async with agent.run_stream('') as result:
+        assert await result.get_response() == snapshot(Foo(x=1))
+        assert result.cost() == snapshot(Cost())
 
 
 async def test_pass_neither():
@@ -439,4 +439,5 @@ async def test_pass_neither():
 async def test_return_empty():
     agent = Agent(FunctionModel(stream_function=lambda _, __: []), deps=None)
     with pytest.raises(ValueError, match='Stream function must return at least one item'):
-        await agent.run_stream('')
+        async with agent.run_stream(''):
+            pass

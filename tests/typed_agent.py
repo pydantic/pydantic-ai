@@ -67,8 +67,8 @@ def run_sync() -> None:
 
 
 async def run_stream() -> None:
-    streamed_result = await typed_agent1.run_stream('testing')
-    _: list[str] = [chunk async for chunk in streamed_result.stream()]
+    async with typed_agent1.run_stream('testing') as streamed_result:
+        _: list[str] = [chunk async for chunk in streamed_result.stream()]
 
 
 typed_agent2: Agent[MyDeps, str] = Agent()

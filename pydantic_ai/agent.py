@@ -1,7 +1,8 @@
 from __future__ import annotations as _annotations
 
 import asyncio
-from collections.abc import Awaitable, Sequence
+from collections.abc import AsyncIterator, Awaitable, Sequence
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any, Callable, Generic, Literal, cast, final, overload
 
@@ -168,6 +169,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         """
         return asyncio.run(self.run(user_prompt, message_history=message_history, model=model, deps=deps))
 
+    @asynccontextmanager
     async def run_stream(
         self,
         user_prompt: str,
@@ -175,7 +177,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         message_history: list[_messages.Message] | None = None,
         model: models.Model | KnownModelName | None = None,
         deps: AgentDeps | None = None,
-    ) -> result.StreamedRunResult[AgentDeps, ResultData]:
+    ) -> AsyncIterator[result.StreamedRunResult[AgentDeps, ResultData]]:
         """Run the agent with a user prompt in async mode, returning a streamed response.
 
         Args:
@@ -216,18 +218,23 @@ class Agent(Generic[AgentDeps, ResultData]):
 
                         if left := either.left:
                             # left means return a streamed result
+                            result_stream = left.value
                             run_span.set_attribute('all_messages', messages)
-                            handle_span.set_attribute('result_type', left.value)
+                            handle_span.set_attribute('result_type', result_stream.__class__.__name__)
                             handle_span.message = 'handle model response -> final result'
-                            return result.StreamedRunResult(
-                                messages,
-                                new_message_index,
-                                cost,
-                                left.value,
-                                self._result_schema,
-                                deps,
-                                self._result_validators,
-                            )
+                            try:
+                                yield result.StreamedRunResult(
+                                    messages,
+                                    new_message_index,
+                                    cost,
+                                    result_stream,
+                                    self._result_schema,
+                                    deps,
+                                    self._result_validators,
+                                )
+                            finally:
+                                await result_stream.close()
+                                return
                         else:
                             # right means continue the conversation
                             tool_responses = either.right

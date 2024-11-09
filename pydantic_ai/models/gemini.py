@@ -18,12 +18,13 @@ from __future__ import annotations as _annotations
 
 import os
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import AsyncIterator, Mapping, Sequence
+from contextlib import asynccontextmanager
 from copy import deepcopy
 from dataclasses import dataclass
 from typing import Annotated, Any, Literal, Union, cast
 
-from httpx import AsyncClient as AsyncHTTPClient
+from httpx import AsyncClient as AsyncHTTPClient, Response as HTTPResponse
 from pydantic import Field
 from typing_extensions import assert_never
 
@@ -60,7 +61,7 @@ class GeminiModel(Model):
         api_key: str | None = None,
         http_client: AsyncHTTPClient | None = None,
         # https://ai.google.dev/gemini-api/docs/quickstart?lang=rest#make-first-request
-        url_template: str = 'https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent',
+        url_template: str = 'https://generativelanguage.googleapis.com/v1beta/models/{model}:{function}',
     ):
         self.model_name = model_name
         if api_key is None:
@@ -110,14 +111,20 @@ class GeminiAgentModel(AgentModel):
     url_template: str
 
     async def request(self, messages: list[Message]) -> tuple[LLMMessage, result.Cost]:
-        response = await self.make_request(messages)
-        return self.process_response(response), response.usage_metadata.as_cost()
+        async with self._make_request(messages, False) as http_response:
+            response = _gemini_response_ta.validate_json(await http_response.aread())
+        return self._process_response(response), response.usage_metadata.as_cost()
 
-    async def make_request(self, messages: list[Message]) -> _GeminiResponse:
+    # async def request_stream(self, messages: list[Message]) -> EitherStreamedResponse:
+    #     """Make a request to the model and return a streaming response."""
+    #     response = await self._make_request(messages, False)
+
+    @asynccontextmanager
+    async def _make_request(self, messages: list[Message], streamed: bool) -> AsyncIterator[HTTPResponse]:
         contents: list[_GeminiContent] = []
         sys_prompt_parts: list[_GeminiTextPart] = []
         for m in messages:
-            either_content = self.message_to_gemini(m)
+            either_content = self._message_to_gemini(m)
             if left := either_content.left:
                 sys_prompt_parts.append(left.value)
             else:
@@ -135,14 +142,17 @@ class GeminiAgentModel(AgentModel):
             'X-Goog-Api-Key': self.api_key,
             'Content-Type': 'application/json',
         }
-        url = self.url_template.format(model=self.model_name)
-        r = await self.http_client.post(url, content=request_json, headers=headers)
-        if r.status_code != 200:
-            raise exceptions.UnexpectedModelBehaviour(f'Unexpected response from gemini {r.status_code}', r.text)
-        return _gemini_response_ta.validate_json(r.content)
+        url = self.url_template.format(
+            model=self.model_name, function='streamGenerateContent' if streamed else 'generateContent'
+        )
+
+        async with self.http_client.stream('POST', url, content=request_json, headers=headers) as r:
+            if r.status_code != 200:
+                raise exceptions.UnexpectedModelBehaviour(f'Unexpected response from gemini {r.status_code}', r.text)
+            yield r
 
     @staticmethod
-    def process_response(response: _GeminiResponse) -> LLMMessage:
+    def _process_response(response: _GeminiResponse) -> LLMMessage:
         assert len(response.candidates) == 1, 'Expected exactly one candidate'
         parts = response.candidates[0].content.parts
         if all(isinstance(part, _GeminiFunctionCallPart) for part in parts):
@@ -158,7 +168,7 @@ class GeminiAgentModel(AgentModel):
             )
 
     @staticmethod
-    def message_to_gemini(m: Message) -> _utils.Either[_GeminiTextPart, _GeminiContent]:
+    def _message_to_gemini(m: Message) -> _utils.Either[_GeminiTextPart, _GeminiContent]:
         """Convert a message to a _GeminiTextPart for "system_instructions" or _GeminiContent for "contents"."""
         if m.role == 'system':
             # SystemPrompt ->

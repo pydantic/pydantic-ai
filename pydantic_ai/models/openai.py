@@ -247,6 +247,9 @@ class OpenAIStreamTextResponse(StreamTextResponse):
     def cost(self) -> Cost:
         return self._cost
 
+    async def close(self) -> None:
+        await self._response.close()
+
 
 @dataclass
 class OpenAIStreamToolCallResponse(StreamToolCallResponse):
@@ -290,6 +293,9 @@ class OpenAIStreamToolCallResponse(StreamToolCallResponse):
 
     def cost(self) -> Cost:
         return self._cost
+
+    async def close(self) -> None:
+        await self._response.close()
 
 
 def _guard_tool_id(t: ToolCall | ToolReturn | RetryPrompt) -> str:

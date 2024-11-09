@@ -81,6 +81,10 @@ class StreamTextResponse(ABC):
         """
         raise NotImplementedError()
 
+    async def close(self) -> None:
+        """Close the response stream."""
+        pass
+
 
 class StreamToolCallResponse(ABC):
     """Streamed response from an LLM when calling a tool."""
@@ -113,6 +117,10 @@ class StreamToolCallResponse(ABC):
         NOTE: this won't return the full cost until the stream is finished.
         """
         raise NotImplementedError()
+
+    async def close(self) -> None:
+        """Close the response stream."""
+        pass
 
 
 EitherStreamedResponse = Union[StreamTextResponse, StreamToolCallResponse]

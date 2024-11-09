@@ -15,6 +15,7 @@ __all__ = (
     'StreamedRunResult',
 )
 
+
 ResultData = TypeVar('ResultData')
 
 
@@ -165,8 +166,10 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
         if isinstance(self._stream_response, models.StreamTextResponse):
             raise exceptions.UserError('stream_messages() can only be used with structured responses')
         else:
-            # we should already have a message at this point, yield that first
-            yield self._stream_response.get()
+            # we should already have a message at this point, yield that first if it has any content
+            initial_msg = self._stream_response.get()
+            if any(call.has_content() for call in initial_msg.calls):
+                yield initial_msg
 
             async for _ in _utils.group_by_temporal(self._stream_response, debounce_by):
                 yield self._stream_response.get()
@@ -197,16 +200,6 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
         """
         return self.cost_so_far + self._stream_response.cost()
 
-    async def _validate_text_result(self, text: str) -> str:
-        for validator in self._result_validators:
-            text = await validator.validate(  # pyright: ignore[reportAssignmentType]
-                text,  # pyright: ignore[reportArgumentType]
-                self._deps,
-                0,
-                None,
-            )
-        return text
-
     async def validate_structured_result(
         self, message: messages.LLMToolCalls, *, allow_partial: bool = False
     ) -> ResultData:
@@ -223,3 +216,13 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
         for validator in self._result_validators:
             result_data = await validator.validate(result_data, self._deps, 0, call)
         return result_data
+
+    async def _validate_text_result(self, text: str) -> str:
+        for validator in self._result_validators:
+            text = await validator.validate(  # pyright: ignore[reportAssignmentType]
+                text,  # pyright: ignore[reportArgumentType]
+                self._deps,
+                0,
+                None,
+            )
+        return text

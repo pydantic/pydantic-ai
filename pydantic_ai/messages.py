@@ -102,6 +102,12 @@ class ToolCall:
     def from_object(cls, tool_name: str, args_object: dict[str, Any]) -> ToolCall:
         return cls(tool_name, ArgsObject(args_object))
 
+    def has_content(self) -> bool:
+        if isinstance(self.args, ArgsObject):
+            return any(self.args.args_object.values())
+        else:
+            return bool(self.args.args_json)
+
 
 @dataclass
 class LLMToolCalls:

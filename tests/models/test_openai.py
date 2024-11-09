@@ -54,6 +54,9 @@ class MockAsyncStream:
     async def __anext__(self) -> chat.ChatCompletionChunk:
         return _utils.sync_anext(self._iter)
 
+    async def close(self):
+        pass
+
 
 @dataclass
 class MockOpenAI:
@@ -313,13 +316,12 @@ async def test_stream_text():
     m = OpenAIModel('gpt-4', openai_client=mock_client)
     agent = Agent(m, deps=None)
 
-    result = await agent.run_stream('')
-
-    assert not result.is_structured()
-    assert not result.is_complete
-    assert [c async for c in result.stream(debounce_by=None)] == snapshot(['hello ', 'hello world'])
-    assert result.is_complete
-    assert result.cost() == snapshot(Cost(request_tokens=6, response_tokens=3, total_tokens=9))
+    async with agent.run_stream('') as result:
+        assert not result.is_structured()
+        assert not result.is_complete
+        assert [c async for c in result.stream(debounce_by=None)] == snapshot(['hello ', 'hello world'])
+        assert result.is_complete
+        assert result.cost() == snapshot(Cost(request_tokens=6, response_tokens=3, total_tokens=9))
 
 
 async def test_stream_text_finish_reason():
@@ -328,12 +330,11 @@ async def test_stream_text_finish_reason():
     m = OpenAIModel('gpt-4', openai_client=mock_client)
     agent = Agent(m, deps=None)
 
-    result = await agent.run_stream('')
-
-    assert not result.is_structured()
-    assert not result.is_complete
-    assert [c async for c in result.stream(debounce_by=None)] == snapshot(['hello ', 'hello world'])
-    assert result.is_complete
+    async with agent.run_stream('') as result:
+        assert not result.is_structured()
+        assert not result.is_complete
+        assert [c async for c in result.stream(debounce_by=None)] == snapshot(['hello ', 'hello world'])
+        assert result.is_complete
 
 
 def struc_chunk(
@@ -375,17 +376,16 @@ async def test_stream_structured():
     m = OpenAIModel('gpt-4', openai_client=mock_client)
     agent = Agent(m, deps=None, result_type=MyTypedDict)
 
-    result = await agent.run_stream('')
-
-    assert result.is_structured()
-    assert not result.is_complete
-    assert [dict(c) async for c in result.stream(debounce_by=None)] == snapshot(
-        [{'first': 'One'}, {'first': 'One', 'second': 'Two'}, {'first': 'One', 'second': 'Two'}]
-    )
-    assert result.is_complete
-    assert result.cost() == snapshot(Cost(request_tokens=20, response_tokens=10, total_tokens=30))
-    # double check cost matches stream count
-    assert result.cost().response_tokens == len(stream)
+    async with agent.run_stream('') as result:
+        assert result.is_structured()
+        assert not result.is_complete
+        assert [dict(c) async for c in result.stream(debounce_by=None)] == snapshot(
+            [{'first': 'One'}, {'first': 'One', 'second': 'Two'}, {'first': 'One', 'second': 'Two'}]
+        )
+        assert result.is_complete
+        assert result.cost() == snapshot(Cost(request_tokens=20, response_tokens=10, total_tokens=30))
+        # double check cost matches stream count
+        assert result.cost().response_tokens == len(stream)
 
 
 async def test_stream_structured_finish_reason():
@@ -400,14 +400,13 @@ async def test_stream_structured_finish_reason():
     m = OpenAIModel('gpt-4', openai_client=mock_client)
     agent = Agent(m, deps=None, result_type=MyTypedDict)
 
-    result = await agent.run_stream('')
-
-    assert result.is_structured()
-    assert not result.is_complete
-    assert [dict(c) async for c in result.stream(debounce_by=None)] == snapshot(
-        [{'first': 'One'}, {'first': 'One', 'second': 'Two'}, {'first': 'One', 'second': 'Two'}]
-    )
-    assert result.is_complete
+    async with agent.run_stream('') as result:
+        assert result.is_structured()
+        assert not result.is_complete
+        assert [dict(c) async for c in result.stream(debounce_by=None)] == snapshot(
+            [{'first': 'One'}, {'first': 'One', 'second': 'Two'}, {'first': 'One', 'second': 'Two'}]
+        )
+        assert result.is_complete
 
 
 async def test_no_content():
@@ -417,4 +416,5 @@ async def test_no_content():
     agent = Agent(m, deps=None, result_type=MyTypedDict)
 
     with pytest.raises(AgentError, match='caused by unexpected model behavior: Streamed response ended without con'):
-        await agent.run_stream('')
+        async with agent.run_stream(''):
+            pass
