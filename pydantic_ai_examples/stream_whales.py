@@ -11,12 +11,16 @@ Run with:
 from typing import Annotated, NotRequired, TypedDict
 
 import devtools
+import logfire
 from pydantic import Field, ValidationError
 from rich.console import Console
 from rich.live import Live
 from rich.table import Table
 
 from pydantic_ai import Agent
+
+# 'if-token-present' means nothing will be sent (and the example wil work) if you don't have logfire set up
+logfire.configure(send_to_logfire='if-token-present')
 
 
 class Whale(TypedDict):

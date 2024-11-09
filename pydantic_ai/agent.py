@@ -217,6 +217,9 @@ class Agent(Generic[AgentDeps, ResultData]):
                     with _logfire.span('model request {run_step=}', run_step=run_step) as model_req_span:
                         async with agent_model.request_stream(messages) as model_response:
                             model_req_span.set_attribute('response_type', model_response.__class__.__name__)
+                            # We want to end the "model request" span here, but we can't exit the context manager
+                            # in the traditional way
+                            model_req_span.__exit__(None, None, None)
 
                             with _logfire.span('handle model response') as handle_span:
                                 either = await self._handle_streamed_model_response(model_response, deps)
@@ -411,13 +414,17 @@ class Agent(Generic[AgentDeps, ResultData]):
 
             # otherwise we run all retriever functions in parallel
             coros: list[Awaitable[_messages.Message]] = []
+            names: list[str] = []
             for call in model_response.calls:
                 retriever = self._retrievers.get(call.tool_name)
                 if retriever is None:
                     # should this be a retry error?
                     raise exceptions.UnexpectedModelBehaviour(f'Unknown function name: {call.tool_name!r}')
                 coros.append(retriever.run(deps, call))
-            new_messages = await asyncio.gather(*coros)
+                names.append(call.tool_name)
+
+            with _logfire.span('running {tools=}', tools=names):
+                new_messages = await asyncio.gather(*coros)
             return _utils.Either(right=new_messages)
         else:
             assert_never(model_response)
@@ -470,12 +477,16 @@ class Agent(Generic[AgentDeps, ResultData]):
 
             # we now run all retriever functions in parallel
             coros: list[Awaitable[_messages.Message]] = []
+            names: list[str] = []
             for call in tool_call_msg.calls:
                 retriever = self._retrievers.get(call.tool_name)
                 if retriever is None:
                     raise exceptions.UnexpectedModelBehaviour(f'Unknown function name: {call.tool_name!r}')
                 coros.append(retriever.run(deps, call))
-            messages += await asyncio.gather(*coros)
+                names.append(call.tool_name)
+
+            with _logfire.span('running {tools=}', tools=names):
+                messages += await asyncio.gather(*coros)
             return _utils.Either(right=messages)
 
     async def _validate_result(

@@ -5,6 +5,8 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Generic, TypeVar, cast
 
+import logfire_api
+
 from . import _result, _utils, exceptions, messages, models
 from .call_typing import AgentDeps
 
@@ -17,6 +19,7 @@ __all__ = (
 
 
 ResultData = TypeVar('ResultData')
+_logfire = logfire_api.Logfire(otel_scope='pydantic-ai')
 
 
 @dataclass
@@ -129,19 +132,22 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
         Returns: An async iterable of the response data.
         """
         if isinstance(self._stream_response, models.StreamTextResponse):
-            if text_delta:
-                async with _utils.group_by_temporal(self._stream_response, debounce_by) as group_iter:
-                    async for chunks in group_iter:
-                        yield ''.join(chunks)  # pyright: ignore[reportReturnType]
-            else:
-                # a quick benchmark shows it's faster to build up a string with concat when we're yielding at each step
-                combined = ''
-                async with _utils.group_by_temporal(self._stream_response, debounce_by) as group_iter:
-                    async for chunks in group_iter:
-                        combined += ''.join(chunks)
-                        combined = await self._validate_text_result(combined)
-                        yield cast(ResultData, combined)
-            self.is_complete = True
+            with _logfire.span('response stream text') as lf_span:
+                if text_delta:
+                    async with _utils.group_by_temporal(self._stream_response, debounce_by) as group_iter:
+                        async for chunks in group_iter:
+                            yield ''.join(chunks)  # pyright: ignore[reportReturnType]
+                else:
+                    # a quick benchmark shows it's faster to build up a string with concat when we're
+                    # yielding at each step
+                    combined = ''
+                    async with _utils.group_by_temporal(self._stream_response, debounce_by) as group_iter:
+                        async for chunks in group_iter:
+                            combined += ''.join(chunks)
+                            combined = await self._validate_text_result(combined)
+                            yield cast(ResultData, combined)
+                    lf_span.set_attribute('combined_text', combined)
+                self.is_complete = True
         else:
             assert not text_delta, 'Cannot use `text_delta=True` for structured responses'
             async for tool_message in self.stream_structured(debounce_by=debounce_by):
@@ -159,17 +165,21 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
                 doesn't make sense to debounce. `None` means no debouncing. Debouncing is important particularly
                 for long structured responses to reduce the overhead of performing validation as each token is received.
         """
-        if isinstance(self._stream_response, models.StreamTextResponse):
-            raise exceptions.UserError('stream_messages() can only be used with structured responses')
-        else:
-            # we should already have a message at this point, yield that first if it has any content
-            initial_msg = self._stream_response.get()
-            if any(call.has_content() for call in initial_msg.calls):
-                yield initial_msg
-            async with _utils.group_by_temporal(self._stream_response, debounce_by) as group_iter:
-                async for _ in group_iter:
-                    yield self._stream_response.get()
-        self.is_complete = True
+        with _logfire.span('response stream structured') as lf_span:
+            if isinstance(self._stream_response, models.StreamTextResponse):
+                raise exceptions.UserError('stream_messages() can only be used with structured responses')
+            else:
+                # we should already have a message at this point, yield that first if it has any content
+                msg = self._stream_response.get()
+                if any(call.has_content() for call in msg.calls):
+                    yield msg
+                async with _utils.group_by_temporal(self._stream_response, debounce_by) as group_iter:
+                    async for _ in group_iter:
+                        msg = self._stream_response.get()
+                        if any(call.has_content() for call in msg.calls):
+                            yield msg
+                lf_span.set_attribute('structured_response', msg)
+            self.is_complete = True
 
     async def get_response(self) -> ResultData:
         """Stream the whole response, validate and return it."""
