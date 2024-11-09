@@ -247,7 +247,7 @@ class Agent(Generic[AgentDeps, ResultData]):
                                     # the model_response should have been fully streamed by now, we can add it's cost
                                     cost += model_response.cost()
 
-            except (ValidationError, exceptions.UnexpectedModelBehaviour) as e:
+            except exceptions.UnexpectedModelBehaviour as e:
                 run_span.set_attribute('messages', messages)
                 # noinspection PyTypeChecker
                 raise exceptions.AgentError(messages, model_used) from e

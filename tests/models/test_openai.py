@@ -325,7 +325,7 @@ async def test_stream_text():
 
 
 async def test_stream_text_finish_reason():
-    stream = text_chunk('hello '), text_chunk('world'), text_chunk('world', finish_reason='stop')
+    stream = text_chunk('hello '), text_chunk('world'), text_chunk('.', finish_reason='stop')
     mock_client = MockOpenAI.create_mock_stream(stream)
     m = OpenAIModel('gpt-4', openai_client=mock_client)
     agent = Agent(m, deps=None)
@@ -333,7 +333,7 @@ async def test_stream_text_finish_reason():
     async with agent.run_stream('') as result:
         assert not result.is_structured()
         assert not result.is_complete
-        assert [c async for c in result.stream(debounce_by=None)] == snapshot(['hello ', 'hello world'])
+        assert [c async for c in result.stream(debounce_by=None)] == snapshot(['hello ', 'hello world', 'hello world.'])
         assert result.is_complete
 
 

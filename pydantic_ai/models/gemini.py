@@ -45,6 +45,7 @@ from . import (
     EitherStreamedResponse,
     Model,
     StreamTextResponse,
+    StreamToolCallResponse,
     cached_async_http_client,
 )
 
@@ -165,11 +166,7 @@ class GeminiAgentModel(AgentModel):
     def _process_response(response: _GeminiResponse) -> LLMMessage:
         either = _extract_response_parts(response)
         if left := either.left:
-            calls = [
-                ToolCall.from_object(part['function_call']['name'], part['function_call']['args'])
-                for part in left.value
-            ]
-            return LLMToolCalls(calls)
+            return _tool_call_from_parts(left.value)
         else:
             return LLMResponse(content=''.join(part['text'] for part in either.right))
 
@@ -196,13 +193,9 @@ class GeminiAgentModel(AgentModel):
             raise UnexpectedModelBehaviour('Streamed response ended without content or tool calls')
 
         if _extract_response_parts(start_response).is_left():
-            raise NotImplementedError()
+            return GeminiStreamToolCallResponse(_content=content, _stream=aiter_bytes)
         else:
-            return GeminiStreamTextResponse(
-                _first=True,
-                _content=content,
-                _stream=aiter_bytes,
-            )
+            return GeminiStreamTextResponse(_first=True, _content=content, _stream=aiter_bytes)
 
     @staticmethod
     def _message_to_gemini(m: Message) -> _utils.Either[_GeminiTextPart, _GeminiContent]:
@@ -256,6 +249,51 @@ class GeminiStreamTextResponse(StreamTextResponse):
                     'Streamed response with unexpected content, expected all parts to be text'
                 )
         return ''.join(new_text)
+
+    def cost(self) -> result.Cost:
+        cost = result.Cost()
+        for response in self._responses():
+            cost += _metadata_as_cost(response['usage_metadata'])
+        return cost
+
+    def _responses(self) -> list[_GeminiResponse]:
+        return _gemini_streamed_response_ta.validate_json(
+            self._content,  # type: ignore # see https://github.com/pydantic/pydantic/pull/10802
+            experimental_allow_partial=True,
+        )
+
+
+@dataclass
+class GeminiStreamToolCallResponse(StreamToolCallResponse):
+    _content: bytearray
+    _stream: AsyncIterator[bytes]
+
+    async def __anext__(self) -> None:
+        chunk = await self._stream.__anext__()
+        self._content.extend(chunk)
+
+    def get(self) -> LLMToolCalls:
+        """Get the `LLMToolCalls` at this point.
+
+        NOTE: It's not clear how the stream of responses should be combined because Gemini seems to always
+        reply with a single response, when returning a structured data.
+
+        I'm therefore assuming that each part contains a complete tool call, and not trying to combine data from
+        separate parts.
+        """
+        responses = self._responses()
+        combined_parts: list[_GeminiFunctionCallPart] = []
+        for r in responses:
+            candidate = r['candidates'][0]
+            parts = candidate['content']['parts']
+            if all_function_call_parts(parts):
+                combined_parts.extend(parts)
+            elif not candidate.get('finish_reason'):
+                # you can get an empty text part along with the finish_reason, so we ignore that case
+                raise UnexpectedModelBehaviour(
+                    'Streamed response with unexpected content, expected all parts to be function calls'
+                )
+        return _tool_call_from_parts(combined_parts)
 
     def cost(self) -> result.Cost:
         cost = result.Cost()
@@ -335,6 +373,12 @@ class _GeminiFunctionCallPart(TypedDict):
 def _function_call_part_from_call(tool: ToolCall) -> _GeminiFunctionCallPart:
     assert isinstance(tool.args, ArgsObject), f'Expected ArgsObject, got {tool.args}'
     return _GeminiFunctionCallPart(function_call=_GeminiFunctionCall(name=tool.tool_name, args=tool.args.args_object))
+
+
+def _tool_call_from_parts(parts: list[_GeminiFunctionCallPart]) -> LLMToolCalls:
+    return LLMToolCalls(
+        calls=[ToolCall.from_object(part['function_call']['name'], part['function_call']['args']) for part in parts]
+    )
 
 
 class _GeminiFunctionCall(TypedDict):
@@ -451,7 +495,7 @@ class _GeminiCandidates(TypedDict):
     """See <https://ai.google.dev/api/generate-content#v1beta.Candidate>."""
 
     content: _GeminiContent
-    finish_reason: NotRequired[Annotated[Literal['STOP'] | None, Field(alias='finishReason')]]
+    finish_reason: NotRequired[Annotated[Literal['STOP'], Field(alias='finishReason')]]
     """
     See <https://ai.google.dev/api/generate-content#FinishReason>, lots of other values are possible,
     but let's wait until we see them and know what they mean to add them here.

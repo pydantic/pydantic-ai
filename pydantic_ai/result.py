@@ -139,17 +139,11 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
                     combined += ''.join(chunks)
                     combined = await self._validate_text_result(combined)
                     yield cast(ResultData, combined)
+            self.is_complete = True
         else:
             assert not text_delta, 'Cannot use `text_delta=True` for structured responses'
-
-            # we should already have a message at this point, yield that first
-            tool_message = self._stream_response.get()
-            yield await self.validate_structured_result(tool_message, allow_partial=True)
-
-            async for _ in _utils.group_by_temporal(self._stream_response, debounce_by):
-                tool_message = self._stream_response.get()
+            async for tool_message in self.stream_structured(debounce_by=debounce_by):
                 yield await self.validate_structured_result(tool_message, allow_partial=True)
-        self.is_complete = True
 
     async def stream_structured(self, *, debounce_by: float | None = 0.1) -> AsyncIterator[messages.LLMToolCalls]:
         """Stream the response as an async iterable of Structured LLM Messages.
