@@ -371,7 +371,7 @@ GetGeminiClient: TypeAlias = (
 
 def gemini_response(content: _GeminiContent, finish_reason: Literal['STOP'] | None = 'STOP') -> _GeminiResponse:
     candidate = _GeminiCandidates(content=content, index=0, safety_ratings=[])
-    if finish_reason:
+    if finish_reason:  # pragma: no cover
         candidate['finish_reason'] = finish_reason
     return _GeminiResponse(candidates=[candidate], usage_metadata=example_usage())
 

@@ -130,15 +130,17 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
         """
         if isinstance(self._stream_response, models.StreamTextResponse):
             if text_delta:
-                async for chunks in _utils.group_by_temporal(self._stream_response, debounce_by):
-                    yield ''.join(chunks)  # pyright: ignore[reportReturnType]
+                async with _utils.group_by_temporal(self._stream_response, debounce_by) as group_iter:
+                    async for chunks in group_iter:
+                        yield ''.join(chunks)  # pyright: ignore[reportReturnType]
             else:
                 # a quick benchmark shows it's faster to build up a string with concat when we're yielding at each step
                 combined = ''
-                async for chunks in _utils.group_by_temporal(self._stream_response, debounce_by):
-                    combined += ''.join(chunks)
-                    combined = await self._validate_text_result(combined)
-                    yield cast(ResultData, combined)
+                async with _utils.group_by_temporal(self._stream_response, debounce_by) as group_iter:
+                    async for chunks in group_iter:
+                        combined += ''.join(chunks)
+                        combined = await self._validate_text_result(combined)
+                        yield cast(ResultData, combined)
             self.is_complete = True
         else:
             assert not text_delta, 'Cannot use `text_delta=True` for structured responses'
@@ -164,9 +166,9 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
             initial_msg = self._stream_response.get()
             if any(call.has_content() for call in initial_msg.calls):
                 yield initial_msg
-
-            async for _ in _utils.group_by_temporal(self._stream_response, debounce_by):
-                yield self._stream_response.get()
+            async with _utils.group_by_temporal(self._stream_response, debounce_by) as group_iter:
+                async for _ in group_iter:
+                    yield self._stream_response.get()
         self.is_complete = True
 
     async def get_response(self) -> ResultData:

@@ -37,6 +37,7 @@ class DeltaToolCall:
 
 DeltaToolCalls = dict[int, DeltaToolCall]
 
+# TODO these should be coroutines
 FunctionDef: TypeAlias = Callable[[list[Message], AgentInfo], LLMMessage]
 StreamFunctionDef: TypeAlias = Callable[[list[Message], AgentInfo], Union[Iterable[str], Iterable[DeltaToolCalls]]]
 

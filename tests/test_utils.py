@@ -31,8 +31,9 @@ async def test_group_by_temporal(interval: float | None, expected: list[list[int
         yield 3
         await asyncio.sleep(0.02)
 
-    groups: list[list[int]] = [g async for g in group_by_temporal(yield_groups(), soft_max_interval=interval)]
-    assert groups == expected
+    async with group_by_temporal(yield_groups(), soft_max_interval=interval) as groups_iter:
+        groups: list[list[int]] = [g async for g in groups_iter]
+        assert groups == expected
 
 
 def test_check_object_json_schema():

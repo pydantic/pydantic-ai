@@ -103,10 +103,8 @@ class OpenAIAgentModel(AgentModel):
     @asynccontextmanager
     async def request_stream(self, messages: list[Message]) -> AsyncIterator[EitherStreamedResponse]:
         response = await self._completions_create(messages, True)
-        try:
+        async with response:
             yield await self._process_streamed_response(response)
-        finally:
-            await response.close()
 
     @overload
     async def _completions_create(

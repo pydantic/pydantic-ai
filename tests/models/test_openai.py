@@ -54,7 +54,10 @@ class MockAsyncStream:
     async def __anext__(self) -> chat.ChatCompletionChunk:
         return _utils.sync_anext(self._iter)
 
-    async def close(self):
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_args: Any):
         pass
 
 
@@ -63,10 +66,6 @@ class MockOpenAI:
     completions: chat.ChatCompletion | list[chat.ChatCompletion] | None = None
     stream: list[chat.ChatCompletionChunk] | list[list[chat.ChatCompletionChunk]] | None = None
     index = 0
-
-    def __post_init__(self):
-        if self.completions is None and self.stream is None or self.completions is not None and self.stream is not None:
-            raise ValueError('Exactly one of `completions` or `stream` must be provided')
 
     @cached_property
     def chat(self) -> Any:
