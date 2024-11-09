@@ -11,7 +11,7 @@ from pydantic_ai import Agent, AgentError, UserError
 from pydantic_ai.messages import ArgsJson, LLMToolCalls, Message, ToolCall, ToolReturn, UserPrompt
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
-from scratch.conftest_with_create_module import IsNow
+from tests.conftest import IsNow
 
 pytestmark = pytest.mark.anyio
 
