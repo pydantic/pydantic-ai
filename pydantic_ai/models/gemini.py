@@ -22,11 +22,11 @@ from collections.abc import AsyncIterator, Mapping, Sequence
 from contextlib import asynccontextmanager
 from copy import deepcopy
 from dataclasses import dataclass
-from typing import Annotated, Any, Literal, TypeGuard, Union
+from typing import Annotated, Any, Literal, Union
 
 from httpx import AsyncClient as AsyncHTTPClient, Response as HTTPResponse
 from pydantic import Field
-from typing_extensions import NotRequired, TypedDict, assert_never
+from typing_extensions import NotRequired, TypedDict, TypeGuard, assert_never
 
 from .. import UnexpectedModelBehaviour, _pydantic, _utils, exceptions, result
 from ..messages import (
