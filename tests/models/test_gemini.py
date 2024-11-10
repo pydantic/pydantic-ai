@@ -387,7 +387,7 @@ async def test_text_success(get_gemini_client: GetGeminiClient):
     agent = Agent(m, deps=None)
 
     result = await agent.run('Hello')
-    assert result.response == 'Hello world'
+    assert result.data == 'Hello world'
     assert result.all_messages() == snapshot(
         [
             UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
@@ -408,7 +408,7 @@ async def test_request_structured_response(get_gemini_client: GetGeminiClient):
     agent = Agent(m, deps=None, result_type=list[int])
 
     result = await agent.run('Hello')
-    assert result.response == [1, 2, 123]
+    assert result.data == [1, 2, 123]
     assert result.all_messages() == snapshot(
         [
             UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
@@ -451,7 +451,7 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
             raise ModelRetry('Wrong location, please try again')
 
     result = await agent.run('Hello')
-    assert result.response == 'final response'
+    assert result.data == 'final response'
     assert result.all_messages() == snapshot(
         [
             SystemPrompt(content='this is the system prompt'),
@@ -619,7 +619,7 @@ async def test_stream_structured_tool_calls(get_gemini_client: GetGeminiClient):
         return y
 
     async with agent.run_stream('Hello') as result:
-        response = await result.get_response()
+        response = await result.get_data()
         assert response == snapshot((1, 2))
     assert result.cost() == snapshot(Cost(request_tokens=3, response_tokens=6, total_tokens=9))
     assert result.all_messages() == snapshot(

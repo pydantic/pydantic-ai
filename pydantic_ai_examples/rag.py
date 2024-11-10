@@ -37,7 +37,7 @@ from typing_extensions import AsyncGenerator
 from pydantic_ai import CallContext
 from pydantic_ai.agent import Agent
 
-# 'if-token-present' means nothing will be sent (and the example wil work) if you don't have logfire set up
+# 'if-token-present' means nothing will be sent (and the example will work) if you don't have logfire configured
 logfire.configure(send_to_logfire='if-token-present')
 logfire.instrument_asyncpg()
 
@@ -85,7 +85,7 @@ async def run_agent(question: str):
     async with database_connect(False) as pool:
         deps = Deps(openai=openai, pool=pool)
         answer = await agent.run(question, deps=deps)
-    print(answer.response)
+    print(answer.data)
 
 
 ############################################################################################

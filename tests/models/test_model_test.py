@@ -38,14 +38,14 @@ def test_call_one():
         return f'{x}-b'
 
     result = agent.run_sync('x', model=TestModel(call_retrievers=['ret_a']))
-    assert result.response == snapshot('{"ret_a":"a-a"}')
+    assert result.data == snapshot('{"ret_a":"a-a"}')
     assert calls == ['a']
 
 
 def test_custom_result_text():
     agent = Agent(deps=None)
     result = agent.run_sync('x', model=TestModel(custom_result_text='custom'))
-    assert result.response == snapshot('custom')
+    assert result.data == snapshot('custom')
     agent = Agent(deps=None, result_type=tuple[str, str])
     with pytest.raises(AssertionError, match='Plain response not allowed, but `custom_result_text` is set.'):
         agent.run_sync('x', model=TestModel(custom_result_text='custom'))
@@ -54,7 +54,7 @@ def test_custom_result_text():
 def test_custom_result_args():
     agent = Agent(deps=None, result_type=tuple[str, str])
     result = agent.run_sync('x', model=TestModel(custom_result_args=['a', 'b']))
-    assert result.response == ('a', 'b')
+    assert result.data == ('a', 'b')
 
 
 def test_custom_result_args_model():
@@ -64,13 +64,13 @@ def test_custom_result_args_model():
 
     agent = Agent(deps=None, result_type=Foo)
     result = agent.run_sync('x', model=TestModel(custom_result_args={'foo': 'a', 'bar': 1}))
-    assert result.response == Foo(foo='a', bar=1)
+    assert result.data == Foo(foo='a', bar=1)
 
 
 def test_result_type():
     agent = Agent(deps=None, result_type=tuple[str, str])
     result = agent.run_sync('x', model=TestModel())
-    assert result.response == ('a', 'a')
+    assert result.data == ('a', 'a')
 
 
 def test_retriever_retry():
@@ -88,7 +88,7 @@ def test_retriever_retry():
 
     result = agent.run_sync('Hello', model=TestModel())
     assert call_count == 2
-    assert result.response == snapshot('{"my_ret":"1"}')
+    assert result.data == snapshot('{"my_ret":"1"}')
     assert result.all_messages() == snapshot(
         [
             UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),

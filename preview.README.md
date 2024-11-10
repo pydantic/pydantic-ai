@@ -57,7 +57,7 @@ async def get_weather(lat: float, lng: float):
 # Run the agent synchronously, conducting a conversation with the LLM until a final response is reached.
 # (internally agents are all async, `run_sync` is a helper using `asyncio.run`)
 result = weather_agent.run_sync('What is the weather like in West London and in Wiltshire?')
-print(result.response)
+print(result.data)
 # > 'The weather in West London is raining, while in Wiltshire it is sunny.'
 
 # `result.all_messages` includes details of messages exchanged, useful if you want to continue

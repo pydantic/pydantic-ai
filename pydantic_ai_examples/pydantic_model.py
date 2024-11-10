@@ -14,7 +14,7 @@ from pydantic import BaseModel
 from pydantic_ai import Agent
 from pydantic_ai.agent import KnownModelName
 
-# 'if-token-present' means nothing will be sent (and the example wil work) if you don't have logfire set up
+# 'if-token-present' means nothing will be sent (and the example will work) if you don't have logfire configured
 logfire.configure(send_to_logfire='if-token-present')
 
 
@@ -28,4 +28,4 @@ agent = Agent(model, result_type=MyModel, deps=None)
 
 if __name__ == '__main__':
     result = agent.run_sync('The windy city in the US of A.')
-    print(result.response)
+    print(result.data)

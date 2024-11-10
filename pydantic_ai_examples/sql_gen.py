@@ -27,7 +27,7 @@ from typing_extensions import TypeAlias
 
 from pydantic_ai import Agent, CallContext, ModelRetry
 
-# 'if-token-present' means nothing will be sent (and the example wil work) if you don't have logfire set up
+# 'if-token-present' means nothing will be sent (and the example will work) if you don't have logfire configured
 logfire.configure(send_to_logfire='if-token-present')
 logfire.instrument_asyncpg()
 
@@ -129,7 +129,7 @@ async def main():
     async with database_connect('postgresql://postgres:postgres@localhost:54320', 'pydantic_ai_sql_gen') as conn:
         deps = Deps(conn)
         result = await agent.run(prompt, deps=deps)
-    debug(result.response)
+    debug(result.data)
 
 
 # pyright: reportUnknownMemberType=false

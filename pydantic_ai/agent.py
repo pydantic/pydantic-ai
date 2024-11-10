@@ -11,7 +11,7 @@ from typing_extensions import assert_never
 
 from . import _result, _retriever as _r, _system_prompt, _utils, exceptions, messages as _messages, models, result
 from .call_typing import AgentDeps
-from .result import ResponseData
+from .result import ResultData
 
 __all__ = 'Agent', 'KnownModelName'
 KnownModelName = Literal[
@@ -28,13 +28,13 @@ _logfire = logfire_api.Logfire(otel_scope='pydantic-ai')
 
 @final
 @dataclass(init=False)
-class Agent(Generic[AgentDeps, ResponseData]):
+class Agent(Generic[AgentDeps, ResultData]):
     """Main class for creating "agents" - a way to have a specific type of "conversation" with an LLM."""
 
     # dataclass fields mostly for my sanity — knowing what attributes are available
     model: models.Model | None
-    _result_schema: _result.ResultSchema[ResponseData] | None
-    _result_validators: list[_result.ResultValidator[AgentDeps, ResponseData]]
+    _result_schema: _result.ResultSchema[ResultData] | None
+    _result_validators: list[_result.ResultValidator[AgentDeps, ResultData]]
     _allow_text_result: bool
     _system_prompts: tuple[str, ...]
     _retrievers: dict[str, _r.Retriever[AgentDeps, Any]]
@@ -52,7 +52,7 @@ class Agent(Generic[AgentDeps, ResponseData]):
     def __init__(
         self,
         model: models.Model | KnownModelName | None = None,
-        result_type: type[ResponseData] = str,
+        result_type: type[ResultData] = str,
         *,
         system_prompt: str | Sequence[str] = (),
         # type here looks odd, but it's required os you can avoid "partially unknown" type errors with `deps=None`
@@ -86,7 +86,7 @@ class Agent(Generic[AgentDeps, ResponseData]):
         message_history: list[_messages.Message] | None = None,
         model: models.Model | KnownModelName | None = None,
         deps: AgentDeps | None = None,
-    ) -> result.RunResult[ResponseData]:
+    ) -> result.RunResult[ResultData]:
         """Run the agent with a user prompt in async mode.
 
         Args:
@@ -155,7 +155,7 @@ class Agent(Generic[AgentDeps, ResponseData]):
         message_history: list[_messages.Message] | None = None,
         model: models.Model | KnownModelName | None = None,
         deps: AgentDeps | None = None,
-    ) -> result.RunResult[ResponseData]:
+    ) -> result.RunResult[ResultData]:
         """Run the agent with a user prompt synchronously.
 
         This is a convenience method that wraps `self.run` with `asyncio.run()`.
@@ -179,7 +179,7 @@ class Agent(Generic[AgentDeps, ResponseData]):
         message_history: list[_messages.Message] | None = None,
         model: models.Model | KnownModelName | None = None,
         deps: AgentDeps | None = None,
-    ) -> AsyncIterator[result.StreamedRunResult[AgentDeps, ResponseData]]:
+    ) -> AsyncIterator[result.StreamedRunResult[AgentDeps, ResultData]]:
         """Run the agent with a user prompt in async mode, returning a streamed response.
 
         Args:
@@ -258,8 +258,8 @@ class Agent(Generic[AgentDeps, ResponseData]):
         return func
 
     def result_validator(
-        self, func: _result.ResultValidatorFunc[AgentDeps, ResponseData]
-    ) -> _result.ResultValidatorFunc[AgentDeps, ResponseData]:
+        self, func: _result.ResultValidatorFunc[AgentDeps, ResultData]
+    ) -> _result.ResultValidatorFunc[AgentDeps, ResultData]:
         """Decorator to register a result validator function."""
         self._result_validators.append(_result.ResultValidator(func))
         return func
@@ -366,7 +366,7 @@ class Agent(Generic[AgentDeps, ResponseData]):
 
     async def _handle_model_response(
         self, model_response: _messages.ModelAnyResponse, deps: AgentDeps
-    ) -> _utils.Either[ResponseData, list[_messages.Message]]:
+    ) -> _utils.Either[ResultData, list[_messages.Message]]:
         """Process a non-streamed response from the model.
 
         Returns:
@@ -375,7 +375,7 @@ class Agent(Generic[AgentDeps, ResponseData]):
         if model_response.role == 'model-text-response':
             # plain string response
             if self._allow_text_result:
-                result_data_input = cast(ResponseData, model_response.content)
+                result_data_input = cast(ResultData, model_response.content)
                 try:
                     result_data = await self._validate_result(result_data_input, deps, None)
                 except _result.ToolRetryError as e:
@@ -481,8 +481,8 @@ class Agent(Generic[AgentDeps, ResponseData]):
             return _utils.Either(right=messages)
 
     async def _validate_result(
-        self, result_data: ResponseData, deps: AgentDeps, tool_call: _messages.ToolCall | None
-    ) -> ResponseData:
+        self, result_data: ResultData, deps: AgentDeps, tool_call: _messages.ToolCall | None
+    ) -> ResultData:
         for validator in self._result_validators:
             result_data = await validator.validate(result_data, deps, self._current_result_retry, tool_call)
         return result_data

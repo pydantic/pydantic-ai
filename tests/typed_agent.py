@@ -106,4 +106,4 @@ def foo_result(response: Union[Foo, Bar]) -> str:
 
 def run_sync3() -> None:
     result: RunResult[Union[Foo, Bar]] = union_agent.run_sync('testing')
-    foo_result(result.response)
+    foo_result(result.data)
