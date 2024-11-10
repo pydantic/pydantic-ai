@@ -10,7 +10,7 @@ import logfire_api
 from typing_extensions import assert_never
 
 from . import _result, _retriever as _r, _system_prompt, _utils, exceptions, messages as _messages, models, result
-from .dependencies import AgentDeps
+from .dependencies import AgentDeps, RetrieverContextFunc, RetrieverParams, RetrieverPlainFunc
 from .result import ResultData
 
 __all__ = 'Agent', 'KnownModelName'
@@ -288,19 +288,17 @@ class Agent(Generic[AgentDeps, ResultData]):
 
     @overload
     def retriever_context(
-        self, func: _r.RetrieverContextFunc[AgentDeps, _r.RetrieverParams], /
-    ) -> _r.Retriever[AgentDeps, _r.RetrieverParams]: ...
+        self, func: RetrieverContextFunc[AgentDeps, RetrieverParams], /
+    ) -> _r.Retriever[AgentDeps, RetrieverParams]: ...
 
     @overload
     def retriever_context(
         self, /, *, retries: int | None = None
-    ) -> Callable[
-        [_r.RetrieverContextFunc[AgentDeps, _r.RetrieverParams]], _r.Retriever[AgentDeps, _r.RetrieverParams]
-    ]: ...
+    ) -> Callable[[RetrieverContextFunc[AgentDeps, RetrieverParams]], _r.Retriever[AgentDeps, RetrieverParams]]: ...
 
     def retriever_context(
         self,
-        func: _r.RetrieverContextFunc[AgentDeps, _r.RetrieverParams] | None = None,
+        func: RetrieverContextFunc[AgentDeps, RetrieverParams] | None = None,
         /,
         *,
         retries: int | None = None,
@@ -309,8 +307,8 @@ class Agent(Generic[AgentDeps, ResultData]):
         if func is None:
 
             def retriever_decorator(
-                func_: _r.RetrieverContextFunc[AgentDeps, _r.RetrieverParams],
-            ) -> _r.Retriever[AgentDeps, _r.RetrieverParams]:
+                func_: RetrieverContextFunc[AgentDeps, RetrieverParams],
+            ) -> _r.Retriever[AgentDeps, RetrieverParams]:
                 # noinspection PyTypeChecker
                 return self._register_retriever(_utils.Either(left=func_), retries)
 
@@ -321,23 +319,23 @@ class Agent(Generic[AgentDeps, ResultData]):
 
     @overload
     def retriever_plain(
-        self, func: _r.RetrieverPlainFunc[_r.RetrieverParams], /
-    ) -> _r.Retriever[AgentDeps, _r.RetrieverParams]: ...
+        self, func: RetrieverPlainFunc[RetrieverParams], /
+    ) -> _r.Retriever[AgentDeps, RetrieverParams]: ...
 
     @overload
     def retriever_plain(
         self, /, *, retries: int | None = None
-    ) -> Callable[[_r.RetrieverPlainFunc[_r.RetrieverParams]], _r.Retriever[AgentDeps, _r.RetrieverParams]]: ...
+    ) -> Callable[[RetrieverPlainFunc[RetrieverParams]], _r.Retriever[AgentDeps, RetrieverParams]]: ...
 
     def retriever_plain(
-        self, func: _r.RetrieverPlainFunc[_r.RetrieverParams] | None = None, /, *, retries: int | None = None
+        self, func: RetrieverPlainFunc[RetrieverParams] | None = None, /, *, retries: int | None = None
     ) -> Any:
         """Decorator to register a retriever function."""
         if func is None:
 
             def retriever_decorator(
-                func_: _r.RetrieverPlainFunc[_r.RetrieverParams],
-            ) -> _r.Retriever[AgentDeps, _r.RetrieverParams]:
+                func_: RetrieverPlainFunc[RetrieverParams],
+            ) -> _r.Retriever[AgentDeps, RetrieverParams]:
                 # noinspection PyTypeChecker
                 return self._register_retriever(_utils.Either(right=func_), retries)
 
@@ -346,11 +344,11 @@ class Agent(Generic[AgentDeps, ResultData]):
             return self._register_retriever(_utils.Either(right=func), retries)
 
     def _register_retriever(
-        self, func: _r.RetrieverEitherFunc[AgentDeps, _r.RetrieverParams], retries: int | None
-    ) -> _r.Retriever[AgentDeps, _r.RetrieverParams]:
+        self, func: _r.RetrieverEitherFunc[AgentDeps, RetrieverParams], retries: int | None
+    ) -> _r.Retriever[AgentDeps, RetrieverParams]:
         """Private utility to register a retriever function."""
         retries_ = retries if retries is not None else self._default_retries
-        retriever = _r.Retriever[AgentDeps, _r.RetrieverParams](func, retries_)
+        retriever = _r.Retriever[AgentDeps, RetrieverParams](func, retries_)
 
         if self._result_schema and retriever.name in self._result_schema.tools:
             raise ValueError(f'Retriever name conflicts with result schema name: {retriever.name!r}')

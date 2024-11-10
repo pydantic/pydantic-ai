@@ -3,13 +3,10 @@ from __future__ import annotations as _annotations
 import inspect
 from collections.abc import Awaitable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Callable, Generic, cast
+from typing import Any, Callable, Generic, cast
 
 from . import _utils
-from .dependencies import AgentDeps, CallContext
-
-if TYPE_CHECKING:
-    from .dependencies import SystemPromptFunc
+from .dependencies import AgentDeps, CallContext, SystemPromptFunc
 
 
 @dataclass

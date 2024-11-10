@@ -2,7 +2,7 @@
 
 You can think of PydanticAI as an Agent Framework or a shim to use Pydantic with LLMs — they're the same thing.
 
-PydanticAI trys to make working with LLMs feel similar to building a web application.
+PydanticAI ties to make working with LLMs feel similar to building a web application.
 
 ## Example — Retrievers
 
@@ -47,7 +47,7 @@ print(result.all_messages())  # (10)!
 7. Multiple retrievers can be registered with the same agent, the LLM can choose which (if any) retrievers to call in order to respond to a user.
 8. Run the agent synchronously, conducting a conversation with the LLM until a final response is reached. (internally agents are all async, `run_sync` is a helper using `asyncio.run` to call `run()`)
 9. The response from the LLM, in this case a `str`, Agents are generic in both the type of `deps` and `result_type`, so calls are typed end-to-end.
-10. `result.all_messages()` includes details of messages exchanged, this is useful both to understand teh conversation that tool place and useful if you want to continue the conversation later — messages can be passed back to later `run/sync_run` calls.
+10. `result.all_messages()` includes details of messages exchanged, this is useful both to understand the conversation that took place and useful if you want to continue the conversation later — messages can be passed back to later `run/sync_run` calls.
 
 !!! tip "Complete `weather_agent.py` example"
     The above `weather_agent.py` example is complete for the sake of brevity, but you can find a complete example [here](#TODO).

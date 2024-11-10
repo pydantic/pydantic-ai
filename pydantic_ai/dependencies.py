@@ -2,7 +2,9 @@ from __future__ import annotations as _annotations
 
 from collections.abc import Awaitable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Callable, Concatenate, Generic, ParamSpec, TypeVar, Union
+from typing import TYPE_CHECKING, Any, Callable, Generic, TypeVar, Union
+
+from typing_extensions import Concatenate, ParamSpec
 
 if TYPE_CHECKING:
     from .result import ResultData
