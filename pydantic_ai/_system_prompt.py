@@ -3,19 +3,13 @@ from __future__ import annotations as _annotations
 import inspect
 from collections.abc import Awaitable
 from dataclasses import dataclass, field
-from typing import Any, Callable, Generic, Union, cast
+from typing import TYPE_CHECKING, Any, Callable, Generic, cast
 
 from . import _utils
 from .dependencies import AgentDeps, CallContext
 
-# A function that may or maybe not take `CallContext` as an argument, and may or may not be async.
-# Usage `SystemPromptFunc[AgentDeps]`
-SystemPromptFunc = Union[
-    Callable[[CallContext[AgentDeps]], str],
-    Callable[[CallContext[AgentDeps]], Awaitable[str]],
-    Callable[[], str],
-    Callable[[], Awaitable[str]],
-]
+if TYPE_CHECKING:
+    from .dependencies import SystemPromptFunc
 
 
 @dataclass

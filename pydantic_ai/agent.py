@@ -287,22 +287,30 @@ class Agent(Generic[AgentDeps, ResultData]):
         return func
 
     @overload
-    def retriever_context(self, func: _r.RetrieverContextFunc[AgentDeps, _r.P], /) -> _r.Retriever[AgentDeps, _r.P]: ...
+    def retriever_context(
+        self, func: _r.RetrieverContextFunc[AgentDeps, _r.RetrieverParams], /
+    ) -> _r.Retriever[AgentDeps, _r.RetrieverParams]: ...
 
     @overload
     def retriever_context(
         self, /, *, retries: int | None = None
-    ) -> Callable[[_r.RetrieverContextFunc[AgentDeps, _r.P]], _r.Retriever[AgentDeps, _r.P]]: ...
+    ) -> Callable[
+        [_r.RetrieverContextFunc[AgentDeps, _r.RetrieverParams]], _r.Retriever[AgentDeps, _r.RetrieverParams]
+    ]: ...
 
     def retriever_context(
-        self, func: _r.RetrieverContextFunc[AgentDeps, _r.P] | None = None, /, *, retries: int | None = None
+        self,
+        func: _r.RetrieverContextFunc[AgentDeps, _r.RetrieverParams] | None = None,
+        /,
+        *,
+        retries: int | None = None,
     ) -> Any:
         """Decorator to register a retriever function."""
         if func is None:
 
             def retriever_decorator(
-                func_: _r.RetrieverContextFunc[AgentDeps, _r.P],
-            ) -> _r.Retriever[AgentDeps, _r.P]:
+                func_: _r.RetrieverContextFunc[AgentDeps, _r.RetrieverParams],
+            ) -> _r.Retriever[AgentDeps, _r.RetrieverParams]:
                 # noinspection PyTypeChecker
                 return self._register_retriever(_utils.Either(left=func_), retries)
 
@@ -312,18 +320,24 @@ class Agent(Generic[AgentDeps, ResultData]):
             return self._register_retriever(_utils.Either(left=func), retries)
 
     @overload
-    def retriever_plain(self, func: _r.RetrieverPlainFunc[_r.P], /) -> _r.Retriever[AgentDeps, _r.P]: ...
+    def retriever_plain(
+        self, func: _r.RetrieverPlainFunc[_r.RetrieverParams], /
+    ) -> _r.Retriever[AgentDeps, _r.RetrieverParams]: ...
 
     @overload
     def retriever_plain(
         self, /, *, retries: int | None = None
-    ) -> Callable[[_r.RetrieverPlainFunc[_r.P]], _r.Retriever[AgentDeps, _r.P]]: ...
+    ) -> Callable[[_r.RetrieverPlainFunc[_r.RetrieverParams]], _r.Retriever[AgentDeps, _r.RetrieverParams]]: ...
 
-    def retriever_plain(self, func: _r.RetrieverPlainFunc[_r.P] | None = None, /, *, retries: int | None = None) -> Any:
+    def retriever_plain(
+        self, func: _r.RetrieverPlainFunc[_r.RetrieverParams] | None = None, /, *, retries: int | None = None
+    ) -> Any:
         """Decorator to register a retriever function."""
         if func is None:
 
-            def retriever_decorator(func_: _r.RetrieverPlainFunc[_r.P]) -> _r.Retriever[AgentDeps, _r.P]:
+            def retriever_decorator(
+                func_: _r.RetrieverPlainFunc[_r.RetrieverParams],
+            ) -> _r.Retriever[AgentDeps, _r.RetrieverParams]:
                 # noinspection PyTypeChecker
                 return self._register_retriever(_utils.Either(right=func_), retries)
 
@@ -332,11 +346,11 @@ class Agent(Generic[AgentDeps, ResultData]):
             return self._register_retriever(_utils.Either(right=func), retries)
 
     def _register_retriever(
-        self, func: _r.RetrieverEitherFunc[AgentDeps, _r.P], retries: int | None
-    ) -> _r.Retriever[AgentDeps, _r.P]:
+        self, func: _r.RetrieverEitherFunc[AgentDeps, _r.RetrieverParams], retries: int | None
+    ) -> _r.Retriever[AgentDeps, _r.RetrieverParams]:
         """Private utility to register a retriever function."""
         retries_ = retries if retries is not None else self._default_retries
-        retriever = _r.Retriever[AgentDeps, _r.P](func, retries_)
+        retriever = _r.Retriever[AgentDeps, _r.RetrieverParams](func, retries_)
 
         if self._result_schema and retriever.name in self._result_schema.tools:
             raise ValueError(f'Retriever name conflicts with result schema name: {retriever.name!r}')

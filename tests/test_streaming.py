@@ -36,7 +36,7 @@ async def test_streamed_text_response():
         return f'{x}-apple'
 
     async with agent.run_stream('Hello') as result:
-        assert not result.is_structured()
+        assert not result.is_structured
         assert not result.is_complete
         assert result.all_messages() == snapshot(
             [
@@ -70,7 +70,7 @@ async def test_streamed_structured_response():
     agent = Agent(m, deps=None, result_type=tuple[str, str])
 
     async with agent.run_stream('') as result:
-        assert result.is_structured()
+        assert result.is_structured
         assert not result.is_complete
         response = await result.get_data()
         assert response == snapshot(('a', 'a'))
@@ -109,7 +109,7 @@ async def test_streamed_text_stream():
     agent = Agent(m, deps=None)
 
     async with agent.run_stream('Hello') as result:
-        assert not result.is_structured()
+        assert not result.is_structured
         # typehint to test (via static typing) that the stream type is correctly inferred
         chunks: list[str] = [c async for c in result.stream()]
         # one chunk due to group_by_temporal

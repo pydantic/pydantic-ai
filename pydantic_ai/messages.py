@@ -167,6 +167,6 @@ class ModelStructuredResponse:
 ModelAnyResponse = Union[ModelTextResponse, ModelStructuredResponse]
 """Any response from a model."""
 Message = Union[SystemPrompt, UserPrompt, ToolReturn, RetryPrompt, ModelAnyResponse]
-"""Any message type."""
+"""Any message send to or returned by a model."""
 
 MessagesTypeAdapter = _pydantic.LazyTypeAdapter(list[Annotated[Message, pydantic.Field(discriminator='role')]])

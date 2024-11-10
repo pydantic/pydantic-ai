@@ -23,7 +23,7 @@ from ._utils import ObjectJsonSchema, check_object_json_schema, is_model_like
 
 if TYPE_CHECKING:
     from . import _retriever
-    from .dependencies import AgentDeps
+    from .dependencies import AgentDeps, RetrieverParams
 
 
 __all__ = 'function_schema', 'LazyTypeAdapter'
@@ -41,7 +41,7 @@ class FunctionSchema(TypedDict):
     var_positional_field: str | None
 
 
-def function_schema(either_function: _retriever.RetrieverEitherFunc[AgentDeps, _retriever.P]) -> FunctionSchema:  # noqa: C901
+def function_schema(either_function: _retriever.RetrieverEitherFunc[AgentDeps, RetrieverParams]) -> FunctionSchema:  # noqa: C901
     """Build a Pydantic validator and JSON schema from a retriever function.
 
     Args:

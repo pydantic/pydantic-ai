@@ -68,7 +68,7 @@ class _BaseRunResult(ABC, Generic[ResultData]):
     """Base type for results.
 
     You should not import or use this type directly, instead use its subclasses
-    [RunResult][pydantic_ai.result.RunResult] and [StreamedRunResult][pydantic_ai.result.StreamedRunResult] instead.
+    [`RunResult`][pydantic_ai.result.RunResult] and [`StreamedRunResult`][pydantic_ai.result.StreamedRunResult] instead.
     """
 
     _all_messages: list[messages.Message]
@@ -80,7 +80,7 @@ class _BaseRunResult(ABC, Generic[ResultData]):
         return self._all_messages
 
     def all_messages_json(self) -> bytes:
-        """Return the history of messages as JSON bytes."""
+        """Return all messages from [`all_messages`][pydantic_ai.result._BaseRunResult.all_messages] as JSON bytes."""
         return messages.MessagesTypeAdapter.dump_json(self.all_messages())
 
     def new_messages(self) -> list[messages.Message]:
@@ -91,7 +91,7 @@ class _BaseRunResult(ABC, Generic[ResultData]):
         return self.all_messages()[self._new_message_index :]
 
     def new_messages_json(self) -> bytes:
-        """Return new messages from [new_messages][] as JSON bytes."""
+        """Return new messages from [`new_messages`][pydantic_ai.result._BaseRunResult.new_messages] as JSON bytes."""
         return messages.MessagesTypeAdapter.dump_json(self.new_messages())
 
     @abstractmethod
@@ -103,7 +103,7 @@ class _BaseRunResult(ABC, Generic[ResultData]):
 class RunResult(_BaseRunResult[ResultData]):
     """Result of a non-streamed run.
 
-    See [_BaseRunResult][pydantic_ai.result._BaseRunResult] for other available methods.
+    See [`_BaseRunResult`][pydantic_ai.result._BaseRunResult] for other available methods.
     """
 
     data: ResultData
@@ -117,7 +117,10 @@ class RunResult(_BaseRunResult[ResultData]):
 
 @dataclass
 class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultData]):
-    """Result of a streamed run that returns structured data via a tool call."""
+    """Result of a streamed run that returns structured data via a tool call.
+
+    See [`_BaseRunResult`][pydantic_ai.result._BaseRunResult] for other available methods.
+    """
 
     cost_so_far: Cost
     """Cost of the run up until the last request."""
@@ -144,7 +147,9 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
         !!! note
             Result validators will NOT be called on the text result if `text_delta=True`.
 
-        The pydantic validator for structured data will be called in [partial mode](#) on each iteration.
+        The pydantic validator for structured data will be called in
+        [partial mode](https://docs.pydantic.dev/dev/concepts/experimental/#partial-validation)
+        on each iteration.
 
         Args:
             text_delta: if `True`, yield each chunk of text as it is received, if `False` (default), yield the full text
@@ -262,6 +267,7 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
             self._marked_completed(structured_message=structured_message)
             return await self.validate_structured_result(structured_message)
 
+    @property
     def is_structured(self) -> bool:
         """Return whether the stream response contains structured data (as opposed to text)."""
         return isinstance(self._stream_response, models.StreamStructuredResponse)
