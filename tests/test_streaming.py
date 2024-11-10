@@ -48,7 +48,7 @@ async def test_streamed_text_response():
                 ToolReturn(tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc)),
             ]
         )
-        response = await result.get_response()
+        response = await result.get_data()
         assert response == snapshot('{"ret_a":"a-apple"}')
         assert result.is_complete
         assert result.all_messages() == snapshot(
@@ -72,7 +72,7 @@ async def test_streamed_structured_response():
     async with agent.run_stream('') as result:
         assert result.is_structured()
         assert not result.is_complete
-        response = await result.get_response()
+        response = await result.get_data()
         assert response == snapshot(('a', 'a'))
         assert result.is_complete
 
@@ -200,7 +200,7 @@ async def test_call_retriever():
                 ToolReturn(tool_name='ret_a', content='hello world', timestamp=IsNow(tz=timezone.utc)),
             ]
         )
-        assert await result.get_response() == snapshot(('hello world', 2))
+        assert await result.get_data() == snapshot(('hello world', 2))
         assert result.all_messages() == snapshot(
             [
                 UserPrompt(content='hello', timestamp=IsNow(tz=timezone.utc)),

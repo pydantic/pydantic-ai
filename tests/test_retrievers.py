@@ -78,7 +78,7 @@ def test_docstring_google():
     agent.retriever_plain(google_style_docstring)
 
     result = agent.run_sync('Hello')
-    json_schema = json.loads(result.response)
+    json_schema = json.loads(result.data)
     assert json_schema == snapshot(
         {
             'description': 'Do foobar stuff, a lot.',
@@ -109,7 +109,7 @@ def test_docstring_sphinx():
     agent.retriever_plain(sphinx_style_docstring)
 
     result = agent.run_sync('Hello')
-    json_schema = json.loads(result.response)
+    json_schema = json.loads(result.data)
     assert json_schema == snapshot(
         {
             'description': 'Sphinx style docstring.',
@@ -141,7 +141,7 @@ def test_docstring_numpy():
     agent.retriever_plain(numpy_style_docstring)
 
     result = agent.run_sync('Hello')
-    json_schema = json.loads(result.response)
+    json_schema = json.loads(result.data)
     assert json_schema == snapshot(
         {
             'description': 'Numpy style docstring.',
@@ -166,7 +166,7 @@ def test_docstring_unknown():
     agent.retriever_plain(unknown_docstring)
 
     result = agent.run_sync('Hello')
-    json_schema = json.loads(result.response)
+    json_schema = json.loads(result.data)
     assert json_schema == snapshot(
         {
             'description': 'Unknown style docstring.',
@@ -195,7 +195,7 @@ def test_docstring_google_no_body():
     agent.retriever_plain(google_style_docstring_no_body)
 
     result = agent.run_sync('')
-    json_schema = json.loads(result.response)
+    json_schema = json.loads(result.data)
     assert json_schema == snapshot(
         {
             'additionalProperties': False,
@@ -221,7 +221,7 @@ def test_takes_just_model():
         return f'{model.x} {model.y}'
 
     result = agent.run_sync('', model=FunctionModel(get_json_schema))
-    json_schema = json.loads(result.response)
+    json_schema = json.loads(result.data)
     assert json_schema == snapshot(
         {
             'title': 'Foo',
@@ -232,7 +232,7 @@ def test_takes_just_model():
     )
 
     result = agent.run_sync('', model=TestModel())
-    assert result.response == snapshot('{"takes_just_model":"0 a"}')
+    assert result.data == snapshot('{"takes_just_model":"0 a"}')
 
 
 def test_takes_model_and_int():
@@ -247,7 +247,7 @@ def test_takes_model_and_int():
         return f'{model.x} {model.y} {z}'
 
     result = agent.run_sync('', model=FunctionModel(get_json_schema))
-    json_schema = json.loads(result.response)
+    json_schema = json.loads(result.data)
     assert json_schema == snapshot(
         {
             '$defs': {
@@ -272,4 +272,4 @@ def test_takes_model_and_int():
     )
 
     result = agent.run_sync('', model=TestModel())
-    assert result.response == snapshot('{"takes_just_model":"0 a 0"}')
+    assert result.data == snapshot('{"takes_just_model":"0 a 0"}')

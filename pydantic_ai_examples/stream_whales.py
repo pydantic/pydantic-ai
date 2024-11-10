@@ -19,7 +19,7 @@ from rich.table import Table
 
 from pydantic_ai import Agent
 
-# 'if-token-present' means nothing will be sent (and the example wil work) if you don't have logfire set up
+# 'if-token-present' means nothing will be sent (and the example will work) if you don't have logfire configured
 logfire.configure(send_to_logfire='if-token-present')
 
 

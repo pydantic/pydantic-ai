@@ -40,7 +40,7 @@ def return_last(messages: list[Message], _: AgentInfo) -> ModelAnyResponse:
 def test_simple():
     agent = Agent(FunctionModel(return_last), deps=None)
     result = agent.run_sync('Hello')
-    assert result.response == snapshot("content='Hello' role='user' message_count=1")
+    assert result.data == snapshot("content='Hello' role='user' message_count=1")
     assert result.all_messages() == snapshot(
         [
             UserPrompt(
@@ -57,7 +57,7 @@ def test_simple():
     )
 
     result2 = agent.run_sync('World', message_history=result.all_messages())
-    assert result2.response == snapshot("content='World' role='user' message_count=3")
+    assert result2.data == snapshot("content='World' role='user' message_count=3")
     assert result2.all_messages() == snapshot(
         [
             UserPrompt(
@@ -130,7 +130,7 @@ async def get_weather(_: CallContext[None], lat: int, lng: int):
 
 def test_weather():
     result = weather_agent.run_sync('London')
-    assert result.response == 'Raining in London'
+    assert result.data == 'Raining in London'
     assert result.all_messages() == snapshot(
         [
             UserPrompt(
@@ -174,7 +174,7 @@ def test_weather():
     )
 
     result = weather_agent.run_sync('Ipswich')
-    assert result.response == 'Sunny in Ipswich'
+    assert result.data == 'Sunny in Ipswich'
 
 
 def call_function_model(messages: list[Message], _: AgentInfo) -> ModelAnyResponse:  # pragma: no cover
@@ -207,7 +207,7 @@ def get_var_args(ctx: CallContext[int], *args: int):
 
 def test_var_args():
     result = var_args_agent.run_sync('{"function": "get_var_args", "arguments": {"args": [1, 2, 3]}}')
-    response_data = json.loads(result.response)
+    response_data = json.loads(result.data)
     # Can't parse ISO timestamps with trailing 'Z' in older versions of python:
     response_data['timestamp'] = re.sub('Z$', '+00:00', response_data['timestamp'])
     assert response_data == snapshot(
@@ -274,7 +274,7 @@ def test_deps_init():
 def test_model_arg():
     agent = Agent(deps=None)
     result = agent.run_sync('Hello', model=FunctionModel(return_last))
-    assert result.response == snapshot("content='Hello' role='user' message_count=1")
+    assert result.data == snapshot("content='Hello' role='user' message_count=1")
 
     with pytest.raises(RuntimeError, match='`model` must be set either when creating the agent or when calling it.'):
         agent.run_sync('Hello')
@@ -320,12 +320,12 @@ def test_register_all():
         )
 
     result = agent_all.run_sync('Hello', model=FunctionModel(f))
-    assert result.response == snapshot('messages=2 allow_text_result=True retrievers=5')
+    assert result.data == snapshot('messages=2 allow_text_result=True retrievers=5')
 
 
 def test_call_all():
     result = agent_all.run_sync('Hello', model=TestModel())
-    assert result.response == snapshot('{"foo":"1","bar":"2","baz":"3","qux":"4","quz":"a"}')
+    assert result.data == snapshot('{"foo":"1","bar":"2","baz":"3","qux":"4","quz":"a"}')
     assert result.all_messages() == snapshot(
         [
             SystemPrompt(content='foobar'),
@@ -371,7 +371,7 @@ def test_retry_str():
             return r
 
     result = agent.run_sync('')
-    assert result.response == snapshot('2')
+    assert result.data == snapshot('2')
 
 
 def test_retry_result_type():
@@ -396,7 +396,7 @@ def test_retry_result_type():
             return r
 
     result = agent.run_sync('')
-    assert result.response == snapshot(Foo(x=2))
+    assert result.data == snapshot(Foo(x=2))
 
 
 def stream_text_function(_messages: list[Message], _: AgentInfo) -> Iterable[str]:
@@ -407,7 +407,7 @@ def stream_text_function(_messages: list[Message], _: AgentInfo) -> Iterable[str
 async def test_stream_text():
     agent = Agent(FunctionModel(stream_function=stream_text_function), deps=None)
     async with agent.run_stream('') as result:
-        assert await result.get_response() == snapshot('hello world')
+        assert await result.get_data() == snapshot('hello world')
         assert result.all_messages() == snapshot(
             [
                 UserPrompt(content='', timestamp=IsNow(tz=timezone.utc)),
@@ -432,7 +432,7 @@ async def test_stream_structure():
 
     agent = Agent(FunctionModel(stream_function=stream_structured_function), deps=None, result_type=Foo)
     async with agent.run_stream('') as result:
-        assert await result.get_response() == snapshot(Foo(x=1))
+        assert await result.get_data() == snapshot(Foo(x=1))
         assert result.cost() == snapshot(Cost())
 
 

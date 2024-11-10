@@ -35,7 +35,7 @@ def test_result_tuple():
     agent = Agent(FunctionModel(return_tuple), deps=None, result_type=tuple[str, str])
 
     result = agent.run_sync('Hello')
-    assert result.response == ('foo', 'bar')
+    assert result.data == ('foo', 'bar')
 
 
 class Foo(BaseModel):
@@ -52,8 +52,8 @@ def test_result_pydantic_model():
     agent = Agent(FunctionModel(return_model), deps=None, result_type=Foo)
 
     result = agent.run_sync('Hello')
-    assert isinstance(result.response, Foo)
-    assert result.response.model_dump() == {'a': 1, 'b': 'foo'}
+    assert isinstance(result.data, Foo)
+    assert result.data.model_dump() == {'a': 1, 'b': 'foo'}
 
 
 def test_result_pydantic_model_retry():
@@ -68,8 +68,8 @@ def test_result_pydantic_model_retry():
     agent = Agent(FunctionModel(return_model), deps=None, result_type=Foo)
 
     result = agent.run_sync('Hello')
-    assert isinstance(result.response, Foo)
-    assert result.response.model_dump() == {'a': 42, 'b': 'foo'}
+    assert isinstance(result.data, Foo)
+    assert result.data.model_dump() == {'a': 42, 'b': 'foo'}
     assert result.all_messages() == snapshot(
         [
             UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
@@ -118,8 +118,8 @@ def test_result_validator():
             raise ModelRetry('"a" should be 42')
 
     result = agent.run_sync('Hello')
-    assert isinstance(result.response, Foo)
-    assert result.response.model_dump() == {'a': 42, 'b': 'foo'}
+    assert isinstance(result.data, Foo)
+    assert result.data.model_dump() == {'a': 42, 'b': 'foo'}
     assert result.all_messages() == snapshot(
         [
             UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
@@ -151,7 +151,7 @@ def test_plain_response():
     agent = Agent(FunctionModel(return_tuple), deps=None, result_type=tuple[str, str])
 
     result = agent.run_sync('Hello')
-    assert result.response == ('foo', 'bar')
+    assert result.data == ('foo', 'bar')
     assert call_index == 2
     assert result.all_messages() == snapshot(
         [
@@ -176,7 +176,7 @@ def test_response_tuple():
     assert agent._result_schema.allow_text_result is False  # pyright: ignore[reportPrivateUsage,reportOptionalMemberAccess]
 
     result = agent.run_sync('Hello')
-    assert result.response == snapshot(('a', 'a'))
+    assert result.data == snapshot(('a', 'a'))
 
     assert m.agent_model_retrievers == snapshot({})
     assert m.agent_model_allow_text_result is False
@@ -234,7 +234,7 @@ def test_response_union_allow_str(input_union_callable: Callable[[], Any]):
     assert agent._result_schema.allow_text_result is True  # pyright: ignore[reportPrivateUsage,reportOptionalMemberAccess]
 
     result = agent.run_sync('Hello')
-    assert result.response == snapshot('{}')
+    assert result.data == snapshot('{}')
     assert got_tool_call_name == snapshot(None)
 
     assert m.agent_model_retrievers == snapshot({})
@@ -308,7 +308,7 @@ class Bar(BaseModel):
         return r
 
     result = agent.run_sync('Hello')
-    assert result.response == mod.Foo(a=0, b='a')
+    assert result.data == mod.Foo(a=0, b='a')
     assert got_tool_call_name == snapshot('final_result_Foo')
 
     assert m.agent_model_retrievers == snapshot({})
@@ -351,7 +351,7 @@ class Bar(BaseModel):
     )
 
     result = agent.run_sync('Hello', model=TestModel(seed=1))
-    assert result.response == mod.Bar(b='b')
+    assert result.data == mod.Bar(b='b')
     assert got_tool_call_name == snapshot('final_result_Bar')
 
 
@@ -381,7 +381,7 @@ def test_run_with_history_new():
     result2 = agent.run_sync('Hello again', message_history=result1.new_messages())
     assert result2 == snapshot(
         RunResult(
-            response='{"ret_a":"a-apple"}',
+            data='{"ret_a":"a-apple"}',
             _all_messages=[
                 SystemPrompt(content='Foobar'),
                 UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
@@ -414,7 +414,7 @@ def test_run_with_history_new():
     # same as result2 except for datetimes
     assert result3 == snapshot(
         RunResult(
-            response='{"ret_a":"a-apple"}',
+            data='{"ret_a":"a-apple"}',
             _all_messages=[
                 SystemPrompt(content='Foobar'),
                 UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
@@ -481,7 +481,7 @@ def test_unknown_retriever_fix():
     agent = Agent(FunctionModel(empty), deps=None)
 
     result = agent.run_sync('Hello')
-    assert result.response == 'success'
+    assert result.data == 'success'
     assert result.all_messages() == snapshot(
         [
             UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),

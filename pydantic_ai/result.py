@@ -11,14 +11,14 @@ from . import _result, _utils, exceptions, messages, models
 from .call_typing import AgentDeps
 
 __all__ = (
-    'ResponseData',
+    'ResultData',
     'Cost',
     'RunResult',
     'StreamedRunResult',
 )
 
 
-ResponseData = TypeVar('ResponseData')
+ResultData = TypeVar('ResultData')
 _logfire = logfire_api.Logfire(otel_scope='pydantic-ai')
 
 
@@ -49,7 +49,7 @@ class Cost:
 
 
 @dataclass
-class _BaseRunResult(ABC, Generic[ResponseData]):
+class _BaseRunResult(ABC, Generic[ResultData]):
     """Result of a run."""
 
     _all_messages: list[messages.Message]
@@ -82,10 +82,10 @@ class _BaseRunResult(ABC, Generic[ResponseData]):
 
 
 @dataclass
-class RunResult(_BaseRunResult[ResponseData]):
+class RunResult(_BaseRunResult[ResultData]):
     """Result of a run."""
 
-    response: ResponseData
+    data: ResultData
     _cost: Cost
 
     def cost(self) -> Cost:
@@ -93,28 +93,28 @@ class RunResult(_BaseRunResult[ResponseData]):
 
 
 @dataclass
-class StreamedRunResult(_BaseRunResult[ResponseData], Generic[AgentDeps, ResponseData]):
+class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultData]):
     """Result of a streamed run that returns structured data via a tool call."""
 
     cost_so_far: Cost
     """Cost up until the last request."""
     _stream_response: models.EitherStreamedResponse
-    _result_schema: _result.ResultSchema[ResponseData] | None
+    _result_schema: _result.ResultSchema[ResultData] | None
     _deps: AgentDeps
-    _result_validators: list[_result.ResultValidator[AgentDeps, ResponseData]]
+    _result_validators: list[_result.ResultValidator[AgentDeps, ResultData]]
     is_complete: bool = False
     """Whether the stream has all been received."""
 
-    async def stream(self, *, text_delta: bool = False, debounce_by: float | None = 0.1) -> AsyncIterator[ResponseData]:
+    async def stream(self, *, text_delta: bool = False, debounce_by: float | None = 0.1) -> AsyncIterator[ResultData]:
         """Stream the response as an async iterable.
 
         Result validators are called on each iteration, if `text_delta=False` (the default) or for structured
         responses.
 
         !!!
-            Note that the result validators will NOT be called on the final text result if `text_delta=True`.
+            Note: result validators will NOT be called on the text result if `text_delta=True`.
 
-        The pydantic validator for the tool type will be called in [partial mode](#) on each iteration.
+        The pydantic validator for structured data will be called in [partial mode](#) on each iteration.
 
         Args:
             text_delta: if `True`, yield each chunk of text as it is received, if `False` (default), yield the full text
@@ -128,13 +128,18 @@ class StreamedRunResult(_BaseRunResult[ResponseData], Generic[AgentDeps, Respons
         """
         if isinstance(self._stream_response, models.StreamTextResponse):
             async for text in self.stream_text(text_delta=text_delta, debounce_by=debounce_by):
-                yield cast(ResponseData, text)
+                yield cast(ResultData, text)
         else:
             assert not text_delta, 'Cannot use `text_delta=True` for structured responses'
             async for structured_message, is_last in self.stream_structured(debounce_by=debounce_by):
                 yield await self.validate_structured_result(structured_message, allow_partial=not is_last)
 
     async def stream_text(self, *, text_delta: bool = False, debounce_by: float | None = 0.1) -> AsyncIterator[str]:
+        """Stream the text result as an async iterable.
+
+        !!!
+            This method will fail if the response is structured, e.g. if [is_structured] returns `True`.
+        """
         with _logfire.span('response stream text') as lf_span:
             if isinstance(self._stream_response, models.StreamStructuredResponse):
                 raise exceptions.UserError('stream_text() can only be used with text responses')
@@ -175,8 +180,8 @@ class StreamedRunResult(_BaseRunResult[ResponseData], Generic[AgentDeps, Respons
     ) -> AsyncIterator[tuple[messages.ModelStructuredResponse, bool]]:
         """Stream the response as an async iterable of Structured LLM Messages.
 
-        !!! note
-            This method is only available for structured responses, e.g. if `is_structured()` returns `True`.
+        !!!
+            This method will fail if the response is text, e.g. if [is_structured] returns `False`.
 
         Args:
             debounce_by: by how much (if at all) to debounce/group the response chunks by. if `AUTO` (default),
@@ -204,7 +209,7 @@ class StreamedRunResult(_BaseRunResult[ResponseData], Generic[AgentDeps, Respons
                 lf_span.set_attribute('structured_response', msg)
                 self._marked_completed(structured_message=msg)
 
-    async def get_response(self) -> ResponseData:
+    async def get_data(self) -> ResultData:
         """Stream the whole response, validate and return it."""
         async for _ in self._stream_response:
             pass
@@ -212,7 +217,7 @@ class StreamedRunResult(_BaseRunResult[ResponseData], Generic[AgentDeps, Respons
             text = ''.join(self._stream_response.get(final=True))
             text = await self._validate_text_result(text)
             self._marked_completed(text=text)
-            return cast(ResponseData, text)
+            return cast(ResultData, text)
         else:
             structured_message = self._stream_response.get(final=True)
             self._marked_completed(structured_message=structured_message)
@@ -225,13 +230,15 @@ class StreamedRunResult(_BaseRunResult[ResponseData], Generic[AgentDeps, Respons
     def cost(self) -> Cost:
         """Return the cost of the whole run.
 
-        NOTE: this won't return the full cost until the stream is finished.
+        !!!
+            This won't return the full cost until the stream is finished.
         """
         return self.cost_so_far + self._stream_response.cost()
 
     async def validate_structured_result(
         self, message: messages.ModelStructuredResponse, *, allow_partial: bool = False
-    ) -> ResponseData:
+    ) -> ResultData:
+        """Validate a structured result message."""
         assert self._result_schema is not None, 'Expected _result_schema to not be None'
         match = self._result_schema.find_tool(message)
         if match is None:

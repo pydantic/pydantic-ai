@@ -120,14 +120,14 @@ async def test_request_simple_success():
     agent = Agent(m, deps=None)
 
     result = await agent.run('hello')
-    assert result.response == 'world'
+    assert result.data == 'world'
     assert result.cost() == snapshot(Cost())
 
     # reset the index so we get the same response again
     mock_client.index = 0  # type: ignore
 
     result = await agent.run('hello', message_history=result.new_messages())
-    assert result.response == 'world'
+    assert result.data == 'world'
     assert result.cost() == snapshot(Cost())
     assert result.all_messages() == snapshot(
         [
@@ -149,7 +149,7 @@ async def test_request_simple_usage():
     agent = Agent(m, deps=None)
 
     result = await agent.run('Hello')
-    assert result.response == 'world'
+    assert result.data == 'world'
     assert result.cost() == snapshot(Cost(request_tokens=2, response_tokens=1, total_tokens=3))
 
 
@@ -172,7 +172,7 @@ async def test_request_structured_response():
     agent = Agent(m, deps=None, result_type=list[int])
 
     result = await agent.run('Hello')
-    assert result.response == [1, 2, 123]
+    assert result.data == [1, 2, 123]
     assert result.all_messages() == snapshot(
         [
             UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
@@ -244,7 +244,7 @@ async def test_request_tool_call():
             raise ModelRetry('Wrong location, please try again')
 
     result = await agent.run('Hello')
-    assert result.response == 'final response'
+    assert result.data == 'final response'
     assert result.all_messages() == snapshot(
         [
             SystemPrompt(content='this is the system prompt'),

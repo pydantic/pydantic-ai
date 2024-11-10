@@ -22,7 +22,7 @@ from httpx import AsyncClient
 
 from pydantic_ai import Agent, CallContext, ModelRetry
 
-# 'if-token-present' means nothing will be sent (and the example wil work) if you don't have logfire set up
+# 'if-token-present' means nothing will be sent (and the example will work) if you don't have logfire configured
 logfire.configure(send_to_logfire='if-token-present')
 
 
@@ -133,7 +133,7 @@ async def main():
         deps = Deps(client=client, weather_api_key=weather_api_key, geo_api_key=geo_api_key)
         result = await weather_agent.run('What is the weather like in London and in Wiltshire?', deps=deps)
         debug(result)
-        print('Response:', result.response)
+        print('Response:', result.data)
 
 
 if __name__ == '__main__':
