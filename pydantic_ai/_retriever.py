@@ -11,7 +11,7 @@ from pydantic_core import SchemaValidator
 from typing_extensions import Concatenate, ParamSpec
 
 from . import _pydantic, _utils, messages
-from .call_typing import AgentDeps, CallContext
+from .dependencies import AgentDeps, CallContext
 from .exceptions import ModelRetry
 
 # retrieval function parameters

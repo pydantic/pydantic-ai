@@ -149,7 +149,8 @@ async def group_by_temporal(
             a group to never be yielded. It's a soft max in the sense that once we're over this time, we yield items
             as soon as `aiter.__anext__()` returns. If `None`, no grouping/debouncing is performed
 
-    Returns: A context manager usable as an iterator async iterable of lists of items from the input async iterable.
+    Returns:
+        A context manager usable as an iterator async iterable of lists of items from the input async iterable.
     """
     if soft_max_interval is None:
 

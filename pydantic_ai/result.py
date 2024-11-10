@@ -8,7 +8,7 @@ from typing import Generic, TypeVar, cast
 import logfire_api
 
 from . import _result, _utils, exceptions, messages, models
-from .call_typing import AgentDeps
+from .dependencies import AgentDeps
 
 __all__ = (
     'ResultData',
@@ -19,19 +19,34 @@ __all__ = (
 
 
 ResultData = TypeVar('ResultData')
+"""Type variable for the result data of a run."""
+
 _logfire = logfire_api.Logfire(otel_scope='pydantic-ai')
 
 
 @dataclass
 class Cost:
-    """Cost of a request or run."""
+    """Cost of a request or run.
+
+    Responsibility for calculating costs is on the model used, PydanticAI simply sums the cost of requests.
+
+    You'll need to look up the documentation of the model you're using to convent "token count" costs to monetary costs.
+    """
 
     request_tokens: int | None = None
+    """Tokens used in processing the request."""
     response_tokens: int | None = None
+    """Tokens used in generating the response."""
     total_tokens: int | None = None
+    """Total tokens used in the whole run, should generally be equal to `request_tokens + response_tokens`."""
     details: dict[str, int] | None = None
+    """Any extra details returned by the model."""
 
     def __add__(self, other: Cost) -> Cost:
+        """Add two costs together.
+
+        This is provided so it's trivial to sum costs from multiple requests and runs.
+        """
         counts: dict[str, int] = {}
         for field in 'request_tokens', 'response_tokens', 'total_tokens':
             self_value = getattr(self, field)
@@ -50,7 +65,11 @@ class Cost:
 
 @dataclass
 class _BaseRunResult(ABC, Generic[ResultData]):
-    """Result of a run."""
+    """Base type for results.
+
+    You should not import or use this type directly, instead use its subclasses
+    [RunResult][pydantic_ai.result.RunResult] and [StreamedRunResult][pydantic_ai.result.StreamedRunResult] instead.
+    """
 
     _all_messages: list[messages.Message]
     _new_message_index: int
@@ -77,18 +96,22 @@ class _BaseRunResult(ABC, Generic[ResultData]):
 
     @abstractmethod
     def cost(self) -> Cost:
-        """Return the cost of the whole run."""
         raise NotImplementedError()
 
 
 @dataclass
 class RunResult(_BaseRunResult[ResultData]):
-    """Result of a run."""
+    """Result of a non-streamed run.
+
+    See [_BaseRunResult][pydantic_ai.result._BaseRunResult] for other available methods.
+    """
 
     data: ResultData
+    """Data from the final response in the run."""
     _cost: Cost
 
     def cost(self) -> Cost:
+        """Return the cost of the whole run."""
         return self._cost
 
 
@@ -97,13 +120,20 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
     """Result of a streamed run that returns structured data via a tool call."""
 
     cost_so_far: Cost
-    """Cost up until the last request."""
+    """Cost of the run up until the last request."""
     _stream_response: models.EitherStreamedResponse
     _result_schema: _result.ResultSchema[ResultData] | None
     _deps: AgentDeps
     _result_validators: list[_result.ResultValidator[AgentDeps, ResultData]]
     is_complete: bool = False
-    """Whether the stream has all been received."""
+    """Whether the stream has all been received.
+
+    This is set to `True` when one of
+    [`stream`][pydantic_ai.result.StreamedRunResult.stream],
+    [`stream_text`][pydantic_ai.result.StreamedRunResult.stream_text],
+    [`stream_structured`][pydantic_ai.result.StreamedRunResult.stream_structured] or
+    [`get_data`][pydantic_ai.result.StreamedRunResult.get_data] completes.
+    """
 
     async def stream(self, *, text_delta: bool = False, debounce_by: float | None = 0.1) -> AsyncIterator[ResultData]:
         """Stream the response as an async iterable.
@@ -111,20 +141,20 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
         Result validators are called on each iteration, if `text_delta=False` (the default) or for structured
         responses.
 
-        !!!
-            Note: result validators will NOT be called on the text result if `text_delta=True`.
+        !!! note
+            Result validators will NOT be called on the text result if `text_delta=True`.
 
         The pydantic validator for structured data will be called in [partial mode](#) on each iteration.
 
         Args:
             text_delta: if `True`, yield each chunk of text as it is received, if `False` (default), yield the full text
                 up to the current point.
-            debounce_by: by how much (if at all) to debounce/group the response chunks by. if `AUTO` (default),
-                the response stream is debounced by 0.2 seconds unless `text_delta` is `True`, in which case it
-                doesn't make sense to debounce. `None` means no debouncing. Debouncing is important particularly
-                for long structured responses to reduce the overhead of performing validation as each token is received.
+            debounce_by: by how much (if at all) to debounce/group the response chunks by. `None` means no debouncing.
+                Debouncing is particularly important for long structured responses to reduce the overhead of
+                performing validation as each token is received.
 
-        Returns: An async iterable of the response data.
+        Returns:
+            An async iterable of the response data.
         """
         if isinstance(self._stream_response, models.StreamTextResponse):
             async for text in self.stream_text(text_delta=text_delta, debounce_by=debounce_by):
@@ -137,8 +167,16 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
     async def stream_text(self, *, text_delta: bool = False, debounce_by: float | None = 0.1) -> AsyncIterator[str]:
         """Stream the text result as an async iterable.
 
-        !!!
-            This method will fail if the response is structured, e.g. if [is_structured] returns `True`.
+        !!! note
+            This method will fail if the response is structured,
+            e.g. if [`is_structured`][pydantic_ai.result.StreamedRunResult.is_structured] returns `True`.
+
+        Args:
+            text_delta: if `True`, yield each chunk of text as it is received, if `False` (default), yield the full text
+                up to the current point.
+            debounce_by: by how much (if at all) to debounce/group the response chunks by. `None` means no debouncing.
+                Debouncing is particularly important for long structured responses to reduce the overhead of
+                performing validation as each token is received.
         """
         with _logfire.span('response stream text') as lf_span:
             if isinstance(self._stream_response, models.StreamStructuredResponse):
@@ -180,16 +218,17 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
     ) -> AsyncIterator[tuple[messages.ModelStructuredResponse, bool]]:
         """Stream the response as an async iterable of Structured LLM Messages.
 
-        !!!
-            This method will fail if the response is text, e.g. if [is_structured] returns `False`.
+        !!! note
+            This method will fail if the response is text,
+            e.g. if [`is_structured`][pydantic_ai.result.StreamedRunResult.is_structured] returns `False`.
 
         Args:
-            debounce_by: by how much (if at all) to debounce/group the response chunks by. if `AUTO` (default),
-                the response stream is debounced by 0.2 seconds unless `text_delta` is `True`, in which case it
-                doesn't make sense to debounce. `None` means no debouncing. Debouncing is important particularly
-                for long structured responses to reduce the overhead of performing validation as each token is received.
+            debounce_by: by how much (if at all) to debounce/group the response chunks by. `None` means no debouncing.
+                Debouncing is particularly important for long structured responses to reduce the overhead of
+                performing validation as each token is received.
 
-        Returns: An async iterable of the structured response message and whether it's the last message.
+        Returns:
+            An async iterable of the structured response message and whether that is the last message.
         """
         with _logfire.span('response stream structured') as lf_span:
             if isinstance(self._stream_response, models.StreamTextResponse):
@@ -230,7 +269,7 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
     def cost(self) -> Cost:
         """Return the cost of the whole run.
 
-        !!!
+        !!! note
             This won't return the full cost until the stream is finished.
         """
         return self.cost_so_far + self._stream_response.cost()

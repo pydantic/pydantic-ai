@@ -10,10 +10,11 @@ import logfire_api
 from typing_extensions import assert_never
 
 from . import _result, _retriever as _r, _system_prompt, _utils, exceptions, messages as _messages, models, result
-from .call_typing import AgentDeps
+from .dependencies import AgentDeps
 from .result import ResultData
 
 __all__ = 'Agent', 'KnownModelName'
+
 KnownModelName = Literal[
     'openai:gpt-4o',
     'openai:gpt-4o-mini',
@@ -23,6 +24,11 @@ KnownModelName = Literal[
     'gemini-1.5-flash',
     'gemini-1.5-pro',
 ]
+"""Known model names that can be used with the `model` parameter of [`Agent`][pydantic_ai.Agent].
+
+`KnownModelName` is provided as a concise way to specify a model.
+"""
+
 _logfire = logfire_api.Logfire(otel_scope='pydantic-ai')
 
 

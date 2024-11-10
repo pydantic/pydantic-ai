@@ -12,14 +12,19 @@ copyright: © Pydantic Services Inc. 2024 to present
 nav:
   - Getting Started:
     - index.md
+    - install.md
   - API Reference:
     - api/agent.md
-    - Models:
-      - Model Base Classes: api/models/index.md
-      - OpenAI: api/models/openai.md
-      - Gemini: api/models/gemini.md
-      - Test: api/models/test.md
-      - Function: api/models/function.md
+    - api/result.md
+    - api/messages.md
+    - api/dependencies.md
+    - api/exceptions.md
+    - "pydantic_ai.models":
+      - api/models/index.md
+      - api/models/openai.md
+      - api/models/gemini.md
+      - api/models/test.md
+      - api/models/function.md
 
 extra:
   # hide the "Made with Material for MkDocs" message

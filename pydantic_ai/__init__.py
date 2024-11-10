@@ -1,7 +1,7 @@
 from importlib.metadata import version
 
 from .agent import Agent
-from .call_typing import CallContext
+from .dependencies import CallContext
 from .exceptions import ModelRetry, UnexpectedModelBehaviour, UserError
 
 __all__ = 'Agent', 'CallContext', 'ModelRetry', 'UnexpectedModelBehaviour', 'UserError', '__version__'

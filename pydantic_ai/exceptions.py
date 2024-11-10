@@ -12,6 +12,7 @@ class ModelRetry(Exception):
     """
 
     message: str
+    """The message to return to the model."""
 
     def __init__(self, message: str):
         self.message = message
@@ -22,6 +23,7 @@ class UserError(RuntimeError):
     """Error caused by a usage mistake by the application developer — You!"""
 
     message: str
+    """Description of the mistake."""
 
     def __init__(self, message: str):
         self.message = message
@@ -32,7 +34,9 @@ class UnexpectedModelBehaviour(RuntimeError):
     """Error caused by unexpected Model behavior, e.g. an unexpected response code."""
 
     message: str
+    """Description of the unexpected behavior."""
     body: str | None
+    """The body of the response, if available."""
 
     def __init__(self, message: str, body: str | None = None):
         self.message = message

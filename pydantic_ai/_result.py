@@ -11,7 +11,7 @@ from pydantic import TypeAdapter, ValidationError
 from typing_extensions import Self, TypeAliasType, TypedDict
 
 from . import _utils, messages
-from .call_typing import AgentDeps, CallContext
+from .dependencies import AgentDeps, CallContext
 from .exceptions import ModelRetry
 from .messages import ModelStructuredResponse, ToolCall
 from .result import ResultData
