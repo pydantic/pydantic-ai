@@ -84,8 +84,13 @@ class StreamTextResponse(ABC):
         raise NotImplementedError()
 
     @abstractmethod
-    def get(self) -> Iterable[str]:
-        """Returns an iterable of text since the last call to `get()` — e.g. the text delta."""
+    def get(self, *, final: bool = False) -> Iterable[str]:
+        """Returns an iterable of text since the last call to `get()` — e.g. the text delta.
+
+        Args:
+            final: If True, this is the final call, after iteration is complete, JSON should be fully validated
+                and all items extracted.
+        """
         raise NotImplementedError()
 
     @abstractmethod

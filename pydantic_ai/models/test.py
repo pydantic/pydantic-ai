@@ -191,7 +191,7 @@ class TestStreamTextResponse(StreamTextResponse):
     async def __anext__(self) -> None:
         self._buffer.append(_utils.sync_anext(self._iter))
 
-    def get(self) -> Iterable[str]:
+    def get(self, *, final: bool = False) -> Iterable[str]:
         yield from self._buffer
         self._buffer.clear()
 

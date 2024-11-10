@@ -137,15 +137,31 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
                     async with _utils.group_by_temporal(self._stream_response, debounce_by) as group_iter:
                         async for _ in group_iter:
                             yield cast(ResultData, ''.join(self._stream_response.get()))
+                    final_delta = ''.join(self._stream_response.get(final=True))
+                    if final_delta:
+                        yield cast(ResultData, final_delta)
                 else:
                     # a quick benchmark shows it's faster to build up a string with concat when we're
                     # yielding at each step
+                    chunks: list[str] = []
                     combined = ''
                     async with _utils.group_by_temporal(self._stream_response, debounce_by) as group_iter:
                         async for _ in group_iter:
-                            combined += ''.join(self._stream_response.get())
-                            combined = await self._validate_text_result(combined)
-                            yield cast(ResultData, combined)
+                            new = False
+                            for chunk in self._stream_response.get():
+                                chunks.append(chunk)
+                                new = True
+                            if new:
+                                combined = await self._validate_text_result(''.join(chunks))
+                                yield cast(ResultData, combined)
+
+                    new = False
+                    for chunk in self._stream_response.get(final=True):
+                        chunks.append(chunk)
+                        new = True
+                    if new:
+                        combined = await self._validate_text_result(''.join(chunks))
+                        yield cast(ResultData, combined)
                     lf_span.set_attribute('combined_text', combined)
                     self._marked_completed(text=combined)
         else:
@@ -186,7 +202,7 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
         if isinstance(self._stream_response, models.StreamTextResponse):
             async for _ in self._stream_response:
                 pass
-            text = ''.join(self._stream_response.get())
+            text = ''.join(self._stream_response.get(final=True))
             text = await self._validate_text_result(text)
             self._marked_completed(text=text)
             return cast(ResultData, text)

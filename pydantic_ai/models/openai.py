@@ -251,7 +251,7 @@ class OpenAIStreamTextResponse(StreamTextResponse):
         if choice.delta.content is not None:
             self._buffer.append(choice.delta.content)
 
-    def get(self) -> Iterable[str]:
+    def get(self, *, final: bool = False) -> Iterable[str]:
         yield from self._buffer
         self._buffer.clear()
 

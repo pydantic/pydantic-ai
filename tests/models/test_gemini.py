@@ -2,7 +2,7 @@
 from __future__ import annotations as _annotations
 
 import json
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Sequence
 from dataclasses import dataclass
 from datetime import timezone
 
@@ -330,28 +330,33 @@ class AsyncByteStreamList(httpx.AsyncByteStream):
             yield chunk
 
 
+ResOrList: TypeAlias = '_GeminiResponse | httpx.AsyncByteStream | Sequence[_GeminiResponse | httpx.AsyncByteStream]'
+GetGeminiClient: TypeAlias = 'Callable[[ResOrList], httpx.AsyncClient]'
+
+
 @pytest.fixture
 async def get_gemini_client(client_with_handler: ClientWithHandler, env: TestEnv):
     env.set('GEMINI_API_KEY', 'via-env-var')
 
-    def create_client(
-        response_data: _GeminiResponse | httpx.AsyncByteStream | list[_GeminiResponse],
-    ) -> httpx.AsyncClient:
+    def create_client(response_or_list: ResOrList) -> httpx.AsyncClient:
         index = 0
 
         def handler(_request: httpx.Request) -> httpx.Response:
             nonlocal index
-            content: bytes | None = None
-            stream: httpx.AsyncByteStream | None = None
 
-            if isinstance(response_data, list):
-                content = _gemini_response_ta.dump_json(response_data[index], by_alias=True)
-            elif isinstance(response_data, httpx.AsyncByteStream):
-                stream = response_data
+            if isinstance(response_or_list, Sequence):
+                response = response_or_list[index]
+                index += 1
             else:
-                content = _gemini_response_ta.dump_json(response_data, by_alias=True)
+                response = response_or_list
 
-            index += 1
+            if isinstance(response, httpx.AsyncByteStream):
+                content: bytes | None = None
+                stream: httpx.AsyncByteStream | None = response
+            else:
+                content = _gemini_response_ta.dump_json(response, by_alias=True)
+                stream = None
+
             return httpx.Response(
                 200,
                 content=content,
@@ -362,11 +367,6 @@ async def get_gemini_client(client_with_handler: ClientWithHandler, env: TestEnv
         return client_with_handler(handler)
 
     return create_client
-
-
-GetGeminiClient: TypeAlias = (
-    'Callable[[_GeminiResponse | httpx.AsyncByteStream | list[_GeminiResponse]], httpx.AsyncClient]'
-)
 
 
 def gemini_response(content: _GeminiContent, finish_reason: Literal['STOP'] | None = 'STOP') -> _GeminiResponse:
@@ -551,6 +551,7 @@ async def test_stream_text(get_gemini_client: GetGeminiClient):
     async with agent.run_stream('Hello') as result:
         chunks = [chunk async for chunk in result.stream(text_delta=True, debounce_by=None)]
         assert chunks == snapshot(['Hello ', 'world'])
+    assert result.cost() == snapshot(Cost(request_tokens=2, response_tokens=4, total_tokens=6))
 
 
 async def test_stream_text_no_data(get_gemini_client: GetGeminiClient):
@@ -580,3 +581,69 @@ async def test_stream_structured(get_gemini_client: GetGeminiClient):
     async with agent.run_stream('Hello') as result:
         chunks = [chunk async for chunk in result.stream(debounce_by=None)]
         assert chunks == snapshot([(1, 2), (1, 2)])
+    assert result.cost() == snapshot(Cost(request_tokens=1, response_tokens=2, total_tokens=3))
+
+
+async def test_stream_structured_tool_calls(get_gemini_client: GetGeminiClient):
+    first_responses = [
+        gemini_response(
+            _content_function_call(LLMToolCalls(calls=[ToolCall.from_object('foo', {'x': 'a'})])),
+        ),
+        gemini_response(
+            _content_function_call(LLMToolCalls(calls=[ToolCall.from_object('bar', {'y': 'b'})])),
+        ),
+    ]
+    first_json_data = _gemini_streamed_response_ta.dump_json(first_responses, by_alias=True)
+    first_stream = AsyncByteStreamList([first_json_data[:100], first_json_data[100:200], first_json_data[200:]])
+
+    second_responses = [
+        gemini_response(
+            _content_function_call(LLMToolCalls(calls=[ToolCall.from_object('final_result', {'response': [1, 2]})])),
+        ),
+    ]
+    second_json_data = _gemini_streamed_response_ta.dump_json(second_responses, by_alias=True)
+    second_stream = AsyncByteStreamList([second_json_data[:100], second_json_data[100:200], second_json_data[200:]])
+
+    gemini_client = get_gemini_client([first_stream, second_stream])
+    model = GeminiModel('gemini-1.5-flash', http_client=gemini_client)
+    agent = Agent(model, result_type=tuple[int, int], deps=None)
+    retriever_calls: list[str] = []
+
+    @agent.retriever_plain
+    async def foo(x: str) -> str:
+        retriever_calls.append(f'foo({x=!r})')
+        return x
+
+    @agent.retriever_plain
+    async def bar(y: str) -> str:
+        retriever_calls.append(f'bar({y=!r})')
+        return y
+
+    async with agent.run_stream('Hello') as result:
+        response = await result.get_response()
+        assert response == snapshot((1, 2))
+    assert result.cost() == snapshot(Cost(request_tokens=3, response_tokens=6, total_tokens=9))
+    assert result.all_messages() == snapshot(
+        [
+            UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
+            LLMToolCalls(
+                calls=[
+                    ToolCall(tool_name='foo', args=ArgsObject(args_object={'x': 'a'})),
+                    ToolCall(tool_name='bar', args=ArgsObject(args_object={'y': 'b'})),
+                ],
+                timestamp=IsNow(tz=timezone.utc),
+            ),
+            ToolReturn(tool_name='foo', content='a', timestamp=IsNow(tz=timezone.utc)),
+            ToolReturn(tool_name='bar', content='b', timestamp=IsNow(tz=timezone.utc)),
+            LLMToolCalls(
+                calls=[
+                    ToolCall(
+                        tool_name='final_result',
+                        args=ArgsObject(args_object={'response': [1, 2]}),
+                    )
+                ],
+                timestamp=IsNow(tz=timezone.utc),
+            ),
+        ]
+    )
+    assert retriever_calls == snapshot(["foo(x='a')", "bar(y='b')"])

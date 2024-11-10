@@ -25,6 +25,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Annotated, Any, Literal, Union
 
+import pydantic_core
 from httpx import AsyncClient as AsyncHTTPClient, Response as HTTPResponse
 from pydantic import Discriminator, Field, Tag
 from typing_extensions import NotRequired, TypedDict, TypeGuard, assert_never
@@ -196,7 +197,7 @@ class GeminiAgentModel(AgentModel):
         if _extract_response_parts(start_response).is_left():
             return GeminiStreamToolCallResponse(_content=content, _stream=aiter_bytes)
         else:
-            return GeminiStreamTextResponse(_first=True, _content=content, _stream=aiter_bytes)
+            return GeminiStreamTextResponse(_json_content=content, _stream=aiter_bytes)
 
     @staticmethod
     def _message_to_gemini(m: Message) -> _utils.Either[_GeminiTextPart, _GeminiContent]:
@@ -225,24 +226,29 @@ class GeminiAgentModel(AgentModel):
 
 @dataclass
 class GeminiStreamTextResponse(StreamTextResponse):
-    _first: bool
-    _content: bytearray
+    _json_content: bytearray
     _stream: AsyncIterator[bytes]
     _position: int = 0
     _timestamp: datetime = field(default_factory=_utils.now_utc, init=False)
+    _cost: result.Cost = field(default_factory=result.Cost, init=False)
 
     async def __anext__(self) -> None:
-        if self._first:
-            self._first = False
-        else:
-            chunk = await self._stream.__anext__()
-            self._content.extend(chunk)
+        chunk = await self._stream.__anext__()
+        self._json_content.extend(chunk)
 
-    def get(self) -> Iterable[str]:
-        responses = self._responses()
-        new_responses = responses[self._position :]
-        self._position = len(responses)
+    def get(self, *, final: bool = False) -> Iterable[str]:
+        if final:
+            all_items = pydantic_core.from_json(self._json_content)
+            new_items = all_items[self._position :]
+            self._position = len(all_items)
+            new_responses = _gemini_streamed_response_ta.validate_python(new_items)
+        else:
+            all_items = pydantic_core.from_json(self._json_content, allow_partial=True)
+            new_items = all_items[self._position : -1]
+            self._position = len(all_items) - 1
+            new_responses = _gemini_streamed_response_ta.validate_python(new_items, experimental_allow_partial=True)
         for r in new_responses:
+            self._cost += _metadata_as_cost(r['usage_metadata'])
             parts = r['candidates'][0]['content']['parts']
             if all_text_parts(parts):
                 for part in parts:
@@ -253,19 +259,10 @@ class GeminiStreamTextResponse(StreamTextResponse):
                 )
 
     def cost(self) -> result.Cost:
-        cost = result.Cost()
-        for response in self._responses():
-            cost += _metadata_as_cost(response['usage_metadata'])
-        return cost
+        return self._cost
 
     def timestamp(self) -> datetime:
         return self._timestamp
-
-    def _responses(self) -> list[_GeminiResponse]:
-        return _gemini_streamed_response_ta.validate_json(
-            self._content,  # type: ignore # see https://github.com/pydantic/pydantic/pull/10802
-            experimental_allow_partial=True,
-        )
 
 
 @dataclass
