@@ -455,5 +455,40 @@ def test_unknown_retriever():
 
     agent = Agent(FunctionModel(empty), deps=None)
 
-    with pytest.raises(AgentError, match="caused by unexpected model behavior: Unknown function name: 'foobar'"):
+    with pytest.raises(AgentError, match=r'model behavior: Exceeded maximum retries \(1\) for result validation'):
         agent.run_sync('Hello')
+    assert agent.last_run_messages == snapshot(
+        [
+            UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
+            ModelStructuredResponse(
+                calls=[ToolCall(tool_name='foobar', args=ArgsJson(args_json='{}'))], timestamp=IsNow(tz=timezone.utc)
+            ),
+            RetryPrompt(content="Unknown tool name: 'foobar'. No tools available.", timestamp=IsNow(tz=timezone.utc)),
+            ModelStructuredResponse(
+                calls=[ToolCall(tool_name='foobar', args=ArgsJson(args_json='{}'))], timestamp=IsNow(tz=timezone.utc)
+            ),
+        ]
+    )
+
+
+def test_unknown_retriever_fix():
+    def empty(m: list[Message], _info: AgentInfo) -> ModelAnyResponse:
+        if len(m) > 1:
+            return ModelTextResponse(content='success')
+        else:
+            return ModelStructuredResponse(calls=[ToolCall.from_json('foobar', '{}')])
+
+    agent = Agent(FunctionModel(empty), deps=None)
+
+    result = agent.run_sync('Hello')
+    assert result.response == 'success'
+    assert result.all_messages() == snapshot(
+        [
+            UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
+            ModelStructuredResponse(
+                calls=[ToolCall(tool_name='foobar', args=ArgsJson(args_json='{}'))], timestamp=IsNow(tz=timezone.utc)
+            ),
+            RetryPrompt(content="Unknown tool name: 'foobar'. No tools available.", timestamp=IsNow(tz=timezone.utc)),
+            ModelTextResponse(content='success', timestamp=IsNow(tz=timezone.utc)),
+        ]
+    )

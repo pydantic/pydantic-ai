@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 import asyncio
 from collections.abc import AsyncIterator, Sequence
-from contextlib import asynccontextmanager, suppress
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any, Callable, Generic, Literal, cast, final, overload
 
@@ -44,6 +44,11 @@ class Agent(Generic[AgentDeps, ResponseData]):
     _default_deps: AgentDeps
     _max_result_retries: int
     _current_result_retry: int
+    last_run_messages: list[_messages.Message] | None = None
+    """The messages from the last run, useful when a run raised an exception.
+
+    Note: these are not used by the agent, e.g. in future runs, they are just stored for developers' convenience.
+    """
 
     def __init__(
         self,
@@ -100,6 +105,7 @@ class Agent(Generic[AgentDeps, ResponseData]):
             deps = self._default_deps
 
         new_message_index, messages = await self._prepare_messages(deps, user_prompt, message_history)
+        self.last_run_messages = messages
 
         for retriever in self._retrievers.values():
             retriever.reset()
@@ -197,6 +203,7 @@ class Agent(Generic[AgentDeps, ResponseData]):
             deps = self._default_deps
 
         new_message_index, messages = await self._prepare_messages(deps, user_prompt, message_history)
+        self.last_run_messages = messages
 
         for retriever in self._retrievers.values():
             retriever.reset()
@@ -413,21 +420,17 @@ class Agent(Generic[AgentDeps, ResponseData]):
                 raise exceptions.UnexpectedModelBehaviour('Received empty tool call message')
 
             # otherwise we run all retriever functions in parallel
+            messages: list[_messages.Message] = []
             tasks: list[asyncio.Task[_messages.Message]] = []
-            try:
-                for call in model_response.calls:
-                    retriever = self._retrievers.get(call.tool_name)
-                    if retriever is None:
-                        # should this be a retry error?
-                        raise exceptions.UnexpectedModelBehaviour(f'Unknown function name: {call.tool_name!r}')
+            for call in model_response.calls:
+                if retriever := self._retrievers.get(call.tool_name):
                     tasks.append(asyncio.create_task(retriever.run(deps, call), name=call.tool_name))
-            except BaseException:
-                await _cancel_tasks(tasks)
-                raise
+                else:
+                    messages.append(self._unknown_tool(call.tool_name))
 
             with _logfire.span('running {tools=}', tools=[t.get_name() for t in tasks]):
-                new_messages = await asyncio.gather(*tasks)
-            return _utils.Either(right=new_messages)
+                messages += await asyncio.gather(*tasks)
+            return _utils.Either(right=messages)
         else:
             assert_never(model_response)
 
@@ -479,16 +482,11 @@ class Agent(Generic[AgentDeps, ResponseData]):
 
             # we now run all retriever functions in parallel
             tasks: list[asyncio.Task[_messages.Message]] = []
-            try:
-                for call in structured_msg.calls:
-                    retriever = self._retrievers.get(call.tool_name)
-                    if retriever is None:
-                        raise exceptions.UnexpectedModelBehaviour(f'Unknown function name: {call.tool_name!r}')
+            for call in structured_msg.calls:
+                if retriever := self._retrievers.get(call.tool_name):
                     tasks.append(asyncio.create_task(retriever.run(deps, call), name=call.tool_name))
-            except BaseException:
-                # otherwise we'll get warnings about coroutines not awaited
-                await _cancel_tasks(tasks)
-                raise
+                else:
+                    messages.append(self._unknown_tool(call.tool_name))
 
             with _logfire.span('running {tools=}', tools=[t.get_name() for t in tasks]):
                 messages += await asyncio.gather(*tasks)
@@ -516,9 +514,13 @@ class Agent(Generic[AgentDeps, ResponseData]):
             messages.append(_messages.SystemPrompt(prompt))
         return messages
 
-
-async def _cancel_tasks(tasks: list[asyncio.Task[_messages.Message]]) -> None:
-    for task in tasks:
-        task.cancel()
-    with suppress(asyncio.CancelledError):
-        await asyncio.gather(*tasks)
+    def _unknown_tool(self, tool_name: str) -> _messages.RetryPrompt:
+        self._incr_result_retry()
+        names = list(self._retrievers.keys())
+        if self._result_schema:
+            names.extend(self._result_schema.tool_names())
+        if names:
+            msg = f'Available tools: {", ".join(names)}'
+        else:
+            msg = 'No tools available.'
+        return _messages.RetryPrompt(content=f'Unknown tool name: {tool_name!r}. {msg}')

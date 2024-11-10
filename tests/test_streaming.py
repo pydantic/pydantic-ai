@@ -14,6 +14,7 @@ from pydantic_ai.messages import (
     Message,
     ModelStructuredResponse,
     ModelTextResponse,
+    RetryPrompt,
     ToolCall,
     ToolReturn,
     UserPrompt,
@@ -242,6 +243,22 @@ async def test_call_retriever_wrong_name():
 
     agent = Agent(FunctionModel(stream_function=stream_structured_function), deps=None, result_type=tuple[str, int])
 
-    with pytest.raises(AgentError, match="caused by unexpected model behavior: Unknown function name: 'foobar'"):
+    @agent.retriever_plain
+    async def ret_a(x: str) -> str:
+        return x
+
+    with pytest.raises(AgentError, match=r'model behavior: Exceeded maximum retries \(1\) for result validation'):
         async with agent.run_stream('hello'):
             pass
+    assert agent.last_run_messages == snapshot(
+        [
+            UserPrompt(content='hello', timestamp=IsNow(tz=timezone.utc)),
+            ModelStructuredResponse(
+                calls=[ToolCall(tool_name='foobar', args=ArgsJson(args_json='{}'))], timestamp=IsNow(tz=timezone.utc)
+            ),
+            RetryPrompt(
+                content="Unknown tool name: 'foobar'. Available tools: ret_a, final_result",
+                timestamp=IsNow(tz=timezone.utc),
+            ),
+        ]
+    )
