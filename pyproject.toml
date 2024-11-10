@@ -68,6 +68,12 @@ dev = [
     "devtools>=0.12.2",
     "anyio>=4.5.0",
 ]
+docs = [
+    "mkdocs",
+    "mkdocs-material",
+    "mkdocstrings-python",
+    "griffe",
+]
 
 [tool.hatch.build.targets.wheel]
 packages = ["pydantic_ai", "pydantic_ai_examples"]

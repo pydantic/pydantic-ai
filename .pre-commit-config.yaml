@@ -4,6 +4,7 @@ repos:
     hooks:
       - id: no-commit-to-branch # prevent direct commits to the `main` branch
       - id: check-yaml
+        args: ["--unsafe"]
       - id: check-toml
       - id: end-of-file-fixer
       - id: trailing-whitespace

@@ -38,6 +38,13 @@ from . import (
 
 @dataclass(init=False)
 class OpenAIModel(Model):
+    """A model that uses the OpenAI API.
+
+    Internally, this uses the [OpenAI Python client](https://github.com/openai/openai-python) to interact with the API.
+
+    Apart from `__init__`, all methods are private or match those of the base class.
+    """
+
     model_name: ChatModel
     client: AsyncOpenAI = field(repr=False)
 
@@ -49,9 +56,23 @@ class OpenAIModel(Model):
         openai_client: AsyncOpenAI | None = None,
         http_client: AsyncHTTPClient | None = None,
     ):
+        """Initialize an OpenAI model.
+
+        Args:
+            model_name: The name of the OpenAI model to use. List of model names available
+                [here](https://github.com/openai/openai-python/blob/v1.54.3/src/openai/types/chat_model.py#L7)
+                (Unfortunately, despite being ask to do so, OpenAI do not provide `.inv` files for their API).
+            api_key: The API key to use for authentication, if not provided, the `OPENAI_API_KEY` environment variable
+                will be used if available.
+            openai_client: An existing
+                [`AsyncOpenAI`](https://github.com/openai/openai-python?tab=readme-ov-file#async-usage)
+                client to use, if provided, `api_key` and `http_client` must be `None`.
+            http_client: An existing `httpx.AsyncClient` to use for making HTTP requests.
+        """
         self.model_name: ChatModel = model_name
         if openai_client is not None:
             assert http_client is None, 'Cannot provide both `openai_client` and `http_client`'
+            assert api_key is None, 'Cannot provide both `openai_client` and `api_key`'
             self.client = openai_client
         elif http_client is not None:
             self.client = AsyncOpenAI(api_key=api_key, http_client=http_client)
@@ -64,9 +85,9 @@ class OpenAIModel(Model):
         allow_text_result: bool,
         result_tools: Sequence[AbstractToolDefinition] | None,
     ) -> AgentModel:
-        tools = [self.map_tool_definition(r) for r in retrievers.values()]
+        tools = [self._map_tool_definition(r) for r in retrievers.values()]
         if result_tools is not None:
-            tools += [self.map_tool_definition(r) for r in result_tools]
+            tools += [self._map_tool_definition(r) for r in result_tools]
         return OpenAIAgentModel(
             self.client,
             self.model_name,
@@ -78,7 +99,7 @@ class OpenAIModel(Model):
         return f'openai:{self.model_name}'
 
     @staticmethod
-    def map_tool_definition(f: AbstractToolDefinition) -> chat.ChatCompletionToolParam:
+    def _map_tool_definition(f: AbstractToolDefinition) -> chat.ChatCompletionToolParam:
         return {
             'type': 'function',
             'function': {
@@ -91,6 +112,8 @@ class OpenAIModel(Model):
 
 @dataclass
 class OpenAIAgentModel(AgentModel):
+    """Implementation of `AgentModel` for OpenAI models."""
+
     client: AsyncOpenAI
     model_name: ChatModel
     allow_text_result: bool
@@ -228,6 +251,8 @@ class OpenAIAgentModel(AgentModel):
 
 @dataclass
 class OpenAIStreamTextResponse(StreamTextResponse):
+    """Implementation of `StreamTextResponse` for OpenAI models."""
+
     _first: str | None
     _response: AsyncStream[ChatCompletionChunk]
     _timestamp: datetime
@@ -266,6 +291,8 @@ class OpenAIStreamTextResponse(StreamTextResponse):
 
 @dataclass
 class OpenAIStreamStructuredResponse(StreamStructuredResponse):
+    """Implementation of `StreamStructuredResponse` for OpenAI models."""
+
     _response: AsyncStream[ChatCompletionChunk]
     _delta_tool_calls: dict[int, ChoiceDeltaToolCall]
     _timestamp: datetime
@@ -295,7 +322,6 @@ class OpenAIStreamStructuredResponse(StreamStructuredResponse):
                 self._delta_tool_calls[new.index] = new
 
     def get(self, *, final: bool = False) -> ModelStructuredResponse:
-        """Map tool call deltas to a `ModelStructuredResponse`."""
         calls: list[ToolCall] = []
         for c in self._delta_tool_calls.values():
             if f := c.function:

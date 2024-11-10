@@ -84,8 +84,8 @@ async def test_structured_response_iter():
         name = agent_info.result_tools[0].name
         json_data = json.dumps({'response': [1, 2, 3, 4]})
         yield {0: DeltaToolCall(name=name)}
-        yield {0: DeltaToolCall(args=json_data[:15])}
-        yield {0: DeltaToolCall(args=json_data[15:])}
+        yield {0: DeltaToolCall(json_args=json_data[:15])}
+        yield {0: DeltaToolCall(json_args=json_data[15:])}
 
     agent = Agent(FunctionModel(stream_function=text_stream), deps=None, result_type=list[int])
 
@@ -169,8 +169,8 @@ async def test_call_retriever():
             assert isinstance(first, UserPrompt)
             json_string = json.dumps({'x': first.content})
             yield {0: DeltaToolCall(name=name)}
-            yield {0: DeltaToolCall(args=json_string[:3])}
-            yield {0: DeltaToolCall(args=json_string[3:])}
+            yield {0: DeltaToolCall(json_args=json_string[:3])}
+            yield {0: DeltaToolCall(json_args=json_string[3:])}
         else:
             last = messages[-1]
             assert isinstance(last, ToolReturn)
@@ -179,8 +179,8 @@ async def test_call_retriever():
             name = agent_info.result_tools[0].name
             json_data = json.dumps({'response': [last.content, 2]})
             yield {0: DeltaToolCall(name=name)}
-            yield {0: DeltaToolCall(args=json_data[:5])}
-            yield {0: DeltaToolCall(args=json_data[5:])}
+            yield {0: DeltaToolCall(json_args=json_data[:5])}
+            yield {0: DeltaToolCall(json_args=json_data[5:])}
 
     agent = Agent(FunctionModel(stream_function=stream_structured_function), deps=None, result_type=tuple[str, int])
 
@@ -235,7 +235,7 @@ async def test_call_retriever_empty():
 
 async def test_call_retriever_wrong_name():
     def stream_structured_function(_messages: list[Message], _: AgentInfo) -> Iterable[DeltaToolCalls] | Iterable[str]:
-        yield {0: DeltaToolCall(name='foobar', args='{}')}
+        yield {0: DeltaToolCall(name='foobar', json_args='{}')}
 
     agent = Agent(FunctionModel(stream_function=stream_structured_function), deps=None, result_type=tuple[str, int])
 

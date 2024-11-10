@@ -1,8 +1,4 @@
-"""Utilities for testing apps build with pydantic_ai.
-
-Specifically by using a model based which calls all retrievers in the agent by inferring the arguments
-from the JSON schema. Also infers suitable data for the return type.
-"""
+"""Utilities for testing apps built with PydanticAI."""
 
 from __future__ import annotations as _annotations
 
@@ -53,19 +49,26 @@ class TestModel(Model):
     otherwise a plain response.
 
     How useful this function will be is unknown, it may be useless, it may require significant changes to be useful.
+
+    Apart from `__init__` derived by the `dataclass` decorator, all methods are private or match those
+    of the base class.
     """
 
     # NOTE: Avoid test discovery by pytest.
     __test__ = False
 
     call_retrievers: list[str] | Literal['all'] = 'all'
+    """List of retrievers to call. If `'all'`, all retrievers will be called."""
     custom_result_text: str | None = None
+    """If set, this text is return as teh final result."""
     custom_result_args: Any | None = None
-    # these three fields are all set by calling `agent_model`
-    agent_model_retrievers: Mapping[str, AbstractToolDefinition] | None = None
-    agent_model_allow_text_result: bool | None = None
-    agent_model_result_tools: list[AbstractToolDefinition] | None = None
+    """If set, these args will be passed to the result tool."""
     seed: int = 0
+    """Seed for generating random data."""
+    # these fields are set when the model is called by the agent
+    agent_model_retrievers: Mapping[str, AbstractToolDefinition] | None = field(default=None, init=False)
+    agent_model_allow_text_result: bool | None = field(default=None, init=False)
+    agent_model_result_tools: list[AbstractToolDefinition] | None = field(default=None, init=False)
 
     def agent_model(
         self,
@@ -109,6 +112,8 @@ class TestModel(Model):
 
 @dataclass
 class TestAgentModel(AgentModel):
+    """Implementation of `AgentModel` for testing purposes."""
+
     # NOTE: Avoid test discovery by pytest.
     __test__ = False
 
@@ -133,7 +138,6 @@ class TestAgentModel(AgentModel):
             yield TestStreamStructuredResponse(msg, cost)
 
     def gen_retriever_args(self, tool_def: AbstractToolDefinition) -> Any:
-        """Generate arguments for a retriever."""
         return _JsonSchemaTestData(tool_def.json_schema, self.seed).generate()
 
     def _request(self, messages: list[Message]) -> ModelAnyResponse:

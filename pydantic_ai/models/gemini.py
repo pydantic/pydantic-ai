@@ -1,4 +1,4 @@
-"""Custom interface to the `generativelanguage.googleapis.com` API using HTTPX and Pydantic.
+"""Custom interface to the `generativelanguage.googleapis.com` API using [HTTPX] and [Pydantic].
 
 The Google SDK for interacting with the `generativelanguage.googleapis.com` API
 [`google-generativeai`](https://ai.google.dev/gemini-api/docs/quickstart?lang=python) reads like it was written by a
@@ -9,9 +9,15 @@ and tries to implement tool calling itself, but doesn't use Pydantic or equivale
 We could also use the Google Vertex SDK,
 [`google-cloud-aiplatform`](https://cloud.google.com/vertex-ai/docs/python-sdk/use-vertex-ai-python-sdk)
 which uses the `*-aiplatform.googleapis.com` API, but that requires a service account for authentication
-which is a faff to set up and manage. The big advantages of `*-aiplatform.googleapis.com` is that it claims API
-compatibility with OpenAI's API, but I suspect Gemini's limited support for JSON Schema means you'd need to
-hack around its limitations anyway for tool calls.
+which is a faff to set up and manage.
+
+Both APIs claim compatibility with OpenAI's API, but that breaks down with even the simplest of requests,
+hence this custom interface.
+
+Despite these limitations, the Gemini model is actually quite powerful and very fast.
+
+[HTTPX]: https://www.python-httpx.org/
+[Pydantic]: https://docs.pydantic.dev/latest/
 """
 
 from __future__ import annotations as _annotations
@@ -51,14 +57,23 @@ from . import (
     cached_async_http_client,
 )
 
-__all__ = 'GeminiModel', 'GeminiModelName'
-
-# https://ai.google.dev/gemini-api/docs/models/gemini#model-variations
 GeminiModelName = Literal['gemini-1.5-flash', 'gemini-1.5-flash-8b', 'gemini-1.5-pro', 'gemini-1.0-pro']
+"""Named Gemini models.
+
+See [the Gemini API docs](https://ai.google.dev/gemini-api/docs/models/gemini#model-variations) for a full list.
+"""
 
 
 @dataclass(init=False)
 class GeminiModel(Model):
+    """A model that uses Gemini via `generativelanguage.googleapis.com` API.
+
+    This is implemented from scratch rather than using a dedicated SDK, good API documentation is
+    available [here](https://ai.google.dev/api).
+
+    Apart from `__init__`, all methods are private or match those of the base class.
+    """
+
     model_name: GeminiModelName
     api_key: str
     http_client: AsyncHTTPClient
@@ -70,9 +85,18 @@ class GeminiModel(Model):
         *,
         api_key: str | None = None,
         http_client: AsyncHTTPClient | None = None,
-        # https://ai.google.dev/gemini-api/docs/quickstart?lang=rest#make-first-request
         url_template: str = 'https://generativelanguage.googleapis.com/v1beta/models/{model}:{function}',
     ):
+        """Initialize a Gemini model.
+
+        Args:
+            model_name: The name of the model to use.
+            api_key: The API key to use for authentication, if not provided, the `GEMINI_API_KEY` environment variable
+                will be used if available.
+            http_client: An existing `httpx.AsyncClient` to use for making HTTP requests.
+            url_template: The URL template to use for making requests, you shouldn't need to change this,
+                docs [here](https://ai.google.dev/gemini-api/docs/quickstart?lang=rest#make-first-request).
+        """
         self.model_name = model_name
         if api_key is None:
             if env_api_key := os.getenv('GEMINI_API_KEY'):
@@ -113,6 +137,8 @@ class GeminiModel(Model):
 
 @dataclass
 class GeminiAgentModel(AgentModel):
+    """Implementation of `AgentModel` for Gemini models."""
+
     http_client: AsyncHTTPClient
     model_name: GeminiModelName
     api_key: str
@@ -226,6 +252,8 @@ class GeminiAgentModel(AgentModel):
 
 @dataclass
 class GeminiStreamTextResponse(StreamTextResponse):
+    """Implementation of `StreamTextResponse` for the Gemini model."""
+
     _json_content: bytearray
     _stream: AsyncIterator[bytes]
     _position: int = 0
@@ -250,7 +278,7 @@ class GeminiStreamTextResponse(StreamTextResponse):
         for r in new_responses:
             self._cost += _metadata_as_cost(r['usage_metadata'])
             parts = r['candidates'][0]['content']['parts']
-            if all_text_parts(parts):
+            if _all_text_parts(parts):
                 for part in parts:
                     yield part['text']
             else:
@@ -267,6 +295,8 @@ class GeminiStreamTextResponse(StreamTextResponse):
 
 @dataclass
 class GeminiStreamStructuredResponse(StreamStructuredResponse):
+    """Implementation of `StreamStructuredResponse` for the Gemini model."""
+
     _content: bytearray
     _stream: AsyncIterator[bytes]
     _timestamp: datetime = field(default_factory=_utils.now_utc, init=False)
@@ -295,7 +325,7 @@ class GeminiStreamStructuredResponse(StreamStructuredResponse):
             self._cost += _metadata_as_cost(r['usage_metadata'])
             candidate = r['candidates'][0]
             parts = candidate['content']['parts']
-            if all_function_call_parts(parts):
+            if _all_function_call_parts(parts):
                 combined_parts.extend(parts)
             elif not candidate.get('finish_reason'):
                 # you can get an empty text part along with the finish_reason, so we ignore that case
@@ -497,9 +527,9 @@ def _extract_response_parts(
     if len(response['candidates']) != 1:
         raise UnexpectedModelBehaviour('Expected exactly one candidate in Gemini response')
     parts = response['candidates'][0]['content']['parts']
-    if all_function_call_parts(parts):
+    if _all_function_call_parts(parts):
         return _utils.Either(left=parts)
-    elif all_text_parts(parts):
+    elif _all_text_parts(parts):
         return _utils.Either(right=parts)
     else:
         raise exceptions.UnexpectedModelBehaviour(
@@ -507,11 +537,11 @@ def _extract_response_parts(
         )
 
 
-def all_function_call_parts(parts: list[_GeminiPartUnion]) -> TypeGuard[list[_GeminiFunctionCallPart]]:
+def _all_function_call_parts(parts: list[_GeminiPartUnion]) -> TypeGuard[list[_GeminiFunctionCallPart]]:
     return all('function_call' in part for part in parts)
 
 
-def all_text_parts(parts: list[_GeminiPartUnion]) -> TypeGuard[list[_GeminiTextPart]]:
+def _all_text_parts(parts: list[_GeminiPartUnion]) -> TypeGuard[list[_GeminiTextPart]]:
     return all('text' in part for part in parts)
 
 

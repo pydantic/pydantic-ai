@@ -29,10 +29,11 @@ _logfire = logfire_api.Logfire(otel_scope='pydantic-ai')
 @final
 @dataclass(init=False)
 class Agent(Generic[AgentDeps, ResultData]):
-    """Main class for creating "agents" - a way to have a specific type of "conversation" with an LLM."""
+    """Class for defining "agents" - a way to have a specific type of "conversation" with an LLM."""
 
     # dataclass fields mostly for my sanity — knowing what attributes are available
     model: models.Model | None
+    """The default model configured for this agent."""
     _result_schema: _result.ResultSchema[ResultData] | None
     _result_validators: list[_result.ResultValidator[AgentDeps, ResultData]]
     _allow_text_result: bool
@@ -62,6 +63,21 @@ class Agent(Generic[AgentDeps, ResultData]):
         result_tool_description: str | None = None,
         result_retries: int | None = None,
     ):
+        """Create an agent.
+
+        Args:
+            model: The default model to use for this agent, if not provide,
+                you must provide the model when calling the agent.
+            result_type: The type of the result data, used to validate the result data, defaults to `str`.
+            system_prompt: Static system prompts to use for this agent, you can also register system
+                prompts via a function with [`system_prompt`][pydantic_ai.Agent.system_prompt].
+            deps: The type used for dependency injection, this parameter exists solely to allow you to fully
+                parameterize the agent, and therefore get the best out of static type checking.
+            retries: The default number of retries to allow before raising an error.
+            result_tool_name: The name of the tool to use for the final result.
+            result_tool_description: The description of the final result tool.
+            result_retries: The maximum number of retries to allow for result validation, defaults to `retries`.
+        """
         self.model = models.infer_model(model) if model is not None else None
 
         self._result_schema = _result.ResultSchema[result_type].build(

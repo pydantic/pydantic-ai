@@ -10,7 +10,7 @@
 
 .PHONY: install  # Install the package, dependencies, and pre-commit for local development
 install: .uv .pre-commit
-	uv sync --frozen --all-extras
+	uv sync --frozen --all-extras --group docs
 	pre-commit install --install-hooks
 
 .PHONY: format  # Format the code
@@ -53,6 +53,16 @@ test-all-python:
 testcov: test
 	@echo "building coverage html"
 	@uv run coverage html
+
+# `--no-strict` so you can build the docs without insiders packages
+.PHONY: docs  # Build the documentation
+docs:
+	uv run mkdocs build --no-strict
+
+# `--no-strict` so you can build the docs without insiders packages
+.PHONY: docs-serve  # Build and serve the documentation
+docs-serve:
+	uv run mkdocs serve --no-strict
 
 .PHONY: all
 all: format lint typecheck testcov

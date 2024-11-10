@@ -1,0 +1,133 @@
+site_name: PydanticAI
+site_description: PydanticAI
+strict: true
+site_url: https://ai.pydantic.dev
+
+repo_name: pydantic/pydantic-ai
+repo_url: https://github.com/pydantic/pydantic-ai
+edit_uri: edit/main/docs/
+
+copyright: © Pydantic Services Inc. 2024 to present
+
+nav:
+  - Getting Started:
+    - index.md
+  - API Reference:
+    - api/agent.md
+    - Models:
+      - Model Base Classes: api/models/index.md
+      - OpenAI: api/models/openai.md
+      - Gemini: api/models/gemini.md
+      - Test: api/models/test.md
+      - Function: api/models/function.md
+
+extra:
+  # hide the "Made with Material for MkDocs" message
+  generator: false
+
+theme:
+  name: "material"
+  palette:
+    - media: "(prefers-color-scheme)"
+      scheme: default
+      primary: pink
+      accent: pink
+      toggle:
+        icon: material/lightbulb
+        name: "Switch to light mode"
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: pink
+      accent: pink
+      toggle:
+        icon: material/lightbulb-outline
+        name: "Switch to dark mode"
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: pink
+      accent: pink
+      toggle:
+        icon: material/lightbulb-auto-outline
+        name: "Switch to system preference"
+  features:
+    - search.suggest
+    - search.highlight
+    - content.tabs.link
+    - content.code.annotate
+    - content.code.copy
+    - content.code.select
+    - navigation.expand
+    - navigation.indexes
+    - navigation.path
+    - navigation.tabs
+    - navigation.sections
+    - navigation.tracking
+    - navigation.top # alternatively, we could do navigation.tabs.sticky
+    - toc.follow
+#  logo: "logo-white.svg"
+#  favicon: "favicon.png"
+
+# https://www.mkdocs.org/user-guide/configuration/#validation
+validation:
+  omitted_files: warn
+  absolute_links: warn
+  unrecognized_links: warn
+
+# used for analytics
+extra_javascript:
+  - "/flarelytics/client.js"
+
+markdown_extensions:
+  - tables
+  - admonition
+  - attr_list
+  - md_in_html
+  - pymdownx.details
+  - pymdownx.caret
+  - pymdownx.critic
+  - pymdownx.mark
+  - pymdownx.superfences
+  - pymdownx.snippets
+  - pymdownx.tilde
+  - pymdownx.highlight:
+      pygments_lang_class: true
+  - pymdownx.extra:
+      pymdownx.superfences:
+        custom_fences:
+          - name: mermaid
+            class: mermaid
+            format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - sane_lists # this means you can start a list from any number
+
+watch:
+  - pydantic_ai
+  - pydantic_ai_examples
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [src/packages/pydantic_ai/pydantic_ai]
+          options:
+            members_order: source
+            separate_signature: true
+            show_signature_annotations: true
+            signature_crossrefs: true
+            group_by_category: false
+            show_source: false
+            heading_level: 2
+          import:
+            - url: https://docs.python.org/3/objects.inv
+            - url: https://docs.pydantic.dev/latest/objects.inv
+            - url: https://fastapi.tiangolo.com/objects.inv
+            - url: https://typing-extensions.readthedocs.io/en/latest/objects.inv
+            - url: https://rich.readthedocs.io/en/stable/objects.inv
+            # waiting for https://github.com/encode/httpx/discussions/3091#discussioncomment-11205594
