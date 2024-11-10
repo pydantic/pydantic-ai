@@ -1,16 +1,8 @@
 from __future__ import annotations as _annotations
 
 import json
-from typing import TYPE_CHECKING
 
-from pydantic import ValidationError
-
-from . import messages
-
-if TYPE_CHECKING:
-    from .models import Model
-
-__all__ = 'ModelRetry', 'AgentError', 'UserError', 'UnexpectedModelBehaviour'
+__all__ = 'ModelRetry', 'UserError', 'UnexpectedModelBehaviour'
 
 
 class ModelRetry(Exception):
@@ -24,46 +16,6 @@ class ModelRetry(Exception):
     def __init__(self, message: str):
         self.message = message
         super().__init__(message)
-
-
-class AgentError(RuntimeError):
-    """Exception raised when an Agent run fails due to a problem with the LLM being used or.
-
-    This exception should always have a cause which you can access to find out what went wrong, it exists so you
-    can access the history of messages when the error occurred.
-    """
-
-    history: list[messages.Message]
-    agent_name: str
-
-    def __init__(self, history: list[messages.Message], model: Model):
-        self.history = history
-        self.model_name = model.name()
-        super().__init__(f'Error while running model {self.model_name}')
-
-    def cause(self) -> ValidationError | UnexpectedModelBehaviour:
-        """This is really just typing super and improved find-ability for `Exception.__cause__`."""
-        cause = self.__cause__
-        if isinstance(cause, (ValidationError, UnexpectedModelBehaviour)):
-            return cause
-        else:
-            raise TypeError(
-                f'Unexpected cause type for AgentError: {type(cause)}, '
-                f'expected ValidationError or UnexpectedModelBehaviour'
-            )
-
-    def __str__(self) -> str:
-        count = len(self.history)
-        plural = 's' if count != 1 else ''
-        msg = f'{super().__str__()} after {count} message{plural}'
-        cause = self.__cause__
-        if isinstance(cause, UnexpectedModelBehaviour):
-            return f'{msg}\n  caused by unexpected model behavior: {cause.message}'
-        elif isinstance(cause, ValidationError):
-            summary = str(cause).split('\n', 1)[0]
-            return f'{msg}\n  caused by: {summary}'
-        else:
-            return msg
 
 
 class UserError(RuntimeError):

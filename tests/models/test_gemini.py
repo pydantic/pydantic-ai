@@ -12,7 +12,7 @@ from inline_snapshot import snapshot
 from pydantic import BaseModel
 from typing_extensions import Literal, TypeAlias
 
-from pydantic_ai import Agent, AgentError, ModelRetry, UnexpectedModelBehaviour, UserError, _utils
+from pydantic_ai import Agent, ModelRetry, UnexpectedModelBehaviour, UserError, _utils
 from pydantic_ai.messages import (
     ArgsObject,
     ModelStructuredResponse,
@@ -494,17 +494,10 @@ async def test_unexpected_response(client_with_handler: ClientWithHandler, env: 
     m = GeminiModel('gemini-1.5-flash', http_client=gemini_client)
     agent = Agent(m, deps=None, system_prompt='this is the system prompt')
 
-    with pytest.raises(AgentError, match='Error while running model gemini-1.5-flash') as exc_info:
+    with pytest.raises(UnexpectedModelBehaviour) as exc_info:
         await agent.run('Hello')
 
-    assert str(exc_info.value) == snapshot(
-        'Error while running model gemini-1.5-flash after 2 messages\n'
-        '  caused by unexpected model behavior: Unexpected response from gemini 401'
-    )
-
-    cause = exc_info.value.cause()
-    assert isinstance(cause, UnexpectedModelBehaviour)
-    assert str(cause) == snapshot('Unexpected response from gemini 401, body:\ninvalid request')
+    assert str(exc_info.value) == snapshot('Unexpected response from gemini 401, body:\ninvalid request')
 
 
 async def test_heterogeneous_responses(get_gemini_client: GetGeminiClient):
@@ -525,12 +518,10 @@ async def test_heterogeneous_responses(get_gemini_client: GetGeminiClient):
     gemini_client = get_gemini_client(response)
     m = GeminiModel('gemini-1.5-flash', http_client=gemini_client)
     agent = Agent(m, deps=None)
-    with pytest.raises(AgentError, match='Error while running model gemini-1.5-flash') as exc_info:
+    with pytest.raises(UnexpectedModelBehaviour) as exc_info:
         await agent.run('Hello')
 
-    cause = exc_info.value.cause()
-    assert isinstance(cause, UnexpectedModelBehaviour)
-    assert str(cause) == snapshot(
+    assert str(exc_info.value) == snapshot(
         'Unsupported response from Gemini, expected all parts to be function calls or text, got: '
         "[{'text': 'foo'}, {'function_call': {'name': 'get_location', 'args': {'loc_name': 'San Fransisco'}}}]"
     )
@@ -565,7 +556,7 @@ async def test_stream_text_no_data(get_gemini_client: GetGeminiClient):
     gemini_client = get_gemini_client(stream)
     m = GeminiModel('gemini-1.5-flash', http_client=gemini_client)
     agent = Agent(m, deps=None)
-    with pytest.raises(AgentError, match='caused by unexpected model behavior: Streamed response ended without con'):
+    with pytest.raises(UnexpectedModelBehaviour, match='Streamed response ended without con'):
         async with agent.run_stream('Hello'):
             pass
 
