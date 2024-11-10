@@ -292,7 +292,7 @@ class OpenAIStreamToolCallResponse(StreamToolCallResponse):
             else:
                 self._delta_tool_calls[new.index] = new
 
-    def get(self) -> LLMToolCalls:
+    def get(self, *, final: bool = False) -> LLMToolCalls:
         """Map tool call deltas to a `LLMToolCalls`."""
         calls: list[ToolCall] = []
         for c in self._delta_tool_calls.values():

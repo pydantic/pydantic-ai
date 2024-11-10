@@ -90,11 +90,11 @@ async def test_structured_response_iter():
 
     chunks: list[list[int]] = []
     async with agent.run_stream('') as result:
-        async for structured_response in result.stream_structured(debounce_by=None):
-            response_data = await result.validate_structured_result(structured_response, allow_partial=True)
+        async for structured_response, last in result.stream_structured(debounce_by=None):
+            response_data = await result.validate_structured_result(structured_response, allow_partial=not last)
             chunks.append(response_data)
 
-    assert chunks == snapshot([[1], [1, 2, 3, 4]])
+    assert chunks == snapshot([[1], [1, 2, 3, 4], [1, 2, 3, 4]])
 
 
 async def test_streamed_text_stream():

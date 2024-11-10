@@ -156,7 +156,7 @@ class FunctionStreamToolCallResponse(StreamToolCallResponse):
             else:
                 self._delta_tool_calls[key] = new
 
-    def get(self) -> LLMToolCalls:
+    def get(self, *, final: bool = False) -> LLMToolCalls:
         """Map tool call deltas to a `LLMToolCalls`."""
         calls: list[ToolCall] = []
         for c in self._delta_tool_calls.values():

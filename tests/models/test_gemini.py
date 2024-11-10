@@ -580,7 +580,7 @@ async def test_stream_structured(get_gemini_client: GetGeminiClient):
 
     async with agent.run_stream('Hello') as result:
         chunks = [chunk async for chunk in result.stream(debounce_by=None)]
-        assert chunks == snapshot([(1, 2), (1, 2)])
+        assert chunks == snapshot([(1, 2), (1, 2), (1, 2)])
     assert result.cost() == snapshot(Cost(request_tokens=1, response_tokens=2, total_tokens=3))
 
 
@@ -593,16 +593,16 @@ async def test_stream_structured_tool_calls(get_gemini_client: GetGeminiClient):
             _content_function_call(LLMToolCalls(calls=[ToolCall.from_object('bar', {'y': 'b'})])),
         ),
     ]
-    first_json_data = _gemini_streamed_response_ta.dump_json(first_responses, by_alias=True)
-    first_stream = AsyncByteStreamList([first_json_data[:100], first_json_data[100:200], first_json_data[200:]])
+    d1 = _gemini_streamed_response_ta.dump_json(first_responses, by_alias=True)
+    first_stream = AsyncByteStreamList([d1[:100], d1[100:200], d1[200:300], d1[300:]])
 
     second_responses = [
         gemini_response(
             _content_function_call(LLMToolCalls(calls=[ToolCall.from_object('final_result', {'response': [1, 2]})])),
         ),
     ]
-    second_json_data = _gemini_streamed_response_ta.dump_json(second_responses, by_alias=True)
-    second_stream = AsyncByteStreamList([second_json_data[:100], second_json_data[100:200], second_json_data[200:]])
+    d2 = _gemini_streamed_response_ta.dump_json(second_responses, by_alias=True)
+    second_stream = AsyncByteStreamList([d2[:100], d2[100:]])
 
     gemini_client = get_gemini_client([first_stream, second_stream])
     model = GeminiModel('gemini-1.5-flash', http_client=gemini_client)

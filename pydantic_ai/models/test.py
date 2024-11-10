@@ -207,12 +207,12 @@ class TestStreamToolCallResponse(StreamToolCallResponse):
     _structured_response: LLMToolCalls
     _cost: Cost
     _iter: Iterator[None] = field(default_factory=lambda: iter([None]))
-    _timestamp: datetime = field(default_factory=_utils.now_utc)
+    _timestamp: datetime = field(default_factory=_utils.now_utc, init=False)
 
     async def __anext__(self) -> None:
         return _utils.sync_anext(self._iter)
 
-    def get(self) -> LLMToolCalls:
+    def get(self, *, final: bool = False) -> LLMToolCalls:
         return self._structured_response
 
     def cost(self) -> Cost:

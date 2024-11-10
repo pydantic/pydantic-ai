@@ -88,8 +88,8 @@ class StreamTextResponse(ABC):
         """Returns an iterable of text since the last call to `get()` — e.g. the text delta.
 
         Args:
-            final: If True, this is the final call, after iteration is complete, JSON should be fully validated
-                and all items extracted.
+            final: If True, this is the final call, after iteration is complete, the response should be fully validated
+                and all text extracted.
         """
         raise NotImplementedError()
 
@@ -124,10 +124,13 @@ class StreamToolCallResponse(ABC):
         raise NotImplementedError()
 
     @abstractmethod
-    def get(self) -> LLMToolCalls:
+    def get(self, *, final: bool = False) -> LLMToolCalls:
         """Get the `LLMToolCalls` at this point.
 
         The `LLMToolCalls` may or may not be complete, depending on whether the stream is finished.
+
+        Args:
+            final: If True, this is the final call, after iteration is complete, the response should be fully validated.
         """
         raise NotImplementedError()
 

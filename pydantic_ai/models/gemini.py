@@ -269,13 +269,14 @@ class GeminiStreamTextResponse(StreamTextResponse):
 class GeminiStreamToolCallResponse(StreamToolCallResponse):
     _content: bytearray
     _stream: AsyncIterator[bytes]
-    _timestamp: datetime = field(default_factory=_utils.now_utc)
+    _timestamp: datetime = field(default_factory=_utils.now_utc, init=False)
+    _cost: result.Cost = field(default_factory=result.Cost, init=False)
 
     async def __anext__(self) -> None:
         chunk = await self._stream.__anext__()
         self._content.extend(chunk)
 
-    def get(self) -> LLMToolCalls:
+    def get(self, *, final: bool = False) -> LLMToolCalls:
         """Get the `LLMToolCalls` at this point.
 
         NOTE: It's not clear how the stream of responses should be combined because Gemini seems to always
@@ -284,9 +285,14 @@ class GeminiStreamToolCallResponse(StreamToolCallResponse):
         I'm therefore assuming that each part contains a complete tool call, and not trying to combine data from
         separate parts.
         """
-        responses = self._responses()
+        responses = _gemini_streamed_response_ta.validate_json(
+            self._content,  # type: ignore # see https://github.com/pydantic/pydantic/pull/10802
+            experimental_allow_partial=not final,
+        )
         combined_parts: list[_GeminiFunctionCallPart] = []
+        self._cost = result.Cost()
         for r in responses:
+            self._cost += _metadata_as_cost(r['usage_metadata'])
             candidate = r['candidates'][0]
             parts = candidate['content']['parts']
             if all_function_call_parts(parts):
@@ -299,19 +305,10 @@ class GeminiStreamToolCallResponse(StreamToolCallResponse):
         return _tool_call_from_parts(combined_parts, timestamp=self._timestamp)
 
     def cost(self) -> result.Cost:
-        cost = result.Cost()
-        for response in self._responses():
-            cost += _metadata_as_cost(response['usage_metadata'])
-        return cost
+        return self._cost
 
     def timestamp(self) -> datetime:
         return self._timestamp
-
-    def _responses(self) -> list[_GeminiResponse]:
-        return _gemini_streamed_response_ta.validate_json(
-            self._content,  # type: ignore # see https://github.com/pydantic/pydantic/pull/10802
-            experimental_allow_partial=True,
-        )
 
 
 # We use typed dicts to define the Gemini API response schema

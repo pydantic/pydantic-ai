@@ -414,13 +414,16 @@ class Agent(Generic[AgentDeps, ResultData]):
 
             # otherwise we run all retriever functions in parallel
             tasks: list[asyncio.Task[_messages.Message]] = []
-            for call in model_response.calls:
-                retriever = self._retrievers.get(call.tool_name)
-                if retriever is None:
-                    await _cancel_tasks(tasks)
-                    # should this be a retry error?
-                    raise exceptions.UnexpectedModelBehaviour(f'Unknown function name: {call.tool_name!r}')
-                tasks.append(asyncio.create_task(retriever.run(deps, call), name=call.tool_name))
+            try:
+                for call in model_response.calls:
+                    retriever = self._retrievers.get(call.tool_name)
+                    if retriever is None:
+                        # should this be a retry error?
+                        raise exceptions.UnexpectedModelBehaviour(f'Unknown function name: {call.tool_name!r}')
+                    tasks.append(asyncio.create_task(retriever.run(deps, call), name=call.tool_name))
+            except BaseException:
+                await _cancel_tasks(tasks)
+                raise
 
             with _logfire.span('running {tools=}', tools=[t.get_name() for t in tasks]):
                 new_messages = await asyncio.gather(*tasks)
@@ -476,13 +479,16 @@ class Agent(Generic[AgentDeps, ResultData]):
 
             # we now run all retriever functions in parallel
             tasks: list[asyncio.Task[_messages.Message]] = []
-            for call in tool_call_msg.calls:
-                retriever = self._retrievers.get(call.tool_name)
-                if retriever is None:
-                    # otherwise we'll get warnings about coroutines not awaited
-                    await _cancel_tasks(tasks)
-                    raise exceptions.UnexpectedModelBehaviour(f'Unknown function name: {call.tool_name!r}')
-                tasks.append(asyncio.create_task(retriever.run(deps, call), name=call.tool_name))
+            try:
+                for call in tool_call_msg.calls:
+                    retriever = self._retrievers.get(call.tool_name)
+                    if retriever is None:
+                        raise exceptions.UnexpectedModelBehaviour(f'Unknown function name: {call.tool_name!r}')
+                    tasks.append(asyncio.create_task(retriever.run(deps, call), name=call.tool_name))
+            except BaseException:
+                # otherwise we'll get warnings about coroutines not awaited
+                await _cancel_tasks(tasks)
+                raise
 
             with _logfire.span('running {tools=}', tools=[t.get_name() for t in tasks]):
                 messages += await asyncio.gather(*tasks)
