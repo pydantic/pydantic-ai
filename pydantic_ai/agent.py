@@ -377,7 +377,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         Returns:
             Return `Either` — left: final result data, right: list of messages to send back to the model.
         """
-        if model_response.role == 'llm-response':
+        if model_response.role == 'model-text-response':
             # plain string response
             if self._allow_text_result:
                 result_data_input = cast(ResultData, model_response.content)
@@ -394,7 +394,7 @@ class Agent(Generic[AgentDeps, ResultData]):
                     content='Plain text responses are not permitted, please call one of the functions instead.',
                 )
                 return _utils.Either(right=[response])
-        elif model_response.role == 'llm-tool-calls':
+        elif model_response.role == 'model-structured-response':
             if self._result_schema is not None:
                 # if there's a result schema, and any of the calls match one of its tools, return the result
                 # NOTE: this means we ignore any other tools called here

@@ -70,7 +70,7 @@ class RetryPrompt:
 class ModelTextResponse:
     content: str
     timestamp: datetime = field(default_factory=_now_utc)
-    role: Literal['llm-response'] = 'llm-response'
+    role: Literal['model-text-response'] = 'model-text-response'
 
 
 @dataclass
@@ -110,7 +110,7 @@ class ToolCall:
 class ModelStructuredResponse:
     calls: list[ToolCall]
     timestamp: datetime = field(default_factory=_now_utc)
-    role: Literal['llm-tool-calls'] = 'llm-tool-calls'
+    role: Literal['model-structured-response'] = 'model-structured-response'
 
 
 ModelAnyResponse = Union[ModelTextResponse, ModelStructuredResponse]

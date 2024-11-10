@@ -214,10 +214,10 @@ class GeminiAgentModel(AgentModel):
         elif m.role == 'retry-prompt':
             # RetryPrompt ->
             return _utils.Either(right=_content_function_retry(m))
-        elif m.role == 'llm-response':
+        elif m.role == 'model-text-response':
             # ModelTextResponse ->
             return _utils.Either(right=_content_model_text(m.content))
-        elif m.role == 'llm-tool-calls':
+        elif m.role == 'model-structured-response':
             # ModelStructuredResponse ->
             return _utils.Either(right=_content_function_call(m))
         else:

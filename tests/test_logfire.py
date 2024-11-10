@@ -76,13 +76,13 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary]) -> None:
                 'id': 0,
                 'message': 'agent run prompt=Hello',
                 'children': [
-                    {'id': 1, 'message': 'model request -> llm-tool-calls'},
+                    {'id': 1, 'message': 'model request -> model-structured-response'},
                     {
                         'id': 2,
                         'message': 'handle model response -> tool-return',
                         'children': [{'id': 3, 'message': "running tools=['my_ret']"}],
                     },
-                    {'id': 4, 'message': 'model request -> llm-response'},
+                    {'id': 4, 'message': 'model request -> model-text-response'},
                     {'id': 5, 'message': 'handle model response -> final result'},
                 ],
             }
@@ -100,11 +100,11 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary]) -> None:
                 {
                     'calls': [{'tool_name': 'my_ret', 'args': {'args_object': {'x': 0}}, 'tool_id': None}],
                     'timestamp': IsStr() & IsNow(iso_string=True, tz=timezone.utc),
-                    'role': 'llm-tool-calls',
+                    'role': 'model-structured-response',
                 }
             ),
             'cost': IsJson({'request_tokens': None, 'response_tokens': None, 'total_tokens': None, 'details': None}),
-            'logfire.msg': 'model request -> llm-tool-calls',
+            'logfire.msg': 'model request -> model-structured-response',
             'logfire.json_schema': IsJson(
                 {
                     'type': 'object',

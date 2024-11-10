@@ -51,7 +51,7 @@ def test_simple():
             ModelTextResponse(
                 content="content='Hello' role='user' message_count=1",
                 timestamp=IsNow(tz=timezone.utc),
-                role='llm-response',
+                role='model-text-response',
             ),
         ]
     )
@@ -68,7 +68,7 @@ def test_simple():
             ModelTextResponse(
                 content="content='Hello' role='user' message_count=1",
                 timestamp=IsNow(tz=timezone.utc),
-                role='llm-response',
+                role='model-text-response',
             ),
             UserPrompt(
                 content='World',
@@ -78,7 +78,7 @@ def test_simple():
             ModelTextResponse(
                 content="content='World' role='user' message_count=3",
                 timestamp=IsNow(tz=timezone.utc),
-                role='llm-response',
+                role='model-text-response',
             ),
         ]
     )
@@ -141,7 +141,7 @@ def test_weather():
             ModelStructuredResponse(
                 calls=[ToolCall.from_json('get_location', '{"location_description": "London"}')],
                 timestamp=IsNow(tz=timezone.utc),
-                role='llm-tool-calls',
+                role='model-structured-response',
             ),
             ToolReturn(
                 tool_name='get_location',
@@ -157,7 +157,7 @@ def test_weather():
                     )
                 ],
                 timestamp=IsNow(tz=timezone.utc),
-                role='llm-tool-calls',
+                role='model-structured-response',
             ),
             ToolReturn(
                 tool_name='get_weather',
@@ -168,7 +168,7 @@ def test_weather():
             ModelTextResponse(
                 content='Raining in London',
                 timestamp=IsNow(tz=timezone.utc),
-                role='llm-response',
+                role='model-text-response',
             ),
         ]
     )

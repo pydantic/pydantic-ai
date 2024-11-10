@@ -210,11 +210,13 @@ class OpenAIAgentModel(AgentModel):
                     tool_call_id=_guard_tool_id(message),
                     content=message.model_response(),
                 )
-        elif message.role == 'llm-response':
+        elif message.role == 'model-text-response':
             # ModelTextResponse ->
             return chat.ChatCompletionAssistantMessageParam(role='assistant', content=message.content)
-        elif message.role == 'llm-tool-calls':
-            assert message.role == 'llm-tool-calls', f'Expected role to be "llm-tool-calls", got {message.role}'
+        elif message.role == 'model-structured-response':
+            assert (
+                message.role == 'model-structured-response'
+            ), f'Expected role to be "llm-tool-calls", got {message.role}'
             # ModelStructuredResponse ->
             return chat.ChatCompletionAssistantMessageParam(
                 role='assistant',

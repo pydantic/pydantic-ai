@@ -405,7 +405,7 @@ def test_run_with_history_new():
         )
     )
     new_msg_roles = [msg.role for msg in result2.new_messages()]
-    assert new_msg_roles == snapshot(['user', 'llm-tool-calls', 'tool-return', 'llm-response'])
+    assert new_msg_roles == snapshot(['user', 'model-structured-response', 'tool-return', 'model-text-response'])
     assert result2.new_messages_json().startswith(b'[{"content":"Hello again",')
 
     # if we pass all_messages, system prompt is NOT inserted before the message_history messages,
