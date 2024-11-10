@@ -10,10 +10,10 @@ from pydantic_ai import Agent, AgentError, CallContext, ModelRetry
 from pydantic_ai.messages import (
     ArgsJson,
     ArgsObject,
-    LLMMessage,
-    LLMResponse,
-    LLMToolCalls,
     Message,
+    ModelAnyResponse,
+    ModelStructuredResponse,
+    ModelTextResponse,
     RetryPrompt,
     SystemPrompt,
     ToolCall,
@@ -27,10 +27,10 @@ from tests.conftest import IsNow
 
 
 def test_result_tuple():
-    def return_tuple(_: list[Message], info: AgentInfo) -> LLMMessage:
+    def return_tuple(_: list[Message], info: AgentInfo) -> ModelAnyResponse:
         assert info.result_tools is not None
         args_json = '{"response": ["foo", "bar"]}'
-        return LLMToolCalls(calls=[ToolCall.from_json(info.result_tools[0].name, args_json)])
+        return ModelStructuredResponse(calls=[ToolCall.from_json(info.result_tools[0].name, args_json)])
 
     agent = Agent(FunctionModel(return_tuple), deps=None, result_type=tuple[str, str])
 
@@ -44,10 +44,10 @@ class Foo(BaseModel):
 
 
 def test_result_pydantic_model():
-    def return_model(_: list[Message], info: AgentInfo) -> LLMMessage:
+    def return_model(_: list[Message], info: AgentInfo) -> ModelAnyResponse:
         assert info.result_tools is not None
         args_json = '{"a": 1, "b": "foo"}'
-        return LLMToolCalls(calls=[ToolCall.from_json(info.result_tools[0].name, args_json)])
+        return ModelStructuredResponse(calls=[ToolCall.from_json(info.result_tools[0].name, args_json)])
 
     agent = Agent(FunctionModel(return_model), deps=None, result_type=Foo)
 
@@ -57,13 +57,13 @@ def test_result_pydantic_model():
 
 
 def test_result_pydantic_model_retry():
-    def return_model(messages: list[Message], info: AgentInfo) -> LLMMessage:
+    def return_model(messages: list[Message], info: AgentInfo) -> ModelAnyResponse:
         assert info.result_tools is not None
         if len(messages) == 1:
             args_json = '{"a": "wrong", "b": "foo"}'
         else:
             args_json = '{"a": 42, "b": "foo"}'
-        return LLMToolCalls(calls=[ToolCall.from_json(info.result_tools[0].name, args_json)])
+        return ModelStructuredResponse(calls=[ToolCall.from_json(info.result_tools[0].name, args_json)])
 
     agent = Agent(FunctionModel(return_model), deps=None, result_type=Foo)
 
@@ -73,7 +73,7 @@ def test_result_pydantic_model_retry():
     assert result.all_messages() == snapshot(
         [
             UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
-            LLMToolCalls(
+            ModelStructuredResponse(
                 calls=[ToolCall.from_json('final_result', '{"a": "wrong", "b": "foo"}')],
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -89,7 +89,7 @@ def test_result_pydantic_model_retry():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
             ),
-            LLMToolCalls(
+            ModelStructuredResponse(
                 calls=[ToolCall.from_json('final_result', '{"a": 42, "b": "foo"}')],
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -99,13 +99,13 @@ def test_result_pydantic_model_retry():
 
 
 def test_result_validator():
-    def return_model(messages: list[Message], info: AgentInfo) -> LLMMessage:
+    def return_model(messages: list[Message], info: AgentInfo) -> ModelAnyResponse:
         assert info.result_tools is not None
         if len(messages) == 1:
             args_json = '{"a": 41, "b": "foo"}'
         else:
             args_json = '{"a": 42, "b": "foo"}'
-        return LLMToolCalls(calls=[ToolCall.from_json(info.result_tools[0].name, args_json)])
+        return ModelStructuredResponse(calls=[ToolCall.from_json(info.result_tools[0].name, args_json)])
 
     agent = Agent(FunctionModel(return_model), deps=None, result_type=Foo)
 
@@ -123,11 +123,11 @@ def test_result_validator():
     assert result.all_messages() == snapshot(
         [
             UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
-            LLMToolCalls(
+            ModelStructuredResponse(
                 calls=[ToolCall.from_json('final_result', '{"a": 41, "b": "foo"}')], timestamp=IsNow(tz=timezone.utc)
             ),
             RetryPrompt(tool_name='final_result', content='"a" should be 42', timestamp=IsNow(tz=timezone.utc)),
-            LLMToolCalls(
+            ModelStructuredResponse(
                 calls=[ToolCall.from_json('final_result', '{"a": 42, "b": "foo"}')], timestamp=IsNow(tz=timezone.utc)
             ),
         ]
@@ -137,16 +137,16 @@ def test_result_validator():
 def test_plain_response():
     call_index = 0
 
-    def return_tuple(_: list[Message], info: AgentInfo) -> LLMMessage:
+    def return_tuple(_: list[Message], info: AgentInfo) -> ModelAnyResponse:
         nonlocal call_index
 
         assert info.result_tools is not None
         call_index += 1
         if call_index == 1:
-            return LLMResponse(content='hello')
+            return ModelTextResponse(content='hello')
         else:
             args_json = '{"response": ["foo", "bar"]}'
-            return LLMToolCalls(calls=[ToolCall.from_json(info.result_tools[0].name, args_json)])
+            return ModelStructuredResponse(calls=[ToolCall.from_json(info.result_tools[0].name, args_json)])
 
     agent = Agent(FunctionModel(return_tuple), deps=None, result_type=tuple[str, str])
 
@@ -156,12 +156,12 @@ def test_plain_response():
     assert result.all_messages() == snapshot(
         [
             UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
-            LLMResponse(content='hello', timestamp=IsNow(tz=timezone.utc)),
+            ModelTextResponse(content='hello', timestamp=IsNow(tz=timezone.utc)),
             RetryPrompt(
                 content='Plain text responses are not permitted, please call one of the functions instead.',
                 timestamp=IsNow(tz=timezone.utc),
             ),
-            LLMToolCalls(
+            ModelStructuredResponse(
                 calls=[ToolCall(tool_name='final_result', args=ArgsJson(args_json='{"response": ["foo", "bar"]}'))],
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -368,12 +368,12 @@ def test_run_with_history_new():
     assert result1.new_messages() == snapshot(
         [
             UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
-            LLMToolCalls(
+            ModelStructuredResponse(
                 calls=[ToolCall(tool_name='ret_a', args=ArgsObject(args_object={'x': 'a'}))],
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ToolReturn(tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc)),
-            LLMResponse(content='{"ret_a":"a-apple"}', timestamp=IsNow(tz=timezone.utc)),
+            ModelTextResponse(content='{"ret_a":"a-apple"}', timestamp=IsNow(tz=timezone.utc)),
         ]
     )
 
@@ -385,20 +385,20 @@ def test_run_with_history_new():
             _all_messages=[
                 SystemPrompt(content='Foobar'),
                 UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
-                LLMToolCalls(
+                ModelStructuredResponse(
                     calls=[ToolCall(tool_name='ret_a', args=ArgsObject(args_object={'x': 'a'}))],
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 ToolReturn(tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc)),
-                LLMResponse(content='{"ret_a":"a-apple"}', timestamp=IsNow(tz=timezone.utc)),
+                ModelTextResponse(content='{"ret_a":"a-apple"}', timestamp=IsNow(tz=timezone.utc)),
                 # second call, notice no repeated system prompt
                 UserPrompt(content='Hello again', timestamp=IsNow(tz=timezone.utc)),
-                LLMToolCalls(
+                ModelStructuredResponse(
                     calls=[ToolCall(tool_name='ret_a', args=ArgsObject(args_object={'x': 'a'}))],
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 ToolReturn(tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc)),
-                LLMResponse(content='{"ret_a":"a-apple"}', timestamp=IsNow(tz=timezone.utc)),
+                ModelTextResponse(content='{"ret_a":"a-apple"}', timestamp=IsNow(tz=timezone.utc)),
             ],
             _new_message_index=5,
             _cost=Cost(),
@@ -418,20 +418,20 @@ def test_run_with_history_new():
             _all_messages=[
                 SystemPrompt(content='Foobar'),
                 UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
-                LLMToolCalls(
+                ModelStructuredResponse(
                     calls=[ToolCall(tool_name='ret_a', args=ArgsObject(args_object={'x': 'a'}))],
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 ToolReturn(tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc)),
-                LLMResponse(content='{"ret_a":"a-apple"}', timestamp=IsNow(tz=timezone.utc)),
+                ModelTextResponse(content='{"ret_a":"a-apple"}', timestamp=IsNow(tz=timezone.utc)),
                 # second call, notice no repeated system prompt
                 UserPrompt(content='Hello again', timestamp=IsNow(tz=timezone.utc)),
-                LLMToolCalls(
+                ModelStructuredResponse(
                     calls=[ToolCall(tool_name='ret_a', args=ArgsObject(args_object={'x': 'a'}))],
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 ToolReturn(tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc)),
-                LLMResponse(content='{"ret_a":"a-apple"}', timestamp=IsNow(tz=timezone.utc)),
+                ModelTextResponse(content='{"ret_a":"a-apple"}', timestamp=IsNow(tz=timezone.utc)),
             ],
             _new_message_index=5,
             _cost=Cost(),
@@ -440,8 +440,8 @@ def test_run_with_history_new():
 
 
 def test_empty_tool_calls():
-    def empty(_: list[Message], _info: AgentInfo) -> LLMMessage:
-        return LLMToolCalls(calls=[])
+    def empty(_: list[Message], _info: AgentInfo) -> ModelAnyResponse:
+        return ModelStructuredResponse(calls=[])
 
     agent = Agent(FunctionModel(empty), deps=None)
 
@@ -450,8 +450,8 @@ def test_empty_tool_calls():
 
 
 def test_unknown_retriever():
-    def empty(_: list[Message], _info: AgentInfo) -> LLMMessage:
-        return LLMToolCalls(calls=[ToolCall.from_json('foobar', '{}')])
+    def empty(_: list[Message], _info: AgentInfo) -> ModelAnyResponse:
+        return ModelStructuredResponse(calls=[ToolCall.from_json('foobar', '{}')])
 
     agent = Agent(FunctionModel(empty), deps=None)
 

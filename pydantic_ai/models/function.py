@@ -10,7 +10,7 @@ from typing import Callable, Union, cast
 from typing_extensions import TypeAlias, overload
 
 from .. import _utils, result
-from ..messages import LLMMessage, LLMToolCalls, Message, ToolCall
+from ..messages import Message, ModelAnyResponse, ModelStructuredResponse, ToolCall
 from . import (
     AbstractToolDefinition,
     AgentModel,
@@ -39,7 +39,7 @@ class DeltaToolCall:
 DeltaToolCalls = dict[int, DeltaToolCall]
 
 # TODO these should be coroutines
-FunctionDef: TypeAlias = Callable[[list[Message], AgentInfo], LLMMessage]
+FunctionDef: TypeAlias = Callable[[list[Message], AgentInfo], ModelAnyResponse]
 StreamFunctionDef: TypeAlias = Callable[[list[Message], AgentInfo], Union[Iterable[str], Iterable[DeltaToolCalls]]]
 
 
@@ -96,7 +96,7 @@ class FunctionAgentModel(AgentModel):
     stream_function: StreamFunctionDef | None
     agent_info: AgentInfo
 
-    async def request(self, messages: list[Message]) -> tuple[LLMMessage, result.Cost]:
+    async def request(self, messages: list[Message]) -> tuple[ModelAnyResponse, result.Cost]:
         assert self.function is not None, 'FunctionModel must receive a `function` to support non-streamed requests'
         return self.function(messages, self.agent_info), result.Cost()
 
@@ -156,14 +156,14 @@ class FunctionStreamToolCallResponse(StreamToolCallResponse):
             else:
                 self._delta_tool_calls[key] = new
 
-    def get(self, *, final: bool = False) -> LLMToolCalls:
-        """Map tool call deltas to a `LLMToolCalls`."""
+    def get(self, *, final: bool = False) -> ModelStructuredResponse:
+        """Map tool call deltas to a `ModelStructuredResponse`."""
         calls: list[ToolCall] = []
         for c in self._delta_tool_calls.values():
             if c.name is not None and c.args is not None:
                 calls.append(ToolCall.from_json(c.name, c.args))
 
-        return LLMToolCalls(calls, timestamp=self._timestamp)
+        return ModelStructuredResponse(calls, timestamp=self._timestamp)
 
     def cost(self) -> result.Cost:
         return result.Cost()

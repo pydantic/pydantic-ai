@@ -13,7 +13,7 @@ from typing_extensions import Self, TypeAliasType, TypedDict
 from . import _utils, messages
 from .call_typing import AgentDeps, CallContext
 from .exceptions import ModelRetry
-from .messages import LLMToolCalls, ToolCall
+from .messages import ModelStructuredResponse, ToolCall
 from .result import ResultData
 
 # A function that always takes `ResultData` and returns `ResultData`,
@@ -119,7 +119,7 @@ class ResultSchema(Generic[ResultData]):
 
         return cls(tools=tools, allow_text_result=allow_text_result)
 
-    def find_tool(self, message: LLMToolCalls) -> tuple[ToolCall, ResultTool[ResultData]] | None:
+    def find_tool(self, message: ModelStructuredResponse) -> tuple[ToolCall, ResultTool[ResultData]] | None:
         """Find a tool that matches one of the calls."""
         for call in message.calls:
             if result := self.tools.get(call.tool_name):

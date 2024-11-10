@@ -11,7 +11,14 @@ from inline_snapshot import snapshot
 from pydantic import BaseModel, Field
 
 from pydantic_ai import Agent, ModelRetry
-from pydantic_ai.messages import LLMResponse, LLMToolCalls, RetryPrompt, ToolCall, ToolReturn, UserPrompt
+from pydantic_ai.messages import (
+    ModelStructuredResponse,
+    ModelTextResponse,
+    RetryPrompt,
+    ToolCall,
+    ToolReturn,
+    UserPrompt,
+)
 from pydantic_ai.models.test import TestModel, _chars, _JsonSchemaTestData  # pyright: ignore[reportPrivateUsage]
 from tests.conftest import IsNow
 
@@ -85,14 +92,14 @@ def test_retriever_retry():
     assert result.all_messages() == snapshot(
         [
             UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
-            LLMToolCalls(
+            ModelStructuredResponse(
                 calls=[ToolCall.from_object('my_ret', {'x': 0})],
                 timestamp=IsNow(tz=timezone.utc),
             ),
             RetryPrompt(tool_name='my_ret', content='First call failed', timestamp=IsNow(tz=timezone.utc)),
-            LLMToolCalls(calls=[ToolCall.from_object('my_ret', {'x': 0})], timestamp=IsNow(tz=timezone.utc)),
+            ModelStructuredResponse(calls=[ToolCall.from_object('my_ret', {'x': 0})], timestamp=IsNow(tz=timezone.utc)),
             ToolReturn(tool_name='my_ret', content='1', timestamp=IsNow(tz=timezone.utc)),
-            LLMResponse(content='{"my_ret":"1"}', timestamp=IsNow(tz=timezone.utc)),
+            ModelTextResponse(content='{"my_ret":"1"}', timestamp=IsNow(tz=timezone.utc)),
         ]
     )
 

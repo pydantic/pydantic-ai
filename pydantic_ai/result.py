@@ -171,7 +171,7 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
 
     async def stream_structured(
         self, *, debounce_by: float | None = 0.1
-    ) -> AsyncIterator[tuple[messages.LLMToolCalls, bool]]:
+    ) -> AsyncIterator[tuple[messages.ModelStructuredResponse, bool]]:
         """Stream the response as an async iterable of Structured LLM Messages.
 
         !!! note
@@ -231,7 +231,7 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
         return self.cost_so_far + self._stream_response.cost()
 
     async def validate_structured_result(
-        self, message: messages.LLMToolCalls, *, allow_partial: bool = False
+        self, message: messages.ModelStructuredResponse, *, allow_partial: bool = False
     ) -> ResultData:
         assert self._result_schema is not None, 'Expected _result_schema to not be None'
         match = self._result_schema.find_tool(message)
@@ -258,12 +258,14 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
         return text
 
     def _marked_completed(
-        self, *, text: str | None = None, structured_message: messages.LLMToolCalls | None = None
+        self, *, text: str | None = None, structured_message: messages.ModelStructuredResponse | None = None
     ) -> None:
         self.is_complete = True
         if text is not None:
             assert structured_message is None, 'Either text or structured_message should provided, not both'
-            self._all_messages.append(messages.LLMResponse(content=text, timestamp=self._stream_response.timestamp()))
+            self._all_messages.append(
+                messages.ModelTextResponse(content=text, timestamp=self._stream_response.timestamp())
+            )
         else:
             assert structured_message is not None, 'Either text or structured_message should provided, not both'
             self._all_messages.append(structured_message)

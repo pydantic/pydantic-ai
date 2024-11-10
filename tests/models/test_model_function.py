@@ -12,10 +12,10 @@ from pydantic import BaseModel
 
 from pydantic_ai import Agent, CallContext, ModelRetry
 from pydantic_ai.messages import (
-    LLMMessage,
-    LLMResponse,
-    LLMToolCalls,
     Message,
+    ModelAnyResponse,
+    ModelStructuredResponse,
+    ModelTextResponse,
     SystemPrompt,
     ToolCall,
     ToolReturn,
@@ -29,12 +29,12 @@ from tests.conftest import IsNow
 pytestmark = pytest.mark.anyio
 
 
-def return_last(messages: list[Message], _: AgentInfo) -> LLMMessage:
+def return_last(messages: list[Message], _: AgentInfo) -> ModelAnyResponse:
     last = messages[-1]
     response = asdict(last)
     response.pop('timestamp', None)
     response['message_count'] = len(messages)
-    return LLMResponse(' '.join(f'{k}={v!r}' for k, v in response.items()))
+    return ModelTextResponse(' '.join(f'{k}={v!r}' for k, v in response.items()))
 
 
 def test_simple():
@@ -48,7 +48,7 @@ def test_simple():
                 timestamp=IsNow(tz=timezone.utc),
                 role='user',
             ),
-            LLMResponse(
+            ModelTextResponse(
                 content="content='Hello' role='user' message_count=1",
                 timestamp=IsNow(tz=timezone.utc),
                 role='llm-response',
@@ -65,7 +65,7 @@ def test_simple():
                 timestamp=IsNow(tz=timezone.utc),
                 role='user',
             ),
-            LLMResponse(
+            ModelTextResponse(
                 content="content='Hello' role='user' message_count=1",
                 timestamp=IsNow(tz=timezone.utc),
                 role='llm-response',
@@ -75,7 +75,7 @@ def test_simple():
                 timestamp=IsNow(tz=timezone.utc),
                 role='user',
             ),
-            LLMResponse(
+            ModelTextResponse(
                 content="content='World' role='user' message_count=3",
                 timestamp=IsNow(tz=timezone.utc),
                 role='llm-response',
@@ -84,12 +84,12 @@ def test_simple():
     )
 
 
-def weather_model(messages: list[Message], info: AgentInfo) -> LLMMessage:  # pragma: no cover
+def weather_model(messages: list[Message], info: AgentInfo) -> ModelAnyResponse:  # pragma: no cover
     assert info.allow_text_result
     assert info.retrievers.keys() == {'get_location', 'get_weather'}
     last = messages[-1]
     if last.role == 'user':
-        return LLMToolCalls(
+        return ModelStructuredResponse(
             calls=[
                 ToolCall.from_json(
                     'get_location',
@@ -99,10 +99,10 @@ def weather_model(messages: list[Message], info: AgentInfo) -> LLMMessage:  # pr
         )
     elif last.role == 'tool-return':
         if last.tool_name == 'get_location':
-            return LLMToolCalls(calls=[ToolCall.from_json('get_weather', last.model_response_str())])
+            return ModelStructuredResponse(calls=[ToolCall.from_json('get_weather', last.model_response_str())])
         elif last.tool_name == 'get_weather':
             location_name = next(m.content for m in messages if m.role == 'user')
-            return LLMResponse(f'{last.content} in {location_name}')
+            return ModelTextResponse(f'{last.content} in {location_name}')
 
     raise ValueError(f'Unexpected message: {last}')
 
@@ -138,7 +138,7 @@ def test_weather():
                 timestamp=IsNow(tz=timezone.utc),
                 role='user',
             ),
-            LLMToolCalls(
+            ModelStructuredResponse(
                 calls=[ToolCall.from_json('get_location', '{"location_description": "London"}')],
                 timestamp=IsNow(tz=timezone.utc),
                 role='llm-tool-calls',
@@ -149,7 +149,7 @@ def test_weather():
                 timestamp=IsNow(tz=timezone.utc),
                 role='tool-return',
             ),
-            LLMToolCalls(
+            ModelStructuredResponse(
                 calls=[
                     ToolCall.from_json(
                         'get_weather',
@@ -165,7 +165,7 @@ def test_weather():
                 timestamp=IsNow(tz=timezone.utc),
                 role='tool-return',
             ),
-            LLMResponse(
+            ModelTextResponse(
                 content='Raining in London',
                 timestamp=IsNow(tz=timezone.utc),
                 role='llm-response',
@@ -177,12 +177,12 @@ def test_weather():
     assert result.response == 'Sunny in Ipswich'
 
 
-def call_function_model(messages: list[Message], _: AgentInfo) -> LLMMessage:  # pragma: no cover
+def call_function_model(messages: list[Message], _: AgentInfo) -> ModelAnyResponse:  # pragma: no cover
     last = messages[-1]
     if last.role == 'user':
         if last.content.startswith('{'):
             details = json.loads(last.content)
-            return LLMToolCalls(
+            return ModelStructuredResponse(
                 calls=[
                     ToolCall.from_json(
                         details['function'],
@@ -191,7 +191,7 @@ def call_function_model(messages: list[Message], _: AgentInfo) -> LLMMessage:  #
                 ]
             )
     elif last.role == 'tool-return':
-        return LLMResponse(pydantic_core.to_json(last).decode())
+        return ModelTextResponse(pydantic_core.to_json(last).decode())
 
     raise ValueError(f'Unexpected message: {last}')
 
@@ -221,13 +221,13 @@ def test_var_args():
     )
 
 
-def call_retriever(messages: list[Message], info: AgentInfo) -> LLMMessage:
+def call_retriever(messages: list[Message], info: AgentInfo) -> ModelAnyResponse:
     if len(messages) == 1:
         assert len(info.retrievers) == 1
         retriever_id = next(iter(info.retrievers.keys()))
-        return LLMToolCalls(calls=[ToolCall.from_json(retriever_id, '{}')])
+        return ModelStructuredResponse(calls=[ToolCall.from_json(retriever_id, '{}')])
     else:
-        return LLMResponse('final response')
+        return ModelTextResponse('final response')
 
 
 def test_deps_none():
@@ -314,8 +314,8 @@ def spam() -> str:
 
 
 def test_register_all():
-    def f(messages: list[Message], info: AgentInfo) -> LLMMessage:
-        return LLMResponse(
+    def f(messages: list[Message], info: AgentInfo) -> ModelAnyResponse:
+        return ModelTextResponse(
             f'messages={len(messages)} allow_text_result={info.allow_text_result} retrievers={len(info.retrievers)}'
         )
 
@@ -330,7 +330,7 @@ def test_call_all():
         [
             SystemPrompt(content='foobar'),
             UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
-            LLMToolCalls(
+            ModelStructuredResponse(
                 calls=[
                     ToolCall.from_object('foo', {'x': 0}),
                     ToolCall.from_object('bar', {'x': 0}),
@@ -345,7 +345,7 @@ def test_call_all():
             ToolReturn(tool_name='baz', content='3', timestamp=IsNow(tz=timezone.utc)),
             ToolReturn(tool_name='qux', content='4', timestamp=IsNow(tz=timezone.utc)),
             ToolReturn(tool_name='quz', content='a', timestamp=IsNow(tz=timezone.utc)),
-            LLMResponse(
+            ModelTextResponse(
                 content='{"foo":"1","bar":"2","baz":"3","qux":"4","quz":"a"}', timestamp=IsNow(tz=timezone.utc)
             ),
         ]
@@ -355,11 +355,11 @@ def test_call_all():
 def test_retry_str():
     call_count = 0
 
-    def try_again(messages: list[Message], _: AgentInfo) -> LLMMessage:
+    def try_again(messages: list[Message], _: AgentInfo) -> ModelAnyResponse:
         nonlocal call_count
         call_count += 1
 
-        return LLMResponse(str(call_count))
+        return ModelTextResponse(str(call_count))
 
     agent = Agent(FunctionModel(try_again), deps=None)
 
@@ -377,11 +377,11 @@ def test_retry_str():
 def test_retry_result_type():
     call_count = 0
 
-    def try_again(messages: list[Message], _: AgentInfo) -> LLMMessage:
+    def try_again(messages: list[Message], _: AgentInfo) -> ModelAnyResponse:
         nonlocal call_count
         call_count += 1
 
-        return LLMToolCalls(calls=[ToolCall.from_object('final_result', {'x': call_count})])
+        return ModelStructuredResponse(calls=[ToolCall.from_object('final_result', {'x': call_count})])
 
     class Foo(BaseModel):
         x: int
@@ -411,7 +411,7 @@ async def test_stream_text():
         assert result.all_messages() == snapshot(
             [
                 UserPrompt(content='', timestamp=IsNow(tz=timezone.utc)),
-                LLMResponse(content='hello world', timestamp=IsNow(tz=timezone.utc)),
+                ModelTextResponse(content='hello world', timestamp=IsNow(tz=timezone.utc)),
             ]
         )
         assert result.cost() == snapshot(Cost())

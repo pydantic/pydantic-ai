@@ -112,7 +112,7 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary]) -> None:
                         'run_step': {},
                         'response': {
                             'type': 'object',
-                            'title': 'LLMToolCalls',
+                            'title': 'ModelStructuredResponse',
                             'x-python-datatype': 'dataclass',
                             'properties': {
                                 'calls': {

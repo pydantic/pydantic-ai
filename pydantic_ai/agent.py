@@ -370,7 +370,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         return new_message_index, messages
 
     async def _handle_model_response(
-        self, model_response: _messages.LLMMessage, deps: AgentDeps
+        self, model_response: _messages.ModelAnyResponse, deps: AgentDeps
     ) -> _utils.Either[ResultData, list[_messages.Message]]:
         """Process a non-streamed response from the model.
 
@@ -458,29 +458,29 @@ class Agent(Generic[AgentDeps, ResultData]):
             if self._result_schema is not None:
                 # if there's a result schema, iterate over the stream until we find at least one tool
                 # NOTE: this means we ignore any other tools called here
-                tool_call_msg = model_response.get()
-                while not tool_call_msg.calls:
+                structured_msg = model_response.get()
+                while not structured_msg.calls:
                     try:
                         await model_response.__anext__()
                     except StopAsyncIteration:
                         break
-                    tool_call_msg = model_response.get()
+                    structured_msg = model_response.get()
 
-                if self._result_schema.find_tool(tool_call_msg):
+                if self._result_schema.find_tool(structured_msg):
                     return _utils.Either(left=model_response)
 
             # the model is calling a retriever function, consume the response to get the next message
             async for _ in model_response:
                 pass
-            tool_call_msg = model_response.get()
-            if not tool_call_msg.calls:
+            structured_msg = model_response.get()
+            if not structured_msg.calls:
                 raise exceptions.UnexpectedModelBehaviour('Received empty tool call message')
-            messages: list[_messages.Message] = [tool_call_msg]
+            messages: list[_messages.Message] = [structured_msg]
 
             # we now run all retriever functions in parallel
             tasks: list[asyncio.Task[_messages.Message]] = []
             try:
-                for call in tool_call_msg.calls:
+                for call in structured_msg.calls:
                     retriever = self._retrievers.get(call.tool_name)
                     if retriever is None:
                         raise exceptions.UnexpectedModelBehaviour(f'Unknown function name: {call.tool_name!r}')

@@ -33,10 +33,10 @@ from typing_extensions import NotRequired, TypedDict, TypeGuard, assert_never
 from .. import UnexpectedModelBehaviour, _pydantic, _utils, exceptions, result
 from ..messages import (
     ArgsObject,
-    LLMMessage,
-    LLMResponse,
-    LLMToolCalls,
     Message,
+    ModelAnyResponse,
+    ModelStructuredResponse,
+    ModelTextResponse,
     RetryPrompt,
     ToolCall,
     ToolReturn,
@@ -120,7 +120,7 @@ class GeminiAgentModel(AgentModel):
     tool_config: _GeminiToolConfig | None
     url_template: str
 
-    async def request(self, messages: list[Message]) -> tuple[LLMMessage, result.Cost]:
+    async def request(self, messages: list[Message]) -> tuple[ModelAnyResponse, result.Cost]:
         async with self._make_request(messages, False) as http_response:
             response = _gemini_response_ta.validate_json(await http_response.aread())
         return self._process_response(response), _metadata_as_cost(response['usage_metadata'])
@@ -165,12 +165,12 @@ class GeminiAgentModel(AgentModel):
             yield r
 
     @staticmethod
-    def _process_response(response: _GeminiResponse) -> LLMMessage:
+    def _process_response(response: _GeminiResponse) -> ModelAnyResponse:
         either = _extract_response_parts(response)
         if left := either.left:
-            return _tool_call_from_parts(left.value)
+            return _structured_response_from_parts(left.value)
         else:
-            return LLMResponse(content=''.join(part['text'] for part in either.right))
+            return ModelTextResponse(content=''.join(part['text'] for part in either.right))
 
     @staticmethod
     async def _process_streamed_response(http_response: HTTPResponse) -> EitherStreamedResponse:
@@ -215,10 +215,10 @@ class GeminiAgentModel(AgentModel):
             # RetryPrompt ->
             return _utils.Either(right=_content_function_retry(m))
         elif m.role == 'llm-response':
-            # LLMResponse ->
+            # ModelTextResponse ->
             return _utils.Either(right=_content_model_text(m.content))
         elif m.role == 'llm-tool-calls':
-            # LLMToolCalls ->
+            # ModelStructuredResponse ->
             return _utils.Either(right=_content_function_call(m))
         else:
             assert_never(m)
@@ -276,8 +276,8 @@ class GeminiStreamToolCallResponse(StreamToolCallResponse):
         chunk = await self._stream.__anext__()
         self._content.extend(chunk)
 
-    def get(self, *, final: bool = False) -> LLMToolCalls:
-        """Get the `LLMToolCalls` at this point.
+    def get(self, *, final: bool = False) -> ModelStructuredResponse:
+        """Get the `ModelStructuredResponse` at this point.
 
         NOTE: It's not clear how the stream of responses should be combined because Gemini seems to always
         reply with a single response, when returning a structured data.
@@ -302,7 +302,7 @@ class GeminiStreamToolCallResponse(StreamToolCallResponse):
                 raise UnexpectedModelBehaviour(
                     'Streamed response with unexpected content, expected all parts to be function calls'
                 )
-        return _tool_call_from_parts(combined_parts, timestamp=self._timestamp)
+        return _structured_response_from_parts(combined_parts, timestamp=self._timestamp)
 
     def cost(self) -> result.Cost:
         return self._cost
@@ -346,7 +346,7 @@ def _content_model_text(text: str) -> _GeminiContent:
     return _GeminiContent(role='model', parts=[_GeminiTextPart(text=text)])
 
 
-def _content_function_call(m: LLMToolCalls) -> _GeminiContent:
+def _content_function_call(m: ModelStructuredResponse) -> _GeminiContent:
     parts: list[_GeminiPartUnion] = [_function_call_part_from_call(t) for t in m.calls]
     return _GeminiContent(role='model', parts=parts)
 
@@ -378,8 +378,10 @@ def _function_call_part_from_call(tool: ToolCall) -> _GeminiFunctionCallPart:
     return _GeminiFunctionCallPart(function_call=_GeminiFunctionCall(name=tool.tool_name, args=tool.args.args_object))
 
 
-def _tool_call_from_parts(parts: list[_GeminiFunctionCallPart], timestamp: datetime | None = None) -> LLMToolCalls:
-    return LLMToolCalls(
+def _structured_response_from_parts(
+    parts: list[_GeminiFunctionCallPart], timestamp: datetime | None = None
+) -> ModelStructuredResponse:
+    return ModelStructuredResponse(
         calls=[ToolCall.from_object(part['function_call']['name'], part['function_call']['args']) for part in parts],
         timestamp=timestamp or _utils.now_utc(),
     )
