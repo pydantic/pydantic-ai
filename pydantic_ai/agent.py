@@ -1,8 +1,8 @@
 from __future__ import annotations as _annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Awaitable, Sequence
-from contextlib import asynccontextmanager
+from collections.abc import AsyncIterator, Sequence
+from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
 from typing import Any, Callable, Generic, Literal, cast, final, overload
 
@@ -413,18 +413,20 @@ class Agent(Generic[AgentDeps, ResultData]):
                 raise exceptions.UnexpectedModelBehaviour('Received empty tool call message')
 
             # otherwise we run all retriever functions in parallel
-            coros: list[Awaitable[_messages.Message]] = []
-            names: list[str] = []
-            for call in model_response.calls:
-                retriever = self._retrievers.get(call.tool_name)
-                if retriever is None:
-                    # should this be a retry error?
-                    raise exceptions.UnexpectedModelBehaviour(f'Unknown function name: {call.tool_name!r}')
-                coros.append(retriever.run(deps, call))
-                names.append(call.tool_name)
+            tasks: list[asyncio.Task[_messages.Message]] = []
+            try:
+                for call in model_response.calls:
+                    retriever = self._retrievers.get(call.tool_name)
+                    if retriever is None:
+                        # should this be a retry error?
+                        raise exceptions.UnexpectedModelBehaviour(f'Unknown function name: {call.tool_name!r}')
+                    tasks.append(asyncio.create_task(retriever.run(deps, call), name=call.tool_name))
+            except BaseException:
+                await _cancel_tasks(tasks)
+                raise
 
-            with _logfire.span('running {tools=}', tools=names):
-                new_messages = await asyncio.gather(*coros)
+            with _logfire.span('running {tools=}', tools=[t.get_name() for t in tasks]):
+                new_messages = await asyncio.gather(*tasks)
             return _utils.Either(right=new_messages)
         else:
             assert_never(model_response)
@@ -476,17 +478,20 @@ class Agent(Generic[AgentDeps, ResultData]):
             messages: list[_messages.Message] = [tool_call_msg]
 
             # we now run all retriever functions in parallel
-            coros: list[Awaitable[_messages.Message]] = []
-            names: list[str] = []
-            for call in tool_call_msg.calls:
-                retriever = self._retrievers.get(call.tool_name)
-                if retriever is None:
-                    raise exceptions.UnexpectedModelBehaviour(f'Unknown function name: {call.tool_name!r}')
-                coros.append(retriever.run(deps, call))
-                names.append(call.tool_name)
+            tasks: list[asyncio.Task[_messages.Message]] = []
+            try:
+                for call in tool_call_msg.calls:
+                    retriever = self._retrievers.get(call.tool_name)
+                    if retriever is None:
+                        raise exceptions.UnexpectedModelBehaviour(f'Unknown function name: {call.tool_name!r}')
+                    tasks.append(asyncio.create_task(retriever.run(deps, call), name=call.tool_name))
+            except BaseException:
+                # otherwise we'll get warnings about coroutines not awaited
+                await _cancel_tasks(tasks)
+                raise
 
-            with _logfire.span('running {tools=}', tools=names):
-                messages += await asyncio.gather(*coros)
+            with _logfire.span('running {tools=}', tools=[t.get_name() for t in tasks]):
+                messages += await asyncio.gather(*tasks)
             return _utils.Either(right=messages)
 
     async def _validate_result(
@@ -510,3 +515,10 @@ class Agent(Generic[AgentDeps, ResultData]):
             prompt = await sys_prompt_runner.run(deps)
             messages.append(_messages.SystemPrompt(prompt))
         return messages
+
+
+async def _cancel_tasks(tasks: list[asyncio.Task[_messages.Message]]) -> None:
+    for task in tasks:
+        task.cancel()
+    with suppress(asyncio.CancelledError):
+        await asyncio.gather(*tasks)

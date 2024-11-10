@@ -43,12 +43,12 @@ async def main():
     console = Console()
     with Live('\n' * 36, console=console) as live:
         console.print('Requesting data...', style='cyan')
-        async with agent.run_stream('Generate me details of 20 species of Whale.') as result:
+        async with agent.run_stream('Generate me details of 5 species of Whale.') as result:
             console.print('Response:', style='green')
 
-            async for message in result.stream_structured(debounce_by=0.01):
+            async for message, last in result.stream_structured(debounce_by=0.01):
                 try:
-                    whales = await result.validate_structured_result(message, allow_partial=True)
+                    whales = await result.validate_structured_result(message, allow_partial=not last)
                 except ValidationError as exc:
                     if all(e['type'] == 'missing' and e['loc'] == ('response',) for e in exc.errors()):
                         continue

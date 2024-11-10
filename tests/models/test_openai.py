@@ -379,7 +379,12 @@ async def test_stream_structured():
         assert result.is_structured()
         assert not result.is_complete
         assert [dict(c) async for c in result.stream(debounce_by=None)] == snapshot(
-            [{'first': 'One'}, {'first': 'One', 'second': 'Two'}, {'first': 'One', 'second': 'Two'}]
+            [
+                {'first': 'One'},
+                {'first': 'One', 'second': 'Two'},
+                {'first': 'One', 'second': 'Two'},
+                {'first': 'One', 'second': 'Two'},
+            ]
         )
         assert result.is_complete
         assert result.cost() == snapshot(Cost(request_tokens=20, response_tokens=10, total_tokens=30))
@@ -403,7 +408,12 @@ async def test_stream_structured_finish_reason():
         assert result.is_structured()
         assert not result.is_complete
         assert [dict(c) async for c in result.stream(debounce_by=None)] == snapshot(
-            [{'first': 'One'}, {'first': 'One', 'second': 'Two'}, {'first': 'One', 'second': 'Two'}]
+            [
+                {'first': 'One'},
+                {'first': 'One', 'second': 'Two'},
+                {'first': 'One', 'second': 'Two'},
+                {'first': 'One', 'second': 'Two'},
+            ]
         )
         assert result.is_complete
 

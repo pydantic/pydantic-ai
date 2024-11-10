@@ -8,7 +8,7 @@ from __future__ import annotations as _annotations
 
 import re
 import string
-from collections.abc import AsyncIterator, Iterator, Mapping, Sequence
+from collections.abc import AsyncIterator, Iterable, Iterator, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -177,6 +177,7 @@ class TestStreamTextResponse(StreamTextResponse):
     _cost: Cost
     _iter: Iterator[str] = field(init=False)
     _timestamp: datetime = field(default_factory=_utils.now_utc)
+    _buffer: list[str] = field(default_factory=list, init=False)
 
     def __post_init__(self):
         *words, last_word = self._text.split(' ')
@@ -187,8 +188,12 @@ class TestStreamTextResponse(StreamTextResponse):
             words = [self._text[:mid], self._text[mid:]]
         self._iter = iter(words)
 
-    async def __anext__(self) -> str:
-        return _utils.sync_anext(self._iter)
+    async def __anext__(self) -> None:
+        self._buffer.append(_utils.sync_anext(self._iter))
+
+    def get(self, *, final: bool = False) -> Iterable[str]:
+        yield from self._buffer
+        self._buffer.clear()
 
     def cost(self) -> Cost:
         return self._cost
@@ -202,12 +207,12 @@ class TestStreamToolCallResponse(StreamToolCallResponse):
     _structured_response: LLMToolCalls
     _cost: Cost
     _iter: Iterator[None] = field(default_factory=lambda: iter([None]))
-    _timestamp: datetime = field(default_factory=_utils.now_utc)
+    _timestamp: datetime = field(default_factory=_utils.now_utc, init=False)
 
     async def __anext__(self) -> None:
         return _utils.sync_anext(self._iter)
 
-    def get(self) -> LLMToolCalls:
+    def get(self, *, final: bool = False) -> LLMToolCalls:
         return self._structured_response
 
     def cost(self) -> Cost:

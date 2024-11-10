@@ -123,10 +123,15 @@ class FunctionAgentModel(AgentModel):
 @dataclass
 class FunctionStreamTextResponse(StreamTextResponse):
     _iter: Iterator[str]
-    _timestamp: datetime = field(default_factory=_utils.now_utc)
+    _timestamp: datetime = field(default_factory=_utils.now_utc, init=False)
+    _buffer: list[str] = field(default_factory=list, init=False)
 
-    async def __anext__(self) -> str:
-        return _utils.sync_anext(self._iter)
+    async def __anext__(self) -> None:
+        self._buffer.append(_utils.sync_anext(self._iter))
+
+    def get(self, *, final: bool = False) -> Iterable[str]:
+        yield from self._buffer
+        self._buffer.clear()
 
     def cost(self) -> result.Cost:
         return result.Cost()
@@ -151,7 +156,7 @@ class FunctionStreamToolCallResponse(StreamToolCallResponse):
             else:
                 self._delta_tool_calls[key] = new
 
-    def get(self) -> LLMToolCalls:
+    def get(self, *, final: bool = False) -> LLMToolCalls:
         """Map tool call deltas to a `LLMToolCalls`."""
         calls: list[ToolCall] = []
         for c in self._delta_tool_calls.values():
