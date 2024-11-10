@@ -64,5 +64,12 @@ docs:
 docs-serve:
 	uv run mkdocs serve --no-strict
 
+.PHONY: cf-pages-build  # Install uv, install dependencies and build the docs, used on CloudFlare Pages
+cf-pages-build:
+	curl -LsSf https://astral.sh/uv/0.4.30/install.sh | sh
+	${HOME}/.cargo/bin/uv python install 3.12
+	${HOME}/.cargo/bin/uv sync --python 3.12 --frozen --group docs
+	${HOME}/.cargo/bin/uv run --no-sync mkdocs build
+
 .PHONY: all
 all: format lint typecheck testcov
