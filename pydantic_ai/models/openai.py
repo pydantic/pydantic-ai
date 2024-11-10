@@ -30,8 +30,8 @@ from . import (
     AgentModel,
     EitherStreamedResponse,
     Model,
+    StreamStructuredResponse,
     StreamTextResponse,
-    StreamToolCallResponse,
     cached_async_http_client,
 )
 
@@ -177,7 +177,7 @@ class OpenAIAgentModel(AgentModel):
             return OpenAIStreamTextResponse(delta.content, response, timestamp, start_cost)
         else:
             assert delta.tool_calls is not None, f'Expected delta with tool_calls, got {delta}'
-            return OpenAIStreamToolCallResponse(
+            return OpenAIStreamStructuredResponse(
                 response,
                 {c.index: c for c in delta.tool_calls},
                 timestamp,
@@ -265,7 +265,7 @@ class OpenAIStreamTextResponse(StreamTextResponse):
 
 
 @dataclass
-class OpenAIStreamToolCallResponse(StreamToolCallResponse):
+class OpenAIStreamStructuredResponse(StreamStructuredResponse):
     _response: AsyncStream[ChatCompletionChunk]
     _delta_tool_calls: dict[int, ChoiceDeltaToolCall]
     _timestamp: datetime

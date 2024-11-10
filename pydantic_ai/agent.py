@@ -432,7 +432,7 @@ class Agent(Generic[AgentDeps, ResultData]):
             assert_never(model_response)
 
     async def _handle_streamed_model_response(
-        self, model_response: models.StreamToolCallResponse | models.StreamTextResponse, deps: AgentDeps
+        self, model_response: models.EitherStreamedResponse, deps: AgentDeps
     ) -> _utils.Either[models.EitherStreamedResponse, list[_messages.Message]]:
         """Process a streamed response from the model.
 
@@ -454,7 +454,7 @@ class Agent(Generic[AgentDeps, ResultData]):
 
                 return _utils.Either(right=[response])
         else:
-            assert isinstance(model_response, models.StreamToolCallResponse), f'Unexpected response: {model_response}'
+            assert isinstance(model_response, models.StreamStructuredResponse), f'Unexpected response: {model_response}'
             if self._result_schema is not None:
                 # if there's a result schema, iterate over the stream until we find at least one tool
                 # NOTE: this means we ignore any other tools called here

@@ -96,6 +96,11 @@ async def test_structured_response_iter():
 
     assert chunks == snapshot([[1], [1, 2, 3, 4], [1, 2, 3, 4]])
 
+    async with agent.run_stream('Hello') as result:
+        with pytest.raises(UserError, match=r'stream_text\(\) can only be used with text responses'):
+            async for _ in result.stream_text():
+                pass
+
 
 async def test_streamed_text_stream():
     m = TestModel(custom_result_text='The cat sat on the mat.')
@@ -128,7 +133,7 @@ async def test_streamed_text_stream():
         )
 
     async with agent.run_stream('Hello') as result:
-        with pytest.raises(UserError, match=r'stream_messages\(\) can only be used with structured responses'):
+        with pytest.raises(UserError, match=r'stream_structured\(\) can only be used with structured responses'):
             async for _ in result.stream_structured():
                 pass
 

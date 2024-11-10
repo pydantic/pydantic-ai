@@ -32,8 +32,8 @@ from . import (
     AgentModel,
     EitherStreamedResponse,
     Model,
+    StreamStructuredResponse,
     StreamTextResponse,
-    StreamToolCallResponse,
 )
 
 
@@ -130,7 +130,7 @@ class TestAgentModel(AgentModel):
         if isinstance(msg, ModelTextResponse):
             yield TestStreamTextResponse(msg.content, cost)
         else:
-            yield TestStreamToolCallResponse(msg, cost)
+            yield TestStreamStructuredResponse(msg, cost)
 
     def gen_retriever_args(self, tool_def: AbstractToolDefinition) -> Any:
         """Generate arguments for a retriever."""
@@ -211,7 +211,7 @@ class TestStreamTextResponse(StreamTextResponse):
 
 
 @dataclass
-class TestStreamToolCallResponse(StreamToolCallResponse):
+class TestStreamStructuredResponse(StreamStructuredResponse):
     _structured_response: ModelStructuredResponse
     _cost: Cost
     _iter: Iterator[None] = field(default_factory=lambda: iter([None]))

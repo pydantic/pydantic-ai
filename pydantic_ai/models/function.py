@@ -16,8 +16,8 @@ from . import (
     AgentModel,
     EitherStreamedResponse,
     Model,
+    StreamStructuredResponse,
     StreamTextResponse,
-    StreamToolCallResponse,
 )
 
 
@@ -117,7 +117,7 @@ class FunctionAgentModel(AgentModel):
         else:
             structured_stream = cast(Iterable[DeltaToolCalls], response_data)
             # noinspection PyTypeChecker
-            yield FunctionStreamToolCallResponse(iter(chain([first], structured_stream)), {})
+            yield FunctionStreamStructuredResponse(iter(chain([first], structured_stream)), {})
 
 
 @dataclass
@@ -141,7 +141,7 @@ class FunctionStreamTextResponse(StreamTextResponse):
 
 
 @dataclass
-class FunctionStreamToolCallResponse(StreamToolCallResponse):
+class FunctionStreamStructuredResponse(StreamStructuredResponse):
     _iter: Iterator[DeltaToolCalls]
     _delta_tool_calls: dict[int, DeltaToolCall]
     _timestamp: datetime = field(default_factory=_utils.now_utc)

@@ -105,12 +105,7 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
     is_complete: bool = False
     """Whether the stream has all been received."""
 
-    async def stream(
-        self,
-        *,
-        text_delta: bool = False,
-        debounce_by: float | None = 0.1,
-    ) -> AsyncIterator[ResultData]:
+    async def stream(self, *, text_delta: bool = False, debounce_by: float | None = 0.1) -> AsyncIterator[ResultData]:
         """Stream the response as an async iterable.
 
         Result validators are called on each iteration, if `text_delta=False` (the default) or for structured
@@ -132,42 +127,48 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
         Returns: An async iterable of the response data.
         """
         if isinstance(self._stream_response, models.StreamTextResponse):
-            with _logfire.span('response stream text') as lf_span:
-                if text_delta:
-                    async with _utils.group_by_temporal(self._stream_response, debounce_by) as group_iter:
-                        async for _ in group_iter:
-                            yield cast(ResultData, ''.join(self._stream_response.get()))
-                    final_delta = ''.join(self._stream_response.get(final=True))
-                    if final_delta:
-                        yield cast(ResultData, final_delta)
-                else:
-                    # a quick benchmark shows it's faster to build up a string with concat when we're
-                    # yielding at each step
-                    chunks: list[str] = []
-                    combined = ''
-                    async with _utils.group_by_temporal(self._stream_response, debounce_by) as group_iter:
-                        async for _ in group_iter:
-                            new = False
-                            for chunk in self._stream_response.get():
-                                chunks.append(chunk)
-                                new = True
-                            if new:
-                                combined = await self._validate_text_result(''.join(chunks))
-                                yield cast(ResultData, combined)
-
-                    new = False
-                    for chunk in self._stream_response.get(final=True):
-                        chunks.append(chunk)
-                        new = True
-                    if new:
-                        combined = await self._validate_text_result(''.join(chunks))
-                        yield cast(ResultData, combined)
-                    lf_span.set_attribute('combined_text', combined)
-                    self._marked_completed(text=combined)
+            async for text in self.stream_text(text_delta=text_delta, debounce_by=debounce_by):
+                yield cast(ResultData, text)
         else:
             assert not text_delta, 'Cannot use `text_delta=True` for structured responses'
             async for tool_message, is_last in self.stream_structured(debounce_by=debounce_by):
                 yield await self.validate_structured_result(tool_message, allow_partial=not is_last)
+
+    async def stream_text(self, *, text_delta: bool = False, debounce_by: float | None = 0.1) -> AsyncIterator[str]:
+        with _logfire.span('response stream text') as lf_span:
+            if isinstance(self._stream_response, models.StreamStructuredResponse):
+                raise exceptions.UserError('stream_text() can only be used with text responses')
+            if text_delta:
+                async with _utils.group_by_temporal(self._stream_response, debounce_by) as group_iter:
+                    async for _ in group_iter:
+                        yield ''.join(self._stream_response.get())
+                final_delta = ''.join(self._stream_response.get(final=True))
+                if final_delta:
+                    yield final_delta
+            else:
+                # a quick benchmark shows it's faster to build up a string with concat when we're
+                # yielding at each step
+                chunks: list[str] = []
+                combined = ''
+                async with _utils.group_by_temporal(self._stream_response, debounce_by) as group_iter:
+                    async for _ in group_iter:
+                        new = False
+                        for chunk in self._stream_response.get():
+                            chunks.append(chunk)
+                            new = True
+                        if new:
+                            combined = await self._validate_text_result(''.join(chunks))
+                            yield combined
+
+                new = False
+                for chunk in self._stream_response.get(final=True):
+                    chunks.append(chunk)
+                    new = True
+                if new:
+                    combined = await self._validate_text_result(''.join(chunks))
+                    yield combined
+                lf_span.set_attribute('combined_text', combined)
+                self._marked_completed(text=combined)
 
     async def stream_structured(
         self, *, debounce_by: float | None = 0.1
@@ -187,7 +188,7 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
         """
         with _logfire.span('response stream structured') as lf_span:
             if isinstance(self._stream_response, models.StreamTextResponse):
-                raise exceptions.UserError('stream_messages() can only be used with structured responses')
+                raise exceptions.UserError('stream_structured() can only be used with structured responses')
             else:
                 # we should already have a message at this point, yield that first if it has any content
                 msg = self._stream_response.get()
@@ -221,7 +222,7 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
 
     def is_structured(self) -> bool:
         """Return whether the stream response contains structured data (as opposed to text)."""
-        return isinstance(self._stream_response, models.StreamToolCallResponse)
+        return isinstance(self._stream_response, models.StreamStructuredResponse)
 
     def cost(self) -> Cost:
         """Return the cost of the whole run.

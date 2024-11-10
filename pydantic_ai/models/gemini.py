@@ -46,8 +46,8 @@ from . import (
     AgentModel,
     EitherStreamedResponse,
     Model,
+    StreamStructuredResponse,
     StreamTextResponse,
-    StreamToolCallResponse,
     cached_async_http_client,
 )
 
@@ -195,7 +195,7 @@ class GeminiAgentModel(AgentModel):
             raise UnexpectedModelBehaviour('Streamed response ended without content or tool calls')
 
         if _extract_response_parts(start_response).is_left():
-            return GeminiStreamToolCallResponse(_content=content, _stream=aiter_bytes)
+            return GeminiStreamStructuredResponse(_content=content, _stream=aiter_bytes)
         else:
             return GeminiStreamTextResponse(_json_content=content, _stream=aiter_bytes)
 
@@ -266,7 +266,7 @@ class GeminiStreamTextResponse(StreamTextResponse):
 
 
 @dataclass
-class GeminiStreamToolCallResponse(StreamToolCallResponse):
+class GeminiStreamStructuredResponse(StreamStructuredResponse):
     _content: bytearray
     _stream: AsyncIterator[bytes]
     _timestamp: datetime = field(default_factory=_utils.now_utc, init=False)

@@ -107,7 +107,7 @@ class StreamTextResponse(ABC):
         raise NotImplementedError()
 
 
-class StreamToolCallResponse(ABC):
+class StreamStructuredResponse(ABC):
     """Streamed response from an LLM when calling a tool."""
 
     def __aiter__(self) -> AsyncIterator[None]:
@@ -148,7 +148,7 @@ class StreamToolCallResponse(ABC):
         raise NotImplementedError()
 
 
-EitherStreamedResponse = Union[StreamTextResponse, StreamToolCallResponse]
+EitherStreamedResponse = Union[StreamTextResponse, StreamStructuredResponse]
 
 
 def infer_model(model: Model | KnownModelName) -> Model:
