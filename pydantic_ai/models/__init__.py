@@ -7,7 +7,7 @@ specific LLM being used.
 from __future__ import annotations as _annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator, Mapping, Sequence
+from collections.abc import AsyncIterator, Iterable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from datetime import datetime
 from functools import cache
@@ -70,13 +70,22 @@ class AgentModel(ABC):
 class StreamTextResponse(ABC):
     """Streamed response from an LLM when returning text."""
 
-    def __aiter__(self) -> AsyncIterator[str]:
-        """Stream the response as an async iterable of string chunks."""
+    def __aiter__(self) -> AsyncIterator[None]:
+        """Stream the response as an async iterable, building up the text as it goes.
+
+        This is an async iterator that yields `None` to avoid doing the work of validating the input and
+        extracting the text field when it will often be thrown away.
+        """
         return self
 
     @abstractmethod
-    async def __anext__(self) -> str:
-        """Process the next chunk of the response, and return the string delta."""
+    async def __anext__(self) -> None:
+        """Process the next chunk of the response, see above for why this returns `None`."""
+        raise NotImplementedError()
+
+    @abstractmethod
+    def get(self) -> Iterable[str]:
+        """Returns an iterable of text since the last call to `get()` — e.g. the text delta."""
         raise NotImplementedError()
 
     @abstractmethod

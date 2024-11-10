@@ -1,6 +1,6 @@
 from __future__ import annotations as _annotations
 
-from collections.abc import AsyncIterator, Mapping, Sequence
+from collections.abc import AsyncIterator, Iterable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -230,12 +230,13 @@ class OpenAIStreamTextResponse(StreamTextResponse):
     _response: AsyncStream[ChatCompletionChunk]
     _timestamp: datetime
     _cost: result.Cost
+    _buffer: list[str] = field(default_factory=list, init=False)
 
-    async def __anext__(self) -> str:
+    async def __anext__(self) -> None:
         if self._first is not None:
-            first = self._first
+            self._buffer.append(self._first)
             self._first = None
-            return first
+            return None
 
         chunk = await self._response.__anext__()
         self._cost += _map_cost(chunk)
@@ -244,12 +245,15 @@ class OpenAIStreamTextResponse(StreamTextResponse):
         except IndexError:
             raise StopAsyncIteration()
 
-        if choice.finish_reason is not None:
-            # we don't raise StopAsyncIteration on the last chunk because usage comes after this
-            return choice.delta.content or ''
+        # we don't raise StopAsyncIteration on the last chunk because usage comes after this
+        if choice.finish_reason is None:
+            assert choice.delta.content is not None, f'Expected delta with content, invalid chunk: {chunk!r}'
+        if choice.delta.content is not None:
+            self._buffer.append(choice.delta.content)
 
-        assert choice.delta.content is not None, f'Expected delta with content, invalid chunk: {chunk!r}'
-        return choice.delta.content
+    def get(self) -> Iterable[str]:
+        yield from self._buffer
+        self._buffer.clear()
 
     def cost(self) -> Cost:
         return self._cost

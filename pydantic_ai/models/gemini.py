@@ -18,7 +18,7 @@ from __future__ import annotations as _annotations
 
 import os
 import re
-from collections.abc import AsyncIterator, Mapping, Sequence
+from collections.abc import AsyncIterator, Iterable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from copy import deepcopy
 from dataclasses import dataclass, field
@@ -26,7 +26,7 @@ from datetime import datetime
 from typing import Annotated, Any, Literal, Union
 
 from httpx import AsyncClient as AsyncHTTPClient, Response as HTTPResponse
-from pydantic import Field
+from pydantic import Discriminator, Field, Tag
 from typing_extensions import NotRequired, TypedDict, TypeGuard, assert_never
 
 from .. import UnexpectedModelBehaviour, _pydantic, _utils, exceptions, result
@@ -229,28 +229,28 @@ class GeminiStreamTextResponse(StreamTextResponse):
     _content: bytearray
     _stream: AsyncIterator[bytes]
     _position: int = 0
-    _timestamp: datetime = field(default_factory=_utils.now_utc)
+    _timestamp: datetime = field(default_factory=_utils.now_utc, init=False)
 
-    async def __anext__(self) -> str:
+    async def __anext__(self) -> None:
         if self._first:
             self._first = False
         else:
             chunk = await self._stream.__anext__()
             self._content.extend(chunk)
 
+    def get(self) -> Iterable[str]:
         responses = self._responses()
         new_responses = responses[self._position :]
         self._position = len(responses)
-        new_text: list[str] = []
         for r in new_responses:
             parts = r['candidates'][0]['content']['parts']
             if all_text_parts(parts):
-                new_text.extend(part['text'] for part in parts)
+                for part in parts:
+                    yield part['text']
             else:
                 raise UnexpectedModelBehaviour(
                     'Streamed response with unexpected content, expected all parts to be text'
                 )
-        return ''.join(new_text)
 
     def cost(self) -> result.Cost:
         cost = result.Cost()
@@ -413,10 +413,28 @@ class _GeminiFunctionResponse(TypedDict):
     response: dict[str, Any]
 
 
+def _part_discriminator(v: Any) -> str:
+    if isinstance(v, dict):
+        if 'text' in v:
+            return 'text'
+        elif 'functionCall' in v or 'function_call' in v:
+            return 'function_call'
+        elif 'functionResponse' in v or 'function_response' in v:
+            return 'function_response'
+    return 'text'
+
+
 # See <https://ai.google.dev/api/caching#Part>
 # we don't currently support other part types
 # TODO discriminator
-_GeminiPartUnion = Union[_GeminiTextPart, _GeminiFunctionCallPart, _GeminiFunctionResponsePart]
+_GeminiPartUnion = Annotated[
+    Union[
+        Annotated[_GeminiTextPart, Tag('text')],
+        Annotated[_GeminiFunctionCallPart, Tag('function_call')],
+        Annotated[_GeminiFunctionResponsePart, Tag('function_response')],
+    ],
+    Discriminator(_part_discriminator),
+]
 
 
 class _GeminiTextContent(TypedDict):

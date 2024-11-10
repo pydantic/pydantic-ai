@@ -98,7 +98,7 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
 
     cost_so_far: Cost
     """Cost up until the last request."""
-    _stream_response: models.StreamTextResponse | models.StreamToolCallResponse
+    _stream_response: models.EitherStreamedResponse
     _result_schema: _result.ResultSchema[ResultData] | None
     _deps: AgentDeps
     _result_validators: list[_result.ResultValidator[AgentDeps, ResultData]]
@@ -135,15 +135,15 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
             with _logfire.span('response stream text') as lf_span:
                 if text_delta:
                     async with _utils.group_by_temporal(self._stream_response, debounce_by) as group_iter:
-                        async for chunks in group_iter:
-                            yield ''.join(chunks)  # pyright: ignore[reportReturnType]
+                        async for _ in group_iter:
+                            yield cast(ResultData, ''.join(self._stream_response.get()))
                 else:
                     # a quick benchmark shows it's faster to build up a string with concat when we're
                     # yielding at each step
                     combined = ''
                     async with _utils.group_by_temporal(self._stream_response, debounce_by) as group_iter:
-                        async for chunks in group_iter:
-                            combined += ''.join(chunks)
+                        async for _ in group_iter:
+                            combined += ''.join(self._stream_response.get())
                             combined = await self._validate_text_result(combined)
                             yield cast(ResultData, combined)
                     lf_span.set_attribute('combined_text', combined)
@@ -184,7 +184,9 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
     async def get_response(self) -> ResultData:
         """Stream the whole response, validate and return it."""
         if isinstance(self._stream_response, models.StreamTextResponse):
-            text = ''.join([chunk async for chunk in self._stream_response])
+            async for _ in self._stream_response:
+                pass
+            text = ''.join(self._stream_response.get())
             text = await self._validate_text_result(text)
             self._marked_completed(text=text)
             return cast(ResultData, text)
