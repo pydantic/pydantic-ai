@@ -2,12 +2,11 @@ from __future__ import annotations as _annotations
 
 import asyncio
 from collections.abc import AsyncIterator, Sequence
-from contextlib import asynccontextmanager, suppress
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any, Callable, Generic, Literal, cast, final, overload
 
 import logfire_api
-from pydantic import ValidationError
 from typing_extensions import assert_never
 
 from . import _result, _retriever as _r, _system_prompt, _utils, exceptions, messages as _messages, models, result
@@ -44,6 +43,11 @@ class Agent(Generic[AgentDeps, ResponseData]):
     _default_deps: AgentDeps
     _max_result_retries: int
     _current_result_retry: int
+    last_run_messages: list[_messages.Message] | None = None
+    """The messages from the last run, useful when a run raised an exception.
+
+    Note: these are not used by the agent, e.g. in future runs, they are just stored for developers' convenience.
+    """
 
     def __init__(
         self,
@@ -100,6 +104,7 @@ class Agent(Generic[AgentDeps, ResponseData]):
             deps = self._default_deps
 
         new_message_index, messages = await self._prepare_messages(deps, user_prompt, message_history)
+        self.last_run_messages = messages
 
         for retriever in self._retrievers.values():
             retriever.reset()
@@ -114,39 +119,34 @@ class Agent(Generic[AgentDeps, ResponseData]):
             model_name=model_used.name(),
         ) as run_span:
             run_step = 0
-            try:
-                while True:
-                    run_step += 1
-                    with _logfire.span('model request {run_step=}', run_step=run_step) as model_req_span:
-                        model_response, request_cost = await agent_model.request(messages)
-                        model_req_span.set_attribute('response', model_response)
-                        model_req_span.set_attribute('cost', request_cost)
-                        model_req_span.message = f'model request -> {model_response.role}'
+            while True:
+                run_step += 1
+                with _logfire.span('model request {run_step=}', run_step=run_step) as model_req_span:
+                    model_response, request_cost = await agent_model.request(messages)
+                    model_req_span.set_attribute('response', model_response)
+                    model_req_span.set_attribute('cost', request_cost)
+                    model_req_span.message = f'model request -> {model_response.role}'
 
-                    messages.append(model_response)
-                    cost += request_cost
+                messages.append(model_response)
+                cost += request_cost
 
-                    with _logfire.span('handle model response') as handle_span:
-                        either = await self._handle_model_response(model_response, deps)
+                with _logfire.span('handle model response') as handle_span:
+                    either = await self._handle_model_response(model_response, deps)
 
-                        if left := either.left:
-                            # left means return a streamed result
-                            run_span.set_attribute('all_messages', messages)
-                            run_span.set_attribute('cost', cost)
-                            handle_span.set_attribute('result', left.value)
-                            handle_span.message = 'handle model response -> final result'
-                            return result.RunResult(messages, new_message_index, left.value, cost)
-                        else:
-                            # right means continue the conversation
-                            tool_responses = either.right
-                            handle_span.set_attribute('tool_responses', tool_responses)
-                            response_msgs = ' '.join(m.role for m in tool_responses)
-                            handle_span.message = f'handle model response -> {response_msgs}'
-                            messages.extend(tool_responses)
-            except (ValidationError, exceptions.UnexpectedModelBehaviour) as e:
-                run_span.set_attribute('messages', messages)
-                # noinspection PyTypeChecker
-                raise exceptions.AgentError(messages, model_used) from e
+                    if left := either.left:
+                        # left means return a streamed result
+                        run_span.set_attribute('all_messages', messages)
+                        run_span.set_attribute('cost', cost)
+                        handle_span.set_attribute('result', left.value)
+                        handle_span.message = 'handle model response -> final result'
+                        return result.RunResult(messages, new_message_index, left.value, cost)
+                    else:
+                        # right means continue the conversation
+                        tool_responses = either.right
+                        handle_span.set_attribute('tool_responses', tool_responses)
+                        response_msgs = ' '.join(m.role for m in tool_responses)
+                        handle_span.message = f'handle model response -> {response_msgs}'
+                        messages.extend(tool_responses)
 
     def run_sync(
         self,
@@ -197,6 +197,7 @@ class Agent(Generic[AgentDeps, ResponseData]):
             deps = self._default_deps
 
         new_message_index, messages = await self._prepare_messages(deps, user_prompt, message_history)
+        self.last_run_messages = messages
 
         for retriever in self._retrievers.values():
             retriever.reset()
@@ -211,49 +212,43 @@ class Agent(Generic[AgentDeps, ResponseData]):
             model_name=model_used.name(),
         ) as run_span:
             run_step = 0
-            try:
-                while True:
-                    run_step += 1
-                    with _logfire.span('model request {run_step=}', run_step=run_step) as model_req_span:
-                        async with agent_model.request_stream(messages) as model_response:
-                            model_req_span.set_attribute('response_type', model_response.__class__.__name__)
-                            # We want to end the "model request" span here, but we can't exit the context manager
-                            # in the traditional way
-                            model_req_span.__exit__(None, None, None)
+            while True:
+                run_step += 1
+                with _logfire.span('model request {run_step=}', run_step=run_step) as model_req_span:
+                    async with agent_model.request_stream(messages) as model_response:
+                        model_req_span.set_attribute('response_type', model_response.__class__.__name__)
+                        # We want to end the "model request" span here, but we can't exit the context manager
+                        # in the traditional way
+                        model_req_span.__exit__(None, None, None)
 
-                            with _logfire.span('handle model response') as handle_span:
-                                either = await self._handle_streamed_model_response(model_response, deps)
+                        with _logfire.span('handle model response') as handle_span:
+                            either = await self._handle_streamed_model_response(model_response, deps)
 
-                                if left := either.left:
-                                    # left means return a streamed result
-                                    result_stream = left.value
-                                    run_span.set_attribute('all_messages', messages)
-                                    handle_span.set_attribute('result_type', result_stream.__class__.__name__)
-                                    handle_span.message = 'handle model response -> final result'
-                                    yield result.StreamedRunResult(
-                                        messages,
-                                        new_message_index,
-                                        cost,
-                                        result_stream,
-                                        self._result_schema,
-                                        deps,
-                                        self._result_validators,
-                                    )
-                                    return
-                                else:
-                                    # right means continue the conversation
-                                    tool_responses = either.right
-                                    handle_span.set_attribute('tool_responses', tool_responses)
-                                    response_msgs = ' '.join(m.role for m in tool_responses)
-                                    handle_span.message = f'handle model response -> {response_msgs}'
-                                    messages.extend(tool_responses)
-                                    # the model_response should have been fully streamed by now, we can add it's cost
-                                    cost += model_response.cost()
-
-            except exceptions.UnexpectedModelBehaviour as e:
-                run_span.set_attribute('messages', messages)
-                # noinspection PyTypeChecker
-                raise exceptions.AgentError(messages, model_used) from e
+                            if left := either.left:
+                                # left means return a streamed result
+                                result_stream = left.value
+                                run_span.set_attribute('all_messages', messages)
+                                handle_span.set_attribute('result_type', result_stream.__class__.__name__)
+                                handle_span.message = 'handle model response -> final result'
+                                yield result.StreamedRunResult(
+                                    messages,
+                                    new_message_index,
+                                    cost,
+                                    result_stream,
+                                    self._result_schema,
+                                    deps,
+                                    self._result_validators,
+                                )
+                                return
+                            else:
+                                # right means continue the conversation
+                                tool_responses = either.right
+                                handle_span.set_attribute('tool_responses', tool_responses)
+                                response_msgs = ' '.join(m.role for m in tool_responses)
+                                handle_span.message = f'handle model response -> {response_msgs}'
+                                messages.extend(tool_responses)
+                                # the model_response should have been fully streamed by now, we can add it's cost
+                                cost += model_response.cost()
 
     def system_prompt(
         self, func: _system_prompt.SystemPromptFunc[AgentDeps]
@@ -413,21 +408,17 @@ class Agent(Generic[AgentDeps, ResponseData]):
                 raise exceptions.UnexpectedModelBehaviour('Received empty tool call message')
 
             # otherwise we run all retriever functions in parallel
+            messages: list[_messages.Message] = []
             tasks: list[asyncio.Task[_messages.Message]] = []
-            try:
-                for call in model_response.calls:
-                    retriever = self._retrievers.get(call.tool_name)
-                    if retriever is None:
-                        # should this be a retry error?
-                        raise exceptions.UnexpectedModelBehaviour(f'Unknown function name: {call.tool_name!r}')
+            for call in model_response.calls:
+                if retriever := self._retrievers.get(call.tool_name):
                     tasks.append(asyncio.create_task(retriever.run(deps, call), name=call.tool_name))
-            except BaseException:
-                await _cancel_tasks(tasks)
-                raise
+                else:
+                    messages.append(self._unknown_tool(call.tool_name))
 
             with _logfire.span('running {tools=}', tools=[t.get_name() for t in tasks]):
-                new_messages = await asyncio.gather(*tasks)
-            return _utils.Either(right=new_messages)
+                messages += await asyncio.gather(*tasks)
+            return _utils.Either(right=messages)
         else:
             assert_never(model_response)
 
@@ -479,16 +470,11 @@ class Agent(Generic[AgentDeps, ResponseData]):
 
             # we now run all retriever functions in parallel
             tasks: list[asyncio.Task[_messages.Message]] = []
-            try:
-                for call in structured_msg.calls:
-                    retriever = self._retrievers.get(call.tool_name)
-                    if retriever is None:
-                        raise exceptions.UnexpectedModelBehaviour(f'Unknown function name: {call.tool_name!r}')
+            for call in structured_msg.calls:
+                if retriever := self._retrievers.get(call.tool_name):
                     tasks.append(asyncio.create_task(retriever.run(deps, call), name=call.tool_name))
-            except BaseException:
-                # otherwise we'll get warnings about coroutines not awaited
-                await _cancel_tasks(tasks)
-                raise
+                else:
+                    messages.append(self._unknown_tool(call.tool_name))
 
             with _logfire.span('running {tools=}', tools=[t.get_name() for t in tasks]):
                 messages += await asyncio.gather(*tasks)
@@ -516,9 +502,13 @@ class Agent(Generic[AgentDeps, ResponseData]):
             messages.append(_messages.SystemPrompt(prompt))
         return messages
 
-
-async def _cancel_tasks(tasks: list[asyncio.Task[_messages.Message]]) -> None:
-    for task in tasks:
-        task.cancel()
-    with suppress(asyncio.CancelledError):
-        await asyncio.gather(*tasks)
+    def _unknown_tool(self, tool_name: str) -> _messages.RetryPrompt:
+        self._incr_result_retry()
+        names = list(self._retrievers.keys())
+        if self._result_schema:
+            names.extend(self._result_schema.tool_names())
+        if names:
+            msg = f'Available tools: {", ".join(names)}'
+        else:
+            msg = 'No tools available.'
+        return _messages.RetryPrompt(content=f'Unknown tool name: {tool_name!r}. {msg}')

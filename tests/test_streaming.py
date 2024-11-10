@@ -7,13 +7,14 @@ from datetime import timezone
 import pytest
 from inline_snapshot import snapshot
 
-from pydantic_ai import Agent, AgentError, UserError
+from pydantic_ai import Agent, UnexpectedModelBehaviour, UserError
 from pydantic_ai.messages import (
     ArgsJson,
     ArgsObject,
     Message,
     ModelStructuredResponse,
     ModelTextResponse,
+    RetryPrompt,
     ToolCall,
     ToolReturn,
     UserPrompt,
@@ -149,14 +150,10 @@ async def test_plain_response():
 
     agent = Agent(FunctionModel(stream_function=text_stream), deps=None, result_type=tuple[str, str])
 
-    with pytest.raises(AgentError) as exc_info:
+    with pytest.raises(UnexpectedModelBehaviour, match=r'Exceeded maximum retries \(1\) for result validation'):
         async with agent.run_stream(''):
             pass
 
-    assert str(exc_info.value) == snapshot(
-        'Error while running model function:stream-text_stream after 2 messages\n'
-        '  caused by unexpected model behavior: Exceeded maximum retries (1) for result validation'
-    )
     assert call_index == 2
 
 
@@ -231,7 +228,7 @@ async def test_call_retriever_empty():
 
     agent = Agent(FunctionModel(stream_function=stream_structured_function), deps=None, result_type=tuple[str, int])
 
-    with pytest.raises(AgentError, match='caused by unexpected model behavior: Received empty tool call message'):
+    with pytest.raises(UnexpectedModelBehaviour, match='Received empty tool call message'):
         async with agent.run_stream('hello'):
             pass
 
@@ -242,6 +239,22 @@ async def test_call_retriever_wrong_name():
 
     agent = Agent(FunctionModel(stream_function=stream_structured_function), deps=None, result_type=tuple[str, int])
 
-    with pytest.raises(AgentError, match="caused by unexpected model behavior: Unknown function name: 'foobar'"):
+    @agent.retriever_plain
+    async def ret_a(x: str) -> str:
+        return x
+
+    with pytest.raises(UnexpectedModelBehaviour, match=r'Exceeded maximum retries \(1\) for result validation'):
         async with agent.run_stream('hello'):
             pass
+    assert agent.last_run_messages == snapshot(
+        [
+            UserPrompt(content='hello', timestamp=IsNow(tz=timezone.utc)),
+            ModelStructuredResponse(
+                calls=[ToolCall(tool_name='foobar', args=ArgsJson(args_json='{}'))], timestamp=IsNow(tz=timezone.utc)
+            ),
+            RetryPrompt(
+                content="Unknown tool name: 'foobar'. Available tools: ret_a, final_result",
+                timestamp=IsNow(tz=timezone.utc),
+            ),
+        ]
+    )
