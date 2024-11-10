@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Protocol, Union
 
 from httpx import AsyncClient as AsyncHTTPClient
 
-from ..messages import LLMMessage, LLMToolCalls, Message
+from ..messages import Message, ModelAnyResponse, ModelStructuredResponse
 
 if TYPE_CHECKING:
     from .._utils import ObjectJsonSchema
@@ -54,7 +54,7 @@ class AgentModel(ABC):
     """Model configured for a specific agent."""
 
     @abstractmethod
-    async def request(self, messages: list[Message]) -> tuple[LLMMessage, Cost]:
+    async def request(self, messages: list[Message]) -> tuple[ModelAnyResponse, Cost]:
         """Make a request to the model."""
         raise NotImplementedError()
 
@@ -107,7 +107,7 @@ class StreamTextResponse(ABC):
         raise NotImplementedError()
 
 
-class StreamToolCallResponse(ABC):
+class StreamStructuredResponse(ABC):
     """Streamed response from an LLM when calling a tool."""
 
     def __aiter__(self) -> AsyncIterator[None]:
@@ -124,10 +124,10 @@ class StreamToolCallResponse(ABC):
         raise NotImplementedError()
 
     @abstractmethod
-    def get(self, *, final: bool = False) -> LLMToolCalls:
-        """Get the `LLMToolCalls` at this point.
+    def get(self, *, final: bool = False) -> ModelStructuredResponse:
+        """Get the `ModelStructuredResponse` at this point.
 
-        The `LLMToolCalls` may or may not be complete, depending on whether the stream is finished.
+        The `ModelStructuredResponse` may or may not be complete, depending on whether the stream is finished.
 
         Args:
             final: If True, this is the final call, after iteration is complete, the response should be fully validated.
@@ -148,7 +148,7 @@ class StreamToolCallResponse(ABC):
         raise NotImplementedError()
 
 
-EitherStreamedResponse = Union[StreamTextResponse, StreamToolCallResponse]
+EitherStreamedResponse = Union[StreamTextResponse, StreamStructuredResponse]
 
 
 def infer_model(model: Model | KnownModelName) -> Model:

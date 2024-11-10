@@ -11,9 +11,9 @@ from pydantic_ai import Agent, AgentError, UserError
 from pydantic_ai.messages import (
     ArgsJson,
     ArgsObject,
-    LLMResponse,
-    LLMToolCalls,
     Message,
+    ModelStructuredResponse,
+    ModelTextResponse,
     ToolCall,
     ToolReturn,
     UserPrompt,
@@ -40,7 +40,7 @@ async def test_streamed_text_response():
         assert result.all_messages() == snapshot(
             [
                 UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
-                LLMToolCalls(
+                ModelStructuredResponse(
                     calls=[ToolCall(tool_name='ret_a', args=ArgsObject(args_object={'x': 'a'}))],
                     timestamp=IsNow(tz=timezone.utc),
                 ),
@@ -53,12 +53,12 @@ async def test_streamed_text_response():
         assert result.all_messages() == snapshot(
             [
                 UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
-                LLMToolCalls(
+                ModelStructuredResponse(
                     calls=[ToolCall(tool_name='ret_a', args=ArgsObject(args_object={'x': 'a'}))],
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 ToolReturn(tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc)),
-                LLMResponse(content='{"ret_a":"a-apple"}', timestamp=IsNow(tz=timezone.utc)),
+                ModelTextResponse(content='{"ret_a":"a-apple"}', timestamp=IsNow(tz=timezone.utc)),
             ]
         )
 
@@ -96,6 +96,11 @@ async def test_structured_response_iter():
 
     assert chunks == snapshot([[1], [1, 2, 3, 4], [1, 2, 3, 4]])
 
+    async with agent.run_stream('Hello') as result:
+        with pytest.raises(UserError, match=r'stream_text\(\) can only be used with text responses'):
+            async for _ in result.stream_text():
+                pass
+
 
 async def test_streamed_text_stream():
     m = TestModel(custom_result_text='The cat sat on the mat.')
@@ -128,7 +133,7 @@ async def test_streamed_text_stream():
         )
 
     async with agent.run_stream('Hello') as result:
-        with pytest.raises(UserError, match=r'stream_messages\(\) can only be used with structured responses'):
+        with pytest.raises(UserError, match=r'stream_structured\(\) can only be used with structured responses'):
             async for _ in result.stream_structured():
                 pass
 
@@ -191,7 +196,7 @@ async def test_call_retriever():
         assert result.all_messages() == snapshot(
             [
                 UserPrompt(content='hello', timestamp=IsNow(tz=timezone.utc)),
-                LLMToolCalls(
+                ModelStructuredResponse(
                     calls=[ToolCall(tool_name='ret_a', args=ArgsJson(args_json='{"x": "hello"}'))],
                     timestamp=IsNow(tz=timezone.utc),
                 ),
@@ -202,12 +207,12 @@ async def test_call_retriever():
         assert result.all_messages() == snapshot(
             [
                 UserPrompt(content='hello', timestamp=IsNow(tz=timezone.utc)),
-                LLMToolCalls(
+                ModelStructuredResponse(
                     calls=[ToolCall(tool_name='ret_a', args=ArgsJson(args_json='{"x": "hello"}'))],
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 ToolReturn(tool_name='ret_a', content='hello world', timestamp=IsNow(tz=timezone.utc)),
-                LLMToolCalls(
+                ModelStructuredResponse(
                     calls=[
                         ToolCall(
                             tool_name='final_result',

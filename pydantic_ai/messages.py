@@ -67,10 +67,10 @@ class RetryPrompt:
 
 
 @dataclass
-class LLMResponse:
+class ModelTextResponse:
     content: str
     timestamp: datetime = field(default_factory=_now_utc)
-    role: Literal['llm-response'] = 'llm-response'
+    role: Literal['model-text-response'] = 'model-text-response'
 
 
 @dataclass
@@ -107,13 +107,13 @@ class ToolCall:
 
 
 @dataclass
-class LLMToolCalls:
+class ModelStructuredResponse:
     calls: list[ToolCall]
     timestamp: datetime = field(default_factory=_now_utc)
-    role: Literal['llm-tool-calls'] = 'llm-tool-calls'
+    role: Literal['model-structured-response'] = 'model-structured-response'
 
 
-LLMMessage = Union[LLMResponse, LLMToolCalls]
-Message = Union[SystemPrompt, UserPrompt, ToolReturn, RetryPrompt, LLMMessage]
+ModelAnyResponse = Union[ModelTextResponse, ModelStructuredResponse]
+Message = Union[SystemPrompt, UserPrompt, ToolReturn, RetryPrompt, ModelAnyResponse]
 
 MessagesTypeAdapter = _pydantic.LazyTypeAdapter(list[Annotated[Message, pydantic.Field(discriminator='role')]])

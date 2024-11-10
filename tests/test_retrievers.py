@@ -6,7 +6,7 @@ from inline_snapshot import snapshot
 from pydantic import BaseModel, Field
 
 from pydantic_ai import Agent, CallContext, UserError
-from pydantic_ai.messages import LLMMessage, LLMResponse, Message
+from pydantic_ai.messages import Message, ModelAnyResponse, ModelTextResponse
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 
@@ -67,10 +67,10 @@ async def google_style_docstring(foo: int, bar: str) -> str:  # pragma: no cover
     return f'{foo} {bar}'
 
 
-def get_json_schema(_messages: list[Message], info: AgentInfo) -> LLMMessage:
+def get_json_schema(_messages: list[Message], info: AgentInfo) -> ModelAnyResponse:
     assert len(info.retrievers) == 1
     r = next(iter(info.retrievers.values()))
-    return LLMResponse(json.dumps(r.json_schema))
+    return ModelTextResponse(json.dumps(r.json_schema))
 
 
 def test_docstring_google():

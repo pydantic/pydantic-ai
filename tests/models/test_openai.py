@@ -26,8 +26,8 @@ from typing_extensions import TypedDict
 from pydantic_ai import Agent, AgentError, ModelRetry, _utils
 from pydantic_ai.messages import (
     ArgsJson,
-    LLMResponse,
-    LLMToolCalls,
+    ModelStructuredResponse,
+    ModelTextResponse,
     RetryPrompt,
     SystemPrompt,
     ToolCall,
@@ -132,9 +132,9 @@ async def test_request_simple_success():
     assert result.all_messages() == snapshot(
         [
             UserPrompt(content='hello', timestamp=IsNow(tz=timezone.utc)),
-            LLMResponse(content='world', timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)),
+            ModelTextResponse(content='world', timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)),
             UserPrompt(content='hello', timestamp=IsNow(tz=timezone.utc)),
-            LLMResponse(content='world', timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)),
+            ModelTextResponse(content='world', timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)),
         ]
     )
 
@@ -176,7 +176,7 @@ async def test_request_structured_response():
     assert result.all_messages() == snapshot(
         [
             UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
-            LLMToolCalls(
+            ModelStructuredResponse(
                 calls=[
                     ToolCall(
                         tool_name='final_result',
@@ -249,7 +249,7 @@ async def test_request_tool_call():
         [
             SystemPrompt(content='this is the system prompt'),
             UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
-            LLMToolCalls(
+            ModelStructuredResponse(
                 calls=[
                     ToolCall(
                         tool_name='get_location',
@@ -265,7 +265,7 @@ async def test_request_tool_call():
                 tool_id='1',
                 timestamp=IsNow(tz=timezone.utc),
             ),
-            LLMToolCalls(
+            ModelStructuredResponse(
                 calls=[
                     ToolCall(
                         tool_name='get_location',
@@ -281,7 +281,7 @@ async def test_request_tool_call():
                 tool_id='2',
                 timestamp=IsNow(tz=timezone.utc),
             ),
-            LLMResponse(content='final response', timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)),
+            ModelTextResponse(content='final response', timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)),
         ]
     )
     assert result.cost() == snapshot(

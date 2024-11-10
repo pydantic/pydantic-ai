@@ -13,23 +13,23 @@ from typing_extensions import Self, TypeAliasType, TypedDict
 from . import _utils, messages
 from .call_typing import AgentDeps, CallContext
 from .exceptions import ModelRetry
-from .messages import LLMToolCalls, ToolCall
-from .result import ResultData
+from .messages import ModelStructuredResponse, ToolCall
+from .result import ResponseData
 
-# A function that always takes `ResultData` and returns `ResultData`,
+# A function that always takes `ResponseData` and returns `ResponseData`,
 # but may or maybe not take `CallInfo` as a first argument, and may or may not be async.
-# Usage `ResultValidator[AgentDeps, ResultData]`
+# Usage `ResultValidator[AgentDeps, ResponseData]`
 ResultValidatorFunc = Union[
-    Callable[[CallContext[AgentDeps], ResultData], ResultData],
-    Callable[[CallContext[AgentDeps], ResultData], Awaitable[ResultData]],
-    Callable[[ResultData], ResultData],
-    Callable[[ResultData], Awaitable[ResultData]],
+    Callable[[CallContext[AgentDeps], ResponseData], ResponseData],
+    Callable[[CallContext[AgentDeps], ResponseData], Awaitable[ResponseData]],
+    Callable[[ResponseData], ResponseData],
+    Callable[[ResponseData], Awaitable[ResponseData]],
 ]
 
 
 @dataclass
-class ResultValidator(Generic[AgentDeps, ResultData]):
-    function: ResultValidatorFunc[AgentDeps, ResultData]
+class ResultValidator(Generic[AgentDeps, ResponseData]):
+    function: ResultValidatorFunc[AgentDeps, ResponseData]
     _takes_ctx: bool = field(init=False)
     _is_async: bool = field(init=False)
 
@@ -38,8 +38,8 @@ class ResultValidator(Generic[AgentDeps, ResultData]):
         self._is_async = inspect.iscoroutinefunction(self.function)
 
     async def validate(
-        self, result: ResultData, deps: AgentDeps, retry: int, tool_call: messages.ToolCall | None
-    ) -> ResultData:
+        self, result: ResponseData, deps: AgentDeps, retry: int, tool_call: messages.ToolCall | None
+    ) -> ResponseData:
         """Validate a result but calling the function.
 
         Args:
@@ -58,10 +58,10 @@ class ResultValidator(Generic[AgentDeps, ResultData]):
 
         try:
             if self._is_async:
-                function = cast(Callable[[Any], Awaitable[ResultData]], self.function)
+                function = cast(Callable[[Any], Awaitable[ResponseData]], self.function)
                 result_data = await function(*args)
             else:
-                function = cast(Callable[[Any], ResultData], self.function)
+                function = cast(Callable[[Any], ResponseData], self.function)
                 result_data = await _utils.run_in_executor(function, *args)
         except ModelRetry as r:
             m = messages.RetryPrompt(content=r.message)
@@ -82,17 +82,17 @@ class ToolRetryError(Exception):
 
 
 @dataclass
-class ResultSchema(Generic[ResultData]):
+class ResultSchema(Generic[ResponseData]):
     """Model the final response from an agent run.
 
     Similar to `Retriever` but for the final result of running an agent.
     """
 
-    tools: dict[str, ResultTool[ResultData]]
+    tools: dict[str, ResultTool[ResponseData]]
     allow_text_result: bool
 
     @classmethod
-    def build(cls, response_type: type[ResultData], name: str, description: str | None) -> Self | None:
+    def build(cls, response_type: type[ResponseData], name: str, description: str | None) -> Self | None:
         """Build a ResultSchema dataclass from a response type."""
         if response_type is str:
             return None
@@ -103,13 +103,13 @@ class ResultSchema(Generic[ResultData]):
         else:
             allow_text_result = False
 
-        def _build_tool(a: Any, tool_name_: str, multiple: bool) -> ResultTool[ResultData]:
+        def _build_tool(a: Any, tool_name_: str, multiple: bool) -> ResultTool[ResponseData]:
             return cast(
-                ResultTool[ResultData],
+                ResultTool[ResponseData],
                 ResultTool.build(a, tool_name_, description, multiple),  # pyright: ignore[reportUnknownMemberType]
             )
 
-        tools: dict[str, ResultTool[ResultData]] = {}
+        tools: dict[str, ResultTool[ResponseData]] = {}
         if args := get_union_args(response_type):
             for arg in args:
                 tool_name = union_tool_name(name, arg)
@@ -119,7 +119,7 @@ class ResultSchema(Generic[ResultData]):
 
         return cls(tools=tools, allow_text_result=allow_text_result)
 
-    def find_tool(self, message: LLMToolCalls) -> tuple[ToolCall, ResultTool[ResultData]] | None:
+    def find_tool(self, message: ModelStructuredResponse) -> tuple[ToolCall, ResultTool[ResponseData]] | None:
         """Find a tool that matches one of the calls."""
         for call in message.calls:
             if result := self.tools.get(call.tool_name):
@@ -134,7 +134,7 @@ DEFAULT_DESCRIPTION = 'The final response which ends this conversation'
 
 
 @dataclass
-class ResultTool(Generic[ResultData]):
+class ResultTool(Generic[ResponseData]):
     name: str
     description: str
     type_adapter: TypeAdapter[Any]
@@ -142,7 +142,9 @@ class ResultTool(Generic[ResultData]):
     outer_typed_dict_key: str | None
 
     @classmethod
-    def build(cls, response_type: type[ResultData], name: str, description: str | None, multiple: bool) -> Self | None:
+    def build(
+        cls, response_type: type[ResponseData], name: str, description: str | None, multiple: bool
+    ) -> Self | None:
         """Build a ResultTool dataclass from a response type."""
         assert response_type is not str, 'ResultTool does not support str as a response type'
 
@@ -180,7 +182,7 @@ class ResultTool(Generic[ResultData]):
 
     def validate(
         self, tool_call: messages.ToolCall, allow_partial: bool = False, wrap_validation_errors: bool = True
-    ) -> ResultData:
+    ) -> ResponseData:
         """Validate a result message.
 
         Args:

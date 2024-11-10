@@ -12,7 +12,7 @@ from typing_extensions import assert_never
 
 from . import _result, _retriever as _r, _system_prompt, _utils, exceptions, messages as _messages, models, result
 from .call_typing import AgentDeps
-from .result import ResultData
+from .result import ResponseData
 
 __all__ = 'Agent', 'KnownModelName'
 KnownModelName = Literal[
@@ -29,13 +29,13 @@ _logfire = logfire_api.Logfire(otel_scope='pydantic-ai')
 
 @final
 @dataclass(init=False)
-class Agent(Generic[AgentDeps, ResultData]):
+class Agent(Generic[AgentDeps, ResponseData]):
     """Main class for creating "agents" - a way to have a specific type of "conversation" with an LLM."""
 
     # dataclass fields mostly for my sanity — knowing what attributes are available
     model: models.Model | None
-    _result_schema: _result.ResultSchema[ResultData] | None
-    _result_validators: list[_result.ResultValidator[AgentDeps, ResultData]]
+    _result_schema: _result.ResultSchema[ResponseData] | None
+    _result_validators: list[_result.ResultValidator[AgentDeps, ResponseData]]
     _allow_text_result: bool
     _system_prompts: tuple[str, ...]
     _retrievers: dict[str, _r.Retriever[AgentDeps, Any]]
@@ -48,7 +48,7 @@ class Agent(Generic[AgentDeps, ResultData]):
     def __init__(
         self,
         model: models.Model | KnownModelName | None = None,
-        result_type: type[ResultData] = str,
+        result_type: type[ResponseData] = str,
         *,
         system_prompt: str | Sequence[str] = (),
         # type here looks odd, but it's required os you can avoid "partially unknown" type errors with `deps=None`
@@ -82,7 +82,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         message_history: list[_messages.Message] | None = None,
         model: models.Model | KnownModelName | None = None,
         deps: AgentDeps | None = None,
-    ) -> result.RunResult[ResultData]:
+    ) -> result.RunResult[ResponseData]:
         """Run the agent with a user prompt in async mode.
 
         Args:
@@ -155,7 +155,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         message_history: list[_messages.Message] | None = None,
         model: models.Model | KnownModelName | None = None,
         deps: AgentDeps | None = None,
-    ) -> result.RunResult[ResultData]:
+    ) -> result.RunResult[ResponseData]:
         """Run the agent with a user prompt synchronously.
 
         This is a convenience method that wraps `self.run` with `asyncio.run()`.
@@ -179,7 +179,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         message_history: list[_messages.Message] | None = None,
         model: models.Model | KnownModelName | None = None,
         deps: AgentDeps | None = None,
-    ) -> AsyncIterator[result.StreamedRunResult[AgentDeps, ResultData]]:
+    ) -> AsyncIterator[result.StreamedRunResult[AgentDeps, ResponseData]]:
         """Run the agent with a user prompt in async mode, returning a streamed response.
 
         Args:
@@ -263,8 +263,8 @@ class Agent(Generic[AgentDeps, ResultData]):
         return func
 
     def result_validator(
-        self, func: _result.ResultValidatorFunc[AgentDeps, ResultData]
-    ) -> _result.ResultValidatorFunc[AgentDeps, ResultData]:
+        self, func: _result.ResultValidatorFunc[AgentDeps, ResponseData]
+    ) -> _result.ResultValidatorFunc[AgentDeps, ResponseData]:
         """Decorator to register a result validator function."""
         self._result_validators.append(_result.ResultValidator(func))
         return func
@@ -370,17 +370,17 @@ class Agent(Generic[AgentDeps, ResultData]):
         return new_message_index, messages
 
     async def _handle_model_response(
-        self, model_response: _messages.LLMMessage, deps: AgentDeps
-    ) -> _utils.Either[ResultData, list[_messages.Message]]:
+        self, model_response: _messages.ModelAnyResponse, deps: AgentDeps
+    ) -> _utils.Either[ResponseData, list[_messages.Message]]:
         """Process a non-streamed response from the model.
 
         Returns:
             Return `Either` — left: final result data, right: list of messages to send back to the model.
         """
-        if model_response.role == 'llm-response':
+        if model_response.role == 'model-text-response':
             # plain string response
             if self._allow_text_result:
-                result_data_input = cast(ResultData, model_response.content)
+                result_data_input = cast(ResponseData, model_response.content)
                 try:
                     result_data = await self._validate_result(result_data_input, deps, None)
                 except _result.ToolRetryError as e:
@@ -394,7 +394,7 @@ class Agent(Generic[AgentDeps, ResultData]):
                     content='Plain text responses are not permitted, please call one of the functions instead.',
                 )
                 return _utils.Either(right=[response])
-        elif model_response.role == 'llm-tool-calls':
+        elif model_response.role == 'model-structured-response':
             if self._result_schema is not None:
                 # if there's a result schema, and any of the calls match one of its tools, return the result
                 # NOTE: this means we ignore any other tools called here
@@ -432,7 +432,7 @@ class Agent(Generic[AgentDeps, ResultData]):
             assert_never(model_response)
 
     async def _handle_streamed_model_response(
-        self, model_response: models.StreamToolCallResponse | models.StreamTextResponse, deps: AgentDeps
+        self, model_response: models.EitherStreamedResponse, deps: AgentDeps
     ) -> _utils.Either[models.EitherStreamedResponse, list[_messages.Message]]:
         """Process a streamed response from the model.
 
@@ -454,33 +454,33 @@ class Agent(Generic[AgentDeps, ResultData]):
 
                 return _utils.Either(right=[response])
         else:
-            assert isinstance(model_response, models.StreamToolCallResponse), f'Unexpected response: {model_response}'
+            assert isinstance(model_response, models.StreamStructuredResponse), f'Unexpected response: {model_response}'
             if self._result_schema is not None:
                 # if there's a result schema, iterate over the stream until we find at least one tool
                 # NOTE: this means we ignore any other tools called here
-                tool_call_msg = model_response.get()
-                while not tool_call_msg.calls:
+                structured_msg = model_response.get()
+                while not structured_msg.calls:
                     try:
                         await model_response.__anext__()
                     except StopAsyncIteration:
                         break
-                    tool_call_msg = model_response.get()
+                    structured_msg = model_response.get()
 
-                if self._result_schema.find_tool(tool_call_msg):
+                if self._result_schema.find_tool(structured_msg):
                     return _utils.Either(left=model_response)
 
             # the model is calling a retriever function, consume the response to get the next message
             async for _ in model_response:
                 pass
-            tool_call_msg = model_response.get()
-            if not tool_call_msg.calls:
+            structured_msg = model_response.get()
+            if not structured_msg.calls:
                 raise exceptions.UnexpectedModelBehaviour('Received empty tool call message')
-            messages: list[_messages.Message] = [tool_call_msg]
+            messages: list[_messages.Message] = [structured_msg]
 
             # we now run all retriever functions in parallel
             tasks: list[asyncio.Task[_messages.Message]] = []
             try:
-                for call in tool_call_msg.calls:
+                for call in structured_msg.calls:
                     retriever = self._retrievers.get(call.tool_name)
                     if retriever is None:
                         raise exceptions.UnexpectedModelBehaviour(f'Unknown function name: {call.tool_name!r}')
@@ -495,8 +495,8 @@ class Agent(Generic[AgentDeps, ResultData]):
             return _utils.Either(right=messages)
 
     async def _validate_result(
-        self, result_data: ResultData, deps: AgentDeps, tool_call: _messages.ToolCall | None
-    ) -> ResultData:
+        self, result_data: ResponseData, deps: AgentDeps, tool_call: _messages.ToolCall | None
+    ) -> ResponseData:
         for validator in self._result_validators:
             result_data = await validator.validate(result_data, deps, self._current_result_retry, tool_call)
         return result_data

@@ -17,15 +17,23 @@ from typing import Any, Literal
 import pydantic_core
 
 from .. import _utils
-from ..messages import LLMMessage, LLMResponse, LLMToolCalls, Message, RetryPrompt, ToolCall, ToolReturn
+from ..messages import (
+    Message,
+    ModelAnyResponse,
+    ModelStructuredResponse,
+    ModelTextResponse,
+    RetryPrompt,
+    ToolCall,
+    ToolReturn,
+)
 from ..result import Cost
 from . import (
     AbstractToolDefinition,
     AgentModel,
     EitherStreamedResponse,
     Model,
+    StreamStructuredResponse,
     StreamTextResponse,
-    StreamToolCallResponse,
 )
 
 
@@ -112,28 +120,28 @@ class TestAgentModel(AgentModel):
     step: int = 0
     last_message_count: int = 0
 
-    async def request(self, messages: list[Message]) -> tuple[LLMMessage, Cost]:
+    async def request(self, messages: list[Message]) -> tuple[ModelAnyResponse, Cost]:
         return self._request(messages), Cost()
 
     @asynccontextmanager
     async def request_stream(self, messages: list[Message]) -> AsyncIterator[EitherStreamedResponse]:
         msg = self._request(messages)
         cost = Cost()
-        if isinstance(msg, LLMResponse):
+        if isinstance(msg, ModelTextResponse):
             yield TestStreamTextResponse(msg.content, cost)
         else:
-            yield TestStreamToolCallResponse(msg, cost)
+            yield TestStreamStructuredResponse(msg, cost)
 
     def gen_retriever_args(self, tool_def: AbstractToolDefinition) -> Any:
         """Generate arguments for a retriever."""
         return _JsonSchemaTestData(tool_def.json_schema, self.seed).generate()
 
-    def _request(self, messages: list[Message]) -> LLMMessage:
+    def _request(self, messages: list[Message]) -> ModelAnyResponse:
         if self.step == 0 and self.retriever_calls:
             calls = [ToolCall.from_object(name, self.gen_retriever_args(args)) for name, args in self.retriever_calls]
             self.step += 1
             self.last_message_count = len(messages)
-            return LLMToolCalls(calls=calls)
+            return ModelStructuredResponse(calls=calls)
 
         new_messages = messages[self.last_message_count :]
         self.last_message_count = len(messages)
@@ -145,7 +153,7 @@ class TestAgentModel(AgentModel):
                 if name in new_retry_names
             ]
             self.step += 1
-            return LLMToolCalls(calls=calls)
+            return ModelStructuredResponse(calls=calls)
         else:
             if response_text := self.result.left:
                 self.step += 1
@@ -155,20 +163,20 @@ class TestAgentModel(AgentModel):
                     for message in messages:
                         if isinstance(message, ToolReturn):
                             output[message.tool_name] = message.content
-                    return LLMResponse(content=pydantic_core.to_json(output).decode())
+                    return ModelTextResponse(content=pydantic_core.to_json(output).decode())
                 else:
-                    return LLMResponse(content=response_text.value)
+                    return ModelTextResponse(content=response_text.value)
             else:
                 assert self.result_tools is not None, 'No result tools provided'
                 custom_result_args = self.result.right
                 result_tool = self.result_tools[self.seed % len(self.result_tools)]
                 if custom_result_args is not None:
                     self.step += 1
-                    return LLMToolCalls(calls=[ToolCall.from_object(result_tool.name, custom_result_args)])
+                    return ModelStructuredResponse(calls=[ToolCall.from_object(result_tool.name, custom_result_args)])
                 else:
                     response_args = self.gen_retriever_args(result_tool)
                     self.step += 1
-                    return LLMToolCalls(calls=[ToolCall.from_object(result_tool.name, response_args)])
+                    return ModelStructuredResponse(calls=[ToolCall.from_object(result_tool.name, response_args)])
 
 
 @dataclass
@@ -203,8 +211,8 @@ class TestStreamTextResponse(StreamTextResponse):
 
 
 @dataclass
-class TestStreamToolCallResponse(StreamToolCallResponse):
-    _structured_response: LLMToolCalls
+class TestStreamStructuredResponse(StreamStructuredResponse):
+    _structured_response: ModelStructuredResponse
     _cost: Cost
     _iter: Iterator[None] = field(default_factory=lambda: iter([None]))
     _timestamp: datetime = field(default_factory=_utils.now_utc, init=False)
@@ -212,7 +220,7 @@ class TestStreamToolCallResponse(StreamToolCallResponse):
     async def __anext__(self) -> None:
         return _utils.sync_anext(self._iter)
 
-    def get(self, *, final: bool = False) -> LLMToolCalls:
+    def get(self, *, final: bool = False) -> ModelStructuredResponse:
         return self._structured_response
 
     def cost(self) -> Cost:

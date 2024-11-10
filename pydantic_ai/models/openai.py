@@ -16,10 +16,10 @@ from typing_extensions import assert_never
 from .. import UnexpectedModelBehaviour, _utils, result
 from ..messages import (
     ArgsJson,
-    LLMMessage,
-    LLMResponse,
-    LLMToolCalls,
     Message,
+    ModelAnyResponse,
+    ModelStructuredResponse,
+    ModelTextResponse,
     RetryPrompt,
     ToolCall,
     ToolReturn,
@@ -30,8 +30,8 @@ from . import (
     AgentModel,
     EitherStreamedResponse,
     Model,
+    StreamStructuredResponse,
     StreamTextResponse,
-    StreamToolCallResponse,
     cached_async_http_client,
 )
 
@@ -96,7 +96,7 @@ class OpenAIAgentModel(AgentModel):
     allow_text_result: bool
     tools: list[chat.ChatCompletionToolParam]
 
-    async def request(self, messages: list[Message]) -> tuple[LLMMessage, result.Cost]:
+    async def request(self, messages: list[Message]) -> tuple[ModelAnyResponse, result.Cost]:
         response = await self._completions_create(messages, False)
         return self._process_response(response), _map_cost(response)
 
@@ -140,18 +140,18 @@ class OpenAIAgentModel(AgentModel):
         )
 
     @staticmethod
-    def _process_response(response: chat.ChatCompletion) -> LLMMessage:
+    def _process_response(response: chat.ChatCompletion) -> ModelAnyResponse:
         """Process a non-streamed response, and prepare a message to return."""
         timestamp = datetime.fromtimestamp(response.created, tz=timezone.utc)
         choice = response.choices[0]
         if choice.message.tool_calls is not None:
-            return LLMToolCalls(
+            return ModelStructuredResponse(
                 [ToolCall.from_json(c.function.name, c.function.arguments, c.id) for c in choice.message.tool_calls],
                 timestamp=timestamp,
             )
         else:
             assert choice.message.content is not None, choice
-            return LLMResponse(choice.message.content, timestamp=timestamp)
+            return ModelTextResponse(choice.message.content, timestamp=timestamp)
 
     @staticmethod
     async def _process_streamed_response(response: AsyncStream[ChatCompletionChunk]) -> EitherStreamedResponse:
@@ -177,7 +177,7 @@ class OpenAIAgentModel(AgentModel):
             return OpenAIStreamTextResponse(delta.content, response, timestamp, start_cost)
         else:
             assert delta.tool_calls is not None, f'Expected delta with tool_calls, got {delta}'
-            return OpenAIStreamToolCallResponse(
+            return OpenAIStreamStructuredResponse(
                 response,
                 {c.index: c for c in delta.tool_calls},
                 timestamp,
@@ -210,12 +210,14 @@ class OpenAIAgentModel(AgentModel):
                     tool_call_id=_guard_tool_id(message),
                     content=message.model_response(),
                 )
-        elif message.role == 'llm-response':
-            # LLMResponse ->
+        elif message.role == 'model-text-response':
+            # ModelTextResponse ->
             return chat.ChatCompletionAssistantMessageParam(role='assistant', content=message.content)
-        elif message.role == 'llm-tool-calls':
-            assert message.role == 'llm-tool-calls', f'Expected role to be "llm-tool-calls", got {message.role}'
-            # LLMToolCalls ->
+        elif message.role == 'model-structured-response':
+            assert (
+                message.role == 'model-structured-response'
+            ), f'Expected role to be "llm-tool-calls", got {message.role}'
+            # ModelStructuredResponse ->
             return chat.ChatCompletionAssistantMessageParam(
                 role='assistant',
                 tool_calls=[_map_tool_call(t) for t in message.calls],
@@ -263,7 +265,7 @@ class OpenAIStreamTextResponse(StreamTextResponse):
 
 
 @dataclass
-class OpenAIStreamToolCallResponse(StreamToolCallResponse):
+class OpenAIStreamStructuredResponse(StreamStructuredResponse):
     _response: AsyncStream[ChatCompletionChunk]
     _delta_tool_calls: dict[int, ChoiceDeltaToolCall]
     _timestamp: datetime
@@ -292,15 +294,15 @@ class OpenAIStreamToolCallResponse(StreamToolCallResponse):
             else:
                 self._delta_tool_calls[new.index] = new
 
-    def get(self, *, final: bool = False) -> LLMToolCalls:
-        """Map tool call deltas to a `LLMToolCalls`."""
+    def get(self, *, final: bool = False) -> ModelStructuredResponse:
+        """Map tool call deltas to a `ModelStructuredResponse`."""
         calls: list[ToolCall] = []
         for c in self._delta_tool_calls.values():
             if f := c.function:
                 if f.name is not None and f.arguments is not None:
                     calls.append(ToolCall.from_json(f.name, f.arguments, c.id))
 
-        return LLMToolCalls(calls, timestamp=self._timestamp)
+        return ModelStructuredResponse(calls, timestamp=self._timestamp)
 
     def cost(self) -> Cost:
         return self._cost
