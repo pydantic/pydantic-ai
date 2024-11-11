@@ -14,15 +14,24 @@ from ._utils import now_utc as _now_utc
 
 @dataclass
 class SystemPrompt:
+    """A system prompt, generally written by the application developer."""
+
     content: str
+    """The content of the prompt."""
     role: Literal['system'] = 'system'
+    """Message type identifier, this type is available on all message as a discriminator."""
 
 
 @dataclass
 class UserPrompt:
+    """A user prompt, generally written by the end user."""
+
     content: str
+    """The content of the prompt."""
     timestamp: datetime = field(default_factory=_now_utc)
+    """The timestamp of the prompt."""
     role: Literal['user'] = 'user'
+    """Message type identifier, this type is available on all message as a discriminator."""
 
 
 tool_return_value_object = _pydantic.LazyTypeAdapter(dict[str, Any])
@@ -30,11 +39,18 @@ tool_return_value_object = _pydantic.LazyTypeAdapter(dict[str, Any])
 
 @dataclass
 class ToolReturn:
+    """A tool return message, this encodes the result of running a retriever."""
+
     tool_name: str
+    """The name of the "tool" was called."""
     content: str | dict[str, Any]
+    """The return value."""
     tool_id: str | None = None
+    """Optional tool identifier, this is used by some models including OpenAI."""
     timestamp: datetime = field(default_factory=_now_utc)
+    """The timestamp, when the tool returned."""
     role: Literal['tool-return'] = 'tool-return'
+    """Message type identifier, this type is available on all message as a discriminator."""
 
     def model_response_str(self) -> str:
         if isinstance(self.content, str):
@@ -52,11 +68,22 @@ class ToolReturn:
 
 @dataclass
 class RetryPrompt:
+    """A message sent when running a retriever failed, result validation failed, or no tool could be found to call."""
+
     content: list[pydantic_core.ErrorDetails] | str
+    """Details of why and how the model should retry.
+
+    If the retry was triggered by a [ValidationError][pydantic_core.ValidationError], this will be a list of
+    error details.
+    """
     tool_name: str | None = None
+    """The name of the tool that was called, if any."""
     tool_id: str | None = None
+    """The tool identifier, if any."""
     timestamp: datetime = field(default_factory=_now_utc)
+    """The timestamp, when the retry was triggered."""
     role: Literal['retry-prompt'] = 'retry-prompt'
+    """Message type identifier, this type is available on all message as a discriminator."""
 
     def model_response(self) -> str:
         if isinstance(self.content, str):
@@ -68,28 +95,44 @@ class RetryPrompt:
 
 @dataclass
 class ModelTextResponse:
+    """A plain text response from a model."""
+
     content: str
+    """The text content of the response."""
     timestamp: datetime = field(default_factory=_now_utc)
+    """The timestamp of the response.
+
+    If the model provides a timestamp in the response (as OpenAI does) that will be used.
+    """
     role: Literal['model-text-response'] = 'model-text-response'
+    """Message type identifier, this type is available on all message as a discriminator."""
 
 
 @dataclass
 class ArgsJson:
     args_json: str
+    """A JSON string of arguments."""
 
 
 @dataclass
 class ArgsObject:
     args_object: dict[str, Any]
+    """A python dictionary of arguments."""
 
 
 @dataclass
 class ToolCall:
-    """Either a retriever/tool call or structured response from the agent."""
+    """Either a retriever/tool call from the agent."""
 
     tool_name: str
+    """The name of the tool to call."""
     args: ArgsJson | ArgsObject
+    """The arguments to pass to the tool.
+
+    Either as JSON or a Python dictionary depending on how data was returned.
+    """
     tool_id: str | None = None
+    """Optional tool identifier, this is used by some models including OpenAI."""
 
     @classmethod
     def from_json(cls, tool_name: str, args_json: str, tool_id: str | None = None) -> ToolCall:
@@ -108,12 +151,22 @@ class ToolCall:
 
 @dataclass
 class ModelStructuredResponse:
+    """A structured response from a model."""
+
     calls: list[ToolCall]
+    """The tool calls being made."""
     timestamp: datetime = field(default_factory=_now_utc)
+    """The timestamp of the response.
+
+    If the model provides a timestamp in the response (as OpenAI does) that will be used.
+    """
     role: Literal['model-structured-response'] = 'model-structured-response'
+    """Message type identifier, this type is available on all message as a discriminator."""
 
 
 ModelAnyResponse = Union[ModelTextResponse, ModelStructuredResponse]
+"""Any response from a model."""
 Message = Union[SystemPrompt, UserPrompt, ToolReturn, RetryPrompt, ModelAnyResponse]
+"""Any message send to or returned by a model."""
 
 MessagesTypeAdapter = _pydantic.LazyTypeAdapter(list[Annotated[Message, pydantic.Field(discriminator='role')]])

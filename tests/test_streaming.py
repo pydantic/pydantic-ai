@@ -36,7 +36,7 @@ async def test_streamed_text_response():
         return f'{x}-apple'
 
     async with agent.run_stream('Hello') as result:
-        assert not result.is_structured()
+        assert not result.is_structured
         assert not result.is_complete
         assert result.all_messages() == snapshot(
             [
@@ -70,7 +70,7 @@ async def test_streamed_structured_response():
     agent = Agent(m, deps=None, result_type=tuple[str, str])
 
     async with agent.run_stream('') as result:
-        assert result.is_structured()
+        assert result.is_structured
         assert not result.is_complete
         response = await result.get_data()
         assert response == snapshot(('a', 'a'))
@@ -84,8 +84,8 @@ async def test_structured_response_iter():
         name = agent_info.result_tools[0].name
         json_data = json.dumps({'response': [1, 2, 3, 4]})
         yield {0: DeltaToolCall(name=name)}
-        yield {0: DeltaToolCall(args=json_data[:15])}
-        yield {0: DeltaToolCall(args=json_data[15:])}
+        yield {0: DeltaToolCall(json_args=json_data[:15])}
+        yield {0: DeltaToolCall(json_args=json_data[15:])}
 
     agent = Agent(FunctionModel(stream_function=text_stream), deps=None, result_type=list[int])
 
@@ -109,7 +109,7 @@ async def test_streamed_text_stream():
     agent = Agent(m, deps=None)
 
     async with agent.run_stream('Hello') as result:
-        assert not result.is_structured()
+        assert not result.is_structured
         # typehint to test (via static typing) that the stream type is correctly inferred
         chunks: list[str] = [c async for c in result.stream()]
         # one chunk due to group_by_temporal
@@ -169,8 +169,8 @@ async def test_call_retriever():
             assert isinstance(first, UserPrompt)
             json_string = json.dumps({'x': first.content})
             yield {0: DeltaToolCall(name=name)}
-            yield {0: DeltaToolCall(args=json_string[:3])}
-            yield {0: DeltaToolCall(args=json_string[3:])}
+            yield {0: DeltaToolCall(json_args=json_string[:3])}
+            yield {0: DeltaToolCall(json_args=json_string[3:])}
         else:
             last = messages[-1]
             assert isinstance(last, ToolReturn)
@@ -179,8 +179,8 @@ async def test_call_retriever():
             name = agent_info.result_tools[0].name
             json_data = json.dumps({'response': [last.content, 2]})
             yield {0: DeltaToolCall(name=name)}
-            yield {0: DeltaToolCall(args=json_data[:5])}
-            yield {0: DeltaToolCall(args=json_data[5:])}
+            yield {0: DeltaToolCall(json_args=json_data[:5])}
+            yield {0: DeltaToolCall(json_args=json_data[5:])}
 
     agent = Agent(FunctionModel(stream_function=stream_structured_function), deps=None, result_type=tuple[str, int])
 
@@ -235,7 +235,7 @@ async def test_call_retriever_empty():
 
 async def test_call_retriever_wrong_name():
     def stream_structured_function(_messages: list[Message], _: AgentInfo) -> Iterable[DeltaToolCalls] | Iterable[str]:
-        yield {0: DeltaToolCall(name='foobar', args='{}')}
+        yield {0: DeltaToolCall(name='foobar', json_args='{}')}
 
     agent = Agent(FunctionModel(stream_function=stream_structured_function), deps=None, result_type=tuple[str, int])
 

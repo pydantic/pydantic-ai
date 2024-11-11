@@ -316,7 +316,7 @@ async def test_stream_text():
     agent = Agent(m, deps=None)
 
     async with agent.run_stream('') as result:
-        assert not result.is_structured()
+        assert not result.is_structured
         assert not result.is_complete
         assert [c async for c in result.stream(debounce_by=None)] == snapshot(['hello ', 'hello world'])
         assert result.is_complete
@@ -330,7 +330,7 @@ async def test_stream_text_finish_reason():
     agent = Agent(m, deps=None)
 
     async with agent.run_stream('') as result:
-        assert not result.is_structured()
+        assert not result.is_structured
         assert not result.is_complete
         assert [c async for c in result.stream(debounce_by=None)] == snapshot(['hello ', 'hello world', 'hello world.'])
         assert result.is_complete
@@ -376,7 +376,7 @@ async def test_stream_structured():
     agent = Agent(m, deps=None, result_type=MyTypedDict)
 
     async with agent.run_stream('') as result:
-        assert result.is_structured()
+        assert result.is_structured
         assert not result.is_complete
         assert [dict(c) async for c in result.stream(debounce_by=None)] == snapshot(
             [
@@ -405,7 +405,7 @@ async def test_stream_structured_finish_reason():
     agent = Agent(m, deps=None, result_type=MyTypedDict)
 
     async with agent.run_stream('') as result:
-        assert result.is_structured()
+        assert result.is_structured
         assert not result.is_complete
         assert [dict(c) async for c in result.stream(debounce_by=None)] == snapshot(
             [

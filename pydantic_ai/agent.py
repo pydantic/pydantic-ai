@@ -10,10 +10,11 @@ import logfire_api
 from typing_extensions import assert_never
 
 from . import _result, _retriever as _r, _system_prompt, _utils, exceptions, messages as _messages, models, result
-from .call_typing import AgentDeps
+from .dependencies import AgentDeps, RetrieverContextFunc, RetrieverParams, RetrieverPlainFunc
 from .result import ResultData
 
 __all__ = 'Agent', 'KnownModelName'
+
 KnownModelName = Literal[
     'openai:gpt-4o',
     'openai:gpt-4o-mini',
@@ -23,16 +24,22 @@ KnownModelName = Literal[
     'gemini-1.5-flash',
     'gemini-1.5-pro',
 ]
+"""Known model names that can be used with the `model` parameter of [`Agent`][pydantic_ai.Agent].
+
+`KnownModelName` is provided as a concise way to specify a model.
+"""
+
 _logfire = logfire_api.Logfire(otel_scope='pydantic-ai')
 
 
 @final
 @dataclass(init=False)
 class Agent(Generic[AgentDeps, ResultData]):
-    """Main class for creating "agents" - a way to have a specific type of "conversation" with an LLM."""
+    """Class for defining "agents" - a way to have a specific type of "conversation" with an LLM."""
 
     # dataclass fields mostly for my sanity — knowing what attributes are available
     model: models.Model | None
+    """The default model configured for this agent."""
     _result_schema: _result.ResultSchema[ResultData] | None
     _result_validators: list[_result.ResultValidator[AgentDeps, ResultData]]
     _allow_text_result: bool
@@ -62,6 +69,21 @@ class Agent(Generic[AgentDeps, ResultData]):
         result_tool_description: str | None = None,
         result_retries: int | None = None,
     ):
+        """Create an agent.
+
+        Args:
+            model: The default model to use for this agent, if not provide,
+                you must provide the model when calling the agent.
+            result_type: The type of the result data, used to validate the result data, defaults to `str`.
+            system_prompt: Static system prompts to use for this agent, you can also register system
+                prompts via a function with [`system_prompt`][pydantic_ai.Agent.system_prompt].
+            deps: The type used for dependency injection, this parameter exists solely to allow you to fully
+                parameterize the agent, and therefore get the best out of static type checking.
+            retries: The default number of retries to allow before raising an error.
+            result_tool_name: The name of the tool to use for the final result.
+            result_tool_description: The description of the final result tool.
+            result_retries: The maximum number of retries to allow for result validation, defaults to `retries`.
+        """
         self.model = models.infer_model(model) if model is not None else None
 
         self._result_schema = _result.ResultSchema[result_type].build(
@@ -265,22 +287,28 @@ class Agent(Generic[AgentDeps, ResultData]):
         return func
 
     @overload
-    def retriever_context(self, func: _r.RetrieverContextFunc[AgentDeps, _r.P], /) -> _r.Retriever[AgentDeps, _r.P]: ...
+    def retriever_context(
+        self, func: RetrieverContextFunc[AgentDeps, RetrieverParams], /
+    ) -> _r.Retriever[AgentDeps, RetrieverParams]: ...
 
     @overload
     def retriever_context(
         self, /, *, retries: int | None = None
-    ) -> Callable[[_r.RetrieverContextFunc[AgentDeps, _r.P]], _r.Retriever[AgentDeps, _r.P]]: ...
+    ) -> Callable[[RetrieverContextFunc[AgentDeps, RetrieverParams]], _r.Retriever[AgentDeps, RetrieverParams]]: ...
 
     def retriever_context(
-        self, func: _r.RetrieverContextFunc[AgentDeps, _r.P] | None = None, /, *, retries: int | None = None
+        self,
+        func: RetrieverContextFunc[AgentDeps, RetrieverParams] | None = None,
+        /,
+        *,
+        retries: int | None = None,
     ) -> Any:
         """Decorator to register a retriever function."""
         if func is None:
 
             def retriever_decorator(
-                func_: _r.RetrieverContextFunc[AgentDeps, _r.P],
-            ) -> _r.Retriever[AgentDeps, _r.P]:
+                func_: RetrieverContextFunc[AgentDeps, RetrieverParams],
+            ) -> _r.Retriever[AgentDeps, RetrieverParams]:
                 # noinspection PyTypeChecker
                 return self._register_retriever(_utils.Either(left=func_), retries)
 
@@ -290,18 +318,24 @@ class Agent(Generic[AgentDeps, ResultData]):
             return self._register_retriever(_utils.Either(left=func), retries)
 
     @overload
-    def retriever_plain(self, func: _r.RetrieverPlainFunc[_r.P], /) -> _r.Retriever[AgentDeps, _r.P]: ...
+    def retriever_plain(
+        self, func: RetrieverPlainFunc[RetrieverParams], /
+    ) -> _r.Retriever[AgentDeps, RetrieverParams]: ...
 
     @overload
     def retriever_plain(
         self, /, *, retries: int | None = None
-    ) -> Callable[[_r.RetrieverPlainFunc[_r.P]], _r.Retriever[AgentDeps, _r.P]]: ...
+    ) -> Callable[[RetrieverPlainFunc[RetrieverParams]], _r.Retriever[AgentDeps, RetrieverParams]]: ...
 
-    def retriever_plain(self, func: _r.RetrieverPlainFunc[_r.P] | None = None, /, *, retries: int | None = None) -> Any:
+    def retriever_plain(
+        self, func: RetrieverPlainFunc[RetrieverParams] | None = None, /, *, retries: int | None = None
+    ) -> Any:
         """Decorator to register a retriever function."""
         if func is None:
 
-            def retriever_decorator(func_: _r.RetrieverPlainFunc[_r.P]) -> _r.Retriever[AgentDeps, _r.P]:
+            def retriever_decorator(
+                func_: RetrieverPlainFunc[RetrieverParams],
+            ) -> _r.Retriever[AgentDeps, RetrieverParams]:
                 # noinspection PyTypeChecker
                 return self._register_retriever(_utils.Either(right=func_), retries)
 
@@ -310,11 +344,11 @@ class Agent(Generic[AgentDeps, ResultData]):
             return self._register_retriever(_utils.Either(right=func), retries)
 
     def _register_retriever(
-        self, func: _r.RetrieverEitherFunc[AgentDeps, _r.P], retries: int | None
-    ) -> _r.Retriever[AgentDeps, _r.P]:
+        self, func: _r.RetrieverEitherFunc[AgentDeps, RetrieverParams], retries: int | None
+    ) -> _r.Retriever[AgentDeps, RetrieverParams]:
         """Private utility to register a retriever function."""
         retries_ = retries if retries is not None else self._default_retries
-        retriever = _r.Retriever[AgentDeps, _r.P](func, retries_)
+        retriever = _r.Retriever[AgentDeps, RetrieverParams](func, retries_)
 
         if self._result_schema and retriever.name in self._result_schema.tools:
             raise ValueError(f'Retriever name conflicts with result schema name: {retriever.name!r}')

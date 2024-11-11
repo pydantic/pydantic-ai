@@ -10,7 +10,7 @@
 
 .PHONY: install  # Install the package, dependencies, and pre-commit for local development
 install: .uv .pre-commit
-	uv sync --frozen --all-extras
+	uv sync --frozen --all-extras --group docs
 	pre-commit install --install-hooks
 
 .PHONY: format  # Format the code
@@ -53,6 +53,23 @@ test-all-python:
 testcov: test
 	@echo "building coverage html"
 	@uv run coverage html
+
+# `--no-strict` so you can build the docs without insiders packages
+.PHONY: docs  # Build the documentation
+docs:
+	uv run mkdocs build --no-strict
+
+# `--no-strict` so you can build the docs without insiders packages
+.PHONY: docs-serve  # Build and serve the documentation
+docs-serve:
+	uv run mkdocs serve --no-strict
+
+.PHONY: cf-pages-build  # Install uv, install dependencies and build the docs, used on CloudFlare Pages
+cf-pages-build:
+	curl -LsSf https://astral.sh/uv/install.sh | sh
+	${HOME}/.local/bin/uv python install 3.12
+	${HOME}/.local/bin/uv sync --python 3.12 --frozen --group docs
+	${HOME}/.local/bin/uv run --no-sync mkdocs build
 
 .PHONY: all
 all: format lint typecheck testcov

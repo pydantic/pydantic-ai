@@ -427,8 +427,8 @@ async def test_stream_structure():
         assert len(agent_info.result_tools) == 1
         name = agent_info.result_tools[0].name
         yield {0: DeltaToolCall(name=name)}
-        yield {0: DeltaToolCall(args='{"x": ')}
-        yield {0: DeltaToolCall(args='1}')}
+        yield {0: DeltaToolCall(json_args='{"x": ')}
+        yield {0: DeltaToolCall(json_args='1}')}
 
     agent = Agent(FunctionModel(stream_function=stream_structured_function), deps=None, result_type=Foo)
     async with agent.run_stream('') as result:
@@ -439,6 +439,10 @@ async def test_stream_structure():
 async def test_pass_neither():
     with pytest.raises(TypeError, match='Either `function` or `stream_function` must be provided'):
         FunctionModel()  # pyright: ignore[reportCallIssue]
+
+
+async def test_pass_both():
+    Agent(FunctionModel(return_last, stream_function=stream_text_function), deps=None)
 
 
 async def test_return_empty():

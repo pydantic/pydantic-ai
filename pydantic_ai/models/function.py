@@ -1,3 +1,11 @@
+"""A model controlled by a local function.
+
+[FunctionModel][pydantic_ai.models.function.FunctionModel] is similar to [TestModel][pydantic_ai.models.test.TestModel],
+but allows greater control over the model's behavior.
+
+It's primary use case for more advanced unit testing than is possible with `TestModel`.
+"""
+
 from __future__ import annotations as _annotations
 
 from collections.abc import AsyncIterator, Iterable, Iterator, Mapping, Sequence
@@ -21,39 +29,12 @@ from . import (
 )
 
 
-@dataclass(frozen=True)
-class AgentInfo:
-    """Information about an agent passed to a function."""
-
-    retrievers: Mapping[str, AbstractToolDefinition]
-    allow_text_result: bool
-    result_tools: list[AbstractToolDefinition] | None
-
-
-@dataclass
-class DeltaToolCall:
-    name: str | None = None
-    args: str | None = None
-
-
-DeltaToolCalls = dict[int, DeltaToolCall]
-
-# TODO these should be coroutines
-FunctionDef: TypeAlias = Callable[[list[Message], AgentInfo], ModelAnyResponse]
-StreamFunctionDef: TypeAlias = Callable[[list[Message], AgentInfo], Union[Iterable[str], Iterable[DeltaToolCalls]]]
-
-
-@dataclass
-class ToolDescription:
-    name: str
-    description: str
-    json_schema: _utils.ObjectJsonSchema
-
-
 @dataclass(init=False)
 class FunctionModel(Model):
-    # NOTE: Avoid test discovery by pytest.
-    __test__ = False
+    """A model controlled by a local function.
+
+    Apart from `__init__`, all methods are private or match those of the base class.
+    """
 
     function: FunctionDef | None = None
     stream_function: StreamFunctionDef | None = None
@@ -64,7 +45,18 @@ class FunctionModel(Model):
     @overload
     def __init__(self, *, stream_function: StreamFunctionDef) -> None: ...
 
+    @overload
+    def __init__(self, function: FunctionDef, *, stream_function: StreamFunctionDef) -> None: ...
+
     def __init__(self, function: FunctionDef | None = None, *, stream_function: StreamFunctionDef | None = None):
+        """Initialize a `FunctionModel`.
+
+        Either `function` or `stream_function` must be provided, providing both is allowed.
+
+        Args:
+            function: The function to call for non-streamed requests.
+            stream_function: The function to call for streamed requests.
+        """
         if function is None and stream_function is None:
             raise TypeError('Either `function` or `stream_function` must be provided')
         self.function = function
@@ -90,8 +82,49 @@ class FunctionModel(Model):
         return f'function:{",".join(labels)}'
 
 
+@dataclass(frozen=True)
+class AgentInfo:
+    """Information about an agent.
+
+    This is passed as the second to functions.
+    """
+
+    retrievers: Mapping[str, AbstractToolDefinition]
+    """The retrievers available on this agent."""
+    allow_text_result: bool
+    """Whether a plain text result is allowed."""
+    result_tools: list[AbstractToolDefinition] | None
+    """The tools that can called as the final result of the run."""
+
+
+@dataclass
+class DeltaToolCall:
+    """Incremental change to a tool call.
+
+    Used to describe a chunk when streaming structured responses.
+    """
+
+    name: str | None = None
+    """Incremental change to the name of the tool."""
+    json_args: str | None = None
+    """Incremental change to the arguments as JSON"""
+
+
+DeltaToolCalls: TypeAlias = dict[int, DeltaToolCall]
+"""A mapping of tool call IDs to incremental changes."""
+
+# TODO these should allow coroutines
+FunctionDef: TypeAlias = Callable[[list[Message], AgentInfo], ModelAnyResponse]
+"""A function used to generate a non-streamed response."""
+
+StreamFunctionDef: TypeAlias = Callable[[list[Message], AgentInfo], Union[Iterable[str], Iterable[DeltaToolCalls]]]
+"""A function used to generate a streamed response."""
+
+
 @dataclass
 class FunctionAgentModel(AgentModel):
+    """Implementation of `AgentModel` for [FunctionModel][pydantic_ai.models.function.FunctionModel]."""
+
     function: FunctionDef | None
     stream_function: StreamFunctionDef | None
     agent_info: AgentInfo
@@ -122,6 +155,8 @@ class FunctionAgentModel(AgentModel):
 
 @dataclass
 class FunctionStreamTextResponse(StreamTextResponse):
+    """Implementation of `StreamTextResponse` for [FunctionModel][pydantic_ai.models.function.FunctionModel]."""
+
     _iter: Iterator[str]
     _timestamp: datetime = field(default_factory=_utils.now_utc, init=False)
     _buffer: list[str] = field(default_factory=list, init=False)
@@ -142,6 +177,8 @@ class FunctionStreamTextResponse(StreamTextResponse):
 
 @dataclass
 class FunctionStreamStructuredResponse(StreamStructuredResponse):
+    """Implementation of `StreamStructuredResponse` for [FunctionModel][pydantic_ai.models.function.FunctionModel]."""
+
     _iter: Iterator[DeltaToolCalls]
     _delta_tool_calls: dict[int, DeltaToolCall]
     _timestamp: datetime = field(default_factory=_utils.now_utc)
@@ -152,16 +189,15 @@ class FunctionStreamStructuredResponse(StreamStructuredResponse):
         for key, new in tool_call.items():
             if current := self._delta_tool_calls.get(key):
                 current.name = _utils.add_optional(current.name, new.name)
-                current.args = _utils.add_optional(current.args, new.args)
+                current.json_args = _utils.add_optional(current.json_args, new.json_args)
             else:
                 self._delta_tool_calls[key] = new
 
     def get(self, *, final: bool = False) -> ModelStructuredResponse:
-        """Map tool call deltas to a `ModelStructuredResponse`."""
         calls: list[ToolCall] = []
         for c in self._delta_tool_calls.values():
-            if c.name is not None and c.args is not None:
-                calls.append(ToolCall.from_json(c.name, c.args))
+            if c.name is not None and c.json_args is not None:
+                calls.append(ToolCall.from_json(c.name, c.json_args))
 
         return ModelStructuredResponse(calls, timestamp=self._timestamp)
 

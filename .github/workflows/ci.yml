@@ -36,6 +36,18 @@ jobs:
 
       - run: make typecheck-mypy
 
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
+      - run: uv sync --python 3.12 --frozen --group docs
+      - run: uv run --frozen mkdocs build
+
   test:
     name: test on ${{ matrix.python-version }}
     runs-on: ubuntu-latest
@@ -97,7 +109,7 @@ jobs:
   # https://github.com/marketplace/actions/alls-green#why used for branch protection checks
   check:
     if: always()
-    needs: [lint, test, coverage]
+    needs: [lint, docs, test, coverage]
     runs-on: ubuntu-latest
 
     steps:

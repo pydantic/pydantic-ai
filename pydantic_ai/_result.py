@@ -11,20 +11,10 @@ from pydantic import TypeAdapter, ValidationError
 from typing_extensions import Self, TypeAliasType, TypedDict
 
 from . import _utils, messages
-from .call_typing import AgentDeps, CallContext
+from .dependencies import AgentDeps, CallContext, ResultValidatorFunc
 from .exceptions import ModelRetry
 from .messages import ModelStructuredResponse, ToolCall
 from .result import ResultData
-
-# A function that always takes `ResultData` and returns `ResultData`,
-# but may or maybe not take `CallInfo` as a first argument, and may or may not be async.
-# Usage `ResultValidator[AgentDeps, ResultData]`
-ResultValidatorFunc = Union[
-    Callable[[CallContext[AgentDeps], ResultData], ResultData],
-    Callable[[CallContext[AgentDeps], ResultData], Awaitable[ResultData]],
-    Callable[[ResultData], ResultData],
-    Callable[[ResultData], Awaitable[ResultData]],
-]
 
 
 @dataclass

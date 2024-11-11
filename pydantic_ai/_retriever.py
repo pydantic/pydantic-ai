@@ -3,37 +3,29 @@ from __future__ import annotations as _annotations
 import inspect
 from collections.abc import Awaitable
 from dataclasses import dataclass, field
-from typing import Any, Callable, Generic, Union, cast
+from typing import Any, Callable, Generic, cast
 
 import pydantic_core
 from pydantic import ValidationError
 from pydantic_core import SchemaValidator
-from typing_extensions import Concatenate, ParamSpec
 
 from . import _pydantic, _utils, messages
-from .call_typing import AgentDeps, CallContext
+from .dependencies import AgentDeps, CallContext, RetrieverContextFunc, RetrieverParams, RetrieverPlainFunc
 from .exceptions import ModelRetry
 
-# retrieval function parameters
-P = ParamSpec('P')
-
-
-RetrieverReturnValue = Union[str, Awaitable[str], dict[str, Any], Awaitable[dict[str, Any]]]
-# Usage `RetrieverContextFunc[AgentDependencies, P]`
-RetrieverContextFunc = Callable[Concatenate[CallContext[AgentDeps], P], RetrieverReturnValue]
-# Usage `RetrieverPlainFunc[P]`
-RetrieverPlainFunc = Callable[P, RetrieverReturnValue]
 # Usage `RetrieverEitherFunc[AgentDependencies, P]`
-RetrieverEitherFunc = _utils.Either[RetrieverContextFunc[AgentDeps, P], RetrieverPlainFunc[P]]
+RetrieverEitherFunc = _utils.Either[
+    RetrieverContextFunc[AgentDeps, RetrieverParams], RetrieverPlainFunc[RetrieverParams]
+]
 
 
 @dataclass(init=False)
-class Retriever(Generic[AgentDeps, P]):
+class Retriever(Generic[AgentDeps, RetrieverParams]):
     """A retriever function for an agent."""
 
     name: str
     description: str
-    function: RetrieverEitherFunc[AgentDeps, P] = field(repr=False)
+    function: RetrieverEitherFunc[AgentDeps, RetrieverParams] = field(repr=False)
     is_async: bool
     single_arg_name: str | None
     positional_fields: list[str]
@@ -44,7 +36,7 @@ class Retriever(Generic[AgentDeps, P]):
     _current_retry: int = 0
     outer_typed_dict_key: str | None = None
 
-    def __init__(self, function: RetrieverEitherFunc[AgentDeps, P], retries: int):
+    def __init__(self, function: RetrieverEitherFunc[AgentDeps, RetrieverParams], retries: int):
         """Build a Retriever dataclass from a function."""
         self.function = function
         # noinspection PyTypeChecker
