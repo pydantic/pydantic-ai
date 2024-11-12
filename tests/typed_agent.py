@@ -3,7 +3,7 @@
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Union
+from typing import Union, assert_type
 
 from pydantic_ai import Agent, CallContext
 from pydantic_ai.result import RunResult
@@ -15,7 +15,8 @@ class MyDeps:
     bar: int
 
 
-typed_agent1 = Agent(result_type=str, deps=MyDeps(foo=1, bar=2))
+typed_agent1 = Agent(deps_type=MyDeps, result_type=str)
+assert_type(typed_agent1, Agent[MyDeps, str])
 
 
 @contextmanager
@@ -30,6 +31,7 @@ def expect_error(error_type: type[Exception]) -> Iterator[None]:
 
 @typed_agent1.retriever_context
 async def ok_retriever(ctx: CallContext[MyDeps], x: str) -> str:
+    assert_type(ctx.deps, MyDeps)
     total = ctx.deps.foo + ctx.deps.bar
     return f'{x} {total}'
 
@@ -63,26 +65,15 @@ with expect_error(ValueError):
 
 
 def run_sync() -> None:
-    _: RunResult[str] = typed_agent1.run_sync('testing')
+    result = typed_agent1.run_sync('testing')
+    assert_type(result, RunResult[str])
+    assert_type(result.data, str)
 
 
 async def run_stream() -> None:
     async with typed_agent1.run_stream('testing') as streamed_result:
-        _: list[str] = [chunk async for chunk in streamed_result.stream()]
-
-
-typed_agent2: Agent[MyDeps, str] = Agent()
-
-
-@typed_agent2.retriever_context
-async def ok_retriever2(ctx: CallContext[MyDeps], x: str) -> str:
-    total = ctx.deps.foo + ctx.deps.bar
-    return f'{x} {total}'
-
-
-def run_sync2() -> None:
-    _: RunResult[str] = typed_agent2.run_sync('testing', model='openai:gpt-4o', deps=MyDeps(foo=1, bar=2))
-    typed_agent2.run_sync('testing', deps=123)  # type: ignore[arg-type]
+        result_items = [chunk async for chunk in streamed_result.stream()]
+        assert_type(result_items, list[str])
 
 
 @dataclass
@@ -98,16 +89,10 @@ class Bar:
 union_agent: Agent[None, Union[Foo, Bar]] = Agent(
     result_type=Union[Foo, Bar],  # type: ignore[arg-type]
 )
-
-
-def foo_result(response: Union[Foo, Bar]) -> str:
-    return str(response)
+assert_type(union_agent, Agent[None, Union[Foo, Bar]])
 
 
 def run_sync3() -> None:
-    result: RunResult[Union[Foo, Bar]] = union_agent.run_sync('testing')
-    foo_result(result.data)
-
-
-agent_unknown_deps = Agent()  # type: ignore[var-annotated]
-agent_known_deps: Agent[None, str] = Agent()
+    result = union_agent.run_sync('testing')
+    assert_type(result, RunResult[Union[Foo, Bar]])
+    assert_type(result.data, Union[Foo, Bar])

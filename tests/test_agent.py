@@ -32,7 +32,7 @@ def test_result_tuple():
         args_json = '{"response": ["foo", "bar"]}'
         return ModelStructuredResponse(calls=[ToolCall.from_json(info.result_tools[0].name, args_json)])
 
-    agent = Agent(FunctionModel(return_tuple), deps=None, result_type=tuple[str, str])
+    agent = Agent(FunctionModel(return_tuple), result_type=tuple[str, str])
 
     result = agent.run_sync('Hello')
     assert result.data == ('foo', 'bar')
@@ -49,7 +49,7 @@ def test_result_pydantic_model():
         args_json = '{"a": 1, "b": "foo"}'
         return ModelStructuredResponse(calls=[ToolCall.from_json(info.result_tools[0].name, args_json)])
 
-    agent = Agent(FunctionModel(return_model), deps=None, result_type=Foo)
+    agent = Agent(FunctionModel(return_model), result_type=Foo)
 
     result = agent.run_sync('Hello')
     assert isinstance(result.data, Foo)
@@ -65,7 +65,7 @@ def test_result_pydantic_model_retry():
             args_json = '{"a": 42, "b": "foo"}'
         return ModelStructuredResponse(calls=[ToolCall.from_json(info.result_tools[0].name, args_json)])
 
-    agent = Agent(FunctionModel(return_model), deps=None, result_type=Foo)
+    agent = Agent(FunctionModel(return_model), result_type=Foo)
 
     result = agent.run_sync('Hello')
     assert isinstance(result.data, Foo)
@@ -107,7 +107,7 @@ def test_result_validator():
             args_json = '{"a": 42, "b": "foo"}'
         return ModelStructuredResponse(calls=[ToolCall.from_json(info.result_tools[0].name, args_json)])
 
-    agent = Agent(FunctionModel(return_model), deps=None, result_type=Foo)
+    agent = Agent(FunctionModel(return_model), result_type=Foo)
 
     @agent.result_validator
     def validate_result(ctx: CallContext[None], r: Foo) -> Foo:
@@ -148,7 +148,7 @@ def test_plain_response():
             args_json = '{"response": ["foo", "bar"]}'
             return ModelStructuredResponse(calls=[ToolCall.from_json(info.result_tools[0].name, args_json)])
 
-    agent = Agent(FunctionModel(return_tuple), deps=None, result_type=tuple[str, str])
+    agent = Agent(FunctionModel(return_tuple), result_type=tuple[str, str])
 
     result = agent.run_sync('Hello')
     assert result.data == ('foo', 'bar')
@@ -172,7 +172,7 @@ def test_plain_response():
 def test_response_tuple():
     m = TestModel()
 
-    agent = Agent(m, deps=None, result_type=tuple[str, str])
+    agent = Agent(m, result_type=tuple[str, str])
     assert agent._result_schema.allow_text_result is False  # pyright: ignore[reportPrivateUsage,reportOptionalMemberAccess]
 
     result = agent.run_sync('Hello')
@@ -358,7 +358,7 @@ class Bar(BaseModel):
 def test_run_with_history_new():
     m = TestModel()
 
-    agent = Agent(m, deps=None, system_prompt='Foobar')
+    agent = Agent(m, system_prompt='Foobar')
 
     @agent.retriever_plain
     async def ret_a(x: str) -> str:
@@ -443,7 +443,7 @@ def test_empty_tool_calls():
     def empty(_: list[Message], _info: AgentInfo) -> ModelAnyResponse:
         return ModelStructuredResponse(calls=[])
 
-    agent = Agent(FunctionModel(empty), deps=None)
+    agent = Agent(FunctionModel(empty))
 
     with pytest.raises(UnexpectedModelBehaviour, match='Received empty tool call message'):
         agent.run_sync('Hello')
@@ -453,7 +453,7 @@ def test_unknown_retriever():
     def empty(_: list[Message], _info: AgentInfo) -> ModelAnyResponse:
         return ModelStructuredResponse(calls=[ToolCall.from_json('foobar', '{}')])
 
-    agent = Agent(FunctionModel(empty), deps=None)
+    agent = Agent(FunctionModel(empty))
 
     with pytest.raises(UnexpectedModelBehaviour, match=r'Exceeded maximum retries \(1\) for result validation'):
         agent.run_sync('Hello')
@@ -478,7 +478,7 @@ def test_unknown_retriever_fix():
         else:
             return ModelStructuredResponse(calls=[ToolCall.from_json('foobar', '{}')])
 
-    agent = Agent(FunctionModel(empty), deps=None)
+    agent = Agent(FunctionModel(empty))
 
     result = agent.run_sync('Hello')
     assert result.data == 'success'

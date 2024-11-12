@@ -31,14 +31,7 @@ KnownModelName = Literal[
 
 _logfire = logfire_api.Logfire(otel_scope='pydantic-ai')
 
-
-class Unset:
-    """A sentinel value to indicate that a parameter was not set."""
-
-    pass
-
-
-UNSET = Unset()
+NoneType = type(None)
 
 
 @final
@@ -56,7 +49,7 @@ class Agent(Generic[AgentDeps, ResultData]):
     _retrievers: dict[str, _r.Retriever[AgentDeps, Any]]
     _default_retries: int
     _system_prompt_functions: list[_system_prompt.SystemPromptRunner[AgentDeps]]
-    _default_deps: AgentDeps
+    _deps_type: type[AgentDeps]
     _max_result_retries: int
     _current_result_retry: int
     last_run_messages: list[_messages.Message] | None = None
@@ -71,7 +64,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         result_type: type[ResultData] = str,
         *,
         system_prompt: str | Sequence[str] = (),
-        deps: AgentDeps | Unset = UNSET,
+        deps_type: type[AgentDeps] = NoneType,
         retries: int = 1,
         result_tool_name: str = 'final_result',
         result_tool_description: str | None = None,
@@ -85,7 +78,7 @@ class Agent(Generic[AgentDeps, ResultData]):
             result_type: The type of the result data, used to validate the result data, defaults to `str`.
             system_prompt: Static system prompts to use for this agent, you can also register system
                 prompts via a function with [`system_prompt`][pydantic_ai.Agent.system_prompt].
-            deps: The type used for dependency injection, this parameter exists solely to allow you to fully
+            deps_type: The type used for dependency injection, this parameter exists solely to allow you to fully
                 parameterize the agent, and therefore get the best out of static type checking.
                 If you're not using deps, but want type checking to pass, you can set `deps=None` to satisfy Pyright
                 or add a type hint `: Agent[None, <return type>]`.
@@ -104,7 +97,7 @@ class Agent(Generic[AgentDeps, ResultData]):
 
         self._system_prompts = (system_prompt,) if isinstance(system_prompt, str) else tuple(system_prompt)
         self._retrievers: dict[str, _r.Retriever[AgentDeps, Any]] = {}
-        self._default_deps = cast(AgentDeps, None if deps == () else deps)
+        self._deps_type = deps_type
         self._default_retries = retries
         self._system_prompt_functions = []
         self._max_result_retries = result_retries if result_retries is not None else retries
@@ -132,8 +125,8 @@ class Agent(Generic[AgentDeps, ResultData]):
         """
         model_used, custom_model, agent_model = await self._get_agent_model(model)
 
-        if deps is None:
-            deps = self._default_deps
+        # we could do runtime type checking of deps against `self._deps_type`, but that's a slippery slope
+        deps = cast(AgentDeps, deps)
 
         new_message_index, messages = await self._prepare_messages(deps, user_prompt, message_history)
         self.last_run_messages = messages
@@ -226,8 +219,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         """
         model_used, custom_model, agent_model = await self._get_agent_model(model)
 
-        if deps is None:
-            deps = self._default_deps
+        deps = cast(AgentDeps, deps)
 
         new_message_index, messages = await self._prepare_messages(deps, user_prompt, message_history)
         self.last_run_messages = messages

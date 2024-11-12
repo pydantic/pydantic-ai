@@ -38,7 +38,7 @@ def return_last(messages: list[Message], _: AgentInfo) -> ModelAnyResponse:
 
 
 def test_simple():
-    agent = Agent(FunctionModel(return_last), deps=None)
+    agent = Agent(FunctionModel(return_last))
     result = agent.run_sync('Hello')
     assert result.data == snapshot("content='Hello' role='user' message_count=1")
     assert result.all_messages() == snapshot(
@@ -196,7 +196,7 @@ def call_function_model(messages: list[Message], _: AgentInfo) -> ModelAnyRespon
     raise ValueError(f'Unexpected message: {last}')
 
 
-var_args_agent = Agent(FunctionModel(call_function_model), deps=123)
+var_args_agent = Agent(FunctionModel(call_function_model), deps_type=int)
 
 
 @var_args_agent.retriever_context
@@ -206,7 +206,7 @@ def get_var_args(ctx: CallContext[int], *args: int):
 
 
 def test_var_args():
-    result = var_args_agent.run_sync('{"function": "get_var_args", "arguments": {"args": [1, 2, 3]}}')
+    result = var_args_agent.run_sync('{"function": "get_var_args", "arguments": {"args": [1, 2, 3]}}', deps=123)
     response_data = json.loads(result.data)
     # Can't parse ISO timestamps with trailing 'Z' in older versions of python:
     response_data['timestamp'] = re.sub('Z$', '+00:00', response_data['timestamp'])
@@ -231,7 +231,7 @@ def call_retriever(messages: list[Message], info: AgentInfo) -> ModelAnyResponse
 
 
 def test_deps_none():
-    agent = Agent(FunctionModel(call_retriever), deps=None)
+    agent = Agent(FunctionModel(call_retriever))
 
     @agent.retriever_context
     async def get_none(ctx: CallContext[None]):
@@ -246,7 +246,7 @@ def test_deps_none():
     assert called
 
     called = False
-    agent.run_sync('Hello', deps=None)
+    agent.run_sync('Hello')
     assert called
 
 
@@ -258,13 +258,7 @@ def test_deps_init():
         assert ctx.deps == ('foo', 'bar')
         return ''
 
-    agent = Agent(FunctionModel(call_retriever), deps=('foo', 'bar'))
-    agent.retriever_context(get_check_foobar)
-    called = False
-    agent.run_sync('Hello')
-    assert called
-
-    agent: Agent[tuple[str, str], str] = Agent(FunctionModel(call_retriever))
+    agent = Agent(FunctionModel(call_retriever), deps_type=tuple[str, str])
     agent.retriever_context(get_check_foobar)
     called = False
     agent.run_sync('Hello', deps=('foo', 'bar'))
@@ -272,7 +266,7 @@ def test_deps_init():
 
 
 def test_model_arg():
-    agent = Agent(deps=None)
+    agent = Agent()
     result = agent.run_sync('Hello', model=FunctionModel(return_last))
     assert result.data == snapshot("content='Hello' role='user' message_count=1")
 
@@ -280,7 +274,7 @@ def test_model_arg():
         agent.run_sync('Hello')
 
 
-agent_all = Agent(deps=None)
+agent_all = Agent()
 
 
 @agent_all.retriever_context
@@ -361,7 +355,7 @@ def test_retry_str():
 
         return ModelTextResponse(str(call_count))
 
-    agent = Agent(FunctionModel(try_again), deps=None)
+    agent = Agent(FunctionModel(try_again))
 
     @agent.result_validator
     async def validate_result(r: str) -> str:
@@ -386,7 +380,7 @@ def test_retry_result_type():
     class Foo(BaseModel):
         x: int
 
-    agent = Agent(FunctionModel(try_again), result_type=Foo, deps=None)
+    agent = Agent(FunctionModel(try_again), result_type=Foo)
 
     @agent.result_validator
     async def validate_result(r: Foo) -> Foo:
@@ -405,7 +399,7 @@ def stream_text_function(_messages: list[Message], _: AgentInfo) -> Iterable[str
 
 
 async def test_stream_text():
-    agent = Agent(FunctionModel(stream_function=stream_text_function), deps=None)
+    agent = Agent(FunctionModel(stream_function=stream_text_function))
     async with agent.run_stream('') as result:
         assert await result.get_data() == snapshot('hello world')
         assert result.all_messages() == snapshot(
@@ -430,7 +424,7 @@ async def test_stream_structure():
         yield {0: DeltaToolCall(json_args='{"x": ')}
         yield {0: DeltaToolCall(json_args='1}')}
 
-    agent = Agent(FunctionModel(stream_function=stream_structured_function), deps=None, result_type=Foo)
+    agent = Agent(FunctionModel(stream_function=stream_structured_function), result_type=Foo)
     async with agent.run_stream('') as result:
         assert await result.get_data() == snapshot(Foo(x=1))
         assert result.cost() == snapshot(Cost())
@@ -442,11 +436,11 @@ async def test_pass_neither():
 
 
 async def test_pass_both():
-    Agent(FunctionModel(return_last, stream_function=stream_text_function), deps=None)
+    Agent(FunctionModel(return_last, stream_function=stream_text_function))
 
 
 async def test_return_empty():
-    agent = Agent(FunctionModel(stream_function=lambda _, __: []), deps=None)
+    agent = Agent(FunctionModel(stream_function=lambda _, __: []))
     with pytest.raises(ValueError, match='Stream function must return at least one item'):
         async with agent.run_stream(''):
             pass

@@ -29,7 +29,7 @@ pytestmark = pytest.mark.anyio
 async def test_streamed_text_response():
     m = TestModel()
 
-    agent = Agent(m, deps=None)
+    agent = Agent(m)
 
     @agent.retriever_plain
     async def ret_a(x: str) -> str:
@@ -67,7 +67,7 @@ async def test_streamed_text_response():
 async def test_streamed_structured_response():
     m = TestModel()
 
-    agent = Agent(m, deps=None, result_type=tuple[str, str])
+    agent = Agent(m, result_type=tuple[str, str])
 
     async with agent.run_stream('') as result:
         assert result.is_structured
@@ -87,7 +87,7 @@ async def test_structured_response_iter():
         yield {0: DeltaToolCall(json_args=json_data[:15])}
         yield {0: DeltaToolCall(json_args=json_data[15:])}
 
-    agent = Agent(FunctionModel(stream_function=text_stream), deps=None, result_type=list[int])
+    agent = Agent(FunctionModel(stream_function=text_stream), result_type=list[int])
 
     chunks: list[list[int]] = []
     async with agent.run_stream('') as result:
@@ -106,7 +106,7 @@ async def test_structured_response_iter():
 async def test_streamed_text_stream():
     m = TestModel(custom_result_text='The cat sat on the mat.')
 
-    agent = Agent(m, deps=None)
+    agent = Agent(m)
 
     async with agent.run_stream('Hello') as result:
         assert not result.is_structured
@@ -148,7 +148,7 @@ async def test_plain_response():
         call_index += 1
         return ['hello ', 'world']
 
-    agent = Agent(FunctionModel(stream_function=text_stream), deps=None, result_type=tuple[str, str])
+    agent = Agent(FunctionModel(stream_function=text_stream), result_type=tuple[str, str])
 
     with pytest.raises(UnexpectedModelBehaviour, match=r'Exceeded maximum retries \(1\) for result validation'):
         async with agent.run_stream(''):
@@ -182,7 +182,7 @@ async def test_call_retriever():
             yield {0: DeltaToolCall(json_args=json_data[:5])}
             yield {0: DeltaToolCall(json_args=json_data[5:])}
 
-    agent = Agent(FunctionModel(stream_function=stream_structured_function), deps=None, result_type=tuple[str, int])
+    agent = Agent(FunctionModel(stream_function=stream_structured_function), result_type=tuple[str, int])
 
     @agent.retriever_plain
     async def ret_a(x: str) -> str:
@@ -226,7 +226,7 @@ async def test_call_retriever_empty():
     def stream_structured_function(_messages: list[Message], _: AgentInfo) -> Iterable[DeltaToolCalls] | Iterable[str]:
         yield {}
 
-    agent = Agent(FunctionModel(stream_function=stream_structured_function), deps=None, result_type=tuple[str, int])
+    agent = Agent(FunctionModel(stream_function=stream_structured_function), result_type=tuple[str, int])
 
     with pytest.raises(UnexpectedModelBehaviour, match='Received empty tool call message'):
         async with agent.run_stream('hello'):
@@ -237,7 +237,7 @@ async def test_call_retriever_wrong_name():
     def stream_structured_function(_messages: list[Message], _: AgentInfo) -> Iterable[DeltaToolCalls] | Iterable[str]:
         yield {0: DeltaToolCall(name='foobar', json_args='{}')}
 
-    agent = Agent(FunctionModel(stream_function=stream_structured_function), deps=None, result_type=tuple[str, int])
+    agent = Agent(FunctionModel(stream_function=stream_structured_function), result_type=tuple[str, int])
 
     @agent.retriever_plain
     async def ret_a(x: str) -> str:
