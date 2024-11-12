@@ -196,7 +196,7 @@ def call_function_model(messages: list[Message], _: AgentInfo) -> ModelAnyRespon
     raise ValueError(f'Unexpected message: {last}')
 
 
-var_args_agent = Agent(FunctionModel(call_function_model), deps=int)
+var_args_agent = Agent(FunctionModel(call_function_model), deps_type=int)
 
 
 @var_args_agent.retriever_context
@@ -258,7 +258,7 @@ def test_deps_init():
         assert ctx.deps == ('foo', 'bar')
         return ''
 
-    agent = Agent(FunctionModel(call_retriever), deps=tuple[str, str])
+    agent = Agent(FunctionModel(call_retriever), deps_type=tuple[str, str])
     agent.retriever_context(get_check_foobar)
     called = False
     agent.run_sync('Hello', deps=('foo', 'bar'))

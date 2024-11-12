@@ -15,7 +15,7 @@ class MyDeps:
     bar: int
 
 
-typed_agent1 = Agent(deps=MyDeps, result_type=str)
+typed_agent1 = Agent(deps_type=MyDeps, result_type=str)
 assert_type(typed_agent1, Agent[MyDeps, str])
 
 
