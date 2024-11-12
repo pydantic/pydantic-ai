@@ -8,6 +8,7 @@
         - run_sync
         - run_stream
         - model
+        - override_deps
         - last_run_messages
         - system_prompt
         - retriever_plain

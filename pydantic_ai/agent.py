@@ -1,8 +1,8 @@
 from __future__ import annotations as _annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Sequence
-from contextlib import asynccontextmanager
+from collections.abc import AsyncIterator, Iterator, Sequence
+from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass
 from typing import Any, Callable, Generic, Literal, cast, final, overload
 
@@ -52,6 +52,7 @@ class Agent(Generic[AgentDeps, ResultData]):
     _deps_type: type[AgentDeps]
     _max_result_retries: int
     _current_result_retry: int
+    _override_deps_stack: list[AgentDeps]
     last_run_messages: list[_messages.Message] | None = None
     """The messages from the last run, useful when a run raised an exception.
 
@@ -103,6 +104,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         self._max_result_retries = result_retries if result_retries is not None else retries
         self._current_result_retry = 0
         self._result_validators = []
+        self._override_deps_stack = []
 
     async def run(
         self,
@@ -125,8 +127,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         """
         model_used, custom_model, agent_model = await self._get_agent_model(model)
 
-        # we could do runtime type checking of deps against `self._deps_type`, but that's a slippery slope
-        deps = cast(AgentDeps, deps)
+        deps = self._get_deps(deps)
 
         new_message_index, messages = await self._prepare_messages(deps, user_prompt, message_history)
         self.last_run_messages = messages
@@ -219,7 +220,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         """
         model_used, custom_model, agent_model = await self._get_agent_model(model)
 
-        deps = cast(AgentDeps, deps)
+        deps = self._get_deps(deps)
 
         new_message_index, messages = await self._prepare_messages(deps, user_prompt, message_history)
         self.last_run_messages = messages
@@ -272,6 +273,19 @@ class Agent(Generic[AgentDeps, ResultData]):
                                 messages.extend(tool_responses)
                                 # the model_response should have been fully streamed by now, we can add it's cost
                                 cost += model_response.cost()
+
+    @contextmanager
+    def override_deps(self, overriding_deps: AgentDeps) -> Iterator[None]:
+        """Context manager to temporarily override agent dependencies, this is particularly useful when testing.
+
+        Args:
+            overriding_deps: The dependencies to use instead of the dependencies passed to the agent run.
+        """
+        self._override_deps_stack.append(overriding_deps)
+        try:
+            yield
+        finally:
+            self._override_deps_stack.pop()
 
     def system_prompt(
         self, func: _system_prompt.SystemPromptFunc[AgentDeps]
@@ -550,6 +564,17 @@ class Agent(Generic[AgentDeps, ResultData]):
         else:
             msg = 'No tools available.'
         return _messages.RetryPrompt(content=f'Unknown tool name: {tool_name!r}. {msg}')
+
+    def _get_deps(self, deps: AgentDeps | None) -> AgentDeps:
+        """Get deps for a run.
+
+        If we've overridden deps via `_override_deps_stack`, use that, otherwise use the deps passed to the call.
+        """
+        try:
+            return self._override_deps_stack[-1]
+        except IndexError:
+            # we could do runtime type checking of deps against `self._deps_type`, but that's a slippery slope
+            return cast(AgentDeps, deps)
 
 
 @dataclass
