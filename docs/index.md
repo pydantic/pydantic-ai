@@ -2,7 +2,11 @@
 
 You can think of PydanticAI as an Agent Framework or a shim to use Pydantic with LLMs — they're the same thing.
 
-PydanticAI ties to make working with LLMs feel similar to building a web application.
+PydanticAI tries to make working with LLMs feel similar to building a web application.
+
+!!! example "In Beta"
+    PydanticAI is in early beta, the API is subject to change and there's a lot more to do.
+    [Feedback](https://github.com/pydantic/pydantic-ai/issues) is very welcome!
 
 ## Example — Retrievers
 
@@ -42,7 +46,7 @@ print(result.all_messages())  # (10)!
 2. Here we configure the agent to use OpenAI's GPT-4o model, you can also customise the model when running the agent.
 3. We specify a dependency for the agent, in this case an HTTP client, which retrievers will use to make requests to external services. PydanticAI's system of dependency injection provides a powerful, type safe way to customise the behaviour of your agents, including for unit tests and evals.
 4. Static system prompts can be registered as key word arguments to the agent, dynamic system prompts can be registered with the `@agent.system_prompot` decorator and benefit from dependency injection.
-5. Retrievers let you register "tools" which the LLM can call while trying to respond to a user. You inject dependencies into the retriever with `CallContext`, any other arguments become the tool schema passed to the LLM, Pydantic is used to validate these arguments, errors are passed back to the LLM so it can retry.
+5. Retrievers let you register "tools" which the LLM may call while to respond to a user. You inject dependencies into the retriever with `CallContext`, any other arguments become the tool schema passed to the LLM, Pydantic is used to validate these arguments, errors are passed back to the LLM so it can retry.
 6. This docstring is also passed to the LLM as a description of the tool.
 7. Multiple retrievers can be registered with the same agent, the LLM can choose which (if any) retrievers to call in order to respond to a user.
 8. Run the agent synchronously, conducting a conversation with the LLM until a final response is reached. (internally agents are all async, `run_sync` is a helper using `asyncio.run` to call `run()`)

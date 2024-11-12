@@ -34,6 +34,9 @@ typecheck-mypy:
 .PHONY: typecheck  # Run static type checking
 typecheck: typecheck-pyright
 
+.PHONY: typecheck-both  # Run static type checking with both Pyright and Mypy
+typecheck-both: typecheck-pyright typecheck-mypy
+
 .PHONY: test  # Run tests and collect coverage data
 test:
 	uv run coverage run -m pytest

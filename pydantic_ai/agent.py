@@ -32,6 +32,15 @@ KnownModelName = Literal[
 _logfire = logfire_api.Logfire(otel_scope='pydantic-ai')
 
 
+class Unset:
+    """A sentinel value to indicate that a parameter was not set."""
+
+    pass
+
+
+UNSET = Unset()
+
+
 @final
 @dataclass(init=False)
 class Agent(Generic[AgentDeps, ResultData]):
@@ -62,8 +71,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         result_type: type[ResultData] = str,
         *,
         system_prompt: str | Sequence[str] = (),
-        # type here looks odd, but it's required os you can avoid "partially unknown" type errors with `deps=None`
-        deps: AgentDeps | tuple[()] = (),
+        deps: AgentDeps | Unset = UNSET,
         retries: int = 1,
         result_tool_name: str = 'final_result',
         result_tool_description: str | None = None,
@@ -79,6 +87,8 @@ class Agent(Generic[AgentDeps, ResultData]):
                 prompts via a function with [`system_prompt`][pydantic_ai.Agent.system_prompt].
             deps: The type used for dependency injection, this parameter exists solely to allow you to fully
                 parameterize the agent, and therefore get the best out of static type checking.
+                If you're not using deps, but want type checking to pass, you can set `deps=None` to satisfy Pyright
+                or add a type hint `: Agent[None, <return type>]`.
             retries: The default number of retries to allow before raising an error.
             result_tool_name: The name of the tool to use for the final result.
             result_tool_description: The description of the final result tool.

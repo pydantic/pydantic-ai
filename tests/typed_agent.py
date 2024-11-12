@@ -107,3 +107,7 @@ def foo_result(response: Union[Foo, Bar]) -> str:
 def run_sync3() -> None:
     result: RunResult[Union[Foo, Bar]] = union_agent.run_sync('testing')
     foo_result(result.data)
+
+
+agent_unknown_deps = Agent()  # type: ignore[var-annotated]
+agent_known_deps: Agent[None, str] = Agent()
