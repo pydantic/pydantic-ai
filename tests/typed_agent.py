@@ -81,7 +81,7 @@ def run_with_override() -> None:
         typed_agent.run_sync('testing', deps=MyDeps(3, 4))
 
     # invalid deps
-    with typed_agent.override_deps(123):  # type: ignore[misc]
+    with typed_agent.override_deps(123):  # type: ignore[arg-type]
         typed_agent.run_sync('testing', deps=MyDeps(3, 4))
 
 
