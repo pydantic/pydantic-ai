@@ -21,7 +21,7 @@ from pydantic_ai.agent import KnownModelName
 # 'if-token-present' means nothing will be sent (and the example will work) if you don't have logfire configured
 logfire.configure(send_to_logfire='if-token-present')
 
-agent = Agent(deps=None)
+agent = Agent()
 
 # models to try, and the appropriate env var
 models: list[tuple[KnownModelName, str]] = [

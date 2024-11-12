@@ -12,7 +12,7 @@ from pydantic_ai.models.test import TestModel
 
 
 def test_retriever_context_no_ctx():
-    agent = Agent(TestModel(), deps=None)
+    agent = Agent(TestModel())
 
     with pytest.raises(UserError) as exc_info:
 
@@ -27,7 +27,7 @@ def test_retriever_context_no_ctx():
 
 
 def test_retriever_plain_with_ctx():
-    agent = Agent(TestModel(), deps=None)
+    agent = Agent(TestModel())
 
     with pytest.raises(UserError) as exc_info:
 
@@ -42,7 +42,7 @@ def test_retriever_plain_with_ctx():
 
 
 def test_retriever_context_ctx_second():
-    agent = Agent(TestModel(), deps=None)
+    agent = Agent(TestModel())
 
     with pytest.raises(UserError) as exc_info:
 
@@ -74,7 +74,7 @@ def get_json_schema(_messages: list[Message], info: AgentInfo) -> ModelAnyRespon
 
 
 def test_docstring_google():
-    agent = Agent(FunctionModel(get_json_schema), deps=None)
+    agent = Agent(FunctionModel(get_json_schema))
     agent.retriever_plain(google_style_docstring)
 
     result = agent.run_sync('Hello')
@@ -105,7 +105,7 @@ def sphinx_style_docstring(foo: int, /) -> str:  # pragma: no cover
 
 
 def test_docstring_sphinx():
-    agent = Agent(FunctionModel(get_json_schema), deps=None)
+    agent = Agent(FunctionModel(get_json_schema))
     agent.retriever_plain(sphinx_style_docstring)
 
     result = agent.run_sync('Hello')
@@ -137,7 +137,7 @@ def numpy_style_docstring(*, foo: int, bar: str) -> str:  # pragma: no cover
 
 
 def test_docstring_numpy():
-    agent = Agent(FunctionModel(get_json_schema), deps=None)
+    agent = Agent(FunctionModel(get_json_schema))
     agent.retriever_plain(numpy_style_docstring)
 
     result = agent.run_sync('Hello')
@@ -162,7 +162,7 @@ def unknown_docstring(**kwargs: int) -> str:  # pragma: no cover
 
 
 def test_docstring_unknown():
-    agent = Agent(FunctionModel(get_json_schema), deps=None)
+    agent = Agent(FunctionModel(get_json_schema))
     agent.retriever_plain(unknown_docstring)
 
     result = agent.run_sync('Hello')
@@ -191,7 +191,7 @@ async def google_style_docstring_no_body(
 
 
 def test_docstring_google_no_body():
-    agent = Agent(FunctionModel(get_json_schema), deps=None)
+    agent = Agent(FunctionModel(get_json_schema))
     agent.retriever_plain(google_style_docstring_no_body)
 
     result = agent.run_sync('')
@@ -210,7 +210,7 @@ def test_docstring_google_no_body():
 
 
 def test_takes_just_model():
-    agent = Agent(deps=None)
+    agent = Agent()
 
     class Foo(BaseModel):
         x: int
@@ -236,7 +236,7 @@ def test_takes_just_model():
 
 
 def test_takes_model_and_int():
-    agent = Agent(deps=None)
+    agent = Agent()
 
     class Foo(BaseModel):
         x: int

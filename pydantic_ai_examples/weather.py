@@ -33,9 +33,7 @@ class Deps:
     geo_api_key: str | None
 
 
-weather_agent: Agent[Deps, str] = Agent(
-    'openai:gpt-4o', system_prompt='Be concise, reply with one sentence.', retries=2
-)
+weather_agent = Agent('openai:gpt-4o', system_prompt='Be concise, reply with one sentence.', deps=Deps, retries=2)
 
 
 @weather_agent.retriever_context

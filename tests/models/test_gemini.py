@@ -384,7 +384,7 @@ async def test_text_success(get_gemini_client: GetGeminiClient):
     response = gemini_response(_content_model_text('Hello world'))
     gemini_client = get_gemini_client(response)
     m = GeminiModel('gemini-1.5-flash', http_client=gemini_client)
-    agent = Agent(m, deps=None)
+    agent = Agent(m)
 
     result = await agent.run('Hello')
     assert result.data == 'Hello world'
@@ -405,7 +405,7 @@ async def test_request_structured_response(get_gemini_client: GetGeminiClient):
     )
     gemini_client = get_gemini_client(response)
     m = GeminiModel('gemini-1.5-flash', http_client=gemini_client)
-    agent = Agent(m, deps=None, result_type=list[int])
+    agent = Agent(m, result_type=list[int])
 
     result = await agent.run('Hello')
     assert result.data == [1, 2, 123]
@@ -441,7 +441,7 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
     ]
     gemini_client = get_gemini_client(responses)
     m = GeminiModel('gemini-1.5-flash', http_client=gemini_client)
-    agent = Agent(m, deps=None, system_prompt='this is the system prompt')
+    agent = Agent(m, system_prompt='this is the system prompt')
 
     @agent.retriever_plain
     async def get_location(loc_name: str) -> str:
@@ -492,7 +492,7 @@ async def test_unexpected_response(client_with_handler: ClientWithHandler, env: 
 
     gemini_client = client_with_handler(handler)
     m = GeminiModel('gemini-1.5-flash', http_client=gemini_client)
-    agent = Agent(m, deps=None, system_prompt='this is the system prompt')
+    agent = Agent(m, system_prompt='this is the system prompt')
 
     with pytest.raises(UnexpectedModelBehaviour) as exc_info:
         await agent.run('Hello')
@@ -517,7 +517,7 @@ async def test_heterogeneous_responses(get_gemini_client: GetGeminiClient):
     )
     gemini_client = get_gemini_client(response)
     m = GeminiModel('gemini-1.5-flash', http_client=gemini_client)
-    agent = Agent(m, deps=None)
+    agent = Agent(m)
     with pytest.raises(UnexpectedModelBehaviour) as exc_info:
         await agent.run('Hello')
 
@@ -536,7 +536,7 @@ async def test_stream_text(get_gemini_client: GetGeminiClient):
     stream = AsyncByteStreamList([json_data[:100], json_data[100:200], json_data[200:]])
     gemini_client = get_gemini_client(stream)
     m = GeminiModel('gemini-1.5-flash', http_client=gemini_client)
-    agent = Agent(m, deps=None)
+    agent = Agent(m)
 
     async with agent.run_stream('Hello') as result:
         chunks = [chunk async for chunk in result.stream(debounce_by=None)]
@@ -555,7 +555,7 @@ async def test_stream_text_no_data(get_gemini_client: GetGeminiClient):
     stream = AsyncByteStreamList([json_data[:100], json_data[100:200], json_data[200:]])
     gemini_client = get_gemini_client(stream)
     m = GeminiModel('gemini-1.5-flash', http_client=gemini_client)
-    agent = Agent(m, deps=None)
+    agent = Agent(m)
     with pytest.raises(UnexpectedModelBehaviour, match='Streamed response ended without con'):
         async with agent.run_stream('Hello'):
             pass
@@ -573,7 +573,7 @@ async def test_stream_structured(get_gemini_client: GetGeminiClient):
     stream = AsyncByteStreamList([json_data[:100], json_data[100:200], json_data[200:]])
     gemini_client = get_gemini_client(stream)
     model = GeminiModel('gemini-1.5-flash', http_client=gemini_client)
-    agent = Agent(model, result_type=tuple[int, int], deps=None)
+    agent = Agent(model, result_type=tuple[int, int])
 
     async with agent.run_stream('Hello') as result:
         chunks = [chunk async for chunk in result.stream(debounce_by=None)]
@@ -605,7 +605,7 @@ async def test_stream_structured_tool_calls(get_gemini_client: GetGeminiClient):
 
     gemini_client = get_gemini_client([first_stream, second_stream])
     model = GeminiModel('gemini-1.5-flash', http_client=gemini_client)
-    agent = Agent(model, result_type=tuple[int, int], deps=None)
+    agent = Agent(model, result_type=tuple[int, int])
     retriever_calls: list[str] = []
 
     @agent.retriever_plain

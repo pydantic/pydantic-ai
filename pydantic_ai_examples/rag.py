@@ -48,7 +48,7 @@ class Deps:
     pool: asyncpg.Pool
 
 
-agent: Agent[Deps, str] = Agent('openai:gpt-4o')
+agent = Agent('openai:gpt-4o', deps=Deps)
 
 
 @agent.retriever_context

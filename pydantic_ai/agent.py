@@ -31,14 +31,7 @@ KnownModelName = Literal[
 
 _logfire = logfire_api.Logfire(otel_scope='pydantic-ai')
 
-
-class Unset:
-    """A sentinel value to indicate that a parameter was not set."""
-
-    pass
-
-
-UNSET = Unset()
+NoneType = type(None)
 
 
 @final
@@ -56,7 +49,6 @@ class Agent(Generic[AgentDeps, ResultData]):
     _retrievers: dict[str, _r.Retriever[AgentDeps, Any]]
     _default_retries: int
     _system_prompt_functions: list[_system_prompt.SystemPromptRunner[AgentDeps]]
-    _default_deps: AgentDeps
     _max_result_retries: int
     _current_result_retry: int
     last_run_messages: list[_messages.Message] | None = None
@@ -71,7 +63,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         result_type: type[ResultData] = str,
         *,
         system_prompt: str | Sequence[str] = (),
-        deps: AgentDeps | Unset = UNSET,
+        deps: type[AgentDeps] = NoneType,
         retries: int = 1,
         result_tool_name: str = 'final_result',
         result_tool_description: str | None = None,
@@ -104,7 +96,6 @@ class Agent(Generic[AgentDeps, ResultData]):
 
         self._system_prompts = (system_prompt,) if isinstance(system_prompt, str) else tuple(system_prompt)
         self._retrievers: dict[str, _r.Retriever[AgentDeps, Any]] = {}
-        self._default_deps = cast(AgentDeps, None if deps == () else deps)
         self._default_retries = retries
         self._system_prompt_functions = []
         self._max_result_retries = result_retries if result_retries is not None else retries
@@ -132,8 +123,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         """
         model_used, custom_model, agent_model = await self._get_agent_model(model)
 
-        if deps is None:
-            deps = self._default_deps
+        deps = cast(AgentDeps, deps)
 
         new_message_index, messages = await self._prepare_messages(deps, user_prompt, message_history)
         self.last_run_messages = messages
@@ -225,8 +215,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         """
         model_used, custom_model, agent_model = await self._get_agent_model(model)
 
-        if deps is None:
-            deps = self._default_deps
+        deps = cast(AgentDeps, deps)
 
         new_message_index, messages = await self._prepare_messages(deps, user_prompt, message_history)
         self.last_run_messages = messages

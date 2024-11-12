@@ -117,7 +117,7 @@ async def test_request_simple_success():
     c = completion_message(ChatCompletionMessage(content='world', role='assistant'))
     mock_client = MockOpenAI.create_mock(c)
     m = OpenAIModel('gpt-4', openai_client=mock_client)
-    agent = Agent(m, deps=None)
+    agent = Agent(m)
 
     result = await agent.run('hello')
     assert result.data == 'world'
@@ -146,7 +146,7 @@ async def test_request_simple_usage():
     )
     mock_client = MockOpenAI.create_mock(c)
     m = OpenAIModel('gpt-4', openai_client=mock_client)
-    agent = Agent(m, deps=None)
+    agent = Agent(m)
 
     result = await agent.run('Hello')
     assert result.data == 'world'
@@ -169,7 +169,7 @@ async def test_request_structured_response():
     )
     mock_client = MockOpenAI.create_mock(c)
     m = OpenAIModel('gpt-4', openai_client=mock_client)
-    agent = Agent(m, deps=None, result_type=list[int])
+    agent = Agent(m, result_type=list[int])
 
     result = await agent.run('Hello')
     assert result.data == [1, 2, 123]
@@ -234,7 +234,7 @@ async def test_request_tool_call():
     ]
     mock_client = MockOpenAI.create_mock(responses)
     m = OpenAIModel('gpt-4', openai_client=mock_client)
-    agent = Agent(m, deps=None, system_prompt='this is the system prompt')
+    agent = Agent(m, system_prompt='this is the system prompt')
 
     @agent.retriever_plain
     async def get_location(loc_name: str) -> str:
@@ -313,7 +313,7 @@ async def test_stream_text():
     stream = text_chunk('hello '), text_chunk('world'), chunk([])
     mock_client = MockOpenAI.create_mock_stream(stream)
     m = OpenAIModel('gpt-4', openai_client=mock_client)
-    agent = Agent(m, deps=None)
+    agent = Agent(m)
 
     async with agent.run_stream('') as result:
         assert not result.is_structured
@@ -327,7 +327,7 @@ async def test_stream_text_finish_reason():
     stream = text_chunk('hello '), text_chunk('world'), text_chunk('.', finish_reason='stop')
     mock_client = MockOpenAI.create_mock_stream(stream)
     m = OpenAIModel('gpt-4', openai_client=mock_client)
-    agent = Agent(m, deps=None)
+    agent = Agent(m)
 
     async with agent.run_stream('') as result:
         assert not result.is_structured
@@ -373,7 +373,7 @@ async def test_stream_structured():
     )
     mock_client = MockOpenAI.create_mock_stream(stream)
     m = OpenAIModel('gpt-4', openai_client=mock_client)
-    agent = Agent(m, deps=None, result_type=MyTypedDict)
+    agent = Agent(m, result_type=MyTypedDict)
 
     async with agent.run_stream('') as result:
         assert result.is_structured
@@ -402,7 +402,7 @@ async def test_stream_structured_finish_reason():
     )
     mock_client = MockOpenAI.create_mock_stream(stream)
     m = OpenAIModel('gpt-4', openai_client=mock_client)
-    agent = Agent(m, deps=None, result_type=MyTypedDict)
+    agent = Agent(m, result_type=MyTypedDict)
 
     async with agent.run_stream('') as result:
         assert result.is_structured
@@ -422,7 +422,7 @@ async def test_no_content():
     stream = chunk([ChoiceDelta()]), chunk([ChoiceDelta()])
     mock_client = MockOpenAI.create_mock_stream(stream)
     m = OpenAIModel('gpt-4', openai_client=mock_client)
-    agent = Agent(m, deps=None, result_type=MyTypedDict)
+    agent = Agent(m, result_type=MyTypedDict)
 
     with pytest.raises(UnexpectedModelBehaviour, match='Streamed response ended without con'):
         async with agent.run_stream(''):

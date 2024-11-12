@@ -24,7 +24,7 @@ from tests.conftest import IsNow
 
 
 def test_call_one():
-    agent = Agent(deps=None)
+    agent = Agent()
     calls: list[str] = []
 
     @agent.retriever_plain
@@ -43,16 +43,16 @@ def test_call_one():
 
 
 def test_custom_result_text():
-    agent = Agent(deps=None)
+    agent = Agent()
     result = agent.run_sync('x', model=TestModel(custom_result_text='custom'))
     assert result.data == snapshot('custom')
-    agent = Agent(deps=None, result_type=tuple[str, str])
+    agent = Agent(result_type=tuple[str, str])
     with pytest.raises(AssertionError, match='Plain response not allowed, but `custom_result_text` is set.'):
         agent.run_sync('x', model=TestModel(custom_result_text='custom'))
 
 
 def test_custom_result_args():
-    agent = Agent(deps=None, result_type=tuple[str, str])
+    agent = Agent(result_type=tuple[str, str])
     result = agent.run_sync('x', model=TestModel(custom_result_args=['a', 'b']))
     assert result.data == ('a', 'b')
 
@@ -62,19 +62,19 @@ def test_custom_result_args_model():
         foo: str
         bar: int
 
-    agent = Agent(deps=None, result_type=Foo)
+    agent = Agent(result_type=Foo)
     result = agent.run_sync('x', model=TestModel(custom_result_args={'foo': 'a', 'bar': 1}))
     assert result.data == Foo(foo='a', bar=1)
 
 
 def test_result_type():
-    agent = Agent(deps=None, result_type=tuple[str, str])
+    agent = Agent(result_type=tuple[str, str])
     result = agent.run_sync('x', model=TestModel())
     assert result.data == ('a', 'a')
 
 
 def test_retriever_retry():
-    agent = Agent(deps=None)
+    agent = Agent()
     call_count = 0
 
     @agent.retriever_plain
