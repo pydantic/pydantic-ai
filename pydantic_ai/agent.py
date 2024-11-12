@@ -257,8 +257,8 @@ class Agent(Generic[AgentDeps, ResultData]):
                         with _logfire.span('handle model response') as handle_span:
                             either = await self._handle_streamed_model_response(model_response, deps)
 
-                            if isinstance(either, models.EitherStreamedResponse):
-                                result_stream = either
+                            if isinstance(either, _MarkFinalResult):
+                                result_stream = either.data
                                 run_span.set_attribute('all_messages', messages)
                                 handle_span.set_attribute('result_type', result_stream.__class__.__name__)
                                 handle_span.message = 'handle model response -> final result'
@@ -467,8 +467,11 @@ class Agent(Generic[AgentDeps, ResultData]):
 
     async def _handle_streamed_model_response(
         self, model_response: models.EitherStreamedResponse, deps: AgentDeps
-    ) -> models.EitherStreamedResponse | list[_messages.Message]:
+    ) -> _MarkFinalResult[models.EitherStreamedResponse] | list[_messages.Message]:
         """Process a streamed response from the model.
+
+        TODO: the response type change to `models.EitherStreamedResponse | list[_messages.Message]` once we drop 3.9
+        (with 3.9 we get `TypeError: Subscripted generics cannot be used with class and instance checks`)
 
         Returns:
             Return `Either` — left: final result data, right: list of messages to send back to the model.
@@ -476,7 +479,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         if isinstance(model_response, models.StreamTextResponse):
             # plain string response
             if self._allow_text_result:
-                return model_response
+                return _MarkFinalResult(model_response)
             else:
                 self._incr_result_retry()
                 response = _messages.RetryPrompt(
@@ -501,7 +504,7 @@ class Agent(Generic[AgentDeps, ResultData]):
                     structured_msg = model_response.get()
 
                 if self._result_schema.find_tool(structured_msg):
-                    return model_response
+                    return _MarkFinalResult(model_response)
 
             # the model is calling a retriever function, consume the response to get the next message
             async for _ in model_response:
