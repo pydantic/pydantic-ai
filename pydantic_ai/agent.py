@@ -389,6 +389,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         if model is not None:
             custom_model = model_ = models.infer_model(model)
         elif self.model is not None:
+            # noinspection PyTypeChecker
             model_ = self.model
             custom_model = None
         else:
@@ -476,7 +477,7 @@ class Agent(Generic[AgentDeps, ResultData]):
     ) -> _MarkFinalResult[models.EitherStreamedResponse] | list[_messages.Message]:
         """Process a streamed response from the model.
 
-        TODO: the response type change to `models.EitherStreamedResponse | list[_messages.Message]` once we drop 3.9
+        TODO: change the response type to `models.EitherStreamedResponse | list[_messages.Message]` once we drop 3.9
         (with 3.9 we get `TypeError: Subscripted generics cannot be used with class and instance checks`)
 
         Returns:

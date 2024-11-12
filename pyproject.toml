@@ -62,7 +62,7 @@ dev = [
     "pyright>=1.1.388",
     "pytest>=8.3.3",
     "pytest-pretty>=1.2.0",
-    "inline-snapshot>=0.13.3",
+    "inline-snapshot>=0.14",
     "ruff>=0.6.9",
     "coverage[toml]>=7.6.2",
     "devtools>=0.12.2",
@@ -169,3 +169,6 @@ exclude_lines = [
 
 [tool.logfire]
 ignore_no_config = true
+
+[tool.inline-snapshot.shortcuts]
+fix=["create", "fix"]
