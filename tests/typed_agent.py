@@ -65,13 +65,13 @@ with expect_error(ValueError):
 
 
 def run_sync() -> None:
-    result = typed_agent.run_sync('testing')
+    result = typed_agent.run_sync('testing', deps=MyDeps(foo=1, bar=2))
     assert_type(result, RunResult[str])
     assert_type(result.data, str)
 
 
 async def run_stream() -> None:
-    async with typed_agent.run_stream('testing') as streamed_result:
+    async with typed_agent.run_stream('testing', deps=MyDeps(foo=1, bar=2)) as streamed_result:
         result_items = [chunk async for chunk in streamed_result.stream()]
         assert_type(result_items, list[str])
 

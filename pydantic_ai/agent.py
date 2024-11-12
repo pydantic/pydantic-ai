@@ -112,7 +112,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         *,
         message_history: list[_messages.Message] | None = None,
         model: models.Model | KnownModelName | None = None,
-        deps: AgentDeps | None = None,
+        deps: AgentDeps = None,
     ) -> result.RunResult[ResultData]:
         """Run the agent with a user prompt in async mode.
 
@@ -181,7 +181,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         *,
         message_history: list[_messages.Message] | None = None,
         model: models.Model | KnownModelName | None = None,
-        deps: AgentDeps | None = None,
+        deps: AgentDeps = None,
     ) -> result.RunResult[ResultData]:
         """Run the agent with a user prompt synchronously.
 
@@ -205,7 +205,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         *,
         message_history: list[_messages.Message] | None = None,
         model: models.Model | KnownModelName | None = None,
-        deps: AgentDeps | None = None,
+        deps: AgentDeps = None,
     ) -> AsyncIterator[result.StreamedRunResult[AgentDeps, ResultData]]:
         """Run the agent with a user prompt in async mode, returning a streamed response.
 
@@ -565,16 +565,17 @@ class Agent(Generic[AgentDeps, ResultData]):
             msg = 'No tools available.'
         return _messages.RetryPrompt(content=f'Unknown tool name: {tool_name!r}. {msg}')
 
-    def _get_deps(self, deps: AgentDeps | None) -> AgentDeps:
+    def _get_deps(self, deps: AgentDeps) -> AgentDeps:
         """Get deps for a run.
 
         If we've overridden deps via `_override_deps_stack`, use that, otherwise use the deps passed to the call.
+
+        We could do runtime type checking of deps against `self._deps_type`, but that's a slippery slope.
         """
         try:
             return self._override_deps_stack[-1]
         except IndexError:
-            # we could do runtime type checking of deps against `self._deps_type`, but that's a slippery slope
-            return cast(AgentDeps, deps)
+            return deps
 
 
 @dataclass
