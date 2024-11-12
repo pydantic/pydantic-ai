@@ -396,6 +396,17 @@ async def test_text_success(get_gemini_client: GetGeminiClient):
     )
     assert result.cost() == snapshot(Cost(request_tokens=1, response_tokens=2, total_tokens=3))
 
+    result = await agent.run('Hello', message_history=result.new_messages())
+    assert result.data == 'Hello world'
+    assert result.all_messages() == snapshot(
+        [
+            UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
+            ModelTextResponse(content='Hello world', timestamp=IsNow(tz=timezone.utc)),
+            UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
+            ModelTextResponse(content='Hello world', timestamp=IsNow(tz=timezone.utc)),
+        ]
+    )
+
 
 async def test_request_structured_response(get_gemini_client: GetGeminiClient):
     response = gemini_response(
@@ -646,3 +657,33 @@ async def test_stream_structured_tool_calls(get_gemini_client: GetGeminiClient):
         ]
     )
     assert retriever_calls == snapshot(["foo(x='a')", "bar(y='b')"])
+
+
+async def test_stream_text_heterogeneous(get_gemini_client: GetGeminiClient):
+    responses = [
+        gemini_response(_content_model_text('Hello ')),
+        gemini_response(
+            _GeminiContent(
+                role='model',
+                parts=[
+                    _GeminiTextPart(text='foo'),
+                    _function_call_part_from_call(
+                        ToolCall(
+                            tool_name='get_location',
+                            args=ArgsObject(args_object={'loc_name': 'San Fransisco'}),
+                        )
+                    ),
+                ],
+            )
+        ),
+    ]
+    json_data = _gemini_streamed_response_ta.dump_json(responses, by_alias=True)
+    stream = AsyncByteStreamList([json_data[:100], json_data[100:200], json_data[200:]])
+    gemini_client = get_gemini_client(stream)
+    m = GeminiModel('gemini-1.5-flash', http_client=gemini_client)
+    agent = Agent(m)
+
+    msg = 'Streamed response with unexpected content, expected all parts to be text'
+    async with agent.run_stream('Hello') as result:
+        with pytest.raises(UnexpectedModelBehaviour, match=msg):
+            await result.get_data()
