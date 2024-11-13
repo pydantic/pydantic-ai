@@ -54,6 +54,8 @@ jobs:
         env:
           PPPR_TOKEN: ${{ secrets.PPPR_TOKEN }}
 
+      - run: uv pip freeze
+
   test:
     name: test on ${{ matrix.python-version }}
     runs-on: ubuntu-latest

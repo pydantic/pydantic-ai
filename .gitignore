@@ -11,4 +11,3 @@ env*/
 /postgres-data/
 .DS_Store
 /pydantic_ai_examples/.chat_app_messages.jsonl
-.docs-insiders-install
