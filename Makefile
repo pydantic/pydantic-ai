@@ -67,7 +67,7 @@ docs:
 docs-serve:
 	uv run mkdocs serve --no-strict
 
-.PHONY: .docs-insiders-install # install insiders packages for docs
+# install insiders packages for docs (to avoid running this on every build, `touch .docs-insiders-install`)
 .docs-insiders-install:
 	@echo 'installing insiders packages'
 	@uv pip install -U \

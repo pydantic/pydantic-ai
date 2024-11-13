@@ -33,11 +33,18 @@ class Deps:
     geo_api_key: str | None
 
 
-weather_agent = Agent('openai:gpt-4o', system_prompt='Be concise, reply with one sentence.', deps_type=Deps, retries=2)
+weather_agent = Agent(
+    'openai:gpt-4o',
+    system_prompt='Be concise, reply with one sentence.',
+    deps_type=Deps,
+    retries=2,
+)
 
 
 @weather_agent.retriever_context
-async def get_lat_lng(ctx: CallContext[Deps], location_description: str) -> dict[str, float]:
+async def get_lat_lng(
+    ctx: CallContext[Deps], location_description: str
+) -> dict[str, float]:
     """Get the latitude and longitude of a location.
 
     Args:
@@ -83,7 +90,9 @@ async def get_weather(ctx: CallContext[Deps], lat: float, lng: float) -> dict[st
         'units': 'metric',
     }
     with logfire.span('calling weather API', params=params) as span:
-        r = await ctx.deps.client.get('https://api.tomorrow.io/v4/weather/realtime', params=params)
+        r = await ctx.deps.client.get(
+            'https://api.tomorrow.io/v4/weather/realtime', params=params
+        )
         r.raise_for_status()
         data = r.json()
         span.set_attribute('response', data)
@@ -128,8 +137,12 @@ async def main():
         weather_api_key = os.getenv('WEATHER_API_KEY')
         # create a free API key at https://geocode.maps.co/
         geo_api_key = os.getenv('GEO_API_KEY')
-        deps = Deps(client=client, weather_api_key=weather_api_key, geo_api_key=geo_api_key)
-        result = await weather_agent.run('What is the weather like in London and in Wiltshire?', deps=deps)
+        deps = Deps(
+            client=client, weather_api_key=weather_api_key, geo_api_key=geo_api_key
+        )
+        result = await weather_agent.run(
+            'What is the weather like in London and in Wiltshire?', deps=deps
+        )
         debug(result)
         print('Response:', result.data)
 

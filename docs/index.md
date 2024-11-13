@@ -68,4 +68,4 @@ async def main():
 10. `result.all_messages()` includes details of messages exchanged, this is useful both to understand the conversation that took place and useful if you want to continue the conversation later — messages can be passed back to later `run/sync_run` calls.
 
 !!! tip "Complete `weather_agent.py` example"
-    The above `weather_agent.py` example is complete for the sake of brevity, but you can find a complete example [here](#TODO).
+    The above `weather_agent.py` example is complete for the sake of brevity, but you can find a complete example [here](examples/weather_agent.md).

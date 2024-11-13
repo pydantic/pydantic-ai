@@ -61,7 +61,9 @@ class Success(BaseModel):
     """Response when SQL could be successfully generated."""
 
     sql_query: Annotated[str, MinLen(1)]
-    explanation: str = Field('', description='Explanation of the SQL query, as markdown')
+    explanation: str = Field(
+        '', description='Explanation of the SQL query, as markdown'
+    )
 
 
 class InvalidRequest(BaseModel):
@@ -81,7 +83,8 @@ agent: Agent[Deps, Response] = Agent(
 @agent.system_prompt
 async def system_prompt() -> str:
     return f"""\
-Given the following PostgreSQL table of records, your job is to write a SQL query that suits the user's request.
+Given the following PostgreSQL table of records, your job is to
+write a SQL query that suits the user's request.
 
 {DB_SCHEMA}
 
@@ -126,7 +129,9 @@ async def main():
     else:
         prompt = sys.argv[1]
 
-    async with database_connect('postgresql://postgres:postgres@localhost:54320', 'pydantic_ai_sql_gen') as conn:
+    async with database_connect(
+        'postgresql://postgres:postgres@localhost:54320', 'pydantic_ai_sql_gen'
+    ) as conn:
         deps = Deps(conn)
         result = await agent.run(prompt, deps=deps)
     debug(result.data)
@@ -139,7 +144,9 @@ async def database_connect(server_dsn: str, database: str) -> AsyncGenerator[Any
     with logfire.span('check and create DB'):
         conn = await asyncpg.connect(server_dsn)
         try:
-            db_exists = await conn.fetchval('SELECT 1 FROM pg_database WHERE datname = $1', database)
+            db_exists = await conn.fetchval(
+                'SELECT 1 FROM pg_database WHERE datname = $1', database
+            )
             if not db_exists:
                 await conn.execute(f'CREATE DATABASE {database}')
         finally:

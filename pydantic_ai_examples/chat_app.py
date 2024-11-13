@@ -35,7 +35,10 @@ async def index() -> HTMLResponse:
 @app.get('/chat/')
 async def get_chat() -> Response:
     msgs = database.get_messages()
-    return Response(b'\n'.join(MessageTypeAdapter.dump_json(m) for m in msgs), media_type='text/plain')
+    return Response(
+        b'\n'.join(MessageTypeAdapter.dump_json(m) for m in msgs),
+        media_type='text/plain',
+    )
 
 
 @app.post('/chat/')
@@ -57,7 +60,9 @@ async def post_chat(prompt: Annotated[str, fastapi.Form()]) -> StreamingResponse
 
 
 THIS_DIR = Path(__file__).parent
-MessageTypeAdapter: TypeAdapter[Message] = TypeAdapter(Annotated[Message, Field(discriminator='role')])
+MessageTypeAdapter: TypeAdapter[Message] = TypeAdapter(
+    Annotated[Message, Field(discriminator='role')]
+)
 
 
 @dataclass
@@ -84,4 +89,6 @@ database = Database()
 if __name__ == '__main__':
     import uvicorn
 
-    uvicorn.run('pydantic_ai_examples.chat_app:app', reload=True, reload_dirs=[str(THIS_DIR)])
+    uvicorn.run(
+        'pydantic_ai_examples.chat_app:app', reload=True, reload_dirs=[str(THIS_DIR)]
+    )

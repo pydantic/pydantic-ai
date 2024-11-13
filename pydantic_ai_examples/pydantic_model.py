@@ -29,3 +29,4 @@ agent = Agent(model, result_type=MyModel)
 if __name__ == '__main__':
     result = agent.run_sync('The windy city in the US of A.')
     print(result.data)
+    print(result.cost())

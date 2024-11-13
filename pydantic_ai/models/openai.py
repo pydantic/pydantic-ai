@@ -159,7 +159,7 @@ class OpenAIAgentModel(AgentModel):
             tools=self.tools or NOT_GIVEN,
             tool_choice=tool_choice or NOT_GIVEN,
             stream=stream,
-            stream_options={'include_usage': True},
+            stream_options={'include_usage': True} if stream else NOT_GIVEN,
         )
 
     @staticmethod

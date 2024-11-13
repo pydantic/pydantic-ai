@@ -25,8 +25,15 @@ logfire.configure(send_to_logfire='if-token-present')
 
 class Whale(TypedDict):
     name: str
-    length: Annotated[float, Field(description='Average length of an adult whale in meters.')]
-    weight: NotRequired[Annotated[float, Field(description='Average weight of an adult whale in kilograms.', ge=50)]]
+    length: Annotated[
+        float, Field(description='Average length of an adult whale in meters.')
+    ]
+    weight: NotRequired[
+        Annotated[
+            float,
+            Field(description='Average weight of an adult whale in kilograms.', ge=50),
+        ]
+    ]
     ocean: NotRequired[str]
     description: NotRequired[Annotated[str, Field(description='Short Description')]]
 
@@ -43,14 +50,21 @@ async def main():
     console = Console()
     with Live('\n' * 36, console=console) as live:
         console.print('Requesting data...', style='cyan')
-        async with agent.run_stream('Generate me details of 5 species of Whale.') as result:
+        async with agent.run_stream(
+            'Generate me details of 5 species of Whale.'
+        ) as result:
             console.print('Response:', style='green')
 
             async for message, last in result.stream_structured(debounce_by=0.01):
                 try:
-                    whales = await result.validate_structured_result(message, allow_partial=not last)
+                    whales = await result.validate_structured_result(
+                        message, allow_partial=not last
+                    )
                 except ValidationError as exc:
-                    if all(e['type'] == 'missing' and e['loc'] == ('response',) for e in exc.errors()):
+                    if all(
+                        e['type'] == 'missing' and e['loc'] == ('response',)
+                        for e in exc.errors()
+                    ):
                         continue
                     else:
                         raise

@@ -98,7 +98,7 @@ or to use a custom prompt:
 
 This model uses `gemini-1.5-flash` by default since Gemini is good at single shot queries.
 
-### `weather.py`
+### `weather_agent.py`
 
 (Demonstrates: retrievers, multiple retrievers, agent deps)
 
@@ -115,7 +115,7 @@ To run this example properly, you'll need two extra API keys:
 **(Note if either key is missing, the code will fall back to dummy data.)**
 
 ```bash
-(uv run/python) -m pydantic_ai_examples.weather
+(uv run/python) -m pydantic_ai_examples.weather_agent
 ```
 
 This example uses `openai:gpt-4o` by default. Gemini seems to be unable to handle the multiple tool
@@ -160,8 +160,6 @@ You can then ask the agent a question with:
 ### `chat_app.py`
 
 (Demonstrates: reusing chat history, serializing messages)
-
-**TODO**: stream responses
 
 Simple chat app example build with FastAPI.
 
