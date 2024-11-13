@@ -1,5 +1,5 @@
 site_name: PydanticAI
-site_description: PydanticAI
+site_description: Agent Framework / shim to use Pydantic with LLMs
 strict: true
 site_url: https://ai.pydantic.dev
 
