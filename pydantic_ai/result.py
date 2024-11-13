@@ -67,8 +67,7 @@ class Cost:
 class _BaseRunResult(ABC, Generic[ResultData]):
     """Base type for results.
 
-    You should not import or use this type directly, instead use its subclasses
-    [`RunResult`][pydantic_ai.result.RunResult] and [`StreamedRunResult`][pydantic_ai.result.StreamedRunResult] instead.
+    You should not import or use this type directly, instead use its subclasses `RunResult` and `StreamedRunResult`.
     """
 
     _all_messages: list[messages.Message]
@@ -80,7 +79,7 @@ class _BaseRunResult(ABC, Generic[ResultData]):
         return self._all_messages
 
     def all_messages_json(self) -> bytes:
-        """Return all messages from [`all_messages`][pydantic_ai.result._BaseRunResult.all_messages] as JSON bytes."""
+        """Return all messages from [`all_messages`][..all_messages] as JSON bytes."""
         return messages.MessagesTypeAdapter.dump_json(self.all_messages())
 
     def new_messages(self) -> list[messages.Message]:
@@ -91,7 +90,7 @@ class _BaseRunResult(ABC, Generic[ResultData]):
         return self.all_messages()[self._new_message_index :]
 
     def new_messages_json(self) -> bytes:
-        """Return new messages from [`new_messages`][pydantic_ai.result._BaseRunResult.new_messages] as JSON bytes."""
+        """Return new messages from [`new_messages`][..new_messages] as JSON bytes."""
         return messages.MessagesTypeAdapter.dump_json(self.new_messages())
 
     @abstractmethod
@@ -101,10 +100,7 @@ class _BaseRunResult(ABC, Generic[ResultData]):
 
 @dataclass
 class RunResult(_BaseRunResult[ResultData]):
-    """Result of a non-streamed run.
-
-    See [`_BaseRunResult`][pydantic_ai.result._BaseRunResult] for other available methods.
-    """
+    """Result of a non-streamed run."""
 
     data: ResultData
     """Data from the final response in the run."""
@@ -117,10 +113,7 @@ class RunResult(_BaseRunResult[ResultData]):
 
 @dataclass
 class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultData]):
-    """Result of a streamed run that returns structured data via a tool call.
-
-    See [`_BaseRunResult`][pydantic_ai.result._BaseRunResult] for other available methods.
-    """
+    """Result of a streamed run that returns structured data via a tool call."""
 
     cost_so_far: Cost
     """Cost of the run up until the last request."""

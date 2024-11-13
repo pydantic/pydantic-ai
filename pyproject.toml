@@ -72,7 +72,6 @@ docs = [
     "mkdocs",
     "mkdocs-material",
     "mkdocstrings-python",
-    "griffe",
 ]
 
 [tool.hatch.build.targets.wheel]
