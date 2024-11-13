@@ -13,15 +13,24 @@ nav:
   - Introduction:
     - Introduction: index.md
     - install.md
+  - Concepts:
+    - concepts/index.md
+    - concepts/dependencies.md
+    - concepts/retrievers.md
+    - concepts/system-prompt.md
+    - concepts/result-validation.md
+    - concepts/message-history.md
+    - concepts/streaming.md
+    - concepts/testing-evals.md
   - Examples:
     - examples/index.md
-    - examples/pydantic_model.md
-    - examples/weather_agent.md
-    - examples/sql_gen.md
+    - examples/pydantic-model.md
+    - examples/weather-agent.md
+    - examples/sql-gen.md
     - examples/rag.md
-    - examples/stream_markdown.md
-    - examples/stream_whales.md
-    - examples/chat_app.md
+    - examples/stream-markdown.md
+    - examples/stream-whales.md
+    - examples/chat-app.md
   - API Reference:
     - api/agent.md
     - api/result.md
