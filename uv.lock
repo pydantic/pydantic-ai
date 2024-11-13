@@ -837,14 +837,13 @@ wheels = [
 
 [[package]]
 name = "mkdocs-material"
-version = "9.5.32+insiders.4.53.12"
-source = { registry = "https://pppr.pydantic.dev/simple/" }
+version = "9.5.44"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "babel" },
     { name = "colorama" },
     { name = "jinja2" },
     { name = "markdown" },
-    { name = "mergedeep" },
     { name = "mkdocs" },
     { name = "mkdocs-material-extensions" },
     { name = "paginate" },
@@ -853,8 +852,9 @@ dependencies = [
     { name = "regex" },
     { name = "requests" },
 ]
+sdist = { url = "https://files.pythonhosted.org/packages/f7/56/182d8121db9ab553cdf9bc58d5972b89833f60b63272f693c1f2b849b640/mkdocs_material-9.5.44.tar.gz", hash = "sha256:f3a6c968e524166b3f3ed1fb97d3ed3e0091183b0545cedf7156a2a6804c56c0", size = 3964306 }
 wheels = [
-    { url = "https://pppr.pydantic.dev/simple/mkdocs-material/mkdocs_material-9.5.32+insiders.4.53.12-py3-none-any.whl" },
+    { url = "https://files.pythonhosted.org/packages/ed/eb/a801d00e0e210d82184aacce596906ec065422c78a7319244ba0771c4ded/mkdocs_material-9.5.44-py3-none-any.whl", hash = "sha256:47015f9c167d58a5ff5e682da37441fc4d66a1c79334bfc08d774763cacf69ca", size = 8674509 },
 ]
 
 [[package]]
@@ -889,15 +889,16 @@ wheels = [
 
 [[package]]
 name = "mkdocstrings-python"
-version = "1.12.2.1.9.0"
-source = { registry = "https://pppr.pydantic.dev/simple/" }
+version = "1.12.2"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "griffe" },
     { name = "mkdocs-autorefs" },
     { name = "mkdocstrings" },
 ]
+sdist = { url = "https://files.pythonhosted.org/packages/23/ec/cb6debe2db77f1ef42b25b21d93b5021474de3037cd82385e586aee72545/mkdocstrings_python-1.12.2.tar.gz", hash = "sha256:7a1760941c0b52a2cd87b960a9e21112ffe52e7df9d0b9583d04d47ed2e186f3", size = 168207 }
 wheels = [
-    { url = "https://pppr.pydantic.dev/simple/mkdocstrings-python/mkdocstrings_python-1.12.2.1.9.0-py3-none-any.whl" },
+    { url = "https://files.pythonhosted.org/packages/5b/c1/ac524e1026d9580cbc654b5d19f5843c8b364a66d30f956372cd09fd2f92/mkdocstrings_python-1.12.2-py3-none-any.whl", hash = "sha256:7f7d40d6db3cb1f5d19dbcd80e3efe4d0ba32b073272c0c0de9de2e604eda62a", size = 111759 },
 ]
 
 [[package]]
