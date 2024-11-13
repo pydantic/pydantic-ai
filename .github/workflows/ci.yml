@@ -46,7 +46,13 @@ jobs:
           enable-cache: true
 
       - run: uv sync --python 3.12 --frozen --group docs
-      - run: uv run --frozen mkdocs build
+      - run: docs
+        if: github.repository_owner != 'pydantic'
+
+      - run: make docs-insiders
+        if: github.repository_owner == 'pydantic'
+        env:
+          PPPR_TOKEN: ${{ secrets.PPPR_TOKEN }}
 
   test:
     name: test on ${{ matrix.python-version }}

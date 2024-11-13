@@ -1243,6 +1243,7 @@ dev = [
     { name = "ruff" },
 ]
 docs = [
+    { name = "griffe" },
     { name = "mkdocs" },
     { name = "mkdocs-material" },
     { name = "mkdocstrings-python" },
@@ -1279,6 +1280,7 @@ dev = [
     { name = "ruff", specifier = ">=0.6.9" },
 ]
 docs = [
+    { name = "griffe" },
     { name = "mkdocs" },
     { name = "mkdocs-material" },
     { name = "mkdocstrings-python" },
