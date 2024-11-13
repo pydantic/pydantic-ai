@@ -89,7 +89,7 @@ cf-pages-build:
 	${HOME}/.local/bin/uv sync --python 3.12 --frozen --group docs
 	${HOME}/.local/bin/uv run python -c "import os;print(len(os.getenv('PPPR_TOKEN', '')))"
 	${HOME}/.local/bin/uv pip install \
-		--extra-index-url https://pydantic:${PPPR_TOKEN}@pppr.pydantic.dev/simple/ \
+		--extra-index-url https://pydantic:$(PPPR_URL)@pppr.pydantic.dev/simple/ \
 		mkdocs-material mkdocstrings-python
 	${HOME}/.local/bin/uv pip freeze
 	${HOME}/.local/bin/uv run --no-sync mkdocs build
