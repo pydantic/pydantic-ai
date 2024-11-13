@@ -1,5 +1,8 @@
 <p align="center">
-  <img src="./img/pydantic-ai-dark.svg" alt="PydanticAI">
+  <img src="./img/pydantic-ai-dark.svg#only-dark" alt="PydanticAI">
+</p>
+<p align="center">
+  <img src="./img/pydantic-ai-light.svg#only-light" alt="PydanticAI">
 </p>
 <p align="center">
   <em>Agent Framework / shim to use Pydantic with LLMs</em>
