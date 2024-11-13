@@ -9,7 +9,7 @@ RAG search example. This demo allows you to ask question of the [logfire](https:
 Demonstrates:
 
 * retrievers
-* agent deps
+* agent dependencies
 * RAG search
 
 This is done by creating a database containing each section of the markdown documentation, then registering
@@ -30,7 +30,7 @@ docker run --rm \
 ```
 
 As with the [SQL gen](./sql_gen.md) example, we run postgres on port `54320` to avoid conflicts with any other postgres instances you may have running.
-We also mount the postgresql `data` directory locally to persist the data if you need to stop and restart the container.
+We also mount the PostgreSQL `data` directory locally to persist the data if you need to stop and restart the container.
 
 With that running and [dependencies installed and environment variables set](./index.md#usage), we can build the search database with (**WARNING**: this requires the `OPENAI_API_KEY` env variable and will calling the OpenAI embedding API around 300 times to generate embeddings for each section of the documentation):
 
