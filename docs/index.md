@@ -1,4 +1,28 @@
-# PydanticAI
+<p align="center">
+  <img src="./img/pydantic-ai-dark.svg#only-dark" alt="PydanticAI">
+</p>
+<p align="center">
+  <img src="./img/pydantic-ai-light.svg#only-light" alt="PydanticAI">
+</p>
+<p align="center">
+  <em>Agent Framework / shim to use Pydantic with LLMs</em>
+</p>
+<p align="center">
+  <a href="https://github.com/pydantic/pydantic-ai/actions/workflows/ci.yml?query=branch%3Amain">
+    <img src="https://github.com/pydantic/pydantic-ai/actions/workflows/ci.yml/badge.svg?event=push" alt="CI">
+  </a>
+  <a href="https://pypi.python.org/pypi/pydantic-ai">
+    <img src="https://img.shields.io/pypi/v/pydantic-ai.svg" alt="PyPI">
+  </a>
+  <a href="https://github.com/pydantic/pydantic-ai">
+    <img src="https://img.shields.io/pypi/pyversions/pydantic-ai.svg" alt="versions">
+  </a>
+  <a href="https://github.com/pydantic/pydantic-ai/blob/main/LICENSE">
+    <img src="https://img.shields.io/github/license/pydantic/pydantic-ai.svg" alt="license">
+  </a>
+</p>
+
+# PydanticAI {.hide}
 
 You can think of PydanticAI as an Agent Framework or a shim to use Pydantic with LLMs — they're the same thing.
 
