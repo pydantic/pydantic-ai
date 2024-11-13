@@ -22,6 +22,8 @@
   </a>
 </p>
 
+# PydanticAI {.hide}
+
 You can think of PydanticAI as an Agent Framework or a shim to use Pydantic with LLMs — they're the same thing.
 
 PydanticAI tries to make working with LLMs feel similar to building a web application.
