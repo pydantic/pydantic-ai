@@ -70,7 +70,7 @@ docs-serve:
 .PHONY: .docs-insiders-install # install insiders packages for docs
 .docs-insiders-install:
 	@echo 'installing insiders packages'
-	@uv pip install \
+	@uv pip install -U \
 		--extra-index-url https://pydantic:${PPPR_TOKEN}@pppr.pydantic.dev/simple/ \
 		mkdocs-material mkdocstrings-python
 
