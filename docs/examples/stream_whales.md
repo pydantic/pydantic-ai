@@ -9,7 +9,7 @@ Demonstrates:
 * streaming structured responses
 
 This script streams structured responses from GPT-4 about whales, validates the data
-and displays it as a dynamic table using `rich` as the data is received.
+and displays it as a dynamic table using [`rich`](https://github.com/Textualize/rich) as the data is received.
 
 ## Running the Example
 
@@ -21,6 +21,6 @@ python/uv-run -m pydantic_ai_examples.stream_whales
 
 ## Example Code
 
-```py
+```py title="stream_whales.py"
 #! pydantic_ai_examples/stream_whales.py
 ```

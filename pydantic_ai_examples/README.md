@@ -161,8 +161,6 @@ You can then ask the agent a question with:
 
 (Demonstrates: reusing chat history, serializing messages)
 
-**TODO**: stream responses
-
 Simple chat app example build with FastAPI.
 
 This demonstrates storing chat history between requests and using it to give the model context for new responses.

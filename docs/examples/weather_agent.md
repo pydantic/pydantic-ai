@@ -30,6 +30,6 @@ python/uv-run -m pydantic_ai_examples.pydantic_model
 
 ## Example Code
 
-```py
+```py title="pydantic_ai_examples/weather_agent.py"
 #! pydantic_ai_examples/weather_agent.py
 ```

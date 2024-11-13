@@ -54,10 +54,18 @@ def prettier_code_blocks():
     """
 
     class SimpleCodeBlock(CodeBlock):
-        def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
+        def __rich_console__(
+            self, console: Console, options: ConsoleOptions
+        ) -> RenderResult:
             code = str(self.text).rstrip()
             yield Text(self.lexer_name, style='dim')
-            yield Syntax(code, self.lexer_name, theme=self.theme, background_color='default', word_wrap=True)
+            yield Syntax(
+                code,
+                self.lexer_name,
+                theme=self.theme,
+                background_color='default',
+                word_wrap=True,
+            )
             yield Text(f'/{self.lexer_name}', style='dim')
 
     Markdown.elements['fence'] = SimpleCodeBlock

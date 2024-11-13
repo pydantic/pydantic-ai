@@ -59,20 +59,27 @@ async def retrieve(context: CallContext[Deps], search_query: str) -> str:
         context: The call context.
         search_query: The search query.
     """
-    with logfire.span('create embedding for {search_query=}', search_query=search_query):
+    with logfire.span(
+        'create embedding for {search_query=}', search_query=search_query
+    ):
         embedding = await context.deps.openai.embeddings.create(
             input=search_query,
             model='text-embedding-3-small',
         )
 
-    assert len(embedding.data) == 1, f'Expected 1 embedding, got {len(embedding.data)}, doc query: {search_query!r}'
+    assert (
+        len(embedding.data) == 1
+    ), f'Expected 1 embedding, got {len(embedding.data)}, doc query: {search_query!r}'
     embedding = embedding.data[0].embedding
     embedding_json = pydantic_core.to_json(embedding).decode()
     rows = await context.deps.pool.fetch(
         'SELECT url, title, content FROM doc_sections ORDER BY embedding <-> $1 LIMIT 8',
         embedding_json,
     )
-    return '\n\n'.join(f'# {row["title"]}\nDocumentation URL:{row["url"]}\n\n{row["content"]}\n' for row in rows)
+    return '\n\n'.join(
+        f'# {row["title"]}\nDocumentation URL:{row["url"]}\n\n{row["content"]}\n'
+        for row in rows
+    )
 
 
 async def run_agent(question: str):
@@ -125,7 +132,10 @@ async def build_search_db():
 
 
 async def insert_doc_section(
-    sem: asyncio.Semaphore, openai: AsyncOpenAI, pool: asyncpg.Pool, section: DocsSection
+    sem: asyncio.Semaphore,
+    openai: AsyncOpenAI,
+    pool: asyncpg.Pool,
+    section: DocsSection,
 ) -> None:
     async with sem:
         url = section.url()
@@ -138,7 +148,9 @@ async def insert_doc_section(
                 input=section.embedding_content(),
                 model='text-embedding-3-small',
             )
-        assert len(embedding.data) == 1, f'Expected 1 embedding, got {len(embedding.data)}, doc section: {section}'
+        assert (
+            len(embedding.data) == 1
+        ), f'Expected 1 embedding, got {len(embedding.data)}, doc section: {section}'
         embedding = embedding.data[0].embedding
         embedding_json = pydantic_core.to_json(embedding).decode()
         await pool.execute(
@@ -161,7 +173,9 @@ class DocsSection:
 
     def url(self) -> str:
         url_path = re.sub(r'\.md$', '', self.path)
-        return f'https://logfire.pydantic.dev/docs/{url_path}/#{slugify(self.title, "-")}'
+        return (
+            f'https://logfire.pydantic.dev/docs/{url_path}/#{slugify(self.title, "-")}'
+        )
 
     def embedding_content(self) -> str:
         return '\n\n'.join((f'path: {self.path}', f'title: {self.title}', self.content))
@@ -173,13 +187,20 @@ sessions_ta = TypeAdapter(list[DocsSection])
 # pyright: reportUnknownMemberType=false
 # pyright: reportUnknownVariableType=false
 @asynccontextmanager
-async def database_connect(create_db: bool = False) -> AsyncGenerator[asyncpg.Pool, None]:
-    server_dsn, database = 'postgresql://postgres:postgres@localhost:54320', 'pydantic_ai_rag'
+async def database_connect(
+    create_db: bool = False,
+) -> AsyncGenerator[asyncpg.Pool, None]:
+    server_dsn, database = (
+        'postgresql://postgres:postgres@localhost:54320',
+        'pydantic_ai_rag',
+    )
     if create_db:
         with logfire.span('check and create DB'):
             conn = await asyncpg.connect(server_dsn)
             try:
-                db_exists = await conn.fetchval('SELECT 1 FROM pg_database WHERE datname = $1', database)
+                db_exists = await conn.fetchval(
+                    'SELECT 1 FROM pg_database WHERE datname = $1', database
+                )
                 if not db_exists:
                     await conn.execute(f'CREATE DATABASE {database}')
             finally:
@@ -229,5 +250,8 @@ if __name__ == '__main__':
             q = 'How do I configure logfire to work with FastAPI?'
         asyncio.run(run_agent(q))
     else:
-        print('uv run --extra examples -m pydantic_ai_examples.rag build|search', file=sys.stderr)
+        print(
+            'uv run --extra examples -m pydantic_ai_examples.rag build|search',
+            file=sys.stderr,
+        )
         sys.exit(1)

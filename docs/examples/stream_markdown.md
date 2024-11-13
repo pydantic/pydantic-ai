@@ -2,7 +2,7 @@
 hide: [toc]
 ---
 
-This example shows how to stream markdown from an agent, using the `rich` library to highlight the output in the terminal.
+This example shows how to stream markdown from an agent, using the [`rich`](https://github.com/Textualize/rich) library to highlight the output in the terminal.
 
 Demonstrates:
 
