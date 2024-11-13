@@ -57,7 +57,7 @@ To run the examples (this will work whether you installed `pydantic_ai`, or clon
 python/uv-run -m pydantic_ai_examples.<example_module_name>
 ```
 
-For examples, to run the very simple [`pydantic_model`](./pydantic_model.md) example:
+For examples, to run the very simple [`pydantic_model`](./pydantic-model.md) example:
 
 ```bash
 python/uv-run -m pydantic_ai_examples.pydantic_model

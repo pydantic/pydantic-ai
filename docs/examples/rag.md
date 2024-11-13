@@ -29,7 +29,7 @@ docker run --rm \
   pgvector/pgvector:pg17
 ```
 
-As with the [SQL gen](./sql_gen.md) example, we run postgres on port `54320` to avoid conflicts with any other postgres instances you may have running.
+As with the [SQL gen](./sql-gen) example, we run postgres on port `54320` to avoid conflicts with any other postgres instances you may have running.
 We also mount the PostgreSQL `data` directory locally to persist the data if you need to stop and restart the container.
 
 With that running and [dependencies installed and environment variables set](./index.md#usage), we can build the search database with (**WARNING**: this requires the `OPENAI_API_KEY` env variable and will calling the OpenAI embedding API around 300 times to generate embeddings for each section of the documentation):

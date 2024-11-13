@@ -32,7 +32,7 @@ PydanticAI tries to make working with LLMs feel similar to building a web applic
     PydanticAI is in early beta, the API is subject to change and there's a lot more to do.
     [Feedback](https://github.com/pydantic/pydantic-ai/issues) is very welcome!
 
-## Retrievers and Dependency Injection
+## Example — Retrievers and Dependency Injection
 
 Partial example of using retrievers to help an LLM respond to a user's query about the weather:
 
@@ -92,4 +92,8 @@ async def main():
 10. `result.all_messages()` includes details of messages exchanged, this is useful both to understand the conversation that took place and useful if you want to continue the conversation later — messages can be passed back to later `run/sync_run` calls.
 
 !!! tip "Complete `weather_agent.py` example"
-    The above `weather_agent.py` example is complete for the sake of brevity, but you can find a complete example [here](examples/weather_agent.md).
+    This example is incomplete for the sake of brevity; you can find a complete `weather_agent.py` example [here](examples/weather-agent.md).
+
+## Example — Result Validation
+
+TODO
