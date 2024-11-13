@@ -87,8 +87,7 @@ cf-pages-build:
 	curl -LsSf https://astral.sh/uv/install.sh | sh
 	${HOME}/.local/bin/uv python install 3.12
 	${HOME}/.local/bin/uv sync --python 3.12 --frozen --group docs
-	${HOME}/.local/bin/uv run python -c "import os;print(len(os.getenv('PPPR_TOKEN', '')))"
-	${HOME}/.local/bin/uv pip install \
+	${HOME}/.local/bin/uv pip install -U \
 		--extra-index-url https://pydantic:$(PPPR_URL)@pppr.pydantic.dev/simple/ \
 		mkdocs-material mkdocstrings-python
 	${HOME}/.local/bin/uv pip freeze
