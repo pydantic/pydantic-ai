@@ -86,6 +86,7 @@ target-version = "py39"
 include = [
     "pydantic_ai/**/*.py",
     "tests/**/*.py",
+    "docs/**/*.py",
     "pydantic_ai_examples/**/*.py",
 ]
 
@@ -118,8 +119,9 @@ docstring-code-format = true
 quote-style = "single"
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**.py" = ["D"]
-"pydantic_ai_examples/**.py" = ["D103"]
+"tests/**/*.py" = ["D"]
+"docs/**/*.py" = ["D"]
+"pydantic_ai_examples/**/*.py" = ["D103"]
 
 [tool.pyright]
 typeCheckingMode = "strict"

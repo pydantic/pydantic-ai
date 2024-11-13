@@ -50,7 +50,7 @@ async def main():
 def prettier_code_blocks():
     """Make rich code blocks prettier and easier to copy.
 
-    Taken from [aicli](https://github.com/samuelcolvin/aicli/blob/v0.8.0/samuelcolvin_aicli.py#L22).
+    From https://github.com/samuelcolvin/aicli/blob/v0.8.0/samuelcolvin_aicli.py#L22
     """
 
     class SimpleCodeBlock(CodeBlock):

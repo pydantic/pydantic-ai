@@ -13,6 +13,15 @@ nav:
   - Introduction:
     - index.md
     - install.md
+  - Examples:
+    - examples/index.md
+    - examples/pydantic_model.md
+    - examples/weather_agent.md
+    - examples/sql_gen.md
+    - examples/rag.md
+    - examples/stream_markdown.md
+    - examples/stream_whales.md
+    - examples/chat_app.md
   - API Reference:
     - api/agent.md
     - api/result.md
@@ -135,3 +144,6 @@ plugins:
             - url: https://typing-extensions.readthedocs.io/en/latest/objects.inv
             - url: https://rich.readthedocs.io/en/stable/objects.inv
             # waiting for https://github.com/encode/httpx/discussions/3091#discussioncomment-11205594
+
+hooks:
+- 'docs/.hooks/main.py'
