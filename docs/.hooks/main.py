@@ -16,7 +16,7 @@ def on_page_markdown(markdown: str, page: Page, config: Config, files: Files) ->
 
 
 def replace_uv_python_run(markdown: str) -> str:
-    return re.sub(r'```bash\n(.*?)python/uv[\- ]run (.+?)\n```', sub_run, markdown)
+    return re.sub(r'```bash\n(.*?)python/uv[\- ]run(.+?)\n```', sub_run, markdown)
 
 
 def sub_run(m: re.Match[str]) -> str:
@@ -26,13 +26,13 @@ def sub_run(m: re.Match[str]) -> str:
 === "pip"
 
     ```bash
-    {prefix}python {command}
+    {prefix}python{command}
     ```
 
 === "uv"
 
     ```bash
-    {prefix}uv run {command}
+    {prefix}uv run{command}
     ```"""
 
 
