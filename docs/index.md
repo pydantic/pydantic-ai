@@ -46,14 +46,14 @@ async def get_weather(
 
 async def main():
     async with httpx.AsyncClient() as client:
-    result = await weather_agent.run(
-        'What is the weather like in West London and in Wiltshire?',
-        deps=client,
-    )  # (8)!
-    print(result.data)  # (9)!
-    # > 'The weather in West London is raining, while in Wiltshire it is sunny.'
+        result = await weather_agent.run(  # (8)!
+            'What is the weather like in West London and in Wiltshire?',
+            deps=client,
+        )
+        print(result.data)  # (9)!
+        # > 'The weather in West London is raining, while in Wiltshire it is sunny.'
 
-    print(result.all_messages())  # (10)!
+        print(result.all_messages())  # (10)!
 ```
 
 1. An agent that can tell users about the weather in a particular location. Agents combine a system prompt, a response type (here `str`) and "retrievers" (aka tools).

@@ -10,7 +10,7 @@ edit_uri: edit/main/docs/
 copyright: © Pydantic Services Inc. 2024 to present
 
 nav:
-  - Getting Started:
+  - Introduction:
     - index.md
     - install.md
   - API Reference:
@@ -19,12 +19,11 @@ nav:
     - api/messages.md
     - api/dependencies.md
     - api/exceptions.md
-    - "pydantic_ai.models":
-      - api/models/index.md
-      - api/models/openai.md
-      - api/models/gemini.md
-      - api/models/test.md
-      - api/models/function.md
+    - api/models/base.md
+    - api/models/openai.md
+    - api/models/gemini.md
+    - api/models/test.md
+    - api/models/function.md
 
 extra:
   # hide the "Made with Material for MkDocs" message
@@ -61,14 +60,13 @@ theme:
     - content.code.annotate
     - content.code.copy
     - content.code.select
+    - navigation.path
     - navigation.expand
     - navigation.indexes
-    - navigation.path
-    - navigation.tabs
     - navigation.sections
     - navigation.tracking
-    - navigation.top # alternatively, we could do navigation.tabs.sticky
     - toc.follow
+#    - navigation.tabs  # don't use navbar tabs
 #  logo: "logo-white.svg"
 #  favicon: "favicon.png"
 
@@ -122,6 +120,7 @@ plugins:
         python:
           paths: [src/packages/pydantic_ai/pydantic_ai]
           options:
+            relative_crossrefs: true
             members_order: source
             separate_signature: true
             show_signature_annotations: true

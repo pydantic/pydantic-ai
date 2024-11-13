@@ -67,11 +67,30 @@ docs:
 docs-serve:
 	uv run mkdocs serve --no-strict
 
+.PHONY: .docs-insiders-install # install insiders packages for docs
+.docs-insiders-install:
+	@echo 'installing insiders packages'
+	@uv pip install -U \
+		--extra-index-url https://pydantic:${PPPR_TOKEN}@pppr.pydantic.dev/simple/ \
+		mkdocs-material mkdocstrings-python
+
+.PHONY: docs-insiders  # Build the documentation using insiders packages
+docs-insiders: .docs-insiders-install
+	uv run --no-sync mkdocs build
+
+.PHONY: docs-serve-insiders  # Build and serve the documentation using insiders packages
+docs-serve-insiders: .docs-insiders-install
+	uv run --no-sync mkdocs serve
+
 .PHONY: cf-pages-build  # Install uv, install dependencies and build the docs, used on CloudFlare Pages
 cf-pages-build:
 	curl -LsSf https://astral.sh/uv/install.sh | sh
 	${HOME}/.local/bin/uv python install 3.12
 	${HOME}/.local/bin/uv sync --python 3.12 --frozen --group docs
+	${HOME}/.local/bin/uv pip install -U \
+		--extra-index-url https://pydantic:$(PPPR_TOKEN)@pppr.pydantic.dev/simple/ \
+		mkdocs-material mkdocstrings-python
+	${HOME}/.local/bin/uv pip freeze
 	${HOME}/.local/bin/uv run --no-sync mkdocs build
 
 .PHONY: all

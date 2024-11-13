@@ -19,5 +19,3 @@
     options:
       members:
         - KnownModelName
-        - ResultValidatorFunc
-        - SystemPromptFunc
