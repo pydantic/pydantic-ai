@@ -88,7 +88,7 @@ cf-pages-build:
 	${HOME}/.local/bin/uv python install 3.12
 	${HOME}/.local/bin/uv sync --python 3.12 --frozen --group docs
 	${HOME}/.local/bin/uv pip install -U \
-		--extra-index-url https://pydantic:${PPPR_TOKEN}@pppr.pydantic.dev/simple/ \
+		--extra-index-url https://pydantic:$(PPPR_TOKEN)@pppr.pydantic.dev/simple/ \
 		mkdocs-material mkdocstrings-python
 	${HOME}/.local/bin/uv pip freeze
 	${HOME}/.local/bin/uv run --no-sync mkdocs build
