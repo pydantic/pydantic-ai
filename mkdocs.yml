@@ -13,15 +13,6 @@ nav:
   - Introduction:
     - Introduction: index.md
     - install.md
-  - Examples:
-    - examples/index.md
-    - examples/pydantic-model.md
-    - examples/weather-agent.md
-    - examples/sql-gen.md
-    - examples/rag.md
-    - examples/stream-markdown.md
-    - examples/stream-whales.md
-    - examples/chat-app.md
   - Concepts:
     - concepts/index.md
     - concepts/dependencies.md
@@ -31,6 +22,15 @@ nav:
     - concepts/message-history.md
     - concepts/streaming.md
     - concepts/testing-evals.md
+  - Examples:
+    - examples/index.md
+    - examples/pydantic-model.md
+    - examples/weather-agent.md
+    - examples/sql-gen.md
+    - examples/rag.md
+    - examples/stream-markdown.md
+    - examples/stream-whales.md
+    - examples/chat-app.md
   - API Reference:
     - api/agent.md
     - api/result.md
