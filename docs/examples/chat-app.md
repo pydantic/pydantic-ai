@@ -8,10 +8,12 @@ Demonstrates:
 
 * reusing chat history
 * serializing messages
+* streaming responses
 
 This demonstrates storing chat history between requests and using it to give the model context for new responses.
 
-Most of the complex logic here is in `chat_app.html` which includes the page layout and JavaScript to handle the chat.
+Most of the complex logic here is between `chat_app.py` which streams the response to the browser,
+and `chat_app.ts` which renders messages in the browser.
 
 ## Running the Example
 
@@ -27,10 +29,20 @@ TODO screenshot.
 
 ## Example Code
 
+Python code that runs the chat app:
+
 ```py title="chat_app.py"
 #! pydantic_ai_examples/chat_app.py
 ```
 
+Simple HTML page to render the app:
+
 ```html title="chat_app.html"
 #! pydantic_ai_examples/chat_app.html
+```
+
+TypeScript to handle rendering the messages, to keep this simple (and at the risk of offending frontend developers) the typescript code is passed to the browser as plain text and transpiled in the browser.
+
+```ts title="chat_app.ts"
+#! pydantic_ai_examples/chat_app.ts
 ```

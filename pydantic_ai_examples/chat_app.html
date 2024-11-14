@@ -58,71 +58,24 @@
   </main>
 </body>
 </html>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/typescript/5.6.3/typescript.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
 <script type="module">
-  import { marked } from 'https://cdn.jsdelivr.net/npm/marked/lib/marked.esm.js';
-
-  function addMessages(lines) {
-    const messages = lines.filter(line => line.length > 1).map((line) => JSON.parse(line))
-    const parent = document.getElementById('conversation');
-    for (const message of messages) {
-      let msgDiv = document.createElement('div');
-      msgDiv.classList.add('border-top', 'pt-2', message.role);
-      msgDiv.innerHTML = marked.parse(message.content);
-      parent.appendChild(msgDiv);
-    }
+  // to let me write TypeScript, without adding the burden of npm we do a dirty, non-production-ready hack
+  // and transpile the TypeScript code in the browser
+  // this is (arguably) A neat demo trick, but not suitable for production!
+  async function loadTs() {
+    const response = await fetch('/chat_app.ts');
+    const tsCode = await response.text();
+    const jsCode = window.ts.transpile(tsCode, { target: "es2015" });
+    let script = document.createElement('script');
+    script.type = 'module';
+    script.text = jsCode;
+    document.body.appendChild(script);
   }
 
-  function onError(error) {
-    console.error(error);
+  loadTs().catch((e) => {
+    console.error(e);
     document.getElementById('error').classList.remove('d-none');
     document.getElementById('spinner').classList.remove('active');
-  }
-
-  async function fetchResponse(response) {
-    let text = '';
-    if (response.ok) {
-      const reader = response.body.getReader();
-      while (true) {
-        const {done, value} = await reader.read();
-        if (done) {
-          break;
-        }
-        text += new TextDecoder().decode(value);
-        const lines = text.split('\n');
-        if (lines.length > 1) {
-          addMessages(lines.slice(0, -1));
-          text = lines[lines.length - 1];
-        }
-      }
-      addMessages(text.split('\n'));
-      let input = document.getElementById('prompt-input')
-      input.disabled = false;
-      input.focus();
-    } else {
-      const text = await response.text();
-      console.error(`Unexpected response: ${response.status}`, {response, text});
-      throw new Error(`Unexpected response: ${response.status}`);
-    }
-  }
-
-  async function onSubmit(e) {
-    e.preventDefault();
-    const spinner = document.getElementById('spinner');
-    spinner.classList.add('active');
-    const body = new FormData(e.target);
-
-    let input = document.getElementById('prompt-input')
-    input.value = '';
-    input.disabled = true;
-
-    const response = await fetch('/chat/', {method: 'POST', body});
-    await fetchResponse(response);
-    spinner.classList.remove('active');
-  }
-
-  // call onSubmit when form is submitted (e.g. user clicks the send button or hits Enter)
-  document.querySelector('form').addEventListener('submit', (e) => onSubmit(e).catch(onError));
-
-  // load messages on page load
-  fetch('/chat/').then(fetchResponse).catch(onError);
+  });
 </script>
