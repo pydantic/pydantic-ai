@@ -65,7 +65,7 @@ jobs:
         with:
           enable-cache: true
 
-      - run: uv run --python 3.12 --frozen pytest tests/test_live.py
+      - run: uv run --python 3.12 --frozen pytest tests/test_live.py -v --durations=100
         if: github.repository_owner == 'pydantic'
         env:
           PYDANTIC_AI_LIVE_TEST_DANGEROUS: 'CHARGE-ME!'
