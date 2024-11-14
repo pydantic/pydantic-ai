@@ -92,7 +92,6 @@ cf-pages-build:
 		mkdocs-material mkdocstrings-python
 	uv pip freeze
 	uv run --no-sync mkdocs build
-	tree site
 
 .PHONY: all
 all: format lint typecheck testcov
