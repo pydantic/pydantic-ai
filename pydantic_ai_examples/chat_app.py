@@ -16,7 +16,12 @@ from fastapi.responses import HTMLResponse, Response, StreamingResponse
 from pydantic import Field, TypeAdapter
 
 from pydantic_ai import Agent
-from pydantic_ai.messages import Message, MessagesTypeAdapter, UserPrompt
+from pydantic_ai.messages import (
+    Message,
+    MessagesTypeAdapter,
+    ModelTextResponse,
+    UserPrompt,
+)
 
 # 'if-token-present' means nothing will be sent (and the example will work) if you don't have logfire configured
 logfire.configure(send_to_logfire='if-token-present')
@@ -30,6 +35,12 @@ logfire.instrument_fastapi(app)
 @app.get('/')
 async def index() -> HTMLResponse:
     return HTMLResponse((THIS_DIR / 'chat_app.html').read_bytes())
+
+
+@app.get('/chat_app.ts')
+async def main_ts() -> Response:
+    """Get the raw typescript code, it's compiled in the browser, forgive me."""
+    return Response((THIS_DIR / 'chat_app.ts').read_bytes(), media_type='text/plain')
 
 
 @app.get('/chat/')
@@ -49,12 +60,16 @@ async def post_chat(prompt: Annotated[str, fastapi.Form()]) -> StreamingResponse
         yield MessageTypeAdapter.dump_json(UserPrompt(content=prompt)) + b'\n'
         # get the chat history so far to pass as context to the agent
         messages = list(database.get_messages())
-        response = await agent.run(prompt, message_history=messages)
+        # run the agent with the user prompt and the chat history
+        async with agent.run_stream(prompt, message_history=messages) as result:
+            async for text in result.stream(debounce_by=0.01):
+                # text here is a `str` and the frontend wants
+                # JSON encoded ModelTextResponse, so we create one
+                m = ModelTextResponse(content=text, timestamp=result.timestamp())
+                yield MessageTypeAdapter.dump_json(m) + b'\n'
+
         # add new messages (e.g. the user prompt and the agent response in this case) to the database
-        database.add_messages(response.new_messages_json())
-        # stream the last message which will be the agent response, we can't just yield `new_messages_json()`
-        # since we already stream the user prompt
-        yield MessageTypeAdapter.dump_json(response.all_messages()[-1]) + b'\n'
+        database.add_messages(result.new_messages_json())
 
     return StreamingResponse(stream_messages(), media_type='text/plain')
 

@@ -3,6 +3,7 @@ from __future__ import annotations as _annotations
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Generic, TypeVar, cast
 
 import logfire_api
@@ -272,6 +273,10 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
             This won't return the full cost until the stream is finished.
         """
         return self.cost_so_far + self._stream_response.cost()
+
+    def timestamp(self) -> datetime:
+        """Get the timestamp of the response."""
+        return self._stream_response.timestamp()
 
     async def validate_structured_result(
         self, message: messages.ModelStructuredResponse, *, allow_partial: bool = False
