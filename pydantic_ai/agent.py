@@ -9,9 +9,17 @@ from typing import Any, Callable, Generic, Literal, cast, final, overload
 import logfire_api
 from typing_extensions import assert_never
 
-from . import _result, _retriever as _r, _system_prompt, _utils, exceptions, messages as _messages, models, result
+from . import (
+    _result,
+    _retriever as _r,
+    _system_prompt,
+    _utils,
+    exceptions,
+    messages as _messages,
+    models,
+    result,
+)
 from .dependencies import AgentDeps, RetrieverContextFunc, RetrieverParams, RetrieverPlainFunc
-from .models import infer_model
 from .result import ResultData
 
 __all__ = 'Agent', 'KnownModelName'
@@ -100,7 +108,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         if model is None or defer_model_check:
             self.model = model
         else:
-            self.model = infer_model(model)
+            self.model = models.infer_model(model)
 
         self._result_schema = _result.ResultSchema[result_type].build(
             result_type, result_tool_name, result_tool_description
@@ -412,14 +420,20 @@ class Agent(Generic[AgentDeps, ResultData]):
             a tuple of `(model used, custom_model if any, agent_model)`
         """
         model_: models.Model
-        if some := self._override_model:
-            model_ = some.value
+        if some_model := self._override_model:
+            # we don't want `override_model()` to cover up errors from the model not being defined, hence this check
+            if model is None and self.model is None:
+                raise exceptions.UserError(
+                    '`model` must be set either when creating the agent or when calling it. '
+                    '(Even when `override_model()` is customizing the model that will actually be called)'
+                )
+            model_ = some_model.value
             custom_model = None
         elif model is not None:
             custom_model = model_ = models.infer_model(model)
         elif self.model is not None:
             # noinspection PyTypeChecker
-            self.model = model_ = models.infer_model(self.model)
+            model_ = self.model = models.infer_model(self.model)
             custom_model = None
         else:
             raise exceptions.UserError('`model` must be set either when creating the agent or when calling it.')
@@ -602,8 +616,8 @@ class Agent(Generic[AgentDeps, ResultData]):
 
         We could do runtime type checking of deps against `self._deps_type`, but that's a slippery slope.
         """
-        if some := self._override_deps:
-            return some.value
+        if some_deps := self._override_deps:
+            return some_deps.value
         else:
             return deps
 

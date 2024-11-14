@@ -6,7 +6,7 @@ import pytest
 from inline_snapshot import snapshot
 from pydantic import BaseModel
 
-from pydantic_ai import Agent, CallContext, ModelRetry, UnexpectedModelBehaviour
+from pydantic_ai import Agent, CallContext, ModelRetry, UnexpectedModelBehaviour, UserError
 from pydantic_ai.messages import (
     ArgsJson,
     ArgsObject,
@@ -509,3 +509,11 @@ def test_override_model(env: TestEnv):
     with agent.override_model('test'):
         result = agent.run_sync('Hello')
         assert result.data == snapshot((0, 'a'))
+
+
+def test_override_model_no_model():
+    agent = Agent()
+
+    with pytest.raises(UserError, match=r'`model` must be set either.+Even when `override_model\(\)` is customizing'):
+        with agent.override_model('test'):
+            agent.run_sync('Hello')
