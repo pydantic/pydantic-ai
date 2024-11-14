@@ -7,6 +7,8 @@ on:
 
 permissions:
   statuses: write
+  # this can be remove once the repo is public
+  actions: read
 
 jobs:
   smokeshow:
