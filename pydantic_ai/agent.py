@@ -23,6 +23,7 @@ KnownModelName = Literal[
     'openai:gpt-3.5-turbo',
     'gemini-1.5-flash',
     'gemini-1.5-pro',
+    'test',
 ]
 """Known model names that can be used with the `model` parameter of [`Agent`][pydantic_ai.Agent].
 
@@ -52,7 +53,8 @@ class Agent(Generic[AgentDeps, ResultData]):
     _deps_type: type[AgentDeps]
     _max_result_retries: int
     _current_result_retry: int
-    _override_deps_stack: list[AgentDeps]
+    _override_deps: _utils.Option[AgentDeps] = None
+    _override_model: _utils.Option[models.Model] = None
     last_run_messages: list[_messages.Message] | None = None
     """The messages from the last run, useful when a run raised an exception.
 
@@ -104,7 +106,6 @@ class Agent(Generic[AgentDeps, ResultData]):
         self._max_result_retries = result_retries if result_retries is not None else retries
         self._current_result_retry = 0
         self._result_validators = []
-        self._override_deps_stack = []
 
     async def run(
         self,
@@ -281,11 +282,26 @@ class Agent(Generic[AgentDeps, ResultData]):
         Args:
             overriding_deps: The dependencies to use instead of the dependencies passed to the agent run.
         """
-        self._override_deps_stack.append(overriding_deps)
+        override_deps_before = self._override_deps
+        self._override_deps = _utils.Some(overriding_deps)
         try:
             yield
         finally:
-            self._override_deps_stack.pop()
+            self._override_deps = override_deps_before
+
+    @contextmanager
+    def override_model(self, overriding_model: models.Model | KnownModelName) -> Iterator[None]:
+        """Context manager to temporarily override the model used by the agent.
+
+        Args:
+            overriding_model: The model to use instead of the model passed to the agent run.
+        """
+        override_model_before = self._override_model
+        self._override_model = _utils.Some(models.infer_model(overriding_model))
+        try:
+            yield
+        finally:
+            self._override_model = override_model_before
 
     def system_prompt(
         self, func: _system_prompt.SystemPromptFunc[AgentDeps]
@@ -386,7 +402,10 @@ class Agent(Generic[AgentDeps, ResultData]):
             a tuple of `(model used, custom_model if any, agent_model)`
         """
         model_: models.Model
-        if model is not None:
+        if some := self._override_model:
+            model_ = some.value
+            custom_model = None
+        elif model is not None:
             custom_model = model_ = models.infer_model(model)
         elif self.model is not None:
             # noinspection PyTypeChecker
@@ -573,9 +592,9 @@ class Agent(Generic[AgentDeps, ResultData]):
 
         We could do runtime type checking of deps against `self._deps_type`, but that's a slippery slope.
         """
-        try:
-            return self._override_deps_stack[-1]
-        except IndexError:
+        if some := self._override_deps:
+            return some.value
+        else:
             return deps
 
 

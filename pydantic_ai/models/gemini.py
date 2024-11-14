@@ -55,6 +55,7 @@ from . import (
     StreamStructuredResponse,
     StreamTextResponse,
     cached_async_http_client,
+    check_allow_model_requests,
 )
 
 GeminiModelName = Literal['gemini-1.5-flash', 'gemini-1.5-flash-8b', 'gemini-1.5-pro', 'gemini-1.0-pro']
@@ -113,6 +114,7 @@ class GeminiModel(Model):
         allow_text_result: bool,
         result_tools: Sequence[AbstractToolDefinition] | None,
     ) -> GeminiAgentModel:
+        check_allow_model_requests()
         tools = [_function_from_abstract_tool(t) for t in retrievers.values()]
         if result_tools is not None:
             tools += [_function_from_abstract_tool(t) for t in result_tools]

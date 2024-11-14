@@ -15,7 +15,12 @@ import pytest
 from _pytest.assertion.rewrite import AssertionRewritingHook
 from typing_extensions import TypeAlias
 
+import pydantic_ai.models
+
 __all__ = 'IsNow', 'TestEnv', 'ClientWithHandler'
+
+
+pydantic_ai.models.ALLOW_MODEL_REQUESTS = False
 
 if TYPE_CHECKING:
 
@@ -65,6 +70,12 @@ def env():
 @pytest.fixture
 def anyio_backend():
     return 'asyncio'
+
+
+@pytest.fixture
+def allow_model_requests():
+    with pydantic_ai.models.override_allow_model_requests(True):
+        yield
 
 
 @pytest.fixture

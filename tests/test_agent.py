@@ -492,3 +492,18 @@ def test_unknown_retriever_fix():
             ModelTextResponse(content='success', timestamp=IsNow(tz=timezone.utc)),
         ]
     )
+
+
+def test_model_requests_blocked():
+    agent = Agent('gemini-1.5-flash', result_type=tuple[str, str])
+
+    with pytest.raises(RuntimeError, match='Model requests are not allowed, since ALLOW_MODEL_REQUESTS is False'):
+        agent.run_sync('Hello')
+
+
+def test_override_model():
+    agent = Agent('gemini-1.5-flash', result_type=tuple[int, str])
+
+    with agent.override_model('test'):
+        result = agent.run_sync('Hello')
+        assert result.data == snapshot((0, 'a'))

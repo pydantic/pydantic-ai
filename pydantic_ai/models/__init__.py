@@ -7,8 +7,8 @@ specific LLM being used.
 from __future__ import annotations as _annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator, Iterable, Mapping, Sequence
-from contextlib import asynccontextmanager
+from collections.abc import AsyncIterator, Iterable, Iterator, Mapping, Sequence
+from contextlib import asynccontextmanager, contextmanager
 from datetime import datetime
 from functools import cache
 from typing import TYPE_CHECKING, Protocol, Union
@@ -151,10 +151,54 @@ class StreamStructuredResponse(ABC):
 EitherStreamedResponse = Union[StreamTextResponse, StreamStructuredResponse]
 
 
+ALLOW_MODEL_REQUESTS = False
+"""Whether to allow requests to models.
+
+This global setting allows you to disable request to most models, e.g. to make sure you don't accidentally
+make costly requests to a model during tests.
+
+The testing models [`TestModel`][pydantic_ai.models.test.TestModel] and
+[`FunctionModel`][pydantic_ai.models.function.FunctionModel] are no affected by this setting.
+"""
+
+
+def check_allow_model_requests() -> None:
+    """Check if model requests are allowed.
+
+    If you're defining your own models that have cost or latency associated with their use, you should call this in
+    [`Model.agent_model`][pydantic_ai.models.Model.agent_model].
+
+    Raises:
+        RuntimeError: If model requests are not allowed.
+    """
+    if not ALLOW_MODEL_REQUESTS:
+        raise RuntimeError('Model requests are not allowed, since ALLOW_MODEL_REQUESTS is False')
+
+
+@contextmanager
+def override_allow_model_requests(allow_model_requests: bool) -> Iterator[None]:
+    """Context manager to temporarily override [`ALLOW_MODEL_REQUESTS`][pydantic_ai.models.ALLOW_MODEL_REQUESTS].
+
+    Args:
+        allow_model_requests: Whether to allow model requests within the context.
+    """
+    global ALLOW_MODEL_REQUESTS
+    old_value = ALLOW_MODEL_REQUESTS
+    ALLOW_MODEL_REQUESTS = allow_model_requests  # pyright: ignore[reportConstantRedefinition]
+    try:
+        yield
+    finally:
+        ALLOW_MODEL_REQUESTS = old_value  # pyright: ignore[reportConstantRedefinition]
+
+
 def infer_model(model: Model | KnownModelName) -> Model:
     """Infer the model from the name."""
     if isinstance(model, Model):
         return model
+    elif model == 'test':
+        from .test import TestModel
+
+        return TestModel()
     elif model.startswith('openai:'):
         from .openai import OpenAIModel
 
