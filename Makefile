@@ -85,13 +85,14 @@ docs-serve-insiders: .docs-insiders-install
 .PHONY: cf-pages-build  # Install uv, install dependencies and build the docs, used on CloudFlare Pages
 cf-pages-build:
 	curl -LsSf https://astral.sh/uv/install.sh | sh
-	${HOME}/.local/bin/uv python install 3.12
-	${HOME}/.local/bin/uv sync --python 3.12 --frozen --group docs
-	${HOME}/.local/bin/uv pip install -U \
+	uv python install 3.12
+	uv sync --python 3.12 --frozen --group docs
+	uv pip install -U \
 		--extra-index-url https://pydantic:$(PPPR_TOKEN)@pppr.pydantic.dev/simple/ \
 		mkdocs-material mkdocstrings-python
-	${HOME}/.local/bin/uv pip freeze
-	${HOME}/.local/bin/uv run --no-sync mkdocs build
+	uv pip freeze
+	uv run --no-sync mkdocs build
+	tree site
 
 .PHONY: all
 all: format lint typecheck testcov
