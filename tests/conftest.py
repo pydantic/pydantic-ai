@@ -56,7 +56,7 @@ class TestEnv:
     def reset(self) -> None:
         for name, value in self.envars.items():
             if value is None:
-                os.environ.pop(name)
+                os.environ.pop(name, None)
             else:
                 os.environ[name] = value
 
