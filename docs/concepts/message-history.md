@@ -1,3 +1,5 @@
+from pydantic_ai_examples.pydantic_model import model
+
 # Messages and chat history
 
 PydanticAI provides access to messages exchanged during an agent run. These messages can be used both to continue a coherent conversation, and to understand how an agent performed.
@@ -97,5 +99,31 @@ print(result2.data)
 print(result2.all_messages())
 ```
 _(This example is complete, it can be run "as is")_
+
+## Other ways of using messages
+
+Since messages are defined by simple dataclasses, you can manually create and manipulate, e.g. for testing.
+
+The message format is independent of the model used, so you can use messages in different agents, or the same agent with different models.
+
+```python
+from pydantic_ai import Agent
+
+agent = Agent('openai:gpt-4o', system_prompt='Be a helpful assistant.')
+
+result1 = agent.run_sync('Tell me a joke.')
+print(result1.data)
+
+result2 = agent.run_sync('Explain?', model='gemini-1.5-pro', message_history=result1.new_messages())
+print(result2.data)
+
+print(result2.all_messages())
+```
+
+## Last Run Messages
+
+TODO: document [`last_run_messages`][pydantic_ai.Agent.last_run_messages].
+
+## Examples
 
 For a more complete example of using messages in conversations, see the [chat app](../examples/chat-app.md) example.
