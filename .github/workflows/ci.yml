@@ -123,11 +123,16 @@ jobs:
           enable-cache: true
 
       - run: uv run --frozen coverage combine coverage
-#      - run: uv run --frozen coverage xml
-#      - uses: codecov/codecov-action@v4
-#        with:
-#          token: ${{ secrets.CODECOV_TOKEN }}
-#          file: ./coverage.xml
+
+      - run: uv run --frozen coverage html --show-contexts --title "PydanticAI coverage for ${{ github.sha }}"
+
+      - name: Store coverage html
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-html
+          path: htmlcov
+          include-hidden-files: true
+
       - run: uv run --frozen coverage report --fail-under 95
 
   # https://github.com/marketplace/actions/alls-green#why used for branch protection checks
