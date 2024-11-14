@@ -135,6 +135,7 @@ watch:
 
 plugins:
   - search
+  - social
   - mkdocstrings:
       handlers:
         python:

@@ -49,8 +49,6 @@ Then set the API key as an environment variable with:
 
 ### Running Examples
 
-These examples are distributed with the `pydantic-ai` package so you can run them either by cloning the [pydantic-ai repo](https://github.com/pydantic/pydantic-ai) or by simply installing `pydantic-ai` from PyPI with `pip` or `uv`.
-
 To run the examples (this will work whether you installed `pydantic_ai`, or cloned the repo), run:
 
 ```bash
