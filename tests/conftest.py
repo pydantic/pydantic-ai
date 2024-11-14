@@ -5,6 +5,7 @@ import os
 import re
 import secrets
 import sys
+from collections.abc import Iterator
 from datetime import datetime
 from pathlib import Path
 from types import ModuleType
@@ -43,28 +44,31 @@ class TestEnv:
     __test__ = False
 
     def __init__(self):
-        self.envars: set[str] = set()
+        self.envars: dict[str, str | None] = {}
 
     def set(self, name: str, value: str) -> None:
-        self.envars.add(name)
+        self.envars[name] = os.getenv(name)
         os.environ[name] = value
 
-    def pop(self, name: str) -> None:  # pragma: no cover
-        self.envars.remove(name)
+    def remove(self, name: str) -> None:
+        self.envars[name] = os.getenv(name)
         os.environ.pop(name)
 
-    def clear(self) -> None:
-        for n in self.envars:
-            os.environ.pop(n)
+    def reset(self) -> None:
+        for name, value in self.envars.items():
+            if value is None:
+                os.environ.pop(name)
+            else:
+                os.environ[name] = value
 
 
 @pytest.fixture
-def env():
+def env() -> Iterator[TestEnv]:
     test_env = TestEnv()
 
     yield test_env
 
-    test_env.clear()
+    test_env.reset()
 
 
 @pytest.fixture

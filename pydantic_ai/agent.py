@@ -11,6 +11,7 @@ from typing_extensions import assert_never
 
 from . import _result, _retriever as _r, _system_prompt, _utils, exceptions, messages as _messages, models, result
 from .dependencies import AgentDeps, RetrieverContextFunc, RetrieverParams, RetrieverPlainFunc
+from .models import infer_model
 from .result import ResultData
 
 __all__ = 'Agent', 'KnownModelName'
@@ -41,7 +42,7 @@ class Agent(Generic[AgentDeps, ResultData]):
     """Class for defining "agents" - a way to have a specific type of "conversation" with an LLM."""
 
     # dataclass fields mostly for my sanity — knowing what attributes are available
-    model: models.Model | None
+    model: models.Model | KnownModelName | None
     """The default model configured for this agent."""
     _result_schema: _result.ResultSchema[ResultData] | None
     _result_validators: list[_result.ResultValidator[AgentDeps, ResultData]]
@@ -72,6 +73,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         result_tool_name: str = 'final_result',
         result_tool_description: str | None = None,
         result_retries: int | None = None,
+        defer_model_check: bool = False,
     ):
         """Create an agent.
 
@@ -89,8 +91,16 @@ class Agent(Generic[AgentDeps, ResultData]):
             result_tool_name: The name of the tool to use for the final result.
             result_tool_description: The description of the final result tool.
             result_retries: The maximum number of retries to allow for result validation, defaults to `retries`.
+            defer_model_check: by default, if you provide a [named][pydantic_ai.agent.KnownModelName] model,
+                it's evaluated to create a [`Model`][pydantic_ai.models.Model] instance immediately,
+                which checks for the necessary environment variables. Set this to `false`
+                to defer the evaluation until the first run. Useful if you want to
+                [override the model][pydantic_ai.Agent.override_model] for testing.
         """
-        self.model = models.infer_model(model) if model is not None else None
+        if model is None or defer_model_check:
+            self.model = model
+        else:
+            self.model = infer_model(model)
 
         self._result_schema = _result.ResultSchema[result_type].build(
             result_type, result_tool_name, result_tool_description
@@ -409,7 +419,7 @@ class Agent(Generic[AgentDeps, ResultData]):
             custom_model = model_ = models.infer_model(model)
         elif self.model is not None:
             # noinspection PyTypeChecker
-            model_ = self.model
+            self.model = model_ = models.infer_model(self.model)
             custom_model = None
         else:
             raise exceptions.UserError('`model` must be set either when creating the agent or when calling it.')

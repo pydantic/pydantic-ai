@@ -59,6 +59,7 @@ def test_api_key_env_var(env: TestEnv):
 
 
 def test_api_key_not_set(env: TestEnv):
+    env.remove('GEMINI_API_KEY')
     with pytest.raises(UserError, match='API key must be provided or set in the GEMINI_API_KEY environment variable'):
         GeminiModel('gemini-1.5-flash')
 
