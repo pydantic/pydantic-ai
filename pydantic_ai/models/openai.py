@@ -33,6 +33,7 @@ from . import (
     StreamStructuredResponse,
     StreamTextResponse,
     cached_async_http_client,
+    check_allow_model_requests,
 )
 
 
@@ -85,6 +86,7 @@ class OpenAIModel(Model):
         allow_text_result: bool,
         result_tools: Sequence[AbstractToolDefinition] | None,
     ) -> AgentModel:
+        check_allow_model_requests()
         tools = [self._map_tool_definition(r) for r in retrievers.values()]
         if result_tools is not None:
             tools += [self._map_tool_definition(r) for r in result_tools]

@@ -59,6 +59,7 @@ def test_api_key_env_var(env: TestEnv):
 
 
 def test_api_key_not_set(env: TestEnv):
+    env.remove('GEMINI_API_KEY')
     with pytest.raises(UserError, match='API key must be provided or set in the GEMINI_API_KEY environment variable'):
         GeminiModel('gemini-1.5-flash')
 
@@ -69,7 +70,7 @@ def test_api_key_empty(env: TestEnv):
         GeminiModel('gemini-1.5-flash')
 
 
-def test_agent_model_simple():
+def test_agent_model_simple(allow_model_requests: None):
     m = GeminiModel('gemini-1.5-flash', api_key='via-arg')
     agent_model = m.agent_model({}, True, None)
     assert isinstance(agent_model.http_client, httpx.AsyncClient)
@@ -88,7 +89,7 @@ class TestToolDefinition:
     outer_typed_dict_key: str | None = None
 
 
-def test_agent_model_tools():
+def test_agent_model_tools(allow_model_requests: None):
     m = GeminiModel('gemini-1.5-flash', api_key='via-arg')
     retrievers = {
         'foo': TestToolDefinition(
@@ -144,7 +145,7 @@ def test_agent_model_tools():
     assert agent_model.tool_config is None
 
 
-def test_require_response_tool():
+def test_require_response_tool(allow_model_requests: None):
     m = GeminiModel('gemini-1.5-flash', api_key='via-arg')
     result_tool = TestToolDefinition(
         'result',
@@ -173,7 +174,7 @@ def test_require_response_tool():
     )
 
 
-def test_json_def_replaced():
+def test_json_def_replaced(allow_model_requests: None):
     class Location(BaseModel):
         lat: float
         lng: float = 1.1
@@ -238,7 +239,7 @@ def test_json_def_replaced():
     )
 
 
-def test_json_def_replaced_any_of():
+def test_json_def_replaced_any_of(allow_model_requests: None):
     class Location(BaseModel):
         lat: float
         lng: float
@@ -282,7 +283,7 @@ def test_json_def_replaced_any_of():
     )
 
 
-def test_json_def_recursive():
+def test_json_def_recursive(allow_model_requests: None):
     class Location(BaseModel):
         lat: float
         lng: float
@@ -335,7 +336,9 @@ GetGeminiClient: TypeAlias = 'Callable[[ResOrList], httpx.AsyncClient]'
 
 
 @pytest.fixture
-async def get_gemini_client(client_with_handler: ClientWithHandler, env: TestEnv):
+async def get_gemini_client(
+    client_with_handler: ClientWithHandler, env: TestEnv, allow_model_requests: None
+) -> GetGeminiClient:
     env.set('GEMINI_API_KEY', 'via-env-var')
 
     def create_client(response_or_list: ResOrList) -> httpx.AsyncClient:
@@ -495,7 +498,7 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
     assert result.cost() == snapshot(Cost(request_tokens=3, response_tokens=6, total_tokens=9))
 
 
-async def test_unexpected_response(client_with_handler: ClientWithHandler, env: TestEnv):
+async def test_unexpected_response(client_with_handler: ClientWithHandler, env: TestEnv, allow_model_requests: None):
     env.set('GEMINI_API_KEY', 'via-env-var')
 
     def handler(_: httpx.Request):

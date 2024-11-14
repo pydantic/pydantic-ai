@@ -9,7 +9,16 @@ from typing import Any, Callable, Generic, Literal, cast, final, overload
 import logfire_api
 from typing_extensions import assert_never
 
-from . import _result, _retriever as _r, _system_prompt, _utils, exceptions, messages as _messages, models, result
+from . import (
+    _result,
+    _retriever as _r,
+    _system_prompt,
+    _utils,
+    exceptions,
+    messages as _messages,
+    models,
+    result,
+)
 from .dependencies import AgentDeps, RetrieverContextFunc, RetrieverParams, RetrieverPlainFunc
 from .result import ResultData
 
@@ -23,6 +32,7 @@ KnownModelName = Literal[
     'openai:gpt-3.5-turbo',
     'gemini-1.5-flash',
     'gemini-1.5-pro',
+    'test',
 ]
 """Known model names that can be used with the `model` parameter of [`Agent`][pydantic_ai.Agent].
 
@@ -40,7 +50,7 @@ class Agent(Generic[AgentDeps, ResultData]):
     """Class for defining "agents" - a way to have a specific type of "conversation" with an LLM."""
 
     # dataclass fields mostly for my sanity — knowing what attributes are available
-    model: models.Model | None
+    model: models.Model | KnownModelName | None
     """The default model configured for this agent."""
     _result_schema: _result.ResultSchema[ResultData] | None
     _result_validators: list[_result.ResultValidator[AgentDeps, ResultData]]
@@ -52,7 +62,8 @@ class Agent(Generic[AgentDeps, ResultData]):
     _deps_type: type[AgentDeps]
     _max_result_retries: int
     _current_result_retry: int
-    _override_deps_stack: list[AgentDeps]
+    _override_deps: _utils.Option[AgentDeps] = None
+    _override_model: _utils.Option[models.Model] = None
     last_run_messages: list[_messages.Message] | None = None
     """The messages from the last run, useful when a run raised an exception.
 
@@ -70,6 +81,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         result_tool_name: str = 'final_result',
         result_tool_description: str | None = None,
         result_retries: int | None = None,
+        defer_model_check: bool = False,
     ):
         """Create an agent.
 
@@ -87,8 +99,16 @@ class Agent(Generic[AgentDeps, ResultData]):
             result_tool_name: The name of the tool to use for the final result.
             result_tool_description: The description of the final result tool.
             result_retries: The maximum number of retries to allow for result validation, defaults to `retries`.
+            defer_model_check: by default, if you provide a [named][pydantic_ai.agent.KnownModelName] model,
+                it's evaluated to create a [`Model`][pydantic_ai.models.Model] instance immediately,
+                which checks for the necessary environment variables. Set this to `false`
+                to defer the evaluation until the first run. Useful if you want to
+                [override the model][pydantic_ai.Agent.override_model] for testing.
         """
-        self.model = models.infer_model(model) if model is not None else None
+        if model is None or defer_model_check:
+            self.model = model
+        else:
+            self.model = models.infer_model(model)
 
         self._result_schema = _result.ResultSchema[result_type].build(
             result_type, result_tool_name, result_tool_description
@@ -104,7 +124,6 @@ class Agent(Generic[AgentDeps, ResultData]):
         self._max_result_retries = result_retries if result_retries is not None else retries
         self._current_result_retry = 0
         self._result_validators = []
-        self._override_deps_stack = []
 
     async def run(
         self,
@@ -281,11 +300,26 @@ class Agent(Generic[AgentDeps, ResultData]):
         Args:
             overriding_deps: The dependencies to use instead of the dependencies passed to the agent run.
         """
-        self._override_deps_stack.append(overriding_deps)
+        override_deps_before = self._override_deps
+        self._override_deps = _utils.Some(overriding_deps)
         try:
             yield
         finally:
-            self._override_deps_stack.pop()
+            self._override_deps = override_deps_before
+
+    @contextmanager
+    def override_model(self, overriding_model: models.Model | KnownModelName) -> Iterator[None]:
+        """Context manager to temporarily override the model used by the agent.
+
+        Args:
+            overriding_model: The model to use instead of the model passed to the agent run.
+        """
+        override_model_before = self._override_model
+        self._override_model = _utils.Some(models.infer_model(overriding_model))
+        try:
+            yield
+        finally:
+            self._override_model = override_model_before
 
     def system_prompt(
         self, func: _system_prompt.SystemPromptFunc[AgentDeps]
@@ -386,11 +420,20 @@ class Agent(Generic[AgentDeps, ResultData]):
             a tuple of `(model used, custom_model if any, agent_model)`
         """
         model_: models.Model
-        if model is not None:
+        if some_model := self._override_model:
+            # we don't want `override_model()` to cover up errors from the model not being defined, hence this check
+            if model is None and self.model is None:
+                raise exceptions.UserError(
+                    '`model` must be set either when creating the agent or when calling it. '
+                    '(Even when `override_model()` is customizing the model that will actually be called)'
+                )
+            model_ = some_model.value
+            custom_model = None
+        elif model is not None:
             custom_model = model_ = models.infer_model(model)
         elif self.model is not None:
             # noinspection PyTypeChecker
-            model_ = self.model
+            model_ = self.model = models.infer_model(self.model)
             custom_model = None
         else:
             raise exceptions.UserError('`model` must be set either when creating the agent or when calling it.')
@@ -573,9 +616,9 @@ class Agent(Generic[AgentDeps, ResultData]):
 
         We could do runtime type checking of deps against `self._deps_type`, but that's a slippery slope.
         """
-        try:
-            return self._override_deps_stack[-1]
-        except IndexError:
+        if some_deps := self._override_deps:
+            return some_deps.value
+        else:
             return deps
 
 

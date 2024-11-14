@@ -6,7 +6,7 @@ import pytest
 from inline_snapshot import snapshot
 from pydantic import BaseModel
 
-from pydantic_ai import Agent, CallContext, ModelRetry, UnexpectedModelBehaviour
+from pydantic_ai import Agent, CallContext, ModelRetry, UnexpectedModelBehaviour, UserError
 from pydantic_ai.messages import (
     ArgsJson,
     ArgsObject,
@@ -23,7 +23,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.result import Cost, RunResult
-from tests.conftest import IsNow
+from tests.conftest import IsNow, TestEnv
 
 
 def test_result_tuple():
@@ -492,3 +492,28 @@ def test_unknown_retriever_fix():
             ModelTextResponse(content='success', timestamp=IsNow(tz=timezone.utc)),
         ]
     )
+
+
+def test_model_requests_blocked(env: TestEnv):
+    env.set('GEMINI_API_KEY', 'foobar')
+    agent = Agent('gemini-1.5-flash', result_type=tuple[str, str], defer_model_check=True)
+
+    with pytest.raises(RuntimeError, match='Model requests are not allowed, since ALLOW_MODEL_REQUESTS is False'):
+        agent.run_sync('Hello')
+
+
+def test_override_model(env: TestEnv):
+    env.set('GEMINI_API_KEY', 'foobar')
+    agent = Agent('gemini-1.5-flash', result_type=tuple[int, str], defer_model_check=True)
+
+    with agent.override_model('test'):
+        result = agent.run_sync('Hello')
+        assert result.data == snapshot((0, 'a'))
+
+
+def test_override_model_no_model():
+    agent = Agent()
+
+    with pytest.raises(UserError, match=r'`model` must be set either.+Even when `override_model\(\)` is customizing'):
+        with agent.override_model('test'):
+            agent.run_sync('Hello')

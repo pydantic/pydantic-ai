@@ -113,7 +113,7 @@ def completion_message(message: ChatCompletionMessage, *, usage: CompletionUsage
     )
 
 
-async def test_request_simple_success():
+async def test_request_simple_success(allow_model_requests: None):
     c = completion_message(ChatCompletionMessage(content='world', role='assistant'))
     mock_client = MockOpenAI.create_mock(c)
     m = OpenAIModel('gpt-4', openai_client=mock_client)
@@ -139,7 +139,7 @@ async def test_request_simple_success():
     )
 
 
-async def test_request_simple_usage():
+async def test_request_simple_usage(allow_model_requests: None):
     c = completion_message(
         ChatCompletionMessage(content='world', role='assistant'),
         usage=CompletionUsage(completion_tokens=1, prompt_tokens=2, total_tokens=3),
@@ -153,7 +153,7 @@ async def test_request_simple_usage():
     assert result.cost() == snapshot(Cost(request_tokens=2, response_tokens=1, total_tokens=3))
 
 
-async def test_request_structured_response():
+async def test_request_structured_response(allow_model_requests: None):
     c = completion_message(
         ChatCompletionMessage(
             content=None,
@@ -190,7 +190,7 @@ async def test_request_structured_response():
     )
 
 
-async def test_request_tool_call():
+async def test_request_tool_call(allow_model_requests: None):
     responses = [
         completion_message(
             ChatCompletionMessage(
@@ -309,7 +309,7 @@ def text_chunk(text: str, finish_reason: FinishReason | None = None) -> chat.Cha
     return chunk([ChoiceDelta(content=text, role='assistant')], finish_reason=finish_reason)
 
 
-async def test_stream_text():
+async def test_stream_text(allow_model_requests: None):
     stream = text_chunk('hello '), text_chunk('world'), chunk([])
     mock_client = MockOpenAI.create_mock_stream(stream)
     m = OpenAIModel('gpt-4', openai_client=mock_client)
@@ -323,7 +323,7 @@ async def test_stream_text():
         assert result.cost() == snapshot(Cost(request_tokens=6, response_tokens=3, total_tokens=9))
 
 
-async def test_stream_text_finish_reason():
+async def test_stream_text_finish_reason(allow_model_requests: None):
     stream = text_chunk('hello '), text_chunk('world'), text_chunk('.', finish_reason='stop')
     mock_client = MockOpenAI.create_mock_stream(stream)
     m = OpenAIModel('gpt-4', openai_client=mock_client)
@@ -358,7 +358,7 @@ class MyTypedDict(TypedDict, total=False):
     second: str
 
 
-async def test_stream_structured():
+async def test_stream_structured(allow_model_requests: None):
     stream = (
         chunk([ChoiceDelta()]),
         chunk([ChoiceDelta(tool_calls=[])]),
@@ -392,7 +392,7 @@ async def test_stream_structured():
         assert result.cost().response_tokens == len(stream)
 
 
-async def test_stream_structured_finish_reason():
+async def test_stream_structured_finish_reason(allow_model_requests: None):
     stream = (
         struc_chunk('final_result', None),
         struc_chunk(None, '{"first": "One'),
@@ -418,7 +418,7 @@ async def test_stream_structured_finish_reason():
         assert result.is_complete
 
 
-async def test_no_content():
+async def test_no_content(allow_model_requests: None):
     stream = chunk([ChoiceDelta()]), chunk([ChoiceDelta()])
     mock_client = MockOpenAI.create_mock_stream(stream)
     m = OpenAIModel('gpt-4', openai_client=mock_client)

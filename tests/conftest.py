@@ -5,6 +5,7 @@ import os
 import re
 import secrets
 import sys
+from collections.abc import Iterator
 from datetime import datetime
 from pathlib import Path
 from types import ModuleType
@@ -15,7 +16,12 @@ import pytest
 from _pytest.assertion.rewrite import AssertionRewritingHook
 from typing_extensions import TypeAlias
 
+import pydantic_ai.models
+
 __all__ = 'IsNow', 'TestEnv', 'ClientWithHandler'
+
+
+pydantic_ai.models.ALLOW_MODEL_REQUESTS = False
 
 if TYPE_CHECKING:
 
@@ -38,33 +44,41 @@ class TestEnv:
     __test__ = False
 
     def __init__(self):
-        self.envars: set[str] = set()
+        self.envars: dict[str, str | None] = {}
 
     def set(self, name: str, value: str) -> None:
-        self.envars.add(name)
+        self.envars[name] = os.getenv(name)
         os.environ[name] = value
 
-    def pop(self, name: str) -> None:  # pragma: no cover
-        self.envars.remove(name)
-        os.environ.pop(name)
+    def remove(self, name: str) -> None:
+        self.envars[name] = os.environ.pop(name, None)
 
-    def clear(self) -> None:
-        for n in self.envars:
-            os.environ.pop(n)
+    def reset(self) -> None:
+        for name, value in self.envars.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
 
 
 @pytest.fixture
-def env():
+def env() -> Iterator[TestEnv]:
     test_env = TestEnv()
 
     yield test_env
 
-    test_env.clear()
+    test_env.reset()
 
 
 @pytest.fixture
 def anyio_backend():
     return 'asyncio'
+
+
+@pytest.fixture
+def allow_model_requests():
+    with pydantic_ai.models.override_allow_model_requests(True):
+        yield
 
 
 @pytest.fixture

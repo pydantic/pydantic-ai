@@ -4,6 +4,7 @@ WARNING: running these tests will consume your OpenAI and Gemini credits.
 """
 
 import os
+from collections.abc import AsyncIterator
 
 import httpx
 import pytest
@@ -20,7 +21,7 @@ pytestmark = [
 
 
 @pytest.fixture
-async def http_client():
+async def http_client(allow_model_requests: None) -> AsyncIterator[httpx.AsyncClient]:
     async with httpx.AsyncClient(timeout=30) as client:
         yield client
 
