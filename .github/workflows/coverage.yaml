@@ -24,6 +24,8 @@ jobs:
         with:
           workflow: ci.yml
           commit: ${{ github.event.workflow_run.head_sha }}
+          # this can be remove once the repo is public
+          github_token: ${{ secrets.GITHUB_TOKEN }}
 
       - run: smokeshow upload coverage-html
         env:
