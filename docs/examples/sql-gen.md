@@ -1,7 +1,3 @@
----
-hide: [toc]
----
-
 # SQL Generation
 
 Example demonstrating how to use Pydantic AI to generate SQL queries based on user input.

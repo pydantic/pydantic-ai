@@ -1,7 +1,3 @@
----
-hide: [toc]
----
-
 Example of Pydantic AI with multiple tools which the LLM needs to call in turn to answer a question.
 
 Demonstrates:

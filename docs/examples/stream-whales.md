@@ -1,7 +1,3 @@
----
-hide: [toc]
----
-
 Information about whales — an example of streamed structured response validation.
 
 Demonstrates:
