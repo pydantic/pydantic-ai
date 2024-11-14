@@ -51,8 +51,7 @@ class TestEnv:
         os.environ[name] = value
 
     def remove(self, name: str) -> None:
-        self.envars[name] = os.getenv(name)
-        os.environ.pop(name)
+        self.envars[name] = os.environ.pop(name, None)
 
     def reset(self) -> None:
         for name, value in self.envars.items():
