@@ -13,7 +13,7 @@ from datetime import datetime
 from functools import cache
 from typing import TYPE_CHECKING, Protocol, Union
 
-from httpx import AsyncClient as AsyncHTTPClient
+import httpx
 
 from ..messages import Message, ModelAnyResponse, ModelStructuredResponse
 
@@ -234,11 +234,14 @@ class AbstractToolDefinition(Protocol):
 
 
 @cache
-def cached_async_http_client() -> AsyncHTTPClient:
+def cached_async_http_client(timeout: int = 600, connect: int = 5) -> httpx.AsyncClient:
     """Cached HTTPX async client so multiple agents and calls can share the same client.
 
     There are good reasons why in production you should use a `httpx.AsyncClient` as an async context manager as
     described in [encode/httpx#2026](https://github.com/encode/httpx/pull/2026), but when experimenting or showing
     examples, it's very useful not to, this allows multiple Agents to use a single client.
+
+    The default timeouts match those of OpenAI,
+    see <https://github.com/openai/openai-python/blob/v1.54.4/src/openai/_constants.py#L9>.
     """
-    return AsyncHTTPClient(timeout=30)
+    return httpx.AsyncClient(timeout=httpx.Timeout(timeout=timeout, connect=connect))
