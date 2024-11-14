@@ -146,6 +146,7 @@ filterwarnings = [
 [tool.coverage.run]
 # required to avoid warnings about files created by create_module fixture
 include = ["pydantic_ai/**/*.py", "tests/**/*.py"]
+omit = ["tests/test_live.py"]
 branch = true
 
 # https://coverage.readthedocs.io/en/latest/config.html#report

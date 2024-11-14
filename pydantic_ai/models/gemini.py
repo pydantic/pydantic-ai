@@ -187,6 +187,7 @@ class GeminiAgentModel(AgentModel):
 
         async with self.http_client.stream('POST', url, content=request_json, headers=headers) as r:
             if r.status_code != 200:
+                await r.aread()
                 raise exceptions.UnexpectedModelBehaviour(f'Unexpected response from gemini {r.status_code}', r.text)
             yield r
 

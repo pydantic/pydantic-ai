@@ -56,6 +56,22 @@ jobs:
 
       - run: tree site
 
+  test-live:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
+      - run: uv run --python 3.12 --frozen pytest tests/test_live.py -v --durations=100
+        if: github.repository_owner == 'pydantic'
+        env:
+          PYDANTIC_AI_LIVE_TEST_DANGEROUS: 'CHARGE-ME!'
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+
   test:
     name: test on ${{ matrix.python-version }}
     runs-on: ubuntu-latest
@@ -64,7 +80,7 @@ jobs:
       matrix:
         python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
     env:
-      PYTHON: ${{ matrix.python-version }}
+      UV_PYTHON: ${{ matrix.python-version }}
     steps:
       - uses: actions/checkout@v4
 
@@ -73,15 +89,15 @@ jobs:
           enable-cache: true
 
       - run: mkdir coverage
-      - run: uv run --frozen --python ${{ matrix.python-version }} coverage run -m pytest
+      - run: uv run --frozen coverage run -m pytest
         env:
           COVERAGE_FILE: coverage/.coverage.${{ runner.os }}-py${{ matrix.python-version }}
 
-      - run: uv run --frozen --all-extras --python ${{ matrix.python-version }} coverage run -m pytest
+      - run: uv run --frozen --all-extras coverage run -m pytest
         env:
           COVERAGE_FILE: coverage/.coverage.${{ runner.os }}-py${{ matrix.python-version }}-all-extras
 
-      - run: uv run --frozen --all-extras --python ${{ matrix.python-version }} python tests/import_examples.py
+      - run: uv run --frozen --all-extras python tests/import_examples.py
 
       - name: store coverage files
         uses: actions/upload-artifact@v4
@@ -117,7 +133,7 @@ jobs:
   # https://github.com/marketplace/actions/alls-green#why used for branch protection checks
   check:
     if: always()
-    needs: [lint, docs, test, coverage]
+    needs: [lint, docs, test-live, test, coverage]
     runs-on: ubuntu-latest
 
     steps:
