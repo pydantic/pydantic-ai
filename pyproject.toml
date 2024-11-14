@@ -70,7 +70,7 @@ dev = [
 ]
 docs = [
     "mkdocs",
-    "mkdocs-material",
+    "mkdocs-material[imaging]",
     "mkdocstrings-python",
 ]
 

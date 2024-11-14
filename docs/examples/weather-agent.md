@@ -16,16 +16,15 @@ the `get_weather` tool to get the weather for those locations.
 
 ## Running the Example
 
-To run this example properly, you'll need two extra API keys:
+To run this example properly, you might want to add two extra API keys **(Note if either key is missing, the code will fall back to dummy data, so they're not required)**:
+
 * A weather API key from [tomorrow.io](https://www.tomorrow.io/weather-api/) set via `WEATHER_API_KEY`
 * A geocoding API key from [geocode.maps.co](https://geocode.maps.co/) set via `GEO_API_KEY`
-
-**(Note if either key is missing, the code will fall back to dummy data.)**
 
 With [dependencies installed and environment variables set](./index.md#usage), run:
 
 ```bash
-python/uv-run -m pydantic_ai_examples.pydantic_model
+python/uv-run -m pydantic_ai_examples.weather_agent
 ```
 
 ## Example Code
