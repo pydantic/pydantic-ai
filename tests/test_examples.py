@@ -1,22 +1,79 @@
+from __future__ import annotations as _annotations
+
+import sys
+from datetime import datetime
+from types import ModuleType
+
+import httpx
 import pytest
+from devtools import debug
 from pytest_examples import CodeExample, EvalExample, find_examples
 from pytest_mock import MockerFixture
 
-LINE_LENGTH = 88
+from pydantic_ai.messages import Message, ModelAnyResponse, ModelTextResponse
+from pydantic_ai.models import KnownModelName, Model
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+from tests.conftest import ClientWithHandler
 
 
 @pytest.mark.parametrize('example', find_examples('docs'), ids=str)
-def test_docs_examples(example: CodeExample, eval_example: EvalExample, mocker: MockerFixture):
+def test_docs_examples(
+    example: CodeExample, eval_example: EvalExample, mocker: MockerFixture, client_with_handler: ClientWithHandler
+):
     # debug(example)
+    mocker.patch('pydantic_ai.agent.models.infer_model', side_effect=mock_infer_model)
+    mocker.patch('pydantic_ai._utils.datetime', MockedDatetime)
+
+    def get_request(url, **kwargs):
+        # sys.stdout.write(f'GET {args=} {kwargs=}\n')
+        request = httpx.Request('GET', url, **kwargs)
+        return httpx.Response(status_code=202, content='', request=request)
+
+    async def async_get_request(url, **kwargs):
+        return get_request(url, **kwargs)
+
+    mocker.patch('httpx.Client.get', side_effect=get_request)
+    mocker.patch('httpx.Client.post', side_effect=get_request)
+    mocker.patch('httpx.AsyncClient.get', side_effect=async_get_request)
+    mocker.patch('httpx.AsyncClient.post', side_effect=async_get_request)
+
     ruff_ignore: list[str] = ['D']
     if str(example.path).endswith('docs/index.md'):
         ruff_ignore.append('F841')
-    eval_example.set_config(ruff_ignore=ruff_ignore, line_length=LINE_LENGTH)
+    eval_example.set_config(ruff_ignore=ruff_ignore)
+
+    call_name = 'main'
+    if 'def test_application_code' in example.source:
+        call_name = 'test_application_code'
+
     if eval_example.update_examples:
         eval_example.format(example)
-        # eval_example.run_print_update(example)
+        module_dict = eval_example.run_print_update(example, call=call_name)
     else:
         eval_example.lint(example)
-        # eval_example.run_print_check(example)
+        module_dict = eval_example.run_print_check(example, call=call_name)
 
-    # eval_example.run(example)
+    if example.path.name == 'dependencies.md' and 'title="joke_app.py"' in example.prefix:
+        sys.modules['joke_app'] = module = ModuleType('joke_app')
+        module.__dict__.update(module_dict)
+
+
+def model_logic(messages: list[Message], info: AgentInfo) -> ModelAnyResponse:
+    m = messages[-1]
+    if m.role == 'user' and m.content == 'What is the weather like in West London and in Wiltshire?':
+        return ModelTextResponse(content='The weather in West London is raining, while in Wiltshire it is sunny.')
+    if m.role == 'user' and m.content == 'Tell me a joke.':
+        return ModelTextResponse(content='Did you hear about the toothpaste scandal? They called it Colgate.')
+    else:
+        sys.stdout.write(str(debug.format(messages, info)))
+        raise RuntimeError(f'Unexpected message: {m}')
+
+
+def mock_infer_model(model: Model | KnownModelName) -> Model:
+    return FunctionModel(model_logic)
+
+
+class MockedDatetime(datetime):
+    @classmethod
+    def now(cls, *args, tz=None, **kwargs):
+        return datetime(2032, 1, 2, 3, 4, 5, 6, tzinfo=tz)

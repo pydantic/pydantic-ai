@@ -13,7 +13,7 @@ Here's an example of defining an agent that requires dependencies.
 
 (**Note:** dependencies aren't actually used in this example, see [Accessing Dependencies](#accessing-dependencies) below)
 
-```python title="unused_dependencies.py"
+```py title="unused_dependencies.py"
 from dataclasses import dataclass
 
 import httpx
@@ -41,6 +41,7 @@ async def main():
             deps=deps,  # (3)!
         )
         print(result.data)
+        #> Did you hear about the toothpaste scandal? They called it Colgate.
 ```
 
 1. Define a dataclass to hold dependencies.
@@ -89,6 +90,7 @@ async def main():
         deps = MyDeps('foobar', client)
         result = await agent.run('Tell me a joke.', deps=deps)
         print(result.data)
+        #> Did you hear about the toothpaste scandal? They called it Colgate.
 ```
 
 1. [`CallContext`][pydantic_ai.dependencies.CallContext] may optionally be passed to a [`system_prompt`][pydantic_ai.Agent.system_prompt] function as the only argument.
@@ -147,6 +149,7 @@ async def main():
         deps=deps,
     )
     print(result.data)
+    #> Did you hear about the toothpaste scandal? They called it Colgate.
 ```
 
 1. Here we use a synchronous `httpx.Client` instead of an asynchronous `httpx.AsyncClient`.
@@ -214,6 +217,7 @@ async def main():
         deps = MyDeps('foobar', client)
         result = await agent.run('Tell me a joke.', deps=deps)
         print(result.data)
+        #> Did you hear about the toothpaste scandal? They called it Colgate.
 ```
 
 1. To pass `CallContext` and to a retriever, us the [`retriever_context`][pydantic_ai.Agent.retriever_context] decorator.
@@ -282,8 +286,8 @@ class TestMyDeps(MyDeps):  # (1)!
 async def test_application_code():
     test_deps = TestMyDeps('test_key', None)  # (2)!
     with joke_agent.override_deps(test_deps):  # (3)!
-        joke = application_code('Tell me a joke.')  # (4)!
-    assert joke == 'funny'
+        joke = await application_code('Tell me a joke.')  # (4)!
+    assert joke.startswith('Did you hear about the toothpaste scandal?')
 ```
 
 1. Define a subclass of `MyDeps` in tests to customise the system prompt factory.
@@ -326,6 +330,7 @@ async def joke_factory(ctx: CallContext[MyDeps], count: int) -> str:
 
 result = joke_agent.run_sync('Tell me a joke.', deps=MyDeps(factory_agent))
 print(result.data)
+#> Did you hear about the toothpaste scandal? They called it Colgate.
 ```
 
 ## Examples

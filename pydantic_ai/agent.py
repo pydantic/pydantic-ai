@@ -4,7 +4,7 @@ import asyncio
 from collections.abc import AsyncIterator, Iterator, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass
-from typing import Any, Callable, Generic, Literal, cast, final, overload
+from typing import Any, Callable, Generic, cast, final, overload
 
 import logfire_api
 from typing_extensions import assert_never
@@ -22,24 +22,7 @@ from . import (
 from .dependencies import AgentDeps, RetrieverContextFunc, RetrieverParams, RetrieverPlainFunc
 from .result import ResultData
 
-__all__ = 'Agent', 'KnownModelName'
-
-KnownModelName = Literal[
-    'openai:gpt-4o',
-    'openai:gpt-4o-mini',
-    'openai:gpt-4-turbo',
-    'openai:gpt-4',
-    'openai:o1-preview',
-    'openai:o1-mini',
-    'openai:gpt-3.5-turbo',
-    'gemini-1.5-flash',
-    'gemini-1.5-pro',
-    'test',
-]
-"""Known model names that can be used with the `model` parameter of [`Agent`][pydantic_ai.Agent].
-
-`KnownModelName` is provided as a concise way to specify a model.
-"""
+__all__ = ('Agent',)
 
 _logfire = logfire_api.Logfire(otel_scope='pydantic-ai')
 
@@ -52,7 +35,7 @@ class Agent(Generic[AgentDeps, ResultData]):
     """Class for defining "agents" - a way to have a specific type of "conversation" with an LLM."""
 
     # dataclass fields mostly for my sanity — knowing what attributes are available
-    model: models.Model | KnownModelName | None
+    model: models.Model | models.KnownModelName | None
     """The default model configured for this agent."""
     _result_schema: _result.ResultSchema[ResultData] | None
     _result_validators: list[_result.ResultValidator[AgentDeps, ResultData]]
@@ -74,7 +57,7 @@ class Agent(Generic[AgentDeps, ResultData]):
 
     def __init__(
         self,
-        model: models.Model | KnownModelName | None = None,
+        model: models.Model | models.KnownModelName | None = None,
         result_type: type[ResultData] = str,
         *,
         system_prompt: str | Sequence[str] = (),
@@ -101,7 +84,7 @@ class Agent(Generic[AgentDeps, ResultData]):
             result_tool_name: The name of the tool to use for the final result.
             result_tool_description: The description of the final result tool.
             result_retries: The maximum number of retries to allow for result validation, defaults to `retries`.
-            defer_model_check: by default, if you provide a [named][pydantic_ai.agent.KnownModelName] model,
+            defer_model_check: by default, if you provide a [named][pydantic_ai.models.KnownModelName] model,
                 it's evaluated to create a [`Model`][pydantic_ai.models.Model] instance immediately,
                 which checks for the necessary environment variables. Set this to `false`
                 to defer the evaluation until the first run. Useful if you want to
@@ -132,7 +115,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         user_prompt: str,
         *,
         message_history: list[_messages.Message] | None = None,
-        model: models.Model | KnownModelName | None = None,
+        model: models.Model | models.KnownModelName | None = None,
         deps: AgentDeps = None,
     ) -> result.RunResult[ResultData]:
         """Run the agent with a user prompt in async mode.
@@ -201,7 +184,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         user_prompt: str,
         *,
         message_history: list[_messages.Message] | None = None,
-        model: models.Model | KnownModelName | None = None,
+        model: models.Model | models.KnownModelName | None = None,
         deps: AgentDeps = None,
     ) -> result.RunResult[ResultData]:
         """Run the agent with a user prompt synchronously.
@@ -225,7 +208,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         user_prompt: str,
         *,
         message_history: list[_messages.Message] | None = None,
-        model: models.Model | KnownModelName | None = None,
+        model: models.Model | models.KnownModelName | None = None,
         deps: AgentDeps = None,
     ) -> AsyncIterator[result.StreamedRunResult[AgentDeps, ResultData]]:
         """Run the agent with a user prompt in async mode, returning a streamed response.
@@ -310,7 +293,7 @@ class Agent(Generic[AgentDeps, ResultData]):
             self._override_deps = override_deps_before
 
     @contextmanager
-    def override_model(self, overriding_model: models.Model | KnownModelName) -> Iterator[None]:
+    def override_model(self, overriding_model: models.Model | models.KnownModelName) -> Iterator[None]:
         """Context manager to temporarily override the model used by the agent.
 
         Args:
@@ -411,7 +394,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         return retriever
 
     async def _get_agent_model(
-        self, model: models.Model | KnownModelName | None
+        self, model: models.Model | models.KnownModelName | None
     ) -> tuple[models.Model, models.Model | None, models.AgentModel]:
         """Create a model configured for this agent.
 

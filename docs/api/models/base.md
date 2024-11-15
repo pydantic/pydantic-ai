@@ -3,6 +3,7 @@
 ::: pydantic_ai.models
     options:
       members:
+        - KnownModelName
         - Model
         - AgentModel
         - AbstractToolDefinition

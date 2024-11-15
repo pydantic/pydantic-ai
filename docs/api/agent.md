@@ -15,8 +15,3 @@
         - retriever_plain
         - retriever_context
         - result_validator
-
-::: pydantic_ai.agent
-    options:
-      members:
-        - KnownModelName

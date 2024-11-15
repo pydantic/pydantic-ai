@@ -76,9 +76,9 @@ async def main():
             deps=client,
         )
         print(result.data)  # (9)!
-        #> 'The weather in West London is raining, while in Wiltshire it is sunny.'
+        #> The weather in West London is raining, while in Wiltshire it is sunny.
 
-        print(result.all_messages())  # (10)!
+        messages = result.all_messages()  # (10)!
 ```
 
 1. An agent that can tell users about the weather in a particular location. Agents combine a system prompt, a response type (here `str`) and "retrievers" (aka tools).
@@ -90,7 +90,7 @@ async def main():
 7. Multiple retrievers can be registered with the same agent, the LLM can choose which (if any) retrievers to call in order to respond to a user.
 8. Run the agent asynchronously, conducting a conversation with the LLM until a final response is reached. You can also run agents synchronously with `run_sync`. Internally agents are all async, so `run_sync` is a helper using `asyncio.run` to call `run()`.
 9. The response from the LLM, in this case a `str`, Agents are generic in both the type of `deps` and `result_type`, so calls are typed end-to-end.
-10. `result.all_messages()` includes details of messages exchanged, this is useful both to understand the conversation that took place and useful if you want to continue the conversation later — messages can be passed back to later `run/run_sync` calls.
+10. [`result.all_messages()`](concepts/message-history.md) includes details of messages exchanged, this is useful both to understand the conversation that took place and useful if you want to continue the conversation later — messages can be passed back to later `run/run_sync` calls.
 
 !!! tip "Complete `weather_agent.py` example"
     This example is incomplete for the sake of brevity; you can find a complete `weather_agent.py` example [here](examples/weather-agent.md).
