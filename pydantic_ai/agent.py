@@ -29,6 +29,8 @@ KnownModelName = Literal[
     'openai:gpt-4o-mini',
     'openai:gpt-4-turbo',
     'openai:gpt-4',
+    'openai:o1-preview',
+    'openai:o1-mini',
     'openai:gpt-3.5-turbo',
     'gemini-1.5-flash',
     'gemini-1.5-pro',

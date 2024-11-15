@@ -14,7 +14,10 @@ from ._utils import now_utc as _now_utc
 
 @dataclass
 class SystemPrompt:
-    """A system prompt, generally written by the application developer."""
+    """A system prompt, generally written by the application developer.
+
+    This gives the model context and guidance on how to respond.
+    """
 
     content: str
     """The content of the prompt."""
@@ -24,7 +27,11 @@ class SystemPrompt:
 
 @dataclass
 class UserPrompt:
-    """A user prompt, generally written by the end user."""
+    """A user prompt, generally written by the end user.
+
+    Content comes from the `user_prompt` parameter of [`Agent.run`][pydantic_ai.Agent.run],
+    [`Agent.run_sync`][pydantic_ai.Agent.run_sync], and [`Agent.run_stream`][pydantic_ai.Agent.run_stream].
+    """
 
     content: str
     """The content of the prompt."""
@@ -68,12 +75,24 @@ class ToolReturn:
 
 @dataclass
 class RetryPrompt:
-    """A message sent when running a retriever failed, result validation failed, or no tool could be found to call."""
+    """A message back to a model asking it to try again.
+
+    This can be sent for a number of reasons:
+
+    * Pydantic validation of retriever arguments failed, here content is derived from a Pydantic
+      [`ValidationError`][pydantic_core.ValidationError]
+    * a retriever raised a [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] exception
+    * no retriever was found for the tool name
+    * the model returned plain text when a structured response was expected
+    * Pydantic validation of a structured response failed, here content is derived from a Pydantic
+      [`ValidationError`][pydantic_core.ValidationError]
+    * a result validator raised a [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] exception
+    """
 
     content: list[pydantic_core.ErrorDetails] | str
     """Details of why and how the model should retry.
 
-    If the retry was triggered by a [ValidationError][pydantic_core.ValidationError], this will be a list of
+    If the retry was triggered by a [`ValidationError`][pydantic_core.ValidationError], this will be a list of
     error details.
     """
     tool_name: str | None = None
@@ -122,7 +141,7 @@ class ArgsObject:
 
 @dataclass
 class ToolCall:
-    """Either a retriever/tool call from the agent."""
+    """Either a tool call from the agent."""
 
     tool_name: str
     """The name of the tool to call."""
@@ -151,7 +170,10 @@ class ToolCall:
 
 @dataclass
 class ModelStructuredResponse:
-    """A structured response from a model."""
+    """A structured response from a model.
+
+    This is used either to call a retriever or to return a structured response from an agent run.
+    """
 
     calls: list[ToolCall]
     """The tool calls being made."""
@@ -166,7 +188,8 @@ class ModelStructuredResponse:
 
 ModelAnyResponse = Union[ModelTextResponse, ModelStructuredResponse]
 """Any response from a model."""
-Message = Union[SystemPrompt, UserPrompt, ToolReturn, RetryPrompt, ModelAnyResponse]
+Message = Union[SystemPrompt, UserPrompt, ToolReturn, RetryPrompt, ModelTextResponse, ModelStructuredResponse]
 """Any message send to or returned by a model."""
 
 MessagesTypeAdapter = _pydantic.LazyTypeAdapter(list[Annotated[Message, pydantic.Field(discriminator='role')]])
+"""Pydantic [`TypeAdapter`][pydantic.type_adapter.TypeAdapter] for (de)serializing messages."""

@@ -1,7 +1,3 @@
----
-hide: [toc]
----
-
 This example shows how to stream markdown from an agent, using the [`rich`](https://github.com/Textualize/rich) library to highlight the output in the terminal.
 
 It'll run the example with both OpenAI and Google Gemini models if the required environment variables are set.

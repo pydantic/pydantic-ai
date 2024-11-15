@@ -151,7 +151,7 @@ class StreamStructuredResponse(ABC):
 EitherStreamedResponse = Union[StreamTextResponse, StreamStructuredResponse]
 
 
-ALLOW_MODEL_REQUESTS = False
+ALLOW_MODEL_REQUESTS = True
 """Whether to allow requests to models.
 
 This global setting allows you to disable request to most models, e.g. to make sure you don't accidentally

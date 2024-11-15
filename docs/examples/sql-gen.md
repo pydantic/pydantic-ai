@@ -1,7 +1,3 @@
----
-hide: [toc]
----
-
 # SQL Generation
 
 Example demonstrating how to use Pydantic AI to generate SQL queries based on user input.
@@ -11,7 +7,7 @@ Demonstrates:
 * custom `result_type`
 * dynamic system prompt
 * result validation
-* agent dependencies
+* [agent dependencies](../concepts/dependencies.md)
 
 ## Running the Example
 

@@ -1,14 +1,10 @@
----
-hide: [toc]
----
-
 Example of Pydantic AI with multiple tools which the LLM needs to call in turn to answer a question.
 
 Demonstrates:
 
 * retrievers
 * multiple retrievers
-* agent dependencies
+* [agent dependencies](../concepts/dependencies.md)
 
 In this case the idea is a "weather" agent — the user can ask for the weather in multiple locations,
 the agent will use the `get_lat_lng` tool to get the latitude and longitude of the locations, then use

@@ -20,7 +20,7 @@ It requires Python 3.9+.
 
 PydanticAI has an excellent (but completely optional) integration with [Pydantic Logfire](https://pydantic.dev/logfire) to help you view and understand agent runs.
 
-To use Logfire, install PydanticAI with the `logfire` optional group:
+To use Logfire with PydanticAI, install PydanticAI with the `logfire` optional group:
 
 === "pip"
 

@@ -1,7 +1,3 @@
----
-hide: [toc]
----
-
 # RAG
 
 RAG search example. This demo allows you to ask question of the [logfire](https://pydantic.dev/logfire) documentation.
@@ -9,7 +5,7 @@ RAG search example. This demo allows you to ask question of the [logfire](https:
 Demonstrates:
 
 * retrievers
-* agent dependencies
+* [agent dependencies](../concepts/dependencies.md)
 * RAG search
 
 This is done by creating a database containing each section of the markdown documentation, then registering
