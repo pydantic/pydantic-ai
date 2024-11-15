@@ -47,7 +47,7 @@ class Agent(Generic[AgentDeps, ResultData]):
     agent = Agent('openai:gpt-4o')
     result = agent.run_sync('What is the capital of France?')
     print(result.data)
-    # > Paris
+    #> Paris
     ```
     """
 

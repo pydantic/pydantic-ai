@@ -119,7 +119,8 @@ ignore = [
 convention = "google"
 
 [tool.ruff.format]
-docstring-code-format = true
+# don't format python in docstrings, pytest-examples takes care of it
+docstring-code-format = false
 quote-style = "single"
 
 [tool.ruff.lint.per-file-ignores]
