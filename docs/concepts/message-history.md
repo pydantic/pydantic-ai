@@ -114,7 +114,9 @@ agent = Agent('openai:gpt-4o', system_prompt='Be a helpful assistant.')
 result1 = agent.run_sync('Tell me a joke.')
 print(result1.data)
 
-result2 = agent.run_sync('Explain?', model='gemini-1.5-pro', message_history=result1.new_messages())
+result2 = agent.run_sync(
+    'Explain?', model='gemini-1.5-pro', message_history=result1.new_messages()
+)
 print(result2.data)
 
 print(result2.all_messages())

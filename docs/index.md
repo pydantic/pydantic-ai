@@ -38,6 +38,7 @@ Partial example of using retrievers to help an LLM respond to a user's query abo
 
 ```py title="weather_agent.py"
 import httpx
+
 from pydantic_ai import Agent, CallContext
 
 weather_agent = Agent(  # (1)!
@@ -75,7 +76,7 @@ async def main():
             deps=client,
         )
         print(result.data)  # (9)!
-        # > 'The weather in West London is raining, while in Wiltshire it is sunny.'
+        #> 'The weather in West London is raining, while in Wiltshire it is sunny.'
 
         print(result.all_messages())  # (10)!
 ```

@@ -78,7 +78,7 @@ agent = Agent(
 async def get_system_prompt(ctx: CallContext[MyDeps]) -> str:  # (2)!
     response = await ctx.deps.http_client.get(  # (3)!
         'https://example.com',
-        headers={'Authorization': f'Bearer {ctx.deps.api_key}'}  # (4)!
+        headers={'Authorization': f'Bearer {ctx.deps.api_key}'},  # (4)!
     )
     response.raise_for_status()
     return f'Prompt: {response.text}'
@@ -134,8 +134,7 @@ agent = Agent(
 @agent.system_prompt
 def get_system_prompt(ctx: CallContext[MyDeps]) -> str:  # (2)!
     response = ctx.deps.http_client.get(
-        'https://example.com',
-        headers={'Authorization': f'Bearer {ctx.deps.api_key}'}
+        'https://example.com', headers={'Authorization': f'Bearer {ctx.deps.api_key}'}
     )
     response.raise_for_status()
     return f'Prompt: {response.text}'
@@ -264,7 +263,6 @@ async def application_code(prompt: str) -> str:  # (3)!
         app_deps = MyDeps('foobar', client)
         result = await joke_agent.run(prompt, deps=app_deps)  # (4)!
     return result.data
-
 ```
 
 1. Define a method on the dependency to make the system prompt easier to customise.
@@ -273,7 +271,7 @@ async def application_code(prompt: str) -> str:  # (3)!
 4. Call the agent from within the application code, in a real application this call might be deep within a call stack. Note `app_deps` here will NOT be used when deps are overridden.
 
 ```py title="test_joke_app.py" hl_lines="10-12"
-from joke_app import application_code, joke_agent, MyDeps
+from joke_app import MyDeps, application_code, joke_agent
 
 
 class TestMyDeps(MyDeps):  # (1)!
@@ -314,7 +312,7 @@ joke_agent = Agent(
     system_prompt=(
         'Use the "joke_factory" to generate some jokes, then choose the best. '
         'You must return just a single joke.'
-    )
+    ),
 )
 
 factory_agent = Agent('gemini-1.5-pro', result_type=list[str])
