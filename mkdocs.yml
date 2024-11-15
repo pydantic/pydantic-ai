@@ -147,7 +147,6 @@ plugins:
             show_signature_annotations: true
             signature_crossrefs: true
             group_by_category: false
-            show_source: false
             heading_level: 2
           import:
             - url: https://docs.python.org/3/objects.inv

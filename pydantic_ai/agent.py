@@ -32,7 +32,24 @@ NoneType = type(None)
 @final
 @dataclass(init=False)
 class Agent(Generic[AgentDeps, ResultData]):
-    """Class for defining "agents" - a way to have a specific type of "conversation" with an LLM."""
+    """Class for defining "agents" - a way to have a specific type of "conversation" with an LLM.
+
+    Agents are generic in the dependency type they take [`AgentDeps`][pydantic_ai.dependencies.AgentDeps]
+    and the result data type they return, [`ResultData`][pydantic_ai.result.ResultData].
+
+    By default, if neither generic parameter is customised, agents have type `Agent[None, str]`.
+
+    Minimal usage example:
+
+    ```py
+    from pydantic_ai import Agent
+
+    agent = Agent('openai:gpt-4o')
+    result = agent.run_sync('What is the capital of France?')
+    print(result.data)
+    # > Paris
+    ```
+    """
 
     # dataclass fields mostly for my sanity — knowing what attributes are available
     model: models.Model | models.KnownModelName | None

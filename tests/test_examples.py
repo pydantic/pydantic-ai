@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 import asyncio
 import sys
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterable
 from datetime import datetime
 from types import ModuleType
 from typing import Any
@@ -19,10 +19,18 @@ from pydantic_ai.models.function import AgentInfo, DeltaToolCalls, FunctionModel
 from tests.conftest import ClientWithHandler
 
 
-@pytest.mark.parametrize('example', find_examples('docs'), ids=str)
+def find_filter_examples() -> Iterable[CodeExample]:
+    for ex in find_examples('docs', 'pydantic_ai'):
+        if ex.path.name != '_utils.py':
+            yield ex
+
+
+@pytest.mark.parametrize('example', find_filter_examples(), ids=str)
 def test_docs_examples(
     example: CodeExample, eval_example: EvalExample, mocker: MockerFixture, client_with_handler: ClientWithHandler
 ):
+    if example.path.name == '_utils.py':
+        return
     # debug(example)
     mocker.patch('pydantic_ai.agent.models.infer_model', side_effect=mock_infer_model)
     mocker.patch('pydantic_ai._utils.datetime', MockedDatetime)
@@ -71,6 +79,8 @@ async def model_logic(messages: list[Message], info: AgentInfo) -> ModelAnyRespo
         return ModelTextResponse(content='Did you hear about the toothpaste scandal? They called it Colgate.')
     if m.role == 'user' and m.content == 'Explain?':
         return ModelTextResponse(content='This is an excellent joke invent by Samuel Colvin, it needs no explanation.')
+    if m.role == 'user' and m.content == 'What is the capital of France?':
+        return ModelTextResponse(content='Paris')
     else:
         sys.stdout.write(str(debug.format(messages, info)))
         raise RuntimeError(f'Unexpected message: {m}')
