@@ -16,7 +16,7 @@ from ._utils import now_utc as _now_utc
 class SystemPrompt:
     """A system prompt, generally written by the application developer.
 
-    This give the model context and guidance on how to respond.
+    This gives the model context and guidance on how to respond.
     """
 
     content: str
@@ -81,18 +81,18 @@ class RetryPrompt:
 
     * Pydantic validation of retriever arguments failed, here content is derived from a Pydantic
       [`ValidationError`][pydantic_core.ValidationError]
-    * a retriever raised a [ModelRetry][pydantic_ai.exceptions.ModelRetry] exception
+    * a retriever raised a [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] exception
     * no retriever was found for the tool name
     * the model returned plain text when a structured response was expected
     * Pydantic validation of a structured response failed, here content is derived from a Pydantic
       [`ValidationError`][pydantic_core.ValidationError]
-    * a result validator raised a [ModelRetry][pydantic_ai.exceptions.ModelRetry] exception
+    * a result validator raised a [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] exception
     """
 
     content: list[pydantic_core.ErrorDetails] | str
     """Details of why and how the model should retry.
 
-    If the retry was triggered by a [ValidationError][pydantic_core.ValidationError], this will be a list of
+    If the retry was triggered by a [`ValidationError`][pydantic_core.ValidationError], this will be a list of
     error details.
     """
     tool_name: str | None = None
