@@ -112,6 +112,7 @@ markdown_extensions:
   - pymdownx.superfences
   - pymdownx.snippets
   - pymdownx.tilde
+  - pymdownx.inlinehilite
   - pymdownx.highlight:
       pygments_lang_class: true
   - pymdownx.extra:

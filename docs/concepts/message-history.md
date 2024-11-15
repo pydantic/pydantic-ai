@@ -269,10 +269,6 @@ print(result2.all_messages())
 """
 ```
 
-## Last Run Messages
-
-TODO: document [`last_run_messages`][pydantic_ai.Agent.last_run_messages].
-
 ## Examples
 
 For a more complete example of using messages in conversations, see the [chat app](../examples/chat-app.md) example.

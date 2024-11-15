@@ -223,6 +223,8 @@ async def main():
 1. To pass `CallContext` and to a retriever, us the [`retriever_context`][pydantic_ai.Agent.retriever_context] decorator.
 2. `CallContext` may optionally be passed to a [`result_validator`][pydantic_ai.Agent.result_validator] function as the first argument.
 
+_(This example is complete, it can be run "as is")_
+
 ## Overriding Dependencies
 
 When testing agents, it's useful to be able to customise dependencies.

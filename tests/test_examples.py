@@ -13,7 +13,14 @@ from devtools import debug
 from pytest_examples import CodeExample, EvalExample, find_examples
 from pytest_mock import MockerFixture
 
-from pydantic_ai.messages import Message, ModelAnyResponse, ModelTextResponse
+from pydantic_ai.messages import (
+    ArgsObject,
+    Message,
+    ModelAnyResponse,
+    ModelStructuredResponse,
+    ModelTextResponse,
+    ToolCall,
+)
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.models.function import AgentInfo, DeltaToolCalls, FunctionModel
 from tests.conftest import ClientWithHandler
@@ -71,16 +78,31 @@ async def async_http_request(url: str, **kwargs: Any) -> httpx.Response:
     return http_request(url, **kwargs)
 
 
+text_responses = {
+    'What is the weather like in West London and in Wiltshire?': 'The weather in West London is raining, while in Wiltshire it is sunny.',
+    'Tell me a joke.': 'Did you hear about the toothpaste scandal? They called it Colgate.',
+    'Explain?': 'This is an excellent joke invent by Samuel Colvin, it needs no explanation.',
+    'What is the capital of France?': 'Paris',
+    'What is the capital of Italy?': 'Rome',
+    'What is the capital of the UK?': 'London',
+    'Who was Albert Einstein?': 'Albert Einstein was a German-born theoretical physicist.',
+    'What was his most famous equation?': "Albert Einstein's most famous equation is (E = mc^2).",
+}
+
+
 async def model_logic(messages: list[Message], info: AgentInfo) -> ModelAnyResponse:
     m = messages[-1]
-    if m.role == 'user' and m.content == 'What is the weather like in West London and in Wiltshire?':
-        return ModelTextResponse(content='The weather in West London is raining, while in Wiltshire it is sunny.')
-    if m.role == 'user' and m.content == 'Tell me a joke.':
-        return ModelTextResponse(content='Did you hear about the toothpaste scandal? They called it Colgate.')
-    if m.role == 'user' and m.content == 'Explain?':
-        return ModelTextResponse(content='This is an excellent joke invent by Samuel Colvin, it needs no explanation.')
-    if m.role == 'user' and m.content == 'What is the capital of France?':
-        return ModelTextResponse(content='Paris')
+    if m.role == 'user':
+        if text_response := text_responses.get(m.content):
+            return ModelTextResponse(content=text_response)
+
+    if m.role == 'user' and m.content == 'Put my money on square eighteen':
+        return ModelStructuredResponse(calls=[ToolCall(tool_name='roulette_wheel', args=ArgsObject({'square': 18}))])
+    elif m.role == 'user' and m.content == 'I bet five is the winner':
+        return ModelStructuredResponse(calls=[ToolCall(tool_name='roulette_wheel', args=ArgsObject({'square': 5}))])
+    elif m.role == 'tool-return' and m.tool_name == 'roulette_wheel':
+        win = m.content == 'winner'
+        return ModelStructuredResponse(calls=[ToolCall(tool_name='final_result', args=ArgsObject({'response': win}))])
     else:
         sys.stdout.write(str(debug.format(messages, info)))
         raise RuntimeError(f'Unexpected message: {m}')
