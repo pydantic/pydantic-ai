@@ -97,12 +97,49 @@ async def main():
     async with agent.run_stream('Tell me a joke.') as result:
         # incomplete messages before the stream finishes
         print(result.all_messages())
+        """
+        [
+            SystemPrompt(content='Be a helpful assistant.', role='system'),
+            UserPrompt(
+                content='Tell me a joke.',
+                timestamp=datetime.datetime(
+                    2032, 1, 2, 3, 4, 5, 6, tzinfo=datetime.timezone.utc
+                ),
+                role='user',
+            ),
+        ]
+        """
 
         async for text in result.stream():
             print(text)
+            #> Did you
+            #> Did you hear about
+            #> Did you hear about the toothpaste
+            #> Did you hear about the toothpaste scandal? They
+            #> Did you hear about the toothpaste scandal? They called it
+            #> Did you hear about the toothpaste scandal? They called it Colgate.
 
         # complete messages once the stream finishes
         print(result.all_messages())
+        """
+        [
+            SystemPrompt(content='Be a helpful assistant.', role='system'),
+            UserPrompt(
+                content='Tell me a joke.',
+                timestamp=datetime.datetime(
+                    2032, 1, 2, 3, 4, 5, 6, tzinfo=datetime.timezone.utc
+                ),
+                role='user',
+            ),
+            ModelTextResponse(
+                content='Did you hear about the toothpaste scandal? They called it Colgate.',
+                timestamp=datetime.datetime(
+                    2032, 1, 2, 3, 4, 5, 6, tzinfo=datetime.timezone.utc
+                ),
+                role='model-text-response',
+            ),
+        ]
+        """
 ```
 _(This example is complete, it can be run "as is" inside an async context)_
 

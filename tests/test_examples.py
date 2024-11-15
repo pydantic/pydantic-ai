@@ -27,18 +27,10 @@ def test_docs_examples(
     mocker.patch('pydantic_ai.agent.models.infer_model', side_effect=mock_infer_model)
     mocker.patch('pydantic_ai._utils.datetime', MockedDatetime)
 
-    def get_request(url: str, **kwargs: Any) -> httpx.Response:
-        # sys.stdout.write(f'GET {args=} {kwargs=}\n')
-        request = httpx.Request('GET', url, **kwargs)
-        return httpx.Response(status_code=202, content='', request=request)
-
-    async def async_get_request(url: str, **kwargs: Any) -> httpx.Response:
-        return get_request(url, **kwargs)
-
-    mocker.patch('httpx.Client.get', side_effect=get_request)
-    mocker.patch('httpx.Client.post', side_effect=get_request)
-    mocker.patch('httpx.AsyncClient.get', side_effect=async_get_request)
-    mocker.patch('httpx.AsyncClient.post', side_effect=async_get_request)
+    mocker.patch('httpx.Client.get', side_effect=http_request)
+    mocker.patch('httpx.Client.post', side_effect=http_request)
+    mocker.patch('httpx.AsyncClient.get', side_effect=async_http_request)
+    mocker.patch('httpx.AsyncClient.post', side_effect=async_http_request)
 
     ruff_ignore: list[str] = ['D']
     if str(example.path).endswith('docs/index.md'):
@@ -59,6 +51,16 @@ def test_docs_examples(
     if example.path.name == 'dependencies.md' and 'title="joke_app.py"' in example.prefix:
         sys.modules['joke_app'] = module = ModuleType('joke_app')
         module.__dict__.update(module_dict)
+
+
+def http_request(url: str, **kwargs: Any) -> httpx.Response:
+    # sys.stdout.write(f'GET {args=} {kwargs=}\n')
+    request = httpx.Request('GET', url, **kwargs)
+    return httpx.Response(status_code=202, content='', request=request)
+
+
+async def async_http_request(url: str, **kwargs: Any) -> httpx.Response:
+    return http_request(url, **kwargs)
 
 
 async def model_logic(messages: list[Message], info: AgentInfo) -> ModelAnyResponse:
@@ -82,9 +84,6 @@ async def stream_model_logic(messages: list[Message], info: AgentInfo) -> AsyncI
             yield f'{work} '
             await asyncio.sleep(0.05)
         yield last_word
-
-    # if m.role == 'user' and m.content == 'Explain?':
-    #     return ['This is an excellent joke invent by Samuel Colvin, it needs no explanation.']
     else:
         sys.stdout.write(str(debug.format(messages, info)))
         raise RuntimeError(f'Unexpected message: {m}')

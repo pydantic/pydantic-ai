@@ -151,7 +151,7 @@ class FunctionAgentModel(AgentModel):
         response_stream = self.stream_function(messages, self.agent_info)
         try:
             first = await response_stream.__anext__()
-        except StopIteration as e:
+        except StopAsyncIteration as e:
             raise ValueError('Stream function must return at least one item') from e
 
         if isinstance(first, str):

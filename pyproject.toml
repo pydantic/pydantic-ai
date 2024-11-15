@@ -63,7 +63,7 @@ dev = [
     "dirty-equals>=0.8.0",
     "inline-snapshot>=0.14",
     "pytest>=8.3.3",
-    "pytest-examples>=0.0.13",
+    "pytest-examples>=0.0.14",
     "pytest-mock>=3.14.0",
     "pytest-pretty>=1.2.0",
 ]
@@ -178,6 +178,3 @@ ignore_no_config = true
 
 [tool.inline-snapshot.shortcuts]
 fix=["create", "fix"]
-
-[tool.uv.sources]
-pytest-examples = { path = "../pytest-examples" }
