@@ -57,16 +57,20 @@ examples = [
 
 [dependency-groups]
 dev = [
+    "anyio>=4.5.0",
+    "devtools>=0.12.2",
+    "coverage[toml]>=7.6.2",
     "dirty-equals>=0.8.0",
+    "inline-snapshot>=0.14",
+    "pytest>=8.3.3",
+    "pytest-examples>=0.0.13",
+    "pytest-mock>=3.14.0",
+    "pytest-pretty>=1.2.0",
+]
+lint = [
     "mypy>=1.11.2",
     "pyright>=1.1.388",
-    "pytest>=8.3.3",
-    "pytest-pretty>=1.2.0",
-    "inline-snapshot>=0.14",
     "ruff>=0.6.9",
-    "coverage[toml]>=7.6.2",
-    "devtools>=0.12.2",
-    "anyio>=4.5.0",
 ]
 docs = [
     "mkdocs",

@@ -14,11 +14,11 @@ nav:
     - Introduction: index.md
     - install.md
   - Concepts:
-    - concepts/index.md
+    - concepts/agents.md
     - concepts/dependencies.md
     - concepts/retrievers.md
     - concepts/system-prompt.md
-    - concepts/result-validation.md
+    - concepts/results.md
     - concepts/message-history.md
     - concepts/streaming.md
     - concepts/testing-evals.md

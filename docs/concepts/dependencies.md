@@ -1,6 +1,6 @@
 # Dependencies
 
-PydanticAI uses a dependency injection system to provide data and services to your agent's [system prompts](system-prompt.md), [retrievers](retrievers.md) and [result validators](result-validation.md#TODO).
+PydanticAI uses a dependency injection system to provide data and services to your agent's [system prompts](system-prompt.md), [retrievers](retrievers.md) and [result validators](results.md#TODO).
 
 Matching PydanticAI's design philosophy, our dependency system tries to use existing best practice in Python development rather than inventing esoteric "magic", this should make dependencies type-safe, understandable easier to test and ultimately easier to deploy in production.
 
@@ -157,7 +157,7 @@ _(This example is complete, it can be run "as is")_
 
 ## Full Example
 
-As well as system prompts, dependencies can be used in [retrievers](retrievers.md) and [result validators](result-validation.md#TODO).
+As well as system prompts, dependencies can be used in [retrievers](retrievers.md) and [result validators](results.md#TODO).
 
 ```python title="full_example.py" hl_lines="27-35 38-48"
 from dataclasses import dataclass

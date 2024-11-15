@@ -10,7 +10,7 @@
 
 .PHONY: install  # Install the package, dependencies, and pre-commit for local development
 install: .uv .pre-commit
-	uv sync --frozen --all-extras --group docs
+	uv sync --frozen --all-extras --group lint --group docs
 	pre-commit install --install-hooks
 
 .PHONY: format  # Format the code
@@ -67,12 +67,15 @@ docs:
 docs-serve:
 	uv run mkdocs serve --no-strict
 
-# install insiders packages for docs (to avoid running this on every build, `touch .docs-insiders-install`)
+.PHONY: .docs-insiders-install # install insiders packages for docs if necessary
 .docs-insiders-install:
-	@echo 'installing insiders packages'
-	@uv pip install -U \
-		--extra-index-url https://pydantic:${PPPR_TOKEN}@pppr.pydantic.dev/simple/ \
-		mkdocs-material mkdocstrings-python
+ifeq ($(shell uv pip show mkdocs-material | grep -q insiders && echo 'installed'), installed)
+	@echo 'insiders packages already installed'
+else
+	@echo 'installing insiders packages...'
+	@uv pip install -U mkdocs-material mkdocstrings-python \
+		--extra-index-url https://pydantic:${PPPR_TOKEN}@pppr.pydantic.dev/simple/
+endif
 
 .PHONY: docs-insiders  # Build the documentation using insiders packages
 docs-insiders: .docs-insiders-install
