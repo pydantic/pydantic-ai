@@ -178,3 +178,6 @@ ignore_no_config = true
 
 [tool.inline-snapshot.shortcuts]
 fix=["create", "fix"]
+
+[tool.uv.sources]
+pytest-examples = { path = "../pytest-examples" }

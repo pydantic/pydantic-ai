@@ -1488,7 +1488,7 @@ dev = [
     { name = "dirty-equals", specifier = ">=0.8.0" },
     { name = "inline-snapshot", specifier = ">=0.14" },
     { name = "pytest", specifier = ">=8.3.3" },
-    { name = "pytest-examples", specifier = ">=0.0.13" },
+    { name = "pytest-examples", directory = "../pytest-examples" },
     { name = "pytest-mock", specifier = ">=3.14.0" },
     { name = "pytest-pretty", specifier = ">=1.2.0" },
 ]
@@ -1654,16 +1654,29 @@ wheels = [
 
 [[package]]
 name = "pytest-examples"
-version = "0.0.13"
-source = { registry = "https://pypi.org/simple" }
+version = "0.0.14"
+source = { directory = "../pytest-examples" }
 dependencies = [
     { name = "black" },
     { name = "pytest" },
     { name = "ruff" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/0d/67/9d3486460bde76a5fd3709de38eea6cbeab7f41b1fe2c657f52a71b19575/pytest_examples-0.0.13.tar.gz", hash = "sha256:4d6fd78154953e84444f58f193eb6cc8d853bca7f0ee9f44ea75db043a2c19b5", size = 20445 }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/17/c4/9b639b46dc0aa246847c5d82171d4167218bcceb2108f566e25afdfd229f/pytest_examples-0.0.13-py3-none-any.whl", hash = "sha256:8c05cc66459199963c7970ff417300ae7e5b7b4c9d5bd859f1e74a35db75555b", size = 17313 },
+
+[package.metadata]
+requires-dist = [
+    { name = "black", specifier = ">=23" },
+    { name = "pytest", specifier = ">=7" },
+    { name = "ruff", specifier = ">=0.5.0" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "coverage", extras = ["toml"], specifier = ">=7.6.1" },
+    { name = "pytest-pretty", specifier = ">=1.2.0" },
+]
+lint = [
+    { name = "pre-commit", specifier = ">=3.5.0" },
+    { name = "ruff", specifier = ">=0.7.4" },
 ]
 
 [[package]]

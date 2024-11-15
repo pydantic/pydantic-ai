@@ -1,6 +1,6 @@
 import json
 import re
-from collections.abc import Iterable
+from collections.abc import AsyncIterator
 from dataclasses import asdict
 from datetime import timezone
 
@@ -29,7 +29,7 @@ from tests.conftest import IsNow
 pytestmark = pytest.mark.anyio
 
 
-def return_last(messages: list[Message], _: AgentInfo) -> ModelAnyResponse:
+async def return_last(messages: list[Message], _: AgentInfo) -> ModelAnyResponse:
     last = messages[-1]
     response = asdict(last)
     response.pop('timestamp', None)
@@ -84,7 +84,7 @@ def test_simple():
     )
 
 
-def weather_model(messages: list[Message], info: AgentInfo) -> ModelAnyResponse:  # pragma: no cover
+async def weather_model(messages: list[Message], info: AgentInfo) -> ModelAnyResponse:  # pragma: no cover
     assert info.allow_text_result
     assert info.retrievers.keys() == {'get_location', 'get_weather'}
     last = messages[-1]
@@ -177,7 +177,7 @@ def test_weather():
     assert result.data == 'Sunny in Ipswich'
 
 
-def call_function_model(messages: list[Message], _: AgentInfo) -> ModelAnyResponse:  # pragma: no cover
+async def call_function_model(messages: list[Message], _: AgentInfo) -> ModelAnyResponse:  # pragma: no cover
     last = messages[-1]
     if last.role == 'user':
         if last.content.startswith('{'):
@@ -221,7 +221,7 @@ def test_var_args():
     )
 
 
-def call_retriever(messages: list[Message], info: AgentInfo) -> ModelAnyResponse:
+async def call_retriever(messages: list[Message], info: AgentInfo) -> ModelAnyResponse:
     if len(messages) == 1:
         assert len(info.retrievers) == 1
         retriever_id = next(iter(info.retrievers.keys()))
@@ -308,7 +308,7 @@ def spam() -> str:
 
 
 def test_register_all():
-    def f(messages: list[Message], info: AgentInfo) -> ModelAnyResponse:
+    async def f(messages: list[Message], info: AgentInfo) -> ModelAnyResponse:
         return ModelTextResponse(
             f'messages={len(messages)} allow_text_result={info.allow_text_result} retrievers={len(info.retrievers)}'
         )
@@ -349,7 +349,7 @@ def test_call_all():
 def test_retry_str():
     call_count = 0
 
-    def try_again(messages: list[Message], _: AgentInfo) -> ModelAnyResponse:
+    async def try_again(messages: list[Message], _: AgentInfo) -> ModelAnyResponse:
         nonlocal call_count
         call_count += 1
 
@@ -371,7 +371,7 @@ def test_retry_str():
 def test_retry_result_type():
     call_count = 0
 
-    def try_again(messages: list[Message], _: AgentInfo) -> ModelAnyResponse:
+    async def try_again(messages: list[Message], _: AgentInfo) -> ModelAnyResponse:
         nonlocal call_count
         call_count += 1
 
@@ -393,7 +393,7 @@ def test_retry_result_type():
     assert result.data == snapshot(Foo(x=2))
 
 
-def stream_text_function(_messages: list[Message], _: AgentInfo) -> Iterable[str]:
+async def stream_text_function(_messages: list[Message], _: AgentInfo) -> AsyncIterator[str]:
     yield 'hello '
     yield 'world'
 
@@ -416,7 +416,9 @@ class Foo(BaseModel):
 
 
 async def test_stream_structure():
-    def stream_structured_function(_messages: list[Message], agent_info: AgentInfo) -> Iterable[DeltaToolCalls]:
+    async def stream_structured_function(
+        _messages: list[Message], agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls]:
         assert agent_info.result_tools is not None
         assert len(agent_info.result_tools) == 1
         name = agent_info.result_tools[0].name
@@ -439,8 +441,13 @@ async def test_pass_both():
     Agent(FunctionModel(return_last, stream_function=stream_text_function))
 
 
+async def stream_text_function_empty(_messages: list[Message], _: AgentInfo) -> AsyncIterator[str]:
+    if False:
+        yield 'hello '
+
+
 async def test_return_empty():
-    agent = Agent(FunctionModel(stream_function=lambda _, __: []))
+    agent = Agent(FunctionModel(stream_function=stream_text_function_empty))
     with pytest.raises(ValueError, match='Stream function must return at least one item'):
         async with agent.run_stream(''):
             pass

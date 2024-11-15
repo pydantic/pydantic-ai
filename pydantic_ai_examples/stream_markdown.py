@@ -16,7 +16,7 @@ from rich.syntax import Syntax
 from rich.text import Text
 
 from pydantic_ai import Agent
-from pydantic_ai.agent import KnownModelName
+from pydantic_ai.models import KnownModelName
 
 # 'if-token-present' means nothing will be sent (and the example will work) if you don't have logfire configured
 logfire.configure(send_to_logfire='if-token-present')

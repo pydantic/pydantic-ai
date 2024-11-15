@@ -1,8 +1,11 @@
 from __future__ import annotations as _annotations
 
+import asyncio
 import sys
+from collections.abc import AsyncIterator
 from datetime import datetime
 from types import ModuleType
+from typing import Any
 
 import httpx
 import pytest
@@ -12,7 +15,7 @@ from pytest_mock import MockerFixture
 
 from pydantic_ai.messages import Message, ModelAnyResponse, ModelTextResponse
 from pydantic_ai.models import KnownModelName, Model
-from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.function import AgentInfo, DeltaToolCalls, FunctionModel
 from tests.conftest import ClientWithHandler
 
 
@@ -24,12 +27,12 @@ def test_docs_examples(
     mocker.patch('pydantic_ai.agent.models.infer_model', side_effect=mock_infer_model)
     mocker.patch('pydantic_ai._utils.datetime', MockedDatetime)
 
-    def get_request(url, **kwargs):
+    def get_request(url: str, **kwargs: Any) -> httpx.Response:
         # sys.stdout.write(f'GET {args=} {kwargs=}\n')
         request = httpx.Request('GET', url, **kwargs)
         return httpx.Response(status_code=202, content='', request=request)
 
-    async def async_get_request(url, **kwargs):
+    async def async_get_request(url: str, **kwargs: Any) -> httpx.Response:
         return get_request(url, **kwargs)
 
     mocker.patch('httpx.Client.get', side_effect=get_request)
@@ -58,22 +61,40 @@ def test_docs_examples(
         module.__dict__.update(module_dict)
 
 
-def model_logic(messages: list[Message], info: AgentInfo) -> ModelAnyResponse:
+async def model_logic(messages: list[Message], info: AgentInfo) -> ModelAnyResponse:
     m = messages[-1]
     if m.role == 'user' and m.content == 'What is the weather like in West London and in Wiltshire?':
         return ModelTextResponse(content='The weather in West London is raining, while in Wiltshire it is sunny.')
     if m.role == 'user' and m.content == 'Tell me a joke.':
         return ModelTextResponse(content='Did you hear about the toothpaste scandal? They called it Colgate.')
+    if m.role == 'user' and m.content == 'Explain?':
+        return ModelTextResponse(content='This is an excellent joke invent by Samuel Colvin, it needs no explanation.')
     else:
         sys.stdout.write(str(debug.format(messages, info)))
         raise RuntimeError(f'Unexpected message: {m}')
 
 
-def mock_infer_model(model: Model | KnownModelName) -> Model:
-    return FunctionModel(model_logic)
+async def stream_model_logic(messages: list[Message], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+    m = messages[-1]
+    if m.role == 'user' and m.content == 'Tell me a joke.':
+        *words, last_word = 'Did you hear about the toothpaste scandal? They called it Colgate.'.split(' ')
+        for work in words:
+            yield f'{work} '
+            await asyncio.sleep(0.05)
+        yield last_word
+
+    # if m.role == 'user' and m.content == 'Explain?':
+    #     return ['This is an excellent joke invent by Samuel Colvin, it needs no explanation.']
+    else:
+        sys.stdout.write(str(debug.format(messages, info)))
+        raise RuntimeError(f'Unexpected message: {m}')
+
+
+def mock_infer_model(_model: Model | KnownModelName) -> Model:
+    return FunctionModel(model_logic, stream_function=stream_model_logic)
 
 
 class MockedDatetime(datetime):
     @classmethod
-    def now(cls, *args, tz=None, **kwargs):
+    def now(cls, tz: Any = None) -> datetime:  # type: ignore
         return datetime(2032, 1, 2, 3, 4, 5, 6, tzinfo=tz)
