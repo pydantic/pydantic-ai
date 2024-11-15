@@ -14,11 +14,11 @@ nav:
     - Introduction: index.md
     - install.md
   - Concepts:
-    - concepts/index.md
+    - concepts/agents.md
     - concepts/dependencies.md
     - concepts/retrievers.md
     - concepts/system-prompt.md
-    - concepts/result-validation.md
+    - concepts/results.md
     - concepts/message-history.md
     - concepts/streaming.md
     - concepts/testing-evals.md
@@ -147,7 +147,6 @@ plugins:
             show_signature_annotations: true
             signature_crossrefs: true
             group_by_category: false
-            show_source: false
             heading_level: 2
           import:
             - url: https://docs.python.org/3/objects.inv

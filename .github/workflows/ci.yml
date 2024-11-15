@@ -26,13 +26,26 @@ jobs:
           enable-cache: true
 
       - name: Install dependencies
-        run: uv sync --python 3.12 --frozen --all-extras
+        run: uv sync --python 3.12 --frozen --all-extras --no-dev --group lint
 
       - uses: pre-commit/action@v3.0.0
         with:
           extra_args: --all-files --verbose
         env:
           SKIP: no-commit-to-branch
+
+  # mypy and lint are a bit slower than other jobs, so we run them separately
+  mypy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --python 3.12 --frozen --no-dev --group lint
 
       - run: make typecheck-mypy
 
@@ -138,7 +151,7 @@ jobs:
   # https://github.com/marketplace/actions/alls-green#why used for branch protection checks
   check:
     if: always()
-    needs: [lint, docs, test-live, test, coverage]
+    needs: [lint, mypy, docs, test-live, test, coverage]
     runs-on: ubuntu-latest
 
     steps:

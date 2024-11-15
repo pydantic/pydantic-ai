@@ -1447,16 +1447,20 @@ dev = [
     { name = "devtools" },
     { name = "dirty-equals" },
     { name = "inline-snapshot" },
-    { name = "mypy" },
-    { name = "pyright" },
     { name = "pytest" },
+    { name = "pytest-examples" },
+    { name = "pytest-mock" },
     { name = "pytest-pretty" },
-    { name = "ruff" },
 ]
 docs = [
     { name = "mkdocs" },
     { name = "mkdocs-material", extra = ["imaging"] },
     { name = "mkdocstrings-python" },
+]
+lint = [
+    { name = "mypy" },
+    { name = "pyright" },
+    { name = "ruff" },
 ]
 
 [package.metadata]
@@ -1483,16 +1487,20 @@ dev = [
     { name = "devtools", specifier = ">=0.12.2" },
     { name = "dirty-equals", specifier = ">=0.8.0" },
     { name = "inline-snapshot", specifier = ">=0.14" },
-    { name = "mypy", specifier = ">=1.11.2" },
-    { name = "pyright", specifier = ">=1.1.388" },
     { name = "pytest", specifier = ">=8.3.3" },
+    { name = "pytest-examples", specifier = ">=0.0.14" },
+    { name = "pytest-mock", specifier = ">=3.14.0" },
     { name = "pytest-pretty", specifier = ">=1.2.0" },
-    { name = "ruff", specifier = ">=0.6.9" },
 ]
 docs = [
     { name = "mkdocs" },
     { name = "mkdocs-material", extras = ["imaging"] },
     { name = "mkdocstrings-python" },
+]
+lint = [
+    { name = "mypy", specifier = ">=1.11.2" },
+    { name = "pyright", specifier = ">=1.1.388" },
+    { name = "ruff", specifier = ">=0.6.9" },
 ]
 
 [[package]]
@@ -1642,6 +1650,32 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/8b/6c/62bbd536103af674e227c41a8f3dcd022d591f6eed5facb5a0f31ee33bbc/pytest-8.3.3.tar.gz", hash = "sha256:70b98107bd648308a7952b06e6ca9a50bc660be218d53c257cc1fc94fda10181", size = 1442487 }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/6b/77/7440a06a8ead44c7757a64362dd22df5760f9b12dc5f11b6188cd2fc27a0/pytest-8.3.3-py3-none-any.whl", hash = "sha256:a6853c7375b2663155079443d2e45de913a911a11d669df02a50814944db57b2", size = 342341 },
+]
+
+[[package]]
+name = "pytest-examples"
+version = "0.0.14"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "black" },
+    { name = "pytest" },
+    { name = "ruff" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/d2/a7/b81d5cf26e9713a2d4c8e6863ee009360c5c07a0cfb880456ec8b09adab7/pytest_examples-0.0.14.tar.gz", hash = "sha256:776d1910709c0c5ce01b29bfe3651c5312d5cfe5c063e23ca6f65aed9af23f09", size = 20767 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/2b/99/f418071551ff2b5e8c06bd8b82b1f4fd472b5e4162f018773ba4ef52b6e8/pytest_examples-0.0.14-py3-none-any.whl", hash = "sha256:867a7ea105635d395df712a4b8d0df3bda4c3d78ae97a57b4f115721952b5e25", size = 17919 },
+]
+
+[[package]]
+name = "pytest-mock"
+version = "3.14.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pytest" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/c6/90/a955c3ab35ccd41ad4de556596fa86685bf4fc5ffcc62d22d856cfd4e29a/pytest-mock-3.14.0.tar.gz", hash = "sha256:2719255a1efeceadbc056d6bf3df3d1c5015530fb40cf347c0f9afac88410bd0", size = 32814 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/f2/3b/b26f90f74e2986a82df6e7ac7e319b8ea7ccece1caec9f8ab6104dc70603/pytest_mock-3.14.0-py3-none-any.whl", hash = "sha256:0b72c38033392a5f4621342fe11e9219ac11ec9d375f8e2a0c164539e0d70f6f", size = 9863 },
 ]
 
 [[package]]

@@ -1,7 +1,7 @@
 from __future__ import annotations as _annotations
 
 import json
-from collections.abc import Iterable
+from collections.abc import AsyncIterator
 from datetime import timezone
 
 import pytest
@@ -81,7 +81,7 @@ async def test_streamed_structured_response():
 
 
 async def test_structured_response_iter():
-    def text_stream(_messages: list[Message], agent_info: AgentInfo) -> Iterable[DeltaToolCalls]:
+    async def text_stream(_messages: list[Message], agent_info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
         assert agent_info.result_tools is not None
         assert len(agent_info.result_tools) == 1
         name = agent_info.result_tools[0].name
@@ -145,11 +145,12 @@ async def test_streamed_text_stream():
 async def test_plain_response():
     call_index = 0
 
-    def text_stream(_messages: list[Message], _: AgentInfo) -> list[str]:
+    async def text_stream(_messages: list[Message], _: AgentInfo) -> AsyncIterator[str]:
         nonlocal call_index
 
         call_index += 1
-        return ['hello ', 'world']
+        yield 'hello '
+        yield 'world'
 
     agent = Agent(FunctionModel(stream_function=text_stream), result_type=tuple[str, str])
 
@@ -161,9 +162,9 @@ async def test_plain_response():
 
 
 async def test_call_retriever():
-    def stream_structured_function(
+    async def stream_structured_function(
         messages: list[Message], agent_info: AgentInfo
-    ) -> Iterable[DeltaToolCalls] | Iterable[str]:
+    ) -> AsyncIterator[DeltaToolCalls | str]:
         if len(messages) == 1:
             assert agent_info.retrievers is not None
             assert len(agent_info.retrievers) == 1
@@ -226,7 +227,7 @@ async def test_call_retriever():
 
 
 async def test_call_retriever_empty():
-    def stream_structured_function(_messages: list[Message], _: AgentInfo) -> Iterable[DeltaToolCalls] | Iterable[str]:
+    async def stream_structured_function(_messages: list[Message], _: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
         yield {}
 
     agent = Agent(FunctionModel(stream_function=stream_structured_function), result_type=tuple[str, int])
@@ -237,7 +238,7 @@ async def test_call_retriever_empty():
 
 
 async def test_call_retriever_wrong_name():
-    def stream_structured_function(_messages: list[Message], _: AgentInfo) -> Iterable[DeltaToolCalls] | Iterable[str]:
+    async def stream_structured_function(_messages: list[Message], _: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
         yield {0: DeltaToolCall(name='foobar', json_args='{}')}
 
     agent = Agent(FunctionModel(stream_function=stream_structured_function), result_type=tuple[str, int])

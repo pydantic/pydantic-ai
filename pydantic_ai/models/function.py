@@ -8,11 +8,11 @@ It's primary use case for more advanced unit testing than is possible with `Test
 
 from __future__ import annotations as _annotations
 
-from collections.abc import AsyncIterator, Iterable, Iterator, Mapping, Sequence
+import inspect
+from collections.abc import AsyncIterator, Awaitable, Iterable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
-from itertools import chain
 from typing import Callable, Union, cast
 
 from typing_extensions import TypeAlias, overload
@@ -114,11 +114,17 @@ DeltaToolCalls: TypeAlias = dict[int, DeltaToolCall]
 """A mapping of tool call IDs to incremental changes."""
 
 # TODO these should allow coroutines
-FunctionDef: TypeAlias = Callable[[list[Message], AgentInfo], ModelAnyResponse]
+FunctionDef: TypeAlias = Callable[[list[Message], AgentInfo], Union[ModelAnyResponse, Awaitable[ModelAnyResponse]]]
 """A function used to generate a non-streamed response."""
 
-StreamFunctionDef: TypeAlias = Callable[[list[Message], AgentInfo], Union[Iterable[str], Iterable[DeltaToolCalls]]]
-"""A function used to generate a streamed response."""
+StreamFunctionDef: TypeAlias = Callable[[list[Message], AgentInfo], AsyncIterator[Union[str, DeltaToolCalls]]]
+"""A function used to generate a streamed response.
+
+While this is defined as having return type of `AsyncIterator[Union[str, DeltaToolCalls]]`, it should
+really be considered as `Union[AsyncIterator[str], AsyncIterator[DeltaToolCalls]`,
+
+E.g. you need to yield all text or all `DeltaToolCalls`, not mix them.
+"""
 
 
 @dataclass
@@ -131,38 +137,46 @@ class FunctionAgentModel(AgentModel):
 
     async def request(self, messages: list[Message]) -> tuple[ModelAnyResponse, result.Cost]:
         assert self.function is not None, 'FunctionModel must receive a `function` to support non-streamed requests'
-        return self.function(messages, self.agent_info), result.Cost()
+        if inspect.iscoroutinefunction(self.function):
+            return await self.function(messages, self.agent_info), result.Cost()
+        else:
+            response = await _utils.run_in_executor(self.function, messages, self.agent_info)
+            return cast(ModelAnyResponse, response), result.Cost()
 
     @asynccontextmanager
     async def request_stream(self, messages: list[Message]) -> AsyncIterator[EitherStreamedResponse]:
         assert (
             self.stream_function is not None
         ), 'FunctionModel must receive a `stream_function` to support streamed requests'
-        response_data = iter(self.stream_function(messages, self.agent_info))
+        response_stream = self.stream_function(messages, self.agent_info)
         try:
-            first = next(response_data)
-        except StopIteration as e:
+            first = await response_stream.__anext__()
+        except StopAsyncIteration as e:
             raise ValueError('Stream function must return at least one item') from e
 
         if isinstance(first, str):
-            text_stream = cast(Iterable[str], response_data)
-            yield FunctionStreamTextResponse(iter(chain([first], text_stream)))
+            text_stream = cast(AsyncIterator[str], response_stream)
+            yield FunctionStreamTextResponse(first, text_stream)
         else:
-            structured_stream = cast(Iterable[DeltaToolCalls], response_data)
-            # noinspection PyTypeChecker
-            yield FunctionStreamStructuredResponse(iter(chain([first], structured_stream)), {})
+            structured_stream = cast(AsyncIterator[DeltaToolCalls], response_stream)
+            yield FunctionStreamStructuredResponse(first, structured_stream)
 
 
 @dataclass
 class FunctionStreamTextResponse(StreamTextResponse):
     """Implementation of `StreamTextResponse` for [FunctionModel][pydantic_ai.models.function.FunctionModel]."""
 
-    _iter: Iterator[str]
+    _next: str | None
+    _iter: AsyncIterator[str]
     _timestamp: datetime = field(default_factory=_utils.now_utc, init=False)
     _buffer: list[str] = field(default_factory=list, init=False)
 
     async def __anext__(self) -> None:
-        self._buffer.append(_utils.sync_anext(self._iter))
+        if self._next is not None:
+            self._buffer.append(self._next)
+            self._next = None
+        else:
+            self._buffer.append(await self._iter.__anext__())
 
     def get(self, *, final: bool = False) -> Iterable[str]:
         yield from self._buffer
@@ -179,12 +193,17 @@ class FunctionStreamTextResponse(StreamTextResponse):
 class FunctionStreamStructuredResponse(StreamStructuredResponse):
     """Implementation of `StreamStructuredResponse` for [FunctionModel][pydantic_ai.models.function.FunctionModel]."""
 
-    _iter: Iterator[DeltaToolCalls]
-    _delta_tool_calls: dict[int, DeltaToolCall]
+    _next: DeltaToolCalls | None
+    _iter: AsyncIterator[DeltaToolCalls]
+    _delta_tool_calls: dict[int, DeltaToolCall] = field(default_factory=dict)
     _timestamp: datetime = field(default_factory=_utils.now_utc)
 
     async def __anext__(self) -> None:
-        tool_call = _utils.sync_anext(self._iter)
+        if self._next is not None:
+            tool_call = self._next
+            self._next = None
+        else:
+            tool_call = await self._iter.__anext__()
 
         for key, new in tool_call.items():
             if current := self._delta_tool_calls.get(key):

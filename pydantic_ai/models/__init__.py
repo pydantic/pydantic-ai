@@ -11,7 +11,7 @@ from collections.abc import AsyncIterator, Iterable, Iterator, Mapping, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from datetime import datetime
 from functools import cache
-from typing import TYPE_CHECKING, Protocol, Union
+from typing import TYPE_CHECKING, Literal, Protocol, Union
 
 import httpx
 
@@ -19,8 +19,25 @@ from ..messages import Message, ModelAnyResponse, ModelStructuredResponse
 
 if TYPE_CHECKING:
     from .._utils import ObjectJsonSchema
-    from ..agent import KnownModelName
     from ..result import Cost
+
+
+KnownModelName = Literal[
+    'openai:gpt-4o',
+    'openai:gpt-4o-mini',
+    'openai:gpt-4-turbo',
+    'openai:gpt-4',
+    'openai:o1-preview',
+    'openai:o1-mini',
+    'openai:gpt-3.5-turbo',
+    'gemini-1.5-flash',
+    'gemini-1.5-pro',
+    'test',
+]
+"""Known model names that can be used with the `model` parameter of [`Agent`][pydantic_ai.Agent].
+
+`KnownModelName` is provided as a concise way to specify a model.
+"""
 
 
 class Model(ABC):

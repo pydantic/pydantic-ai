@@ -5,7 +5,7 @@ import os
 import re
 import secrets
 import sys
-from collections.abc import Iterator
+from collections.abc import AsyncIterator, Iterator
 from datetime import datetime
 from pathlib import Path
 from types import ModuleType
@@ -82,7 +82,7 @@ def allow_model_requests():
 
 
 @pytest.fixture
-async def client_with_handler():
+async def client_with_handler() -> AsyncIterator[ClientWithHandler]:
     client: httpx.AsyncClient | None = None
 
     def create_client(handler: Callable[[httpx.Request], httpx.Response]) -> httpx.AsyncClient:

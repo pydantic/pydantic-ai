@@ -1,6 +1,6 @@
 # Dependencies
 
-PydanticAI uses a dependency injection system to provide data and services to your agent's [system prompts](system-prompt.md), [retrievers](retrievers.md) and [result validators](result-validation.md#TODO).
+PydanticAI uses a dependency injection system to provide data and services to your agent's [system prompts](system-prompt.md), [retrievers](retrievers.md) and [result validators](results.md#TODO).
 
 Matching PydanticAI's design philosophy, our dependency system tries to use existing best practice in Python development rather than inventing esoteric "magic", this should make dependencies type-safe, understandable easier to test and ultimately easier to deploy in production.
 
@@ -13,7 +13,7 @@ Here's an example of defining an agent that requires dependencies.
 
 (**Note:** dependencies aren't actually used in this example, see [Accessing Dependencies](#accessing-dependencies) below)
 
-```python title="unused_dependencies.py"
+```py title="unused_dependencies.py"
 from dataclasses import dataclass
 
 import httpx
@@ -41,6 +41,7 @@ async def main():
             deps=deps,  # (3)!
         )
         print(result.data)
+        #> Did you hear about the toothpaste scandal? They called it Colgate.
 ```
 
 1. Define a dataclass to hold dependencies.
@@ -78,7 +79,7 @@ agent = Agent(
 async def get_system_prompt(ctx: CallContext[MyDeps]) -> str:  # (2)!
     response = await ctx.deps.http_client.get(  # (3)!
         'https://example.com',
-        headers={'Authorization': f'Bearer {ctx.deps.api_key}'}  # (4)!
+        headers={'Authorization': f'Bearer {ctx.deps.api_key}'},  # (4)!
     )
     response.raise_for_status()
     return f'Prompt: {response.text}'
@@ -89,6 +90,7 @@ async def main():
         deps = MyDeps('foobar', client)
         result = await agent.run('Tell me a joke.', deps=deps)
         print(result.data)
+        #> Did you hear about the toothpaste scandal? They called it Colgate.
 ```
 
 1. [`CallContext`][pydantic_ai.dependencies.CallContext] may optionally be passed to a [`system_prompt`][pydantic_ai.Agent.system_prompt] function as the only argument.
@@ -134,8 +136,7 @@ agent = Agent(
 @agent.system_prompt
 def get_system_prompt(ctx: CallContext[MyDeps]) -> str:  # (2)!
     response = ctx.deps.http_client.get(
-        'https://example.com',
-        headers={'Authorization': f'Bearer {ctx.deps.api_key}'}
+        'https://example.com', headers={'Authorization': f'Bearer {ctx.deps.api_key}'}
     )
     response.raise_for_status()
     return f'Prompt: {response.text}'
@@ -148,6 +149,7 @@ async def main():
         deps=deps,
     )
     print(result.data)
+    #> Did you hear about the toothpaste scandal? They called it Colgate.
 ```
 
 1. Here we use a synchronous `httpx.Client` instead of an asynchronous `httpx.AsyncClient`.
@@ -157,7 +159,7 @@ _(This example is complete, it can be run "as is")_
 
 ## Full Example
 
-As well as system prompts, dependencies can be used in [retrievers](retrievers.md) and [result validators](result-validation.md#TODO).
+As well as system prompts, dependencies can be used in [retrievers](retrievers.md) and [result validators](results.md#TODO).
 
 ```python title="full_example.py" hl_lines="27-35 38-48"
 from dataclasses import dataclass
@@ -215,6 +217,7 @@ async def main():
         deps = MyDeps('foobar', client)
         result = await agent.run('Tell me a joke.', deps=deps)
         print(result.data)
+        #> Did you hear about the toothpaste scandal? They called it Colgate.
 ```
 
 1. To pass `CallContext` and to a retriever, us the [`retriever_context`][pydantic_ai.Agent.retriever_context] decorator.
@@ -264,7 +267,6 @@ async def application_code(prompt: str) -> str:  # (3)!
         app_deps = MyDeps('foobar', client)
         result = await joke_agent.run(prompt, deps=app_deps)  # (4)!
     return result.data
-
 ```
 
 1. Define a method on the dependency to make the system prompt easier to customise.
@@ -273,7 +275,7 @@ async def application_code(prompt: str) -> str:  # (3)!
 4. Call the agent from within the application code, in a real application this call might be deep within a call stack. Note `app_deps` here will NOT be used when deps are overridden.
 
 ```py title="test_joke_app.py" hl_lines="10-12"
-from joke_app import application_code, joke_agent, MyDeps
+from joke_app import MyDeps, application_code, joke_agent
 
 
 class TestMyDeps(MyDeps):  # (1)!
@@ -284,8 +286,8 @@ class TestMyDeps(MyDeps):  # (1)!
 async def test_application_code():
     test_deps = TestMyDeps('test_key', None)  # (2)!
     with joke_agent.override_deps(test_deps):  # (3)!
-        joke = application_code('Tell me a joke.')  # (4)!
-    assert joke == 'funny'
+        joke = await application_code('Tell me a joke.')  # (4)!
+    assert joke.startswith('Did you hear about the toothpaste scandal?')
 ```
 
 1. Define a subclass of `MyDeps` in tests to customise the system prompt factory.
@@ -314,7 +316,7 @@ joke_agent = Agent(
     system_prompt=(
         'Use the "joke_factory" to generate some jokes, then choose the best. '
         'You must return just a single joke.'
-    )
+    ),
 )
 
 factory_agent = Agent('gemini-1.5-pro', result_type=list[str])
@@ -328,6 +330,7 @@ async def joke_factory(ctx: CallContext[MyDeps], count: int) -> str:
 
 result = joke_agent.run_sync('Tell me a joke.', deps=MyDeps(factory_agent))
 print(result.data)
+#> Did you hear about the toothpaste scandal? They called it Colgate.
 ```
 
 ## Examples

@@ -38,12 +38,50 @@ agent = Agent('openai:gpt-4o', system_prompt='Be a helpful assistant.')
 
 result = agent.run_sync('Tell me a joke.')
 print(result.data)
+#> Did you hear about the toothpaste scandal? They called it Colgate.
 
 # all messages from the run
 print(result.all_messages())
+"""
+[
+    SystemPrompt(content='Be a helpful assistant.', role='system'),
+    UserPrompt(
+        content='Tell me a joke.',
+        timestamp=datetime.datetime(
+            2032, 1, 2, 3, 4, 5, 6, tzinfo=datetime.timezone.utc
+        ),
+        role='user',
+    ),
+    ModelTextResponse(
+        content='Did you hear about the toothpaste scandal? They called it Colgate.',
+        timestamp=datetime.datetime(
+            2032, 1, 2, 3, 4, 5, 6, tzinfo=datetime.timezone.utc
+        ),
+        role='model-text-response',
+    ),
+]
+"""
 
 # messages excluding system prompts
 print(result.new_messages())
+"""
+[
+    UserPrompt(
+        content='Tell me a joke.',
+        timestamp=datetime.datetime(
+            2032, 1, 2, 3, 4, 5, 6, tzinfo=datetime.timezone.utc
+        ),
+        role='user',
+    ),
+    ModelTextResponse(
+        content='Did you hear about the toothpaste scandal? They called it Colgate.',
+        timestamp=datetime.datetime(
+            2032, 1, 2, 3, 4, 5, 6, tzinfo=datetime.timezone.utc
+        ),
+        role='model-text-response',
+    ),
+]
+"""
 ```
 _(This example is complete, it can be run "as is")_
 
@@ -54,15 +92,54 @@ from pydantic_ai import Agent
 
 agent = Agent('openai:gpt-4o', system_prompt='Be a helpful assistant.')
 
-async with agent.run_stream('Tell me a joke.') as result:
-    # incomplete messages before the stream finishes
-    print(result.all_messages())
 
-    async for text in result.stream():
-        print(text)
+async def main():
+    async with agent.run_stream('Tell me a joke.') as result:
+        # incomplete messages before the stream finishes
+        print(result.all_messages())
+        """
+        [
+            SystemPrompt(content='Be a helpful assistant.', role='system'),
+            UserPrompt(
+                content='Tell me a joke.',
+                timestamp=datetime.datetime(
+                    2032, 1, 2, 3, 4, 5, 6, tzinfo=datetime.timezone.utc
+                ),
+                role='user',
+            ),
+        ]
+        """
 
-    # complete messages once the stream finishes
-    print(result.all_messages())
+        async for text in result.stream():
+            print(text)
+            #> Did you
+            #> Did you hear about
+            #> Did you hear about the toothpaste
+            #> Did you hear about the toothpaste scandal? They
+            #> Did you hear about the toothpaste scandal? They called it
+            #> Did you hear about the toothpaste scandal? They called it Colgate.
+
+        # complete messages once the stream finishes
+        print(result.all_messages())
+        """
+        [
+            SystemPrompt(content='Be a helpful assistant.', role='system'),
+            UserPrompt(
+                content='Tell me a joke.',
+                timestamp=datetime.datetime(
+                    2032, 1, 2, 3, 4, 5, 6, tzinfo=datetime.timezone.utc
+                ),
+                role='user',
+            ),
+            ModelTextResponse(
+                content='Did you hear about the toothpaste scandal? They called it Colgate.',
+                timestamp=datetime.datetime(
+                    2032, 1, 2, 3, 4, 5, 6, tzinfo=datetime.timezone.utc
+                ),
+                role='model-text-response',
+            ),
+        ]
+        """
 ```
 _(This example is complete, it can be run "as is" inside an async context)_
 
@@ -92,11 +169,46 @@ agent = Agent('openai:gpt-4o', system_prompt='Be a helpful assistant.')
 
 result1 = agent.run_sync('Tell me a joke.')
 print(result1.data)
+#> Did you hear about the toothpaste scandal? They called it Colgate.
 
 result2 = agent.run_sync('Explain?', message_history=result1.new_messages())
 print(result2.data)
+#> This is an excellent joke invent by Samuel Colvin, it needs no explanation.
 
 print(result2.all_messages())
+"""
+[
+    SystemPrompt(content='Be a helpful assistant.', role='system'),
+    UserPrompt(
+        content='Tell me a joke.',
+        timestamp=datetime.datetime(
+            2032, 1, 2, 3, 4, 5, 6, tzinfo=datetime.timezone.utc
+        ),
+        role='user',
+    ),
+    ModelTextResponse(
+        content='Did you hear about the toothpaste scandal? They called it Colgate.',
+        timestamp=datetime.datetime(
+            2032, 1, 2, 3, 4, 5, 6, tzinfo=datetime.timezone.utc
+        ),
+        role='model-text-response',
+    ),
+    UserPrompt(
+        content='Explain?',
+        timestamp=datetime.datetime(
+            2032, 1, 2, 3, 4, 5, 6, tzinfo=datetime.timezone.utc
+        ),
+        role='user',
+    ),
+    ModelTextResponse(
+        content='This is an excellent joke invent by Samuel Colvin, it needs no explanation.',
+        timestamp=datetime.datetime(
+            2032, 1, 2, 3, 4, 5, 6, tzinfo=datetime.timezone.utc
+        ),
+        role='model-text-response',
+    ),
+]
+"""
 ```
 _(This example is complete, it can be run "as is")_
 
@@ -113,11 +225,48 @@ agent = Agent('openai:gpt-4o', system_prompt='Be a helpful assistant.')
 
 result1 = agent.run_sync('Tell me a joke.')
 print(result1.data)
+#> Did you hear about the toothpaste scandal? They called it Colgate.
 
-result2 = agent.run_sync('Explain?', model='gemini-1.5-pro', message_history=result1.new_messages())
+result2 = agent.run_sync(
+    'Explain?', model='gemini-1.5-pro', message_history=result1.new_messages()
+)
 print(result2.data)
+#> This is an excellent joke invent by Samuel Colvin, it needs no explanation.
 
 print(result2.all_messages())
+"""
+[
+    SystemPrompt(content='Be a helpful assistant.', role='system'),
+    UserPrompt(
+        content='Tell me a joke.',
+        timestamp=datetime.datetime(
+            2032, 1, 2, 3, 4, 5, 6, tzinfo=datetime.timezone.utc
+        ),
+        role='user',
+    ),
+    ModelTextResponse(
+        content='Did you hear about the toothpaste scandal? They called it Colgate.',
+        timestamp=datetime.datetime(
+            2032, 1, 2, 3, 4, 5, 6, tzinfo=datetime.timezone.utc
+        ),
+        role='model-text-response',
+    ),
+    UserPrompt(
+        content='Explain?',
+        timestamp=datetime.datetime(
+            2032, 1, 2, 3, 4, 5, 6, tzinfo=datetime.timezone.utc
+        ),
+        role='user',
+    ),
+    ModelTextResponse(
+        content='This is an excellent joke invent by Samuel Colvin, it needs no explanation.',
+        timestamp=datetime.datetime(
+            2032, 1, 2, 3, 4, 5, 6, tzinfo=datetime.timezone.utc
+        ),
+        role='model-text-response',
+    ),
+]
+"""
 ```
 
 ## Last Run Messages
