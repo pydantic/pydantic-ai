@@ -4,7 +4,7 @@ Demonstrates:
 
 * retrievers
 * multiple retrievers
-* [agent dependencies](../concepts/dependencies.md)
+* [agent dependencies](../dependencies.md)
 
 In this case the idea is a "weather" agent — the user can ask for the weather in multiple locations,
 the agent will use the `get_lat_lng` tool to get the latitude and longitude of the locations, then use

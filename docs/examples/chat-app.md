@@ -2,7 +2,7 @@ Simple chat app example build with FastAPI.
 
 Demonstrates:
 
-* [reusing chat history](../concepts/message-history.md)
+* [reusing chat history](../message-history.md)
 * serializing messages
 * streaming responses
 

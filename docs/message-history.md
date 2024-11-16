@@ -1,12 +1,6 @@
-from pydantic_ai_examples.pydantic_model import model
-
 # Messages and chat history
 
 PydanticAI provides access to messages exchanged during an agent run. These messages can be used both to continue a coherent conversation, and to understand how an agent performed.
-
-## Messages types
-
-[API documentation for `messages`][pydantic_ai.messages] contains details of the message types and their meaning.
 
 ### Accessing Messages from Results
 
@@ -271,4 +265,22 @@ print(result2.all_messages())
 
 ## Examples
 
-For a more complete example of using messages in conversations, see the [chat app](../examples/chat-app.md) example.
+For a more complete example of using messages in conversations, see the [chat app](examples/chat-app.md) example.
+
+## API Reference
+
+::: pydantic_ai.messages
+    options:
+      members:
+        - Message
+        - SystemPrompt
+        - UserPrompt
+        - ToolReturn
+        - RetryPrompt
+        - ModelAnyResponse
+        - ModelTextResponse
+        - ModelStructuredResponse
+        - ToolCall
+        - ArgsJson
+        - ArgsObject
+        - MessagesTypeAdapter

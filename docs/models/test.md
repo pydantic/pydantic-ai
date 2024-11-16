@@ -1,3 +1,3 @@
-# `pydantic_ai.models.test`
+# TestModel
 
 ::: pydantic_ai.models.test

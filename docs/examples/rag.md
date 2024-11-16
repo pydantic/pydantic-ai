@@ -5,7 +5,7 @@ RAG search example. This demo allows you to ask question of the [logfire](https:
 Demonstrates:
 
 * retrievers
-* [agent dependencies](../concepts/dependencies.md)
+* [agent dependencies](../dependencies.md)
 * RAG search
 
 This is done by creating a database containing each section of the markdown documentation, then registering

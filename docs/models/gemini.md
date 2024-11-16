@@ -1,3 +1,3 @@
-# `pydantic_ai.models.gemini`
+# Gemini
 
 ::: pydantic_ai.models.gemini

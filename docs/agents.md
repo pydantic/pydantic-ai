@@ -1,9 +1,9 @@
 ## Introduction
 
-Agents are PydanticAI's primary interface for interacting with models.
+Agents are PydanticAI's primary interface for interacting with LLMs.
 
 In some use cases a single Agent will control an entire application or component,
-but agents can also interact to embody more complex workflows.
+but multiple agents can also interact to embody more complex workflows.
 
 The [`Agent`][pydantic_ai.Agent] class is well documented, but in essence you can think of an agent as a container for:
 
@@ -11,7 +11,7 @@ The [`Agent`][pydantic_ai.Agent] class is well documented, but in essence you ca
 * One or more [retrievers](#retrievers) — functions that the LLM may call to get information while generating a response
 * An optional structured [result type](results.md) — the structured datatype the LLM must return at the end of a run
 * A [dependency](dependencies.md) type constraint — system prompt functions, retrievers and result validators may all use dependencies when they're run
-* Agents may optionally also have a default [model](#TODO) associated with them, the model to use can also be defined when running the agent
+* Agents may optionally also have a default [model](models/index.md) associated with them, the model to use can also be defined when running the agent
 
 In typing terms, agents are generic in their dependency and result types, e.g. an agent which required `#!python Foobar` dependencies and returned data of type `#!python list[str]` results would have type `#!python Agent[Foobar, list[str]]`.
 
@@ -51,7 +51,7 @@ print(result.data)
 1. Create an agent, which expects an integer dependency and returns a boolean result, this agent will ahve type of `#!python Agent[int, bool]`.
 2. Define a retriever that checks if the square is a winner, here [`CallContext`][pydantic_ai.dependencies.CallContext] is parameterized with the dependency type `int`, if you got the dependency type wrong you'd get a typing error.
 3. In reality, you might want to use a random number here e.g. `random.randint(0, 36)` here.
-4. `result.data` will be a boolean indicating if the square is a winner, Pydantic performs the result validation
+4. `result.data` will be a boolean indicating if the square is a winner, Pydantic performs the result validation, it'll be typed as a `bool` since its type is derived from the `result_type` generic parameter of the agent.
 
 !!! tip "Agents are Singletons, like FastAPI"
     Agents are a singleton instance, you can think of them as similar to a small [`FastAPI`][fastapi.FastAPI] app or an [`APIRouter`][fastapi.APIRouter].
@@ -60,9 +60,9 @@ print(result.data)
 
 There are three ways to run an agent:
 
-1. [`#!python agent.run()`][pydantic_ai.Agent.run] — a coroutine which returns a result containing a completed response
-2. [`#!python agent.run_sync()`][pydantic_ai.Agent.run_sync] — a plain function which returns a result containing a completed response (internally, this just calls `#!python asyncio.run(self.run())`)
-3. [`#!python agent.run_stream()`][pydantic_ai.Agent.run_stream] — a coroutine which returns a result containing methods to stream a response as an async iterable
+1. [`#!python agent.run()`][pydantic_ai.Agent.run] — a coroutine which returns a result containing a completed response, returns a [`RunResult`][pydantic_ai.result.RunResult]
+2. [`#!python agent.run_sync()`][pydantic_ai.Agent.run_sync] — a plain function which returns a result containing a completed response (internally, this just calls `#!python asyncio.run(self.run())`), returns a [`RunResult`][pydantic_ai.result.RunResult]
+3. [`#!python agent.run_stream()`][pydantic_ai.Agent.run_stream] — a coroutine which returns a result containing methods to stream a response as an async iterable, returns a [`StreamedRunResult`][pydantic_ai.result.StreamedRunResult]
 
 Here's a simple example demonstrating all three:
 
@@ -127,7 +127,7 @@ You can add both to a single agent; they're concatenated in the order they're de
 
 Here's an example using both types of system prompts:
 
-```python title="system_prompt_example.py"
+```python title="system_prompts.py"
 from datetime import date
 
 from pydantic_ai import Agent, CallContext
@@ -153,6 +153,7 @@ result = agent.run_sync('What is the date?', deps='Frank')
 print(result.data)
 #> Hello Frank, the date today is 2032-01-02.
 ```
+
 1. The agent expects a string dependency.
 2. Static system prompt defined at agent creation time.
 3. Dynamic system prompt defined via a decorator.
@@ -181,7 +182,22 @@ print(result.data)
 * show an except of a `UnexpectedModelBehaviour` being raised
 * if a `UnexpectedModelBehaviour` is raised, you may want to access the [`.last_run_messages`][pydantic_ai.Agent.last_run_messages] attribute of an agent to see the messages exchanged that led to the error, show an example of accessing `.last_run_messages` in an except block to get more details
 
-instructions:
-* all code examples should be complete
-* keep your tone fairly informal like the rest of the documentation
-* be concise, avoid abstract verbose explanations
+## API Reference
+
+::: pydantic_ai.Agent
+    options:
+      members:
+        - __init__
+        - run
+        - run_sync
+        - run_stream
+        - model
+        - override_deps
+        - override_model
+        - last_run_messages
+        - system_prompt
+        - retriever_plain
+        - retriever_context
+        - result_validator
+
+::: pydantic_ai.exceptions

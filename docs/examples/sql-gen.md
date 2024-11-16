@@ -7,7 +7,7 @@ Demonstrates:
 * custom `result_type`
 * dynamic system prompt
 * result validation
-* [agent dependencies](../concepts/dependencies.md)
+* [agent dependencies](../dependencies.md)
 
 ## Running the Example
 

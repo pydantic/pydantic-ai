@@ -1,3 +1,3 @@
-# `pydantic_ai.models.function`
+# FunctionModel
 
 ::: pydantic_ai.models.function
