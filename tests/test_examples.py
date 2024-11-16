@@ -87,6 +87,7 @@ text_responses = {
     'What is the capital of the UK?': 'London',
     'Who was Albert Einstein?': 'Albert Einstein was a German-born theoretical physicist.',
     'What was his most famous equation?': "Albert Einstein's most famous equation is (E = mc^2).",
+    'What is the date?': 'Hello Frank, the date today is 2032-01-02.',
 }
 
 
@@ -110,15 +111,17 @@ async def model_logic(messages: list[Message], info: AgentInfo) -> ModelAnyRespo
 
 async def stream_model_logic(messages: list[Message], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
     m = messages[-1]
-    if m.role == 'user' and m.content == 'Tell me a joke.':
-        *words, last_word = 'Did you hear about the toothpaste scandal? They called it Colgate.'.split(' ')
-        for work in words:
-            yield f'{work} '
-            await asyncio.sleep(0.05)
-        yield last_word
-    else:
-        sys.stdout.write(str(debug.format(messages, info)))
-        raise RuntimeError(f'Unexpected message: {m}')
+    if m.role == 'user':
+        if text_response := text_responses.get(m.content):
+            *words, last_word = text_response.split(' ')
+            for work in words:
+                yield f'{work} '
+                await asyncio.sleep(0.05)
+            yield last_word
+            return
+
+    sys.stdout.write(str(debug.format(messages, info)))
+    raise RuntimeError(f'Unexpected message: {m}')
 
 
 def mock_infer_model(_model: Model | KnownModelName) -> Model:

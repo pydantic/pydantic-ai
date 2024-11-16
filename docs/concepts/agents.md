@@ -7,8 +7,8 @@ but agents can also interact to embody more complex workflows.
 
 The [`Agent`][pydantic_ai.Agent] class is well documented, but in essence you can think of an agent as a container for:
 
-* A [system prompt](system-prompt.md) — a set of instructions for the LLM written by the developer
-* One or more [retrievers](retrievers.md) — functions that the LLM may call to get information while generating a response
+* A [system prompt](#system-prompts) — a set of instructions for the LLM written by the developer
+* One or more [retrievers](#retrievers) — functions that the LLM may call to get information while generating a response
 * An optional structured [result type](results.md) — the structured datatype the LLM must return at the end of a run
 * A [dependency](dependencies.md) type constraint — system prompt functions, retrievers and result validators may all use dependencies when they're run
 * Agents may optionally also have a default [model](#TODO) associated with them, the model to use can also be defined when running the agent
@@ -75,6 +75,7 @@ result_sync = agent.run_sync('What is the capital of Italy?')
 print(result_sync.data)
 #> Rome
 
+
 async def main():
     result = await agent.run('What is the capital of France?')
     print(result.data)
@@ -102,12 +103,11 @@ agent = Agent('openai:gpt-4o')
 # First run
 result1 = agent.run_sync('Who was Albert Einstein?')
 print(result1.data)
-#> Albert Einstein was a theoretical physicist.
+#> Albert Einstein was a German-born theoretical physicist.
 
 # Second run, passing previous messages
 result2 = agent.run_sync(
-    'What was his most famous equation?',  # (1)!
-    message_history=result1.new_messages()
+    'What was his most famous equation?', message_history=result1.new_messages()  # (1)!
 )
 print(result2.data)
 #> Albert Einstein's most famous equation is (E = mc^2).
@@ -129,6 +129,7 @@ Here's an example using both types of system prompts:
 
 ```python title="system_prompt_example.py"
 from datetime import date
+
 from pydantic_ai import Agent, CallContext
 
 agent = Agent(
@@ -147,9 +148,10 @@ def add_the_users_name(ctx: CallContext[str]) -> str:
 def add_the_date() -> str:  # (4)!
     return f'The date is {date.today()}.'
 
+
 result = agent.run_sync('What is the date?', deps='Frank')
 print(result.data)
-#> Today is a special weather event day. The weather is sunny with a chance of rain.
+#> Hello Frank, the date today is 2032-01-02.
 ```
 1. The agent expects a string dependency.
 2. Static system prompt defined at agent creation time.
