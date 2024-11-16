@@ -1,3 +1,3 @@
-# `pydantic_ai.models.openai`
+# OpenAI
 
 ::: pydantic_ai.models.openai

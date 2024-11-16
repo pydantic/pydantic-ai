@@ -13,15 +13,18 @@ nav:
   - Introduction:
     - Introduction: index.md
     - install.md
-  - Concepts:
-    - concepts/agents.md
-    - concepts/dependencies.md
-    - concepts/retrievers.md
-    - concepts/system-prompt.md
-    - concepts/results.md
-    - concepts/message-history.md
-    - concepts/streaming.md
-    - concepts/testing-evals.md
+  - Documentation:
+    - agents.md
+    - dependencies.md
+    - results.md
+    - message-history.md
+    - testing-evals.md
+    - Models:
+      - models/index.md
+      - models/openai.md
+      - models/gemini.md
+      - models/test.md
+      - models/function.md
   - Examples:
     - examples/index.md
     - examples/pydantic-model.md
@@ -31,17 +34,6 @@ nav:
     - examples/stream-markdown.md
     - examples/stream-whales.md
     - examples/chat-app.md
-  - API Reference:
-    - api/agent.md
-    - api/result.md
-    - api/messages.md
-    - api/dependencies.md
-    - api/exceptions.md
-    - api/models/base.md
-    - api/models/openai.md
-    - api/models/gemini.md
-    - api/models/test.md
-    - api/models/function.md
 
 extra:
   # hide the "Made with Material for MkDocs" message
@@ -79,7 +71,7 @@ theme:
     - content.code.copy
     - content.code.select
     - navigation.path
-    - navigation.expand
+#    - navigation.expand
     - navigation.indexes
     - navigation.sections
     - navigation.tracking
@@ -112,6 +104,7 @@ markdown_extensions:
   - pymdownx.superfences
   - pymdownx.snippets
   - pymdownx.tilde
+  - pymdownx.inlinehilite
   - pymdownx.highlight:
       pygments_lang_class: true
   - pymdownx.extra:
@@ -147,7 +140,8 @@ plugins:
             show_signature_annotations: true
             signature_crossrefs: true
             group_by_category: false
-            heading_level: 2
+            # 3 because docs are in pages with an H2 just above them
+            heading_level: 3
           import:
             - url: https://docs.python.org/3/objects.inv
             - url: https://docs.pydantic.dev/latest/objects.inv

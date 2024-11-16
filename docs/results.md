@@ -1,4 +1,20 @@
-# `pydantic_ai.result`
+## Ending runs
+
+TODO
+
+## Result Validators
+
+TODO
+
+## Streamed Results
+
+TODO
+
+## Cost
+
+TODO
+
+## API Reference
 
 ::: pydantic_ai.result
     options:
