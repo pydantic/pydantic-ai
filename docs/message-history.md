@@ -135,7 +135,7 @@ async def main():
         ]
         """
 ```
-_(This example is complete, it can be run "as is" inside an async context)_
+_(This example is complete, it can be run "as is")_
 
 ### Using Messages as Input for Further Agent Runs
 
