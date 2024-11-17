@@ -48,7 +48,7 @@ async def main():
 2. Pass the dataclass type to the `deps_type` argument of the [`Agent` constructor][pydantic_ai.Agent.__init__]. **Note**: we're passing the type here, NOT an instance, this parameter is not actually used at runtime, it's here so we can get full type checking of the agent.
 3. When running the agent, pass an instance of the dataclass to the `deps` parameter.
 
-_(This example is complete, it can be run "as is" inside an async context)_
+_(This example is complete, it can be run "as is")_
 
 ## Accessing Dependencies
 
@@ -98,7 +98,7 @@ async def main():
 3. Access dependencies through the [`.deps`][pydantic_ai.dependencies.CallContext.deps] attribute.
 4. Access dependencies through the [`.deps`][pydantic_ai.dependencies.CallContext.deps] attribute.
 
-_(This example is complete, it can be run "as is" inside an async context)_
+_(This example is complete, it can be run "as is")_
 
 ### Asynchronous vs. Synchronous dependencies
 

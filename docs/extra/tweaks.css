@@ -7,3 +7,12 @@
 .hide {
   display: none;
 }
+
+.text-center {
+  text-align: center;
+}
+
+img.index-header {
+  width: 70%;
+  max-width: 500px;
+}
