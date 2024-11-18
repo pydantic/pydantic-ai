@@ -18,12 +18,7 @@ nav:
     - results.md
     - message-history.md
     - testing-evals.md
-    - Models:
-      - models/index.md
-      - models/openai.md
-      - models/gemini.md
-      - models/test.md
-      - models/function.md
+    - logfire.md
   - Examples:
     - examples/index.md
     - examples/pydantic-model.md
@@ -33,6 +28,17 @@ nav:
     - examples/stream-markdown.md
     - examples/stream-whales.md
     - examples/chat-app.md
+  - API Reference:
+    - api/agent.md
+    - api/result.md
+    - api/messages.md
+    - api/dependencies.md
+    - api/exceptions.md
+    - api/models/base.md
+    - api/models/openai.md
+    - api/models/gemini.md
+    - api/models/test.md
+    - api/models/function.md
 
 extra:
   # hide the "Made with Material for MkDocs" message
@@ -120,10 +126,6 @@ markdown_extensions:
   - pymdownx.tasklist:
       custom_checkbox: true
   - sane_lists # this means you can start a list from any number
-  - material.extensions.preview:
-      targets:
-        include:
-          - '*'
 
 watch:
   - pydantic_ai
@@ -132,6 +134,7 @@ watch:
 plugins:
   - search
   - social
+  - glightbox
   - mkdocstrings:
       handlers:
         python:

@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 import asyncio
 from collections.abc import AsyncIterator, Iterator, Sequence
 from contextlib import asynccontextmanager, contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Callable, Generic, cast, final, overload
 
 import logfire_api
@@ -54,18 +54,18 @@ class Agent(Generic[AgentDeps, ResultData]):
     # dataclass fields mostly for my sanity — knowing what attributes are available
     model: models.Model | models.KnownModelName | None
     """The default model configured for this agent."""
-    _result_schema: _result.ResultSchema[ResultData] | None
-    _result_validators: list[_result.ResultValidator[AgentDeps, ResultData]]
-    _allow_text_result: bool
-    _system_prompts: tuple[str, ...]
-    _retrievers: dict[str, _r.Retriever[AgentDeps, Any]]
-    _default_retries: int
-    _system_prompt_functions: list[_system_prompt.SystemPromptRunner[AgentDeps]]
-    _deps_type: type[AgentDeps]
-    _max_result_retries: int
-    _current_result_retry: int
-    _override_deps: _utils.Option[AgentDeps] = None
-    _override_model: _utils.Option[models.Model] = None
+    _result_schema: _result.ResultSchema[ResultData] | None = field(repr=False)
+    _result_validators: list[_result.ResultValidator[AgentDeps, ResultData]] = field(repr=False)
+    _allow_text_result: bool = field(repr=False)
+    _system_prompts: tuple[str, ...] = field(repr=False)
+    _retrievers: dict[str, _r.Retriever[AgentDeps, Any]] = field(repr=False)
+    _default_retries: int = field(repr=False)
+    _system_prompt_functions: list[_system_prompt.SystemPromptRunner[AgentDeps]] = field(repr=False)
+    _deps_type: type[AgentDeps] = field(repr=False)
+    _max_result_retries: int = field(repr=False)
+    _current_result_retry: int = field(repr=False)
+    _override_deps: _utils.Option[AgentDeps] = field(default=None, repr=False)
+    _override_model: _utils.Option[models.Model] = field(default=None, repr=False)
     last_run_messages: list[_messages.Message] | None = None
     """The messages from the last run, useful when a run raised an exception.
 

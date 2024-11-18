@@ -59,8 +59,9 @@ jobs:
           enable-cache: true
 
       - run: uv sync --python 3.12 --frozen --group docs
-      - run: docs
-        if: github.repository_owner != 'pydantic'
+
+        # always build docs to check it works without insiders packages
+      - run: make docs
 
       - run: make docs-insiders
         if: github.repository_owner == 'pydantic'

@@ -11,7 +11,7 @@ The [`Agent`][pydantic_ai.Agent] class is well documented, but in essence you ca
 * One or more [retrievers](#retrievers) — functions that the LLM may call to get information while generating a response
 * An optional structured [result type](results.md) — the structured datatype the LLM must return at the end of a run
 * A [dependency](dependencies.md) type constraint — system prompt functions, retrievers and result validators may all use dependencies when they're run
-* Agents may optionally also have a default [model](models/index.md) associated with them, the model to use can also be defined when running the agent
+* Agents may optionally also have a default [model](api/models/base.md) associated with them, the model to use can also be defined when running the agent
 
 In typing terms, agents are generic in their dependency and result types, e.g. an agent which required `#!python Foobar` dependencies and returned data of type `#!python list[str]` results would have type `#!python Agent[Foobar, list[str]]`.
 
@@ -350,7 +350,9 @@ agent.run_sync('hello', model=FunctionModel(print_schema))
 
 _(This example is complete, it can be run "as is")_
 
-The return type of retriever can any valid JSON object ([`JsonData`][pydantic_ai.dependencies.JsonData]) as some models (e.g. Gemini) support semi-structured return values, some expect text (OpenAI) but seem to be just as good at extracting meaning from the data, if a Python is returned and the model expects a string, the value will be serialized to JSON
+The return type of retriever can any valid JSON object ([`JsonData`][pydantic_ai.dependencies.JsonData]) as some models (e.g. Gemini) support semi-structured return values, some expect text (OpenAI) but seem to be just as good at extracting meaning from the data, if a Python is returned and the model expects a string, the value will be serialized to JSON.
+
+If a retriever has a single parameter that can be represented as an object in JSON schema (e.g. dataclass, TypedDict, pydantic model), the schema for the retriever is simplified to be just that object. (TODO example)
 
 ## Reflection and self-correction
 
@@ -478,23 +480,3 @@ else:
 1. Define a retriever that will raise `ModelRetry` repeatedly in this case.
 
 _(This example is complete, it can be run "as is")_
-
-## API Reference
-
-::: pydantic_ai.Agent
-    options:
-      members:
-        - __init__
-        - run
-        - run_sync
-        - run_stream
-        - model
-        - override_deps
-        - override_model
-        - last_run_messages
-        - system_prompt
-        - retriever_plain
-        - retriever_context
-        - result_validator
-
-::: pydantic_ai.exceptions
