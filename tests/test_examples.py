@@ -93,7 +93,7 @@ def test_docs_examples(
 
     prefix_settings = example.prefix_settings()
 
-    ruff_ignore: list[str] = ['D']
+    ruff_ignore: list[str] = ['D', 'I001']
     if str(example.path).endswith('docs/index.md'):
         ruff_ignore.append('F841')
     eval_example.set_config(ruff_ignore=ruff_ignore, target_version='py39')
@@ -154,6 +154,20 @@ text_responses: dict[str, str | ToolCall] = {
     'Where does "hello world" come from?': (
         'The first known use of "hello, world" was in a 1974 textbook about the C programming language.'
     ),
+    'What is my balance?': ToolCall(tool_name='customer_balance', args=ArgsObject({'include_pending': True})),
+    'I just lost my card!': ToolCall(
+        tool_name='final_result',
+        args=ArgsObject(
+            {
+                'support_advice': (
+                    "I'm sorry to hear that, John. "
+                    'We are temporarily blocking your card to prevent unauthorized transactions.'
+                ),
+                'block_card': True,
+                'risk': 8,
+            }
+        ),
+    ),
 }
 
 
@@ -185,6 +199,13 @@ async def model_logic(messages: list[Message], info: AgentInfo) -> ModelAnyRespo
         return ModelStructuredResponse(calls=[ToolCall(tool_name='final_result', args=ArgsObject(args))])
     elif m.role == 'retry-prompt' and m.tool_name == 'calc_volume':
         return ModelStructuredResponse(calls=[ToolCall(tool_name='calc_volume', args=ArgsObject({'size': 6}))])
+    elif m.role == 'tool-return' and m.tool_name == 'customer_balance':
+        args = {
+            'support_advice': 'Hello John, your current account balance, including pending transactions, is $123.45.',
+            'block_card': False,
+            'risk': 1,
+        }
+        return ModelStructuredResponse(calls=[ToolCall(tool_name='final_result', args=ArgsObject(args))])
     else:
         sys.stdout.write(str(debug.format(messages, info)))
         raise RuntimeError(f'Unexpected message: {m}')

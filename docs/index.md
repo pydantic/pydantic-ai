@@ -30,13 +30,13 @@ Here's a very minimal example of PydanticAI.
 ```py title="hello_world.py"
 from pydantic_ai import Agent
 
-agent = Agent(
-    'gemini-1.5-flash',
-    system_prompt='Be concise, reply with one sentence.'
-)
+agent = Agent('gemini-1.5-flash', system_prompt='Be concise, reply with one sentence.')
 
 result = agent.run_sync('Where does "hello world" come from?')
 print(result.data)
+"""
+The first known use of "hello, world" was in a 1974 textbook about the C programming language.
+"""
 ```
 
 Not very interesting yet, but we can easily add retrievers, dynamic system prompts and structured responses to build more powerful agents.
@@ -47,7 +47,9 @@ Small but complete example of using PydanticAI to build a support agent for a ba
 
 ```py title="bank_support.py"
 from dataclasses import dataclass
+
 from pydantic import BaseModel, Field
+
 from pydantic_ai import Agent, CallContext
 
 from bank_database import DatabaseConn
@@ -72,7 +74,7 @@ support_agent = Agent(  # (1)!
     system_prompt=(  # (4)!
         'You are a support agent in our bank, give the '
         'customer support and judge the risk level of their query. '
-        "Reply using the customer's name to make your response feel personalised. "
+        "Reply using the customer's name."
     ),
 )
 
@@ -84,7 +86,9 @@ async def add_customer_name(ctx: CallContext[SupportDependencies]) -> str:
 
 
 @support_agent.retriever_context  # (6)!
-async def customer_balance(ctx: CallContext[SupportDependencies], include_pending: bool) -> str:
+async def customer_balance(
+    ctx: CallContext[SupportDependencies], include_pending: bool
+) -> str:
     """Returns the customer's current account balance"""  # (7)!
     balance = await ctx.deps.db.customer_balance(
         id=ctx.deps.customer_id,
@@ -96,9 +100,15 @@ async def customer_balance(ctx: CallContext[SupportDependencies], include_pendin
 deps = SupportDependencies(customer_id=123, db=DatabaseConn())
 result = support_agent.run_sync('What is my balance?', deps=deps)  # (8)!
 print(result.data)  # (10)!
+"""
+support_advice='Hello John, your current account balance, including pending transactions, is $123.45.' block_card=False risk=1
+"""
 
 result = support_agent.run_sync('I just lost my card!', deps=deps)
 print(result.data)
+"""
+support_advice="I'm sorry to hear that, John. We are temporarily blocking your card to prevent unauthorized transactions." block_card=True risk=8
+"""
 ```
 
 1. An [agent](agents.md) that acts as first-tier support in a bank, agents are generic in the type of dependencies they take and the type of result they return, in this case `Deps` and `SupportResult`.
