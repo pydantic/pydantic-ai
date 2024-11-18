@@ -342,7 +342,3 @@ The following examples demonstrate how to use dependencies in PydanticAI:
 - [Weather Agent](examples/weather-agent.md)
 - [SQL Generation](examples/sql-gen.md)
 - [RAG](examples/rag.md)
-
-## API Reference
-
-::: pydantic_ai.dependencies

@@ -132,7 +132,6 @@ async def get_weather(ctx: CallContext[Deps], lat: float, lng: float) -> dict[st
 
 async def main():
     async with AsyncClient() as client:
-        logfire.instrument_httpx()
         # create a free API key at https://www.tomorrow.io/weather-api/
         weather_api_key = os.getenv('WEATHER_API_KEY')
         # create a free API key at https://geocode.maps.co/

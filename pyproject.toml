@@ -49,7 +49,7 @@ logfire = [
 examples = [
     "asyncpg>=0.30.0",
     "fastapi>=0.115.4",
-    "logfire[asyncpg,fastapi]>=2",
+    "logfire[asyncpg,fastapi,httpx]>=2.3",
     "python-multipart>=0.0.17",
     "rich>=13.9.2",
     "uvicorn>=0.32.0",
@@ -74,6 +74,7 @@ lint = [
 ]
 docs = [
     "mkdocs",
+    "mkdocs-glightbox>=0.4.0",
     "mkdocs-material[imaging]",
     "mkdocstrings-python",
 ]

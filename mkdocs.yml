@@ -18,12 +18,7 @@ nav:
     - results.md
     - message-history.md
     - testing-evals.md
-    - Models:
-      - models/index.md
-      - models/openai.md
-      - models/gemini.md
-      - models/test.md
-      - models/function.md
+    - logfire.md
   - Examples:
     - examples/index.md
     - examples/pydantic-model.md
@@ -143,6 +138,7 @@ watch:
 plugins:
   - search
   - social
+  - glightbox
   - mkdocstrings:
       handlers:
         python:
