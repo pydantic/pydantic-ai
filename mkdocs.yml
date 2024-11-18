@@ -10,7 +10,7 @@ edit_uri: edit/main/docs/
 copyright: © Pydantic Services Inc. 2024 to present
 
 nav:
-  - Introduction: index.md
+  - index.md
   - install.md
   - Documentation:
     - agents.md
