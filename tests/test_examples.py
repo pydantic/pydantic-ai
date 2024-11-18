@@ -93,9 +93,12 @@ def test_docs_examples(
 
     prefix_settings = example.prefix_settings()
 
-    ruff_ignore: list[str] = ['D', 'I001']
-    if str(example.path).endswith('docs/index.md'):
-        ruff_ignore.append('F841')
+    ruff_ignore: list[str] = ['D']
+    # `from bank_database import DatabaseConn` wrongly sorted in imports
+    # waiting for https://github.com/pydantic/pytest-examples/issues/43
+    if 'from bank_database import DatabaseConn' in example.source:
+        ruff_ignore.append('I001')
+
     eval_example.set_config(ruff_ignore=ruff_ignore, target_version='py39')
 
     eval_example.print_callback = print_callback
