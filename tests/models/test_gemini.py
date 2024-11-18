@@ -344,8 +344,11 @@ async def get_gemini_client(
     def create_client(response_or_list: ResOrList) -> httpx.AsyncClient:
         index = 0
 
-        def handler(_request: httpx.Request) -> httpx.Response:
+        def handler(request: httpx.Request) -> httpx.Response:
             nonlocal index
+
+            ua = request.headers.get('User-Agent')
+            assert isinstance(ua, str) and ua.startswith('pydantic-ai')
 
             if isinstance(response_or_list, Sequence):
                 response = response_or_list[index]
