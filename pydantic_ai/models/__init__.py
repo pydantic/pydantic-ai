@@ -261,4 +261,15 @@ def cached_async_http_client(timeout: int = 600, connect: int = 5) -> httpx.Asyn
     The default timeouts match those of OpenAI,
     see <https://github.com/openai/openai-python/blob/v1.54.4/src/openai/_constants.py#L9>.
     """
-    return httpx.AsyncClient(timeout=httpx.Timeout(timeout=timeout, connect=connect))
+    return httpx.AsyncClient(
+        timeout=httpx.Timeout(timeout=timeout, connect=connect),
+        headers={'User-Agent': get_user_agent()},
+    )
+
+
+@cache
+def get_user_agent() -> str:
+    """Get the user agent string for the HTTP client."""
+    from .. import __version__
+
+    return f'pydantic-ai/{__version__}'

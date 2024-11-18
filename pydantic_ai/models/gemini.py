@@ -56,6 +56,7 @@ from . import (
     StreamTextResponse,
     cached_async_http_client,
     check_allow_model_requests,
+    get_user_agent,
 )
 
 GeminiModelName = Literal['gemini-1.5-flash', 'gemini-1.5-flash-8b', 'gemini-1.5-pro', 'gemini-1.0-pro']
@@ -182,6 +183,7 @@ class GeminiAgentModel(AgentModel):
         headers = {
             'X-Goog-Api-Key': self.api_key,
             'Content-Type': 'application/json',
+            'User-Agent': get_user_agent(),
         }
         url = self.url_template.format(
             model=self.model_name, function='streamGenerateContent' if streamed else 'generateContent'
