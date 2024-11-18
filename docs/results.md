@@ -29,7 +29,7 @@
 
 Streamed responses provide a unique challenge:
 * validating the partial result is both practically and semantically complex, but pydantic can do this
-* we don't know if a result will be the final result of a run until we start streaming it, so PydanticAI has to start streaming just enough of the response to sniff out if it's the final response, then either stream the rest of the response to call a retriever, or return an object that lets the rest of teh response be streamed by the user
+* we don't know if a result will be the final result of a run until we start streaming it, so PydanticAI has to start streaming just enough of the response to sniff out if it's the final response, then either stream the rest of the response to call a retriever, or return an object that lets the rest of the response be streamed by the user
 * examples including: streaming text, streaming validated data, streaming the raw data to do validation inside a try/except block when necessary
 * explanation of how streamed responses are "debounced"
 

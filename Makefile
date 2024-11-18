@@ -71,6 +71,9 @@ docs-serve:
 .docs-insiders-install:
 ifeq ($(shell uv pip show mkdocs-material | grep -q insiders && echo 'installed'), installed)
 	@echo 'insiders packages already installed'
+else ifeq ($(PPPR_TOKEN),)
+	@echo "Error: PPPR_TOKEN is not set, can't install insiders packages"
+	@exit 1
 else
 	@echo 'installing insiders packages...'
 	@uv pip install -U mkdocs-material mkdocstrings-python \
@@ -79,11 +82,11 @@ endif
 
 .PHONY: docs-insiders  # Build the documentation using insiders packages
 docs-insiders: .docs-insiders-install
-	uv run --no-sync mkdocs build
+	uv run --no-sync mkdocs build -f mkdocs.insiders.yml
 
 .PHONY: docs-serve-insiders  # Build and serve the documentation using insiders packages
 docs-serve-insiders: .docs-insiders-install
-	uv run --no-sync mkdocs serve
+	uv run --no-sync mkdocs serve -f mkdocs.insiders.yml
 
 .PHONY: cf-pages-build  # Install uv, install dependencies and build the docs, used on CloudFlare Pages
 cf-pages-build:
