@@ -2,7 +2,9 @@
 
 TODO
 
-## Result Validators
+## Structured result validation
+
+## Result validators functions
 
 TODO
 

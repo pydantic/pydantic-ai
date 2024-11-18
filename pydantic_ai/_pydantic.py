@@ -5,12 +5,9 @@ This module has to use numerous internal Pydantic APIs and is therefore brittle 
 
 from __future__ import annotations as _annotations
 
-import re
-from inspect import Parameter, Signature, signature
-from typing import TYPE_CHECKING, Any, Callable, Literal, TypedDict, cast, get_origin
+from inspect import Parameter, signature
+from typing import TYPE_CHECKING, Any, TypedDict, cast, get_origin
 
-from _griffe.enumerations import DocstringSectionKind
-from _griffe.models import Docstring, Object as GriffeObject
 from pydantic import ConfigDict, TypeAdapter
 from pydantic._internal import _decorators, _generate_schema, _typing_extra
 from pydantic._internal._config import ConfigWrapper
@@ -19,6 +16,7 @@ from pydantic.json_schema import GenerateJsonSchema
 from pydantic.plugin._schema_validator import create_schema_validator
 from pydantic_core import SchemaValidator, core_schema
 
+from ._griffe import doc_descriptions
 from ._utils import ObjectJsonSchema, check_object_json_schema, is_model_like
 
 if TYPE_CHECKING:
@@ -66,7 +64,7 @@ def function_schema(either_function: _retriever.RetrieverEitherFunc[AgentDeps, R
     var_positional_field: str | None = None
     errors: list[str] = []
     decorators = _decorators.DecoratorInfos()
-    description, field_descriptions = _doc_descriptions(function, sig)
+    description, field_descriptions = doc_descriptions(function, sig)
 
     for index, (name, p) in enumerate(sig.parameters.items()):
         if p.annotation is sig.empty:
@@ -190,127 +188,6 @@ def _build_schema(
         extras_schema=gen_schema.generate_schema(var_kwargs_schema) if var_kwargs_schema else None,
     )
     return td_schema, None
-
-
-DocstringStyle = Literal['google', 'numpy', 'sphinx']
-
-
-def _doc_descriptions(
-    func: Callable[..., Any], sig: Signature, *, style: DocstringStyle | None = None
-) -> tuple[str, dict[str, str]]:
-    """Extract the function description and parameter descriptions from a function's docstring.
-
-    Returns:
-        A tuple of (main function description, parameter descriptions).
-    """
-    doc = func.__doc__
-    if doc is None:
-        return '', {}
-
-    # see https://github.com/mkdocstrings/griffe/issues/293
-    parent = cast(GriffeObject, sig)
-
-    docstring = Docstring(doc, lineno=1, parser=style or _infer_docstring_style(doc), parent=parent)
-    sections = docstring.parse()
-
-    params = {}
-    if parameters := next((p for p in sections if p.kind == DocstringSectionKind.parameters), None):
-        params = {p.name: p.description for p in parameters.value}
-
-    main_desc = ''
-    if main := next((p for p in sections if p.kind == DocstringSectionKind.text), None):
-        main_desc = main.value
-
-    return main_desc, params
-
-
-def _infer_docstring_style(doc: str) -> DocstringStyle:
-    """Simplistic docstring style inference."""
-    for pattern, replacements, style in _docstring_style_patterns:
-        matches = (
-            re.search(pattern.format(replacement), doc, re.IGNORECASE | re.MULTILINE) for replacement in replacements
-        )
-        if any(matches):
-            return style
-    # fallback to google style
-    return 'google'
-
-
-# See https://github.com/mkdocstrings/griffe/issues/329#issuecomment-2425017804
-_docstring_style_patterns: list[tuple[str, list[str], DocstringStyle]] = [
-    (
-        r'\n[ \t]*:{0}([ \t]+\w+)*:([ \t]+.+)?\n',
-        [
-            'param',
-            'parameter',
-            'arg',
-            'argument',
-            'key',
-            'keyword',
-            'type',
-            'var',
-            'ivar',
-            'cvar',
-            'vartype',
-            'returns',
-            'return',
-            'rtype',
-            'raises',
-            'raise',
-            'except',
-            'exception',
-        ],
-        'sphinx',
-    ),
-    (
-        r'\n[ \t]*{0}:([ \t]+.+)?\n[ \t]+.+',
-        [
-            'args',
-            'arguments',
-            'params',
-            'parameters',
-            'keyword args',
-            'keyword arguments',
-            'other args',
-            'other arguments',
-            'other params',
-            'other parameters',
-            'raises',
-            'exceptions',
-            'returns',
-            'yields',
-            'receives',
-            'examples',
-            'attributes',
-            'functions',
-            'methods',
-            'classes',
-            'modules',
-            'warns',
-            'warnings',
-        ],
-        'google',
-    ),
-    (
-        r'\n[ \t]*{0}\n[ \t]*---+\n',
-        [
-            'deprecated',
-            'parameters',
-            'other parameters',
-            'returns',
-            'yields',
-            'receives',
-            'raises',
-            'warns',
-            'attributes',
-            'functions',
-            'methods',
-            'classes',
-            'modules',
-        ],
-        'numpy',
-    ),
-]
 
 
 def _is_call_ctx(annotation: Any) -> bool:
