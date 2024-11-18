@@ -29,7 +29,7 @@ from tests.conftest import ClientWithHandler
 
 
 @pytest.fixture(scope='module', autouse=True)
-def register_modules():
+def register_fake_db():
     class FakeTable:
         def get(self, name: str) -> int | None:
             if name == 'John Doe':
@@ -40,6 +40,30 @@ def register_modules():
         users: FakeTable = field(default_factory=FakeTable)
 
     module_name = 'fake_database'
+    sys.modules[module_name] = module = ModuleType(module_name)
+    module.__dict__.update({'DatabaseConn': DatabaseConn})
+
+    yield
+
+    sys.modules.pop(module_name)
+
+
+@pytest.fixture(scope='module', autouse=True)
+def register_bank_db():
+    class DatabaseConn:
+        @classmethod
+        async def customer_name(cls, *, id: int) -> str | None:
+            if id == 123:
+                return 'John'
+
+        @classmethod
+        async def customer_balance(cls, *, id: int, include_pending: bool) -> float:
+            if id == 123:
+                return 123.45
+            else:
+                raise ValueError('Customer not found')
+
+    module_name = 'bank_database'
     sys.modules[module_name] = module = ModuleType(module_name)
     module.__dict__.update({'DatabaseConn': DatabaseConn})
 
@@ -109,7 +133,9 @@ async def async_http_request(url: str, **kwargs: Any) -> httpx.Response:
 
 
 text_responses: dict[str, str | ToolCall] = {
-    'What is the weather like in West London and in Wiltshire?': 'The weather in West London is raining, while in Wiltshire it is sunny.',
+    'What is the weather like in West London and in Wiltshire?': (
+        'The weather in West London is raining, while in Wiltshire it is sunny.'
+    ),
     'Tell me a joke.': 'Did you hear about the toothpaste scandal? They called it Colgate.',
     'Explain?': 'This is an excellent joke invent by Samuel Colvin, it needs no explanation.',
     'What is the capital of France?': 'Paris',
@@ -125,6 +151,9 @@ text_responses: dict[str, str | ToolCall] = {
         tool_name='get_user_by_name', args=ArgsObject({'name': 'John'})
     ),
     'Please get me the volume of a box with size 6.': ToolCall(tool_name='calc_volume', args=ArgsObject({'size': 6})),
+    'Where does "hello world" come from?': (
+        'The first known use of "hello, world" was in a 1974 textbook about the C programming language.'
+    ),
 }
 
 
