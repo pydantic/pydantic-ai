@@ -1,6 +1,6 @@
 from __future__ import annotations as _annotations
 
-from collections.abc import Awaitable, Mapping
+from collections.abc import Awaitable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable, Generic, TypeVar, Union
 
@@ -66,8 +66,8 @@ but may or maybe not take `CallInfo` as a first argument, and may or may not be 
 Usage `ResultValidator[AgentDeps, ResultData]`.
 """
 
-JsonData: TypeAlias = 'None | str | int | float | list[JsonData] | Mapping[str, JsonData]'
-"""JSON data type alias."""
+JsonData: TypeAlias = 'None | str | int | float | Sequence[JsonData] | Mapping[str, JsonData]'
+"""Type representing any JSON data."""
 
 RetrieverReturnValue = Union[JsonData, Awaitable[JsonData]]
 """Return value of a retriever function."""

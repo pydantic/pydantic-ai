@@ -346,7 +346,7 @@ agent.run_sync('hello', model=FunctionModel(print_schema))
 
 _(This example is complete, it can be run "as is")_
 
-The return type of retriever can either be `str` or a JSON object typed as `dict[str, Any]` as some models (e.g. Gemini) support structured return values, some expect text (OpenAI) but seem to be just as good at extracting meaning from the data.
+The return type of retriever can any valid JSON object ([`JsonData`][pydantic_ai.dependencies.JsonData]) as some models (e.g. Gemini) support semi-structured return values, some expect text (OpenAI) but seem to be just as good at extracting meaning from the data, if a Python is returned and the model expects a string, the value will be serialized to JSON
 
 ## Reflection and self-correction
 

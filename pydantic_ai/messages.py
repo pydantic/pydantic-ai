@@ -1,7 +1,7 @@
 from __future__ import annotations as _annotations
 
 import json
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import TYPE_CHECKING, Annotated, Any, Literal, Union
@@ -44,11 +44,11 @@ class UserPrompt:
     """Message type identifier, this type is available on all message as a discriminator."""
 
 
-JsonData: TypeAlias = 'Union[str, int, float, None, list[JsonData], Mapping[str, JsonData]]'
+JsonData: TypeAlias = 'Union[str, int, float, None, Sequence[JsonData], Mapping[str, JsonData]]'
 if not TYPE_CHECKING:
     # work around for https://github.com/pydantic/pydantic/issues/10873
     # this is need for pydantic to work both `json_ta` and `MessagesTypeAdapter` at the bottom of this file
-    JsonData = TypeAliasType('JsonData', 'Union[str, int, float, None, list[JsonData], Mapping[str, JsonData]]')
+    JsonData = TypeAliasType('JsonData', 'Union[str, int, float, None, Sequence[JsonData], Mapping[str, JsonData]]')
 
 json_ta: TypeAdapter[JsonData] = TypeAdapter(JsonData)
 

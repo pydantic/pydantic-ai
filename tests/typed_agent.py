@@ -41,6 +41,11 @@ def ok_retriever_plain(x: str) -> dict[str, str]:
     return {'x': x}
 
 
+@typed_agent.retriever_plain
+def ok_json_list(x: str) -> list[Union[str, int]]:
+    return [x, 1]
+
+
 @typed_agent.retriever_context
 async def bad_retriever1(ctx: CallContext[MyDeps], x: str) -> str:
     total = ctx.deps.foo + ctx.deps.spam  # type: ignore[attr-defined]
@@ -53,8 +58,8 @@ async def bad_retriever2(ctx: CallContext[int], x: str) -> str:
 
 
 @typed_agent.retriever_plain  # type: ignore[arg-type]
-async def bad_retriever_return(x: int) -> list[int]:
-    return [x]
+async def bad_retriever_return(x: int) -> list[MyDeps]:
+    return [MyDeps(1, x)]
 
 
 with expect_error(ValueError):
