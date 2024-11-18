@@ -114,6 +114,8 @@ print(result2.data)
 ```
 1. Continue the conversation, without `message_history` the model would not know who "he" was referring to.
 
+_(This example is complete, it can be run "as is")_
+
 ## System Prompts
 
 System prompts might seem simple at first glance since they're just strings (or sequences of strings that are concatenated), but crafting the right system prompt is key to getting the model to behave as you want.
@@ -158,6 +160,8 @@ print(result.data)
 2. Static system prompt defined at agent creation time.
 3. Dynamic system prompt defined via a decorator.
 4. Another dynamic system prompt, system prompts don't have to have the `CallContext` parameter.
+
+_(This example is complete, it can be run "as is")_
 
 ## Retrievers
 
@@ -472,6 +476,8 @@ else:
     print(result.data)
 ```
 1. Define a retriever that will raise `ModelRetry` repeatedly in this case.
+
+_(This example is complete, it can be run "as is")_
 
 ## API Reference
 
