@@ -33,6 +33,17 @@ nav:
     - examples/stream-markdown.md
     - examples/stream-whales.md
     - examples/chat-app.md
+  - API Reference:
+    - api/agent.md
+    - api/result.md
+    - api/messages.md
+    - api/dependencies.md
+    - api/exceptions.md
+    - api/models/base.md
+    - api/models/openai.md
+    - api/models/gemini.md
+    - api/models/test.md
+    - api/models/function.md
 
 extra:
   # hide the "Made with Material for MkDocs" message
