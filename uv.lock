@@ -780,9 +780,6 @@ asyncpg = [
 fastapi = [
     { name = "opentelemetry-instrumentation-fastapi" },
 ]
-httpx = [
-    { name = "opentelemetry-instrumentation-httpx" },
-]
 
 [[package]]
 name = "logfire-api"
@@ -1218,21 +1215,6 @@ wheels = [
 ]
 
 [[package]]
-name = "opentelemetry-instrumentation-httpx"
-version = "0.48b0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "opentelemetry-api" },
-    { name = "opentelemetry-instrumentation" },
-    { name = "opentelemetry-semantic-conventions" },
-    { name = "opentelemetry-util-http" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/d3/d9/c65d818607c16d1b7ea8d2de6111c6cecadf8d2fd38c1885a72733a7c6d3/opentelemetry_instrumentation_httpx-0.48b0.tar.gz", hash = "sha256:ee977479e10398931921fb995ac27ccdeea2e14e392cb27ef012fc549089b60a", size = 16931 }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/c2/fe/f2daa9d6d988c093b8c7b1d35df675761a8ece0b600b035dc04982746c9d/opentelemetry_instrumentation_httpx-0.48b0-py3-none-any.whl", hash = "sha256:d94f9d612c82d09fe22944d1904a30a464c19bea2ba76be656c99a28ad8be8e5", size = 13900 },
-]
-
-[[package]]
 name = "opentelemetry-proto"
 version = "1.27.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1458,7 +1440,7 @@ dependencies = [
 examples = [
     { name = "asyncpg" },
     { name = "fastapi" },
-    { name = "logfire", extra = ["asyncpg", "fastapi", "httpx"] },
+    { name = "logfire", extra = ["asyncpg", "fastapi"] },
     { name = "python-multipart" },
     { name = "rich" },
     { name = "uvicorn" },
@@ -1499,7 +1481,7 @@ requires-dist = [
     { name = "griffe", specifier = ">=1.3.2" },
     { name = "httpx", specifier = ">=0.27.2" },
     { name = "logfire", marker = "extra == 'logfire'", specifier = ">=2" },
-    { name = "logfire", extras = ["asyncpg", "fastapi", "httpx"], marker = "extra == 'examples'", specifier = ">=2.3" },
+    { name = "logfire", extras = ["asyncpg", "fastapi"], marker = "extra == 'examples'", specifier = ">=2.3" },
     { name = "logfire-api", specifier = ">=1.2.0" },
     { name = "openai", specifier = ">=1.54.3" },
     { name = "pydantic", specifier = ">=2.10.0b1" },
