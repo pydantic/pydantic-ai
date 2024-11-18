@@ -41,16 +41,12 @@ print(result.all_messages())
     SystemPrompt(content='Be a helpful assistant.', role='system'),
     UserPrompt(
         content='Tell me a joke.',
-        timestamp=datetime.datetime(
-            2032, 1, 2, 3, 4, 5, 6, tzinfo=datetime.timezone.utc
-        ),
+        timestamp=datetime.datetime(...),
         role='user',
     ),
     ModelTextResponse(
         content='Did you hear about the toothpaste scandal? They called it Colgate.',
-        timestamp=datetime.datetime(
-            2032, 1, 2, 3, 4, 5, 6, tzinfo=datetime.timezone.utc
-        ),
+        timestamp=datetime.datetime(...),
         role='model-text-response',
     ),
 ]
@@ -62,16 +58,12 @@ print(result.new_messages())
 [
     UserPrompt(
         content='Tell me a joke.',
-        timestamp=datetime.datetime(
-            2032, 1, 2, 3, 4, 5, 6, tzinfo=datetime.timezone.utc
-        ),
+        timestamp=datetime.datetime(...),
         role='user',
     ),
     ModelTextResponse(
         content='Did you hear about the toothpaste scandal? They called it Colgate.',
-        timestamp=datetime.datetime(
-            2032, 1, 2, 3, 4, 5, 6, tzinfo=datetime.timezone.utc
-        ),
+        timestamp=datetime.datetime(...),
         role='model-text-response',
     ),
 ]
@@ -96,9 +88,7 @@ async def main():
             SystemPrompt(content='Be a helpful assistant.', role='system'),
             UserPrompt(
                 content='Tell me a joke.',
-                timestamp=datetime.datetime(
-                    2032, 1, 2, 3, 4, 5, 6, tzinfo=datetime.timezone.utc
-                ),
+                timestamp=datetime.datetime(...),
                 role='user',
             ),
         ]
@@ -120,16 +110,12 @@ async def main():
             SystemPrompt(content='Be a helpful assistant.', role='system'),
             UserPrompt(
                 content='Tell me a joke.',
-                timestamp=datetime.datetime(
-                    2032, 1, 2, 3, 4, 5, 6, tzinfo=datetime.timezone.utc
-                ),
+                timestamp=datetime.datetime(...),
                 role='user',
             ),
             ModelTextResponse(
                 content='Did you hear about the toothpaste scandal? They called it Colgate.',
-                timestamp=datetime.datetime(
-                    2032, 1, 2, 3, 4, 5, 6, tzinfo=datetime.timezone.utc
-                ),
+                timestamp=datetime.datetime(...),
                 role='model-text-response',
             ),
         ]
@@ -175,30 +161,22 @@ print(result2.all_messages())
     SystemPrompt(content='Be a helpful assistant.', role='system'),
     UserPrompt(
         content='Tell me a joke.',
-        timestamp=datetime.datetime(
-            2032, 1, 2, 3, 4, 5, 6, tzinfo=datetime.timezone.utc
-        ),
+        timestamp=datetime.datetime(...),
         role='user',
     ),
     ModelTextResponse(
         content='Did you hear about the toothpaste scandal? They called it Colgate.',
-        timestamp=datetime.datetime(
-            2032, 1, 2, 3, 4, 5, 6, tzinfo=datetime.timezone.utc
-        ),
+        timestamp=datetime.datetime(...),
         role='model-text-response',
     ),
     UserPrompt(
         content='Explain?',
-        timestamp=datetime.datetime(
-            2032, 1, 2, 3, 4, 5, 6, tzinfo=datetime.timezone.utc
-        ),
+        timestamp=datetime.datetime(...),
         role='user',
     ),
     ModelTextResponse(
         content='This is an excellent joke invent by Samuel Colvin, it needs no explanation.',
-        timestamp=datetime.datetime(
-            2032, 1, 2, 3, 4, 5, 6, tzinfo=datetime.timezone.utc
-        ),
+        timestamp=datetime.datetime(...),
         role='model-text-response',
     ),
 ]
@@ -233,30 +211,22 @@ print(result2.all_messages())
     SystemPrompt(content='Be a helpful assistant.', role='system'),
     UserPrompt(
         content='Tell me a joke.',
-        timestamp=datetime.datetime(
-            2032, 1, 2, 3, 4, 5, 6, tzinfo=datetime.timezone.utc
-        ),
+        timestamp=datetime.datetime(...),
         role='user',
     ),
     ModelTextResponse(
         content='Did you hear about the toothpaste scandal? They called it Colgate.',
-        timestamp=datetime.datetime(
-            2032, 1, 2, 3, 4, 5, 6, tzinfo=datetime.timezone.utc
-        ),
+        timestamp=datetime.datetime(...),
         role='model-text-response',
     ),
     UserPrompt(
         content='Explain?',
-        timestamp=datetime.datetime(
-            2032, 1, 2, 3, 4, 5, 6, tzinfo=datetime.timezone.utc
-        ),
+        timestamp=datetime.datetime(...),
         role='user',
     ),
     ModelTextResponse(
         content='This is an excellent joke invent by Samuel Colvin, it needs no explanation.',
-        timestamp=datetime.datetime(
-            2032, 1, 2, 3, 4, 5, 6, tzinfo=datetime.timezone.utc
-        ),
+        timestamp=datetime.datetime(...),
         role='model-text-response',
     ),
 ]

@@ -5,13 +5,12 @@ from collections.abc import Awaitable
 from dataclasses import dataclass, field
 from typing import Any, Callable, Generic, cast
 
-import pydantic_core
 from pydantic import ValidationError
 from pydantic_core import SchemaValidator
 
 from . import _pydantic, _utils, messages
 from .dependencies import AgentDeps, CallContext, RetrieverContextFunc, RetrieverParams, RetrieverPlainFunc
-from .exceptions import ModelRetry
+from .exceptions import ModelRetry, UnexpectedModelBehaviour
 
 # Usage `RetrieverEitherFunc[AgentDependencies, P]`
 RetrieverEitherFunc = _utils.Either[
@@ -64,7 +63,7 @@ class Retriever(Generic[AgentDeps, RetrieverParams]):
             else:
                 args_dict = self.validator.validate_python(message.args.args_object)
         except ValidationError as e:
-            return self._on_error(e.errors(include_url=False), message)
+            return self._on_error(e, message)
 
         args, kwargs = self._call_args(deps, args_dict, message)
         try:
@@ -75,7 +74,7 @@ class Retriever(Generic[AgentDeps, RetrieverParams]):
                 function = cast(Callable[[Any], str], self.function.whichever())
                 response_content = await _utils.run_in_executor(function, *args, **kwargs)
         except ModelRetry as e:
-            return self._on_error(e.message, message)
+            return self._on_error(e, message)
 
         self._current_retry = 0
         return messages.ToolReturn(
@@ -98,14 +97,16 @@ class Retriever(Generic[AgentDeps, RetrieverParams]):
 
         return args, args_dict
 
-    def _on_error(
-        self, content: list[pydantic_core.ErrorDetails] | str, call_message: messages.ToolCall
-    ) -> messages.RetryPrompt:
+    def _on_error(self, exc: ValidationError | ModelRetry, call_message: messages.ToolCall) -> messages.RetryPrompt:
         self._current_retry += 1
         if self._current_retry > self.max_retries:
             # TODO custom error with details of the retriever
-            raise
+            raise UnexpectedModelBehaviour(f'Retriever exceeded max retries count of {self.max_retries}') from exc
         else:
+            if isinstance(exc, ValidationError):
+                content = exc.errors(include_url=False)
+            else:
+                content = exc.message
             return messages.RetryPrompt(
                 tool_name=call_message.tool_name,
                 content=content,

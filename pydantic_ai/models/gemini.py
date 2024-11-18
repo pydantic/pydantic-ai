@@ -472,26 +472,30 @@ class _GeminiTextContent(TypedDict):
 
 
 class _GeminiTools(TypedDict):
-    function_declarations: list[_GeminiFunction]
+    function_declarations: list[Annotated[_GeminiFunction, Field(alias='functionDeclarations')]]
 
 
 class _GeminiFunction(TypedDict):
     name: str
     description: str
-    parameters: dict[str, Any]
+    parameters: NotRequired[dict[str, Any]]
     """
     ObjectJsonSchema isn't really true since Gemini only accepts a subset of JSON Schema
     <https://ai.google.dev/gemini-api/docs/function-calling#function_declarations>
+    and
+    <https://ai.google.dev/api/caching#FunctionDeclaration>
     """
 
 
 def _function_from_abstract_tool(tool: AbstractToolDefinition) -> _GeminiFunction:
     json_schema = _GeminiJsonSchema(tool.json_schema).simplify()
-    return _GeminiFunction(
+    f = _GeminiFunction(
         name=tool.name,
         description=tool.description,
-        parameters=json_schema,
     )
+    if json_schema.get('properties'):
+        f['parameters'] = json_schema
+    return f
 
 
 class _GeminiToolConfig(TypedDict):

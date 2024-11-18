@@ -326,7 +326,7 @@ class Agent(Generic[AgentDeps, ResultData]):
     def system_prompt(
         self, func: _system_prompt.SystemPromptFunc[AgentDeps]
     ) -> _system_prompt.SystemPromptFunc[AgentDeps]:
-        """Decorator to register a system prompt function that takes `CallContext` as it's only argument."""
+        """Decorator to register a system prompt function that optionally takes `CallContext` as it's only argument."""
         self._system_prompt_functions.append(_system_prompt.SystemPromptRunner(func))
         return func
 

@@ -1,10 +1,10 @@
 from __future__ import annotations as _annotations
 
-from collections.abc import Awaitable
+from collections.abc import Awaitable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable, Generic, TypeVar, Union
 
-from typing_extensions import Concatenate, ParamSpec
+from typing_extensions import Concatenate, ParamSpec, TypeAlias
 
 if TYPE_CHECKING:
     from .result import ResultData
@@ -20,6 +20,7 @@ __all__ = (
     'RetrieverContextFunc',
     'RetrieverPlainFunc',
     'RetrieverParams',
+    'JsonData',
 )
 
 AgentDeps = TypeVar('AgentDeps')
@@ -65,7 +66,10 @@ but may or maybe not take `CallInfo` as a first argument, and may or may not be 
 Usage `ResultValidator[AgentDeps, ResultData]`.
 """
 
-RetrieverReturnValue = Union[str, Awaitable[str], dict[str, Any], Awaitable[dict[str, Any]]]
+JsonData: TypeAlias = 'None | str | int | float | Sequence[JsonData] | Mapping[str, JsonData]'
+"""Type representing any JSON data."""
+
+RetrieverReturnValue = Union[JsonData, Awaitable[JsonData]]
 """Return value of a retriever function."""
 RetrieverContextFunc = Callable[Concatenate[CallContext[AgentDeps], RetrieverParams], RetrieverReturnValue]
 """A retriever function that takes `CallContext` as the first argument.
