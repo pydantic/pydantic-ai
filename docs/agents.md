@@ -352,7 +352,7 @@ The return type of retriever can either be `str` or a JSON object typed as `dict
 
 Validation errors from both retriever parameter validation and [structured result validation](results.md#structured-result-validation) can be passed back to the model with a request to retry.
 
-You can also raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] from within a [retriever](#retrievers) or [result validators functions](results.md#result-validators-functions) to tell the model it should retry.
+You can also raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] from within a [retriever](#retrievers) or [result validator functions](results.md#result-validators-functions) to tell the model it should retry.
 
 - The default retry count is **1** but can be altered for the [entire agent][pydantic_ai.Agent.__init__], a [specific retriever][pydantic_ai.Agent.retriever_context], or a [result validator][pydantic_ai.Agent.__init__].
 - You can access the current retry count from within a retriever or result validator via [`ctx.retry`][pydantic_ai.dependencies.CallContext].
@@ -403,7 +403,7 @@ user_id=123 message='Hello John, would you be free for coffee sometime next week
 
 ## Model errors
 
-If models behave unexpectedly (e.g., the retry limit is exceeded, or their api returns `503`), agent runs will raise [`UnexpectedModelBehaviour`][pydantic_ai.exceptions.UnexpectedModelBehaviour].
+If models behave unexpectedly (e.g., the retry limit is exceeded, or their API returns `503`), agent runs will raise [`UnexpectedModelBehaviour`][pydantic_ai.exceptions.UnexpectedModelBehaviour].
 
 In these cases, [`agent.last_run_messages`][pydantic_ai.Agent.last_run_messages] can be used to access the messages exchanged during the run to help diagnose the issue.
 
