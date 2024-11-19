@@ -96,11 +96,9 @@ async def main():
 
         async for text in result.stream():
             print(text)
-            #> Did you
-            #> Did you hear about
+            #> Did you hear
             #> Did you hear about the toothpaste
-            #> Did you hear about the toothpaste scandal? They
-            #> Did you hear about the toothpaste scandal? They called it
+            #> Did you hear about the toothpaste scandal? They called
             #> Did you hear about the toothpaste scandal? They called it Colgate.
 
         # complete messages once the stream finishes

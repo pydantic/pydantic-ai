@@ -1,6 +1,5 @@
 from __future__ import annotations as _annotations
 
-import asyncio
 import re
 import sys
 from collections.abc import AsyncIterator, Iterable
@@ -15,6 +14,7 @@ from devtools import debug
 from pytest_examples import CodeExample, EvalExample, find_examples
 from pytest_mock import MockerFixture
 
+from pydantic_ai._utils import group_by_temporal
 from pydantic_ai.messages import (
     ArgsObject,
     Message,
@@ -91,6 +91,7 @@ def test_docs_examples(
 ):
     # debug(example)
     mocker.patch('pydantic_ai.agent.models.infer_model', side_effect=mock_infer_model)
+    mocker.patch('pydantic_ai._utils.group_by_temporal', side_effect=mock_group_by_temporal)
 
     mocker.patch('httpx.Client.get', side_effect=http_request)
     mocker.patch('httpx.Client.post', side_effect=http_request)
@@ -262,11 +263,15 @@ async def stream_model_logic(messages: list[Message], info: AgentInfo) -> AsyncI
     if m.role == 'user':
         if response := text_responses.get(m.content):
             if isinstance(response, str):
-                *words, last_word = response.split(' ')
+                words = response.split(' ')
+                chunk: list[str] = []
                 for work in words:
-                    yield f'{work} '
-                    await asyncio.sleep(0.05)
-                yield last_word
+                    chunk.append(work)
+                    if len(chunk) == 3:
+                        yield ' '.join(chunk) + ' '
+                        chunk.clear()
+                if chunk:
+                    yield ' '.join(chunk)
                 return
             else:
                 if isinstance(response.args, ArgsObject):
@@ -275,10 +280,9 @@ async def stream_model_logic(messages: list[Message], info: AgentInfo) -> AsyncI
                     json_text = response.args.args_json
 
                 yield {1: DeltaToolCall(name=response.tool_name)}
-                for chunk_index in range(0, len(json_text), 10):
-                    chunk = json_text[chunk_index : chunk_index + 10]
-                    yield {1: DeltaToolCall(json_args=chunk)}
-                    await asyncio.sleep(0.05)
+                for chunk_index in range(0, len(json_text), 15):
+                    text_chunk = json_text[chunk_index : chunk_index + 15]
+                    yield {1: DeltaToolCall(json_args=text_chunk)}
                 return
 
     sys.stdout.write(str(debug.format(messages, info)))
@@ -292,3 +296,8 @@ def mock_infer_model(model: Model | KnownModelName) -> Model:
         return TestModel()
     else:
         return FunctionModel(model_logic, stream_function=stream_model_logic)
+
+
+def mock_group_by_temporal(aiter: Any, soft_max_interval: float | None) -> Any:
+    """Mock group_by_temporal to avoid debouncing, since the iterators above have no delay."""
+    return group_by_temporal(aiter, None)

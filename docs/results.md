@@ -176,14 +176,11 @@ async def main():
     async with agent.run_stream('Where does "hello world" come from?') as result:  # (2)!
         async for message in result.stream():  # (3)!
             print(message)
-            #> The first
-            #> The first known use
+            #> The first known
             #> The first known use of "hello,
-            #> The first known use of "hello, world" was
-            #> The first known use of "hello, world" was in a
+            #> The first known use of "hello, world" was in
             #> The first known use of "hello, world" was in a 1974 textbook
-            #> The first known use of "hello, world" was in a 1974 textbook about the
-            #> The first known use of "hello, world" was in a 1974 textbook about the C programming
+            #> The first known use of "hello, world" was in a 1974 textbook about the C
             #> The first known use of "hello, world" was in a 1974 textbook about the C programming language.
 ```
 
@@ -205,15 +202,12 @@ async def main():
     async with agent.run_stream('Where does "hello world" come from?') as result:
         async for message in result.stream_text(delta=True):  # (1)!
             print(message)
-            #> The first
-            #> known use
-            #> of "hello,
-            #> world" was
-            #> in a
-            #> 1974 textbook
-            #> about the
-            #> C programming
-            #> language.
+            #> The first known
+            #> use of "hello,
+            #> world" was in
+            #> a 1974 textbook
+            #> about the C
+            #> programming language.
 ```
 
 1. [`stream_text`][pydantic_ai.result.StreamedRunResult.stream_text] will error if the response is not text
@@ -252,11 +246,11 @@ async def main():
     async with agent.run_stream(user_input) as result:
         async for profile in result.stream():
             print(profile)
-            #> {'name': 'B'}
             #> {'name': 'Ben'}
-            #> {'name': 'Ben', 'dob': date(1990, 1, 28), 'bio': ''}
+            #> {'name': 'Ben'}
+            #> {'name': 'Ben', 'dob': date(1990, 1, 28), 'bio': 'Likes'}
             #> {'name': 'Ben', 'dob': date(1990, 1, 28), 'bio': 'Likes the chain the '}
-            #> {'name': 'Ben', 'dob': date(1990, 1, 28), 'bio': 'Likes the chain the dog and the pyramid'}
+            #> {'name': 'Ben', 'dob': date(1990, 1, 28), 'bio': 'Likes the chain the dog and the pyr'}
             #> {'name': 'Ben', 'dob': date(1990, 1, 28), 'bio': 'Likes the chain the dog and the pyramid'}
             #> {'name': 'Ben', 'dob': date(1990, 1, 28), 'bio': 'Likes the chain the dog and the pyramid'}
 ```
@@ -295,14 +289,11 @@ async def main():
             except ValidationError:
                 continue
             print(profile)
-            #> {'name': 'B'}
             #> {'name': 'Ben'}
             #> {'name': 'Ben'}
-            #> {'name': 'Ben', 'dob': date(1990, 1, 28), 'bio': ''}
-            #> {'name': 'Ben', 'dob': date(1990, 1, 28), 'bio': 'Likes the '}
+            #> {'name': 'Ben', 'dob': date(1990, 1, 28), 'bio': 'Likes'}
             #> {'name': 'Ben', 'dob': date(1990, 1, 28), 'bio': 'Likes the chain the '}
-            #> {'name': 'Ben', 'dob': date(1990, 1, 28), 'bio': 'Likes the chain the dog and th'}
-            #> {'name': 'Ben', 'dob': date(1990, 1, 28), 'bio': 'Likes the chain the dog and the pyramid'}
+            #> {'name': 'Ben', 'dob': date(1990, 1, 28), 'bio': 'Likes the chain the dog and the pyr'}
             #> {'name': 'Ben', 'dob': date(1990, 1, 28), 'bio': 'Likes the chain the dog and the pyramid'}
             #> {'name': 'Ben', 'dob': date(1990, 1, 28), 'bio': 'Likes the chain the dog and the pyramid'}
 ```
