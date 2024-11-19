@@ -2,19 +2,15 @@
 
 PydanticAI is available [on PyPI](https://pypi.org/project/pydantic-ai/) so installation is as simple as:
 
-=== "pip"
 
-    ```bash
-    pip install pydantic-ai
-    ```
-
-=== "uv"
-
-    ```bash
-    uv add pydantic-ai
-    ```
+```bash
+pip/uv-add pydantic-ai
+```
 
 It requires Python 3.9+.
+
+!!! note "Use `--prerelease=allow` with uv"
+    Until Pydantic v2.10 is released (very soon), you'll need to use `--prerelease=allow` with `uv` to install PydanticAI.
 
 ## Use with Pydantic Logfire
 
@@ -22,20 +18,20 @@ PydanticAI has an excellent (but completely optional) integration with [Pydantic
 
 To use Logfire with PydanticAI, install PydanticAI with the `logfire` optional group:
 
-=== "pip"
-
-    ```bash
-    pip install 'pydantic-ai[logfire]'
-    ```
-
-=== "uv"
-
-    ```bash
-    uv add 'pydantic-ai[logfire]'
-    ```
+```bash
+pip/uv-add 'pydantic-ai[logfire]'
+```
 
 From there, follow the [Logfire setup cods](logfire.md#integrating-logfire) to configure Logfire.
 
-## Next Steps
+## Running Examples
 
-To run PydanticAI, follow instructions [in examples](examples/index.md).
+PydanticAI bundles its examples so you can run them very easily.
+
+To install extra dependencies required to run examples, install the `examples` optional group:
+
+```bash
+pip/uv-add 'pydantic-ai[examples]'
+```
+
+For next steps, follow instructions [in examples](examples/index.md).

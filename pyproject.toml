@@ -44,7 +44,7 @@ dependencies = [
 
 [project.optional-dependencies]
 logfire = [
-    "logfire>=2",
+    "logfire>=2.3",
 ]
 examples = [
     "asyncpg>=0.30.0",
