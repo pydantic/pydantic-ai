@@ -1,4 +1,4 @@
-from pydantic_ai_examples.pydantic_model import agentResults are the final values returned from [running an agent](agents.md#running-agents).
+Results are the final values returned from [running an agent](agents.md#running-agents).
 The result values are wrapped in [`RunResult`][pydantic_ai.result.RunResult] and [`StreamedRunResult`][pydantic_ai.result.StreamedRunResult] so you can access other data like [cost][pydantic_ai.result.Cost] of the run and [message history](message-history.md#accessing-messages-from-results)
 
 Both `RunResult` and `StreamedRunResult` are generic in the data they wrap, so typing information about the data returned by the agent is preserved.
