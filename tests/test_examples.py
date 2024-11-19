@@ -39,9 +39,15 @@ def register_fake_db():
     class DatabaseConn:
         users: FakeTable = field(default_factory=FakeTable)
 
+        async def execute(self, query: str) -> None:
+            pass
+
+    class QueryError(RuntimeError):
+        pass
+
     module_name = 'fake_database'
     sys.modules[module_name] = module = ModuleType(module_name)
-    module.__dict__.update({'DatabaseConn': DatabaseConn})
+    module.__dict__.update({'DatabaseConn': DatabaseConn, 'QueryError': QueryError})
 
     yield
 
@@ -170,6 +176,27 @@ text_responses: dict[str, str | ToolCall] = {
                 'risk': 8,
             }
         ),
+    ),
+    'Where the olympics held in 2012?': ToolCall(
+        tool_name='final_result',
+        args=ArgsObject({'city': 'London', 'country': 'United Kingdom'}),
+    ),
+    'The box is 10x20x30': 'Please provide the units for the dimensions (e.g., cm, in, m).',
+    'The box is 10x20x30 cm': ToolCall(
+        tool_name='final_result',
+        args=ArgsObject({'width': 10, 'height': 20, 'depth': 30, 'units': 'cm'}),
+    ),
+    'red square, blue circle, green triangle': ToolCall(
+        tool_name='final_result_list',
+        args=ArgsObject({'response': ['red', 'blue', 'green']}),
+    ),
+    'square size 10, circle size 20, triangle size 30': ToolCall(
+        tool_name='final_result_list_2',
+        args=ArgsObject({'response': [10, 20, 30]}),
+    ),
+    'get me uses who were last active yesterday.': ToolCall(
+        tool_name='final_result_Success',
+        args=ArgsObject({'sql_query': 'SELECT * FROM users WHERE last_active::date = today() - interval 1 day'}),
     ),
 }
 

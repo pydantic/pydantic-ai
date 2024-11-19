@@ -55,7 +55,7 @@ _(This example is complete, it can be run "as is")_
 Dependencies are accessed through the [`CallContext`][pydantic_ai.dependencies.CallContext] type, this should be the first parameter of system prompt functions etc.
 
 
-```python title="system_prompt_dependencies.py" hl_lines="20-27"
+```py title="system_prompt_dependencies.py" hl_lines="20-27"
 from dataclasses import dataclass
 
 import httpx
@@ -113,7 +113,7 @@ to use `async` methods where dependencies perform IO, although synchronous depen
 
 Here's the same example as above, but with a synchronous dependency:
 
-```python title="sync_dependencies.py"
+```py title="sync_dependencies.py"
 from dataclasses import dataclass
 
 import httpx
@@ -161,7 +161,7 @@ _(This example is complete, it can be run "as is")_
 
 As well as system prompts, dependencies can be used in [retrievers](agents.md#retrievers) and [result validators](results.md#result-validators-functions).
 
-```python title="full_example.py" hl_lines="27-35 38-48"
+```py title="full_example.py" hl_lines="27-35 38-48"
 from dataclasses import dataclass
 
 import httpx

@@ -77,6 +77,7 @@ agent: Agent[Deps, Response] = Agent(
     'gemini-1.5-flash',
     # Type ignore while we wait for PEP-0747, nonetheless unions will work fine everywhere else
     result_type=Response,  # type: ignore
+    deps_type=Deps,
 )
 
 

@@ -66,7 +66,7 @@ There are three ways to run an agent:
 
 Here's a simple example demonstrating all three:
 
-```python title="run_agent.py"
+```py title="run_agent.py"
 from pydantic_ai import Agent
 
 agent = Agent('openai:gpt-4o')
@@ -95,7 +95,7 @@ An agent **run** might represent an entire conversation — there's no limit to 
 
 Here's an example of a conversation comprised of multiple runs:
 
-```python title="conversation_example.py" hl_lines="13"
+```py title="conversation_example.py" hl_lines="13"
 from pydantic_ai import Agent
 
 agent = Agent('openai:gpt-4o')
@@ -131,7 +131,7 @@ You can add both to a single agent; they're concatenated in the order they're de
 
 Here's an example using both types of system prompts:
 
-```python title="system_prompts.py"
+```py title="system_prompts.py"
 from datetime import date
 
 from pydantic_ai import Agent, CallContext
@@ -228,7 +228,7 @@ _(This example is complete, it can be run "as is")_
 
 Let's print the messages from that game to see what happened:
 
-```python title="dice_game_messages.py"
+```py title="dice_game_messages.py"
 from dice_game import dice_result
 
 print(dice_result.all_messages())
@@ -417,7 +417,7 @@ If models behave unexpectedly (e.g., the retry limit is exceeded, or their API r
 
 In these cases, [`agent.last_run_messages`][pydantic_ai.Agent.last_run_messages] can be used to access the messages exchanged during the run to help diagnose the issue.
 
-```python
+```py
 from pydantic_ai import Agent, ModelRetry, UnexpectedModelBehaviour
 
 agent = Agent('openai:gpt-4o')
