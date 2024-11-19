@@ -95,7 +95,7 @@ An agent **run** might represent an entire conversation — there's no limit to 
 
 Here's an example of a conversation comprised of multiple runs:
 
-```python title="conversation_example.py"
+```python title="conversation_example.py" hl_lines="13"
 from pydantic_ai import Agent
 
 agent = Agent('openai:gpt-4o')
@@ -107,12 +107,14 @@ print(result1.data)
 
 # Second run, passing previous messages
 result2 = agent.run_sync(
-    'What was his most famous equation?', message_history=result1.new_messages()  # (1)!
+    'What was his most famous equation?',
+    message_history=result1.new_messages(),  # (1)!
 )
 print(result2.data)
 #> Albert Einstein's most famous equation is (E = mc^2).
 ```
-1. Continue the conversation, without `message_history` the model would not know who "he" was referring to.
+
+1. Continue the conversation, without `message_history` the model would not know who "his" was referring to.
 
 _(This example is complete, it can be run "as is")_
 
@@ -158,7 +160,7 @@ print(result.data)
 
 1. The agent expects a string dependency.
 2. Static system prompt defined at agent creation time.
-3. Dynamic system prompt defined via a decorator.
+3. Dynamic system prompt defined via a decorator with [`CallContext`][pydantic_ai.dependencies.CallContext], this is called just after `run_sync`, not when the agent is created, so can benefit from runtime information like the dependencies used on that run.
 4. Another dynamic system prompt, system prompts don't have to have the `CallContext` parameter.
 
 _(This example is complete, it can be run "as is")_
