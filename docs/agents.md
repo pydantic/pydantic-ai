@@ -31,7 +31,7 @@ roulette_agent = Agent(  # (1)!
 )
 
 
-@roulette_agent.retriever_context
+@roulette_agent.retriever
 async def roulette_wheel(ctx: CallContext[int], square: int) -> str:  # (2)!
     """check if the square is a winner"""
     return 'winner' if square == ctx.deps else 'loser'
@@ -179,7 +179,9 @@ They're useful when it is impractical or impossible to put all the context an ag
 There are two different decorator functions to register retrievers:
 
 1. [`@agent.retriever_plain`][pydantic_ai.Agent.retriever_plain] — for retrievers that don't need access to the agent [context][pydantic_ai.dependencies.CallContext]
-2. [`@agent.retriever_context`][pydantic_ai.Agent.retriever_context] — for retrievers that do need access to the agent [context][pydantic_ai.dependencies.CallContext]
+2. [`@agent.retriever`][pydantic_ai.Agent.retriever] — for retrievers that do need access to the agent [context][pydantic_ai.dependencies.CallContext]
+
+`@agent.retriever` is the default since in the majority of cases retrievers will need access to the agent context.
 
 Here's an example using both:
 
@@ -205,7 +207,7 @@ def roll_dice() -> str:
     return str(random.randint(1, 6))
 
 
-@agent.retriever_context  # (4)!
+@agent.retriever  # (4)!
 def get_player_name(ctx: CallContext[str]) -> str:
     """Get the player's name."""
     return ctx.deps
@@ -219,7 +221,7 @@ print(dice_result.data)
 1. This is a pretty simple task, so we can use the fast and cheap Gemini flash model.
 2. We pass the user's name as the dependency, to keep things simple we use just the name as a string as the dependency.
 3. This retriever doesn't need any context, it just returns a random number. You could probably use a dynamic system prompt in this case.
-4. This retriever needs the player's name, so it uses `CallContext` to access dependencies which are just the player's name.
+4. This retriever needs the player's name, so it uses `CallContext` to access dependencies which are just the player's name in this case.
 5. Run the agent, passing the player's name as the dependency.
 
 _(This example is complete, it can be run "as is")_
@@ -362,7 +364,7 @@ Validation errors from both retriever parameter validation and [structured resul
 
 You can also raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] from within a [retriever](#retrievers) or [result validator functions](results.md#result-validators-functions) to tell the model it should retry.
 
-- The default retry count is **1** but can be altered for the [entire agent][pydantic_ai.Agent.__init__], a [specific retriever][pydantic_ai.Agent.retriever_context], or a [result validator][pydantic_ai.Agent.__init__].
+- The default retry count is **1** but can be altered for the [entire agent][pydantic_ai.Agent.__init__], a [specific retriever][pydantic_ai.Agent.retriever], or a [result validator][pydantic_ai.Agent.__init__].
 - You can access the current retry count from within a retriever or result validator via [`ctx.retry`][pydantic_ai.dependencies.CallContext].
 
 Here's an example:
@@ -386,7 +388,7 @@ agent = Agent(
 )
 
 
-@agent.retriever_context(retries=2)
+@agent.retriever(retries=2)
 def get_user_by_name(ctx: CallContext[DatabaseConn], name: str) -> int:
     """Get a user's ID from their full name."""
     print(name)

@@ -119,7 +119,7 @@ async def get_location(location_description: str) -> str:
     return json.dumps(lat_lng)
 
 
-@weather_agent.retriever_context
+@weather_agent.retriever
 async def get_weather(_: CallContext[None], lat: int, lng: int):
     if (lat, lng) == (51, 0):
         # it always rains in London
@@ -199,7 +199,7 @@ async def call_function_model(messages: list[Message], _: AgentInfo) -> ModelAny
 var_args_agent = Agent(FunctionModel(call_function_model), deps_type=int)
 
 
-@var_args_agent.retriever_context
+@var_args_agent.retriever
 def get_var_args(ctx: CallContext[int], *args: int):
     assert ctx.deps == 123
     return json.dumps({'args': args})
@@ -233,7 +233,7 @@ async def call_retriever(messages: list[Message], info: AgentInfo) -> ModelAnyRe
 def test_deps_none():
     agent = Agent(FunctionModel(call_retriever))
 
-    @agent.retriever_context
+    @agent.retriever
     async def get_none(ctx: CallContext[None]):
         nonlocal called
 
@@ -259,7 +259,7 @@ def test_deps_init():
         return ''
 
     agent = Agent(FunctionModel(call_retriever), deps_type=tuple[str, str])
-    agent.retriever_context(get_check_foobar)
+    agent.retriever(get_check_foobar)
     called = False
     agent.run_sync('Hello', deps=('foo', 'bar'))
     assert called
@@ -277,12 +277,12 @@ def test_model_arg():
 agent_all = Agent()
 
 
-@agent_all.retriever_context
+@agent_all.retriever
 async def foo(_: CallContext[None], x: int) -> str:
     return str(x + 1)
 
 
-@agent_all.retriever_context(retries=3)
+@agent_all.retriever(retries=3)
 def bar(ctx, x: int) -> str:  # pyright: ignore[reportUnknownParameterType,reportMissingParameterType]
     return str(x + 2)
 

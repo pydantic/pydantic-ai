@@ -78,10 +78,10 @@ def function_schema(either_function: _retriever.RetrieverEitherFunc[AgentDeps, R
 
             if index == 0 and takes_ctx:
                 if not _is_call_ctx(annotation):
-                    errors.append('First argument must be a CallContext instance when using `.retriever_context`')
+                    errors.append('First argument must be a CallContext instance when using `.retriever`')
                 continue
             elif not takes_ctx and _is_call_ctx(annotation):
-                errors.append('CallContext instance can only be used with `.retriever_context`')
+                errors.append('CallContext instance can only be used with `.retriever`')
                 continue
             elif index != 0 and _is_call_ctx(annotation):
                 errors.append('CallContext instance can only be used as the first argument')

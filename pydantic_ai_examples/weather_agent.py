@@ -41,7 +41,7 @@ weather_agent = Agent(
 )
 
 
-@weather_agent.retriever_context
+@weather_agent.retriever
 async def get_lat_lng(
     ctx: CallContext[Deps], location_description: str
 ) -> dict[str, float]:
@@ -71,7 +71,7 @@ async def get_lat_lng(
         raise ModelRetry('Could not find the location')
 
 
-@weather_agent.retriever_context
+@weather_agent.retriever
 async def get_weather(ctx: CallContext[Deps], lat: float, lng: float) -> dict[str, Any]:
     """Get the weather at a location.
 
