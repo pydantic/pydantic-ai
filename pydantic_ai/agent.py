@@ -366,6 +366,7 @@ class Agent(Generic[AgentDeps, ResultData]):
 
         result = agent.run_sync('foobar', deps='spam')
         print(result.data)
+        #> success (no retriever calls)
         ```
         """
         self._system_prompt_functions.append(_system_prompt.SystemPromptRunner(func))
@@ -420,6 +421,7 @@ class Agent(Generic[AgentDeps, ResultData]):
 
         result = agent.run_sync('foobar', deps='spam')
         print(result.data)
+        #> success (no retriever calls)
         ```
         """
         self._result_validators.append(_result.ResultValidator(func))
@@ -471,6 +473,7 @@ class Agent(Generic[AgentDeps, ResultData]):
 
         result = agent.run_sync('foobar', deps=1)
         print(result.data)
+        #> {"foobar":1,"spam":1.0}
         ```
 
         Args:
@@ -530,6 +533,7 @@ class Agent(Generic[AgentDeps, ResultData]):
 
         result = agent.run_sync('foobar', deps=1)
         print(result.data)
+        #> {"foobar":123,"spam":3.14}
         ```
 
         Args:
