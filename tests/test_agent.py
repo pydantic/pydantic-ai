@@ -234,7 +234,7 @@ def test_response_union_allow_str(input_union_callable: Callable[[], Any]):
     assert agent._result_schema.allow_text_result is True  # pyright: ignore[reportPrivateUsage,reportOptionalMemberAccess]
 
     result = agent.run_sync('Hello')
-    assert result.data == snapshot('{}')
+    assert result.data == snapshot('success (no retriever calls)')
     assert got_tool_call_name == snapshot(None)
 
     assert m.agent_model_retrievers == snapshot({})

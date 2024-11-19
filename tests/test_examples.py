@@ -235,5 +235,7 @@ async def stream_model_logic(messages: list[Message], info: AgentInfo) -> AsyncI
 def mock_infer_model(model: Model | KnownModelName) -> Model:
     if isinstance(model, (FunctionModel, TestModel)):
         return model
+    elif model == 'test':
+        return TestModel()
     else:
         return FunctionModel(model_logic, stream_function=stream_model_logic)

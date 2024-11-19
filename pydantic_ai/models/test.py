@@ -167,7 +167,10 @@ class TestAgentModel(AgentModel):
                     for message in messages:
                         if isinstance(message, ToolReturn):
                             output[message.tool_name] = message.content
-                    return ModelTextResponse(content=pydantic_core.to_json(output).decode())
+                    if output:
+                        return ModelTextResponse(content=pydantic_core.to_json(output).decode())
+                    else:
+                        return ModelTextResponse(content='success (no retriever calls)')
                 else:
                     return ModelTextResponse(content=response_text.value)
             else:
