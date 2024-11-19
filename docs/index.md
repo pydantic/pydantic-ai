@@ -2,21 +2,21 @@
 
 --8<-- "docs/.partials/index-header.html"
 
-When I first found FastAPI, I got it immediately, I was excited to find something genuinely innovative and ergonomic built on Pydantic.
+When I first found FastAPI, I got it immediately, I was excited to find something so genuinely innovative and yet ergonomic built on Pydantic.
 
 Virtually every Agent Framework and LLM library in Python uses Pydantic, but when we came to use Gen AI in [Pydantic Logfire](https://pydantic.dev/logfire), I couldn't find anything that gave me the same feeling.
 
-PydanticAI is a Python AI Framework designed to make it less painful to build production grade applications with Generative AI.
+PydanticAI is a Python Agent Framework designed to make it less painful to build production grade applications with Generative AI.
 
 ## Why use PydanticAI
 
 * Built by the team behind Pydantic (the validation layer of the OpenAI SDK, the Anthropic SDK, Langchain, LlamaIndex, AutoGPT, Transformers, Instructor and many more)
-* Typesafe
 * Multi-model — currently with OpenAI and Gemini are support, Anthropic [coming soon](https://github.com/pydantic/pydantic-ai/issues/63), simply interface to implement other models or adapt existing ones
+* Type-safe
 * Built on tried and tested best practices in Python
 * Structured response validation with Pydantic
 * Streamed responses, including validation of streamed structured responses with Pydantic
-* Novel, typesafe dependency injection system
+* Novel, type-safe dependency injection system
 * Logfire integration
 
 !!! example "In Beta"
@@ -38,6 +38,7 @@ print(result.data)
 The first known use of "hello, world" was in a 1974 textbook about the C programming language.
 """
 ```
+_(This example is complete, it can be run "as is")_
 
 Not very interesting yet, but we can easily add retrievers, dynamic system prompts and structured responses to build more powerful agents.
 
@@ -89,12 +90,15 @@ async def add_customer_name(ctx: CallContext[SupportDependencies]) -> str:
 async def customer_balance(
     ctx: CallContext[SupportDependencies], include_pending: bool
 ) -> str:
-    """Returns the customer's current account balance"""  # (7)!
+    """Returns the customer's current account balance."""  # (7)!
     balance = await ctx.deps.db.customer_balance(
         id=ctx.deps.customer_id,
         include_pending=include_pending,
     )
     return f'${balance:.2f}'
+
+
+...  # (11)!
 
 
 deps = SupportDependencies(customer_id=123, db=DatabaseConn())
@@ -121,10 +125,11 @@ support_advice="I'm sorry to hear that, John. We are temporarily blocking your c
 8. [Run the agent](agents.md#running-agents) synchronously, conducting a conversation with the LLM until a final response is reached.
 9. The response from the agent will, be guaranteed to be a `SupportResult`, if validation fails [reflection](agents.md#reflection-and-self-correction) will mean the agent is prompted to try again.
 10. The result will be validated with Pydantic to guarantee it is a `SupportResult`, since the agent is generic, it'll also be typed as a `SupportResult` to aid with static type checking.
+11. In real use case, you'd add many more retrievers to the agent to extend the context it's equipped with and support it can provide.
 
-!!! tip "Complete `weather_agent.py` example"
-    This example is incomplete for the sake of brevity; you can find a complete `weather_agent.py` example [here](examples/weather-agent.md).
+!!! tip "Complete `bank_support.py` example"
+    This example is incomplete for the sake of brevity (the definition of `DatabaseConn` is missing); you can find a complete `bank_support.py` example [here](examples/bank-support.md).
 
-## Example — Result Validation
+## Next Steps
 
-TODO
+To try PydanticAI yourself, follow instructions [in examples](examples/index.md).
