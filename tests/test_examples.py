@@ -204,13 +204,13 @@ text_responses: dict[str, str | ToolCall] = {
         tool_name='final_result_Success',
         args=ArgsObject({'sql_query': 'SELECT * FROM users WHERE last_active::date = today() - interval 1 day'}),
     ),
-    'my name is Ben, I was born on January 28th 1990, I like sports and music.': ToolCall(
+    'My name is Ben, I was born on January 28th 1990, I like the chain the dog and the pyramid.': ToolCall(
         tool_name='final_result',
         args=ArgsObject(
             {
                 'name': 'Ben',
-                'date_of_birth': '1990-01-28',
-                'interests': ['sports', 'music'],
+                'dob': '1990-01-28',
+                'bio': 'Likes the chain the dog and the pyramid',
             }
         ),
     ),

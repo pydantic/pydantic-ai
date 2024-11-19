@@ -229,15 +229,15 @@ Here's an example of streaming a use profile as it's built:
 ```py title="streamed_user_profile.py"
 from datetime import date
 
-from typing_extensions import Literal, TypedDict
+from typing_extensions import TypedDict
 
 from pydantic_ai import Agent
 
 
 class UserProfile(TypedDict, total=False):
     name: str
-    date_of_birth: date
-    interests: list[Literal['sports', 'music', 'art', 'readings']]
+    dob: date
+    bio: str
 
 
 agent = Agent(
@@ -248,16 +248,17 @@ agent = Agent(
 
 
 async def main():
-    user_input = 'my name is Ben, I was born on January 28th 1990, I like sports and music.'
+    user_input = 'My name is Ben, I was born on January 28th 1990, I like the chain the dog and the pyramid.'
     async with agent.run_stream(user_input) as result:
         async for profile in result.stream():
             print(profile)
             #> {'name': 'B'}
             #> {'name': 'Ben'}
-            #> {'name': 'Ben'}
-            #> {'name': 'Ben', 'date_of_birth': date(1990, 1, 28), 'interests': []}
-            #> {'name': 'Ben', 'date_of_birth': date(1990, 1, 28), 'interests': ['sports', 'music']}
-            #> {'name': 'Ben', 'date_of_birth': date(1990, 1, 28), 'interests': ['sports', 'music']}
+            #> {'name': 'Ben', 'dob': date(1990, 1, 28), 'bio': ''}
+            #> {'name': 'Ben', 'dob': date(1990, 1, 28), 'bio': 'Likes the chain the '}
+            #> {'name': 'Ben', 'dob': date(1990, 1, 28), 'bio': 'Likes the chain the dog and the pyramid'}
+            #> {'name': 'Ben', 'dob': date(1990, 1, 28), 'bio': 'Likes the chain the dog and the pyramid'}
+            #> {'name': 'Ben', 'dob': date(1990, 1, 28), 'bio': 'Likes the chain the dog and the pyramid'}
 ```
 
 _(This example is complete, it can be run "as is")_
@@ -268,42 +269,46 @@ If you want fine-grained control of validation, particularly catching validation
 from datetime import date
 
 from pydantic import ValidationError
-from typing_extensions import Literal, TypedDict
+from typing_extensions import TypedDict
 
 from pydantic_ai import Agent
 
 
 class UserProfile(TypedDict, total=False):
     name: str
-    date_of_birth: date
-    interests: list[Literal['sports', 'music', 'art', 'readings']]
+    dob: date
+    bio: str
 
 
 agent = Agent('openai:gpt-4o', result_type=UserProfile)
 
 
 async def main():
-    user_input = 'my name is Ben, I was born on January 28th 1990, I like sports and music.'
+    user_input = 'My name is Ben, I was born on January 28th 1990, I like the chain the dog and the pyramid.'
     async with agent.run_stream(user_input) as result:
         async for message, last in result.stream_structured(debounce_by=0.01):  # (1)!
             try:
-                profile = await result.validate_structured_result(message, allow_partial=not last)  # (2)!
+                profile = await result.validate_structured_result(  # (2)!
+                    message,
+                    allow_partial=not last,
+                )
             except ValidationError:
                 continue
             print(profile)
             #> {'name': 'B'}
             #> {'name': 'Ben'}
             #> {'name': 'Ben'}
-            #> {'name': 'Ben'}
-            #> {'name': 'Ben', 'date_of_birth': date(1990, 1, 28)}
-            #> {'name': 'Ben', 'date_of_birth': date(1990, 1, 28), 'interests': []}
-            #> {'name': 'Ben', 'date_of_birth': date(1990, 1, 28), 'interests': ['sports']}
-            #> {'name': 'Ben', 'date_of_birth': date(1990, 1, 28), 'interests': ['sports', 'music']}
-            #> {'name': 'Ben', 'date_of_birth': date(1990, 1, 28), 'interests': ['sports', 'music']}
+            #> {'name': 'Ben', 'dob': date(1990, 1, 28), 'bio': ''}
+            #> {'name': 'Ben', 'dob': date(1990, 1, 28), 'bio': 'Likes the '}
+            #> {'name': 'Ben', 'dob': date(1990, 1, 28), 'bio': 'Likes the chain the '}
+            #> {'name': 'Ben', 'dob': date(1990, 1, 28), 'bio': 'Likes the chain the dog and th'}
+            #> {'name': 'Ben', 'dob': date(1990, 1, 28), 'bio': 'Likes the chain the dog and the pyramid'}
+            #> {'name': 'Ben', 'dob': date(1990, 1, 28), 'bio': 'Likes the chain the dog and the pyramid'}
+            #> {'name': 'Ben', 'dob': date(1990, 1, 28), 'bio': 'Likes the chain the dog and the pyramid'}
 ```
 
-1. [`stream_structured`][pydantic_ai.result.StreamedRunResult.stream_structured]
-2. [`validate_structured_result`][pydantic_ai.result.StreamedRunResult.validate_structured_result]
+1. [`stream_structured`][pydantic_ai.result.StreamedRunResult.stream_structured] streams the data as [`ModelStructuredResponse`][pydantic_ai.messages.ModelStructuredResponse] objects, thus iteration can't fail with a `ValidationError`.
+2. [`validate_structured_result`][pydantic_ai.result.StreamedRunResult.validate_structured_result] validates the data, `allow_partial=True` enables pydantic's [`experimental_allow_partial` flag on `TypeAdapter`][pydantic.type_adapter.TypeAdapter.validate_json].
 
 _(This example is complete, it can be run "as is")_
 
