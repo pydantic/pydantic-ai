@@ -85,7 +85,7 @@ async def main():
                     table.add_row(
                         str(wid),
                         whale['name'],
-                        f'{whale['length']:0.0f}',
+                        f'{whale["length"]:0.0f}',
                         f'{w:0.0f}' if (w := whale.get('weight')) else '…',
                         whale.get('ocean') or '…',
                         whale.get('description') or '…',
