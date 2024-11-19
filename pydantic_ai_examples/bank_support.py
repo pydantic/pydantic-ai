@@ -16,7 +16,7 @@ class DatabaseConn:
     """This is a fake database for example purposes.
 
     In reality, you'd be connecting to an external database
-    to get information about customers.
+    (e.g. PostgreSQL) to get information about customers.
     """
 
     @classmethod
