@@ -4,9 +4,9 @@ Example demonstrating how to use Pydantic AI to generate SQL queries based on us
 
 Demonstrates:
 
-* custom `result_type`
-* dynamic system prompt
-* result validation
+* [dynamic system prompt](../agents.md#system-prompts)
+* [structured `result_type`](../results.md#structured-result-validation)
+* [result validation](../results.md#result-validators-functions)
 * [agent dependencies](../dependencies.md)
 
 ## Running the Example

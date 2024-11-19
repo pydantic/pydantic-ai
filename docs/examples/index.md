@@ -61,7 +61,17 @@ For examples, to run the very simple [`pydantic_model`](./pydantic-model.md) exa
 python/uv-run -m pydantic_ai_examples.pydantic_model
 ```
 
-But you'll probably want to edit examples in addition to just running them. You can copy the examples to a new directory with:
+If you like on-liners and you're using uv, you can run a pydantic-ai example with zero setup:
+
+```bash
+OPENAI_API_KEY='your-api-key' \
+  uv run --with 'pydantic-ai[examples]' \
+  -m pydantic_ai_examples.pydantic_model
+```
+
+---
+
+You'll probably want to edit examples in addition to just running them. You can copy the examples to a new directory with:
 
 ```bash
 python/uv-run -m pydantic_ai_examples --copy-to examples/

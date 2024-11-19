@@ -23,6 +23,7 @@ nav:
     - examples/index.md
     - examples/pydantic-model.md
     - examples/weather-agent.md
+    - examples/bank-support.md
     - examples/sql-gen.md
     - examples/rag.md
     - examples/stream-markdown.md

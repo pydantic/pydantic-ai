@@ -4,7 +4,7 @@ RAG search example. This demo allows you to ask question of the [logfire](https:
 
 Demonstrates:
 
-* retrievers
+* [retrievers](../agents.md#retrievers)
 * [agent dependencies](../dependencies.md)
 * RAG search
 

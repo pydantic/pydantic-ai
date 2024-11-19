@@ -2,7 +2,7 @@ Simple example of using Pydantic AI to construct a Pydantic model from a text in
 
 Demonstrates:
 
-* custom `result_type`
+* [structured `result_type`](../results.md#structured-result-validation)
 
 ## Running the Example
 

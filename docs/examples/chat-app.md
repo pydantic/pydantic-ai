@@ -3,8 +3,8 @@ Simple chat app example build with FastAPI.
 Demonstrates:
 
 * [reusing chat history](../message-history.md)
-* serializing messages
-* streaming responses
+* [serializing messages](../message-history.md#accessing-messages-from-results)
+* [streaming responses](../results.md#streamed-results)
 
 This demonstrates storing chat history between requests and using it to give the model context for new responses.
 
