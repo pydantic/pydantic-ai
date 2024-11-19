@@ -6,7 +6,7 @@ import pytest
 from inline_snapshot import snapshot
 from pydantic import BaseModel
 
-from pydantic_ai import Agent, CallContext, ModelRetry, UnexpectedModelBehaviour, UserError
+from pydantic_ai import Agent, CallContext, ModelRetry, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
     ArgsJson,
     ArgsObject,
@@ -445,7 +445,7 @@ def test_empty_tool_calls():
 
     agent = Agent(FunctionModel(empty))
 
-    with pytest.raises(UnexpectedModelBehaviour, match='Received empty tool call message'):
+    with pytest.raises(UnexpectedModelBehavior, match='Received empty tool call message'):
         agent.run_sync('Hello')
 
 
@@ -455,7 +455,7 @@ def test_unknown_retriever():
 
     agent = Agent(FunctionModel(empty))
 
-    with pytest.raises(UnexpectedModelBehaviour, match=r'Exceeded maximum retries \(1\) for result validation'):
+    with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum retries \(1\) for result validation'):
         agent.run_sync('Hello')
     assert agent.last_run_messages == snapshot(
         [

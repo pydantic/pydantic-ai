@@ -23,7 +23,7 @@ from openai.types.chat.chat_completion_message_tool_call import Function
 from openai.types.completion_usage import CompletionUsage, PromptTokensDetails
 from typing_extensions import TypedDict
 
-from pydantic_ai import Agent, ModelRetry, UnexpectedModelBehaviour, _utils
+from pydantic_ai import Agent, ModelRetry, UnexpectedModelBehavior, _utils
 from pydantic_ai.messages import (
     ArgsJson,
     ModelStructuredResponse,
@@ -424,6 +424,6 @@ async def test_no_content(allow_model_requests: None):
     m = OpenAIModel('gpt-4', openai_client=mock_client)
     agent = Agent(m, result_type=MyTypedDict)
 
-    with pytest.raises(UnexpectedModelBehaviour, match='Streamed response ended without con'):
+    with pytest.raises(UnexpectedModelBehavior, match='Streamed response ended without con'):
         async with agent.run_stream(''):
             pass

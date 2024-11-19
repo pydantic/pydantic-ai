@@ -444,12 +444,12 @@ user_id=123 message='Hello John, would you be free for coffee sometime next week
 
 ## Model errors
 
-If models behave unexpectedly (e.g., the retry limit is exceeded, or their API returns `503`), agent runs will raise [`UnexpectedModelBehaviour`][pydantic_ai.exceptions.UnexpectedModelBehaviour].
+If models behave unexpectedly (e.g., the retry limit is exceeded, or their API returns `503`), agent runs will raise [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior].
 
 In these cases, [`agent.last_run_messages`][pydantic_ai.Agent.last_run_messages] can be used to access the messages exchanged during the run to help diagnose the issue.
 
 ```py
-from pydantic_ai import Agent, ModelRetry, UnexpectedModelBehaviour
+from pydantic_ai import Agent, ModelRetry, UnexpectedModelBehavior
 
 agent = Agent('openai:gpt-4o')
 
@@ -464,7 +464,7 @@ def calc_volume(size: int) -> int:  # (1)!
 
 try:
     result = agent.run_sync('Please get me the volume of a box with size 6.')
-except UnexpectedModelBehaviour as e:
+except UnexpectedModelBehavior as e:
     print('An error occurred:', e)
     #> An error occurred: Retriever exceeded max retries count of 1
     print('cause:', repr(e.__cause__))

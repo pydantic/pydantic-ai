@@ -279,7 +279,7 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
         assert self._result_schema is not None, 'Expected _result_schema to not be None'
         match = self._result_schema.find_tool(message)
         if match is None:
-            raise exceptions.UnexpectedModelBehaviour(
+            raise exceptions.UnexpectedModelBehavior(
                 f'Invalid message, unable to find tool: {self._result_schema.tool_names()}'
             )
 

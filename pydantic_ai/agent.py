@@ -660,7 +660,7 @@ class Agent(Generic[AgentDeps, ResultData]):
                         return _MarkFinalResult(result_data)
 
             if not model_response.calls:
-                raise exceptions.UnexpectedModelBehaviour('Received empty tool call message')
+                raise exceptions.UnexpectedModelBehavior('Received empty tool call message')
 
             # otherwise we run all retriever functions in parallel
             messages: list[_messages.Message] = []
@@ -723,7 +723,7 @@ class Agent(Generic[AgentDeps, ResultData]):
                 pass
             structured_msg = model_response.get()
             if not structured_msg.calls:
-                raise exceptions.UnexpectedModelBehaviour('Received empty tool call message')
+                raise exceptions.UnexpectedModelBehavior('Received empty tool call message')
             messages: list[_messages.Message] = [structured_msg]
 
             # we now run all retriever functions in parallel
@@ -748,7 +748,7 @@ class Agent(Generic[AgentDeps, ResultData]):
     def _incr_result_retry(self) -> None:
         self._current_result_retry += 1
         if self._current_result_retry > self._max_result_retries:
-            raise exceptions.UnexpectedModelBehaviour(
+            raise exceptions.UnexpectedModelBehavior(
                 f'Exceeded maximum retries ({self._max_result_retries}) for result validation'
             )
 
