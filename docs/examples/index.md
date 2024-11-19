@@ -53,7 +53,7 @@ For examples, to run the very simple [`pydantic_model`](./pydantic-model.md) exa
 python/uv-run -m pydantic_ai_examples.pydantic_model
 ```
 
-If you like on-liners and you're using uv, you can run a pydantic-ai example with zero setup:
+If you like one-liners and you're using uv, you can run a pydantic-ai example with zero setup:
 
 ```bash
 OPENAI_API_KEY='your-api-key' \

@@ -5,15 +5,15 @@ Agents are PydanticAI's primary interface for interacting with LLMs.
 In some use cases a single Agent will control an entire application or component,
 but multiple agents can also interact to embody more complex workflows.
 
-The [`Agent`][pydantic_ai.Agent] class is well documented, but in essence you can think of an agent as a container for:
+The [`Agent`][pydantic_ai.Agent] class has full API documentation, but conceptually you can think of an agent as a container for:
 
 * A [system prompt](#system-prompts) — a set of instructions for the LLM written by the developer
 * One or more [retrievers](#retrievers) — functions that the LLM may call to get information while generating a response
 * An optional structured [result type](results.md) — the structured datatype the LLM must return at the end of a run
 * A [dependency](dependencies.md) type constraint — system prompt functions, retrievers and result validators may all use dependencies when they're run
-* Agents may optionally also have a default [model](api/models/base.md) associated with them, the model to use can also be defined when running the agent
+* Agents may optionally also have a default [model](api/models/base.md) associated with them; the model to use can also be specified when running the agent
 
-In typing terms, agents are generic in their dependency and result types, e.g. an agent which required `#!python Foobar` dependencies and returned data of type `#!python list[str]` results would have type `#!python Agent[Foobar, list[str]]`.
+In typing terms, agents are generic in their dependency and result types, e.g., an agent which required dependencies of type `#!python Foobar` and returned results of type `#!python list[str]` would have type `#!python Agent[Foobar, list[str]]`.
 
 Here's a toy example of an agent that simulates a roulette wheel:
 
@@ -25,7 +25,7 @@ roulette_agent = Agent(  # (1)!
     deps_type=int,
     result_type=bool,
     system_prompt=(
-        'Use the `roulette_wheel` to see if the '
+        'Use the `roulette_wheel` function to see if the '
         'customer has won based on the number they provide.'
     ),
 )
@@ -48,21 +48,22 @@ print(result.data)
 #> False
 ```
 
-1. Create an agent, which expects an integer dependency and returns a boolean result, this agent will ahve type of `#!python Agent[int, bool]`.
-2. Define a retriever that checks if the square is a winner, here [`CallContext`][pydantic_ai.dependencies.CallContext] is parameterized with the dependency type `int`, if you got the dependency type wrong you'd get a typing error.
-3. In reality, you might want to use a random number here e.g. `random.randint(0, 36)` here.
-4. `result.data` will be a boolean indicating if the square is a winner, Pydantic performs the result validation, it'll be typed as a `bool` since its type is derived from the `result_type` generic parameter of the agent.
+1. Create an agent, which expects an integer dependency and returns a boolean result. This agent will have type `#!python Agent[int, bool]`.
+2. Define a retriever that checks if the square is a winner. Here [`CallContext`][pydantic_ai.dependencies.CallContext] is parameterized with the dependency type `int`; if you got the dependency type wrong you'd get a typing error.
+3. In reality, you might want to use a random number here e.g. `random.randint(0, 36)`.
+4. `result.data` will be a boolean indicating if the square is a winner. Pydantic performs the result validation, it'll be typed as a `bool` since its type is derived from the `result_type` generic parameter of the agent.
 
-!!! tip "Agents are Singletons, like FastAPI"
-    Agents are a singleton instance, you can think of them as similar to a small [`FastAPI`][fastapi.FastAPI] app or an [`APIRouter`][fastapi.APIRouter].
+
+!!! tip "Agents are designed for reuse, like FastAPI Apps"
+    Agents are intended to be instantiated once (frequently as module globals) and reused throughout your application, similar to a small [FastAPI][fastapi.FastAPI] app or an [APIRouter][fastapi.APIRouter].
 
 ## Running Agents
 
 There are three ways to run an agent:
 
-1. [`agent.run()`][pydantic_ai.Agent.run] — a coroutine which returns a result containing a completed response, returns a [`RunResult`][pydantic_ai.result.RunResult]
-2. [`agent.run_sync()`][pydantic_ai.Agent.run_sync] — a plain function which returns a result containing a completed response (internally, this just calls `asyncio.run(self.run())`), returns a [`RunResult`][pydantic_ai.result.RunResult]
-3. [`agent.run_stream()`][pydantic_ai.Agent.run_stream] — a coroutine which returns a result containing methods to stream a response as an async iterable, returns a [`StreamedRunResult`][pydantic_ai.result.StreamedRunResult]
+1. [`agent.run()`][pydantic_ai.Agent.run] — a coroutine which returns a [`RunResult`][pydantic_ai.result.RunResult] containing a completed response
+2. [`agent.run_sync()`][pydantic_ai.Agent.run_sync] — a plain, synchronous function which returns a [`RunResult`][pydantic_ai.result.RunResult] containing a completed response (internally, this just calls `asyncio.run(self.run())`)
+3. [`agent.run_stream()`][pydantic_ai.Agent.run_stream] — a coroutine which returns a [`StreamedRunResult`][pydantic_ai.result.StreamedRunResult], which contains methods to stream a response as an async iterable
 
 Here's a simple example demonstrating all three:
 
@@ -114,7 +115,7 @@ print(result2.data)
 #> Albert Einstein's most famous equation is (E = mc^2).
 ```
 
-1. Continue the conversation, without `message_history` the model would not know who "his" was referring to.
+1. Continue the conversation; without `message_history` the model would not know who "his" was referring to.
 
 _(This example is complete, it can be run "as is")_
 
@@ -125,9 +126,9 @@ System prompts might seem simple at first glance since they're just strings (or 
 Generally, system prompts fall into two categories:
 
 1. **Static system prompts**: These are known when writing the code and can be defined via the `system_prompt` parameter of the [`Agent` constructor][pydantic_ai.Agent.__init__].
-2. **Dynamic system prompts**: These aren't known until runtime and should be defined via functions decorated with [`@agent.system_prompt`][pydantic_ai.Agent.system_prompt].
+2. **Dynamic system prompts**: These depend in some way on context that isn't known until runtime, and should be defined via functions decorated with [`@agent.system_prompt`][pydantic_ai.Agent.system_prompt].
 
-You can add both to a single agent; they're concatenated in the order they're defined at runtime.
+You can add both to a single agent; they're appended in the order they're defined at runtime.
 
 Here's an example using both types of system prompts:
 
@@ -169,12 +170,12 @@ _(This example is complete, it can be run "as is")_
 
 Retrievers provide a mechanism for models to request extra information to help them generate a response.
 
-They're useful when it is impractical or impossible to put all the context an agent might need into the system prompt, or when you want to make agents' behavior more deterministic by deferring some of the logic required to generate a response to another tool.
+They're useful when it is impractical or impossible to put all the context an agent might need into the system prompt, or when you want to make agents' behavior more deterministic or reliable by deferring some of the logic required to generate a response to another (not necessarily AI-powered) tool.
 
 !!! info "Retrievers vs. RAG"
     Retrievers are basically the "R" of RAG (Retrieval-Augmented Generation) — they augment what the model can do by letting it request extra information.
 
-    The main semantic difference between PydanticAI Retreivers and RAG is RAG is synonymous with vector search, while PydanticAI retrievers are more general purpose. (Note: we might add support for some vector search functionality in the future, particuarly an API for generating embeddings, see [#58](https://github.com/pydantic/pydantic-ai/issues/58))
+    The main semantic difference between PydanticAI Retrievers and RAG is RAG is synonymous with vector search, while PydanticAI retrievers are more general-purpose. (Note: we may add support for vector search functionality in the future, particularly an API for generating embeddings. See [#58](https://github.com/pydantic/pydantic-ai/issues/58))
 
 There are two different decorator functions to register retrievers:
 
@@ -328,11 +329,11 @@ Under the hood, retrievers use the model's "tools" or "functions" API to let the
 
 Function parameters are extracted from the function signature, and all parameters except `CallContext` are used to build the schema for that tool call.
 
-Even better, PydanticAI extracts the docstring from retriever functions and (thanks to [griffe](https://mkdocstrings.github.io/griffe/)) extracts parameter descriptions from the docstring and add them to the schema.
+Even better, PydanticAI extracts the docstring from retriever functions and (thanks to [griffe](https://mkdocstrings.github.io/griffe/)) extracts parameter descriptions from the docstring and adds them to the schema.
 
-[Griffe supports](https://mkdocstrings.github.io/griffe/reference/docstrings/#docstrings) extracting parameter descriptions from `google`, `numpy` and `sphinx` style docstrings, PydanticAI will infer the format to use based on the docstring. We'll add support in future to explicitly set the style to use, and warn/error if not all parameters are documented, see [#59](https://github.com/pydantic/pydantic-ai/issues/59).
+[Griffe supports](https://mkdocstrings.github.io/griffe/reference/docstrings/#docstrings) extracting parameter descriptions from `google`, `numpy` and `sphinx` style docstrings, and PydanticAI will infer the format to use based on the docstring. We plan to add support in the future to explicitly set the style to use, and warn/error if not all parameters are documented; see [#59](https://github.com/pydantic/pydantic-ai/issues/59).
 
-To demonstrate retriever schema, here we use [`FunctionModel`][pydantic_ai.models.function.FunctionModel] to print the schema a model would receive:
+To demonstrate a retriever's schema, here we use [`FunctionModel`][pydantic_ai.models.function.FunctionModel] to print the schema a model would receive:
 
 ```py title="retriever_schema.py"
 from pydantic_ai import Agent
@@ -385,7 +386,7 @@ agent.run_sync('hello', model=FunctionModel(print_schema))
 
 _(This example is complete, it can be run "as is")_
 
-The return type of retriever can any valid JSON object ([`JsonData`][pydantic_ai.dependencies.JsonData]) as some models (e.g. Gemini) support semi-structured return values, some expect text (OpenAI) but seem to be just as good at extracting meaning from the data, if a Python is returned and the model expects a string, the value will be serialized to JSON.
+The return type of retriever can be any valid JSON object ([`JsonData`][pydantic_ai.dependencies.JsonData]) as some models (e.g. Gemini) support semi-structured return values, some expect text (OpenAI) but seem to be just as good at extracting meaning from the data. If a Python object is returned and the model expects a string, the value will be serialized to JSON.
 
 If a retriever has a single parameter that can be represented as an object in JSON schema (e.g. dataclass, TypedDict, pydantic model), the schema for the retriever is simplified to be just that object. (TODO example)
 
@@ -393,7 +394,7 @@ If a retriever has a single parameter that can be represented as an object in JS
 
 Validation errors from both retriever parameter validation and [structured result validation](results.md#structured-result-validation) can be passed back to the model with a request to retry.
 
-You can also raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] from within a [retriever](#retrievers) or [result validator functions](results.md#result-validators-functions) to tell the model it should retry.
+You can also raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] from within a [retriever](#retrievers) or [result validator function](results.md#result-validators-functions) to tell the model it should retry generating a response.
 
 - The default retry count is **1** but can be altered for the [entire agent][pydantic_ai.Agent.__init__], a [specific retriever][pydantic_ai.Agent.retriever], or a [result validator][pydantic_ai.Agent.__init__].
 - You can access the current retry count from within a retriever or result validator via [`ctx.retry`][pydantic_ai.dependencies.CallContext].
