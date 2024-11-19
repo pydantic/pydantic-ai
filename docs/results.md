@@ -257,7 +257,7 @@ async def main():
 
 _(This example is complete, it can be run "as is")_
 
-If you want fine-grained control of validation, particularly catching validation errors, you can use teh following pattern:
+If you want fine-grained control of validation, particularly catching validation errors, you can use the following pattern:
 
 ```py title="streamed_user_profile.py"
 from datetime import date

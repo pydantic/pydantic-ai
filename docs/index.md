@@ -136,7 +136,7 @@ async def main():
 10. The result will be validated with Pydantic to guarantee it is a `SupportResult`, since the agent is generic, it'll also be typed as a `SupportResult` to aid with static type checking.
 11. In a real use case, you'd add many more retrievers and a longer system prompt to the agent to extend the context it's equipped with and support it can provide.
 12. This is a simple sketch of a database connection, used to keep the example short and readable. In reality, you'd be connecting to an external database (e.g. PostgreSQL) to get information about customers.
-13. This [Pydantic](https://docs.pydantic.dev) model is used to constrain the structured data returned by the agent. From this simple definition, Pydantic builds teh JSON Schema that tells the LLM how to return the data, and performs validation to guarantee the data is correct at the end of the conversation.
+13. This [Pydantic](https://docs.pydantic.dev) model is used to constrain the structured data returned by the agent. From this simple definition, Pydantic builds the JSON Schema that tells the LLM how to return the data, and performs validation to guarantee the data is correct at the end of the conversation.
 
 !!! tip "Complete `bank_support.py` example"
     This example is incomplete for the sake of brevity (the definition of `DatabaseConn` is missing); you can find a complete `bank_support.py` example [here](examples/bank-support.md).
