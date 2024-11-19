@@ -149,10 +149,151 @@ print(result.data)
 
 ## Streamed Results
 
-**TODO**
+There two main challenges with streamed results:
 
-Streamed responses provide a unique challenge:
-* validating the partial result is both practically and semantically complex, but pydantic can do this
-* we don't know if a result will be the final result of a run until we start streaming it, so PydanticAI has to start streaming just enough of the response to sniff out if it's the final response, then either stream the rest of the response to call a retriever, or return an object that lets the rest of the response be streamed by the user
-* examples including: streaming text, streaming validated data, streaming the raw data to do validation inside a try/except block when necessary
-* explanation of how streamed responses are "debounced"
+1. Validating structured responses before they're complete, this is achieved by "partial validation" which was recently added to Pydantic in [pydantic/pydantic#10748](https://github.com/pydantic/pydantic/pull/10748).
+2. When receiving a response, we don't know if it's the final response without starting to stream it and peeking at the content. PydanticAI streams just enough of the response to sniff out if it's a retriever call or a result, then streams the whole thing and calls retrievers, or returns the stream as a [`StreamedRunResult`][pydantic_ai.result.StreamedRunResult].
+
+### Streaming Text
+
+Example of streamed text result:
+
+```py title="streamed_hello_world.py"
+from pydantic_ai import Agent
+
+agent = Agent('gemini-1.5-flash')  # (1)!
+
+
+async def main():
+    async with agent.run_stream('Where does "hello world" come from?') as result:  # (2)!
+        async for message in result.stream():  # (3)!
+            print(message)
+            #> The first
+            #> The first known use
+            #> The first known use of "hello,
+            #> The first known use of "hello, world" was
+            #> The first known use of "hello, world" was in a
+            #> The first known use of "hello, world" was in a 1974 textbook
+            #> The first known use of "hello, world" was in a 1974 textbook about the
+            #> The first known use of "hello, world" was in a 1974 textbook about the C programming
+            #> The first known use of "hello, world" was in a 1974 textbook about the C programming language.
+```
+
+1. Streaming works with the standard [`Agent`][pydantic_ai.Agent] class, and doesn't require any special setup, just a model that supports streaming (currently all models support streaming).
+2. The [`Agent.run_stream()`][pydantic_ai.Agent.run_stream] method is used to start a streamed run, this method returns a context manager so the connection can be closed when the stream completes.
+3. Each item yield by [`StreamedRunResult.stream()`][pydantic_ai.result.StreamedRunResult.stream] is the complete text response, extended as new data is received.
+
+We can also stream text as deltas rather than the entire text in each item:
+
+```py title="streamed_delta_hello_world.py"
+from pydantic_ai import Agent
+
+agent = Agent('gemini-1.5-flash')
+
+
+async def main():
+    async with agent.run_stream('Where does "hello world" come from?') as result:
+        async for message in result.stream_text(delta=True):  # (1)!
+            print(message)
+            #> The first
+            #> known use
+            #> of "hello,
+            #> world" was
+            #> in a
+            #> 1974 textbook
+            #> about the
+            #> C programming
+            #> language.
+```
+
+1. [`stream_text`][pydantic_ai.result.StreamedRunResult.stream_text] will error if the response is not text
+
+### Streaming Structured Responses
+
+Not all types are supported with partial validation in Pydantic, see [pydantic/pydantic#10748](https://github.com/pydantic/pydantic/pull/10748), generally for model-like structures it's currently best to use `TypeDict`.
+
+Here's an example of streaming a use profile as it's built:
+
+```py title="streamed_user_profile.py"
+from datetime import date
+
+from typing_extensions import Literal, TypedDict
+
+from pydantic_ai import Agent
+
+
+class UserProfile(TypedDict, total=False):
+    name: str
+    date_of_birth: date
+    interests: list[Literal['sports', 'music', 'art', 'readings']]
+
+
+agent = Agent(
+    'openai:gpt-4o',
+    result_type=UserProfile,
+    system_prompt='Extract a user profile from the input',
+)
+
+
+async def main():
+    user_input = 'my name is Ben, I was born on January 28th 1990, I like sports and music.'
+    async with agent.run_stream(user_input) as result:
+        async for profile in result.stream():
+            print(profile)
+            #> {'name': 'B'}
+            #> {'name': 'Ben'}
+            #> {'name': 'Ben'}
+            #> {'name': 'Ben', 'date_of_birth': date(1990, 1, 28), 'interests': []}
+            #> {'name': 'Ben', 'date_of_birth': date(1990, 1, 28), 'interests': ['sports', 'music']}
+            #> {'name': 'Ben', 'date_of_birth': date(1990, 1, 28), 'interests': ['sports', 'music']}
+```
+
+If you want fine-grained control of validation, particularly catching validation errors, you can use teh following pattern:
+
+```py title="streamed_user_profile.py"
+from datetime import date
+
+from pydantic import ValidationError
+from typing_extensions import Literal, TypedDict
+
+from pydantic_ai import Agent
+
+
+class UserProfile(TypedDict, total=False):
+    name: str
+    date_of_birth: date
+    interests: list[Literal['sports', 'music', 'art', 'readings']]
+
+
+agent = Agent('openai:gpt-4o', result_type=UserProfile)
+
+
+async def main():
+    user_input = 'my name is Ben, I was born on January 28th 1990, I like sports and music.'
+    async with agent.run_stream(user_input) as result:
+        async for message, last in result.stream_structured(debounce_by=0.01):  # (1)!
+            try:
+                profile = await result.validate_structured_result(message, allow_partial=not last)  # (1)!
+            except ValidationError:
+                continue
+            print(profile)
+            #> {'name': 'B'}
+            #> {'name': 'Ben'}
+            #> {'name': 'Ben'}
+            #> {'name': 'Ben'}
+            #> {'name': 'Ben', 'date_of_birth': date(1990, 1, 28)}
+            #> {'name': 'Ben', 'date_of_birth': date(1990, 1, 28), 'interests': []}
+            #> {'name': 'Ben', 'date_of_birth': date(1990, 1, 28), 'interests': ['sports']}
+            #> {'name': 'Ben', 'date_of_birth': date(1990, 1, 28), 'interests': ['sports', 'music']}
+            #> {'name': 'Ben', 'date_of_birth': date(1990, 1, 28), 'interests': ['sports', 'music']}
+```
+
+1. [`stream_structured`][pydantic_ai.result.StreamedRunResult.stream_structured]
+2. [`validate_structured_result`][pydantic_ai.result.StreamedRunResult.validate_structured_result]
+
+## Examples
+
+The following examples demonstrate how to use streamed responses in PydanticAI:
+
+- [Stream markdown](examples/stream-markdown.md)
+- [Stream Whales](examples/stream-whales.md)

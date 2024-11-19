@@ -132,7 +132,7 @@ async def test_streamed_text_stream():
         )
 
     async with agent.run_stream('Hello') as result:
-        assert [c async for c in result.stream(text_delta=True, debounce_by=None)] == snapshot(
+        assert [c async for c in result.stream_text(delta=True, debounce_by=None)] == snapshot(
             ['The ', 'cat ', 'sat ', 'on ', 'the ', 'mat.']
         )
 

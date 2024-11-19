@@ -132,22 +132,14 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
     [`get_data`][pydantic_ai.result.StreamedRunResult.get_data] completes.
     """
 
-    async def stream(self, *, text_delta: bool = False, debounce_by: float | None = 0.1) -> AsyncIterator[ResultData]:
+    async def stream(self, *, debounce_by: float | None = 0.1) -> AsyncIterator[ResultData]:
         """Stream the response as an async iterable.
-
-        Result validators are called on each iteration, if `text_delta=False` (the default) or for structured
-        responses.
-
-        !!! note
-            Result validators will NOT be called on the text result if `text_delta=True`.
 
         The pydantic validator for structured data will be called in
         [partial mode](https://docs.pydantic.dev/dev/concepts/experimental/#partial-validation)
         on each iteration.
 
         Args:
-            text_delta: if `True`, yield each chunk of text as it is received, if `False` (default), yield the full text
-                up to the current point.
             debounce_by: by how much (if at all) to debounce/group the response chunks by. `None` means no debouncing.
                 Debouncing is particularly important for long structured responses to reduce the overhead of
                 performing validation as each token is received.
@@ -156,22 +148,24 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
             An async iterable of the response data.
         """
         if isinstance(self._stream_response, models.StreamTextResponse):
-            async for text in self.stream_text(text_delta=text_delta, debounce_by=debounce_by):
+            async for text in self.stream_text(debounce_by=debounce_by):
                 yield cast(ResultData, text)
         else:
-            assert not text_delta, 'Cannot use `text_delta=True` for structured responses'
             async for structured_message, is_last in self.stream_structured(debounce_by=debounce_by):
                 yield await self.validate_structured_result(structured_message, allow_partial=not is_last)
 
-    async def stream_text(self, *, text_delta: bool = False, debounce_by: float | None = 0.1) -> AsyncIterator[str]:
+    async def stream_text(self, *, delta: bool = False, debounce_by: float | None = 0.1) -> AsyncIterator[str]:
         """Stream the text result as an async iterable.
 
         !!! note
             This method will fail if the response is structured,
             e.g. if [`is_structured`][pydantic_ai.result.StreamedRunResult.is_structured] returns `True`.
 
+        !!! note
+            Result validators will NOT be called on the text result if `delta=True`.
+
         Args:
-            text_delta: if `True`, yield each chunk of text as it is received, if `False` (default), yield the full text
+            delta: if `True`, yield each chunk of text as it is received, if `False` (default), yield the full text
                 up to the current point.
             debounce_by: by how much (if at all) to debounce/group the response chunks by. `None` means no debouncing.
                 Debouncing is particularly important for long structured responses to reduce the overhead of
@@ -180,7 +174,7 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
         with _logfire.span('response stream text') as lf_span:
             if isinstance(self._stream_response, models.StreamStructuredResponse):
                 raise exceptions.UserError('stream_text() can only be used with text responses')
-            if text_delta:
+            if delta:
                 async with _utils.group_by_temporal(self._stream_response, debounce_by) as group_iter:
                     async for _ in group_iter:
                         yield ''.join(self._stream_response.get())

@@ -9,6 +9,7 @@ from types import ModuleType
 from typing import Any
 
 import httpx
+import pydantic_core
 import pytest
 from devtools import debug
 from pytest_examples import CodeExample, EvalExample, find_examples
@@ -23,7 +24,7 @@ from pydantic_ai.messages import (
     ToolCall,
 )
 from pydantic_ai.models import KnownModelName, Model
-from pydantic_ai.models.function import AgentInfo, DeltaToolCalls, FunctionModel
+from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from tests.conftest import ClientWithHandler
 
@@ -105,7 +106,11 @@ def test_docs_examples(
     if 'from bank_database import DatabaseConn' in example.source:
         ruff_ignore.append('I001')
 
-    eval_example.set_config(ruff_ignore=ruff_ignore, target_version='py39')
+    line_length = 88
+    if prefix_settings.get('title') in ('streamed_hello_world.py', 'streamed_user_profile.py'):
+        line_length = 120
+
+    eval_example.set_config(ruff_ignore=ruff_ignore, target_version='py39', line_length=line_length)
 
     eval_example.print_callback = print_callback
 
@@ -128,7 +133,8 @@ def test_docs_examples(
 
 
 def print_callback(s: str) -> str:
-    return re.sub(r'datetime.datetime\(.+?\)', 'datetime.datetime(...)', s, flags=re.DOTALL)
+    s = re.sub(r'datetime\.datetime\(.+?\)', 'datetime.datetime(...)', s, flags=re.DOTALL)
+    return re.sub(r'datetime.date\(', 'date(', s)
 
 
 def http_request(url: str, **kwargs: Any) -> httpx.Response:
@@ -198,6 +204,16 @@ text_responses: dict[str, str | ToolCall] = {
         tool_name='final_result_Success',
         args=ArgsObject({'sql_query': 'SELECT * FROM users WHERE last_active::date = today() - interval 1 day'}),
     ),
+    'my name is Ben, I was born on January 28th 1990, I like sports and music.': ToolCall(
+        tool_name='final_result',
+        args=ArgsObject(
+            {
+                'name': 'Ben',
+                'date_of_birth': '1990-01-28',
+                'interests': ['sports', 'music'],
+            }
+        ),
+    ),
 }
 
 
@@ -253,7 +269,17 @@ async def stream_model_logic(messages: list[Message], info: AgentInfo) -> AsyncI
                 yield last_word
                 return
             else:
-                raise NotImplementedError('todo')
+                if isinstance(response.args, ArgsObject):
+                    json_text = pydantic_core.to_json(response.args.args_object).decode()
+                else:
+                    json_text = response.args.args_json
+
+                yield {1: DeltaToolCall(name=response.tool_name)}
+                for chunk_index in range(0, len(json_text), 10):
+                    chunk = json_text[chunk_index : chunk_index + 10]
+                    yield {1: DeltaToolCall(json_args=chunk)}
+                    await asyncio.sleep(0.05)
+                return
 
     sys.stdout.write(str(debug.format(messages, info)))
     raise RuntimeError(f'Unexpected message: {m}')

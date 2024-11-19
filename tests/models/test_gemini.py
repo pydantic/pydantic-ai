@@ -561,7 +561,7 @@ async def test_stream_text(get_gemini_client: GetGeminiClient):
     assert result.cost() == snapshot(Cost(request_tokens=2, response_tokens=4, total_tokens=6))
 
     async with agent.run_stream('Hello') as result:
-        chunks = [chunk async for chunk in result.stream(text_delta=True, debounce_by=None)]
+        chunks = [chunk async for chunk in result.stream_text(delta=True, debounce_by=None)]
         assert chunks == snapshot(['Hello ', 'world'])
     assert result.cost() == snapshot(Cost(request_tokens=2, response_tokens=4, total_tokens=6))
 
