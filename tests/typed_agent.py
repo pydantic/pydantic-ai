@@ -1,11 +1,11 @@
 """This file is used to test static typing, it's analyzed with pyright and mypy."""
 
-from collections.abc import Iterator
+from collections.abc import Awaitable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Union, assert_type
+from typing import Callable, Union, assert_type
 
-from pydantic_ai import Agent, CallContext
+from pydantic_ai import Agent, CallContext, ModelRetry
 from pydantic_ai.result import RunResult
 
 
@@ -17,6 +17,21 @@ class MyDeps:
 
 typed_agent = Agent(deps_type=MyDeps, result_type=str)
 assert_type(typed_agent, Agent[MyDeps, str])
+
+
+@typed_agent.system_prompt
+async def system_prompt_ok1(ctx: CallContext[MyDeps]) -> str:
+    return f'{ctx.deps}'
+
+
+@typed_agent.system_prompt
+def system_prompt_ok2() -> str:
+    return 'foobar'
+
+
+# we have overloads for every possible signature of system_prompt, so the type of decorated functions is correct
+assert_type(system_prompt_ok1, Callable[[CallContext[MyDeps]], Awaitable[str]])
+assert_type(system_prompt_ok2, Callable[[], str])
 
 
 @contextmanager
@@ -34,6 +49,10 @@ async def ok_retriever(ctx: CallContext[MyDeps], x: str) -> str:
     assert_type(ctx.deps, MyDeps)
     total = ctx.deps.foo + ctx.deps.bar
     return f'{x} {total}'
+
+
+# we can't add overloads for every possible signature of retriever, so the type of ok_retriever is obscured
+assert_type(ok_retriever, Callable[[CallContext[MyDeps], str], str])  # type: ignore[assert-type]
 
 
 @typed_agent.retriever_plain
@@ -67,6 +86,28 @@ with expect_error(ValueError):
     @typed_agent.retriever  # type: ignore[arg-type]
     async def bad_retriever3(x: str) -> str:
         return x
+
+
+@typed_agent.result_validator
+def ok_validator_simple(data: str) -> str:
+    return data
+
+
+@typed_agent.result_validator
+async def ok_validator_ctx(ctx: CallContext[MyDeps], data: str) -> str:
+    if ctx.deps.foo == 1:
+        raise ModelRetry('foo is 1')
+    return data
+
+
+# we have overloads for every possible signature of result_validator, so the type of decorated functions is correct
+assert_type(ok_validator_simple, Callable[[str], str])
+assert_type(ok_validator_ctx, Callable[[CallContext[MyDeps], str], Awaitable[str]])
+
+
+@typed_agent.result_validator  # type: ignore[arg-type]
+async def result_validator_wrong(ctx: CallContext[int], result: str) -> str:
+    return result
 
 
 def run_sync() -> None:
