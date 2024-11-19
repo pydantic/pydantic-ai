@@ -10,7 +10,7 @@ from pydantic_core import SchemaValidator
 
 from . import _pydantic, _utils, messages
 from .dependencies import AgentDeps, CallContext, RetrieverContextFunc, RetrieverParams, RetrieverPlainFunc
-from .exceptions import ModelRetry, UnexpectedModelBehaviour
+from .exceptions import ModelRetry, UnexpectedModelBehavior
 
 # Usage `RetrieverEitherFunc[AgentDependencies, P]`
 RetrieverEitherFunc = _utils.Either[
@@ -101,7 +101,7 @@ class Retriever(Generic[AgentDeps, RetrieverParams]):
         self._current_retry += 1
         if self._current_retry > self.max_retries:
             # TODO custom error with details of the retriever
-            raise UnexpectedModelBehaviour(f'Retriever exceeded max retries count of {self.max_retries}') from exc
+            raise UnexpectedModelBehavior(f'Retriever exceeded max retries count of {self.max_retries}') from exc
         else:
             if isinstance(exc, ValidationError):
                 content = exc.errors(include_url=False)

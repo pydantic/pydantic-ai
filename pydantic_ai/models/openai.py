@@ -13,7 +13,7 @@ from openai.types.chat import ChatCompletionChunk
 from openai.types.chat.chat_completion_chunk import ChoiceDeltaToolCall
 from typing_extensions import assert_never
 
-from .. import UnexpectedModelBehaviour, _utils, result
+from .. import UnexpectedModelBehavior, _utils, result
 from ..messages import (
     ArgsJson,
     Message,
@@ -184,7 +184,7 @@ class OpenAIAgentModel(AgentModel):
         try:
             first_chunk = await response.__anext__()
         except StopAsyncIteration as e:  # pragma: no cover
-            raise UnexpectedModelBehaviour('Streamed response ended without content or tool calls') from e
+            raise UnexpectedModelBehavior('Streamed response ended without content or tool calls') from e
         timestamp = datetime.fromtimestamp(first_chunk.created, tz=timezone.utc)
         delta = first_chunk.choices[0].delta
         start_cost = _map_cost(first_chunk)
@@ -194,7 +194,7 @@ class OpenAIAgentModel(AgentModel):
             try:
                 next_chunk = await response.__anext__()
             except StopAsyncIteration as e:
-                raise UnexpectedModelBehaviour('Streamed response ended without content or tool calls') from e
+                raise UnexpectedModelBehavior('Streamed response ended without content or tool calls') from e
             delta = next_chunk.choices[0].delta
             start_cost += _map_cost(next_chunk)
 

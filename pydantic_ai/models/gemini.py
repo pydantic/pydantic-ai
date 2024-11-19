@@ -36,7 +36,7 @@ from httpx import AsyncClient as AsyncHTTPClient, Response as HTTPResponse
 from pydantic import Discriminator, Field, Tag
 from typing_extensions import NotRequired, TypedDict, TypeGuard, assert_never
 
-from .. import UnexpectedModelBehaviour, _pydantic, _utils, exceptions, result
+from .. import UnexpectedModelBehavior, _pydantic, _utils, exceptions, result
 from ..messages import (
     ArgsObject,
     Message,
@@ -192,7 +192,7 @@ class GeminiAgentModel(AgentModel):
         async with self.http_client.stream('POST', url, content=request_json, headers=headers) as r:
             if r.status_code != 200:
                 await r.aread()
-                raise exceptions.UnexpectedModelBehaviour(f'Unexpected response from gemini {r.status_code}', r.text)
+                raise exceptions.UnexpectedModelBehavior(f'Unexpected response from gemini {r.status_code}', r.text)
             yield r
 
     @staticmethod
@@ -223,7 +223,7 @@ class GeminiAgentModel(AgentModel):
                     break
 
         if start_response is None:
-            raise UnexpectedModelBehaviour('Streamed response ended without content or tool calls')
+            raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')
 
         if _extract_response_parts(start_response).is_left():
             return GeminiStreamStructuredResponse(_content=content, _stream=aiter_bytes)
@@ -287,7 +287,7 @@ class GeminiStreamTextResponse(StreamTextResponse):
                 for part in parts:
                     yield part['text']
             else:
-                raise UnexpectedModelBehaviour(
+                raise UnexpectedModelBehavior(
                     'Streamed response with unexpected content, expected all parts to be text'
                 )
 
@@ -334,7 +334,7 @@ class GeminiStreamStructuredResponse(StreamStructuredResponse):
                 combined_parts.extend(parts)
             elif not candidate.get('finish_reason'):
                 # you can get an empty text part along with the finish_reason, so we ignore that case
-                raise UnexpectedModelBehaviour(
+                raise UnexpectedModelBehavior(
                     'Streamed response with unexpected content, expected all parts to be function calls'
                 )
         return _structured_response_from_parts(combined_parts, timestamp=self._timestamp)
@@ -534,14 +534,14 @@ def _extract_response_parts(
     Returns Either a list of function calls (Either.left) or a list of text parts (Either.right).
     """
     if len(response['candidates']) != 1:
-        raise UnexpectedModelBehaviour('Expected exactly one candidate in Gemini response')
+        raise UnexpectedModelBehavior('Expected exactly one candidate in Gemini response')
     parts = response['candidates'][0]['content']['parts']
     if _all_function_call_parts(parts):
         return _utils.Either(left=parts)
     elif _all_text_parts(parts):
         return _utils.Either(right=parts)
     else:
-        raise exceptions.UnexpectedModelBehaviour(
+        raise exceptions.UnexpectedModelBehavior(
             f'Unsupported response from Gemini, expected all parts to be function calls or text, got: {parts!r}'
         )
 

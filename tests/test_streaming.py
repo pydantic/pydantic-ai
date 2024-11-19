@@ -7,7 +7,7 @@ from datetime import timezone
 import pytest
 from inline_snapshot import snapshot
 
-from pydantic_ai import Agent, UnexpectedModelBehaviour, UserError
+from pydantic_ai import Agent, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
     ArgsJson,
     ArgsObject,
@@ -154,7 +154,7 @@ async def test_plain_response():
 
     agent = Agent(FunctionModel(stream_function=text_stream), result_type=tuple[str, str])
 
-    with pytest.raises(UnexpectedModelBehaviour, match=r'Exceeded maximum retries \(1\) for result validation'):
+    with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum retries \(1\) for result validation'):
         async with agent.run_stream(''):
             pass
 
@@ -232,7 +232,7 @@ async def test_call_retriever_empty():
 
     agent = Agent(FunctionModel(stream_function=stream_structured_function), result_type=tuple[str, int])
 
-    with pytest.raises(UnexpectedModelBehaviour, match='Received empty tool call message'):
+    with pytest.raises(UnexpectedModelBehavior, match='Received empty tool call message'):
         async with agent.run_stream('hello'):
             pass
 
@@ -247,7 +247,7 @@ async def test_call_retriever_wrong_name():
     async def ret_a(x: str) -> str:
         return x
 
-    with pytest.raises(UnexpectedModelBehaviour, match=r'Exceeded maximum retries \(1\) for result validation'):
+    with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum retries \(1\) for result validation'):
         async with agent.run_stream('hello'):
             pass
     assert agent.last_run_messages == snapshot(

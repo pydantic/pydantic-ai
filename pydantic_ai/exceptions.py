@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 import json
 
-__all__ = 'ModelRetry', 'UserError', 'UnexpectedModelBehaviour'
+__all__ = 'ModelRetry', 'UserError', 'UnexpectedModelBehavior'
 
 
 class ModelRetry(Exception):
@@ -30,7 +30,7 @@ class UserError(RuntimeError):
         super().__init__(message)
 
 
-class UnexpectedModelBehaviour(RuntimeError):
+class UnexpectedModelBehavior(RuntimeError):
     """Error caused by unexpected Model behavior, e.g. an unexpected response code."""
 
     message: str
