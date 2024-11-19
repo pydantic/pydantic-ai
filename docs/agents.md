@@ -194,16 +194,16 @@ agent = Agent(
     'gemini-1.5-flash',  # (1)!
     deps_type=str,  # (2)!
     system_prompt=(
-        "You're a dice game, you should roll the dice and see if the number "
-        "you got back matches the user's guess, if so tell them they're a winner. "
+        "You're a dice game, you should roll the die and see if the number "
+        "you get back matches the user's guess. If so, tell them they're a winner. "
         "Use the player's name in the response."
     ),
 )
 
 
 @agent.retriever_plain  # (3)!
-def roll_dice() -> str:
-    """Roll a six-sided dice and return the result."""
+def roll_die() -> str:
+    """Roll a six-sided die and return the result."""
     return str(random.randint(1, 6))
 
 
@@ -235,7 +235,7 @@ print(dice_result.all_messages())
 """
 [
     SystemPrompt(
-        content="You're a dice game, you should roll the dice and see if the number you got back matches the user's guess, if so tell them they're a winner. Use the player's name in the response.",
+        content="You're a dice game, you should roll the die and see if the number you get back matches the user's guess. If so, tell them they're a winner. Use the player's name in the response.",
         role='system',
     ),
     UserPrompt(
@@ -246,14 +246,14 @@ print(dice_result.all_messages())
     ModelStructuredResponse(
         calls=[
             ToolCall(
-                tool_name='roll_dice', args=ArgsObject(args_object={}), tool_id=None
+                tool_name='roll_die', args=ArgsObject(args_object={}), tool_id=None
             )
         ],
         timestamp=datetime.datetime(...),
         role='model-structured-response',
     ),
     ToolReturn(
-        tool_name='roll_dice',
+        tool_name='roll_die',
         content='4',
         tool_id=None,
         timestamp=datetime.datetime(...),
@@ -286,10 +286,41 @@ print(dice_result.all_messages())
 """
 ```
 
-We can represent that as a flow diagram, thus:
+We can represent this with a diagram:
 
-![Dice game flow diagram](./img/dice-diagram-light.svg#only-light)
-![Dice game flow diagram](./img/dice-diagram-dark.svg#only-dark)
+```mermaid
+sequenceDiagram
+    participant Agent
+    participant LLM
+
+    Note over Agent: Send prompts
+    Agent ->> LLM: System: "You're a dice game..."<br>User: "My guess is 4"
+    activate LLM
+    Note over LLM: LLM decides to use<br>a retriever
+
+    LLM ->> Agent: Call retriever<br>roll_die()
+    deactivate LLM
+    activate Agent
+    Note over Agent: Rolls a six-sided die
+
+    Agent -->> LLM: ToolReturn<br>"4"
+    deactivate Agent
+    activate LLM
+    Note over LLM: LLM decides to use<br>another retriever
+
+    LLM ->> Agent: Call retriever<br>get_player_name()
+    deactivate LLM
+    activate Agent
+    Note over Agent: Retrieves player name
+    Agent -->> LLM: ToolReturn<br>"Adam"
+    deactivate Agent
+    activate LLM
+    Note over LLM: LLM constructs final response
+
+    LLM ->> Agent: ModelTextResponse<br>"Congratulations Adam, ..."
+    deactivate LLM
+    Note over Agent: Game session complete
+```
 
 ### Retrievers, tools, and schema
 
