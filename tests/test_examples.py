@@ -119,7 +119,7 @@ def test_docs_examples(
     if 'def test_application_code' in example.source:
         call_name = 'test_application_code'
 
-    if eval_example.update_examples:
+    if eval_example.update_examples:  # pragma: no cover
         eval_example.format(example)
         module_dict = eval_example.run_print_update(example, call=call_name)
     else:
@@ -218,7 +218,7 @@ text_responses: dict[str, str | ToolCall] = {
 }
 
 
-async def model_logic(messages: list[Message], info: AgentInfo) -> ModelAnyResponse:
+async def model_logic(messages: list[Message], info: AgentInfo) -> ModelAnyResponse:  # pragma: no cover
     m = messages[-1]
     if m.role == 'user':
         if response := text_responses.get(m.content):
@@ -258,7 +258,9 @@ async def model_logic(messages: list[Message], info: AgentInfo) -> ModelAnyRespo
         raise RuntimeError(f'Unexpected message: {m}')
 
 
-async def stream_model_logic(messages: list[Message], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+async def stream_model_logic(
+    messages: list[Message], info: AgentInfo
+) -> AsyncIterator[str | DeltaToolCalls]:  # pragma: no cover
     m = messages[-1]
     if m.role == 'user':
         if response := text_responses.get(m.content):
