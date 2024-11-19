@@ -13,7 +13,7 @@ class MyDeps:
 agent = Agent(TestModel(), deps_type=MyDeps)
 
 
-@agent.retriever_context
+@agent.retriever
 async def test_retriever(ctx: CallContext[MyDeps]) -> str:
     return f'{ctx.deps}'
 

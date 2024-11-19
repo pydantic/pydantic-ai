@@ -188,7 +188,7 @@ async def get_system_prompt(ctx: CallContext[MyDeps]) -> str:
     return f'Prompt: {response.text}'
 
 
-@agent.retriever_context  # (1)!
+@agent.retriever  # (1)!
 async def get_joke_material(ctx: CallContext[MyDeps], subject: str) -> str:
     response = await ctx.deps.http_client.get(
         'https://example.com#jokes',
@@ -220,7 +220,7 @@ async def main():
         #> Did you hear about the toothpaste scandal? They called it Colgate.
 ```
 
-1. To pass `CallContext` and to a retriever, us the [`retriever_context`][pydantic_ai.Agent.retriever_context] decorator.
+1. To pass `CallContext` and to a retriever, us the [`retriever`][pydantic_ai.Agent.retriever] decorator.
 2. `CallContext` may optionally be passed to a [`result_validator`][pydantic_ai.Agent.result_validator] function as the first argument.
 
 _(This example is complete, it can be run "as is")_
@@ -324,7 +324,7 @@ joke_agent = Agent(
 factory_agent = Agent('gemini-1.5-pro', result_type=list[str])
 
 
-@joke_agent.retriever_context
+@joke_agent.retriever
 async def joke_factory(ctx: CallContext[MyDeps], count: int) -> str:
     r = await ctx.deps.factory_agent.run(f'Please generate {count} jokes.')
     return '\n'.join(r.data)

@@ -338,16 +338,16 @@ class Agent(Generic[AgentDeps, ResultData]):
         return func
 
     @overload
-    def retriever_context(
+    def retriever(
         self, func: RetrieverContextFunc[AgentDeps, RetrieverParams], /
     ) -> _r.Retriever[AgentDeps, RetrieverParams]: ...
 
     @overload
-    def retriever_context(
+    def retriever(
         self, /, *, retries: int | None = None
     ) -> Callable[[RetrieverContextFunc[AgentDeps, RetrieverParams]], _r.Retriever[AgentDeps, RetrieverParams]]: ...
 
-    def retriever_context(
+    def retriever(
         self,
         func: RetrieverContextFunc[AgentDeps, RetrieverParams] | None = None,
         /,

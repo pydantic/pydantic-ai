@@ -11,18 +11,18 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 
 
-def test_retriever_context_no_ctx():
+def test_retriever_no_ctx():
     agent = Agent(TestModel())
 
     with pytest.raises(UserError) as exc_info:
 
-        @agent.retriever_context  # pyright: ignore[reportArgumentType]
+        @agent.retriever  # pyright: ignore[reportArgumentType]
         def invalid_retriever(x: int) -> str:  # pragma: no cover
             return 'Hello'
 
     assert str(exc_info.value) == snapshot(
-        'Error generating schema for test_retriever_context_no_ctx.<locals>.invalid_retriever:\n'
-        '  First argument must be a CallContext instance when using `.retriever_context`'
+        'Error generating schema for test_retriever_no_ctx.<locals>.invalid_retriever:\n'
+        '  First argument must be a CallContext instance when using `.retriever`'
     )
 
 
@@ -37,22 +37,22 @@ def test_retriever_plain_with_ctx():
 
     assert str(exc_info.value) == snapshot(
         'Error generating schema for test_retriever_plain_with_ctx.<locals>.invalid_retriever:\n'
-        '  CallContext instance can only be used with `.retriever_context`'
+        '  CallContext instance can only be used with `.retriever`'
     )
 
 
-def test_retriever_context_ctx_second():
+def test_retriever_ctx_second():
     agent = Agent(TestModel())
 
     with pytest.raises(UserError) as exc_info:
 
-        @agent.retriever_context  # pyright: ignore[reportArgumentType]
+        @agent.retriever  # pyright: ignore[reportArgumentType]
         def invalid_retriever(x: int, ctx: CallContext[None]) -> str:  # pragma: no cover
             return 'Hello'
 
     assert str(exc_info.value) == snapshot(
-        'Error generating schema for test_retriever_context_ctx_second.<locals>.invalid_retriever:\n'
-        '  First argument must be a CallContext instance when using `.retriever_context`\n'
+        'Error generating schema for test_retriever_ctx_second.<locals>.invalid_retriever:\n'
+        '  First argument must be a CallContext instance when using `.retriever`\n'
         '  CallContext instance can only be used as the first argument'
     )
 

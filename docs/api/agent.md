@@ -13,5 +13,5 @@
         - last_run_messages
         - system_prompt
         - retriever_plain
-        - retriever_context
+        - retriever
         - result_validator

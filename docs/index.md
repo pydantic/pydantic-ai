@@ -94,7 +94,7 @@ async def add_customer_name(ctx: CallContext[SupportDependencies]) -> str:
     return f"The customer's name is {customer_name!r}"
 
 
-@support_agent.retriever_context  # (6)!
+@support_agent.retriever  # (6)!
 async def customer_balance(
     ctx: CallContext[SupportDependencies], include_pending: bool
 ) -> str:
