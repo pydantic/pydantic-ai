@@ -149,7 +149,7 @@ text_responses: dict[str, str | ToolCall] = {
     'What is the date?': 'Hello Frank, the date today is 2032-01-02.',
     'Put my money on square eighteen': ToolCall(tool_name='roulette_wheel', args=ArgsObject({'square': 18})),
     'I bet five is the winner': ToolCall(tool_name='roulette_wheel', args=ArgsObject({'square': 5})),
-    'My guess is 4': ToolCall(tool_name='roll_dice', args=ArgsObject({})),
+    'My guess is 4': ToolCall(tool_name='roll_die', args=ArgsObject({})),
     'Send a message to John Doe asking for coffee next week': ToolCall(
         tool_name='get_user_by_name', args=ArgsObject({'name': 'John'})
     ),
@@ -186,7 +186,7 @@ async def model_logic(messages: list[Message], info: AgentInfo) -> ModelAnyRespo
     elif m.role == 'tool-return' and m.tool_name == 'roulette_wheel':
         win = m.content == 'winner'
         return ModelStructuredResponse(calls=[ToolCall(tool_name='final_result', args=ArgsObject({'response': win}))])
-    elif m.role == 'tool-return' and m.tool_name == 'roll_dice':
+    elif m.role == 'tool-return' and m.tool_name == 'roll_die':
         return ModelStructuredResponse(calls=[ToolCall(tool_name='get_player_name', args=ArgsObject({}))])
     elif m.role == 'tool-return' and m.tool_name == 'get_player_name':
         return ModelTextResponse(content="Congratulations Adam, you guessed correctly! You're a winner!")
