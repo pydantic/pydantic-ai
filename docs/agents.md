@@ -181,6 +181,8 @@ There are two different decorator functions to register retrievers:
 1. [`@agent.retriever_plain`][pydantic_ai.Agent.retriever_plain] — for retrievers that don't need access to the agent [context][pydantic_ai.dependencies.CallContext]
 2. [`@agent.retriever`][pydantic_ai.Agent.retriever] — for retrievers that do need access to the agent [context][pydantic_ai.dependencies.CallContext]
 
+`@agent.retriever` is the default since in the majority of cases retrievers will need access to the agent context.
+
 Here's an example using both:
 
 ```py title="dice_game.py"
