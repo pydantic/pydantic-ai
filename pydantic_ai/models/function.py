@@ -15,10 +15,10 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
 from itertools import chain
-from typing import Callable, Union, assert_never, cast
+from typing import Callable, Union, cast
 
 import pydantic_core
-from typing_extensions import TypeAlias, overload
+from typing_extensions import TypeAlias, assert_never, overload
 
 from .. import _utils, result
 from ..messages import ArgsJson, Message, ModelAnyResponse, ModelStructuredResponse, ToolCall
