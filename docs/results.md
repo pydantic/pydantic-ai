@@ -22,6 +22,8 @@ print(result.cost())
 #> Cost(request_tokens=56, response_tokens=8, total_tokens=64, details=None)
 ```
 
+_(This example is complete, it can be run "as is")_
+
 Runs end when either a plain text response is received or the model calls a tool associated with one of the structured result types. We will add limits to make sure a run doesn't go on indefinitely, see [#70](https://github.com/pydantic/pydantic-ai/issues/70).
 
 ## Result data {#structured-result-validation}
@@ -74,6 +76,8 @@ print(result.data)
 #> width=10 height=20 depth=30 units='cm'
 ```
 
+_(This example is complete, it can be run "as is")_
+
 Here's an example of using a union return type which registered multiple tools, and wraps non-object schemas in an object:
 
 ```py title="colors_or_sizes.py"
@@ -95,6 +99,8 @@ result = agent.run_sync('square size 10, circle size 20, triangle size 30')
 print(result.data)
 #> [10, 20, 30]
 ```
+
+_(This example is complete, it can be run "as is")_
 
 ### Result validators functions
 
@@ -147,6 +153,8 @@ print(result.data)
 #> sql_query='SELECT * FROM users WHERE last_active::date = today() - interval 1 day'
 ```
 
+_(This example is complete, it can be run "as is")_
+
 ## Streamed Results
 
 There two main challenges with streamed results:
@@ -183,6 +191,8 @@ async def main():
 2. The [`Agent.run_stream()`][pydantic_ai.Agent.run_stream] method is used to start a streamed run, this method returns a context manager so the connection can be closed when the stream completes.
 3. Each item yield by [`StreamedRunResult.stream()`][pydantic_ai.result.StreamedRunResult.stream] is the complete text response, extended as new data is received.
 
+_(This example is complete, it can be run "as is")_
+
 We can also stream text as deltas rather than the entire text in each item:
 
 ```py title="streamed_delta_hello_world.py"
@@ -207,6 +217,8 @@ async def main():
 ```
 
 1. [`stream_text`][pydantic_ai.result.StreamedRunResult.stream_text] will error if the response is not text
+
+_(This example is complete, it can be run "as is")_
 
 ### Streaming Structured Responses
 
@@ -248,6 +260,8 @@ async def main():
             #> {'name': 'Ben', 'date_of_birth': date(1990, 1, 28), 'interests': ['sports', 'music']}
 ```
 
+_(This example is complete, it can be run "as is")_
+
 If you want fine-grained control of validation, particularly catching validation errors, you can use teh following pattern:
 
 ```py title="streamed_user_profile.py"
@@ -273,7 +287,7 @@ async def main():
     async with agent.run_stream(user_input) as result:
         async for message, last in result.stream_structured(debounce_by=0.01):  # (1)!
             try:
-                profile = await result.validate_structured_result(message, allow_partial=not last)  # (1)!
+                profile = await result.validate_structured_result(message, allow_partial=not last)  # (2)!
             except ValidationError:
                 continue
             print(profile)
@@ -290,6 +304,8 @@ async def main():
 
 1. [`stream_structured`][pydantic_ai.result.StreamedRunResult.stream_structured]
 2. [`validate_structured_result`][pydantic_ai.result.StreamedRunResult.validate_structured_result]
+
+_(This example is complete, it can be run "as is")_
 
 ## Examples
 
