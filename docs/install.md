@@ -34,4 +34,4 @@ To install extra dependencies required to run examples, install the `examples` o
 pip/uv-add 'pydantic-ai[examples]'
 ```
 
-For next steps, follow instructions [in examples](examples/index.md).
+For next steps, follow the instructions [in the examples](examples/index.md).
