@@ -1,6 +1,5 @@
 from __future__ import annotations as _annotations
 
-import asyncio
 import re
 import sys
 from collections.abc import AsyncIterator, Iterable
@@ -9,11 +8,13 @@ from types import ModuleType
 from typing import Any
 
 import httpx
+import pydantic_core
 import pytest
 from devtools import debug
 from pytest_examples import CodeExample, EvalExample, find_examples
 from pytest_mock import MockerFixture
 
+from pydantic_ai._utils import group_by_temporal
 from pydantic_ai.messages import (
     ArgsObject,
     Message,
@@ -23,7 +24,7 @@ from pydantic_ai.messages import (
     ToolCall,
 )
 from pydantic_ai.models import KnownModelName, Model
-from pydantic_ai.models.function import AgentInfo, DeltaToolCalls, FunctionModel
+from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from tests.conftest import ClientWithHandler
 
@@ -39,9 +40,15 @@ def register_fake_db():
     class DatabaseConn:
         users: FakeTable = field(default_factory=FakeTable)
 
+        async def execute(self, query: str) -> None:
+            pass
+
+    class QueryError(RuntimeError):
+        pass
+
     module_name = 'fake_database'
     sys.modules[module_name] = module = ModuleType(module_name)
-    module.__dict__.update({'DatabaseConn': DatabaseConn})
+    module.__dict__.update({'DatabaseConn': DatabaseConn, 'QueryError': QueryError})
 
     yield
 
@@ -84,6 +91,7 @@ def test_docs_examples(
 ):
     # debug(example)
     mocker.patch('pydantic_ai.agent.models.infer_model', side_effect=mock_infer_model)
+    mocker.patch('pydantic_ai._utils.group_by_temporal', side_effect=mock_group_by_temporal)
 
     mocker.patch('httpx.Client.get', side_effect=http_request)
     mocker.patch('httpx.Client.post', side_effect=http_request)
@@ -99,7 +107,11 @@ def test_docs_examples(
     if 'from bank_database import DatabaseConn' in example.source:
         ruff_ignore.append('I001')
 
-    eval_example.set_config(ruff_ignore=ruff_ignore, target_version='py39')
+    line_length = 88
+    if prefix_settings.get('title') in ('streamed_hello_world.py', 'streamed_user_profile.py'):
+        line_length = 120
+
+    eval_example.set_config(ruff_ignore=ruff_ignore, target_version='py39', line_length=line_length)
 
     eval_example.print_callback = print_callback
 
@@ -122,7 +134,8 @@ def test_docs_examples(
 
 
 def print_callback(s: str) -> str:
-    return re.sub(r'datetime.datetime\(.+?\)', 'datetime.datetime(...)', s, flags=re.DOTALL)
+    s = re.sub(r'datetime\.datetime\(.+?\)', 'datetime.datetime(...)', s, flags=re.DOTALL)
+    return re.sub(r'datetime.date\(', 'date(', s)
 
 
 def http_request(url: str, **kwargs: Any) -> httpx.Response:
@@ -168,6 +181,37 @@ text_responses: dict[str, str | ToolCall] = {
                 ),
                 'block_card': True,
                 'risk': 8,
+            }
+        ),
+    ),
+    'Where the olympics held in 2012?': ToolCall(
+        tool_name='final_result',
+        args=ArgsObject({'city': 'London', 'country': 'United Kingdom'}),
+    ),
+    'The box is 10x20x30': 'Please provide the units for the dimensions (e.g., cm, in, m).',
+    'The box is 10x20x30 cm': ToolCall(
+        tool_name='final_result',
+        args=ArgsObject({'width': 10, 'height': 20, 'depth': 30, 'units': 'cm'}),
+    ),
+    'red square, blue circle, green triangle': ToolCall(
+        tool_name='final_result_list',
+        args=ArgsObject({'response': ['red', 'blue', 'green']}),
+    ),
+    'square size 10, circle size 20, triangle size 30': ToolCall(
+        tool_name='final_result_list_2',
+        args=ArgsObject({'response': [10, 20, 30]}),
+    ),
+    'get me uses who were last active yesterday.': ToolCall(
+        tool_name='final_result_Success',
+        args=ArgsObject({'sql_query': 'SELECT * FROM users WHERE last_active::date = today() - interval 1 day'}),
+    ),
+    'My name is Ben, I was born on January 28th 1990, I like the chain the dog and the pyramid.': ToolCall(
+        tool_name='final_result',
+        args=ArgsObject(
+            {
+                'name': 'Ben',
+                'dob': '1990-01-28',
+                'bio': 'Likes the chain the dog and the pyramid',
             }
         ),
     ),
@@ -219,14 +263,27 @@ async def stream_model_logic(messages: list[Message], info: AgentInfo) -> AsyncI
     if m.role == 'user':
         if response := text_responses.get(m.content):
             if isinstance(response, str):
-                *words, last_word = response.split(' ')
+                words = response.split(' ')
+                chunk: list[str] = []
                 for work in words:
-                    yield f'{work} '
-                    await asyncio.sleep(0.05)
-                yield last_word
+                    chunk.append(work)
+                    if len(chunk) == 3:
+                        yield ' '.join(chunk) + ' '
+                        chunk.clear()
+                if chunk:
+                    yield ' '.join(chunk)
                 return
             else:
-                raise NotImplementedError('todo')
+                if isinstance(response.args, ArgsObject):
+                    json_text = pydantic_core.to_json(response.args.args_object).decode()
+                else:
+                    json_text = response.args.args_json
+
+                yield {1: DeltaToolCall(name=response.tool_name)}
+                for chunk_index in range(0, len(json_text), 15):
+                    text_chunk = json_text[chunk_index : chunk_index + 15]
+                    yield {1: DeltaToolCall(json_args=text_chunk)}
+                return
 
     sys.stdout.write(str(debug.format(messages, info)))
     raise RuntimeError(f'Unexpected message: {m}')
@@ -239,3 +296,8 @@ def mock_infer_model(model: Model | KnownModelName) -> Model:
         return TestModel()
     else:
         return FunctionModel(model_logic, stream_function=stream_model_logic)
+
+
+def mock_group_by_temporal(aiter: Any, soft_max_interval: float | None) -> Any:
+    """Mock group_by_temporal to avoid debouncing, since the iterators above have no delay."""
+    return group_by_temporal(aiter, None)

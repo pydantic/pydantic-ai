@@ -9,16 +9,19 @@ It's primary use case for more advanced unit testing than is possible with `Test
 from __future__ import annotations as _annotations
 
 import inspect
+import re
 from collections.abc import AsyncIterator, Awaitable, Iterable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
+from itertools import chain
 from typing import Callable, Union, cast
 
-from typing_extensions import TypeAlias, overload
+import pydantic_core
+from typing_extensions import TypeAlias, assert_never, overload
 
 from .. import _utils, result
-from ..messages import Message, ModelAnyResponse, ModelStructuredResponse, ToolCall
+from ..messages import ArgsJson, Message, ModelAnyResponse, ModelStructuredResponse, ToolCall
 from . import (
     AbstractToolDefinition,
     AgentModel,
@@ -113,7 +116,6 @@ class DeltaToolCall:
 DeltaToolCalls: TypeAlias = dict[int, DeltaToolCall]
 """A mapping of tool call IDs to incremental changes."""
 
-# TODO these should allow coroutines
 FunctionDef: TypeAlias = Callable[[list[Message], AgentInfo], Union[ModelAnyResponse, Awaitable[ModelAnyResponse]]]
 """A function used to generate a non-streamed response."""
 
@@ -138,10 +140,12 @@ class FunctionAgentModel(AgentModel):
     async def request(self, messages: list[Message]) -> tuple[ModelAnyResponse, result.Cost]:
         assert self.function is not None, 'FunctionModel must receive a `function` to support non-streamed requests'
         if inspect.iscoroutinefunction(self.function):
-            return await self.function(messages, self.agent_info), result.Cost()
+            response = await self.function(messages, self.agent_info)
         else:
-            response = await _utils.run_in_executor(self.function, messages, self.agent_info)
-            return cast(ModelAnyResponse, response), result.Cost()
+            response_ = await _utils.run_in_executor(self.function, messages, self.agent_info)
+            response = cast(ModelAnyResponse, response_)
+        # TODO is `messages` right here? Should it just be new messages?
+        return response, _estimate_cost(chain(messages, [response]))
 
     @asynccontextmanager
     async def request_stream(self, messages: list[Message]) -> AsyncIterator[EitherStreamedResponse]:
@@ -225,3 +229,40 @@ class FunctionStreamStructuredResponse(StreamStructuredResponse):
 
     def timestamp(self) -> datetime:
         return self._timestamp
+
+
+def _estimate_cost(messages: Iterable[Message]) -> result.Cost:
+    """Very rough guesstimate of the number of tokens associate with a series of messages.
+
+    This is designed to be used solely to give plausible numbers for testing!
+    """
+    # there seem to be about 50 tokens of overhead for both Gemini and OpenAI calls, so add that here ¯\_(ツ)_/¯
+
+    request_tokens = 50
+    response_tokens = 0
+    for message in messages:
+        if message.role == 'system' or message.role == 'user':
+            request_tokens += _string_cost(message.content)
+        elif message.role == 'tool-return':
+            request_tokens += _string_cost(message.model_response_str())
+        elif message.role == 'retry-prompt':
+            request_tokens += _string_cost(message.model_response())
+        elif message.role == 'model-text-response':
+            response_tokens += _string_cost(message.content)
+        elif message.role == 'model-structured-response':
+            for call in message.calls:
+                if isinstance(call.args, ArgsJson):
+                    args_str = call.args.args_json
+                else:
+                    args_str = pydantic_core.to_json(call.args.args_object).decode()
+
+                response_tokens += 1 + _string_cost(args_str)
+        else:
+            assert_never(message)
+    return result.Cost(
+        request_tokens=request_tokens, response_tokens=response_tokens, total_tokens=request_tokens + response_tokens
+    )
+
+
+def _string_cost(content: str) -> int:
+    return len(re.split(r'[\s",.:]+', content))

@@ -60,7 +60,7 @@ class TestModel(Model):
     call_retrievers: list[str] | Literal['all'] = 'all'
     """List of retrievers to call. If `'all'`, all retrievers will be called."""
     custom_result_text: str | None = None
-    """If set, this text is return as teh final result."""
+    """If set, this text is return as the final result."""
     custom_result_args: Any | None = None
     """If set, these args will be passed to the result tool."""
     seed: int = 0

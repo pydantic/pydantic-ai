@@ -25,7 +25,7 @@ and [`StreamedRunResult`][pydantic_ai.result.StreamedRunResult] (returned by [`A
 
 Example of accessing methods on a [`RunResult`][pydantic_ai.result.RunResult] :
 
-```python title="run_result_messages.py" hl_lines="10 28"
+```py title="run_result_messages.py" hl_lines="10 28"
 from pydantic_ai import Agent
 
 agent = Agent('openai:gpt-4o', system_prompt='Be a helpful assistant.')
@@ -73,7 +73,7 @@ _(This example is complete, it can be run "as is")_
 
 Example of accessing methods on a [`StreamedRunResult`][pydantic_ai.result.StreamedRunResult] :
 
-```python title="streamed_run_result_messages.py" hl_lines="9 31"
+```py title="streamed_run_result_messages.py" hl_lines="9 31"
 from pydantic_ai import Agent
 
 agent = Agent('openai:gpt-4o', system_prompt='Be a helpful assistant.')
@@ -96,11 +96,9 @@ async def main():
 
         async for text in result.stream():
             print(text)
-            #> Did you
-            #> Did you hear about
+            #> Did you hear
             #> Did you hear about the toothpaste
-            #> Did you hear about the toothpaste scandal? They
-            #> Did you hear about the toothpaste scandal? They called it
+            #> Did you hear about the toothpaste scandal? They called
             #> Did you hear about the toothpaste scandal? They called it Colgate.
 
         # complete messages once the stream finishes
@@ -190,7 +188,7 @@ Since messages are defined by simple dataclasses, you can manually create and ma
 
 The message format is independent of the model used, so you can use messages in different agents, or the same agent with different models.
 
-```python
+```py
 from pydantic_ai import Agent
 
 agent = Agent('openai:gpt-4o', system_prompt='Be a helpful assistant.')

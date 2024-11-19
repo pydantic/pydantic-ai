@@ -39,10 +39,10 @@ async def main():
         if env_var in os.environ:
             console.log(f'Using model: {model}')
             with Live('', console=console, vertical_overflow='visible') as live:
-                async with agent.run_stream(prompt, model=model) as response:
-                    async for message in response.stream():
+                async with agent.run_stream(prompt, model=model) as result:
+                    async for message in result.stream():
                         live.update(Markdown(message))
-            console.log(response.cost())
+            console.log(result.cost())
         else:
             console.log(f'{model} requires {env_var} to be set.')
 

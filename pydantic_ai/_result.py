@@ -101,8 +101,10 @@ class ResultSchema(Generic[ResultData]):
 
         tools: dict[str, ResultTool[ResultData]] = {}
         if args := get_union_args(response_type):
-            for arg in args:
+            for i, arg in enumerate(args, start=1):
                 tool_name = union_tool_name(name, arg)
+                while tool_name in tools:
+                    tool_name = f'{tool_name}_{i}'
                 tools[tool_name] = _build_tool(arg, tool_name, True)
         else:
             tools[name] = _build_tool(response_type, name, False)
