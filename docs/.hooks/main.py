@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import re
+import urllib.parse
 from pathlib import Path
 
 from mkdocs.config import Config
@@ -12,6 +13,7 @@ def on_page_markdown(markdown: str, page: Page, config: Config, files: Files) ->
     """Called on each file after it is read and before it is converted to HTML."""
     markdown = replace_uv_python_run(markdown)
     markdown = render_examples(markdown)
+    markdown = render_video(markdown)
     return markdown
 
 
@@ -52,3 +54,28 @@ def sub_example(m: re.Match[str]) -> str:
     content = re.sub(r'^""".*?"""', '', content, count=1, flags=re.S).strip()
 
     return content
+
+
+def render_video(markdown: str) -> str:
+    return re.sub(r'\{\{ *video\((["\'])(.+?)\1(?:, (\d+))?\) *\}\}', sub_cf_video, markdown)
+
+
+def sub_cf_video(m: re.Match[str]) -> str:
+    video_id = m.group(2)
+    time = m.group(3)
+    time = f'{time}s' if time else ''
+
+    domain = 'https://customer-nmegqx24430okhaq.cloudflarestream.com'
+    poster = f'{domain}/{video_id}/thumbnails/thumbnail.jpg?time={time}&height=600'
+    print(poster)
+    return f"""
+<div style="position: relative; padding-top: 67%;">
+  <iframe
+    src="{domain}/{video_id}/iframe?poster={urllib.parse.quote_plus(poster)}"
+    loading="lazy"
+    style="border: none; position: absolute; top: 0; left: 0; height: 100%; width: 100%;"
+    allow="accelerometer; gyroscope; autoplay; encrypted-media; picture-in-picture;"
+    allowfullscreen="true"
+  ></iframe>
+</div>
+"""
