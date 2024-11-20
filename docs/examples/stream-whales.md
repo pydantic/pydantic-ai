@@ -15,6 +15,10 @@ With [dependencies installed and environment variables set](./index.md#usage), r
 python/uv-run -m pydantic_ai_examples.stream_whales
 ```
 
+Should give an output like this:
+
+{{ video('53dd5e7664c20ae90ed90ae42f606bf3', 25) }}
+
 ## Example Code
 
 ```py title="stream_whales.py"

@@ -15,7 +15,7 @@ PydanticAI is a Python Agent Framework designed to make it less painful to build
 * Type-safe
 * Control flow and composing agents is done with vanilla python, allowing you to make use of the same Python development best practices you'd use in any other (non-AI) project
 * [Structured response](results.md#structured-result-validation) validation with Pydantic
-* [Streamed responses](results.md#streamed-results) , including validation of streamed _structured_ responses with Pydantic
+* [Streamed responses](results.md#streamed-results), including validation of streamed _structured_ responses with Pydantic
 * Novel, type-safe [dependency injection system](dependencies.md), useful for testing and eval-driven iterative development
 * [Logfire integration](logfire.md) for debugging and monitoring the performance and general behavior of your LLM-powered application
 
@@ -81,8 +81,7 @@ support_agent = Agent(  # (1)!
     result_type=SupportResult,  # (9)!
     system_prompt=(  # (4)!
         'You are a support agent in our bank, give the '
-        'customer support and judge the risk level of their query. '
-        "Reply using the customer's name."
+        'customer support and judge the risk level of their query.'
     ),
 )
 
