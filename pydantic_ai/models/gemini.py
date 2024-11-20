@@ -213,8 +213,8 @@ class GeminiAgentModel(AgentModel):
         async for chunk in aiter_bytes:
             content.extend(chunk)
             responses = _gemini_streamed_response_ta.validate_json(
-                content,  # type: ignore # see https://github.com/pydantic/pydantic/pull/10802
-                experimental_allow_partial=True,
+                content,
+                experimental_allow_partial='trailing-strings',
             )
             if responses:
                 last = responses[-1]
@@ -279,7 +279,9 @@ class GeminiStreamTextResponse(StreamTextResponse):
             all_items = pydantic_core.from_json(self._json_content, allow_partial=True)
             new_items = all_items[self._position : -1]
             self._position = len(all_items) - 1
-            new_responses = _gemini_streamed_response_ta.validate_python(new_items, experimental_allow_partial=True)
+            new_responses = _gemini_streamed_response_ta.validate_python(
+                new_items, experimental_allow_partial='trailing-strings'
+            )
         for r in new_responses:
             self._cost += _metadata_as_cost(r['usage_metadata'])
             parts = r['candidates'][0]['content']['parts']
@@ -321,8 +323,8 @@ class GeminiStreamStructuredResponse(StreamStructuredResponse):
         separate parts.
         """
         responses = _gemini_streamed_response_ta.validate_json(
-            self._content,  # type: ignore # see https://github.com/pydantic/pydantic/pull/10802
-            experimental_allow_partial=not final,
+            self._content,
+            experimental_allow_partial='off' if final else 'trailing-strings',
         )
         combined_parts: list[_GeminiFunctionCallPart] = []
         self._cost = result.Cost()
