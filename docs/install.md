@@ -9,9 +9,6 @@ pip/uv-add pydantic-ai
 
 It requires Python 3.9+.
 
-!!! note "Use `--prerelease=allow` with uv"
-    Until Pydantic v2.10 is released (very soon), you'll need to use `--prerelease=allow` with `uv` to install PydanticAI.
-
 ## Use with Pydantic Logfire
 
 PydanticAI has an excellent (but completely optional) integration with [Pydantic Logfire](https://pydantic.dev/logfire) to help you view and understand agent runs.

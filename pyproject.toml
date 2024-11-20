@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "pydantic-ai"
-version = "0.0.4"
+version = "0.0.5"
 description = "Agent Framework / shim to use Pydantic with LLMs"
 authors = [
     { name = "Samuel Colvin", email = "samuel@pydantic.dev" },
@@ -39,7 +39,7 @@ dependencies = [
     "httpx>=0.27.2",
     "logfire-api>=1.2.0",
     "openai>=1.54.3",
-    "pydantic>=2.10.0b1",
+    "pydantic>=2.10",
 ]
 
 [project.optional-dependencies]

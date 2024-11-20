@@ -5,7 +5,7 @@ import sys
 import types
 from collections.abc import Awaitable
 from dataclasses import dataclass, field
-from typing import Any, Callable, Generic, Union, cast, get_args, get_origin
+from typing import Any, Callable, Generic, Literal, Union, cast, get_args, get_origin
 
 from pydantic import TypeAdapter, ValidationError
 from typing_extensions import Self, TypeAliasType, TypedDict
@@ -184,13 +184,14 @@ class ResultTool(Generic[ResultData]):
             Either the validated result data (left) or a retry message (right).
         """
         try:
+            pyd_allow_partial: Literal['off', 'trailing-strings'] = 'trailing-strings' if allow_partial else 'off'
             if isinstance(tool_call.args, messages.ArgsJson):
                 result = self.type_adapter.validate_json(
-                    tool_call.args.args_json or '', experimental_allow_partial=allow_partial
+                    tool_call.args.args_json or '', experimental_allow_partial=pyd_allow_partial
                 )
             else:
                 result = self.type_adapter.validate_python(
-                    tool_call.args.args_object, experimental_allow_partial=allow_partial
+                    tool_call.args.args_object, experimental_allow_partial=pyd_allow_partial
                 )
         except ValidationError as e:
             if wrap_validation_errors:
