@@ -24,6 +24,7 @@ from pydantic_ai.messages import (
     UserPrompt,
 )
 from pydantic_ai.models.gemini import (
+    ApiKeyAuth,
     GeminiModel,
     _content_function_call,
     _content_model_text,
@@ -49,13 +50,15 @@ pytestmark = pytest.mark.anyio
 def test_api_key_arg(env: TestEnv):
     env.set('GEMINI_API_KEY', 'via-env-var')
     m = GeminiModel('gemini-1.5-flash', api_key='via-arg')
-    assert m.api_key == 'via-arg'
+    assert isinstance(m.auth, ApiKeyAuth)
+    assert m.auth.api_key == 'via-arg'
 
 
 def test_api_key_env_var(env: TestEnv):
     env.set('GEMINI_API_KEY', 'via-env-var')
     m = GeminiModel('gemini-1.5-flash')
-    assert m.api_key == 'via-env-var'
+    assert isinstance(m.auth, ApiKeyAuth)
+    assert m.auth.api_key == 'via-env-var'
 
 
 def test_api_key_not_set(env: TestEnv):
@@ -75,7 +78,8 @@ def test_agent_model_simple(allow_model_requests: None):
     agent_model = m.agent_model({}, True, None)
     assert isinstance(agent_model.http_client, httpx.AsyncClient)
     assert agent_model.model_name == 'gemini-1.5-flash'
-    assert agent_model.api_key == 'via-arg'
+    assert isinstance(agent_model.auth, ApiKeyAuth)
+    assert agent_model.auth.api_key == 'via-arg'
     assert agent_model.tools is None
     assert agent_model.tool_config is None
 
@@ -562,7 +566,7 @@ async def test_stream_text(get_gemini_client: GetGeminiClient):
 
     async with agent.run_stream('Hello') as result:
         chunks = [chunk async for chunk in result.stream_text(delta=True, debounce_by=None)]
-        assert chunks == snapshot(['Hello ', 'world'])
+        assert chunks == snapshot(['', 'Hello ', 'world'])
     assert result.cost() == snapshot(Cost(request_tokens=2, response_tokens=4, total_tokens=6))
 
 

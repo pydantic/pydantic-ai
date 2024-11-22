@@ -107,19 +107,18 @@ async def customer_balance(
 ...  # (11)!
 
 
-async def main():
-    deps = SupportDependencies(customer_id=123, db=DatabaseConn())
-    result = await support_agent.run('What is my balance?', deps=deps)  # (8)!
-    print(result.data)  # (10)!
-    """
-    support_advice='Hello John, your current account balance, including pending transactions, is $123.45.' block_card=False risk=1
-    """
+deps = SupportDependencies(customer_id=123, db=DatabaseConn())
+result = support_agent.run_sync('What is my balance?', deps=deps)  # (8)!
+print(result.data)  # (10)!
+"""
+support_advice='Hello John, your current account balance, including pending transactions, is $123.45.' block_card=False risk=1
+"""
 
-    result = await support_agent.run('I just lost my card!', deps=deps)
-    print(result.data)
-    """
-    support_advice="I'm sorry to hear that, John. We are temporarily blocking your card to prevent unauthorized transactions." block_card=True risk=8
-    """
+result = support_agent.run_sync('I just lost my card!', deps=deps)
+print(result.data)
+"""
+support_advice="I'm sorry to hear that, John. We are temporarily blocking your card to prevent unauthorized transactions." block_card=True risk=8
+"""
 ```
 
 1. This [agent](agents.md) will act as first-tier support in a bank. Agents are generic in the type of dependencies they accept and the type of result they return. In this case, the support agent has type `#!python Agent[SupportDependencies, SupportResult]`.
