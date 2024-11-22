@@ -15,7 +15,7 @@ VERTEX_AI_URL_TEMPLATE = (
     'https://{region}-aiplatform.googleapis.com/v1'
     '/projects/{project_id}'
     '/locations/{region}'
-    '/publishers/google'
+    '/publishers/{model_publisher}'
     '/models/{model}'
     ':{function}'
 )
@@ -28,6 +28,7 @@ class VertexAIModel(GeminiModel):
         auth: str | Path | Credentials,
         *,
         region: str = 'us-central1',
+        model_publisher: str = 'google',
         http_client: AsyncHTTPClient | None = None,
         url_template: str = VERTEX_AI_URL_TEMPLATE,
     ):
@@ -41,7 +42,11 @@ class VertexAIModel(GeminiModel):
         # use replace, not format since we don't want to replace `{model}` or `{function}` yet
         project_id: Any = credentials.project_id
         assert isinstance(project_id, str), f'Expected project_id to be a string, got {project_id}'
-        self.url_template = url_template.replace('{region}', region).replace('{project_id}', project_id)
+        self.url_template = (
+            url_template.replace('{region}', region)
+            .replace('{project_id}', project_id)
+            .replace('{model_publisher}', model_publisher)
+        )
 
     def name(self) -> str:
         return f'vertexai:{super().name()}'

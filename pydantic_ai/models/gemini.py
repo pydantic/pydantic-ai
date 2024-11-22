@@ -539,10 +539,8 @@ class _GeminiResponse(TypedDict):
     """
 
     candidates: list[_GeminiCandidates]
-
-    # usageMetadata appears to be required by both APIs but is omitted when streaming responses from vertex
+    # usageMetadata appears to be required by both APIs but is omitted when streaming responses until the last response
     usage_metadata: NotRequired[Annotated[_GeminiUsageMetaData, Field(alias='usageMetadata')]]
-
     prompt_feedback: NotRequired[Annotated[_GeminiPromptFeedback, Field(alias='promptFeedback')]]
 
 
