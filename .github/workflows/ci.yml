@@ -10,7 +10,7 @@ on:
 
 env:
   CI: true
-  RICH_COLUMNS: 120
+  COLUMNS: 120
 
 permissions:
   contents: read

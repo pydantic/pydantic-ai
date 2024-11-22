@@ -87,7 +87,7 @@ class GeminiModel(Model):
         *,
         api_key: str | None = None,
         http_client: AsyncHTTPClient | None = None,
-        url_template: str = 'https://generativelanguage.googleapis.com/v1/models/{model}:{function}',
+        url_template: str = 'https://generativelanguage.googleapis.com/v1beta/models/{model}:{function}',
     ):
         """Initialize a Gemini model.
 
