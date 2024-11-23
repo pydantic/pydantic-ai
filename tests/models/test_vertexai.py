@@ -13,8 +13,7 @@ from pydantic_ai import UserError
 from tests.conftest import IsNow
 
 if TYPE_CHECKING:
-    from google.auth.credentials import Credentials as BaseCredentials
-    from google.oauth2.service_account import Credentials as ServiceAccountCredentials
+    from google.oauth2.service_account import Credentials
 
     from pydantic_ai.models.vertexai import BearerTokenAuth, VertexAIModel
 
@@ -27,8 +26,7 @@ else:
         google_auth_installed = False
     else:
         google_auth_installed = True
-        from google.auth.credentials import Credentials as BaseCredentials
-        from google.oauth2.service_account import Credentials as ServiceAccountCredentials
+        from google.oauth2.service_account import Credentials
 
 
 pytestmark = [
@@ -55,9 +53,8 @@ async def test_init_service_account(tmp_path: Path, allow_model_requests: None):
     assert model.name() == snapshot('vertexai:gemini-1.5-flash')
 
 
-class NoOpCredentials(BaseCredentials):  # pragma: no cover
-    def refresh(self, request: Any):
-        self.token = 'custom-token'
+class NoOpCredentials:
+    pass
 
 
 async def test_init_env(mocker: MockerFixture, allow_model_requests: None):
@@ -145,7 +142,7 @@ async def test_init_env_no_project_id(mocker: MockerFixture):
 async def test_bearer_token():
     refresh_count = 0
 
-    class MockRefreshCredentials(ServiceAccountCredentials):
+    class MockRefreshCredentials(Credentials):
         def refresh(self, request: Any):
             nonlocal refresh_count
             refresh_count += 1
