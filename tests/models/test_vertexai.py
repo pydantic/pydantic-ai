@@ -3,31 +3,43 @@ from __future__ import annotations as _annotations
 import json
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
-from google.auth.crypt import Signer
-from google.oauth2.service_account import Credentials
 from inline_snapshot import snapshot
 
-from pydantic_ai.models.vertexai import BearerTokenAuth, VertexAIModel
 from tests.conftest import IsNow
 
-pytestmark = pytest.mark.anyio
+if TYPE_CHECKING:
+    from google.oauth2.service_account import Credentials
+
+    from pydantic_ai.models.vertexai import BearerTokenAuth, VertexAIModel
+
+    google_auth_installed = True
+else:
+    try:
+        # noinspection PyUnresolvedReferences
+        from pydantic_ai.models.vertexai import BearerTokenAuth, VertexAIModel
+    except ImportError:
+        google_auth_installed = False
+    else:
+        google_auth_installed = True
+        from google.oauth2.service_account import Credentials
 
 
-class MockSigner(Signer):  # pragma: no cover
-    @property
-    def key_id(self) -> str | None:
-        return None
+pytestmark = [
+    pytest.mark.skipif(not google_auth_installed, reason='google-auth not installed'),
+    pytest.mark.anyio,
+]
 
-    def sign(self, message: str | bytes):
-        return b'signature'
+
+def mock_signer() -> Any:
+    return None
 
 
 def test_init_creds():
     creds = Credentials(
-        signer=MockSigner(),
+        signer=mock_signer(),
         service_account_email='test@example.com',
         token_uri='https://example.com/token',
         project_id='my-project-id',
@@ -92,7 +104,7 @@ async def test_bearer_token():
             self.token = f'custom-token-{refresh_count}'
 
     creds = MockRefreshCredentials(
-        signer=MockSigner(),
+        signer=mock_signer(),
         service_account_email='test@example.com',
         token_uri='https://example.com/token',
         project_id='my-project-id',

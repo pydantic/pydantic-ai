@@ -28,6 +28,14 @@ from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls
 from pydantic_ai.models.test import TestModel
 from tests.conftest import ClientWithHandler
 
+try:
+    from pydantic_ai.models.vertexai import VertexAIModel
+except ImportError:
+    VertexAIModel = None
+
+
+pytestmark = pytest.mark.skipif(VertexAIModel is None, reason='google-auth not installed')
+
 
 @pytest.fixture(scope='module', autouse=True)
 def register_fake_db():

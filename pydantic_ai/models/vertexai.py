@@ -46,13 +46,20 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal
 
-from google.auth.transport.requests import Request
-from google.oauth2.service_account import Credentials
 from httpx import AsyncClient as AsyncHTTPClient
 
 from .._utils import run_in_executor
 from . import cached_async_http_client
 from .gemini import GeminiModel, GeminiModelName
+
+try:
+    from google.auth.transport.requests import Request
+    from google.oauth2.service_account import Credentials
+except ImportError as e:
+    raise ImportError(
+        'Please install `google-auth` to use the VertexAI model, '
+        "you can use the `vertexai` optional group — `pip install 'pydantic-ai[vertexai]'`"
+    ) from e
 
 VERTEX_AI_URL_TEMPLATE = (
     'https://{region}-aiplatform.googleapis.com/v1'

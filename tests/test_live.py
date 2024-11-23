@@ -14,14 +14,40 @@ from pydantic import BaseModel
 
 from pydantic_ai import Agent
 from pydantic_ai.models import Model
-from pydantic_ai.models.gemini import GeminiModel
-from pydantic_ai.models.openai import OpenAIModel
-from pydantic_ai.models.vertexai import VertexAIModel
 
 pytestmark = [
     pytest.mark.skipif(os.getenv('PYDANTIC_AI_LIVE_TEST_DANGEROUS') != 'CHARGE-ME!', reason='live tests disabled'),
     pytest.mark.anyio,
 ]
+
+
+def openai(http_client: httpx.AsyncClient, _tmp_path: Path) -> Model:
+    from pydantic_ai.models.openai import OpenAIModel
+
+    return OpenAIModel('gpt-4o-mini', http_client=http_client)
+
+
+def gemini(http_client: httpx.AsyncClient, _tmp_path: Path) -> Model:
+    from pydantic_ai.models.gemini import GeminiModel
+
+    return GeminiModel('gemini-1.5-pro', http_client=http_client)
+
+
+def vertexai(http_client: httpx.AsyncClient, tmp_path: Path) -> Model:
+    from pydantic_ai.models.vertexai import VertexAIModel
+
+    service_account_content = os.environ['GOOGLE_SERVICE_ACCOUNT_CONTENT']
+    service_account_path = tmp_path / 'service_account.json'
+    service_account_path.write_text(service_account_content)
+    return VertexAIModel('gemini-1.5-flash', service_account_path, http_client=http_client)
+
+
+params = [
+    pytest.param(openai, id='openai'),
+    pytest.param(gemini, id='gemini'),
+    pytest.param(vertexai, id='vertexai'),
+]
+GetModel = Callable[[httpx.AsyncClient, Path], Model]
 
 
 @pytest.fixture
@@ -30,34 +56,9 @@ async def http_client(allow_model_requests: None) -> AsyncIterator[httpx.AsyncCl
         yield client
 
 
-def get_openai(http_client: httpx.AsyncClient, _tmp_path: Path) -> Model:
-    return OpenAIModel('gpt-4o-mini', http_client=http_client)
-
-
-def get_gemini(http_client: httpx.AsyncClient, _tmp_path: Path) -> Model:
-    return GeminiModel('gemini-1.5-pro', http_client=http_client)
-
-
-def get_vertexai(http_client: httpx.AsyncClient, tmp_path: Path) -> Model:
-    service_account_content = os.environ['GOOGLE_SERVICE_ACCOUNT_CONTENT']
-    service_account_path = tmp_path / 'service_account.json'
-    service_account_path.write_text(service_account_content)
-    return VertexAIModel('gemini-1.5-flash', service_account_path, http_client=http_client)
-
-
-params = [
-    pytest.param(get_openai, id='openai'),
-    pytest.param(get_gemini, id='gemini'),
-    pytest.param(get_vertexai, id='vertexai'),
-]
-
-
 @pytest.mark.parametrize('get_model', params)
-async def test_text(
-    http_client: httpx.AsyncClient, tmp_path: Path, get_model: Callable[[httpx.AsyncClient, Path], Model]
-):
-    model = get_model(http_client, tmp_path)
-    agent = Agent(model)
+async def test_text(http_client: httpx.AsyncClient, tmp_path: Path, get_model: GetModel):
+    agent = Agent(get_model(http_client, tmp_path))
     result = await agent.run('What is the capital of France?')
     print('Text response:', result.data)
     assert 'paris' in result.data.lower()
@@ -67,11 +68,8 @@ async def test_text(
 
 
 @pytest.mark.parametrize('get_model', params)
-async def test_stream(
-    http_client: httpx.AsyncClient, tmp_path: Path, get_model: Callable[[httpx.AsyncClient, Path], Model]
-):
-    model = get_model(http_client, tmp_path)
-    agent = Agent(model)
+async def test_stream(http_client: httpx.AsyncClient, tmp_path: Path, get_model: GetModel):
+    agent = Agent(get_model(http_client, tmp_path))
     async with agent.run_stream('What is the capital of France?') as result:
         data = await result.get_data()
     print('Stream response:', data)
@@ -86,11 +84,8 @@ class MyModel(BaseModel):
 
 
 @pytest.mark.parametrize('get_model', params)
-async def test_structured(
-    http_client: httpx.AsyncClient, tmp_path: Path, get_model: Callable[[httpx.AsyncClient, Path], Model]
-):
-    model = get_model(http_client, tmp_path)
-    agent = Agent(model, result_type=MyModel)
+async def test_structured(http_client: httpx.AsyncClient, tmp_path: Path, get_model: GetModel):
+    agent = Agent(get_model(http_client, tmp_path), result_type=MyModel)
     result = await agent.run('What is the capital of the UK?')
     print('Structured response:', result.data)
     assert result.data.city.lower() == 'london'
