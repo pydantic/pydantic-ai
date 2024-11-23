@@ -80,7 +80,7 @@ jobs:
         with:
           enable-cache: true
 
-      - run: uv run --python 3.12 --frozen pytest tests/test_live.py -v --durations=100
+      - run: uv run --python 3.12 --frozen --extra vertexai pytest tests/test_live.py -v --durations=100
         env:
           PYDANTIC_AI_LIVE_TEST_DANGEROUS: 'CHARGE-ME!'
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
