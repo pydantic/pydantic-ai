@@ -43,6 +43,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+vertexai = [
+    "google-auth>=2.36.0",
+]
 logfire = [
     "logfire>=2.3",
 ]
