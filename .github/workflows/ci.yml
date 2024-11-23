@@ -85,6 +85,7 @@ jobs:
           PYDANTIC_AI_LIVE_TEST_DANGEROUS: 'CHARGE-ME!'
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GOOGLE_SERVICE_ACCOUNT_CONTENT: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_CONTENT }}
 
   test:
     name: test on ${{ matrix.python-version }}

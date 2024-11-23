@@ -79,7 +79,7 @@ class GeminiModel(Model):
     model_name: GeminiModelName
     auth: AuthProtocol
     http_client: AsyncHTTPClient
-    url_template: str
+    url: str
 
     def __init__(
         self,
@@ -87,7 +87,7 @@ class GeminiModel(Model):
         *,
         api_key: str | None = None,
         http_client: AsyncHTTPClient | None = None,
-        url_template: str = 'https://generativelanguage.googleapis.com/v1beta/models/{model}:{function}',
+        url_template: str = 'https://generativelanguage.googleapis.com/v1beta/models/{model}:',
     ):
         """Initialize a Gemini model.
 
@@ -97,7 +97,8 @@ class GeminiModel(Model):
                 will be used if available.
             http_client: An existing `httpx.AsyncClient` to use for making HTTP requests.
             url_template: The URL template to use for making requests, you shouldn't need to change this,
-                docs [here](https://ai.google.dev/gemini-api/docs/quickstart?lang=rest#make-first-request).
+                docs [here](https://ai.google.dev/gemini-api/docs/quickstart?lang=rest#make-first-request),
+                `model` is substituted with the model name, and `function` is added to the end of the URL.
         """
         self.model_name = model_name
         if api_key is None:
@@ -107,7 +108,7 @@ class GeminiModel(Model):
                 raise exceptions.UserError('API key must be provided or set in the GEMINI_API_KEY environment variable')
         self.auth = ApiKeyAuth(api_key)
         self.http_client = http_client or cached_async_http_client()
-        self.url_template = url_template
+        self.url = url_template.format(model=model_name)
 
     def agent_model(
         self,
@@ -131,7 +132,7 @@ class GeminiModel(Model):
             auth=self.auth,
             tools=_GeminiTools(function_declarations=tools) if tools else None,
             tool_config=tool_config,
-            url_template=self.url_template,
+            url=self.url,
         )
 
     def name(self) -> str:
@@ -160,7 +161,7 @@ class GeminiAgentModel(AgentModel):
     auth: AuthProtocol
     tools: _GeminiTools | None
     tool_config: _GeminiToolConfig | None
-    url_template: str
+    url: str
 
     async def request(self, messages: list[Message]) -> tuple[ModelAnyResponse, result.Cost]:
         async with self._make_request(messages, False) as http_response:
@@ -191,9 +192,7 @@ class GeminiAgentModel(AgentModel):
         if self.tool_config is not None:
             request_data['tool_config'] = self.tool_config
 
-        url = self.url_template.format(
-            model=self.model_name, function='streamGenerateContent' if streamed else 'generateContent'
-        )
+        url = self.url + ('streamGenerateContent' if streamed else 'generateContent')
 
         headers = {
             'Content-Type': 'application/json',

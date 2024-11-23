@@ -89,9 +89,9 @@ def find_filter_examples() -> Iterable[CodeExample]:
 def test_docs_examples(
     example: CodeExample, eval_example: EvalExample, mocker: MockerFixture, client_with_handler: ClientWithHandler
 ):
-    # debug(example)
     mocker.patch('pydantic_ai.agent.models.infer_model', side_effect=mock_infer_model)
     mocker.patch('pydantic_ai._utils.group_by_temporal', side_effect=mock_group_by_temporal)
+    mocker.patch('pydantic_ai.models.vertexai._creds_from_file', return_value=MockCredentials())
 
     mocker.patch('httpx.Client.get', side_effect=http_request)
     mocker.patch('httpx.Client.post', side_effect=http_request)
@@ -303,3 +303,8 @@ def mock_infer_model(model: Model | KnownModelName) -> Model:
 def mock_group_by_temporal(aiter: Any, soft_max_interval: float | None) -> Any:
     """Mock group_by_temporal to avoid debouncing, since the iterators above have no delay."""
     return group_by_temporal(aiter, None)
+
+
+@dataclass
+class MockCredentials:
+    project_id = 'foobar'
