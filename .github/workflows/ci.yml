@@ -64,7 +64,7 @@ jobs:
       - run: make docs
 
       - run: make docs-insiders
-        if: github.repository_owner == 'pydantic'
+        if: github.event.pull_request.head.repo.full_name == github.repository
         env:
           PPPR_TOKEN: ${{ secrets.PPPR_TOKEN }}
 
@@ -72,6 +72,7 @@ jobs:
 
   test-live:
     runs-on: ubuntu-latest
+    if: github.event.pull_request.head.repo.full_name == github.repository
     steps:
       - uses: actions/checkout@v4
 
@@ -80,7 +81,6 @@ jobs:
           enable-cache: true
 
       - run: uv run --python 3.12 --frozen pytest tests/test_live.py -v --durations=100
-        if: github.repository_owner == 'pydantic'
         env:
           PYDANTIC_AI_LIVE_TEST_DANGEROUS: 'CHARGE-ME!'
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
@@ -160,6 +160,7 @@ jobs:
         uses: re-actors/alls-green@release/v1
         with:
           jobs: ${{ toJSON(needs) }}
+          allowed-skips: test-live
 
   release:
     needs: [check]
