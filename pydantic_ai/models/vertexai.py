@@ -6,16 +6,18 @@ changed from the default `GeminiModel`, it relies on the VertexAI
 and `streamGenerateContent` function endpoints
 having the same schemas as the equivalent [Gemini endpoints][pydantic_ai.models.gemini.GeminiModel].
 
-There are three advantages of using this API over the `generativelanguage.googleapis.com` API which
+There are four advantages of using this API over the `generativelanguage.googleapis.com` API which
 [`GeminiModel`][pydantic_ai.models.gemini.GeminiModel] uses, and one big disadvantage.
 
 Advantages:
 
 1. The VertexAI API seems to be less flakey, less likely to occasionally return a 503 response.
 2. You can
-  [purchase provisioned throughput](https://cloud.google.com/vertex-ai/generative-ai/docs/provisioned-throughput#purchase-provisioned-throughput)
-  with VertexAI.
+   [purchase provisioned throughput](https://cloud.google.com/vertex-ai/generative-ai/docs/provisioned-throughput#purchase-provisioned-throughput)
+   with VertexAI.
 3. If you're running PydanticAI inside GCP, you don't need to set up authentication, it should "just work".
+4. You can decide which region to use, which might be important from a regulatory perspective,
+   and might improve latency.
 
 Disadvantage:
 
