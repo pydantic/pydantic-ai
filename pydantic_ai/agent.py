@@ -601,7 +601,8 @@ class Agent(Generic[AgentDeps, ResultData]):
             raise exceptions.UserError('`model` must be set either when creating the agent or when calling it.')
 
         result_tools = list(self._result_schema.tools.values()) if self._result_schema else None
-        return model_, custom_model, model_.agent_model(self._retrievers, self._allow_text_result, result_tools)
+        agent_model = await model_.agent_model(self._retrievers, self._allow_text_result, result_tools)
+        return model_, custom_model, agent_model
 
     async def _prepare_messages(
         self, deps: AgentDeps, user_prompt: str, message_history: list[_messages.Message] | None

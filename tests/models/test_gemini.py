@@ -73,9 +73,9 @@ def test_api_key_empty(env: TestEnv):
         GeminiModel('gemini-1.5-flash')
 
 
-def test_agent_model_simple(allow_model_requests: None):
+async def test_agent_model_simple(allow_model_requests: None):
     m = GeminiModel('gemini-1.5-flash', api_key='via-arg')
-    agent_model = m.agent_model({}, True, None)
+    agent_model = await m.agent_model({}, True, None)
     assert isinstance(agent_model.http_client, httpx.AsyncClient)
     assert agent_model.model_name == 'gemini-1.5-flash'
     assert isinstance(agent_model.auth, ApiKeyAuth)
@@ -93,7 +93,7 @@ class TestToolDefinition:
     outer_typed_dict_key: str | None = None
 
 
-def test_agent_model_tools(allow_model_requests: None):
+async def test_agent_model_tools(allow_model_requests: None):
     m = GeminiModel('gemini-1.5-flash', api_key='via-arg')
     retrievers = {
         'foo': TestToolDefinition(
@@ -117,7 +117,7 @@ def test_agent_model_tools(allow_model_requests: None):
         'This is the tool for the final Result',
         {'type': 'object', 'title': 'Result', 'properties': {'spam': {'type': 'number'}}, 'required': ['spam']},
     )
-    agent_model = m.agent_model(retrievers, True, [result_tool])
+    agent_model = await m.agent_model(retrievers, True, [result_tool])
     assert agent_model.tools == snapshot(
         _GeminiTools(
             function_declarations=[
@@ -149,14 +149,14 @@ def test_agent_model_tools(allow_model_requests: None):
     assert agent_model.tool_config is None
 
 
-def test_require_response_tool(allow_model_requests: None):
+async def test_require_response_tool(allow_model_requests: None):
     m = GeminiModel('gemini-1.5-flash', api_key='via-arg')
     result_tool = TestToolDefinition(
         'result',
         'This is the tool for the final Result',
         {'type': 'object', 'title': 'Result', 'properties': {'spam': {'type': 'number'}}},
     )
-    agent_model = m.agent_model({}, False, [result_tool])
+    agent_model = await m.agent_model({}, False, [result_tool])
     assert agent_model.tools == snapshot(
         _GeminiTools(
             function_declarations=[
@@ -178,7 +178,7 @@ def test_require_response_tool(allow_model_requests: None):
     )
 
 
-def test_json_def_replaced(allow_model_requests: None):
+async def test_json_def_replaced(allow_model_requests: None):
     class Location(BaseModel):
         lat: float
         lng: float = 1.1
@@ -213,7 +213,7 @@ def test_json_def_replaced(allow_model_requests: None):
         'This is the tool for the final Result',
         json_schema,
     )
-    agent_model = m.agent_model({}, True, [result_tool])
+    agent_model = await m.agent_model({}, True, [result_tool])
     assert agent_model.tools == snapshot(
         _GeminiTools(
             function_declarations=[
@@ -243,7 +243,7 @@ def test_json_def_replaced(allow_model_requests: None):
     )
 
 
-def test_json_def_replaced_any_of(allow_model_requests: None):
+async def test_json_def_replaced_any_of(allow_model_requests: None):
     class Location(BaseModel):
         lat: float
         lng: float
@@ -259,7 +259,7 @@ def test_json_def_replaced_any_of(allow_model_requests: None):
         'This is the tool for the final Result',
         json_schema,
     )
-    agent_model = m.agent_model({}, True, [result_tool])
+    agent_model = await m.agent_model({}, True, [result_tool])
     assert agent_model.tools == snapshot(
         _GeminiTools(
             function_declarations=[
@@ -287,7 +287,7 @@ def test_json_def_replaced_any_of(allow_model_requests: None):
     )
 
 
-def test_json_def_recursive(allow_model_requests: None):
+async def test_json_def_recursive(allow_model_requests: None):
     class Location(BaseModel):
         lat: float
         lng: float
@@ -323,7 +323,7 @@ def test_json_def_recursive(allow_model_requests: None):
         json_schema,
     )
     with pytest.raises(UserError, match=r'Recursive `\$ref`s in JSON Schema are not supported by Gemini'):
-        m.agent_model({}, True, [result_tool])
+        await m.agent_model({}, True, [result_tool])
 
 
 @dataclass

@@ -110,29 +110,20 @@ class GeminiModel(Model):
         self.http_client = http_client or cached_async_http_client()
         self.url = url_template.format(model=model_name)
 
-    def agent_model(
+    async def agent_model(
         self,
         retrievers: Mapping[str, AbstractToolDefinition],
         allow_text_result: bool,
         result_tools: Sequence[AbstractToolDefinition] | None,
     ) -> GeminiAgentModel:
-        check_allow_model_requests()
-        tools = [_function_from_abstract_tool(t) for t in retrievers.values()]
-        if result_tools is not None:
-            tools += [_function_from_abstract_tool(t) for t in result_tools]
-
-        if allow_text_result:
-            tool_config = None
-        else:
-            tool_config = _tool_config([t['name'] for t in tools])
-
         return GeminiAgentModel(
             http_client=self.http_client,
             model_name=self.model_name,
             auth=self.auth,
-            tools=_GeminiTools(function_declarations=tools) if tools else None,
-            tool_config=tool_config,
             url=self.url,
+            retrievers=retrievers,
+            allow_text_result=allow_text_result,
+            result_tools=result_tools,
         )
 
     def name(self) -> str:
@@ -152,7 +143,7 @@ class ApiKeyAuth:
         return {'X-Goog-Api-Key': self.api_key}
 
 
-@dataclass
+@dataclass(init=False)
 class GeminiAgentModel(AgentModel):
     """Implementation of `AgentModel` for Gemini models."""
 
@@ -162,6 +153,33 @@ class GeminiAgentModel(AgentModel):
     tools: _GeminiTools | None
     tool_config: _GeminiToolConfig | None
     url: str
+
+    def __init__(
+        self,
+        http_client: AsyncHTTPClient,
+        model_name: GeminiModelName,
+        auth: AuthProtocol,
+        url: str,
+        retrievers: Mapping[str, AbstractToolDefinition],
+        allow_text_result: bool,
+        result_tools: Sequence[AbstractToolDefinition] | None,
+    ):
+        check_allow_model_requests()
+        tools = [_function_from_abstract_tool(t) for t in retrievers.values()]
+        if result_tools is not None:
+            tools += [_function_from_abstract_tool(t) for t in result_tools]
+
+        if allow_text_result:
+            tool_config = None
+        else:
+            tool_config = _tool_config([t['name'] for t in tools])
+
+        self.http_client = http_client
+        self.model_name = model_name
+        self.auth = auth
+        self.tools = _GeminiTools(function_declarations=tools) if tools else None
+        self.tool_config = tool_config
+        self.url = url
 
     async def request(self, messages: list[Message]) -> tuple[ModelAnyResponse, result.Cost]:
         async with self._make_request(messages, False) as http_response:

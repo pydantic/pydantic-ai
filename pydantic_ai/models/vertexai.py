@@ -22,15 +22,28 @@ Disadvantage:
 
 ## Example Usage
 
-```py title="vertex_example.py"
-from pathlib import Path
+With the default google project already configured in your environment:
 
+```py title="vertex_example_env.py"
+from pydantic_ai import Agent
+from pydantic_ai.models.vertexai import VertexAIModel
+
+model = VertexAIModel('gemini-1.5-flash')
+agent = Agent(model)
+result = agent.run_sync('Tell me a joke.')
+print(result.data)
+#> Did you hear about the toothpaste scandal? They called it Colgate.
+```
+
+Or using a service account JSON file:
+
+```py title="vertex_example_service_account.py"
 from pydantic_ai import Agent
 from pydantic_ai.models.vertexai import VertexAIModel
 
 model = VertexAIModel(
     'gemini-1.5-flash',
-    auth=Path('path/to/service-account.json'),
+    service_account_file='path/to/service-account.json',
 )
 agent = Agent(model)
 result = agent.run_sync('Tell me a joke.')
@@ -41,6 +54,7 @@ print(result.data)
 
 from __future__ import annotations as _annotations
 
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -49,12 +63,15 @@ from typing import Literal
 from httpx import AsyncClient as AsyncHTTPClient
 
 from .._utils import run_in_executor
-from . import cached_async_http_client
-from .gemini import GeminiModel, GeminiModelName
+from ..exceptions import UserError
+from . import AbstractToolDefinition, Model, cached_async_http_client
+from .gemini import GeminiAgentModel, GeminiModelName
 
 try:
+    import google.auth
+    from google.auth.credentials import Credentials as BaseCredentials
     from google.auth.transport.requests import Request
-    from google.oauth2.service_account import Credentials
+    from google.oauth2.service_account import Credentials as ServiceAccountCredentials
 except ImportError as e:
     raise ImportError(
         'Please install `google-auth` to use the VertexAI model, '
@@ -88,19 +105,31 @@ The template is used thus:
 """
 
 
-class VertexAIModel(GeminiModel):
+@dataclass(init=False)
+class VertexAIModel(Model):
     """A model that uses Gemini via the `*-aiplatform.googleapis.com` API.
 
     This is implemented by inherits from [`GeminiModel`][pydantic_ai.models.gemini] but using different endpoints
     and authentication.
     """
 
-    # noinspection PyMissingConstructor
+    model_name: GeminiModelName
+    service_account_file: Path | str | None
+    project_id: str | None
+    region: VertexAiRegion
+    model_publisher: Literal['google']
+    http_client: AsyncHTTPClient
+    url_template: str
+
+    auth: BearerTokenAuth | None
+    url: str | None
+
+    # TODO __init__ can be removed once we drop 3.9 and we can set kw_only correctly on the dataclass
     def __init__(
         self,
         model_name: GeminiModelName,
-        auth: Path | Credentials,
         *,
+        service_account_file: Path | str | None = None,
         project_id: str | None = None,
         region: VertexAiRegion = 'us-central1',
         model_publisher: Literal['google'] = 'google',
@@ -110,8 +139,8 @@ class VertexAIModel(GeminiModel):
         """Initialize a Vertex AI Gemini model.
 
         Args:
-            model_name: The name of the model to use. I couldn't find a list of supported google models,
-            auth: Path to a service account file or a `google.auth.Credentials` object.
+            model_name: The name of the model to use. I couldn't find a list of supported Google models,
+            service_account_file: Path to a service account file
             project_id: The project ID to use, if not provided it will be taken from the credentials.
             region: The region to make requests to.
             model_publisher: The model publisher to use, I couldn't find a good list of available publishers,
@@ -124,30 +153,83 @@ class VertexAIModel(GeminiModel):
                 for more information.
         """
         self.model_name = model_name
-        if isinstance(auth, Path):
-            credentials = _creds_from_file(auth)
-        else:
-            credentials = auth
-        self.auth = BearerTokenAuth(credentials)
+        self.service_account_file = service_account_file
+        self.project_id = project_id
+        self.region = region
+        self.model_publisher = model_publisher
         self.http_client = http_client or cached_async_http_client()
+        self.url_template = url_template
 
-        if project_id is None:
-            assert isinstance(credentials.project_id, str), f'Expected project_id to be a string, got {project_id}'
-            project_id = credentials.project_id
+        self.auth = None
+        self.url = None
 
-        self.url = url_template.format(
-            region=region, project_id=project_id, model_publisher=model_publisher, model=model_name
+    async def agent_model(
+        self,
+        retrievers: Mapping[str, AbstractToolDefinition],
+        allow_text_result: bool,
+        result_tools: Sequence[AbstractToolDefinition] | None,
+    ) -> GeminiAgentModel:
+        url, auth = await self._ainit()
+        return GeminiAgentModel(
+            http_client=self.http_client,
+            model_name=self.model_name,
+            auth=auth,
+            url=url,
+            retrievers=retrievers,
+            allow_text_result=allow_text_result,
+            result_tools=result_tools,
         )
 
+    async def _ainit(self) -> tuple[str, BearerTokenAuth]:
+        if self.url is not None and self.auth is not None:
+            return self.url, self.auth
+
+        if self.service_account_file is not None:
+            creds: BaseCredentials | ServiceAccountCredentials = _creds_from_file(self.service_account_file)
+            assert creds.project_id is None or isinstance(creds.project_id, str)
+            creds_project_id: str | None = creds.project_id
+            creds_source = 'service account file'
+        else:
+            creds, creds_project_id = await _async_google_auth()
+            creds_source = '`google.auth.default()`'
+
+        if self.project_id is None:
+            if creds_project_id is None:
+                raise UserError(f'No project_id provided and none found in {creds_source}')
+            project_id = creds_project_id
+        else:
+            if creds_project_id is not None and self.project_id != creds_project_id:
+                raise UserError(
+                    f'The project_id you provided does not match the one from {creds_source}: '
+                    f'{self.project_id!r} != {creds_project_id!r}'
+                )
+            project_id = self.project_id
+
+        self.url = url = self.url_template.format(
+            region=self.region,
+            project_id=project_id,
+            model_publisher=self.model_publisher,
+            model=self.model_name,
+        )
+        self.auth = auth = BearerTokenAuth(creds)
+        return url, auth
+
     def name(self) -> str:
-        return f'vertexai:{super().name()}'
+        return f'vertexai:{self.model_name}'
 
 
 # pyright: reportUnknownMemberType=false
-def _creds_from_file(service_account_file: str | Path) -> Credentials:
-    return Credentials.from_service_account_file(
+def _creds_from_file(service_account_file: str | Path) -> ServiceAccountCredentials:
+    return ServiceAccountCredentials.from_service_account_file(
         str(service_account_file), scopes=['https://www.googleapis.com/auth/cloud-platform']
     )
+
+
+# pyright: reportReturnType=false
+# pyright: reportUnknownVariableType=false
+# pyright: reportUnknownArgumentType=false
+async def _async_google_auth() -> tuple[BaseCredentials, str | None]:
+    return await run_in_executor(google.auth.default)
 
 
 # default expiry is 3600 seconds
@@ -156,7 +238,7 @@ MAX_TOKEN_AGE = timedelta(seconds=3000)
 
 @dataclass
 class BearerTokenAuth:
-    credentials: Credentials
+    credentials: BaseCredentials | ServiceAccountCredentials
     token_created: datetime | None = field(default=None, init=False)
 
     async def headers(self) -> dict[str, str]:

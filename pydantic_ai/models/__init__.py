@@ -44,13 +44,15 @@ class Model(ABC):
     """Abstract class for a model."""
 
     @abstractmethod
-    def agent_model(
+    async def agent_model(
         self,
         retrievers: Mapping[str, AbstractToolDefinition],
         allow_text_result: bool,
         result_tools: Sequence[AbstractToolDefinition] | None,
     ) -> AgentModel:
         """Create an agent model.
+
+        This is async in case slow/async config checks need to be performed that can't be done in `__init__`.
 
         Args:
             retrievers: The retrievers available to the agent.

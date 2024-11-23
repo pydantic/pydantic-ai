@@ -65,7 +65,7 @@ class FunctionModel(Model):
         self.function = function
         self.stream_function = stream_function
 
-    def agent_model(
+    async def agent_model(
         self,
         retrievers: Mapping[str, AbstractToolDefinition],
         allow_text_result: bool,

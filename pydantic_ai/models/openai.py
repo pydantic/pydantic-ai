@@ -80,7 +80,7 @@ class OpenAIModel(Model):
         else:
             self.client = AsyncOpenAI(api_key=api_key, http_client=cached_async_http_client())
 
-    def agent_model(
+    async def agent_model(
         self,
         retrievers: Mapping[str, AbstractToolDefinition],
         allow_text_result: bool,

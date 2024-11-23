@@ -39,7 +39,7 @@ def vertexai(http_client: httpx.AsyncClient, tmp_path: Path) -> Model:
     service_account_content = os.environ['GOOGLE_SERVICE_ACCOUNT_CONTENT']
     service_account_path = tmp_path / 'service_account.json'
     service_account_path.write_text(service_account_content)
-    return VertexAIModel('gemini-1.5-flash', service_account_path, http_client=http_client)
+    return VertexAIModel('gemini-1.5-flash', service_account_file=service_account_path, http_client=http_client)
 
 
 params = [
