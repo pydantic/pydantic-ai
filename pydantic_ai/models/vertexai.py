@@ -44,7 +44,7 @@ from __future__ import annotations as _annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Literal
+from typing import Literal
 
 from httpx import AsyncClient as AsyncHTTPClient
 
@@ -101,6 +101,7 @@ class VertexAIModel(GeminiModel):
         model_name: GeminiModelName,
         auth: Path | Credentials,
         *,
+        project_id: str | None = None,
         region: VertexAiRegion = 'us-central1',
         model_publisher: Literal['google'] = 'google',
         http_client: AsyncHTTPClient | None = None,
@@ -111,6 +112,7 @@ class VertexAIModel(GeminiModel):
         Args:
             model_name: The name of the model to use. I couldn't find a list of supported google models,
             auth: Path to a service account file or a `google.auth.Credentials` object.
+            project_id: The project ID to use, if not provided it will be taken from the credentials.
             region: The region to make requests to.
             model_publisher: The model publisher to use, I couldn't find a good list of available publishers,
                 and from trial and error it seems non-google models don't work with the `generateContent` and
@@ -122,15 +124,17 @@ class VertexAIModel(GeminiModel):
                 for more information.
         """
         self.model_name = model_name
-        if isinstance(auth, Credentials):
-            credentials = auth
-        else:
+        if isinstance(auth, Path):
             credentials = _creds_from_file(auth)
+        else:
+            credentials = auth
         self.auth = BearerTokenAuth(credentials)
         self.http_client = http_client or cached_async_http_client()
 
-        project_id: Any = credentials.project_id
-        assert isinstance(project_id, str), f'Expected project_id to be a string, got {project_id}'
+        if project_id is None:
+            assert isinstance(credentials.project_id, str), f'Expected project_id to be a string, got {project_id}'
+            project_id = credentials.project_id
+
         self.url = url_template.format(
             region=region, project_id=project_id, model_publisher=model_publisher, model=model_name
         )
