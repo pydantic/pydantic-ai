@@ -1494,6 +1494,7 @@ logfire = [
 ]
 vertexai = [
     { name = "google-auth" },
+    { name = "requests" },
 ]
 
 [package.dev-dependencies]
@@ -1534,6 +1535,7 @@ requires-dist = [
     { name = "openai", specifier = ">=1.54.3" },
     { name = "pydantic", specifier = ">=2.10" },
     { name = "python-multipart", marker = "extra == 'examples'", specifier = ">=0.0.17" },
+    { name = "requests", marker = "extra == 'vertexai'", specifier = ">=2.32.3" },
     { name = "rich", marker = "extra == 'examples'", specifier = ">=13.9.2" },
     { name = "uvicorn", marker = "extra == 'examples'", specifier = ">=0.32.0" },
 ]
