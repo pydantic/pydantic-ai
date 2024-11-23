@@ -70,7 +70,7 @@ class TestModel(Model):
     agent_model_allow_text_result: bool | None = field(default=None, init=False)
     agent_model_result_tools: list[AbstractToolDefinition] | None = field(default=None, init=False)
 
-    def agent_model(
+    async def agent_model(
         self,
         retrievers: Mapping[str, AbstractToolDefinition],
         allow_text_result: bool,

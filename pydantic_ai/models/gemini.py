@@ -29,7 +29,7 @@ from contextlib import asynccontextmanager
 from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Annotated, Any, Literal, Union
+from typing import Annotated, Any, Literal, Protocol, Union
 
 import pydantic_core
 from httpx import AsyncClient as AsyncHTTPClient, Response as HTTPResponse
@@ -77,9 +77,9 @@ class GeminiModel(Model):
     """
 
     model_name: GeminiModelName
-    api_key: str
+    auth: AuthProtocol
     http_client: AsyncHTTPClient
-    url_template: str
+    url: str
 
     def __init__(
         self,
@@ -87,7 +87,7 @@ class GeminiModel(Model):
         *,
         api_key: str | None = None,
         http_client: AsyncHTTPClient | None = None,
-        url_template: str = 'https://generativelanguage.googleapis.com/v1beta/models/{model}:{function}',
+        url_template: str = 'https://generativelanguage.googleapis.com/v1beta/models/{model}:',
     ):
         """Initialize a Gemini model.
 
@@ -97,7 +97,8 @@ class GeminiModel(Model):
                 will be used if available.
             http_client: An existing `httpx.AsyncClient` to use for making HTTP requests.
             url_template: The URL template to use for making requests, you shouldn't need to change this,
-                docs [here](https://ai.google.dev/gemini-api/docs/quickstart?lang=rest#make-first-request).
+                docs [here](https://ai.google.dev/gemini-api/docs/quickstart?lang=rest#make-first-request),
+                `model` is substituted with the model name, and `function` is added to the end of the URL.
         """
         self.model_name = model_name
         if api_key is None:
@@ -105,16 +106,64 @@ class GeminiModel(Model):
                 api_key = env_api_key
             else:
                 raise exceptions.UserError('API key must be provided or set in the GEMINI_API_KEY environment variable')
-        self.api_key = api_key
+        self.auth = ApiKeyAuth(api_key)
         self.http_client = http_client or cached_async_http_client()
-        self.url_template = url_template
+        self.url = url_template.format(model=model_name)
 
-    def agent_model(
+    async def agent_model(
         self,
         retrievers: Mapping[str, AbstractToolDefinition],
         allow_text_result: bool,
         result_tools: Sequence[AbstractToolDefinition] | None,
     ) -> GeminiAgentModel:
+        return GeminiAgentModel(
+            http_client=self.http_client,
+            model_name=self.model_name,
+            auth=self.auth,
+            url=self.url,
+            retrievers=retrievers,
+            allow_text_result=allow_text_result,
+            result_tools=result_tools,
+        )
+
+    def name(self) -> str:
+        return self.model_name
+
+
+class AuthProtocol(Protocol):
+    async def headers(self) -> dict[str, str]: ...
+
+
+@dataclass
+class ApiKeyAuth:
+    api_key: str
+
+    async def headers(self) -> dict[str, str]:
+        # https://cloud.google.com/docs/authentication/api-keys-use#using-with-rest
+        return {'X-Goog-Api-Key': self.api_key}
+
+
+@dataclass(init=False)
+class GeminiAgentModel(AgentModel):
+    """Implementation of `AgentModel` for Gemini models."""
+
+    http_client: AsyncHTTPClient
+    model_name: GeminiModelName
+    auth: AuthProtocol
+    tools: _GeminiTools | None
+    tool_config: _GeminiToolConfig | None
+    url: str
+
+    def __init__(
+        self,
+        http_client: AsyncHTTPClient,
+        model_name: GeminiModelName,
+        auth: AuthProtocol,
+        url: str,
+        retrievers: Mapping[str, AbstractToolDefinition],
+        allow_text_result: bool,
+        result_tools: Sequence[AbstractToolDefinition] | None,
+    ):
         check_allow_model_requests()
         tools = [_function_from_abstract_tool(t) for t in retrievers.values()]
         if result_tools is not None:
@@ -125,34 +174,17 @@ class GeminiModel(Model):
         else:
             tool_config = _tool_config([t['name'] for t in tools])
 
-        return GeminiAgentModel(
-            http_client=self.http_client,
-            model_name=self.model_name,
-            api_key=self.api_key,
-            tools=_GeminiTools(function_declarations=tools) if tools else None,
-            tool_config=tool_config,
-            url_template=self.url_template,
-        )
-
-    def name(self) -> str:
-        return self.model_name
-
-
-@dataclass
-class GeminiAgentModel(AgentModel):
-    """Implementation of `AgentModel` for Gemini models."""
-
-    http_client: AsyncHTTPClient
-    model_name: GeminiModelName
-    api_key: str
-    tools: _GeminiTools | None
-    tool_config: _GeminiToolConfig | None
-    url_template: str
+        self.http_client = http_client
+        self.model_name = model_name
+        self.auth = auth
+        self.tools = _GeminiTools(function_declarations=tools) if tools else None
+        self.tool_config = tool_config
+        self.url = url
 
     async def request(self, messages: list[Message]) -> tuple[ModelAnyResponse, result.Cost]:
         async with self._make_request(messages, False) as http_response:
             response = _gemini_response_ta.validate_json(await http_response.aread())
-        return self._process_response(response), _metadata_as_cost(response['usage_metadata'])
+        return self._process_response(response), _metadata_as_cost(response)
 
     @asynccontextmanager
     async def request_stream(self, messages: list[Message]) -> AsyncIterator[EitherStreamedResponse]:
@@ -178,16 +210,15 @@ class GeminiAgentModel(AgentModel):
         if self.tool_config is not None:
             request_data['tool_config'] = self.tool_config
 
-        request_json = _gemini_request_ta.dump_json(request_data, by_alias=True)
-        # https://cloud.google.com/docs/authentication/api-keys-use#using-with-rest
+        url = self.url + ('streamGenerateContent' if streamed else 'generateContent')
+
         headers = {
-            'X-Goog-Api-Key': self.api_key,
             'Content-Type': 'application/json',
             'User-Agent': get_user_agent(),
+            **await self.auth.headers(),
         }
-        url = self.url_template.format(
-            model=self.model_name, function='streamGenerateContent' if streamed else 'generateContent'
-        )
+
+        request_json = _gemini_request_ta.dump_json(request_data, by_alias=True)
 
         async with self.http_client.stream('POST', url, content=request_json, headers=headers) as r:
             if r.status_code != 200:
@@ -283,7 +314,7 @@ class GeminiStreamTextResponse(StreamTextResponse):
                 new_items, experimental_allow_partial='trailing-strings'
             )
         for r in new_responses:
-            self._cost += _metadata_as_cost(r['usage_metadata'])
+            self._cost += _metadata_as_cost(r)
             parts = r['candidates'][0]['content']['parts']
             if _all_text_parts(parts):
                 for part in parts:
@@ -329,7 +360,7 @@ class GeminiStreamStructuredResponse(StreamStructuredResponse):
         combined_parts: list[_GeminiFunctionCallPart] = []
         self._cost = result.Cost()
         for r in responses:
-            self._cost += _metadata_as_cost(r['usage_metadata'])
+            self._cost += _metadata_as_cost(r)
             candidate = r['candidates'][0]
             parts = candidate['content']['parts']
             if _all_function_call_parts(parts):
@@ -521,10 +552,12 @@ class _GeminiResponse(TypedDict):
     """Schema for the response from the Gemini API.
 
     See <https://ai.google.dev/api/generate-content#v1beta.GenerateContentResponse>
+    and <https://cloud.google.com/vertex-ai/docs/reference/rest/v1/GenerateContentResponse>
     """
 
     candidates: list[_GeminiCandidates]
-    usage_metadata: Annotated[_GeminiUsageMetaData, Field(alias='usageMetadata')]
+    # usageMetadata appears to be required by both APIs but is omitted when streaming responses until the last response
+    usage_metadata: NotRequired[Annotated[_GeminiUsageMetaData, Field(alias='usageMetadata')]]
     prompt_feedback: NotRequired[Annotated[_GeminiPromptFeedback, Field(alias='promptFeedback')]]
 
 
@@ -582,7 +615,10 @@ class _GeminiUsageMetaData(TypedDict, total=False):
     cached_content_token_count: NotRequired[Annotated[int, Field(alias='cachedContentTokenCount')]]
 
 
-def _metadata_as_cost(metadata: _GeminiUsageMetaData) -> result.Cost:
+def _metadata_as_cost(response: _GeminiResponse) -> result.Cost:
+    metadata = response.get('usage_metadata')
+    if metadata is None:
+        return result.Cost()
     details: dict[str, int] = {}
     if cached_content_token_count := metadata.get('cached_content_token_count'):
         details['cached_content_token_count'] = cached_content_token_count

@@ -38,6 +38,7 @@ nav:
     - api/models/base.md
     - api/models/openai.md
     - api/models/gemini.md
+    - api/models/vertexai.md
     - api/models/test.md
     - api/models/function.md
 

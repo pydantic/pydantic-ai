@@ -5,19 +5,49 @@ WARNING: running these tests will consume your OpenAI and Gemini credits.
 
 import os
 from collections.abc import AsyncIterator
+from pathlib import Path
+from typing import Callable
 
 import httpx
 import pytest
 from pydantic import BaseModel
 
 from pydantic_ai import Agent
-from pydantic_ai.models.gemini import GeminiModel
-from pydantic_ai.models.openai import OpenAIModel
+from pydantic_ai.models import Model
 
 pytestmark = [
     pytest.mark.skipif(os.getenv('PYDANTIC_AI_LIVE_TEST_DANGEROUS') != 'CHARGE-ME!', reason='live tests disabled'),
     pytest.mark.anyio,
 ]
+
+
+def openai(http_client: httpx.AsyncClient, _tmp_path: Path) -> Model:
+    from pydantic_ai.models.openai import OpenAIModel
+
+    return OpenAIModel('gpt-4o-mini', http_client=http_client)
+
+
+def gemini(http_client: httpx.AsyncClient, _tmp_path: Path) -> Model:
+    from pydantic_ai.models.gemini import GeminiModel
+
+    return GeminiModel('gemini-1.5-pro', http_client=http_client)
+
+
+def vertexai(http_client: httpx.AsyncClient, tmp_path: Path) -> Model:
+    from pydantic_ai.models.vertexai import VertexAIModel
+
+    service_account_content = os.environ['GOOGLE_SERVICE_ACCOUNT_CONTENT']
+    service_account_path = tmp_path / 'service_account.json'
+    service_account_path.write_text(service_account_content)
+    return VertexAIModel('gemini-1.5-flash', service_account_file=service_account_path, http_client=http_client)
+
+
+params = [
+    pytest.param(openai, id='openai'),
+    pytest.param(gemini, id='gemini'),
+    pytest.param(vertexai, id='vertexai'),
+]
+GetModel = Callable[[httpx.AsyncClient, Path], Model]
 
 
 @pytest.fixture
@@ -26,23 +56,25 @@ async def http_client(allow_model_requests: None) -> AsyncIterator[httpx.AsyncCl
         yield client
 
 
-async def test_openai(http_client: httpx.AsyncClient):
-    agent = Agent(OpenAIModel('gpt-3.5-turbo', http_client=http_client))
+@pytest.mark.parametrize('get_model', params)
+async def test_text(http_client: httpx.AsyncClient, tmp_path: Path, get_model: GetModel):
+    agent = Agent(get_model(http_client, tmp_path))
     result = await agent.run('What is the capital of France?')
-    print('OpenAI response:', result.data)
+    print('Text response:', result.data)
     assert 'paris' in result.data.lower()
-    print('OpenAI cost:', result.cost())
+    print('Text cost:', result.cost())
     cost = result.cost()
     assert cost.total_tokens is not None and cost.total_tokens > 0
 
 
-async def test_openai_stream(http_client: httpx.AsyncClient):
-    agent = Agent(OpenAIModel('gpt-3.5-turbo', http_client=http_client))
+@pytest.mark.parametrize('get_model', params)
+async def test_stream(http_client: httpx.AsyncClient, tmp_path: Path, get_model: GetModel):
+    agent = Agent(get_model(http_client, tmp_path))
     async with agent.run_stream('What is the capital of France?') as result:
         data = await result.get_data()
-    print('OpenAI stream response:', data)
+    print('Stream response:', data)
     assert 'paris' in data.lower()
-    print('OpenAI stream cost:', result.cost())
+    print('Stream cost:', result.cost())
     cost = result.cost()
     assert cost.total_tokens is not None and cost.total_tokens > 0
 
@@ -51,42 +83,12 @@ class MyModel(BaseModel):
     city: str
 
 
-async def test_openai_structured(http_client: httpx.AsyncClient):
-    agent = Agent(OpenAIModel('gpt-4o-mini', http_client=http_client), result_type=MyModel)
+@pytest.mark.parametrize('get_model', params)
+async def test_structured(http_client: httpx.AsyncClient, tmp_path: Path, get_model: GetModel):
+    agent = Agent(get_model(http_client, tmp_path), result_type=MyModel)
     result = await agent.run('What is the capital of the UK?')
-    print('OpenAI structured response:', result.data)
+    print('Structured response:', result.data)
     assert result.data.city.lower() == 'london'
-    print('OpenAI structured cost:', result.cost())
-    cost = result.cost()
-    assert cost.total_tokens is not None and cost.total_tokens > 0
-
-
-async def test_gemini(http_client: httpx.AsyncClient):
-    agent = Agent(GeminiModel('gemini-1.5-flash', http_client=http_client))
-    result = await agent.run('What is the capital of France?')
-    print('Gemini response:', result.data)
-    assert 'paris' in result.data.lower()
-    print('Gemini cost:', result.cost())
-    cost = result.cost()
-    assert cost.total_tokens is not None and cost.total_tokens > 0
-
-
-async def test_gemini_stream(http_client: httpx.AsyncClient):
-    agent = Agent(GeminiModel('gemini-1.5-pro', http_client=http_client))
-    async with agent.run_stream('What is the capital of France?') as result:
-        data = await result.get_data()
-    print('Gemini stream response:', data)
-    assert 'paris' in data.lower()
-    print('Gemini stream cost:', result.cost())
-    cost = result.cost()
-    assert cost.total_tokens is not None and cost.total_tokens > 0
-
-
-async def test_gemini_structured(http_client: httpx.AsyncClient):
-    agent = Agent(GeminiModel('gemini-1.5-pro', http_client=http_client), result_type=MyModel)
-    result = await agent.run('What is the capital of the UK?')
-    print('Gemini structured response:', result.data)
-    assert result.data.city.lower() == 'london'
-    print('Gemini structured cost:', result.cost())
+    print('Structured cost:', result.cost())
     cost = result.cost()
     assert cost.total_tokens is not None and cost.total_tokens > 0
