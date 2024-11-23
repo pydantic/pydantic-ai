@@ -1,8 +1,9 @@
 """Custom interface to the `*-aiplatform.googleapis.com` API for Gemini models.
 
-This model inherits from [`GeminiModel`][pydantic_ai.models.gemini], it relies on the VertexAI
+This model uses [`GeminiAgentModel`][pydantic_ai.models.gemini.GeminiAgentModel] with just the URL and auth method
+changed from the default `GeminiModel`, it relies on the VertexAI
 [`generateContent` function endpoint](https://cloud.google.com/vertex-ai/docs/reference/rest/v1/projects.locations.endpoints/generateContent)
-and `streamGenerateContent` function endpoint
+and `streamGenerateContent` function endpoints
 having the same schemas as the equivalent [Gemini endpoints][pydantic_ai.models.gemini.GeminiModel].
 
 There are three advantages of using this API over the `generativelanguage.googleapis.com` API which
@@ -14,11 +15,11 @@ Advantages:
 2. You can
   [purchase provisioned throughput](https://cloud.google.com/vertex-ai/generative-ai/docs/provisioned-throughput#purchase-provisioned-throughput)
   with VertexAI.
-3. If you're running PydanticAI inside GCP, service account authorization means you don't need an API key.
+3. If you're running PydanticAI inside GCP, you don't need to set up authentication, it should "just work".
 
 Disadvantage:
 
-1. Service account authorization is much more painful to set up than an API key.
+1. When authorization doesn't just work, it's much more painful to set up than an API key.
 
 ## Example Usage
 
@@ -107,11 +108,7 @@ The template is used thus:
 
 @dataclass(init=False)
 class VertexAIModel(Model):
-    """A model that uses Gemini via the `*-aiplatform.googleapis.com` API.
-
-    This is implemented by inherits from [`GeminiModel`][pydantic_ai.models.gemini] but using different endpoints
-    and authentication.
-    """
+    """A model that uses Gemini via the `*-aiplatform.googleapis.com` VertexAI API."""
 
     model_name: GeminiModelName
     service_account_file: Path | str | None
@@ -139,8 +136,10 @@ class VertexAIModel(Model):
         """Initialize a Vertex AI Gemini model.
 
         Args:
-            model_name: The name of the model to use. I couldn't find a list of supported Google models,
-            service_account_file: Path to a service account file
+            model_name: The name of the model to use. I couldn't find a list of supported Google models, in VertexAI
+                so for now this uses the same models as the [Gemini model][pydantic_ai.models.gemini.GeminiModel].
+            service_account_file: Path to a service account file.
+                If not provided, the default environment credentials will be used.
             project_id: The project ID to use, if not provided it will be taken from the credentials.
             region: The region to make requests to.
             model_publisher: The model publisher to use, I couldn't find a good list of available publishers,
