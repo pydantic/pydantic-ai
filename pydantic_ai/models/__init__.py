@@ -46,6 +46,8 @@ KnownModelName = Literal[
     'groq:gemma-7b-it',
     'gemini-1.5-flash',
     'gemini-1.5-pro',
+    'vertexai:gemini-1.5-flash',
+    'vertexai:gemini-1.5-pro',
     'test',
 ]
 """Known model names that can be used with the `model` parameter of [`Agent`][pydantic_ai.Agent].
@@ -245,6 +247,11 @@ def infer_model(model: Model | KnownModelName) -> Model:
         from .groq import GroqModel
 
         return GroqModel(model[5:])  # pyright: ignore[reportArgumentType]
+    elif model.startswith('vertexai:'):
+        from .vertexai import VertexAIModel
+
+        # noinspection PyTypeChecker
+        return VertexAIModel(model[9:])  # pyright: ignore[reportArgumentType]
     else:
         from ..exceptions import UserError
 

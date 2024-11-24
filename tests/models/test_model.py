@@ -1,3 +1,5 @@
+from typing import TYPE_CHECKING
+
 import pytest
 
 from pydantic_ai import UserError
@@ -5,6 +7,19 @@ from pydantic_ai.models import infer_model
 from pydantic_ai.models.gemini import GeminiModel
 from pydantic_ai.models.openai import OpenAIModel
 from tests.conftest import TestEnv
+
+if TYPE_CHECKING:
+    from pydantic_ai.models.vertexai import VertexAIModel
+
+    google_auth_installed = True
+
+else:
+    try:
+        from pydantic_ai.models.vertexai import VertexAIModel
+    except ImportError:
+        google_auth_installed = False
+    else:
+        google_auth_installed = True
 
 
 def test_infer_str_openai(env: TestEnv):
@@ -22,6 +37,13 @@ def test_infer_str_gemini(env: TestEnv):
     m = infer_model('gemini-1.5-flash')
     assert isinstance(m, GeminiModel)
     assert m.name() == 'gemini-1.5-flash'
+
+
+@pytest.mark.skipif(not google_auth_installed, reason='google-auth not installed')
+def test_infer_vertexai(env: TestEnv):
+    m = infer_model('vertexai:gemini-1.5-flash')
+    assert isinstance(m, VertexAIModel)
+    assert m.name() == 'vertexai:gemini-1.5-flash'
 
 
 def test_infer_str_unknown():
