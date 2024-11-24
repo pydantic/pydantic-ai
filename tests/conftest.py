@@ -6,6 +6,7 @@ import re
 import secrets
 import sys
 from collections.abc import AsyncIterator, Iterator
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from types import ModuleType
@@ -18,7 +19,7 @@ from typing_extensions import TypeAlias
 
 import pydantic_ai.models
 
-__all__ = 'IsNow', 'TestEnv', 'ClientWithHandler'
+__all__ = 'IsNow', 'TestEnv', 'ClientWithHandler', 'try_import'
 
 
 pydantic_ai.models.ALLOW_MODEL_REQUESTS = False
@@ -146,3 +147,18 @@ def create_module(tmp_path: Path, request: pytest.FixtureRequest) -> Callable[[s
         return module
 
     return run
+
+
+@contextmanager
+def try_import() -> Iterator[Callable[[], bool]]:
+    import_success = False
+
+    def check_import() -> bool:
+        return import_success
+
+    try:
+        yield check_import
+    except ImportError:
+        pass
+    else:
+        import_success = True

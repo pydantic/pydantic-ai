@@ -42,10 +42,17 @@ def vertexai(http_client: httpx.AsyncClient, tmp_path: Path) -> Model:
     return VertexAIModel('gemini-1.5-flash', service_account_file=service_account_path, http_client=http_client)
 
 
+def groq(http_client: httpx.AsyncClient, _tmp_path: Path) -> Model:
+    from pydantic_ai.models.groq import GroqModel
+
+    return GroqModel('llama-3.1-70b-versatile', http_client=http_client)
+
+
 params = [
     pytest.param(openai, id='openai'),
     pytest.param(gemini, id='gemini'),
     pytest.param(vertexai, id='vertexai'),
+    pytest.param(groq, id='groq'),
 ]
 GetModel = Callable[[httpx.AsyncClient, Path], Model]
 

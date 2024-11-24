@@ -58,6 +58,9 @@ examples = [
     "rich>=13.9.2",
     "uvicorn>=0.32.0",
 ]
+groq = [
+    "groq>=0.12.0",
+]
 
 [dependency-groups]
 dev = [

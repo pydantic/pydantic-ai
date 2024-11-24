@@ -39,6 +39,7 @@ nav:
     - api/models/openai.md
     - api/models/gemini.md
     - api/models/vertexai.md
+    - api/models/groq.md
     - api/models/test.md
     - api/models/function.md
 

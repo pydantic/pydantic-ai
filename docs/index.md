@@ -11,7 +11,7 @@ PydanticAI is a Python Agent Framework designed to make it less painful to build
 ## Why use PydanticAI
 
 * Built by the team behind Pydantic (the validation layer of the OpenAI SDK, the Anthropic SDK, LangChain, LlamaIndex, AutoGPT, Transformers, Instructor and many more)
-* Model-agnostic — currently both OpenAI and Gemini are supported, and Anthropic [is coming soon](https://github.com/pydantic/pydantic-ai/issues/63). And there is a simple interface to implement and customize support for other models.
+* Model-agnostic — currently both OpenAI, Gemini, and Groq are supported, Anthropic [is coming soon](https://github.com/pydantic/pydantic-ai/issues/63). And there is a simple interface to implement support for other models.
 * Type-safe
 * Control flow and composing agents is done with vanilla python, allowing you to make use of the same Python development best practices you'd use in any other (non-AI) project
 * [Structured response](results.md#structured-result-validation) validation with Pydantic

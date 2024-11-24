@@ -30,6 +30,20 @@ KnownModelName = Literal[
     'openai:o1-preview',
     'openai:o1-mini',
     'openai:gpt-3.5-turbo',
+    'groq:llama-3.1-70b-versatile',
+    'groq:llama3-groq-70b-8192-tool-use-preview',
+    'groq:llama3-groq-8b-8192-tool-use-preview',
+    'groq:llama-3.1-70b-specdec',
+    'groq:llama-3.1-8b-instant',
+    'groq:llama-3.2-1b-preview',
+    'groq:llama-3.2-3b-preview',
+    'groq:llama-3.2-11b-vision-preview',
+    'groq:llama-3.2-90b-vision-preview',
+    'groq:llama3-70b-8192',
+    'groq:llama3-8b-8192',
+    'groq:mixtral-8x7b-32768',
+    'groq:gemma2-9b-it',
+    'groq:gemma-7b-it',
     'gemini-1.5-flash',
     'gemini-1.5-pro',
     'test',
@@ -227,6 +241,10 @@ def infer_model(model: Model | KnownModelName) -> Model:
 
         # noinspection PyTypeChecker
         return GeminiModel(model)  # pyright: ignore[reportArgumentType]
+    elif model.startswith('groq:'):
+        from .groq import GroqModel
+
+        return GroqModel(model[5:])  # pyright: ignore[reportArgumentType]
     else:
         from ..exceptions import UserError
 

@@ -3,34 +3,23 @@ from __future__ import annotations as _annotations
 import json
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import pytest
 from inline_snapshot import snapshot
 from pytest_mock import MockerFixture
 
 from pydantic_ai import UserError
-from tests.conftest import IsNow
+from tests.conftest import IsNow, try_import
 
-if TYPE_CHECKING:
+with try_import() as imports_successful:
     from google.oauth2.service_account import Credentials
 
     from pydantic_ai.models.vertexai import BearerTokenAuth, VertexAIModel
 
-    google_auth_installed = True
-else:
-    try:
-        # noinspection PyUnresolvedReferences
-        from pydantic_ai.models.vertexai import BearerTokenAuth, VertexAIModel
-    except ImportError:
-        google_auth_installed = False
-    else:
-        google_auth_installed = True
-        from google.oauth2.service_account import Credentials
-
 
 pytestmark = [
-    pytest.mark.skipif(not google_auth_installed, reason='google-auth not installed'),
+    pytest.mark.skipif(not imports_successful(), reason='google-auth not installed'),
     pytest.mark.anyio,
 ]
 
