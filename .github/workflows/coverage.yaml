@@ -7,8 +7,6 @@ on:
 
 permissions:
   statuses: write
-  # this can be remove once the repo is public
-  actions: read
 
 jobs:
   smokeshow:
@@ -26,8 +24,7 @@ jobs:
         with:
           workflow: ci.yml
           commit: ${{ github.event.workflow_run.head_sha }}
-          # this can be remove once the repo is public
-          github_token: ${{ secrets.GITHUB_TOKEN }}
+          allow_forks: true
 
       - run: smokeshow upload coverage-html
         env:
