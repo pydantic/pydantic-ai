@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Literal, Protocol, Union
 
 import httpx
 
+from ..exceptions import UserError
 from ..messages import Message, ModelAnyResponse, ModelStructuredResponse
 
 if TYPE_CHECKING:
@@ -252,8 +253,6 @@ def infer_model(model: Model | KnownModelName) -> Model:
 
         return VertexAIModel(model[9:])  # pyright: ignore[reportArgumentType]
     else:
-        from ..exceptions import UserError
-
         raise UserError(f'Unknown model: {model}')
 
 
