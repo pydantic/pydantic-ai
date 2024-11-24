@@ -250,7 +250,6 @@ def infer_model(model: Model | KnownModelName) -> Model:
     elif model.startswith('vertexai:'):
         from .vertexai import VertexAIModel
 
-        # noinspection PyTypeChecker
         return VertexAIModel(model[9:])  # pyright: ignore[reportArgumentType]
     else:
         from ..exceptions import UserError
