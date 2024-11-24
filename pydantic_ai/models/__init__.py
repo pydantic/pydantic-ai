@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Literal, Protocol, Union
 
 import httpx
 
+from ..exceptions import UserError
 from ..messages import Message, ModelAnyResponse, ModelStructuredResponse
 
 if TYPE_CHECKING:
@@ -46,6 +47,8 @@ KnownModelName = Literal[
     'groq:gemma-7b-it',
     'gemini-1.5-flash',
     'gemini-1.5-pro',
+    'vertexai:gemini-1.5-flash',
+    'vertexai:gemini-1.5-pro',
     'test',
 ]
 """Known model names that can be used with the `model` parameter of [`Agent`][pydantic_ai.Agent].
@@ -245,9 +248,11 @@ def infer_model(model: Model | KnownModelName) -> Model:
         from .groq import GroqModel
 
         return GroqModel(model[5:])  # pyright: ignore[reportArgumentType]
-    else:
-        from ..exceptions import UserError
+    elif model.startswith('vertexai:'):
+        from .vertexai import VertexAIModel
 
+        return VertexAIModel(model[9:])  # pyright: ignore[reportArgumentType]
+    else:
         raise UserError(f'Unknown model: {model}')
 
 
