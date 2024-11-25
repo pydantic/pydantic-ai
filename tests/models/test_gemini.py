@@ -96,7 +96,7 @@ class TestToolDefinition:
 
 async def test_agent_model_tools(allow_model_requests: None):
     m = GeminiModel('gemini-1.5-flash', api_key='via-arg')
-    retrievers = {
+    tools = {
         'foo': TestToolDefinition(
             'foo',
             'This is foo',
@@ -118,7 +118,7 @@ async def test_agent_model_tools(allow_model_requests: None):
         'This is the tool for the final Result',
         {'type': 'object', 'title': 'Result', 'properties': {'spam': {'type': 'number'}}, 'required': ['spam']},
     )
-    agent_model = await m.agent_model(retrievers, True, [result_tool])
+    agent_model = await m.agent_model(tools, True, [result_tool])
     assert agent_model.tools == snapshot(
         _GeminiTools(
             function_declarations=[
@@ -628,16 +628,16 @@ async def test_stream_structured_tool_calls(get_gemini_client: GetGeminiClient):
     gemini_client = get_gemini_client([first_stream, second_stream])
     model = GeminiModel('gemini-1.5-flash', http_client=gemini_client)
     agent = Agent(model, result_type=tuple[int, int])
-    retriever_calls: list[str] = []
+    tool_calls: list[str] = []
 
     @agent.tool_plain
     async def foo(x: str) -> str:
-        retriever_calls.append(f'foo({x=!r})')
+        tool_calls.append(f'foo({x=!r})')
         return x
 
     @agent.tool_plain
     async def bar(y: str) -> str:
-        retriever_calls.append(f'bar({y=!r})')
+        tool_calls.append(f'bar({y=!r})')
         return y
 
     async with agent.run_stream('Hello') as result:
@@ -667,7 +667,7 @@ async def test_stream_structured_tool_calls(get_gemini_client: GetGeminiClient):
             ),
         ]
     )
-    assert retriever_calls == snapshot(["foo(x='a')", "bar(y='b')"])
+    assert tool_calls == snapshot(["foo(x='a')", "bar(y='b')"])
 
 
 async def test_stream_text_heterogeneous(get_gemini_client: GetGeminiClient):

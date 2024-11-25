@@ -34,7 +34,7 @@ If the result type is a union with multiple members (after remove `str` from the
 
 If the result type schema is not of type `"object"`, the result type is wrapped in a single element object, so the schema of all tools registered with the model are object schemas.
 
-Structured results (like retrievers) use Pydantic to build the JSON schema used for the tool, and to validate the data returned by the model.
+Structured results (like tools) use Pydantic to build the JSON schema used for the tool, and to validate the data returned by the model.
 
 !!! note "Bring on PEP-747"
     Until [PEP-747](https://peps.python.org/pep-0747/) "Annotating Type Forms" lands, unions are not valid as `type`s in Python.
@@ -160,7 +160,7 @@ _(This example is complete, it can be run "as is")_
 There two main challenges with streamed results:
 
 1. Validating structured responses before they're complete, this is achieved by "partial validation" which was recently added to Pydantic in [pydantic/pydantic#10748](https://github.com/pydantic/pydantic/pull/10748).
-2. When receiving a response, we don't know if it's the final response without starting to stream it and peeking at the content. PydanticAI streams just enough of the response to sniff out if it's a retriever call or a result, then streams the whole thing and calls retrievers, or returns the stream as a [`StreamedRunResult`][pydantic_ai.result.StreamedRunResult].
+2. When receiving a response, we don't know if it's the final response without starting to stream it and peeking at the content. PydanticAI streams just enough of the response to sniff out if it's a tool call or a result, then streams the whole thing and calls tools, or returns the stream as a [`StreamedRunResult`][pydantic_ai.result.StreamedRunResult].
 
 ### Streaming Text
 

@@ -87,7 +87,7 @@ def test_simple():
 
 async def weather_model(messages: list[Message], info: AgentInfo) -> ModelAnyResponse:  # pragma: no cover
     assert info.allow_text_result
-    assert info.retrievers.keys() == {'get_location', 'get_weather'}
+    assert info.tools.keys() == {'get_location', 'get_weather'}
     last = messages[-1]
     if last.role == 'user':
         return ModelStructuredResponse(
@@ -222,17 +222,17 @@ def test_var_args():
     )
 
 
-async def call_retriever(messages: list[Message], info: AgentInfo) -> ModelAnyResponse:
+async def call_tool(messages: list[Message], info: AgentInfo) -> ModelAnyResponse:
     if len(messages) == 1:
-        assert len(info.retrievers) == 1
-        retriever_id = next(iter(info.retrievers.keys()))
-        return ModelStructuredResponse(calls=[ToolCall.from_json(retriever_id, '{}')])
+        assert len(info.tools) == 1
+        tool_id = next(iter(info.tools.keys()))
+        return ModelStructuredResponse(calls=[ToolCall.from_json(tool_id, '{}')])
     else:
         return ModelTextResponse('final response')
 
 
 def test_deps_none():
-    agent = Agent(FunctionModel(call_retriever))
+    agent = Agent(FunctionModel(call_tool))
 
     @agent.tool
     async def get_none(ctx: CallContext[None]):
@@ -259,7 +259,7 @@ def test_deps_init():
         assert ctx.deps == ('foo', 'bar')
         return ''
 
-    agent = Agent(FunctionModel(call_retriever), deps_type=tuple[str, str])
+    agent = Agent(FunctionModel(call_tool), deps_type=tuple[str, str])
     agent.tool(get_check_foobar)
     called = False
     agent.run_sync('Hello', deps=('foo', 'bar'))
@@ -311,11 +311,11 @@ def spam() -> str:
 def test_register_all():
     async def f(messages: list[Message], info: AgentInfo) -> ModelAnyResponse:
         return ModelTextResponse(
-            f'messages={len(messages)} allow_text_result={info.allow_text_result} retrievers={len(info.retrievers)}'
+            f'messages={len(messages)} allow_text_result={info.allow_text_result} tools={len(info.tools)}'
         )
 
     result = agent_all.run_sync('Hello', model=FunctionModel(f))
-    assert result.data == snapshot('messages=2 allow_text_result=True retrievers=5')
+    assert result.data == snapshot('messages=2 allow_text_result=True tools=5')
 
 
 def test_call_all():

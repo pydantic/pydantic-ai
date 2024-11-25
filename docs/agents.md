@@ -8,9 +8,9 @@ but multiple agents can also interact to embody more complex workflows.
 The [`Agent`][pydantic_ai.Agent] class has full API documentation, but conceptually you can think of an agent as a container for:
 
 * A [system prompt](#system-prompts) — a set of instructions for the LLM written by the developer
-* One or more [retrievers](#retrievers) — functions that the LLM may call to get information while generating a response
+* One or more [tools](#tools) — functions that the LLM may call to get information while generating a response
 * An optional structured [result type](results.md) — the structured datatype the LLM must return at the end of a run
-* A [dependency](dependencies.md) type constraint — system prompt functions, retrievers and result validators may all use dependencies when they're run
+* A [dependency](dependencies.md) type constraint — system prompt functions, tools and result validators may all use dependencies when they're run
 * Agents may optionally also have a default [model](api/models/base.md) associated with them; the model to use can also be specified when running the agent
 
 In typing terms, agents are generic in their dependency and result types, e.g., an agent which required dependencies of type `#!python Foobar` and returned results of type `#!python list[str]` would have type `#!python Agent[Foobar, list[str]]`.
@@ -49,7 +49,7 @@ print(result.data)
 ```
 
 1. Create an agent, which expects an integer dependency and returns a boolean result. This agent will have type `#!python Agent[int, bool]`.
-2. Define a retriever that checks if the square is a winner. Here [`CallContext`][pydantic_ai.dependencies.CallContext] is parameterized with the dependency type `int`; if you got the dependency type wrong you'd get a typing error.
+2. Define a tool that checks if the square is a winner. Here [`CallContext`][pydantic_ai.dependencies.CallContext] is parameterized with the dependency type `int`; if you got the dependency type wrong you'd get a typing error.
 3. In reality, you might want to use a random number here e.g. `random.randint(0, 36)`.
 4. `result.data` will be a boolean indicating if the square is a winner. Pydantic performs the result validation, it'll be typed as a `bool` since its type is derived from the `result_type` generic parameter of the agent.
 
@@ -166,23 +166,23 @@ print(result.data)
 
 _(This example is complete, it can be run "as is")_
 
-## Retrievers
+## Tools
 
-Retrievers provide a mechanism for models to request extra information to help them generate a response.
+Tools provide a mechanism for models to request extra information to help them generate a response.
 
 They're useful when it is impractical or impossible to put all the context an agent might need into the system prompt, or when you want to make agents' behavior more deterministic or reliable by deferring some of the logic required to generate a response to another (not necessarily AI-powered) tool.
 
-!!! info "Retrievers vs. RAG"
-    Retrievers are basically the "R" of RAG (Retrieval-Augmented Generation) — they augment what the model can do by letting it request extra information.
+!!! info "Tools vs. RAG"
+    Tools are basically the "R" of RAG (Retrieval-Augmented Generation) — they augment what the model can do by letting it request extra information.
 
-    The main semantic difference between PydanticAI Retrievers and RAG is RAG is synonymous with vector search, while PydanticAI retrievers are more general-purpose. (Note: we may add support for vector search functionality in the future, particularly an API for generating embeddings. See [#58](https://github.com/pydantic/pydantic-ai/issues/58))
+    The main semantic difference between PydanticAI Tools and RAG is RAG is synonymous with vector search, while PydanticAI tools are more general-purpose. (Note: we may add support for vector search functionality in the future, particularly an API for generating embeddings. See [#58](https://github.com/pydantic/pydantic-ai/issues/58))
 
-There are two different decorator functions to register retrievers:
+There are two different decorator functions to register tools:
 
-1. [`@agent.tool_plain`][pydantic_ai.Agent.retriever_plain] — for retrievers that don't need access to the agent [context][pydantic_ai.dependencies.CallContext]
-2. [`@agent.tool`][pydantic_ai.Agent.retriever] — for retrievers that do need access to the agent [context][pydantic_ai.dependencies.CallContext]
+1. [`@agent.tool_plain`][pydantic_ai.Agent.tool_plain] — for tools that don't need access to the agent [context][pydantic_ai.dependencies.CallContext]
+2. [`@agent.tool`][pydantic_ai.Agent.tool] — for tools that do need access to the agent [context][pydantic_ai.dependencies.CallContext]
 
-`@agent.tool` is the default since in the majority of cases retrievers will need access to the agent context.
+`@agent.tool` is the default since in the majority of cases tools will need access to the agent context.
 
 Here's an example using both:
 
@@ -221,8 +221,8 @@ print(dice_result.data)
 
 1. This is a pretty simple task, so we can use the fast and cheap Gemini flash model.
 2. We pass the user's name as the dependency, to keep things simple we use just the name as a string as the dependency.
-3. This retriever doesn't need any context, it just returns a random number. You could probably use a dynamic system prompt in this case.
-4. This retriever needs the player's name, so it uses `CallContext` to access dependencies which are just the player's name in this case.
+3. This tool doesn't need any context, it just returns a random number. You could probably use a dynamic system prompt in this case.
+4. This tool needs the player's name, so it uses `CallContext` to access dependencies which are just the player's name in this case.
 5. Run the agent, passing the player's name as the dependency.
 
 _(This example is complete, it can be run "as is")_
@@ -297,9 +297,9 @@ sequenceDiagram
     Note over Agent: Send prompts
     Agent ->> LLM: System: "You're a dice game..."<br>User: "My guess is 4"
     activate LLM
-    Note over LLM: LLM decides to use<br>a retriever
+    Note over LLM: LLM decides to use<br>a tool
 
-    LLM ->> Agent: Call retriever<br>roll_die()
+    LLM ->> Agent: Call tool<br>roll_die()
     deactivate LLM
     activate Agent
     Note over Agent: Rolls a six-sided die
@@ -307,9 +307,9 @@ sequenceDiagram
     Agent -->> LLM: ToolReturn<br>"4"
     deactivate Agent
     activate LLM
-    Note over LLM: LLM decides to use<br>another retriever
+    Note over LLM: LLM decides to use<br>another tool
 
-    LLM ->> Agent: Call retriever<br>get_player_name()
+    LLM ->> Agent: Call tool<br>get_player_name()
     deactivate LLM
     activate Agent
     Note over Agent: Retrieves player name
@@ -323,19 +323,19 @@ sequenceDiagram
     Note over Agent: Game session complete
 ```
 
-### Retrievers, tools, and schema
+### tools and schema
 
-Under the hood, retrievers use the model's "tools" or "functions" API to let the model know what retrievers are available to call. Tools or functions are also used to define the schema(s) for structured responses, thus a model might have access to many tools, some of which call retrievers while others end the run and return a result.
+Under the hood, tools use the model's "tools" or "functions" API to let the model know what tools are available to call. Tools or functions are also used to define the schema(s) for structured responses, thus a model might have access to many tools, some of which call tools while others end the run and return a result.
 
 Function parameters are extracted from the function signature, and all parameters except `CallContext` are used to build the schema for that tool call.
 
-Even better, PydanticAI extracts the docstring from retriever functions and (thanks to [griffe](https://mkdocstrings.github.io/griffe/)) extracts parameter descriptions from the docstring and adds them to the schema.
+Even better, PydanticAI extracts the docstring from tool functions and (thanks to [griffe](https://mkdocstrings.github.io/griffe/)) extracts parameter descriptions from the docstring and adds them to the schema.
 
 [Griffe supports](https://mkdocstrings.github.io/griffe/reference/docstrings/#docstrings) extracting parameter descriptions from `google`, `numpy` and `sphinx` style docstrings, and PydanticAI will infer the format to use based on the docstring. We plan to add support in the future to explicitly set the style to use, and warn/error if not all parameters are documented; see [#59](https://github.com/pydantic/pydantic-ai/issues/59).
 
-To demonstrate a retriever's schema, here we use [`FunctionModel`][pydantic_ai.models.function.FunctionModel] to print the schema a model would receive:
+To demonstrate a tool's schema, here we use [`FunctionModel`][pydantic_ai.models.function.FunctionModel] to print the schema a model would receive:
 
-```py title="retriever_schema.py"
+```py title="tool_schema.py"
 from pydantic_ai import Agent
 from pydantic_ai.messages import Message, ModelAnyResponse, ModelTextResponse
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -356,10 +356,10 @@ def foobar(a: int, b: str, c: dict[str, list[float]]) -> str:
 
 
 def print_schema(messages: list[Message], info: AgentInfo) -> ModelAnyResponse:
-    retriever = info.retrievers['foobar']
-    print(retriever.description)
+    tool = info.tools['foobar']
+    print(tool.description)
     #> Get me foobar.
-    print(retriever.json_schema)
+    print(tool.json_schema)
     """
     {
         'description': 'Get me foobar.',
@@ -386,22 +386,22 @@ agent.run_sync('hello', model=FunctionModel(print_schema))
 
 _(This example is complete, it can be run "as is")_
 
-The return type of retriever can be any valid JSON object ([`JsonData`][pydantic_ai.dependencies.JsonData]) as some models (e.g. Gemini) support semi-structured return values, some expect text (OpenAI) but seem to be just as good at extracting meaning from the data. If a Python object is returned and the model expects a string, the value will be serialized to JSON.
+The return type of tool can be any valid JSON object ([`JsonData`][pydantic_ai.dependencies.JsonData]) as some models (e.g. Gemini) support semi-structured return values, some expect text (OpenAI) but seem to be just as good at extracting meaning from the data. If a Python object is returned and the model expects a string, the value will be serialized to JSON.
 
-If a retriever has a single parameter that can be represented as an object in JSON schema (e.g. dataclass, TypedDict, pydantic model), the schema for the retriever is simplified to be just that object. (TODO example)
+If a tool has a single parameter that can be represented as an object in JSON schema (e.g. dataclass, TypedDict, pydantic model), the schema for the tool is simplified to be just that object. (TODO example)
 
 ## Reflection and self-correction
 
-Validation errors from both retriever parameter validation and [structured result validation](results.md#structured-result-validation) can be passed back to the model with a request to retry.
+Validation errors from both tool parameter validation and [structured result validation](results.md#structured-result-validation) can be passed back to the model with a request to retry.
 
-You can also raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] from within a [retriever](#retrievers) or [result validator function](results.md#result-validators-functions) to tell the model it should retry generating a response.
+You can also raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] from within a [tool](#tools) or [result validator function](results.md#result-validators-functions) to tell the model it should retry generating a response.
 
-- The default retry count is **1** but can be altered for the [entire agent][pydantic_ai.Agent.__init__], a [specific retriever][pydantic_ai.Agent.retriever], or a [result validator][pydantic_ai.Agent.__init__].
-- You can access the current retry count from within a retriever or result validator via [`ctx.retry`][pydantic_ai.dependencies.CallContext].
+- The default retry count is **1** but can be altered for the [entire agent][pydantic_ai.Agent.__init__], a [specific tool][pydantic_ai.Agent.tool], or a [result validator][pydantic_ai.Agent.__init__].
+- You can access the current retry count from within a tool or result validator via [`ctx.retry`][pydantic_ai.dependencies.CallContext].
 
 Here's an example:
 
-```py title="retriever_retry.py"
+```py title="tool_retry.py"
 from fake_database import DatabaseConn
 from pydantic import BaseModel
 
@@ -467,7 +467,7 @@ try:
     result = agent.run_sync('Please get me the volume of a box with size 6.')
 except UnexpectedModelBehavior as e:
     print('An error occurred:', e)
-    #> An error occurred: Retriever exceeded max retries count of 1
+    #> An error occurred: Tool exceeded max retries count of 1
     print('cause:', repr(e.__cause__))
     #> cause: ModelRetry('Please try again.')
     print('messages:', agent.last_run_messages)
@@ -513,6 +513,6 @@ except UnexpectedModelBehavior as e:
 else:
     print(result.data)
 ```
-1. Define a retriever that will raise `ModelRetry` repeatedly in this case.
+1. Define a tool that will raise `ModelRetry` repeatedly in this case.
 
 _(This example is complete, it can be run "as is")_

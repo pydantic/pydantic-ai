@@ -67,13 +67,13 @@ class FunctionModel(Model):
 
     async def agent_model(
         self,
-        retrievers: Mapping[str, AbstractToolDefinition],
+        retrieval_tools: Mapping[str, AbstractToolDefinition],
         allow_text_result: bool,
         result_tools: Sequence[AbstractToolDefinition] | None,
     ) -> AgentModel:
         result_tools = list(result_tools) if result_tools is not None else None
         return FunctionAgentModel(
-            self.function, self.stream_function, AgentInfo(retrievers, allow_text_result, result_tools)
+            self.function, self.stream_function, AgentInfo(retrieval_tools, allow_text_result, result_tools)
         )
 
     def name(self) -> str:
@@ -92,8 +92,8 @@ class AgentInfo:
     This is passed as the second to functions.
     """
 
-    retrievers: Mapping[str, AbstractToolDefinition]
-    """The retrievers available on this agent."""
+    tools: Mapping[str, AbstractToolDefinition]
+    """The tools available on this agent."""
     allow_text_result: bool
     """Whether a plain text result is allowed."""
     result_tools: list[AbstractToolDefinition] | None

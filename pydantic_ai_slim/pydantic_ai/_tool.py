@@ -9,22 +9,20 @@ from pydantic import ValidationError
 from pydantic_core import SchemaValidator
 
 from . import _pydantic, _utils, messages
-from .dependencies import AgentDeps, CallContext, RetrieverContextFunc, RetrieverParams, RetrieverPlainFunc
+from .dependencies import AgentDeps, CallContext, ToolContextFunc, ToolParams, ToolPlainFunc
 from .exceptions import ModelRetry, UnexpectedModelBehavior
 
-# Usage `RetrieverEitherFunc[AgentDependencies, P]`
-RetrieverEitherFunc = _utils.Either[
-    RetrieverContextFunc[AgentDeps, RetrieverParams], RetrieverPlainFunc[RetrieverParams]
-]
+# Usage `ToolEitherFunc[AgentDependencies, P]`
+ToolEitherFunc = _utils.Either[ToolContextFunc[AgentDeps, ToolParams], ToolPlainFunc[ToolParams]]
 
 
 @dataclass(init=False)
-class Tool(Generic[AgentDeps, RetrieverParams]):
-    """A retriever function for an agent."""
+class Tool(Generic[AgentDeps, ToolParams]):
+    """A tool function for an agent."""
 
     name: str
     description: str
-    function: RetrieverEitherFunc[AgentDeps, RetrieverParams] = field(repr=False)
+    function: ToolEitherFunc[AgentDeps, ToolParams] = field(repr=False)
     is_async: bool
     single_arg_name: str | None
     positional_fields: list[str]
@@ -35,8 +33,8 @@ class Tool(Generic[AgentDeps, RetrieverParams]):
     _current_retry: int = 0
     outer_typed_dict_key: str | None = None
 
-    def __init__(self, function: RetrieverEitherFunc[AgentDeps, RetrieverParams], retries: int):
-        """Build a Retriever dataclass from a function."""
+    def __init__(self, function: ToolEitherFunc[AgentDeps, ToolParams], retries: int):
+        """Build a Tool dataclass from a function."""
         self.function = function
         # noinspection PyTypeChecker
         f = _pydantic.function_schema(function)
@@ -56,7 +54,7 @@ class Tool(Generic[AgentDeps, RetrieverParams]):
         self._current_retry = 0
 
     async def run(self, deps: AgentDeps, message: messages.ToolCall) -> messages.Message:
-        """Run the retriever function asynchronously."""
+        """Run the tool function asynchronously."""
         try:
             if isinstance(message.args, messages.ArgsJson):
                 args_dict = self.validator.validate_json(message.args.args_json)
@@ -100,8 +98,8 @@ class Tool(Generic[AgentDeps, RetrieverParams]):
     def _on_error(self, exc: ValidationError | ModelRetry, call_message: messages.ToolCall) -> messages.RetryPrompt:
         self._current_retry += 1
         if self._current_retry > self.max_retries:
-            # TODO custom error with details of the retriever
-            raise UnexpectedModelBehavior(f'Retriever exceeded max retries count of {self.max_retries}') from exc
+            # TODO custom error with details of the tool
+            raise UnexpectedModelBehavior(f'Tool exceeded max retries count of {self.max_retries}') from exc
         else:
             if isinstance(exc, ValidationError):
                 content = exc.errors(include_url=False)

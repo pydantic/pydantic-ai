@@ -38,7 +38,7 @@ def test_call_one():
         calls.append('b')
         return f'{x}-b'
 
-    result = agent.run_sync('x', model=TestModel(call_retrievers=['ret_a']))
+    result = agent.run_sync('x', model=TestModel(call_tools=['ret_a']))
     assert result.data == snapshot('{"ret_a":"a-a"}')
     assert calls == ['a']
 
@@ -74,7 +74,7 @@ def test_result_type():
     assert result.data == ('a', 'a')
 
 
-def test_retriever_retry():
+def test_tool_retry():
     agent = Agent()
     call_count = 0
 

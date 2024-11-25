@@ -45,18 +45,18 @@ def expect_error(error_type: type[Exception]) -> Iterator[None]:
 
 
 @typed_agent.tool
-async def ok_retriever(ctx: CallContext[MyDeps], x: str) -> str:
+async def ok_tool(ctx: CallContext[MyDeps], x: str) -> str:
     assert_type(ctx.deps, MyDeps)
     total = ctx.deps.foo + ctx.deps.bar
     return f'{x} {total}'
 
 
-# we can't add overloads for every possible signature of retriever, so the type of ok_retriever is obscured
-assert_type(ok_retriever, Callable[[CallContext[MyDeps], str], str])  # type: ignore[assert-type]
+# we can't add overloads for every possible signature of tool, so the type of ok_tool is obscured
+assert_type(ok_tool, Callable[[CallContext[MyDeps], str], str])  # type: ignore[assert-type]
 
 
 @typed_agent.tool_plain
-def ok_retriever_plain(x: str) -> dict[str, str]:
+def ok_tool_plain(x: str) -> dict[str, str]:
     return {'x': x}
 
 
@@ -66,25 +66,25 @@ def ok_json_list(x: str) -> list[Union[str, int]]:
 
 
 @typed_agent.tool
-async def bad_retriever1(ctx: CallContext[MyDeps], x: str) -> str:
+async def bad_tool1(ctx: CallContext[MyDeps], x: str) -> str:
     total = ctx.deps.foo + ctx.deps.spam  # type: ignore[attr-defined]
     return f'{x} {total}'
 
 
 @typed_agent.tool  # type: ignore[arg-type]
-async def bad_retriever2(ctx: CallContext[int], x: str) -> str:
+async def bad_tool2(ctx: CallContext[int], x: str) -> str:
     return f'{x} {ctx.deps}'
 
 
 @typed_agent.tool_plain  # type: ignore[arg-type]
-async def bad_retriever_return(x: int) -> list[MyDeps]:
+async def bad_tool_return(x: int) -> list[MyDeps]:
     return [MyDeps(1, x)]
 
 
 with expect_error(ValueError):
 
     @typed_agent.tool  # type: ignore[arg-type]
-    async def bad_retriever3(x: str) -> str:
+    async def bad_tool3(x: str) -> str:
         return x
 
 

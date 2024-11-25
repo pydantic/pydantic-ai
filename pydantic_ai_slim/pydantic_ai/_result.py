@@ -75,7 +75,7 @@ class ToolRetryError(Exception):
 class ResultSchema(Generic[ResultData]):
     """Model the final response from an agent run.
 
-    Similar to `Retriever` but for the final result of running an agent.
+    Similar to `Tool` but for the final result of running an agent.
     """
 
     tools: dict[str, ResultTool[ResultData]]

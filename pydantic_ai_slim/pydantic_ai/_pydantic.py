@@ -20,8 +20,8 @@ from ._griffe import doc_descriptions
 from ._utils import ObjectJsonSchema, check_object_json_schema, is_model_like
 
 if TYPE_CHECKING:
-    from . import _retriever
-    from .dependencies import AgentDeps, RetrieverParams
+    from . import _tool
+    from .dependencies import AgentDeps, ToolParams
 
 
 __all__ = 'function_schema', 'LazyTypeAdapter'
@@ -39,8 +39,8 @@ class FunctionSchema(TypedDict):
     var_positional_field: str | None
 
 
-def function_schema(either_function: _retriever.RetrieverEitherFunc[AgentDeps, RetrieverParams]) -> FunctionSchema:  # noqa: C901
-    """Build a Pydantic validator and JSON schema from a retriever function.
+def function_schema(either_function: _tool.ToolEitherFunc[AgentDeps, ToolParams]) -> FunctionSchema:  # noqa: C901
+    """Build a Pydantic validator and JSON schema from a tool function.
 
     Args:
         either_function: The function to build a validator and JSON schema for.
@@ -78,10 +78,10 @@ def function_schema(either_function: _retriever.RetrieverEitherFunc[AgentDeps, R
 
             if index == 0 and takes_ctx:
                 if not _is_call_ctx(annotation):
-                    errors.append('First argument must be a CallContext instance when using `.retriever`')
+                    errors.append('First argument must be a CallContext instance when using `.tool`')
                 continue
             elif not takes_ctx and _is_call_ctx(annotation):
-                errors.append('CallContext instance can only be used with `.retriever`')
+                errors.append('CallContext instance can only be used with `.tool`')
                 continue
             elif index != 0 and _is_call_ctx(annotation):
                 errors.append('CallContext instance can only be used as the first argument')

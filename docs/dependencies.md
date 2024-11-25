@@ -1,6 +1,6 @@
 # Dependencies
 
-PydanticAI uses a dependency injection system to provide data and services to your agent's [system prompts](agents.md#system-prompts), [retrievers](agents.md#retrievers) and [result validators](results.md#result-validators-functions).
+PydanticAI uses a dependency injection system to provide data and services to your agent's [system prompts](agents.md#system-prompts), [tools](agents.md#tools) and [result validators](results.md#result-validators-functions).
 
 Matching PydanticAI's design philosophy, our dependency system tries to use existing best practice in Python development rather than inventing esoteric "magic", this should make dependencies type-safe, understandable easier to test and ultimately easier to deploy in production.
 
@@ -101,7 +101,7 @@ _(This example is complete, it can be run "as is")_
 
 ### Asynchronous vs. Synchronous dependencies
 
-System prompt functions, retriever functions and result validator are all run in the async context of an agent run.
+System prompt functions, tool functions and result validator are all run in the async context of an agent run.
 
 If these functions are not coroutines (e.g. `async def`) they are called with
 [`run_in_executor`][asyncio.loop.run_in_executor] in a thread pool, it's therefore marginally preferable
@@ -158,7 +158,7 @@ _(This example is complete, it can be run "as is")_
 
 ## Full Example
 
-As well as system prompts, dependencies can be used in [retrievers](agents.md#retrievers) and [result validators](results.md#result-validators-functions).
+As well as system prompts, dependencies can be used in [tools](agents.md#tools) and [result validators](results.md#result-validators-functions).
 
 ```py title="full_example.py" hl_lines="27-35 38-48"
 from dataclasses import dataclass
@@ -219,7 +219,7 @@ async def main():
         #> Did you hear about the toothpaste scandal? They called it Colgate.
 ```
 
-1. To pass `CallContext` and to a retriever, us the [`retriever`][pydantic_ai.Agent.retriever] decorator.
+1. To pass `CallContext` and to a tool, us the [`tool`][pydantic_ai.Agent.tool] decorator.
 2. `CallContext` may optionally be passed to a [`result_validator`][pydantic_ai.Agent.result_validator] function as the first argument.
 
 _(This example is complete, it can be run "as is")_

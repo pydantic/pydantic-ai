@@ -162,14 +162,14 @@ async def test_plain_response():
     assert call_index == 2
 
 
-async def test_call_retriever():
+async def test_call_tool():
     async def stream_structured_function(
         messages: list[Message], agent_info: AgentInfo
     ) -> AsyncIterator[DeltaToolCalls | str]:
         if len(messages) == 1:
-            assert agent_info.retrievers is not None
-            assert len(agent_info.retrievers) == 1
-            name = next(iter(agent_info.retrievers))
+            assert agent_info.tools is not None
+            assert len(agent_info.tools) == 1
+            name = next(iter(agent_info.tools))
             first = messages[0]
             assert isinstance(first, UserPrompt)
             json_string = json.dumps({'x': first.content})
@@ -227,7 +227,7 @@ async def test_call_retriever():
         )
 
 
-async def test_call_retriever_empty():
+async def test_call_tool_empty():
     async def stream_structured_function(_messages: list[Message], _: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
         yield {}
 
@@ -238,7 +238,7 @@ async def test_call_retriever_empty():
             pass
 
 
-async def test_call_retriever_wrong_name():
+async def test_call_tool_wrong_name():
     async def stream_structured_function(_messages: list[Message], _: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
         yield {0: DeltaToolCall(name='foobar', json_args='{}')}
 

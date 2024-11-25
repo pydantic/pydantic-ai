@@ -11,48 +11,48 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 
 
-def test_retriever_no_ctx():
+def test_tool_no_ctx():
     agent = Agent(TestModel())
 
     with pytest.raises(UserError) as exc_info:
 
         @agent.tool  # pyright: ignore[reportArgumentType]
-        def invalid_retriever(x: int) -> str:  # pragma: no cover
+        def invalid_tool(x: int) -> str:  # pragma: no cover
             return 'Hello'
 
     assert str(exc_info.value) == snapshot(
-        'Error generating schema for test_retriever_no_ctx.<locals>.invalid_retriever:\n'
-        '  First argument must be a CallContext instance when using `.retriever`'
+        'Error generating schema for test_tool_no_ctx.<locals>.invalid_tool:\n'
+        '  First argument must be a CallContext instance when using `.tool`'
     )
 
 
-def test_retriever_plain_with_ctx():
+def test_tool_plain_with_ctx():
     agent = Agent(TestModel())
 
     with pytest.raises(UserError) as exc_info:
 
         @agent.tool_plain
-        async def invalid_retriever(ctx: CallContext[None]) -> str:  # pragma: no cover
+        async def invalid_tool(ctx: CallContext[None]) -> str:  # pragma: no cover
             return 'Hello'
 
     assert str(exc_info.value) == snapshot(
-        'Error generating schema for test_retriever_plain_with_ctx.<locals>.invalid_retriever:\n'
-        '  CallContext instance can only be used with `.retriever`'
+        'Error generating schema for test_tool_plain_with_ctx.<locals>.invalid_tool:\n'
+        '  CallContext instance can only be used with `.tool`'
     )
 
 
-def test_retriever_ctx_second():
+def test_tool_ctx_second():
     agent = Agent(TestModel())
 
     with pytest.raises(UserError) as exc_info:
 
         @agent.tool  # pyright: ignore[reportArgumentType]
-        def invalid_retriever(x: int, ctx: CallContext[None]) -> str:  # pragma: no cover
+        def invalid_tool(x: int, ctx: CallContext[None]) -> str:  # pragma: no cover
             return 'Hello'
 
     assert str(exc_info.value) == snapshot(
-        'Error generating schema for test_retriever_ctx_second.<locals>.invalid_retriever:\n'
-        '  First argument must be a CallContext instance when using `.retriever`\n'
+        'Error generating schema for test_tool_ctx_second.<locals>.invalid_tool:\n'
+        '  First argument must be a CallContext instance when using `.tool`\n'
         '  CallContext instance can only be used as the first argument'
     )
 
@@ -68,8 +68,8 @@ async def google_style_docstring(foo: int, bar: str) -> str:  # pragma: no cover
 
 
 async def get_json_schema(_messages: list[Message], info: AgentInfo) -> ModelAnyResponse:
-    assert len(info.retrievers) == 1
-    r = next(iter(info.retrievers.values()))
+    assert len(info.tools) == 1
+    r = next(iter(info.tools.values()))
     return ModelTextResponse(json.dumps(r.json_schema))
 
 
