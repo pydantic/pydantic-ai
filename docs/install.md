@@ -19,7 +19,7 @@ To use Logfire with PydanticAI, install PydanticAI with the `logfire` optional g
 pip/uv-add 'pydantic-ai[logfire]'
 ```
 
-From there, follow the [Logfire setup cods](logfire.md#integrating-logfire) to configure Logfire.
+From there, follow the [Logfire setup docs](logfire.md#integrating-logfire) to configure Logfire.
 
 ## Running Examples
 
@@ -31,4 +31,4 @@ To install extra dependencies required to run examples, install the `examples` o
 pip/uv-add 'pydantic-ai[examples]'
 ```
 
-For next steps, follow the instructions [in the examples](examples/index.md).
+To run the examples, follow instructions [in the examples](examples/index.md).

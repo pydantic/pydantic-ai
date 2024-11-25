@@ -6,10 +6,6 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Literal, overload
 
-from groq import NOT_GIVEN, AsyncGroq, AsyncStream
-from groq.types import chat
-from groq.types.chat import ChatCompletion, ChatCompletionChunk
-from groq.types.chat.chat_completion_chunk import ChoiceDeltaToolCall
 from httpx import AsyncClient as AsyncHTTPClient
 from typing_extensions import assert_never
 
@@ -35,6 +31,17 @@ from . import (
     cached_async_http_client,
     check_allow_model_requests,
 )
+
+try:
+    from groq import NOT_GIVEN, AsyncGroq, AsyncStream
+    from groq.types import chat
+    from groq.types.chat import ChatCompletion, ChatCompletionChunk
+    from groq.types.chat.chat_completion_chunk import ChoiceDeltaToolCall
+except ImportError as e:
+    raise ImportError(
+        'Please install `groq` to use the Groq model, '
+        "you can use the `groq` optional group — `pip install 'pydantic-ai[groq]'`"
+    ) from e
 
 GroqModelName = Literal[
     'llama-3.1-70b-versatile',

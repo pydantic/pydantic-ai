@@ -1,5 +1,10 @@
 version = 1
 requires-python = ">=3.9"
+resolution-markers = [
+    "python_full_version < '3.11'",
+    "python_full_version >= '3.11' and python_full_version < '3.13'",
+    "python_full_version >= '3.13'",
+]
 
 [[package]]
 name = "annotated-types"
@@ -1490,7 +1495,6 @@ dependencies = [
     { name = "griffe" },
     { name = "httpx" },
     { name = "logfire-api" },
-    { name = "openai" },
     { name = "pydantic" },
 ]
 
@@ -1498,8 +1502,12 @@ dependencies = [
 examples = [
     { name = "asyncpg" },
     { name = "fastapi" },
+    { name = "google-auth" },
+    { name = "groq" },
     { name = "logfire", extra = ["asyncpg", "fastapi"] },
+    { name = "openai" },
     { name = "python-multipart" },
+    { name = "requests" },
     { name = "rich" },
     { name = "uvicorn" },
 ]
@@ -1508,6 +1516,9 @@ groq = [
 ]
 logfire = [
     { name = "logfire" },
+]
+openai = [
+    { name = "openai" },
 ]
 vertexai = [
     { name = "google-auth" },
@@ -1550,8 +1561,9 @@ requires-dist = [
     { name = "logfire", marker = "extra == 'logfire'", specifier = ">=2.3" },
     { name = "logfire", extras = ["asyncpg", "fastapi"], marker = "extra == 'examples'", specifier = ">=2.3" },
     { name = "logfire-api", specifier = ">=1.2.0" },
-    { name = "openai", specifier = ">=1.54.3" },
+    { name = "openai", marker = "extra == 'openai'", specifier = ">=1.54.3" },
     { name = "pydantic", specifier = ">=2.10" },
+    { name = "pydantic-ai", extras = ["openai", "vertexai", "groq"], marker = "extra == 'examples'" },
     { name = "python-multipart", marker = "extra == 'examples'", specifier = ">=0.0.17" },
     { name = "requests", marker = "extra == 'vertexai'", specifier = ">=2.32.3" },
     { name = "rich", marker = "extra == 'examples'", specifier = ">=13.9.2" },

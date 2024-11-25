@@ -7,10 +7,6 @@ from datetime import datetime, timezone
 from typing import Literal, overload
 
 from httpx import AsyncClient as AsyncHTTPClient
-from openai import NOT_GIVEN, AsyncOpenAI, AsyncStream
-from openai.types import ChatModel, chat
-from openai.types.chat import ChatCompletionChunk
-from openai.types.chat.chat_completion_chunk import ChoiceDeltaToolCall
 from typing_extensions import assert_never
 
 from .. import UnexpectedModelBehavior, _utils, result
@@ -35,6 +31,17 @@ from . import (
     cached_async_http_client,
     check_allow_model_requests,
 )
+
+try:
+    from openai import NOT_GIVEN, AsyncOpenAI, AsyncStream
+    from openai.types import ChatModel, chat
+    from openai.types.chat import ChatCompletionChunk
+    from openai.types.chat.chat_completion_chunk import ChoiceDeltaToolCall
+except ImportError as e:
+    raise ImportError(
+        'Please install `openai` to use the OpenAI model, '
+        "you can use the `openai` optional group — `pip install 'pydantic-ai[openai]'`"
+    ) from e
 
 
 @dataclass(init=False)

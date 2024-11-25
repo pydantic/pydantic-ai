@@ -171,8 +171,6 @@ jobs:
     environment: release
 
     permissions:
-      # necessary while private, see https://github.com/actions/checkout/issues/254#issuecomment-1961296625
-      contents: read
       id-token: write
 
     steps:

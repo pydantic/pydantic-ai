@@ -9,18 +9,6 @@ from typing import Any, Literal, cast
 
 import pytest
 from inline_snapshot import snapshot
-from openai import AsyncOpenAI
-from openai.types import chat
-from openai.types.chat.chat_completion import Choice
-from openai.types.chat.chat_completion_chunk import (
-    Choice as ChunkChoice,
-    ChoiceDelta,
-    ChoiceDeltaToolCall,
-    ChoiceDeltaToolCallFunction,
-)
-from openai.types.chat.chat_completion_message import ChatCompletionMessage
-from openai.types.chat.chat_completion_message_tool_call import Function
-from openai.types.completion_usage import CompletionUsage, PromptTokensDetails
 from typing_extensions import TypedDict
 
 from pydantic_ai import Agent, ModelRetry, UnexpectedModelBehavior, _utils
@@ -34,11 +22,29 @@ from pydantic_ai.messages import (
     ToolReturn,
     UserPrompt,
 )
-from pydantic_ai.models.openai import OpenAIModel
 from pydantic_ai.result import Cost
-from tests.conftest import IsNow
+from tests.conftest import IsNow, try_import
 
-pytestmark = pytest.mark.anyio
+with try_import() as imports_successful:
+    from openai import AsyncOpenAI
+    from openai.types import chat
+    from openai.types.chat.chat_completion import Choice
+    from openai.types.chat.chat_completion_chunk import (
+        Choice as ChunkChoice,
+        ChoiceDelta,
+        ChoiceDeltaToolCall,
+        ChoiceDeltaToolCallFunction,
+    )
+    from openai.types.chat.chat_completion_message import ChatCompletionMessage
+    from openai.types.chat.chat_completion_message_tool_call import Function
+    from openai.types.completion_usage import CompletionUsage, PromptTokensDetails
+
+    from pydantic_ai.models.openai import OpenAIModel
+
+pytestmark = [
+    pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
+    pytest.mark.anyio,
+]
 
 
 def test_init():
