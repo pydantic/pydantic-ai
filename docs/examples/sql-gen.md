@@ -1,6 +1,6 @@
 # SQL Generation
 
-Example demonstrating how to use Pydantic AI to generate SQL queries based on user input.
+Example demonstrating how to use PydanticAI to generate SQL queries based on user input.
 
 Demonstrates:
 

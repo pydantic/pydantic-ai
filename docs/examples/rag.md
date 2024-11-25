@@ -9,7 +9,7 @@ Demonstrates:
 * RAG search
 
 This is done by creating a database containing each section of the markdown documentation, then registering
-the search tool as a retriever with the Pydantic AI agent.
+the search tool as a retriever with the PydanticAI agent.
 
 Logic for extracting sections from markdown files and a JSON file with that data is available in
 [this gist](https://gist.github.com/samuelcolvin/4b5bb9bb163b1122ff17e29e48c10992).
@@ -34,7 +34,7 @@ With that running and [dependencies installed and environment variables set](./i
 python/uv-run -m pydantic_ai_examples.rag build
 ```
 
-(Note building the database doesn't use Pydantic AI right now, instead it uses the OpenAI SDK directly.)
+(Note building the database doesn't use PydanticAI right now, instead it uses the OpenAI SDK directly.)
 
 You can then ask the agent a question with:
 

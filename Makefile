@@ -80,8 +80,9 @@ else ifeq ($(PPPR_TOKEN),)
 	@exit 1
 else
 	@echo 'installing insiders packages...'
-	@uv pip install -U mkdocs-material mkdocstrings-python \
-		--extra-index-url https://pydantic:${PPPR_TOKEN}@pppr.pydantic.dev/simple/
+	@uv pip install -U \
+		--extra-index-url https://pydantic:${PPPR_TOKEN}@pppr.pydantic.dev/simple/ \
+		mkdocs-material mkdocstrings-python
 endif
 
 .PHONY: docs-insiders  # Build the documentation using insiders packages
@@ -98,10 +99,10 @@ cf-pages-build:
 	uv python install 3.12
 	uv sync --python 3.12 --frozen --group docs
 	uv pip install -U \
-		--extra-index-url https://pydantic:$(PPPR_TOKEN)@pppr.pydantic.dev/simple/ \
+		--extra-index-url https://pydantic:${PPPR_TOKEN}@pppr.pydantic.dev/simple/ \
 		mkdocs-material mkdocstrings-python
 	uv pip freeze
-	uv run --no-sync mkdocs build
+	uv run --no-sync mkdocs build -f mkdocs.insiders.yml
 
 .PHONY: all
 all: format lint typecheck testcov
