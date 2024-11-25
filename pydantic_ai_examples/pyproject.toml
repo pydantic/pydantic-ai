@@ -44,10 +44,7 @@ dependencies = [
 ]
 
 [tool.hatch.build]
-sources = ["."]
-
-[tool.hatch.build.targets.wheel]
-packages = ["pydantic_ai_examples"]
+include = ["*.py", "*.html", "*.ts"]
 
 [tool.hatch.build.targets.wheel.sources]
 "" = "pydantic_ai_examples"
