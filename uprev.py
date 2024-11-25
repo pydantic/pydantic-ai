@@ -63,7 +63,12 @@ examples_pp_text, count_ex = replace_deps_version(examples_pp_text)
 if count_root == 2 and count_ex == 1:
     root_pp.write_text(root_pp_text)
     examples_pp.write_text(examples_pp_text)
-    print(f'SUCCESS: replaced the following version occurrences\n  3 in root {root_pp}\n  1 in {examples_pp}')
+    print(
+        f'SUCCESS: replaced the following version occurrences\n'
+        f'  3 in root {root_pp}\n'
+        f'  1 in {examples_pp}\n\n'
+        'Now run `make sync` to update the lock files.',
+    )
 else:
     print(
         f'ERROR: found {count_root} version references in {root_pp_text} (expected 3) '
