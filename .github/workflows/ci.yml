@@ -80,7 +80,7 @@ jobs:
         with:
           enable-cache: true
 
-      - run: |
+      - run: >
           uv run
           --python 3.12
           --frozen
