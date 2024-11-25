@@ -51,7 +51,7 @@ class Deps:
 agent = Agent('openai:gpt-4o', deps_type=Deps)
 
 
-@agent.retriever
+@agent.tool
 async def retrieve(context: CallContext[Deps], search_query: str) -> str:
     """Retrieve documentation sections based on a search query.
 

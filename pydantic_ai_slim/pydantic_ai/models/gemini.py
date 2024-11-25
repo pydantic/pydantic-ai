@@ -112,7 +112,7 @@ class GeminiModel(Model):
 
     async def agent_model(
         self,
-        retrievers: Mapping[str, AbstractToolDefinition],
+        retrieval_tools: Mapping[str, AbstractToolDefinition],
         allow_text_result: bool,
         result_tools: Sequence[AbstractToolDefinition] | None,
     ) -> GeminiAgentModel:
@@ -121,7 +121,7 @@ class GeminiModel(Model):
             model_name=self.model_name,
             auth=self.auth,
             url=self.url,
-            retrievers=retrievers,
+            retrieval_tools=retrieval_tools,
             allow_text_result=allow_text_result,
             result_tools=result_tools,
         )
@@ -160,12 +160,12 @@ class GeminiAgentModel(AgentModel):
         model_name: GeminiModelName,
         auth: AuthProtocol,
         url: str,
-        retrievers: Mapping[str, AbstractToolDefinition],
+        retrieval_tools: Mapping[str, AbstractToolDefinition],
         allow_text_result: bool,
         result_tools: Sequence[AbstractToolDefinition] | None,
     ):
         check_allow_model_requests()
-        tools = [_function_from_abstract_tool(t) for t in retrievers.values()]
+        tools = [_function_from_abstract_tool(t) for t in retrieval_tools.values()]
         if result_tools is not None:
             tools += [_function_from_abstract_tool(t) for t in result_tools]
 

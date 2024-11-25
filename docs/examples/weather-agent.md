@@ -2,7 +2,7 @@ Example of PydanticAI with multiple tools which the LLM needs to call in turn to
 
 Demonstrates:
 
-* [retrievers](../agents.md#retrievers)
+* [tools](../agents.md#tools)
 * [agent dependencies](../dependencies.md)
 
 In this case the idea is a "weather" agent — the user can ask for the weather in multiple locations,

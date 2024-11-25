@@ -45,7 +45,7 @@ UnSet = UnSetType()
 class TestModel(Model):
     """A model specifically for testing purposes.
 
-    This will (by default) call all retrievers in the agent model, then return a tool response if possible,
+    This will (by default) call all tools in the agent model, then return a tool response if possible,
     otherwise a plain response.
 
     How useful this function will be is unknown, it may be useless, it may require significant changes to be useful.
@@ -57,8 +57,8 @@ class TestModel(Model):
     # NOTE: Avoid test discovery by pytest.
     __test__ = False
 
-    call_retrievers: list[str] | Literal['all'] = 'all'
-    """List of retrievers to call. If `'all'`, all retrievers will be called."""
+    call_tools: list[str] | Literal['all'] = 'all'
+    """List of tools to call. If `'all'`, all tools will be called."""
     custom_result_text: str | None = None
     """If set, this text is return as the final result."""
     custom_result_args: Any | None = None
@@ -66,25 +66,25 @@ class TestModel(Model):
     seed: int = 0
     """Seed for generating random data."""
     # these fields are set when the model is called by the agent
-    agent_model_retrievers: Mapping[str, AbstractToolDefinition] | None = field(default=None, init=False)
+    agent_model_tools: Mapping[str, AbstractToolDefinition] | None = field(default=None, init=False)
     agent_model_allow_text_result: bool | None = field(default=None, init=False)
     agent_model_result_tools: list[AbstractToolDefinition] | None = field(default=None, init=False)
 
     async def agent_model(
         self,
-        retrievers: Mapping[str, AbstractToolDefinition],
+        retrieval_tools: Mapping[str, AbstractToolDefinition],
         allow_text_result: bool,
         result_tools: Sequence[AbstractToolDefinition] | None,
     ) -> AgentModel:
-        self.agent_model_retrievers = retrievers
+        self.agent_model_tools = retrieval_tools
         self.agent_model_allow_text_result = allow_text_result
         self.agent_model_result_tools = list(result_tools) if result_tools is not None else None
 
-        if self.call_retrievers == 'all':
-            retriever_calls = [(r.name, r) for r in retrievers.values()]
+        if self.call_tools == 'all':
+            tool_calls = [(r.name, r) for r in retrieval_tools.values()]
         else:
-            retrievers_to_call = (retrievers[name] for name in self.call_retrievers)
-            retriever_calls = [(r.name, r) for r in retrievers_to_call]
+            tools_to_call = (retrieval_tools[name] for name in self.call_tools)
+            tool_calls = [(r.name, r) for r in tools_to_call]
 
         if self.custom_result_text is not None:
             assert allow_text_result, 'Plain response not allowed, but `custom_result_text` is set.'
@@ -104,7 +104,7 @@ class TestModel(Model):
             result = _utils.Either(right=None)
         else:
             result = _utils.Either(left=None)
-        return TestAgentModel(retriever_calls, result, self.agent_model_result_tools, self.seed)
+        return TestAgentModel(tool_calls, result, self.agent_model_result_tools, self.seed)
 
     def name(self) -> str:
         return 'test-model'
@@ -117,7 +117,7 @@ class TestAgentModel(AgentModel):
     # NOTE: Avoid test discovery by pytest.
     __test__ = False
 
-    retriever_calls: list[tuple[str, AbstractToolDefinition]]
+    tool_calls: list[tuple[str, AbstractToolDefinition]]
     # left means the text is plain text; right means it's a function call
     result: _utils.Either[str | None, Any | None]
     result_tools: list[AbstractToolDefinition] | None
@@ -137,12 +137,12 @@ class TestAgentModel(AgentModel):
         else:
             yield TestStreamStructuredResponse(msg, cost)
 
-    def gen_retriever_args(self, tool_def: AbstractToolDefinition) -> Any:
+    def gen_tool_args(self, tool_def: AbstractToolDefinition) -> Any:
         return _JsonSchemaTestData(tool_def.json_schema, self.seed).generate()
 
     def _request(self, messages: list[Message]) -> ModelAnyResponse:
-        if self.step == 0 and self.retriever_calls:
-            calls = [ToolCall.from_object(name, self.gen_retriever_args(args)) for name, args in self.retriever_calls]
+        if self.step == 0 and self.tool_calls:
+            calls = [ToolCall.from_object(name, self.gen_tool_args(args)) for name, args in self.tool_calls]
             self.step += 1
             self.last_message_count = len(messages)
             return ModelStructuredResponse(calls=calls)
@@ -152,8 +152,8 @@ class TestAgentModel(AgentModel):
         new_retry_names = {m.tool_name for m in new_messages if isinstance(m, RetryPrompt)}
         if new_retry_names:
             calls = [
-                ToolCall.from_object(name, self.gen_retriever_args(args))
-                for name, args in self.retriever_calls
+                ToolCall.from_object(name, self.gen_tool_args(args))
+                for name, args in self.tool_calls
                 if name in new_retry_names
             ]
             self.step += 1
@@ -162,7 +162,7 @@ class TestAgentModel(AgentModel):
             if response_text := self.result.left:
                 self.step += 1
                 if response_text.value is None:
-                    # build up details of retriever responses
+                    # build up details of tool responses
                     output: dict[str, Any] = {}
                     for message in messages:
                         if isinstance(message, ToolReturn):
@@ -170,7 +170,7 @@ class TestAgentModel(AgentModel):
                     if output:
                         return ModelTextResponse(content=pydantic_core.to_json(output).decode())
                     else:
-                        return ModelTextResponse(content='success (no retriever calls)')
+                        return ModelTextResponse(content='success (no tool calls)')
                 else:
                     return ModelTextResponse(content=response_text.value)
             else:
@@ -181,7 +181,7 @@ class TestAgentModel(AgentModel):
                     self.step += 1
                     return ModelStructuredResponse(calls=[ToolCall.from_object(result_tool.name, custom_result_args)])
                 else:
-                    response_args = self.gen_retriever_args(result_tool)
+                    response_args = self.gen_tool_args(result_tool)
                     self.step += 1
                     return ModelStructuredResponse(calls=[ToolCall.from_object(result_tool.name, response_args)])
 

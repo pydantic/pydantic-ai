@@ -16,10 +16,10 @@ __all__ = (
     'CallContext',
     'ResultValidatorFunc',
     'SystemPromptFunc',
-    'RetrieverReturnValue',
-    'RetrieverContextFunc',
-    'RetrieverPlainFunc',
-    'RetrieverParams',
+    'ToolReturnValue',
+    'ToolContextFunc',
+    'ToolPlainFunc',
+    'ToolParams',
     'JsonData',
 )
 
@@ -39,7 +39,7 @@ class CallContext(Generic[AgentDeps]):
     """Name of the tool being called."""
 
 
-RetrieverParams = ParamSpec('RetrieverParams')
+ToolParams = ParamSpec('ToolParams')
 """Retrieval function param spec."""
 
 SystemPromptFunc = Union[
@@ -69,15 +69,15 @@ Usage `ResultValidator[AgentDeps, ResultData]`.
 JsonData: TypeAlias = 'None | str | int | float | Sequence[JsonData] | Mapping[str, JsonData]'
 """Type representing any JSON data."""
 
-RetrieverReturnValue = Union[JsonData, Awaitable[JsonData]]
-"""Return value of a retriever function."""
-RetrieverContextFunc = Callable[Concatenate[CallContext[AgentDeps], RetrieverParams], RetrieverReturnValue]
-"""A retriever function that takes `CallContext` as the first argument.
+ToolReturnValue = Union[JsonData, Awaitable[JsonData]]
+"""Return value of a tool function."""
+ToolContextFunc = Callable[Concatenate[CallContext[AgentDeps], ToolParams], ToolReturnValue]
+"""A tool function that takes `CallContext` as the first argument.
 
-Usage `RetrieverContextFunc[AgentDeps, RetrieverParams]`.
+Usage `ToolContextFunc[AgentDeps, ToolParams]`.
 """
-RetrieverPlainFunc = Callable[RetrieverParams, RetrieverReturnValue]
-"""A retriever function that does not take `CallContext` as the first argument.
+ToolPlainFunc = Callable[ToolParams, ToolReturnValue]
+"""A tool function that does not take `CallContext` as the first argument.
 
-Usage `RetrieverPlainFunc[RetrieverParams]`.
+Usage `ToolPlainFunc[ToolParams]`.
 """

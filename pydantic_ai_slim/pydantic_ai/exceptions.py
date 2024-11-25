@@ -6,7 +6,7 @@ __all__ = 'ModelRetry', 'UserError', 'UnexpectedModelBehavior'
 
 
 class ModelRetry(Exception):
-    """Exception raised when a retriever function should be retried.
+    """Exception raised when a tool function should be retried.
 
     The agent will return the message to the model and ask it to try calling the function/tool again.
     """
