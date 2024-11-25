@@ -42,7 +42,8 @@ from pydantic_ai.models.gemini import (
     _GeminiUsageMetaData,
 )
 from pydantic_ai.result import Cost
-from tests.conftest import ClientWithHandler, IsNow, TestEnv
+
+from ..conftest import ClientWithHandler, IsNow, TestEnv
 
 pytestmark = pytest.mark.anyio
 

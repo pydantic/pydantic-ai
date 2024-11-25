@@ -3,7 +3,8 @@ import pytest
 from pydantic_ai import UserError
 from pydantic_ai.models import infer_model
 from pydantic_ai.models.gemini import GeminiModel
-from tests.conftest import TestEnv, try_import
+
+from ..conftest import TestEnv, try_import
 
 with try_import() as openai_imports_successful:
     from pydantic_ai.models.openai import OpenAIModel

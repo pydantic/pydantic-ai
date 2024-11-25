@@ -26,7 +26,8 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
-from tests.conftest import ClientWithHandler
+
+from .conftest import ClientWithHandler
 
 try:
     from pydantic_ai.models.vertexai import VertexAIModel

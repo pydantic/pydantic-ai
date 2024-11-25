@@ -10,7 +10,8 @@ from inline_snapshot import snapshot
 from pytest_mock import MockerFixture
 
 from pydantic_ai import UserError
-from tests.conftest import IsNow, try_import
+
+from ..conftest import IsNow, try_import
 
 with try_import() as imports_successful:
     from google.oauth2.service_account import Credentials

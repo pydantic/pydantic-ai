@@ -23,7 +23,8 @@ from pydantic_ai.messages import (
     UserPrompt,
 )
 from pydantic_ai.result import Cost
-from tests.conftest import IsNow, try_import
+
+from ..conftest import IsNow, try_import
 
 with try_import() as imports_successful:
     from openai import AsyncOpenAI

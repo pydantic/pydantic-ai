@@ -24,7 +24,8 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.result import Cost
-from tests.conftest import IsNow
+
+from ..conftest import IsNow
 
 pytestmark = pytest.mark.anyio
 
