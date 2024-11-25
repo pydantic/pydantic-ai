@@ -88,7 +88,7 @@ def register_bank_db():
 
 
 def find_filter_examples() -> Iterable[CodeExample]:
-    for ex in find_examples('docs', 'pydantic_ai'):
+    for ex in find_examples('docs', 'pydantic_ai_slim'):
         if ex.path.name != '_utils.py':
             yield ex
 

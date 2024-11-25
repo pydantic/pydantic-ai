@@ -1,0 +1,51 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pydantic-ai-slim"
+version = "0.0.5"
+description = "Agent Framework / shim to use Pydantic with LLMs"
+authors = [
+    { name = "Samuel Colvin", email = "samuel@pydantic.dev" },
+]
+license = "MIT"
+readme = "README.md"
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Information Technology",
+    "Intended Audience :: System Administrators",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: Unix",
+    "Operating System :: POSIX :: Linux",
+    "Environment :: Console",
+    "Environment :: MacOS X",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Internet",
+]
+requires-python = ">=3.9"
+dependencies = [
+    "eval-type-backport>=0.2.0",
+    "griffe>=1.3.2",
+    "httpx>=0.27.2",
+    "logfire-api>=1.2.0",
+    "pydantic>=2.10",
+]
+
+[project.optional-dependencies]
+openai = ["openai>=1.54.3"]
+vertexai = ["google-auth>=2.36.0", "requests>=2.32.3"]
+groq = ["groq>=0.12.0"]
+logfire = ["logfire>=2.3"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["pydantic_ai"]

@@ -6,6 +6,13 @@ resolution-markers = [
     "python_full_version >= '3.13'",
 ]
 
+[manifest]
+members = [
+    "pydantic-ai",
+    "pydantic-ai-examples",
+    "pydantic-ai-slim",
+]
+
 [[package]]
 name = "annotated-types"
 version = "0.7.0"
@@ -1491,38 +1498,13 @@ name = "pydantic-ai"
 version = "0.0.5"
 source = { editable = "." }
 dependencies = [
-    { name = "eval-type-backport" },
-    { name = "griffe" },
-    { name = "httpx" },
-    { name = "logfire-api" },
-    { name = "pydantic" },
+    { name = "pydantic-ai-examples" },
+    { name = "pydantic-ai-slim", extra = ["groq", "openai", "vertexai"] },
 ]
 
 [package.optional-dependencies]
-examples = [
-    { name = "asyncpg" },
-    { name = "fastapi" },
-    { name = "google-auth" },
-    { name = "groq" },
-    { name = "logfire", extra = ["asyncpg", "fastapi"] },
-    { name = "openai" },
-    { name = "python-multipart" },
-    { name = "requests" },
-    { name = "rich" },
-    { name = "uvicorn" },
-]
-groq = [
-    { name = "groq" },
-]
-logfire = [
-    { name = "logfire" },
-]
 openai = [
     { name = "openai" },
-]
-vertexai = [
-    { name = "google-auth" },
-    { name = "requests" },
 ]
 
 [package.dev-dependencies]
@@ -1551,23 +1533,9 @@ lint = [
 
 [package.metadata]
 requires-dist = [
-    { name = "asyncpg", marker = "extra == 'examples'", specifier = ">=0.30.0" },
-    { name = "eval-type-backport", specifier = ">=0.2.0" },
-    { name = "fastapi", marker = "extra == 'examples'", specifier = ">=0.115.4" },
-    { name = "google-auth", marker = "extra == 'vertexai'", specifier = ">=2.36.0" },
-    { name = "griffe", specifier = ">=1.3.2" },
-    { name = "groq", marker = "extra == 'groq'", specifier = ">=0.12.0" },
-    { name = "httpx", specifier = ">=0.27.2" },
-    { name = "logfire", marker = "extra == 'logfire'", specifier = ">=2.3" },
-    { name = "logfire", extras = ["asyncpg", "fastapi"], marker = "extra == 'examples'", specifier = ">=2.3" },
-    { name = "logfire-api", specifier = ">=1.2.0" },
     { name = "openai", marker = "extra == 'openai'", specifier = ">=1.54.3" },
-    { name = "pydantic", specifier = ">=2.10" },
-    { name = "pydantic-ai", extras = ["openai", "vertexai", "groq"], marker = "extra == 'examples'" },
-    { name = "python-multipart", marker = "extra == 'examples'", specifier = ">=0.0.17" },
-    { name = "requests", marker = "extra == 'vertexai'", specifier = ">=2.32.3" },
-    { name = "rich", marker = "extra == 'examples'", specifier = ">=13.9.2" },
-    { name = "uvicorn", marker = "extra == 'examples'", specifier = ">=0.32.0" },
+    { name = "pydantic-ai-examples", editable = "pydantic_ai_examples" },
+    { name = "pydantic-ai-slim", extras = ["openai", "vertexai", "groq"], editable = "pydantic_ai_slim" },
 ]
 
 [package.metadata.requires-dev]
@@ -1583,15 +1551,81 @@ dev = [
     { name = "pytest-pretty", specifier = ">=1.2.0" },
 ]
 docs = [
-    { name = "mkdocs" },
+    { name = "mkdocs", specifier = ">=1.6.1" },
     { name = "mkdocs-glightbox", specifier = ">=0.4.0" },
-    { name = "mkdocs-material", extras = ["imaging"] },
-    { name = "mkdocstrings-python" },
+    { name = "mkdocs-material", extras = ["imaging"], specifier = ">=9.5.45" },
+    { name = "mkdocstrings-python", specifier = ">=1.12.2" },
 ]
 lint = [
     { name = "mypy", specifier = ">=1.11.2" },
     { name = "pyright", specifier = ">=1.1.388" },
     { name = "ruff", specifier = ">=0.6.9" },
+]
+
+[[package]]
+name = "pydantic-ai-examples"
+version = "0.0.5"
+source = { editable = "pydantic_ai_examples" }
+dependencies = [
+    { name = "asyncpg" },
+    { name = "fastapi" },
+    { name = "logfire", extra = ["asyncpg", "fastapi"] },
+    { name = "pydantic-ai-slim", extra = ["groq", "openai", "vertexai"] },
+    { name = "python-multipart" },
+    { name = "rich" },
+    { name = "uvicorn" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "asyncpg", specifier = ">=0.30.0" },
+    { name = "fastapi", specifier = ">=0.115.4" },
+    { name = "logfire", extras = ["asyncpg", "fastapi"], specifier = ">=2.3" },
+    { name = "pydantic-ai-slim", extras = ["openai", "vertexai", "groq"], editable = "pydantic_ai_slim" },
+    { name = "python-multipart", specifier = ">=0.0.17" },
+    { name = "rich", specifier = ">=13.9.2" },
+    { name = "uvicorn", specifier = ">=0.32.0" },
+]
+
+[[package]]
+name = "pydantic-ai-slim"
+version = "0.0.5"
+source = { editable = "pydantic_ai_slim" }
+dependencies = [
+    { name = "eval-type-backport" },
+    { name = "griffe" },
+    { name = "httpx" },
+    { name = "logfire-api" },
+    { name = "pydantic" },
+]
+
+[package.optional-dependencies]
+groq = [
+    { name = "groq" },
+]
+logfire = [
+    { name = "logfire" },
+]
+openai = [
+    { name = "openai" },
+]
+vertexai = [
+    { name = "google-auth" },
+    { name = "requests" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "eval-type-backport", specifier = ">=0.2.0" },
+    { name = "google-auth", marker = "extra == 'vertexai'", specifier = ">=2.36.0" },
+    { name = "griffe", specifier = ">=1.3.2" },
+    { name = "groq", marker = "extra == 'groq'", specifier = ">=0.12.0" },
+    { name = "httpx", specifier = ">=0.27.2" },
+    { name = "logfire", marker = "extra == 'logfire'", specifier = ">=2.3" },
+    { name = "logfire-api", specifier = ">=1.2.0" },
+    { name = "openai", marker = "extra == 'openai'", specifier = ">=1.54.3" },
+    { name = "pydantic", specifier = ">=2.10" },
+    { name = "requests", marker = "extra == 'vertexai'", specifier = ">=2.32.3" },
 ]
 
 [[package]]
