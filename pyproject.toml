@@ -35,11 +35,10 @@ classifiers = [
 requires-python = ">=3.9"
 dependencies = [
     "pydantic-ai-slim[openai,vertexai,groq]",
-    "pydantic-ai-examples",
 ]
 
 [project.optional-dependencies]
-openai = ["openai>=1.54.3"]
+examples = ["pydantic-ai-examples"]
 
 [tool.uv.sources]
 pydantic-ai-slim = { workspace = true }

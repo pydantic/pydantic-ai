@@ -35,6 +35,7 @@ classifiers = [
     "Topic :: Internet",
 ]
 requires-python = ">=3.9"
+dynamic = ["version"]
 dependencies = [
     "pydantic-ai-slim[openai,vertexai,groq]",
     "asyncpg>=0.30.0",
@@ -44,7 +45,6 @@ dependencies = [
     "rich>=13.9.2",
     "uvicorn>=0.32.0",
 ]
-dynamic = ["version"]
 
 [tool.hatch.build]
 include = ["*.py", "*.html", "*.ts"]
