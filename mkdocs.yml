@@ -131,7 +131,7 @@ markdown_extensions:
   - sane_lists # this means you can start a list from any number
 
 watch:
-  - pydantic_ai
+  - pydantic_ai_slim
   - pydantic_ai_examples
 
 plugins:
@@ -141,7 +141,7 @@ plugins:
   - mkdocstrings:
       handlers:
         python:
-          paths: [src/packages/pydantic_ai/pydantic_ai]
+          paths: [src/packages/pydantic_ai_slim/pydantic_ai]
           options:
             relative_crossrefs: true
             members_order: source
@@ -153,8 +153,7 @@ plugins:
             heading_level: 3
           import:
             - url: https://docs.python.org/3/objects.inv
-              # TODO use /latest/ not /dev/ when Pydantic 2.10 is released
-            - url: https://docs.pydantic.dev/dev/objects.inv
+            - url: https://docs.pydantic.dev/latest/objects.inv
             - url: https://fastapi.tiangolo.com/objects.inv
             - url: https://typing-extensions.readthedocs.io/en/latest/objects.inv
             - url: https://rich.readthedocs.io/en/stable/objects.inv

@@ -67,7 +67,6 @@ def sub_cf_video(m: re.Match[str]) -> str:
 
     domain = 'https://customer-nmegqx24430okhaq.cloudflarestream.com'
     poster = f'{domain}/{video_id}/thumbnails/thumbnail.jpg?time={time}&height=600'
-    print(poster)
     return f"""
 <div style="position: relative; padding-top: 67%;">
   <iframe

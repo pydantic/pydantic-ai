@@ -20,7 +20,8 @@ from pydantic_ai.messages import (
     UserPrompt,
 )
 from pydantic_ai.models.test import TestModel, _chars, _JsonSchemaTestData  # pyright: ignore[reportPrivateUsage]
-from tests.conftest import IsNow
+
+from ..conftest import IsNow
 
 
 def test_call_one():

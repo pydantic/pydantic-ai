@@ -23,7 +23,8 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.result import Cost, RunResult
-from tests.conftest import IsNow, TestEnv
+
+from .conftest import IsNow, TestEnv
 
 
 def test_result_tuple():
