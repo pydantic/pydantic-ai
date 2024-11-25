@@ -2,9 +2,11 @@
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+[tool.hatch.version]
+path = "../pyproject.toml"
+
 [project]
 name = "pydantic-ai-slim"
-version = "0.0.5"
 description = "Agent Framework / shim to use Pydantic with LLMs"
 authors = [
     { name = "Samuel Colvin", email = "samuel@pydantic.dev" },
@@ -40,6 +42,7 @@ dependencies = [
     "logfire-api>=1.2.0",
     "pydantic>=2.10",
 ]
+dynamic = ["version"]
 
 [project.optional-dependencies]
 openai = ["openai>=1.54.3"]

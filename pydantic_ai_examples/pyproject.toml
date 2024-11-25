@@ -2,9 +2,11 @@
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+[tool.hatch.version]
+path = "../pyproject.toml"
+
 [project]
 name = "pydantic-ai-examples"
-version = "0.0.5"
 description = "Agent Framework / shim to use Pydantic with LLMs"
 authors = [
     { name = "Samuel Colvin", email = "samuel@pydantic.dev" },
@@ -42,6 +44,7 @@ dependencies = [
     "rich>=13.9.2",
     "uvicorn>=0.32.0",
 ]
+dynamic = ["version"]
 
 [tool.hatch.build]
 include = ["*.py", "*.html", "*.ts"]
