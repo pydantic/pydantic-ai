@@ -5,4 +5,4 @@ from .dependencies import CallContext
 from .exceptions import ModelRetry, UnexpectedModelBehavior, UserError
 
 __all__ = 'Agent', 'CallContext', 'ModelRetry', 'UnexpectedModelBehavior', 'UserError', '__version__'
-__version__ = version('pydantic_ai')
+__version__ = version('pydantic_ai_slim')

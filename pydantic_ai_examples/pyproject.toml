@@ -37,7 +37,7 @@ classifiers = [
 requires-python = ">=3.9"
 dynamic = ["version"]
 dependencies = [
-    "pydantic-ai-slim[openai,vertexai,groq]",
+    "pydantic-ai-slim[openai,vertexai,groq]==0.0.6a4",
     "asyncpg>=0.30.0",
     "fastapi>=0.115.4",
     "logfire[asyncpg,fastapi]>=2.3",
