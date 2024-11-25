@@ -1,14 +1,16 @@
 """Update the pydantic-ai version number everywhere.
 
-Because we have multiple functions which depend on one-another,
+Because we have multiple packages which depend on one-another,
 we have to update the version number in:
-* 3 places in pyproject.toml
-* 1 place in pydantic_ai_examples/pyproject.toml
+* pyproject.toml
+* pydantic_ai_examples/pyproject.toml
+* pydantic_ai_slim/pyproject.toml
 
 Usage:
 
     uv run uprev.py <new_version_number>
 """
+
 import re
 import sys
 
@@ -46,12 +48,12 @@ print(f'Updating version from {old_version!r} to {version!r}')
 
 
 def replace_deps_version(text: str) -> tuple[str, int]:
-    return re.subn(
-        '(pydantic-ai-.+?==)' + re.escape(old_version),
-        r'\g<1>' + version,
-        text,
-        count=5,
+    ovr = re.escape(old_version)
+    text, c = re.subn(f'(pydantic-ai-.+?==){ovr}', fr'\g<1>{version}', text, count=5)
+    text, c2 = re.subn(
+        fr'^(version ?= ?)(["\']){ovr}\2$', fr'\g<1>\g<2>{version}\g<2>', text, count=5, flags=re.M
     )
+    return text, c + c2
 
 
 root_pp_text, count_root = replace_deps_version(root_pp_text)
@@ -60,19 +62,27 @@ examples_pp = ROOT_DIR / 'pydantic_ai_examples' / 'pyproject.toml'
 examples_pp_text = examples_pp.read_text()
 examples_pp_text, count_ex = replace_deps_version(examples_pp_text)
 
-if count_root == 2 and count_ex == 1:
+slim_pp = ROOT_DIR / 'pydantic_ai_slim' / 'pyproject.toml'
+slim_pp_text = slim_pp.read_text()
+slim_pp_text, count_slim = replace_deps_version(slim_pp_text)
+
+if count_root == 2 and count_ex == 2 and count_slim == 1:
     root_pp.write_text(root_pp_text)
     examples_pp.write_text(examples_pp_text)
+    slim_pp.write_text(slim_pp_text)
     print(
-        f'SUCCESS: replaced the following version occurrences\n'
-        f'  3 in root {root_pp}\n'
-        f'  1 in {examples_pp}\n\n'
+        f'SUCCESS: replaced version in\n'
+        f'* {root_pp}\n'
+        f'* {examples_pp}\n'
+        f'* {slim_pp}\n\n'
         'Now run `make sync` to update the lock files.',
     )
 else:
     print(
-        f'ERROR: found {count_root} version references in {root_pp_text} (expected 3) '
-        f'and {count_ex} in {examples_pp} (expected 1)',
-        file=sys.stderr
+        f'ERROR:\n'
+        f'  {count_root} version references in {root_pp} (expected 2)\n'
+        f'  {count_ex} version references in {examples_pp} (expected 2)\n'
+        f'  {count_slim} version references in {slim_pp} (expected 1)',
+        file=sys.stderr,
     )
     sys.exit(1)
