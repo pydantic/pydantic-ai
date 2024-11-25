@@ -16,7 +16,7 @@ def test_retriever_no_ctx():
 
     with pytest.raises(UserError) as exc_info:
 
-        @agent.retriever  # pyright: ignore[reportArgumentType]
+        @agent.tool  # pyright: ignore[reportArgumentType]
         def invalid_retriever(x: int) -> str:  # pragma: no cover
             return 'Hello'
 
@@ -31,7 +31,7 @@ def test_retriever_plain_with_ctx():
 
     with pytest.raises(UserError) as exc_info:
 
-        @agent.retriever_plain
+        @agent.tool_plain
         async def invalid_retriever(ctx: CallContext[None]) -> str:  # pragma: no cover
             return 'Hello'
 
@@ -46,7 +46,7 @@ def test_retriever_ctx_second():
 
     with pytest.raises(UserError) as exc_info:
 
-        @agent.retriever  # pyright: ignore[reportArgumentType]
+        @agent.tool  # pyright: ignore[reportArgumentType]
         def invalid_retriever(x: int, ctx: CallContext[None]) -> str:  # pragma: no cover
             return 'Hello'
 
@@ -75,7 +75,7 @@ async def get_json_schema(_messages: list[Message], info: AgentInfo) -> ModelAny
 
 def test_docstring_google():
     agent = Agent(FunctionModel(get_json_schema))
-    agent.retriever_plain(google_style_docstring)
+    agent.tool_plain(google_style_docstring)
 
     result = agent.run_sync('Hello')
     json_schema = json.loads(result.data)
@@ -106,7 +106,7 @@ def sphinx_style_docstring(foo: int, /) -> str:  # pragma: no cover
 
 def test_docstring_sphinx():
     agent = Agent(FunctionModel(get_json_schema))
-    agent.retriever_plain(sphinx_style_docstring)
+    agent.tool_plain(sphinx_style_docstring)
 
     result = agent.run_sync('Hello')
     json_schema = json.loads(result.data)
@@ -138,7 +138,7 @@ def numpy_style_docstring(*, foo: int, bar: str) -> str:  # pragma: no cover
 
 def test_docstring_numpy():
     agent = Agent(FunctionModel(get_json_schema))
-    agent.retriever_plain(numpy_style_docstring)
+    agent.tool_plain(numpy_style_docstring)
 
     result = agent.run_sync('Hello')
     json_schema = json.loads(result.data)
@@ -163,7 +163,7 @@ def unknown_docstring(**kwargs: int) -> str:  # pragma: no cover
 
 def test_docstring_unknown():
     agent = Agent(FunctionModel(get_json_schema))
-    agent.retriever_plain(unknown_docstring)
+    agent.tool_plain(unknown_docstring)
 
     result = agent.run_sync('Hello')
     json_schema = json.loads(result.data)
@@ -192,7 +192,7 @@ async def google_style_docstring_no_body(
 
 def test_docstring_google_no_body():
     agent = Agent(FunctionModel(get_json_schema))
-    agent.retriever_plain(google_style_docstring_no_body)
+    agent.tool_plain(google_style_docstring_no_body)
 
     result = agent.run_sync('')
     json_schema = json.loads(result.data)
@@ -216,7 +216,7 @@ def test_takes_just_model():
         x: int
         y: str
 
-    @agent.retriever_plain
+    @agent.tool_plain
     def takes_just_model(model: Foo) -> str:
         return f'{model.x} {model.y}'
 
@@ -242,7 +242,7 @@ def test_takes_model_and_int():
         x: int
         y: str
 
-    @agent.retriever_plain
+    @agent.tool_plain
     def takes_just_model(model: Foo, z: int) -> str:
         return f'{model.x} {model.y} {z}'
 

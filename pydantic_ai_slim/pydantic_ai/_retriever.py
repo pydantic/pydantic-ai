@@ -19,7 +19,7 @@ RetrieverEitherFunc = _utils.Either[
 
 
 @dataclass(init=False)
-class Retriever(Generic[AgentDeps, RetrieverParams]):
+class Tool(Generic[AgentDeps, RetrieverParams]):
     """A retriever function for an agent."""
 
     name: str

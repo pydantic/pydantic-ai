@@ -28,12 +28,12 @@ def test_call_one():
     agent = Agent()
     calls: list[str] = []
 
-    @agent.retriever_plain
+    @agent.tool_plain
     async def ret_a(x: str) -> str:
         calls.append('a')
         return f'{x}-a'
 
-    @agent.retriever_plain
+    @agent.tool_plain
     async def ret_b(x: str) -> str:  # pragma: no cover
         calls.append('b')
         return f'{x}-b'
@@ -78,7 +78,7 @@ def test_retriever_retry():
     agent = Agent()
     call_count = 0
 
-    @agent.retriever_plain
+    @agent.tool_plain
     async def my_ret(x: int) -> str:
         nonlocal call_count
         call_count += 1

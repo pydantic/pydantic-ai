@@ -58,7 +58,7 @@ class Agent(Generic[AgentDeps, ResultData]):
     _result_validators: list[_result.ResultValidator[AgentDeps, ResultData]] = field(repr=False)
     _allow_text_result: bool = field(repr=False)
     _system_prompts: tuple[str, ...] = field(repr=False)
-    _retrievers: dict[str, _r.Retriever[AgentDeps, Any]] = field(repr=False)
+    _tools: dict[str, _r.Tool[AgentDeps, Any]] = field(repr=False)
     _default_retries: int = field(repr=False)
     _system_prompt_functions: list[_system_prompt.SystemPromptRunner[AgentDeps]] = field(repr=False)
     _deps_type: type[AgentDeps] = field(repr=False)
@@ -119,7 +119,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         self._allow_text_result = self._result_schema is None or self._result_schema.allow_text_result
 
         self._system_prompts = (system_prompt,) if isinstance(system_prompt, str) else tuple(system_prompt)
-        self._retrievers: dict[str, _r.Retriever[AgentDeps, Any]] = {}
+        self._tools: dict[str, _r.Tool[AgentDeps, Any]] = {}
         self._deps_type = deps_type
         self._default_retries = retries
         self._system_prompt_functions = []
@@ -153,8 +153,8 @@ class Agent(Generic[AgentDeps, ResultData]):
         new_message_index, messages = await self._prepare_messages(deps, user_prompt, message_history)
         self.last_run_messages = messages
 
-        for retriever in self._retrievers.values():
-            retriever.reset()
+        for tool in self._tools.values():
+            tool.reset()
 
         cost = result.Cost()
 
@@ -246,8 +246,8 @@ class Agent(Generic[AgentDeps, ResultData]):
         new_message_index, messages = await self._prepare_messages(deps, user_prompt, message_history)
         self.last_run_messages = messages
 
-        for retriever in self._retrievers.values():
-            retriever.reset()
+        for tool in self._tools.values():
+            tool.reset()
 
         cost = result.Cost()
 
@@ -428,18 +428,18 @@ class Agent(Generic[AgentDeps, ResultData]):
         return func
 
     @overload
-    def retriever(
+    def tool(
         self, func: RetrieverContextFunc[AgentDeps, RetrieverParams], /
     ) -> RetrieverContextFunc[AgentDeps, RetrieverParams]: ...
 
     @overload
-    def retriever(
+    def tool(
         self, /, *, retries: int | None = None
     ) -> Callable[
         [RetrieverContextFunc[AgentDeps, RetrieverParams]], RetrieverContextFunc[AgentDeps, RetrieverParams]
     ]: ...
 
-    def retriever(
+    def tool(
         self,
         func: RetrieverContextFunc[AgentDeps, RetrieverParams] | None = None,
         /,
@@ -455,7 +455,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         [learn more](../agents.md#retrievers-tools-and-schema).
 
         We can't add overloads for every possible signature of retriever, since the return type is a recursive union
-        so the signature of functions decorated with `@agent.retriever` is obscured.
+        so the signature of functions decorated with `@agent.tool` is obscured.
 
         Example:
         ```py
@@ -463,11 +463,11 @@ class Agent(Generic[AgentDeps, ResultData]):
 
         agent = Agent('test', deps_type=int)
 
-        @agent.retriever
+        @agent.tool
         def foobar(ctx: CallContext[int], x: int) -> int:
             return ctx.deps + x
 
-        @agent.retriever(retries=2)
+        @agent.tool(retries=2)
         async def spam(ctx: CallContext[str], y: float) -> float:
             return ctx.deps + y
 
@@ -497,14 +497,14 @@ class Agent(Generic[AgentDeps, ResultData]):
             return func
 
     @overload
-    def retriever_plain(self, func: RetrieverPlainFunc[RetrieverParams], /) -> RetrieverPlainFunc[RetrieverParams]: ...
+    def tool_plain(self, func: RetrieverPlainFunc[RetrieverParams], /) -> RetrieverPlainFunc[RetrieverParams]: ...
 
     @overload
-    def retriever_plain(
+    def tool_plain(
         self, /, *, retries: int | None = None
     ) -> Callable[[RetrieverPlainFunc[RetrieverParams]], RetrieverPlainFunc[RetrieverParams]]: ...
 
-    def retriever_plain(
+    def tool_plain(
         self, func: RetrieverPlainFunc[RetrieverParams] | None = None, /, *, retries: int | None = None
     ) -> Any:
         """Decorator to register a retriever function which DOES NOT take `CallContext` as an argument.
@@ -515,7 +515,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         [learn more](../agents.md#retrievers-tools-and-schema).
 
         We can't add overloads for every possible signature of retriever, since the return type is a recursive union
-        so the signature of functions decorated with `@agent.retriever` is obscured.
+        so the signature of functions decorated with `@agent.tool` is obscured.
 
         Example:
         ```py
@@ -523,11 +523,11 @@ class Agent(Generic[AgentDeps, ResultData]):
 
         agent = Agent('test')
 
-        @agent.retriever
+        @agent.tool
         def foobar(ctx: CallContext[int]) -> int:
             return 123
 
-        @agent.retriever(retries=2)
+        @agent.tool(retries=2)
         async def spam(ctx: CallContext[str]) -> float:
             return 3.14
 
@@ -560,15 +560,15 @@ class Agent(Generic[AgentDeps, ResultData]):
     ) -> None:
         """Private utility to register a retriever function."""
         retries_ = retries if retries is not None else self._default_retries
-        retriever = _r.Retriever[AgentDeps, RetrieverParams](func, retries_)
+        retriever = _r.Tool[AgentDeps, RetrieverParams](func, retries_)
 
         if self._result_schema and retriever.name in self._result_schema.tools:
             raise ValueError(f'Retriever name conflicts with result schema name: {retriever.name!r}')
 
-        if retriever.name in self._retrievers:
+        if retriever.name in self._tools:
             raise ValueError(f'Retriever name conflicts with existing retriever: {retriever.name!r}')
 
-        self._retrievers[retriever.name] = retriever
+        self._tools[retriever.name] = retriever
 
     async def _get_agent_model(
         self, model: models.Model | models.KnownModelName | None
@@ -601,7 +601,7 @@ class Agent(Generic[AgentDeps, ResultData]):
             raise exceptions.UserError('`model` must be set either when creating the agent or when calling it.')
 
         result_tools = list(self._result_schema.tools.values()) if self._result_schema else None
-        agent_model = await model_.agent_model(self._retrievers, self._allow_text_result, result_tools)
+        agent_model = await model_.agent_model(self._tools, self._allow_text_result, result_tools)
         return model_, custom_model, agent_model
 
     async def _prepare_messages(
@@ -667,7 +667,7 @@ class Agent(Generic[AgentDeps, ResultData]):
             messages: list[_messages.Message] = []
             tasks: list[asyncio.Task[_messages.Message]] = []
             for call in model_response.calls:
-                if retriever := self._retrievers.get(call.tool_name):
+                if retriever := self._tools.get(call.tool_name):
                     tasks.append(asyncio.create_task(retriever.run(deps, call), name=call.tool_name))
                 else:
                     messages.append(self._unknown_tool(call.tool_name))
@@ -730,7 +730,7 @@ class Agent(Generic[AgentDeps, ResultData]):
             # we now run all retriever functions in parallel
             tasks: list[asyncio.Task[_messages.Message]] = []
             for call in structured_msg.calls:
-                if retriever := self._retrievers.get(call.tool_name):
+                if retriever := self._tools.get(call.tool_name):
                     tasks.append(asyncio.create_task(retriever.run(deps, call), name=call.tool_name))
                 else:
                     messages.append(self._unknown_tool(call.tool_name))
@@ -763,7 +763,7 @@ class Agent(Generic[AgentDeps, ResultData]):
 
     def _unknown_tool(self, tool_name: str) -> _messages.RetryPrompt:
         self._incr_result_retry()
-        names = list(self._retrievers.keys())
+        names = list(self._tools.keys())
         if self._result_schema:
             names.extend(self._result_schema.tool_names())
         if names:

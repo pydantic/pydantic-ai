@@ -33,7 +33,7 @@ async def test_streamed_text_response():
 
     agent = Agent(m)
 
-    @agent.retriever_plain
+    @agent.tool_plain
     async def ret_a(x: str) -> str:
         return f'{x}-apple'
 
@@ -189,7 +189,7 @@ async def test_call_retriever():
 
     agent = Agent(FunctionModel(stream_function=stream_structured_function), result_type=tuple[str, int])
 
-    @agent.retriever_plain
+    @agent.tool_plain
     async def ret_a(x: str) -> str:
         assert x == 'hello'
         return f'{x} world'
@@ -244,7 +244,7 @@ async def test_call_retriever_wrong_name():
 
     agent = Agent(FunctionModel(stream_function=stream_structured_function), result_type=tuple[str, int])
 
-    @agent.retriever_plain
+    @agent.tool_plain
     async def ret_a(x: str) -> str:
         return x
 

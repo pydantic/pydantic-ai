@@ -361,7 +361,7 @@ def test_run_with_history_new():
 
     agent = Agent(m, system_prompt='Foobar')
 
-    @agent.retriever_plain
+    @agent.tool_plain
     async def ret_a(x: str) -> str:
         return f'{x}-apple'
 

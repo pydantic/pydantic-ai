@@ -62,7 +62,7 @@ def get_logfire_summary(capfire: CaptureLogfire) -> Callable[[], LogfireSummary]
 def test_logfire(get_logfire_summary: Callable[[], LogfireSummary]) -> None:
     agent = Agent(model=TestModel())
 
-    @agent.retriever_plain
+    @agent.tool_plain
     async def my_ret(x: int) -> str:
         return str(x + 1)
 

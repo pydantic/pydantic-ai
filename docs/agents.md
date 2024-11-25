@@ -31,7 +31,7 @@ roulette_agent = Agent(  # (1)!
 )
 
 
-@roulette_agent.retriever
+@roulette_agent.tool
 async def roulette_wheel(ctx: CallContext[int], square: int) -> str:  # (2)!
     """check if the square is a winner"""
     return 'winner' if square == ctx.deps else 'loser'
@@ -179,10 +179,10 @@ They're useful when it is impractical or impossible to put all the context an ag
 
 There are two different decorator functions to register retrievers:
 
-1. [`@agent.retriever_plain`][pydantic_ai.Agent.retriever_plain] — for retrievers that don't need access to the agent [context][pydantic_ai.dependencies.CallContext]
-2. [`@agent.retriever`][pydantic_ai.Agent.retriever] — for retrievers that do need access to the agent [context][pydantic_ai.dependencies.CallContext]
+1. [`@agent.tool_plain`][pydantic_ai.Agent.retriever_plain] — for retrievers that don't need access to the agent [context][pydantic_ai.dependencies.CallContext]
+2. [`@agent.tool`][pydantic_ai.Agent.retriever] — for retrievers that do need access to the agent [context][pydantic_ai.dependencies.CallContext]
 
-`@agent.retriever` is the default since in the majority of cases retrievers will need access to the agent context.
+`@agent.tool` is the default since in the majority of cases retrievers will need access to the agent context.
 
 Here's an example using both:
 
@@ -202,13 +202,13 @@ agent = Agent(
 )
 
 
-@agent.retriever_plain  # (3)!
+@agent.tool_plain  # (3)!
 def roll_die() -> str:
     """Roll a six-sided die and return the result."""
     return str(random.randint(1, 6))
 
 
-@agent.retriever  # (4)!
+@agent.tool  # (4)!
 def get_player_name(ctx: CallContext[str]) -> str:
     """Get the player's name."""
     return ctx.deps
@@ -343,7 +343,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 agent = Agent()
 
 
-@agent.retriever_plain
+@agent.tool_plain
 def foobar(a: int, b: str, c: dict[str, list[float]]) -> str:
     """Get me foobar.
 
@@ -420,7 +420,7 @@ agent = Agent(
 )
 
 
-@agent.retriever(retries=2)
+@agent.tool(retries=2)
 def get_user_by_name(ctx: CallContext[DatabaseConn], name: str) -> int:
     """Get a user's ID from their full name."""
     print(name)
@@ -455,7 +455,7 @@ from pydantic_ai import Agent, ModelRetry, UnexpectedModelBehavior
 agent = Agent('openai:gpt-4o')
 
 
-@agent.retriever_plain
+@agent.tool_plain
 def calc_volume(size: int) -> int:  # (1)!
     if size == 42:
         return size**3

@@ -240,7 +240,7 @@ async def test_request_tool_call(allow_model_requests: None):
     m = GroqModel('llama-3.1-70b-versatile', groq_client=mock_client)
     agent = Agent(m, system_prompt='this is the system prompt')
 
-    @agent.retriever_plain
+    @agent.tool_plain
     async def get_location(loc_name: str) -> str:
         if loc_name == 'London':
             return json.dumps({'lat': 51, 'lng': 0})

@@ -44,7 +44,7 @@ def expect_error(error_type: type[Exception]) -> Iterator[None]:
         raise AssertionError('Expected an error')
 
 
-@typed_agent.retriever
+@typed_agent.tool
 async def ok_retriever(ctx: CallContext[MyDeps], x: str) -> str:
     assert_type(ctx.deps, MyDeps)
     total = ctx.deps.foo + ctx.deps.bar
@@ -55,35 +55,35 @@ async def ok_retriever(ctx: CallContext[MyDeps], x: str) -> str:
 assert_type(ok_retriever, Callable[[CallContext[MyDeps], str], str])  # type: ignore[assert-type]
 
 
-@typed_agent.retriever_plain
+@typed_agent.tool_plain
 def ok_retriever_plain(x: str) -> dict[str, str]:
     return {'x': x}
 
 
-@typed_agent.retriever_plain
+@typed_agent.tool_plain
 def ok_json_list(x: str) -> list[Union[str, int]]:
     return [x, 1]
 
 
-@typed_agent.retriever
+@typed_agent.tool
 async def bad_retriever1(ctx: CallContext[MyDeps], x: str) -> str:
     total = ctx.deps.foo + ctx.deps.spam  # type: ignore[attr-defined]
     return f'{x} {total}'
 
 
-@typed_agent.retriever  # type: ignore[arg-type]
+@typed_agent.tool  # type: ignore[arg-type]
 async def bad_retriever2(ctx: CallContext[int], x: str) -> str:
     return f'{x} {ctx.deps}'
 
 
-@typed_agent.retriever_plain  # type: ignore[arg-type]
+@typed_agent.tool_plain  # type: ignore[arg-type]
 async def bad_retriever_return(x: int) -> list[MyDeps]:
     return [MyDeps(1, x)]
 
 
 with expect_error(ValueError):
 
-    @typed_agent.retriever  # type: ignore[arg-type]
+    @typed_agent.tool  # type: ignore[arg-type]
     async def bad_retriever3(x: str) -> str:
         return x
 

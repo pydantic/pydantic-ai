@@ -6,8 +6,7 @@ Matching PydanticAI's design philosophy, our dependency system tries to use exis
 
 ## Defining Dependencies
 
-Dependencies can be any python type. While in simple cases you might be able to pass a single object
-as a dependency (e.g. an HTTP connection), [dataclasses][] are generally a convenient container when your dependencies included multiple objects.
+Dependencies can be any python type. While in simple cases you might be able to pass a single object as a dependency (e.g. an HTTP connection), [dataclasses][] are generally a convenient container when your dependencies included multiple objects.
 
 Here's an example of defining an agent that requires dependencies.
 
@@ -188,7 +187,7 @@ async def get_system_prompt(ctx: CallContext[MyDeps]) -> str:
     return f'Prompt: {response.text}'
 
 
-@agent.retriever  # (1)!
+@agent.tool  # (1)!
 async def get_joke_material(ctx: CallContext[MyDeps], subject: str) -> str:
     response = await ctx.deps.http_client.get(
         'https://example.com#jokes',
@@ -324,7 +323,7 @@ joke_agent = Agent(
 factory_agent = Agent('gemini-1.5-pro', result_type=list[str])
 
 
-@joke_agent.retriever
+@joke_agent.tool
 async def joke_factory(ctx: CallContext[MyDeps], count: int) -> str:
     r = await ctx.deps.factory_agent.run(f'Please generate {count} jokes.')
     return '\n'.join(r.data)
