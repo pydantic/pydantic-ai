@@ -193,7 +193,7 @@ jobs:
         with:
           version_file_path: pyproject.toml
 
-      - run: uv build
+      - run: uv build --all-packages
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1

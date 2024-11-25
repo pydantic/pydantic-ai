@@ -73,7 +73,7 @@ docs = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = []
+only-include = ["/README.md"]
 
 [tool.hatch.build.targets.sdist]
 include = ["/README.md", "/Makefile", "/tests"]
