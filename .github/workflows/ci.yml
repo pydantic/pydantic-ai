@@ -34,6 +34,9 @@ jobs:
         env:
           SKIP: no-commit-to-branch
 
+      - run: uv build --all-packages
+      - run: ls -lh dist/
+
   # mypy and lint are a bit slower than other jobs, so we run them separately
   mypy:
     runs-on: ubuntu-latest
