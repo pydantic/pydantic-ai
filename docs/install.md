@@ -14,32 +14,6 @@ This installs the `pydantic_ai` package, core dependencies, and libraries requir
 * [Google VertexAI API](https://cloud.google.com/vertex-ai) for Gemini models
 * [Groq API](https://console.groq.com/docs/overview)
 
-## Slim Install
-
-If you know which model you're going to use and want to avoid installing superfluous package, you can use the [`pydantic-ai-slim`](https://pypi.org/project/pydantic-ai-slim/) package.
-
-To use just [`OpenAIModel`][pydantic_ai.models.openai.OpenAIModel], run:
-
-```bash
-pip/uv-add 'pydantic-ai-slim[openai]'
-```
-
-To use just [`VertexAIModel`][pydantic_ai.models.vertexai.VertexAIModel], run:
-
-```bash
-pip/uv-add 'pydantic-ai-slim[vertexai]'
-```
-
-To use [`GeminiModel`][pydantic_ai.models.gemini.GeminiModel]:
-
-To use Gemini via the `generativelanguage.googleapis.com` API no extract dependencies are required.
-
-To use just [`GroqModel`][pydantic_ai.models.groq.GroqModel], run:
-
-```bash
-pip/uv-add 'pydantic-ai-slim[groq]'
-```
-
 ## Use with Pydantic Logfire
 
 PydanticAI has an excellent (but completely optional) integration with [Pydantic Logfire](https://pydantic.dev/logfire) to help you view and understand agent runs.
@@ -54,7 +28,7 @@ From there, follow the [Logfire setup docs](logfire.md#integrating-logfire) to c
 
 ## Running Examples
 
-PydanticAI distributes the [`pydantic_ai_examples`](https://github.com/pydantic/pydantic-ai/tree/main/pydantic_ai_examples) directory as a separate PyPI package ([`pydantic-ai-examples`](https://pypi.org/project/pydantic-ai-examples/)) to make examples extremely easy to customize and run.
+We distributes the [`pydantic_ai_examples`](https://github.com/pydantic/pydantic-ai/tree/main/pydantic_ai_examples) directory as a separate PyPI package ([`pydantic-ai-examples`](https://pypi.org/project/pydantic-ai-examples/)) to make examples extremely easy to customize and run.
 
 To install examples, use the `examples` optional group:
 
@@ -62,7 +36,41 @@ To install examples, use the `examples` optional group:
 pip/uv-add 'pydantic-ai[examples]'
 ```
 
-To run the examples, follow instructions [in the examples](examples/index.md).
+To run the examples, follow instructions in the [examples docs](examples/index.md).
+
+## Slim Install
+
+If you know which model you're going to use and want to avoid installing superfluous package, you can use the [`pydantic-ai-slim`](https://pypi.org/project/pydantic-ai-slim/) package.
+
+If you're using just [`OpenAIModel`][pydantic_ai.models.openai.OpenAIModel], run:
+
+```bash
+pip/uv-add 'pydantic-ai-slim[openai]'
+```
+
+If you're using just [`GeminiModel`][pydantic_ai.models.gemini.GeminiModel] (Gemini via the `generativelanguage.googleapis.com` API) no extra dependencies are required, run:
+
+```bash
+pip/uv-add pydantic-ai-slim
+```
+
+If you're using just [`VertexAIModel`][pydantic_ai.models.vertexai.VertexAIModel], run:
+
+```bash
+pip/uv-add 'pydantic-ai-slim[vertexai]'
+```
+
+To use just [`GroqModel`][pydantic_ai.models.groq.GroqModel], run:
+
+```bash
+pip/uv-add 'pydantic-ai-slim[groq]'
+```
+
+You can install dependencies for multiple models and use cases with:
+
+```bash
+pip/uv-add 'pydantic-ai-slim[openai,vertexai,logfire]'
+```
 
 ## Model Configuration
 
@@ -89,9 +97,7 @@ agent = Agent('openai:gpt-4o')
 ...
 ```
 
-#### `api_key` argument
-
-Or initialise the model directly without the need to set the [`api_key` argument][pydantic_ai.models.openai.OpenAIModel.__init__]:
+Or initialise the model directly with just the model name:
 
 ```py title="openai_model_init.py"
 from pydantic_ai import Agent
@@ -102,7 +108,9 @@ agent = Agent(model)
 ...
 ```
 
-If you don't want to or can't set the environment variable, you can pass it at runtime:
+#### `api_key` argument
+
+If you don't want to or can't set the environment variable, you can pass it at runtime via the [`api_key` argument][pydantic_ai.models.openai.OpenAIModel.__init__]:
 
 ```py title="openai_model_api_key.py"
 from pydantic_ai import Agent
@@ -139,13 +147,15 @@ agent = Agent(model)
 
 ### Gemini
 
-To use Google's Gemini models through their `generativelanguage.googleapis.com` API, go to [aistudio.google.com](https://aistudio.google.com/) and follow your nose until you find the place to generate an API key.
+[`GeminiModel`][pydantic_ai.models.gemini.GeminiModel] let's you use the Google's Gemini models through their `generativelanguage.googleapis.com` API.
 
 !!! warning "For prototyping only"
     Google themselves refer to this API as the "hobby" API, I've received 503 responses from it a number of times.
     The API is easy to use and useful for prototyping and simple demos, but I would not rely on it in production.
 
     If you want to run Gemini models in production, you should use the [VertexAI API](#gemini-via-vertexai) described below.
+
+To use `GeminiModel`, go to [aistudio.google.com](https://aistudio.google.com/) and follow your nose until you find the place to generate an API key.
 
 #### environment variable
 
@@ -164,9 +174,7 @@ agent = Agent('gemini-1.5-flash')
 ...
 ```
 
-#### `api_key` argument
-
-Or initialise the model directly without the need to set the [`api_key` argument][pydantic_ai.models.gemini.GeminiModel.__init__]:
+Or initialise the model directly with just the model name:
 
 ```py title="gemini_model_init.py"
 from pydantic_ai import Agent
@@ -177,7 +185,9 @@ agent = Agent(model)
 ...
 ```
 
-If you don't want to or can't set the environment variable, you can pass it at runtime:
+#### `api_key` argument
+
+If you don't want to or can't set the environment variable, you can pass it at runtime via the [`api_key` argument][pydantic_ai.models.gemini.GeminiModel.__init__]:
 
 ```py title="gemini_model_api_key.py"
 from pydantic_ai import Agent
@@ -284,9 +294,7 @@ agent = Agent('groq:llama-3.1-70b-versatile')
 ...
 ```
 
-#### `api_key` argument
-
-Or initialise the model directly without the need to set the [`api_key` argument][pydantic_ai.models.groq.GroqModel.__init__]:
+Or initialise the model directly with just the model name:
 
 ```py title="groq_model_init.py"
 from pydantic_ai import Agent
@@ -297,7 +305,9 @@ agent = Agent(model)
 ...
 ```
 
-If you don't want to or can't set the environment variable, you can pass it at runtime:
+#### `api_key` argument
+
+If you don't want to or can't set the environment variable, you can pass it at runtime via the [`api_key` argument][pydantic_ai.models.groq.GroqModel.__init__]:
 
 ```py title="groq_model_api_key.py"
 from pydantic_ai import Agent
