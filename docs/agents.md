@@ -8,12 +8,12 @@ but multiple agents can also interact to embody more complex workflows.
 The [`Agent`][pydantic_ai.Agent] class has full API documentation, but conceptually you can think of an agent as a container for:
 
 * A [system prompt](#system-prompts) — a set of instructions for the LLM written by the developer
-* One or more [retrieval tool](#tools) — functions that the LLM may call to get information while generating a response
+* One or more [retrieval tool](#function-tools) — functions that the LLM may call to get information while generating a response
 * An optional structured [result type](results.md) — the structured datatype the LLM must return at the end of a run
 * A [dependency](dependencies.md) type constraint — system prompt functions, tools and result validators may all use dependencies when they're run
 * Agents may optionally also have a default [LLM model](api/models/base.md) associated with them; the model to use can also be specified when running the agent
 
-In typing terms, agents are generic in their dependency and result types, e.g., an agent which required dependencies of type `#!python Foobar` and returned results of type `#!python list[str]` would have type `#!python Agent[Foobar, list[str]]`.
+In typing terms, agents are generic in their dependency and result types, e.g., an agent which required dependencies of type `#!python Foobar` and returned results of type `#!python list[str]` would have type `cAgent[Foobar, list[str]]`. In practice, you shouldn't need to care about this, it should just mean your IDE can tell you when you have the right type, and if you choose to use [static type checking](#static-type-checking) it should work well with PydanticAI.
 
 Here's a toy example of an agent that simulates a roulette wheel:
 
@@ -394,9 +394,9 @@ If a tool has a single parameter that can be represented as an object in JSON sc
 
 ## Reflection and self-correction
 
-Validation errors from both tool parameter validation and [structured result validation](results.md#structured-result-validation) can be passed back to the model with a request to retry.
+Validation errors from both function tool parameter validation and [structured result validation](results.md#structured-result-validation) can be passed back to the model with a request to retry.
 
-You can also raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] from within a [tool](#tools) or [result validator function](results.md#result-validators-functions) to tell the model it should retry generating a response.
+You can also raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] from within a [tool](#function-tools) or [result validator function](results.md#result-validators-functions) to tell the model it should retry generating a response.
 
 - The default retry count is **1** but can be altered for the [entire agent][pydantic_ai.Agent.__init__], a [specific tool][pydantic_ai.Agent.tool], or a [result validator][pydantic_ai.Agent.__init__].
 - You can access the current retry count from within a tool or result validator via [`ctx.retry`][pydantic_ai.dependencies.CallContext].
@@ -518,3 +518,64 @@ else:
 1. Define a tool that will raise `ModelRetry` repeatedly in this case.
 
 _(This example is complete, it can be run "as is")_
+
+## Static Type Checking
+
+PydanticAI is designed to work well with static type checkers, like mypy and pyright.
+
+!!! tip "mypy vs. pyright"
+    [mypy](https://github.com/python/mypy) and [pyright](https://github.com/microsoft/pyright) are both static type checkers for Python.
+
+    Mypy was the first and is still generally considered the default, in part because it was developed parly by Guido van Rossum, the creator of Python.
+
+    Pyright is generally faster and more sophisticated. It is develoepd by Eric Trout for use in VSCode, since that's its primary use case, it's terminal output is more verbose and harder to read than that of mypy.
+
+In particular, agents are generic in both the type of their dependencies and the type of results they return, so you can use the type hints to ensure you're using the right types.
+
+Consider the following script with type mistakes:
+
+```py title="type_mistakes.py" hl_lines="18 28"
+from dataclasses import dataclass
+
+from pydantic_ai import Agent, CallContext
+
+
+@dataclass
+class User:
+    name: str
+
+
+agent = Agent(
+    'test',
+    deps_type=User,  # (1)!
+    result_type=bool,
+)
+
+
+@agent.system_prompt
+def add_user_name(ctx: CallContext[str]) -> str:  # (2)!
+    return f"The user's name is {ctx.deps}."
+
+
+def foobar(x: bytes) -> None:
+    pass
+
+
+result = agent.run_sync('Does their name start with "A"?', deps=User('Adam'))
+foobar(result.data)  # (3)!
+```
+
+1. The agent is defined as expecting an instance of `User` as `deps`.
+2. But here `add_user_name` is defined as taking a `str` as the dependency, not a `User`.
+3. Since the agent is defined as returning a `bool`, this will raise a type error since `foobar` expects `bytes`.
+
+Running `mypy` on this will give the following output:
+
+```bash
+➤ uv run mypy type_mistakes.py
+type_mistakes.py:18: error: Argument 1 to "system_prompt" of "Agent" has incompatible type "Callable[[CallContext[str]], str]"; expected "Callable[[CallContext[User]], str]"  [arg-type]
+type_mistakes.py:28: error: Argument 1 to "foobar" has incompatible type "bool"; expected "bytes"  [arg-type]
+Found 2 errors in 1 file (checked 1 source file)
+```
+
+Running `pyright` would identify the same issues.

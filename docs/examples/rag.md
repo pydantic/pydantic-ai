@@ -4,7 +4,7 @@ RAG search example. This demo allows you to ask question of the [logfire](https:
 
 Demonstrates:
 
-* [tools](../agents.md#tools)
+* [tools](../agents.md#function-tools)
 * [agent dependencies](../dependencies.md)
 * RAG search
 
