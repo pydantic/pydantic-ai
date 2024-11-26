@@ -534,7 +534,7 @@ In particular, agents are generic in both the type of their dependencies and the
 
 Consider the following script with type mistakes:
 
-```py title="type_mistakes.py" hl_lines="17 27"
+```py title="type_mistakes.py" hl_lines="18 28"
 from dataclasses import dataclass
 
 from pydantic_ai import Agent, CallContext
@@ -546,6 +546,7 @@ class User:
 
 
 agent = Agent(
+    'test',
     deps_type=User,  # (1)!
     result_type=bool,
 )
@@ -572,8 +573,8 @@ Running `mypy` on this will give the following output:
 
 ```bash
 ➤ uv run mypy type_mistakes.py
-type_mistakes.py:17: error: Argument 1 to "system_prompt" of "Agent" has incompatible type "Callable[[CallContext[str]], str]"; expected "Callable[[CallContext[User]], str]"  [arg-type]
-type_mistakes.py:27: error: Argument 1 to "foobar" has incompatible type "bool"; expected "bytes"  [arg-type]
+type_mistakes.py:18: error: Argument 1 to "system_prompt" of "Agent" has incompatible type "Callable[[CallContext[str]], str]"; expected "Callable[[CallContext[User]], str]"  [arg-type]
+type_mistakes.py:28: error: Argument 1 to "foobar" has incompatible type "bool"; expected "bytes"  [arg-type]
 Found 2 errors in 1 file (checked 1 source file)
 ```
 
