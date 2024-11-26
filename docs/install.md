@@ -66,7 +66,7 @@ To use just [`GroqModel`][pydantic_ai.models.groq.GroqModel], run:
 pip/uv-add 'pydantic-ai-slim[groq]'
 ```
 
-You can install dependencies for multiple models and use cases with:
+You can install dependencies for multiple models and use cases, for example:
 
 ```bash
 pip/uv-add 'pydantic-ai-slim[openai,vertexai,logfire]'
@@ -80,7 +80,7 @@ To use hosted commercial models, you need to configure your local environment wi
 
 To use OpenAI through their main API, go to [platform.openai.com](https://platform.openai.com/) and follow your nose until you find the place to generate an API key.
 
-#### environment variable
+#### Environment variable
 
 Once you have the API key, you can set it as an environment variable:
 
@@ -149,6 +149,8 @@ agent = Agent(model)
 
 [`GeminiModel`][pydantic_ai.models.gemini.GeminiModel] let's you use the Google's Gemini models through their `generativelanguage.googleapis.com` API.
 
+[`GeminiModelName`][pydantic_ai.models.gemini.GeminiModelName] contains a list of available Gemini models that can be used through this interface.
+
 !!! warning "For prototyping only"
     Google themselves refer to this API as the "hobby" API, I've received 503 responses from it a number of times.
     The API is easy to use and useful for prototyping and simple demos, but I would not rely on it in production.
@@ -157,7 +159,7 @@ agent = Agent(model)
 
 To use `GeminiModel`, go to [aistudio.google.com](https://aistudio.google.com/) and follow your nose until you find the place to generate an API key.
 
-#### environment variable
+#### Environment variable
 
 Once you have the API key, you can set it as an environment variable:
 
@@ -201,6 +203,8 @@ agent = Agent(model)
 ### Gemini via VertexAI
 
 To run Google's Gemini models in production, you should use [`VertexAIModel`][pydantic_ai.models.vertexai.VertexAIModel] which uses the `*-aiplatform.googleapis.com` API.
+
+[`GeminiModelName`][pydantic_ai.models.gemini.GeminiModelName] contains a list of available Gemini models that can be used through this interface.
 
 This interface has a number of advantages over `generativelanguage.googleapis.com` documented above:
 
@@ -277,7 +281,9 @@ agent = Agent(model)
 
 To use [Groq](https://groq.com/) through their API, go to [console.groq.com/keys](https://console.groq.com/keys) and follow your nose until you find the place to generate an API key.
 
-#### environment variable
+[`GroqModelName`][pydantic_ai.models.groq.GroqModelName] contains a list of available Groq models.
+
+#### Environment variable
 
 Once you have the API key, you can set it as an environment variable:
 
@@ -317,5 +323,3 @@ model = GroqModel('llama-3.1-70b-versatile', api_key='your-api-key')
 agent = Agent(model)
 ...
 ```
-
-[`GroqModelName`][pydantic_ai.models.groq.GroqModelName] contains a list of models available on Groq.

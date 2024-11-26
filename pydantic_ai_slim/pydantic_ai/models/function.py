@@ -1,11 +1,3 @@
-"""A model controlled by a local function.
-
-[FunctionModel][pydantic_ai.models.function.FunctionModel] is similar to [TestModel][pydantic_ai.models.test.TestModel],
-but allows greater control over the model's behavior.
-
-It's primary use case for more advanced unit testing than is possible with `TestModel`.
-"""
-
 from __future__ import annotations as _annotations
 
 import inspect

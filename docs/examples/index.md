@@ -20,12 +20,9 @@ If you clone the repo, you should instead use `uv sync --extra examples` to inst
 
 ### Setting model environment variables
 
-All these examples will need you to set either:
+These examples will need you to set up authentication with one or more of the LLMs, see the [model configuration](../install.md#model-configuration) docs for details on how to do this.
 
-* `OPENAI_API_KEY` to use OpenAI models, go to [platform.openai.com](https://platform.openai.com/) and follow your nose until you find how to generate an API key
-* or, `GEMINI_API_KEY` to use Google Gemini models, go to [aistudio.google.com](https://aistudio.google.com/) and do the same to generate an API key
-
-Then set the API key as an environment variable with:
+TL;DR: in most cases you'll need to set one of the following environment variables:
 
 === "OpenAI"
 

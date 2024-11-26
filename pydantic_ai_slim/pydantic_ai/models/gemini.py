@@ -1,25 +1,3 @@
-"""Custom interface to the `generativelanguage.googleapis.com` API using [HTTPX] and [Pydantic].
-
-The Google SDK for interacting with the `generativelanguage.googleapis.com` API
-[`google-generativeai`](https://ai.google.dev/gemini-api/docs/quickstart?lang=python) reads like it was written by a
-Java developer who thought they knew everything about OOP, spent 30 minutes trying to learn Python,
-gave up and decided to build the library to prove how horrible Python is. It also doesn't use httpx for HTTP requests,
-and tries to implement tool calling itself, but doesn't use Pydantic or equivalent for validation.
-
-We could also use the Google Vertex SDK,
-[`google-cloud-aiplatform`](https://cloud.google.com/vertex-ai/docs/python-sdk/use-vertex-ai-python-sdk)
-which uses the `*-aiplatform.googleapis.com` API, but that requires a service account for authentication
-which is a faff to set up and manage.
-
-Both APIs claim compatibility with OpenAI's API, but that breaks down with even the simplest of requests,
-hence this custom interface.
-
-Despite these limitations, the Gemini model is actually quite powerful and very fast.
-
-[HTTPX]: https://www.python-httpx.org/
-[Pydantic]: https://docs.pydantic.dev/latest/
-"""
-
 from __future__ import annotations as _annotations
 
 import os
