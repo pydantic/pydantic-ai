@@ -1,6 +1,18 @@
-"""Very simply CLI to aid in running the examples, and for copying examples code to a new directory.
+"""Very simply CLI to aid in copying examples code to a new directory.
 
-See README.md for more information.
+To run examples in place, run:
+
+    uv run -m pydantic_ai_examples.<example_module_name>
+
+For examples:
+
+    uv run -m pydantic_ai_examples.pydantic_model
+
+To copy all examples to a new directory, run:
+
+    uv run -m pydantic_ai_examples --copy-to <destination_path>
+
+See https://ai.pydantic.dev/examples/ for more information.
 """
 
 import argparse
