@@ -521,14 +521,20 @@ _(This example is complete, it can be run "as is")_
 
 ## Static Type Checking
 
-PydanticAI is designed to work well with static type checkers, like [pyright](https://github.com/microsoft/pyright)
-and [mypy](https://github.com/python/mypy).
+PydanticAI is designed to work well with static type checkers, like mypy and pyright.
+
+!!! tip "mypy vs. pyright"
+    [mypy](https://github.com/python/mypy) and [pyright](https://github.com/microsoft/pyright) are both static type checkers for Python.
+
+    Mypy was the first and is still generally considered the default, in part because it was developed parly by Guido van Rossum, the creator of Python.
+
+    Pyright is generally faster and more sophisticated. It is develoepd by Eric Trout for use in VSCode, since that's its primary use case, it's terminal output is more verbose and harder to read than that of mypy.
 
 In particular, agents are generic in both the type of their dependencies and the type of results they return, so you can use the type hints to ensure you're using the right types.
 
 Consider the following script with type mistakes:
 
-```py title="type_mistakes.py"
+```py title="type_mistakes.py" hl_lines="17 27"
 from dataclasses import dataclass
 
 from pydantic_ai import Agent, CallContext
