@@ -121,12 +121,14 @@ so you can customise the `organization`, `project`, `base_url` etc. as defined i
 You could also use the [`AsyncAzureOpenAI`](https://learn.microsoft.com/en-us/azure/ai-services/openai/how-to/switching-endpoints) client to use the Azure OpenAI API.
 
 ```py title="openai_azure.py"
+from openai import AsyncAzureOpenAI
+
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIModel
-from openai import AsyncAzureOpenAI
 
 client = AsyncAzureOpenAI(
     azure_endpoint='...',
+    api_version='2024-07-01-preview',
     api_key='your-api-key',
 )
 
