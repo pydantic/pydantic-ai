@@ -13,27 +13,27 @@ class MyDeps:
 agent = Agent(TestModel(), deps_type=MyDeps)
 
 
-@agent.retriever
-async def example_retriever(ctx: CallContext[MyDeps]) -> str:
+@agent.tool
+async def example_tool(ctx: CallContext[MyDeps]) -> str:
     return f'{ctx.deps}'
 
 
 def test_deps_used():
     result = agent.run_sync('foobar', deps=MyDeps(foo=1, bar=2))
-    assert result.data == '{"example_retriever":"MyDeps(foo=1, bar=2)"}'
+    assert result.data == '{"example_tool":"MyDeps(foo=1, bar=2)"}'
 
 
 def test_deps_override():
     with agent.override_deps(MyDeps(foo=3, bar=4)):
         result = agent.run_sync('foobar', deps=MyDeps(foo=1, bar=2))
-        assert result.data == '{"example_retriever":"MyDeps(foo=3, bar=4)"}'
+        assert result.data == '{"example_tool":"MyDeps(foo=3, bar=4)"}'
 
         with agent.override_deps(MyDeps(foo=5, bar=6)):
             result = agent.run_sync('foobar', deps=MyDeps(foo=1, bar=2))
-            assert result.data == '{"example_retriever":"MyDeps(foo=5, bar=6)"}'
+            assert result.data == '{"example_tool":"MyDeps(foo=5, bar=6)"}'
 
         result = agent.run_sync('foobar', deps=MyDeps(foo=1, bar=2))
-        assert result.data == '{"example_retriever":"MyDeps(foo=3, bar=4)"}'
+        assert result.data == '{"example_tool":"MyDeps(foo=3, bar=4)"}'
 
     result = agent.run_sync('foobar', deps=MyDeps(foo=1, bar=2))
-    assert result.data == '{"example_retriever":"MyDeps(foo=1, bar=2)"}'
+    assert result.data == '{"example_tool":"MyDeps(foo=1, bar=2)"}'

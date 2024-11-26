@@ -28,17 +28,17 @@ def test_call_one():
     agent = Agent()
     calls: list[str] = []
 
-    @agent.retriever_plain
+    @agent.tool_plain
     async def ret_a(x: str) -> str:
         calls.append('a')
         return f'{x}-a'
 
-    @agent.retriever_plain
+    @agent.tool_plain
     async def ret_b(x: str) -> str:  # pragma: no cover
         calls.append('b')
         return f'{x}-b'
 
-    result = agent.run_sync('x', model=TestModel(call_retrievers=['ret_a']))
+    result = agent.run_sync('x', model=TestModel(call_tools=['ret_a']))
     assert result.data == snapshot('{"ret_a":"a-a"}')
     assert calls == ['a']
 
@@ -74,11 +74,11 @@ def test_result_type():
     assert result.data == ('a', 'a')
 
 
-def test_retriever_retry():
+def test_tool_retry():
     agent = Agent()
     call_count = 0
 
-    @agent.retriever_plain
+    @agent.tool_plain
     async def my_ret(x: int) -> str:
         nonlocal call_count
         call_count += 1

@@ -11,15 +11,15 @@ from typing_extensions import assert_never
 
 from . import (
     _result,
-    _retriever as _r,
     _system_prompt,
+    _tool as _r,
     _utils,
     exceptions,
     messages as _messages,
     models,
     result,
 )
-from .dependencies import AgentDeps, CallContext, RetrieverContextFunc, RetrieverParams, RetrieverPlainFunc
+from .dependencies import AgentDeps, CallContext, ToolContextFunc, ToolParams, ToolPlainFunc
 from .result import ResultData
 
 __all__ = ('Agent',)
@@ -58,7 +58,7 @@ class Agent(Generic[AgentDeps, ResultData]):
     _result_validators: list[_result.ResultValidator[AgentDeps, ResultData]] = field(repr=False)
     _allow_text_result: bool = field(repr=False)
     _system_prompts: tuple[str, ...] = field(repr=False)
-    _retrievers: dict[str, _r.Retriever[AgentDeps, Any]] = field(repr=False)
+    _function_tools: dict[str, _r.Tool[AgentDeps, Any]] = field(repr=False)
     _default_retries: int = field(repr=False)
     _system_prompt_functions: list[_system_prompt.SystemPromptRunner[AgentDeps]] = field(repr=False)
     _deps_type: type[AgentDeps] = field(repr=False)
@@ -119,7 +119,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         self._allow_text_result = self._result_schema is None or self._result_schema.allow_text_result
 
         self._system_prompts = (system_prompt,) if isinstance(system_prompt, str) else tuple(system_prompt)
-        self._retrievers: dict[str, _r.Retriever[AgentDeps, Any]] = {}
+        self._function_tools: dict[str, _r.Tool[AgentDeps, Any]] = {}
         self._deps_type = deps_type
         self._default_retries = retries
         self._system_prompt_functions = []
@@ -153,8 +153,8 @@ class Agent(Generic[AgentDeps, ResultData]):
         new_message_index, messages = await self._prepare_messages(deps, user_prompt, message_history)
         self.last_run_messages = messages
 
-        for retriever in self._retrievers.values():
-            retriever.reset()
+        for tool in self._function_tools.values():
+            tool.reset()
 
         cost = result.Cost()
 
@@ -246,8 +246,8 @@ class Agent(Generic[AgentDeps, ResultData]):
         new_message_index, messages = await self._prepare_messages(deps, user_prompt, message_history)
         self.last_run_messages = messages
 
-        for retriever in self._retrievers.values():
-            retriever.reset()
+        for tool in self._function_tools.values():
+            tool.reset()
 
         cost = result.Cost()
 
@@ -366,7 +366,7 @@ class Agent(Generic[AgentDeps, ResultData]):
 
         result = agent.run_sync('foobar', deps='spam')
         print(result.data)
-        #> success (no retriever calls)
+        #> success (no tool calls)
         ```
         """
         self._system_prompt_functions.append(_system_prompt.SystemPromptRunner(func))
@@ -421,41 +421,37 @@ class Agent(Generic[AgentDeps, ResultData]):
 
         result = agent.run_sync('foobar', deps='spam')
         print(result.data)
-        #> success (no retriever calls)
+        #> success (no tool calls)
         ```
         """
         self._result_validators.append(_result.ResultValidator(func))
         return func
 
     @overload
-    def retriever(
-        self, func: RetrieverContextFunc[AgentDeps, RetrieverParams], /
-    ) -> RetrieverContextFunc[AgentDeps, RetrieverParams]: ...
+    def tool(self, func: ToolContextFunc[AgentDeps, ToolParams], /) -> ToolContextFunc[AgentDeps, ToolParams]: ...
 
     @overload
-    def retriever(
+    def tool(
         self, /, *, retries: int | None = None
-    ) -> Callable[
-        [RetrieverContextFunc[AgentDeps, RetrieverParams]], RetrieverContextFunc[AgentDeps, RetrieverParams]
-    ]: ...
+    ) -> Callable[[ToolContextFunc[AgentDeps, ToolParams]], ToolContextFunc[AgentDeps, ToolParams]]: ...
 
-    def retriever(
+    def tool(
         self,
-        func: RetrieverContextFunc[AgentDeps, RetrieverParams] | None = None,
+        func: ToolContextFunc[AgentDeps, ToolParams] | None = None,
         /,
         *,
         retries: int | None = None,
     ) -> Any:
-        """Decorator to register a retriever function which takes
+        """Decorator to register a tool function which takes
         [`CallContext`][pydantic_ai.dependencies.CallContext] as its first argument.
 
         Can decorate a sync or async functions.
 
         The docstring is inspected to extract both the tool description and description of each parameter,
-        [learn more](../agents.md#retrievers-tools-and-schema).
+        [learn more](../agents.md#tools-tools-and-schema).
 
-        We can't add overloads for every possible signature of retriever, since the return type is a recursive union
-        so the signature of functions decorated with `@agent.retriever` is obscured.
+        We can't add overloads for every possible signature of tool, since the return type is a recursive union
+        so the signature of functions decorated with `@agent.tool` is obscured.
 
         Example:
         ```py
@@ -463,11 +459,11 @@ class Agent(Generic[AgentDeps, ResultData]):
 
         agent = Agent('test', deps_type=int)
 
-        @agent.retriever
+        @agent.tool
         def foobar(ctx: CallContext[int], x: int) -> int:
             return ctx.deps + x
 
-        @agent.retriever(retries=2)
+        @agent.tool(retries=2)
         async def spam(ctx: CallContext[str], y: float) -> float:
             return ctx.deps + y
 
@@ -477,45 +473,43 @@ class Agent(Generic[AgentDeps, ResultData]):
         ```
 
         Args:
-            func: The retriever function to register.
-            retries: The number of retries to allow for this retriever, defaults to the agent's default retries,
+            func: The tool function to register.
+            retries: The number of retries to allow for this tool, defaults to the agent's default retries,
                 which defaults to 1.
         """  # noqa: D205
         if func is None:
 
-            def retriever_decorator(
-                func_: RetrieverContextFunc[AgentDeps, RetrieverParams],
-            ) -> RetrieverContextFunc[AgentDeps, RetrieverParams]:
+            def tool_decorator(
+                func_: ToolContextFunc[AgentDeps, ToolParams],
+            ) -> ToolContextFunc[AgentDeps, ToolParams]:
                 # noinspection PyTypeChecker
-                self._register_retriever(_utils.Either(left=func_), retries)
+                self._register_tool(_utils.Either(left=func_), retries)
                 return func_
 
-            return retriever_decorator
+            return tool_decorator
         else:
             # noinspection PyTypeChecker
-            self._register_retriever(_utils.Either(left=func), retries)
+            self._register_tool(_utils.Either(left=func), retries)
             return func
 
     @overload
-    def retriever_plain(self, func: RetrieverPlainFunc[RetrieverParams], /) -> RetrieverPlainFunc[RetrieverParams]: ...
+    def tool_plain(self, func: ToolPlainFunc[ToolParams], /) -> ToolPlainFunc[ToolParams]: ...
 
     @overload
-    def retriever_plain(
+    def tool_plain(
         self, /, *, retries: int | None = None
-    ) -> Callable[[RetrieverPlainFunc[RetrieverParams]], RetrieverPlainFunc[RetrieverParams]]: ...
+    ) -> Callable[[ToolPlainFunc[ToolParams]], ToolPlainFunc[ToolParams]]: ...
 
-    def retriever_plain(
-        self, func: RetrieverPlainFunc[RetrieverParams] | None = None, /, *, retries: int | None = None
-    ) -> Any:
-        """Decorator to register a retriever function which DOES NOT take `CallContext` as an argument.
+    def tool_plain(self, func: ToolPlainFunc[ToolParams] | None = None, /, *, retries: int | None = None) -> Any:
+        """Decorator to register a tool function which DOES NOT take `CallContext` as an argument.
 
         Can decorate a sync or async functions.
 
         The docstring is inspected to extract both the tool description and description of each parameter,
-        [learn more](../agents.md#retrievers-tools-and-schema).
+        [learn more](../agents.md#tools-tools-and-schema).
 
-        We can't add overloads for every possible signature of retriever, since the return type is a recursive union
-        so the signature of functions decorated with `@agent.retriever` is obscured.
+        We can't add overloads for every possible signature of tool, since the return type is a recursive union
+        so the signature of functions decorated with `@agent.tool` is obscured.
 
         Example:
         ```py
@@ -523,11 +517,11 @@ class Agent(Generic[AgentDeps, ResultData]):
 
         agent = Agent('test')
 
-        @agent.retriever
+        @agent.tool
         def foobar(ctx: CallContext[int]) -> int:
             return 123
 
-        @agent.retriever(retries=2)
+        @agent.tool(retries=2)
         async def spam(ctx: CallContext[str]) -> float:
             return 3.14
 
@@ -537,38 +531,36 @@ class Agent(Generic[AgentDeps, ResultData]):
         ```
 
         Args:
-            func: The retriever function to register.
-            retries: The number of retries to allow for this retriever, defaults to the agent's default retries,
+            func: The tool function to register.
+            retries: The number of retries to allow for this tool, defaults to the agent's default retries,
                 which defaults to 1.
         """
         if func is None:
 
-            def retriever_decorator(
-                func_: RetrieverPlainFunc[RetrieverParams],
-            ) -> RetrieverPlainFunc[RetrieverParams]:
+            def tool_decorator(
+                func_: ToolPlainFunc[ToolParams],
+            ) -> ToolPlainFunc[ToolParams]:
                 # noinspection PyTypeChecker
-                self._register_retriever(_utils.Either(right=func_), retries)
+                self._register_tool(_utils.Either(right=func_), retries)
                 return func_
 
-            return retriever_decorator
+            return tool_decorator
         else:
-            self._register_retriever(_utils.Either(right=func), retries)
+            self._register_tool(_utils.Either(right=func), retries)
             return func
 
-    def _register_retriever(
-        self, func: _r.RetrieverEitherFunc[AgentDeps, RetrieverParams], retries: int | None
-    ) -> None:
-        """Private utility to register a retriever function."""
+    def _register_tool(self, func: _r.ToolEitherFunc[AgentDeps, ToolParams], retries: int | None) -> None:
+        """Private utility to register a tool function."""
         retries_ = retries if retries is not None else self._default_retries
-        retriever = _r.Retriever[AgentDeps, RetrieverParams](func, retries_)
+        tool = _r.Tool[AgentDeps, ToolParams](func, retries_)
 
-        if self._result_schema and retriever.name in self._result_schema.tools:
-            raise ValueError(f'Retriever name conflicts with result schema name: {retriever.name!r}')
+        if self._result_schema and tool.name in self._result_schema.tools:
+            raise ValueError(f'Tool name conflicts with result schema name: {tool.name!r}')
 
-        if retriever.name in self._retrievers:
-            raise ValueError(f'Retriever name conflicts with existing retriever: {retriever.name!r}')
+        if tool.name in self._function_tools:
+            raise ValueError(f'Tool name conflicts with existing tool: {tool.name!r}')
 
-        self._retrievers[retriever.name] = retriever
+        self._function_tools[tool.name] = tool
 
     async def _get_agent_model(
         self, model: models.Model | models.KnownModelName | None
@@ -601,7 +593,7 @@ class Agent(Generic[AgentDeps, ResultData]):
             raise exceptions.UserError('`model` must be set either when creating the agent or when calling it.')
 
         result_tools = list(self._result_schema.tools.values()) if self._result_schema else None
-        agent_model = await model_.agent_model(self._retrievers, self._allow_text_result, result_tools)
+        agent_model = await model_.agent_model(self._function_tools, self._allow_text_result, result_tools)
         return model_, custom_model, agent_model
 
     async def _prepare_messages(
@@ -663,12 +655,12 @@ class Agent(Generic[AgentDeps, ResultData]):
             if not model_response.calls:
                 raise exceptions.UnexpectedModelBehavior('Received empty tool call message')
 
-            # otherwise we run all retriever functions in parallel
+            # otherwise we run all tool functions in parallel
             messages: list[_messages.Message] = []
             tasks: list[asyncio.Task[_messages.Message]] = []
             for call in model_response.calls:
-                if retriever := self._retrievers.get(call.tool_name):
-                    tasks.append(asyncio.create_task(retriever.run(deps, call), name=call.tool_name))
+                if tool := self._function_tools.get(call.tool_name):
+                    tasks.append(asyncio.create_task(tool.run(deps, call), name=call.tool_name))
                 else:
                     messages.append(self._unknown_tool(call.tool_name))
 
@@ -719,7 +711,7 @@ class Agent(Generic[AgentDeps, ResultData]):
                 if self._result_schema.find_tool(structured_msg):
                     return _MarkFinalResult(model_response)
 
-            # the model is calling a retriever function, consume the response to get the next message
+            # the model is calling a tool function, consume the response to get the next message
             async for _ in model_response:
                 pass
             structured_msg = model_response.get()
@@ -727,11 +719,11 @@ class Agent(Generic[AgentDeps, ResultData]):
                 raise exceptions.UnexpectedModelBehavior('Received empty tool call message')
             messages: list[_messages.Message] = [structured_msg]
 
-            # we now run all retriever functions in parallel
+            # we now run all tool functions in parallel
             tasks: list[asyncio.Task[_messages.Message]] = []
             for call in structured_msg.calls:
-                if retriever := self._retrievers.get(call.tool_name):
-                    tasks.append(asyncio.create_task(retriever.run(deps, call), name=call.tool_name))
+                if tool := self._function_tools.get(call.tool_name):
+                    tasks.append(asyncio.create_task(tool.run(deps, call), name=call.tool_name))
                 else:
                     messages.append(self._unknown_tool(call.tool_name))
 
@@ -763,7 +755,7 @@ class Agent(Generic[AgentDeps, ResultData]):
 
     def _unknown_tool(self, tool_name: str) -> _messages.RetryPrompt:
         self._incr_result_retry()
-        names = list(self._retrievers.keys())
+        names = list(self._function_tools.keys())
         if self._result_schema:
             names.extend(self._result_schema.tool_names())
         if names:

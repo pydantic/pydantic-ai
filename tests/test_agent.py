@@ -179,7 +179,7 @@ def test_response_tuple():
     result = agent.run_sync('Hello')
     assert result.data == snapshot(('a', 'a'))
 
-    assert m.agent_model_retrievers == snapshot({})
+    assert m.agent_model_tools == snapshot({})
     assert m.agent_model_allow_text_result is False
 
     assert m.agent_model_result_tools is not None
@@ -235,10 +235,10 @@ def test_response_union_allow_str(input_union_callable: Callable[[], Any]):
     assert agent._result_schema.allow_text_result is True  # pyright: ignore[reportPrivateUsage,reportOptionalMemberAccess]
 
     result = agent.run_sync('Hello')
-    assert result.data == snapshot('success (no retriever calls)')
+    assert result.data == snapshot('success (no tool calls)')
     assert got_tool_call_name == snapshot(None)
 
-    assert m.agent_model_retrievers == snapshot({})
+    assert m.agent_model_tools == snapshot({})
     assert m.agent_model_allow_text_result is True
 
     assert m.agent_model_result_tools is not None
@@ -312,7 +312,7 @@ class Bar(BaseModel):
     assert result.data == mod.Foo(a=0, b='a')
     assert got_tool_call_name == snapshot('final_result_Foo')
 
-    assert m.agent_model_retrievers == snapshot({})
+    assert m.agent_model_tools == snapshot({})
     assert m.agent_model_allow_text_result is False
 
     assert m.agent_model_result_tools is not None
@@ -361,7 +361,7 @@ def test_run_with_history_new():
 
     agent = Agent(m, system_prompt='Foobar')
 
-    @agent.retriever_plain
+    @agent.tool_plain
     async def ret_a(x: str) -> str:
         return f'{x}-apple'
 
@@ -450,7 +450,7 @@ def test_empty_tool_calls():
         agent.run_sync('Hello')
 
 
-def test_unknown_retriever():
+def test_unknown_tool():
     def empty(_: list[Message], _info: AgentInfo) -> ModelAnyResponse:
         return ModelStructuredResponse(calls=[ToolCall.from_json('foobar', '{}')])
 
@@ -472,7 +472,7 @@ def test_unknown_retriever():
     )
 
 
-def test_unknown_retriever_fix():
+def test_unknown_tool_fix():
     def empty(m: list[Message], _info: AgentInfo) -> ModelAnyResponse:
         if len(m) > 1:
             return ModelTextResponse(content='success')

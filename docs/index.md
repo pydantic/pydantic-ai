@@ -48,9 +48,9 @@ The first known use of "hello, world" was in a 1974 textbook about the C program
 
 _(This example is complete, it can be run "as is")_
 
-Not very interesting yet, but we can easily add "retrievers", dynamic system prompts, and structured responses to build more powerful agents.
+Not very interesting yet, but we can easily add "tools", dynamic system prompts, and structured responses to build more powerful agents.
 
-## Retrievers & Dependency Injection Example
+## Tools & Dependency Injection Example
 
 Here is a concise example using PydanticAI to build a support agent for a bank:
 
@@ -92,7 +92,7 @@ async def add_customer_name(ctx: CallContext[SupportDependencies]) -> str:
     return f"The customer's name is {customer_name!r}"
 
 
-@support_agent.retriever  # (6)!
+@support_agent.tool  # (6)!
 async def customer_balance(
     ctx: CallContext[SupportDependencies], include_pending: bool
 ) -> str:
@@ -124,15 +124,15 @@ async def main():
 
 1. This [agent](agents.md) will act as first-tier support in a bank. Agents are generic in the type of dependencies they accept and the type of result they return. In this case, the support agent has type `#!python Agent[SupportDependencies, SupportResult]`.
 2. Here we configure the agent to use [OpenAI's GPT-4o model](api/models/openai.md), you can also set the model when running the agent.
-3. The `SupportDependencies` dataclass is used to pass data, connections, and logic into the model that will be needed when running [system prompt](agents.md#system-prompts) and [retriever](agents.md#retrievers) functions. PydanticAI's system of dependency injection provides a type-safe way to customise the behavior of your agents, and can be especially useful when running unit tests and evals.
+3. The `SupportDependencies` dataclass is used to pass data, connections, and logic into the model that will be needed when running [system prompt](agents.md#system-prompts) and [tool](agents.md#tools) functions. PydanticAI's system of dependency injection provides a type-safe way to customise the behavior of your agents, and can be especially useful when running unit tests and evals.
 4. Static [system prompts](agents.md#system-prompts) can be registered with the [`system_prompt` keyword argument][pydantic_ai.Agent.__init__] to the agent.
 5. Dynamic [system prompts](agents.md#system-prompts) can be registered with the [`@agent.system_prompt`][pydantic_ai.Agent.system_prompt] decorator, and can make use of dependency injection. Dependencies are carried via the [`CallContext`][pydantic_ai.dependencies.CallContext] argument, which is parameterized with the `deps_type` from above. If the type annotation here is wrong, static type checkers will catch it.
-6. [Retrievers](agents.md#retrievers) let you register "tools" which the LLM may call while responding to a user. Again, dependencies are carried via [`CallContext`][pydantic_ai.dependencies.CallContext], and any other arguments become the tool schema passed to the LLM. Pydantic is used to validate these arguments, and errors are passed back to the LLM so it can retry.
-7. The docstring of a retriever also passed to the LLM as a description of the tool. Parameter descriptions are [extracted](agents.md#retrievers-tools-and-schema) from the docstring and added to the tool schema sent to the LLM.
-8. [Run the agent](agents.md#running-agents) asynchronously, conducting a conversation with the LLM until a final response is reached. Even in this fairly simple case, the agent will exchange multiple messages with the LLM as retrievers are called to retrieve a result.
+6. [Tools](agents.md#tools) let you register "tools" which the LLM may call while responding to a user. Again, dependencies are carried via [`CallContext`][pydantic_ai.dependencies.CallContext], and any other arguments become the tool schema passed to the LLM. Pydantic is used to validate these arguments, and errors are passed back to the LLM so it can retry.
+7. The docstring of a tool is also passed to the LLM as the description of the tool. Parameter descriptions are [extracted](agents.md#tools-tools-and-schema) from the docstring and added to the tool schema sent to the LLM.
+8. [Run the agent](agents.md#running-agents) asynchronously, conducting a conversation with the LLM until a final response is reached. Even in this fairly simple case, the agent will exchange multiple messages with the LLM as tools are called to retrieve a result.
 9. The response from the agent will, be guaranteed to be a `SupportResult`, if validation fails [reflection](agents.md#reflection-and-self-correction) will mean the agent is prompted to try again.
 10. The result will be validated with Pydantic to guarantee it is a `SupportResult`, since the agent is generic, it'll also be typed as a `SupportResult` to aid with static type checking.
-11. In a real use case, you'd add many more retrievers and a longer system prompt to the agent to extend the context it's equipped with and support it can provide.
+11. In a real use case, you'd add many more tools and a longer system prompt to the agent to extend the context it's equipped with and support it can provide.
 12. This is a simple sketch of a database connection, used to keep the example short and readable. In reality, you'd be connecting to an external database (e.g. PostgreSQL) to get information about customers.
 13. This [Pydantic](https://docs.pydantic.dev) model is used to constrain the structured data returned by the agent. From this simple definition, Pydantic builds the JSON Schema that tells the LLM how to return the data, and performs validation to guarantee the data is correct at the end of the conversation.
 
@@ -153,8 +153,8 @@ sequenceDiagram
 
     Agent ->> LLM: Request<br>System: "You are a support agent..."<br>System: "The customer's name is John"<br>User: "What is my balance?"
     activate LLM
-    Note over LLM: LLM decides to use a retriever
-    LLM ->> Agent: Call retriever<br>customer_balance()
+    Note over LLM: LLM decides to use a tool
+    LLM ->> Agent: Call tool<br>customer_balance()
     deactivate LLM
     activate Agent
     Note over Agent: Retrieve account balance

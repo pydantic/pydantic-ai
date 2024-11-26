@@ -12,6 +12,6 @@
         - override_model
         - last_run_messages
         - system_prompt
-        - retriever
-        - retriever_plain
+        - tool
+        - tool_plain
         - result_validator

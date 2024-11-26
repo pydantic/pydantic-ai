@@ -55,7 +55,7 @@ json_ta: TypeAdapter[JsonData] = TypeAdapter(JsonData)
 
 @dataclass
 class ToolReturn:
-    """A tool return message, this encodes the result of running a retriever."""
+    """A tool return message, this encodes the result of running a tool."""
 
     tool_name: str
     """The name of the "tool" was called."""
@@ -89,10 +89,10 @@ class RetryPrompt:
 
     This can be sent for a number of reasons:
 
-    * Pydantic validation of retriever arguments failed, here content is derived from a Pydantic
+    * Pydantic validation of tool arguments failed, here content is derived from a Pydantic
       [`ValidationError`][pydantic_core.ValidationError]
-    * a retriever raised a [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] exception
-    * no retriever was found for the tool name
+    * a tool raised a [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] exception
+    * no tool was found for the tool name
     * the model returned plain text when a structured response was expected
     * Pydantic validation of a structured response failed, here content is derived from a Pydantic
       [`ValidationError`][pydantic_core.ValidationError]
@@ -182,7 +182,7 @@ class ToolCall:
 class ModelStructuredResponse:
     """A structured response from a model.
 
-    This is used either to call a retriever or to return a structured response from an agent run.
+    This is used either to call a tool or to return a structured response from an agent run.
     """
 
     calls: list[ToolCall]

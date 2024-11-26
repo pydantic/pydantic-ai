@@ -11,48 +11,48 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 
 
-def test_retriever_no_ctx():
+def test_tool_no_ctx():
     agent = Agent(TestModel())
 
     with pytest.raises(UserError) as exc_info:
 
-        @agent.retriever  # pyright: ignore[reportArgumentType]
-        def invalid_retriever(x: int) -> str:  # pragma: no cover
+        @agent.tool  # pyright: ignore[reportArgumentType]
+        def invalid_tool(x: int) -> str:  # pragma: no cover
             return 'Hello'
 
     assert str(exc_info.value) == snapshot(
-        'Error generating schema for test_retriever_no_ctx.<locals>.invalid_retriever:\n'
-        '  First argument must be a CallContext instance when using `.retriever`'
+        'Error generating schema for test_tool_no_ctx.<locals>.invalid_tool:\n'
+        '  First argument must be a CallContext instance when using `.tool`'
     )
 
 
-def test_retriever_plain_with_ctx():
+def test_tool_plain_with_ctx():
     agent = Agent(TestModel())
 
     with pytest.raises(UserError) as exc_info:
 
-        @agent.retriever_plain
-        async def invalid_retriever(ctx: CallContext[None]) -> str:  # pragma: no cover
+        @agent.tool_plain
+        async def invalid_tool(ctx: CallContext[None]) -> str:  # pragma: no cover
             return 'Hello'
 
     assert str(exc_info.value) == snapshot(
-        'Error generating schema for test_retriever_plain_with_ctx.<locals>.invalid_retriever:\n'
-        '  CallContext instance can only be used with `.retriever`'
+        'Error generating schema for test_tool_plain_with_ctx.<locals>.invalid_tool:\n'
+        '  CallContext instance can only be used with `.tool`'
     )
 
 
-def test_retriever_ctx_second():
+def test_tool_ctx_second():
     agent = Agent(TestModel())
 
     with pytest.raises(UserError) as exc_info:
 
-        @agent.retriever  # pyright: ignore[reportArgumentType]
-        def invalid_retriever(x: int, ctx: CallContext[None]) -> str:  # pragma: no cover
+        @agent.tool  # pyright: ignore[reportArgumentType]
+        def invalid_tool(x: int, ctx: CallContext[None]) -> str:  # pragma: no cover
             return 'Hello'
 
     assert str(exc_info.value) == snapshot(
-        'Error generating schema for test_retriever_ctx_second.<locals>.invalid_retriever:\n'
-        '  First argument must be a CallContext instance when using `.retriever`\n'
+        'Error generating schema for test_tool_ctx_second.<locals>.invalid_tool:\n'
+        '  First argument must be a CallContext instance when using `.tool`\n'
         '  CallContext instance can only be used as the first argument'
     )
 
@@ -68,14 +68,14 @@ async def google_style_docstring(foo: int, bar: str) -> str:  # pragma: no cover
 
 
 async def get_json_schema(_messages: list[Message], info: AgentInfo) -> ModelAnyResponse:
-    assert len(info.retrievers) == 1
-    r = next(iter(info.retrievers.values()))
+    assert len(info.function_tools) == 1
+    r = next(iter(info.function_tools.values()))
     return ModelTextResponse(json.dumps(r.json_schema))
 
 
 def test_docstring_google():
     agent = Agent(FunctionModel(get_json_schema))
-    agent.retriever_plain(google_style_docstring)
+    agent.tool_plain(google_style_docstring)
 
     result = agent.run_sync('Hello')
     json_schema = json.loads(result.data)
@@ -106,7 +106,7 @@ def sphinx_style_docstring(foo: int, /) -> str:  # pragma: no cover
 
 def test_docstring_sphinx():
     agent = Agent(FunctionModel(get_json_schema))
-    agent.retriever_plain(sphinx_style_docstring)
+    agent.tool_plain(sphinx_style_docstring)
 
     result = agent.run_sync('Hello')
     json_schema = json.loads(result.data)
@@ -138,7 +138,7 @@ def numpy_style_docstring(*, foo: int, bar: str) -> str:  # pragma: no cover
 
 def test_docstring_numpy():
     agent = Agent(FunctionModel(get_json_schema))
-    agent.retriever_plain(numpy_style_docstring)
+    agent.tool_plain(numpy_style_docstring)
 
     result = agent.run_sync('Hello')
     json_schema = json.loads(result.data)
@@ -163,7 +163,7 @@ def unknown_docstring(**kwargs: int) -> str:  # pragma: no cover
 
 def test_docstring_unknown():
     agent = Agent(FunctionModel(get_json_schema))
-    agent.retriever_plain(unknown_docstring)
+    agent.tool_plain(unknown_docstring)
 
     result = agent.run_sync('Hello')
     json_schema = json.loads(result.data)
@@ -192,7 +192,7 @@ async def google_style_docstring_no_body(
 
 def test_docstring_google_no_body():
     agent = Agent(FunctionModel(get_json_schema))
-    agent.retriever_plain(google_style_docstring_no_body)
+    agent.tool_plain(google_style_docstring_no_body)
 
     result = agent.run_sync('')
     json_schema = json.loads(result.data)
@@ -216,7 +216,7 @@ def test_takes_just_model():
         x: int
         y: str
 
-    @agent.retriever_plain
+    @agent.tool_plain
     def takes_just_model(model: Foo) -> str:
         return f'{model.x} {model.y}'
 
@@ -242,7 +242,7 @@ def test_takes_model_and_int():
         x: int
         y: str
 
-    @agent.retriever_plain
+    @agent.tool_plain
     def takes_just_model(model: Foo, z: int) -> str:
         return f'{model.x} {model.y} {z}'
 

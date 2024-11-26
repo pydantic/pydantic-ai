@@ -32,7 +32,7 @@ roulette_agent = Agent(
 )
 
 
-@roulette_agent.retriever
+@roulette_agent.tool
 async def roulette_wheel(
     ctx: CallContext[Deps], square: int
 ) -> Literal['winner', 'loser']:
