@@ -63,7 +63,7 @@ class Model(ABC):
     @abstractmethod
     async def agent_model(
         self,
-        retrieval_tools: Mapping[str, AbstractToolDefinition],
+        function_tools: Mapping[str, AbstractToolDefinition],
         allow_text_result: bool,
         result_tools: Sequence[AbstractToolDefinition] | None,
     ) -> AgentModel:
@@ -72,7 +72,7 @@ class Model(ABC):
         This is async in case slow/async config checks need to be performed that can't be done in `__init__`.
 
         Args:
-            retrieval_tools: The tools available to the agent.
+            function_tools: The tools available to the agent.
             allow_text_result: Whether a plain text final response/result is permitted.
             result_tools: Tool definitions for the final result tool(s), if any.
 

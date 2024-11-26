@@ -67,13 +67,13 @@ class FunctionModel(Model):
 
     async def agent_model(
         self,
-        retrieval_tools: Mapping[str, AbstractToolDefinition],
+        function_tools: Mapping[str, AbstractToolDefinition],
         allow_text_result: bool,
         result_tools: Sequence[AbstractToolDefinition] | None,
     ) -> AgentModel:
         result_tools = list(result_tools) if result_tools is not None else None
         return FunctionAgentModel(
-            self.function, self.stream_function, AgentInfo(retrieval_tools, allow_text_result, result_tools)
+            self.function, self.stream_function, AgentInfo(function_tools, allow_text_result, result_tools)
         )
 
     def name(self) -> str:
@@ -89,11 +89,15 @@ class FunctionModel(Model):
 class AgentInfo:
     """Information about an agent.
 
-    This is passed as the second to functions.
+    This is passed as the second to functions used within [`FunctionModel`][pydantic_ai.models.function.FunctionModel].
     """
 
-    tools: Mapping[str, AbstractToolDefinition]
-    """The tools available on this agent."""
+    function_tools: Mapping[str, AbstractToolDefinition]
+    """The function tools available on this agent.
+
+    These are the tools registered via the [`tool`][pydantic_ai.Agent.tool] and
+    [`tool_plain`][pydantic_ai.Agent.tool_plain] decorators.
+    """
     allow_text_result: bool
     """Whether a plain text result is allowed."""
     result_tools: list[AbstractToolDefinition] | None

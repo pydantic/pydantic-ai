@@ -89,12 +89,12 @@ class OpenAIModel(Model):
 
     async def agent_model(
         self,
-        retrieval_tools: Mapping[str, AbstractToolDefinition],
+        function_tools: Mapping[str, AbstractToolDefinition],
         allow_text_result: bool,
         result_tools: Sequence[AbstractToolDefinition] | None,
     ) -> AgentModel:
         check_allow_model_requests()
-        tools = [self._map_tool_definition(r) for r in retrieval_tools.values()]
+        tools = [self._map_tool_definition(r) for r in function_tools.values()]
         if result_tools is not None:
             tools += [self._map_tool_definition(r) for r in result_tools]
         return OpenAIAgentModel(

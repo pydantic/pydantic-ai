@@ -356,7 +356,7 @@ def foobar(a: int, b: str, c: dict[str, list[float]]) -> str:
 
 
 def print_schema(messages: list[Message], info: AgentInfo) -> ModelAnyResponse:
-    tool = info.tools['foobar']
+    tool = info.function_tools['foobar']
     print(tool.description)
     #> Get me foobar.
     print(tool.json_schema)

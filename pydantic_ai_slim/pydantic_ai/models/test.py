@@ -72,18 +72,18 @@ class TestModel(Model):
 
     async def agent_model(
         self,
-        retrieval_tools: Mapping[str, AbstractToolDefinition],
+        function_tools: Mapping[str, AbstractToolDefinition],
         allow_text_result: bool,
         result_tools: Sequence[AbstractToolDefinition] | None,
     ) -> AgentModel:
-        self.agent_model_tools = retrieval_tools
+        self.agent_model_tools = function_tools
         self.agent_model_allow_text_result = allow_text_result
         self.agent_model_result_tools = list(result_tools) if result_tools is not None else None
 
         if self.call_tools == 'all':
-            tool_calls = [(r.name, r) for r in retrieval_tools.values()]
+            tool_calls = [(r.name, r) for r in function_tools.values()]
         else:
-            tools_to_call = (retrieval_tools[name] for name in self.call_tools)
+            tools_to_call = (function_tools[name] for name in self.call_tools)
             tool_calls = [(r.name, r) for r in tools_to_call]
 
         if self.custom_result_text is not None:

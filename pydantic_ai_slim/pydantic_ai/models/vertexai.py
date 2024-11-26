@@ -166,7 +166,7 @@ class VertexAIModel(Model):
 
     async def agent_model(
         self,
-        retrieval_tools: Mapping[str, AbstractToolDefinition],
+        function_tools: Mapping[str, AbstractToolDefinition],
         allow_text_result: bool,
         result_tools: Sequence[AbstractToolDefinition] | None,
     ) -> GeminiAgentModel:
@@ -176,7 +176,7 @@ class VertexAIModel(Model):
             model_name=self.model_name,
             auth=auth,
             url=url,
-            retrieval_tools=retrieval_tools,
+            function_tools=function_tools,
             allow_text_result=allow_text_result,
             result_tools=result_tools,
         )

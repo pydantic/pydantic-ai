@@ -167,9 +167,9 @@ async def test_call_tool():
         messages: list[Message], agent_info: AgentInfo
     ) -> AsyncIterator[DeltaToolCalls | str]:
         if len(messages) == 1:
-            assert agent_info.tools is not None
-            assert len(agent_info.tools) == 1
-            name = next(iter(agent_info.tools))
+            assert agent_info.function_tools is not None
+            assert len(agent_info.function_tools) == 1
+            name = next(iter(agent_info.function_tools))
             first = messages[0]
             assert isinstance(first, UserPrompt)
             json_string = json.dumps({'x': first.content})

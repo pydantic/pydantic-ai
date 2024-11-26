@@ -58,7 +58,7 @@ class Agent(Generic[AgentDeps, ResultData]):
     _result_validators: list[_result.ResultValidator[AgentDeps, ResultData]] = field(repr=False)
     _allow_text_result: bool = field(repr=False)
     _system_prompts: tuple[str, ...] = field(repr=False)
-    _tools: dict[str, _r.Tool[AgentDeps, Any]] = field(repr=False)
+    _function_tools: dict[str, _r.Tool[AgentDeps, Any]] = field(repr=False)
     _default_retries: int = field(repr=False)
     _system_prompt_functions: list[_system_prompt.SystemPromptRunner[AgentDeps]] = field(repr=False)
     _deps_type: type[AgentDeps] = field(repr=False)
@@ -119,7 +119,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         self._allow_text_result = self._result_schema is None or self._result_schema.allow_text_result
 
         self._system_prompts = (system_prompt,) if isinstance(system_prompt, str) else tuple(system_prompt)
-        self._tools: dict[str, _r.Tool[AgentDeps, Any]] = {}
+        self._function_tools: dict[str, _r.Tool[AgentDeps, Any]] = {}
         self._deps_type = deps_type
         self._default_retries = retries
         self._system_prompt_functions = []
@@ -153,7 +153,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         new_message_index, messages = await self._prepare_messages(deps, user_prompt, message_history)
         self.last_run_messages = messages
 
-        for tool in self._tools.values():
+        for tool in self._function_tools.values():
             tool.reset()
 
         cost = result.Cost()
@@ -246,7 +246,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         new_message_index, messages = await self._prepare_messages(deps, user_prompt, message_history)
         self.last_run_messages = messages
 
-        for tool in self._tools.values():
+        for tool in self._function_tools.values():
             tool.reset()
 
         cost = result.Cost()
@@ -557,10 +557,10 @@ class Agent(Generic[AgentDeps, ResultData]):
         if self._result_schema and tool.name in self._result_schema.tools:
             raise ValueError(f'Tool name conflicts with result schema name: {tool.name!r}')
 
-        if tool.name in self._tools:
+        if tool.name in self._function_tools:
             raise ValueError(f'Tool name conflicts with existing tool: {tool.name!r}')
 
-        self._tools[tool.name] = tool
+        self._function_tools[tool.name] = tool
 
     async def _get_agent_model(
         self, model: models.Model | models.KnownModelName | None
@@ -593,7 +593,7 @@ class Agent(Generic[AgentDeps, ResultData]):
             raise exceptions.UserError('`model` must be set either when creating the agent or when calling it.')
 
         result_tools = list(self._result_schema.tools.values()) if self._result_schema else None
-        agent_model = await model_.agent_model(self._tools, self._allow_text_result, result_tools)
+        agent_model = await model_.agent_model(self._function_tools, self._allow_text_result, result_tools)
         return model_, custom_model, agent_model
 
     async def _prepare_messages(
@@ -659,7 +659,7 @@ class Agent(Generic[AgentDeps, ResultData]):
             messages: list[_messages.Message] = []
             tasks: list[asyncio.Task[_messages.Message]] = []
             for call in model_response.calls:
-                if tool := self._tools.get(call.tool_name):
+                if tool := self._function_tools.get(call.tool_name):
                     tasks.append(asyncio.create_task(tool.run(deps, call), name=call.tool_name))
                 else:
                     messages.append(self._unknown_tool(call.tool_name))
@@ -722,7 +722,7 @@ class Agent(Generic[AgentDeps, ResultData]):
             # we now run all tool functions in parallel
             tasks: list[asyncio.Task[_messages.Message]] = []
             for call in structured_msg.calls:
-                if tool := self._tools.get(call.tool_name):
+                if tool := self._function_tools.get(call.tool_name):
                     tasks.append(asyncio.create_task(tool.run(deps, call), name=call.tool_name))
                 else:
                     messages.append(self._unknown_tool(call.tool_name))
@@ -755,7 +755,7 @@ class Agent(Generic[AgentDeps, ResultData]):
 
     def _unknown_tool(self, tool_name: str) -> _messages.RetryPrompt:
         self._incr_result_retry()
-        names = list(self._tools.keys())
+        names = list(self._function_tools.keys())
         if self._result_schema:
             names.extend(self._result_schema.tool_names())
         if names:
