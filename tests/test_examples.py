@@ -27,7 +27,7 @@ from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 
-from .conftest import ClientWithHandler
+from .conftest import ClientWithHandler, TestEnv
 
 try:
     from pydantic_ai.models.vertexai import VertexAIModel
@@ -96,7 +96,11 @@ def find_filter_examples() -> Iterable[CodeExample]:
 
 @pytest.mark.parametrize('example', find_filter_examples(), ids=str)
 def test_docs_examples(
-    example: CodeExample, eval_example: EvalExample, mocker: MockerFixture, client_with_handler: ClientWithHandler
+    example: CodeExample,
+    eval_example: EvalExample,
+    mocker: MockerFixture,
+    client_with_handler: ClientWithHandler,
+    env: TestEnv,
 ):
     mocker.patch('pydantic_ai.agent.models.infer_model', side_effect=mock_infer_model)
     mocker.patch('pydantic_ai._utils.group_by_temporal', side_effect=mock_group_by_temporal)
@@ -107,6 +111,10 @@ def test_docs_examples(
     mocker.patch('httpx.AsyncClient.get', side_effect=async_http_request)
     mocker.patch('httpx.AsyncClient.post', side_effect=async_http_request)
     mocker.patch('random.randint', return_value=4)
+
+    env.set('OPENAI_API_KEY', 'testing')
+    env.set('GEMINI_API_KEY', 'testing')
+    env.set('GROQ_API_KEY', 'testing')
 
     prefix_settings = example.prefix_settings()
 

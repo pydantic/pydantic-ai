@@ -1,9 +1,10 @@
 # Monitoring and Performance
 
 Applications that use LLMs have some challenges that are well known and understood: LLMs are **slow**, **unreliable** and **expensive**.
+
 These applications also have some challenges that most developers have encountered much less often: LLMs are **fickle** and **non-deterministic**. Subtle changes in a prompt can completely change a model's performance, and there's no `EXPLAIN` query you can run to understand why.
 
-!!! danger
+!!! danger "Warning"
     From a software engineers point of view, you can think of LLMs as the worst database you've ever heard of, but worse.
 
     If LLMs weren't so bloody useful, we'd never touch them.
