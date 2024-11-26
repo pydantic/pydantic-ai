@@ -4,7 +4,7 @@ Demonstrates:
 
 * [dynamic system prompt](../agents.md#system-prompts)
 * [structured `result_type`](../results.md#structured-result-validation)
-* [tools](../agents.md#tools)
+* [tools](../agents.md#function-tools)
 
 ## Running the Example
 
