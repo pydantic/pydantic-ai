@@ -101,7 +101,7 @@ _(This example is complete, it can be run "as is")_
 
 ### Asynchronous vs. Synchronous dependencies
 
-System prompt functions, tool functions and result validator are all run in the async context of an agent run.
+[System prompt functions](agents.md#system-prompts), [function tools](agents.md#function-tools) and [result validators](results.md#result-validators-functions) are all run in the async context of an agent run.
 
 If these functions are not coroutines (e.g. `async def`) they are called with
 [`run_in_executor`][asyncio.loop.run_in_executor] in a thread pool, it's therefore marginally preferable
@@ -219,7 +219,7 @@ async def main():
         #> Did you hear about the toothpaste scandal? They called it Colgate.
 ```
 
-1. To pass `CallContext` and to a tool, us the [`tool`][pydantic_ai.Agent.tool] decorator.
+1. To pass `CallContext` to a tool, use the [`tool`][pydantic_ai.Agent.tool] decorator.
 2. `CallContext` may optionally be passed to a [`result_validator`][pydantic_ai.Agent.result_validator] function as the first argument.
 
 _(This example is complete, it can be run "as is")_

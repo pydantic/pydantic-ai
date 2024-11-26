@@ -8,10 +8,10 @@ but multiple agents can also interact to embody more complex workflows.
 The [`Agent`][pydantic_ai.Agent] class has full API documentation, but conceptually you can think of an agent as a container for:
 
 * A [system prompt](#system-prompts) — a set of instructions for the LLM written by the developer
-* One or more [tools](#tools) — functions that the LLM may call to get information while generating a response
+* One or more [retrieval tool](#tools) — functions that the LLM may call to get information while generating a response
 * An optional structured [result type](results.md) — the structured datatype the LLM must return at the end of a run
 * A [dependency](dependencies.md) type constraint — system prompt functions, tools and result validators may all use dependencies when they're run
-* Agents may optionally also have a default [model](api/models/base.md) associated with them; the model to use can also be specified when running the agent
+* Agents may optionally also have a default [LLM model](api/models/base.md) associated with them; the model to use can also be specified when running the agent
 
 In typing terms, agents are generic in their dependency and result types, e.g., an agent which required dependencies of type `#!python Foobar` and returned results of type `#!python list[str]` would have type `#!python Agent[Foobar, list[str]]`.
 
@@ -166,21 +166,21 @@ print(result.data)
 
 _(This example is complete, it can be run "as is")_
 
-## Tools
+## Function Tools
 
-Tools provide a mechanism for models to request extra information to help them generate a response.
+Function tools provide a mechanism for models to retrieve extra information to help them generate a response.
 
 They're useful when it is impractical or impossible to put all the context an agent might need into the system prompt, or when you want to make agents' behavior more deterministic or reliable by deferring some of the logic required to generate a response to another (not necessarily AI-powered) tool.
 
-!!! info "Tools vs. RAG"
-    Tools are basically the "R" of RAG (Retrieval-Augmented Generation) — they augment what the model can do by letting it request extra information.
+!!! info "Function tools vs. RAG"
+    Function tools are basically the "R" of RAG (Retrieval-Augmented Generation) — they augment what the model can do by letting it request extra information.
 
     The main semantic difference between PydanticAI Tools and RAG is RAG is synonymous with vector search, while PydanticAI tools are more general-purpose. (Note: we may add support for vector search functionality in the future, particularly an API for generating embeddings. See [#58](https://github.com/pydantic/pydantic-ai/issues/58))
 
 There are two different decorator functions to register tools:
 
-1. [`@agent.tool_plain`][pydantic_ai.Agent.tool_plain] — for tools that don't need access to the agent [context][pydantic_ai.dependencies.CallContext]
-2. [`@agent.tool`][pydantic_ai.Agent.tool] — for tools that do need access to the agent [context][pydantic_ai.dependencies.CallContext]
+1. [`@agent.tool`][pydantic_ai.Agent.tool] — for tools that need access to the agent [context][pydantic_ai.dependencies.CallContext]
+2. [`@agent.tool_plain`][pydantic_ai.Agent.tool_plain] — for tools that do not need access to the agent [context][pydantic_ai.dependencies.CallContext]
 
 `@agent.tool` is the default since in the majority of cases tools will need access to the agent context.
 
@@ -323,13 +323,15 @@ sequenceDiagram
     Note over Agent: Game session complete
 ```
 
-### tools and schema
+### Function Tools vs. Structured Results
 
-Under the hood, tools use the model's "tools" or "functions" API to let the model know what tools are available to call. Tools or functions are also used to define the schema(s) for structured responses, thus a model might have access to many tools, some of which call tools while others end the run and return a result.
+As the name suggests, function tools use the model's "tools" or "functions" API to let the model know what is available to call. Tools or functions are also used to define the schema(s) for structured responses, thus a model might have access to many tools, some of which call function tools while others end the run and return a result.
+
+### Function tools and schema
 
 Function parameters are extracted from the function signature, and all parameters except `CallContext` are used to build the schema for that tool call.
 
-Even better, PydanticAI extracts the docstring from tool functions and (thanks to [griffe](https://mkdocstrings.github.io/griffe/)) extracts parameter descriptions from the docstring and adds them to the schema.
+Even better, PydanticAI extracts the docstring from functions and (thanks to [griffe](https://mkdocstrings.github.io/griffe/)) extracts parameter descriptions from the docstring and adds them to the schema.
 
 [Griffe supports](https://mkdocstrings.github.io/griffe/reference/docstrings/#docstrings) extracting parameter descriptions from `google`, `numpy` and `sphinx` style docstrings, and PydanticAI will infer the format to use based on the docstring. We plan to add support in the future to explicitly set the style to use, and warn/error if not all parameters are documented; see [#59](https://github.com/pydantic/pydantic-ai/issues/59).
 

@@ -9,7 +9,7 @@ Demonstrates:
 * RAG search
 
 This is done by creating a database containing each section of the markdown documentation, then registering
-the search tool as a tool with the PydanticAI agent.
+the search tool with the PydanticAI agent.
 
 Logic for extracting sections from markdown files and a JSON file with that data is available in
 [this gist](https://gist.github.com/samuelcolvin/4b5bb9bb163b1122ff17e29e48c10992).
