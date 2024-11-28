@@ -8,11 +8,11 @@ from dataclasses import dataclass, is_dataclass
 from datetime import datetime, timezone
 from functools import partial
 from types import GenericAlias
-from typing import Any, Callable, Generic, TypeGuard, TypeVar, Union, cast, overload
+from typing import Any, Callable, Generic, TypeVar, Union, cast, overload
 
 from pydantic import BaseModel
 from pydantic.json_schema import JsonSchemaValue
-from typing_extensions import ParamSpec, TypeAlias, is_typeddict
+from typing_extensions import ParamSpec, TypeAlias, TypeGuard, is_typeddict
 
 _P = ParamSpec('_P')
 _R = TypeVar('_R')
