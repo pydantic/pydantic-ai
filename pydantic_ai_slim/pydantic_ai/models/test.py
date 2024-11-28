@@ -5,7 +5,7 @@ import string
 from collections.abc import AsyncIterator, Iterable, Iterator, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from typing import Any, Literal
 
 import pydantic_core
@@ -140,7 +140,7 @@ class TestAgentModel(AgentModel):
 
     def _request(self, messages: list[Message]) -> ModelAnyResponse:
         if self.step == 0 and self.tool_calls:
-            calls = [ToolCall.from_object(name, self.gen_tool_args(args)) for name, args in self.tool_calls]
+            calls = [ToolCall.from_dict(name, self.gen_tool_args(args)) for name, args in self.tool_calls]
             self.step += 1
             self.last_message_count = len(messages)
             return ModelStructuredResponse(calls=calls)
@@ -150,7 +150,7 @@ class TestAgentModel(AgentModel):
         new_retry_names = {m.tool_name for m in new_messages if isinstance(m, RetryPrompt)}
         if new_retry_names:
             calls = [
-                ToolCall.from_object(name, self.gen_tool_args(args))
+                ToolCall.from_dict(name, self.gen_tool_args(args))
                 for name, args in self.tool_calls
                 if name in new_retry_names
             ]
@@ -177,11 +177,11 @@ class TestAgentModel(AgentModel):
                 result_tool = self.result_tools[self.seed % len(self.result_tools)]
                 if custom_result_args is not None:
                     self.step += 1
-                    return ModelStructuredResponse(calls=[ToolCall.from_object(result_tool.name, custom_result_args)])
+                    return ModelStructuredResponse(calls=[ToolCall.from_dict(result_tool.name, custom_result_args)])
                 else:
                     response_args = self.gen_tool_args(result_tool)
                     self.step += 1
-                    return ModelStructuredResponse(calls=[ToolCall.from_object(result_tool.name, response_args)])
+                    return ModelStructuredResponse(calls=[ToolCall.from_dict(result_tool.name, response_args)])
 
 
 @dataclass
@@ -321,7 +321,7 @@ class _JsonSchemaTestData:
 
         if fmt := schema.get('format'):
             if fmt == 'date':
-                return '2024-01-01'
+                return (date(2024, 1, 1) + timedelta(days=self.seed)).isoformat()
 
         return self._char()
 

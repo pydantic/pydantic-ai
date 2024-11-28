@@ -1,5 +1,3 @@
-from black import timezonefrom black import timezonefrom black import timezone
-
 # Testing and Evals
 
 When thinking about PydanticAI use and LLM integrations in general, there are two distinct kinds of test:
@@ -109,7 +107,7 @@ from pydantic_ai.messages import (
     UserPrompt,
     ModelStructuredResponse,
     ToolCall,
-    ArgsObject,
+    ArgsDict,
     ToolReturn,
     ModelTextResponse,
 )
@@ -121,7 +119,7 @@ pytestmark = pytest.mark.anyio  # (1)!
 models.ALLOW_MODEL_REQUESTS = False  # (2)!
 
 
-async def test_forecast_success():
+async def test_forecast():
     conn = DatabaseConn()
     user_id = 1
     with weather_agent.override(model=TestModel()):  # (3)!
@@ -145,8 +143,8 @@ async def test_forecast_success():
             calls=[
                 ToolCall(
                     tool_name='weather_forecast',
-                    args=ArgsObject(
-                        args_object={'location': 'a', 'forecast_date': '2024-01-01'}
+                    args=ArgsDict(
+                        args_dict={'location': 'a', 'forecast_date': '2024-01-01'}
                     ),
                     tool_id=None,
                 )
@@ -179,10 +177,78 @@ async def test_forecast_success():
 
 ### Unit testing with `FunctionModel`
 
-TODO
+The above tests are a great start, but careful readers will notice that the `WeatherService.get_forecast` is never called since `TestModel` calls `weather_forecast` with a date in the past.
+
+To fully exercise `weather_forecast`, we need to use [`FunctionModel`][pydantic_ai.models.function.FunctionModel] to customise how the tools is called.
+
+Here's an example of using `FunctionModel` to test the `weather_forecast` tool with custom inputs
+
+```py title="test_weather_app2.py"
+import re
+
+import pytest
+
+from pydantic_ai import models
+from pydantic_ai.messages import (
+    Message,
+    ModelAnyResponse,
+    ModelStructuredResponse,
+    ModelTextResponse,
+    ToolCall,
+)
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+from fake_database import DatabaseConn
+from weather_app import run_weather_forecast, weather_agent
+
+pytestmark = pytest.mark.anyio
+models.ALLOW_MODEL_REQUESTS = False
+
+
+async def test_forecast_future():
+    def call_weather_forecast(  # (1)!
+        messages: list[Message], info: AgentInfo
+    ) -> ModelAnyResponse:
+        if len(messages) == 2:
+            # first call, call the weather forecast tool
+            assert set(info.function_tools.keys()) == {'weather_forecast'}
+
+            user_prompt = messages[1]
+            m = re.search(r'\d{4}-\d{2}-\d{2}', user_prompt.content)
+            assert m is not None
+            args = {'location': 'London', 'forecast_date': m.group()}
+            return ModelStructuredResponse(
+                calls=[ToolCall.from_dict('weather_forecast', args)]
+            )
+        else:
+            # second call, return the forecast
+            msg = messages[-1]
+            assert msg.role == 'tool-return'
+            return ModelTextResponse(f'The forecast is: {msg.content}')
+
+    conn = DatabaseConn()
+    user_id = 1
+    with weather_agent.override(model=FunctionModel(call_weather_forecast)):  # (2)!
+        prompt = 'What will the weather be like in London on 2032-01-01?'
+        await run_weather_forecast([(prompt, user_id)], conn)
+
+    forecast = await conn.get_forecast(user_id)
+    assert forecast == 'The forecast is: Rainy with a chance of sun'
+```
+
+1. We define a function `call_weather_forecast` that will be called by `FunctionModel` in place of the LLM, this function has access to the list of [`Message`s][pydantic_ai.messages.Message] that make up the run, and [`AgentInfo`][pydantic_ai.models.function.AgentInfo] which contains information about the agent and the function tools and return type tools.
+2. We use [`FunctionModel`][pydantic_ai.models.function.FunctionModel] to replace the agent's model with our custom function.
 
 ## Evals
 
-TODO.
+"Evals" refers to evaluating the performance of an LLM when used in a specific context.
 
-evals are more like benchmarks, they never "pass" although they do "fail", you care mostly about how they change over time, we (and we think most other people) don't really know what a "good" eval is, we provide some useful tools, we'll improve this if/when a common best practice emerges, or we think we have something interesting to say
+Unlike unit tests, evals are an emerging art/science, anyone who tells you they know exactly how evals should be defined can safely be ignored.
+
+Evals are generally more like benchmarks than unit tests, they never "pass" although they do "fail"; you care mostly about how they change over time.
+
+### System prompt customization
+
+The system prompt is the developer's primary tool in controlling the LLM's behavior, so it's often useful to be able to customise the system prompt and see how performance changes.
+
+TODO example of customizing system prompt through deps.

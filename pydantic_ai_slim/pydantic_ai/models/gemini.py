@@ -16,7 +16,7 @@ from typing_extensions import NotRequired, TypedDict, TypeGuard, assert_never
 
 from .. import UnexpectedModelBehavior, _pydantic, _utils, exceptions, result
 from ..messages import (
-    ArgsObject,
+    ArgsDict,
     Message,
     ModelAnyResponse,
     ModelStructuredResponse,
@@ -420,15 +420,15 @@ class _GeminiFunctionCallPart(TypedDict):
 
 
 def _function_call_part_from_call(tool: ToolCall) -> _GeminiFunctionCallPart:
-    assert isinstance(tool.args, ArgsObject), f'Expected ArgsObject, got {tool.args}'
-    return _GeminiFunctionCallPart(function_call=_GeminiFunctionCall(name=tool.tool_name, args=tool.args.args_object))
+    assert isinstance(tool.args, ArgsDict), f'Expected ArgsObject, got {tool.args}'
+    return _GeminiFunctionCallPart(function_call=_GeminiFunctionCall(name=tool.tool_name, args=tool.args.args_dict))
 
 
 def _structured_response_from_parts(
     parts: list[_GeminiFunctionCallPart], timestamp: datetime | None = None
 ) -> ModelStructuredResponse:
     return ModelStructuredResponse(
-        calls=[ToolCall.from_object(part['function_call']['name'], part['function_call']['args']) for part in parts],
+        calls=[ToolCall.from_dict(part['function_call']['name'], part['function_call']['args']) for part in parts],
         timestamp=timestamp or _utils.now_utc(),
     )
 

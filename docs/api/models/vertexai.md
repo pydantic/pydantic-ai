@@ -10,9 +10,6 @@ and
 function endpoints
 having the same schemas as the equivalent [Gemini endpoints][pydantic_ai.models.gemini.GeminiModel].
 
-There are four advantages of using this API over the `generativelanguage.googleapis.com` API which
-[`GeminiModel`][pydantic_ai.models.gemini.GeminiModel] uses, and one big disadvantage.
-
 ## Setup
 
 For details on how to set up authentication with this model as well as a comparison with the `generativelanguage.googleapis.com` API used by [`GeminiModel`][pydantic_ai.models.gemini.GeminiModel],

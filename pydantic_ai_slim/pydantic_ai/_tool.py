@@ -59,7 +59,7 @@ class Tool(Generic[AgentDeps, ToolParams]):
             if isinstance(message.args, messages.ArgsJson):
                 args_dict = self.validator.validate_json(message.args.args_json)
             else:
-                args_dict = self.validator.validate_python(message.args.args_object)
+                args_dict = self.validator.validate_python(message.args.args_dict)
         except ValidationError as e:
             return self._on_error(e, message)
 

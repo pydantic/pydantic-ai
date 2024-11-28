@@ -144,8 +144,8 @@ class ArgsJson:
 
 
 @dataclass
-class ArgsObject:
-    args_object: dict[str, Any]
+class ArgsDict:
+    args_dict: dict[str, Any]
     """A python dictionary of arguments."""
 
 
@@ -155,7 +155,7 @@ class ToolCall:
 
     tool_name: str
     """The name of the tool to call."""
-    args: ArgsJson | ArgsObject
+    args: ArgsJson | ArgsDict
     """The arguments to pass to the tool.
 
     Either as JSON or a Python dictionary depending on how data was returned.
@@ -168,12 +168,12 @@ class ToolCall:
         return cls(tool_name, ArgsJson(args_json), tool_id)
 
     @classmethod
-    def from_object(cls, tool_name: str, args_object: dict[str, Any]) -> ToolCall:
-        return cls(tool_name, ArgsObject(args_object))
+    def from_dict(cls, tool_name: str, args_dict: dict[str, Any]) -> ToolCall:
+        return cls(tool_name, ArgsDict(args_dict))
 
     def has_content(self) -> bool:
-        if isinstance(self.args, ArgsObject):
-            return any(self.args.args_object.values())
+        if isinstance(self.args, ArgsDict):
+            return any(self.args.args_dict.values())
         else:
             return bool(self.args.args_json)
 

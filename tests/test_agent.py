@@ -8,8 +8,8 @@ from pydantic import BaseModel
 
 from pydantic_ai import Agent, CallContext, ModelRetry, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
+    ArgsDict,
     ArgsJson,
-    ArgsObject,
     Message,
     ModelAnyResponse,
     ModelStructuredResponse,
@@ -370,7 +370,7 @@ def test_run_with_history_new():
         [
             UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
             ModelStructuredResponse(
-                calls=[ToolCall(tool_name='ret_a', args=ArgsObject(args_object={'x': 'a'}))],
+                calls=[ToolCall(tool_name='ret_a', args=ArgsDict(args_dict={'x': 'a'}))],
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ToolReturn(tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc)),
@@ -387,7 +387,7 @@ def test_run_with_history_new():
                 SystemPrompt(content='Foobar'),
                 UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
                 ModelStructuredResponse(
-                    calls=[ToolCall(tool_name='ret_a', args=ArgsObject(args_object={'x': 'a'}))],
+                    calls=[ToolCall(tool_name='ret_a', args=ArgsDict(args_dict={'x': 'a'}))],
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 ToolReturn(tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc)),
@@ -395,7 +395,7 @@ def test_run_with_history_new():
                 # second call, notice no repeated system prompt
                 UserPrompt(content='Hello again', timestamp=IsNow(tz=timezone.utc)),
                 ModelStructuredResponse(
-                    calls=[ToolCall(tool_name='ret_a', args=ArgsObject(args_object={'x': 'a'}))],
+                    calls=[ToolCall(tool_name='ret_a', args=ArgsDict(args_dict={'x': 'a'}))],
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 ToolReturn(tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc)),
@@ -420,7 +420,7 @@ def test_run_with_history_new():
                 SystemPrompt(content='Foobar'),
                 UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
                 ModelStructuredResponse(
-                    calls=[ToolCall(tool_name='ret_a', args=ArgsObject(args_object={'x': 'a'}))],
+                    calls=[ToolCall(tool_name='ret_a', args=ArgsDict(args_dict={'x': 'a'}))],
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 ToolReturn(tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc)),
@@ -428,7 +428,7 @@ def test_run_with_history_new():
                 # second call, notice no repeated system prompt
                 UserPrompt(content='Hello again', timestamp=IsNow(tz=timezone.utc)),
                 ModelStructuredResponse(
-                    calls=[ToolCall(tool_name='ret_a', args=ArgsObject(args_object={'x': 'a'}))],
+                    calls=[ToolCall(tool_name='ret_a', args=ArgsDict(args_dict={'x': 'a'}))],
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 ToolReturn(tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc)),
