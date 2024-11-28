@@ -231,7 +231,7 @@ When testing agents, it's useful to be able to customise dependencies.
 While this can sometimes be done by calling the agent directly within unit tests, we can also override dependencies
 while calling application code which in turn calls the agent.
 
-This is done via the [`override_deps`][pydantic_ai.Agent.override_deps] method on the agent.
+This is done via the [`override`][pydantic_ai.Agent.override] method on the agent.
 
 ```py title="joke_app.py"
 from dataclasses import dataclass
@@ -286,7 +286,7 @@ class TestMyDeps(MyDeps):  # (1)!
 
 async def test_application_code():
     test_deps = TestMyDeps('test_key', None)  # (2)!
-    with joke_agent.override_deps(test_deps):  # (3)!
+    with joke_agent.override(deps=test_deps):  # (3)!
         joke = await application_code('Tell me a joke.')  # (4)!
     assert joke.startswith('Did you hear about the toothpaste scandal?')
 ```

@@ -8,7 +8,7 @@ from dataclasses import dataclass, is_dataclass
 from datetime import datetime, timezone
 from functools import partial
 from types import GenericAlias
-from typing import Any, Callable, Generic, TypeVar, Union, cast, overload
+from typing import Any, Callable, Generic, TypeGuard, TypeVar, Union, cast, overload
 
 from pydantic import BaseModel
 from pydantic.json_schema import JsonSchemaValue
@@ -66,10 +66,6 @@ Option: TypeAlias = Union[Some[T], None]
 """Analogous to Rust's `Option` type, usage: `Option[Thing]` is equivalent to `Some[Thing] | None`."""
 
 
-Left = TypeVar('Left')
-Right = TypeVar('Right')
-
-
 class Unset:
     """A singleton to represent an unset value."""
 
@@ -77,6 +73,14 @@ class Unset:
 
 
 UNSET = Unset()
+
+
+def is_set(t_or_unset: T | Unset) -> TypeGuard[T]:
+    return t_or_unset is not UNSET
+
+
+Left = TypeVar('Left')
+Right = TypeVar('Right')
 
 
 class Either(Generic[Left, Right]):

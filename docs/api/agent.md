@@ -8,8 +8,7 @@
         - run_sync
         - run_stream
         - model
-        - override_deps
-        - override_model
+        - override
         - last_run_messages
         - system_prompt
         - tool

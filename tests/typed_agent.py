@@ -123,11 +123,11 @@ async def run_stream() -> None:
 
 
 def run_with_override() -> None:
-    with typed_agent.override_deps(MyDeps(1, 2)):
+    with typed_agent.override(deps=MyDeps(1, 2)):
         typed_agent.run_sync('testing', deps=MyDeps(3, 4))
 
     # invalid deps
-    with typed_agent.override_deps(123):  # type: ignore[arg-type]
+    with typed_agent.override(deps=123):  # type: ignore[arg-type]
         typed_agent.run_sync('testing', deps=MyDeps(3, 4))
 
 

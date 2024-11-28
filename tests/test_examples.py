@@ -4,6 +4,7 @@ import re
 import sys
 from collections.abc import AsyncIterator, Iterable
 from dataclasses import dataclass, field
+from datetime import date
 from types import ModuleType
 from typing import Any
 
@@ -48,9 +49,16 @@ def register_fake_db():
     @dataclass
     class DatabaseConn:
         users: FakeTable = field(default_factory=FakeTable)
+        _forecasts: dict[int, str] = field(default_factory=dict)
 
         async def execute(self, query: str) -> None:
             pass
+
+        async def store_forecast(self, user_id: int, forecast: str) -> None:
+            self._forecasts[user_id] = forecast
+
+        async def get_forecast(self, user_id: int) -> str | None:
+            return self._forecasts.get(user_id)
 
     class QueryError(RuntimeError):
         pass
@@ -88,6 +96,26 @@ def register_bank_db():
     sys.modules.pop(module_name)
 
 
+@pytest.fixture(scope='module', autouse=True)
+def weather_service():
+    class WeatherService:
+        def get_historic_weather(self, location: str, forecast_date: date) -> str:
+            return 'Sunny with a chance of rain'
+
+        def get_forecast(self, location: str, forecast_date: date) -> str:
+            return 'Rainy with a chance of sun'
+
+        async def __aenter__(self) -> WeatherService:
+            return self
+
+        async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+            pass
+
+    module_name = 'weather_service'
+    sys.modules[module_name] = module = ModuleType(module_name)
+    module.__dict__.update({'WeatherService': WeatherService})
+
+
 def find_filter_examples() -> Iterable[CodeExample]:
     for ex in find_examples('docs', 'pydantic_ai_slim'):
         if ex.path.name != '_utils.py':
@@ -121,7 +149,7 @@ def test_docs_examples(
     ruff_ignore: list[str] = ['D']
     # `from bank_database import DatabaseConn` wrongly sorted in imports
     # waiting for https://github.com/pydantic/pytest-examples/issues/43
-    if 'from bank_database import DatabaseConn' in example.source:
+    if 'import DatabaseConn' in example.source:
         ruff_ignore.append('I001')
 
     line_length = 88
@@ -133,8 +161,10 @@ def test_docs_examples(
     eval_example.print_callback = print_callback
 
     call_name = 'main'
-    if 'def test_application_code' in example.source:
-        call_name = 'test_application_code'
+    for name in ('test_application_code', 'test_forecast_success'):
+        if f'def {name}' in example.source:
+            call_name = name
+            break
 
     if eval_example.update_examples:  # pragma: no cover
         eval_example.format(example)
@@ -143,6 +173,7 @@ def test_docs_examples(
         eval_example.lint(example)
         module_dict = eval_example.run_print_check(example, call=call_name)
 
+    debug(prefix_settings)
     if title := prefix_settings.get('title'):
         if title.endswith('.py'):
             module_name = title[:-3]

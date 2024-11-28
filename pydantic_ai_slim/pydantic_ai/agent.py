@@ -105,7 +105,7 @@ class Agent(Generic[AgentDeps, ResultData]):
                 it's evaluated to create a [`Model`][pydantic_ai.models.Model] instance immediately,
                 which checks for the necessary environment variables. Set this to `false`
                 to defer the evaluation until the first run. Useful if you want to
-                [override the model][pydantic_ai.Agent.override_model] for testing.
+                [override the model][pydantic_ai.Agent.override] for testing.
         """
         if model is None or defer_model_check:
             self.model = model
@@ -296,32 +296,41 @@ class Agent(Generic[AgentDeps, ResultData]):
                                 cost += model_response.cost()
 
     @contextmanager
-    def override_deps(self, overriding_deps: AgentDeps) -> Iterator[None]:
-        """Context manager to temporarily override agent dependencies, this is particularly useful when testing.
+    def override(
+        self,
+        *,
+        deps: AgentDeps | _utils.Unset = _utils.UNSET,
+        model: models.Model | models.KnownModelName | _utils.Unset = _utils.UNSET,
+    ) -> Iterator[None]:
+        """Context manager to temporarily override agent dependencies and model.
+
+        This is particularly useful when testing.
 
         Args:
-            overriding_deps: The dependencies to use instead of the dependencies passed to the agent run.
+            deps: The dependencies to use instead of the dependencies passed to the agent run.
+            model: The model to use instead of the model passed to the agent run.
         """
-        override_deps_before = self._override_deps
-        self._override_deps = _utils.Some(overriding_deps)
+        if _utils.is_set(deps):
+            override_deps_before = self._override_deps
+            self._override_deps = _utils.Some(deps)
+        else:
+            override_deps_before = _utils.UNSET
+
+        # noinspection PyTypeChecker
+        if _utils.is_set(model):
+            override_model_before = self._override_model
+            # noinspection PyTypeChecker
+            self._override_model = _utils.Some(models.infer_model(model))  # pyright: ignore[reportArgumentType]
+        else:
+            override_model_before = _utils.UNSET
+
         try:
             yield
         finally:
-            self._override_deps = override_deps_before
-
-    @contextmanager
-    def override_model(self, overriding_model: models.Model | models.KnownModelName) -> Iterator[None]:
-        """Context manager to temporarily override the model used by the agent.
-
-        Args:
-            overriding_model: The model to use instead of the model passed to the agent run.
-        """
-        override_model_before = self._override_model
-        self._override_model = _utils.Some(models.infer_model(overriding_model))
-        try:
-            yield
-        finally:
-            self._override_model = override_model_before
+            if _utils.is_set(override_deps_before):
+                self._override_deps = override_deps_before
+            if _utils.is_set(override_model_before):
+                self._override_model = override_model_before
 
     @overload
     def system_prompt(
@@ -575,11 +584,11 @@ class Agent(Generic[AgentDeps, ResultData]):
         """
         model_: models.Model
         if some_model := self._override_model:
-            # we don't want `override_model()` to cover up errors from the model not being defined, hence this check
+            # we don't want `override()` to cover up errors from the model not being defined, hence this check
             if model is None and self.model is None:
                 raise exceptions.UserError(
                     '`model` must be set either when creating the agent or when calling it. '
-                    '(Even when `override_model()` is customizing the model that will actually be called)'
+                    '(Even when `override(model=...)` is customizing the model that will actually be called)'
                 )
             model_ = some_model.value
             custom_model = None
@@ -767,7 +776,7 @@ class Agent(Generic[AgentDeps, ResultData]):
     def _get_deps(self, deps: AgentDeps) -> AgentDeps:
         """Get deps for a run.
 
-        If we've overridden deps via `_override_deps_stack`, use that, otherwise use the deps passed to the call.
+        If we've overridden deps via `_override_deps`, use that, otherwise use the deps passed to the call.
 
         We could do runtime type checking of deps against `self._deps_type`, but that's a slippery slope.
         """

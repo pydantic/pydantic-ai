@@ -1,5 +1,3 @@
-"""Utilities for testing apps built with PydanticAI."""
-
 from __future__ import annotations as _annotations
 
 import re
@@ -45,10 +43,10 @@ UnSet = UnSetType()
 class TestModel(Model):
     """A model specifically for testing purposes.
 
-    This will (by default) call all tools in the agent model, then return a tool response if possible,
+    This will (by default) call all tools in the agent, then return a tool response if possible,
     otherwise a plain response.
 
-    How useful this function will be is unknown, it may be useless, it may require significant changes to be useful.
+    How useful this model is will vary significantly.
 
     Apart from `__init__` derived by the `dataclass` decorator, all methods are private or match those
     of the base class.
@@ -320,8 +318,12 @@ class _JsonSchemaTestData:
 
         if schema.get('maxLength') == 0:
             return ''
-        else:
-            return self._char()
+
+        if fmt := schema.get('format'):
+            if fmt == 'date':
+                return '2024-01-01'
+
+        return self._char()
 
     def _int_gen(self, schema: dict[str, Any]) -> int:
         """Generate an integer from a JSON Schema integer."""
