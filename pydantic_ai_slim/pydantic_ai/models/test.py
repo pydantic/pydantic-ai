@@ -31,14 +31,6 @@ from . import (
 )
 
 
-class UnSetType:
-    def __repr__(self):
-        return 'UnSet'
-
-
-UnSet = UnSetType()
-
-
 @dataclass
 class TestModel(Model):
     """A model specifically for testing purposes.
@@ -186,6 +178,8 @@ class TestAgentModel(AgentModel):
 
 @dataclass
 class TestStreamTextResponse(StreamTextResponse):
+    """A text response that streams test data."""
+
     _text: str
     _cost: Cost
     _iter: Iterator[str] = field(init=False)
@@ -217,6 +211,8 @@ class TestStreamTextResponse(StreamTextResponse):
 
 @dataclass
 class TestStreamStructuredResponse(StreamStructuredResponse):
+    """A structured response that streams test data."""
+
     _structured_response: ModelStructuredResponse
     _cost: Cost
     _iter: Iterator[None] = field(default_factory=lambda: iter([None]))

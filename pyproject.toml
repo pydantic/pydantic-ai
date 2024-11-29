@@ -88,12 +88,11 @@ flake8-quotes = { inline-quotes = "single", multiline-quotes = "double" }
 isort = { combine-as-imports = true, known-first-party = ["pydantic_ai"] }
 mccabe = { max-complexity = 15 }
 ignore = [
-    "D101", # ignore missing docstring in public class TODO remove
-    "D102", # ignore missing docstring in public method TODO remove
-    "D107", # ignore missing docstring in __init__ methods
     "D100", # ignore missing docstring in module
+    "D102", # ignore missing docstring in public method
     "D104", # ignore missing docstring in public package
     "D105", # ignore missing docstring in magic methods
+    "D107", # ignore missing docstring in __init__ methods
 ]
 
 [tool.ruff.lint.pydocstyle]
@@ -107,7 +106,7 @@ quote-style = "single"
 [tool.ruff.lint.per-file-ignores]
 "tests/**/*.py" = ["D"]
 "docs/**/*.py" = ["D"]
-"pydantic_ai_examples/**/*.py" = ["D103"]
+"pydantic_ai_examples/**/*.py" = ["D101", "D103"]
 
 [tool.pyright]
 typeCheckingMode = "strict"

@@ -139,12 +139,16 @@ class ModelTextResponse:
 
 @dataclass
 class ArgsJson:
+    """Tool arguments as a JSON string."""
+
     args_json: str
     """A JSON string of arguments."""
 
 
 @dataclass
 class ArgsDict:
+    """Tool arguments as a Python dictionary."""
+
     args_dict: dict[str, Any]
     """A python dictionary of arguments."""
 
