@@ -109,11 +109,15 @@ class GeminiModel(Model):
 
 
 class AuthProtocol(Protocol):
+    """Abstract definition for Gemini authentication."""
+
     async def headers(self) -> dict[str, str]: ...
 
 
 @dataclass
 class ApiKeyAuth:
+    """Authentication using an API key for the `X-Goog-Api-Key` header."""
+
     api_key: str
 
     async def headers(self) -> dict[str, str]:
