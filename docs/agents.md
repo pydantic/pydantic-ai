@@ -246,9 +246,7 @@ print(dice_result.all_messages())
     ),
     ModelStructuredResponse(
         calls=[
-            ToolCall(
-                tool_name='roll_die', args=ArgsObject(args_object={}), tool_id=None
-            )
+            ToolCall(tool_name='roll_die', args=ArgsDict(args_dict={}), tool_id=None)
         ],
         timestamp=datetime.datetime(...),
         role='model-structured-response',
@@ -263,9 +261,7 @@ print(dice_result.all_messages())
     ModelStructuredResponse(
         calls=[
             ToolCall(
-                tool_name='get_player_name',
-                args=ArgsObject(args_object={}),
-                tool_id=None,
+                tool_name='get_player_name', args=ArgsDict(args_dict={}), tool_id=None
             )
         ],
         timestamp=datetime.datetime(...),
@@ -485,7 +481,7 @@ except UnexpectedModelBehavior as e:
             calls=[
                 ToolCall(
                     tool_name='calc_volume',
-                    args=ArgsObject(args_object={'size': 6}),
+                    args=ArgsDict(args_dict={'size': 6}),
                     tool_id=None,
                 )
             ],
@@ -503,7 +499,7 @@ except UnexpectedModelBehavior as e:
             calls=[
                 ToolCall(
                     tool_name='calc_volume',
-                    args=ArgsObject(args_object={'size': 6}),
+                    args=ArgsDict(args_dict={'size': 6}),
                     tool_id=None,
                 )
             ],

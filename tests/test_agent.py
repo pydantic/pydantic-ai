@@ -8,8 +8,8 @@ from pydantic import BaseModel
 
 from pydantic_ai import Agent, CallContext, ModelRetry, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
+    ArgsDict,
     ArgsJson,
-    ArgsObject,
     Message,
     ModelAnyResponse,
     ModelStructuredResponse,
@@ -370,7 +370,7 @@ def test_run_with_history_new():
         [
             UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
             ModelStructuredResponse(
-                calls=[ToolCall(tool_name='ret_a', args=ArgsObject(args_object={'x': 'a'}))],
+                calls=[ToolCall(tool_name='ret_a', args=ArgsDict(args_dict={'x': 'a'}))],
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ToolReturn(tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc)),
@@ -387,7 +387,7 @@ def test_run_with_history_new():
                 SystemPrompt(content='Foobar'),
                 UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
                 ModelStructuredResponse(
-                    calls=[ToolCall(tool_name='ret_a', args=ArgsObject(args_object={'x': 'a'}))],
+                    calls=[ToolCall(tool_name='ret_a', args=ArgsDict(args_dict={'x': 'a'}))],
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 ToolReturn(tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc)),
@@ -395,7 +395,7 @@ def test_run_with_history_new():
                 # second call, notice no repeated system prompt
                 UserPrompt(content='Hello again', timestamp=IsNow(tz=timezone.utc)),
                 ModelStructuredResponse(
-                    calls=[ToolCall(tool_name='ret_a', args=ArgsObject(args_object={'x': 'a'}))],
+                    calls=[ToolCall(tool_name='ret_a', args=ArgsDict(args_dict={'x': 'a'}))],
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 ToolReturn(tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc)),
@@ -420,7 +420,7 @@ def test_run_with_history_new():
                 SystemPrompt(content='Foobar'),
                 UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
                 ModelStructuredResponse(
-                    calls=[ToolCall(tool_name='ret_a', args=ArgsObject(args_object={'x': 'a'}))],
+                    calls=[ToolCall(tool_name='ret_a', args=ArgsDict(args_dict={'x': 'a'}))],
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 ToolReturn(tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc)),
@@ -428,7 +428,7 @@ def test_run_with_history_new():
                 # second call, notice no repeated system prompt
                 UserPrompt(content='Hello again', timestamp=IsNow(tz=timezone.utc)),
                 ModelStructuredResponse(
-                    calls=[ToolCall(tool_name='ret_a', args=ArgsObject(args_object={'x': 'a'}))],
+                    calls=[ToolCall(tool_name='ret_a', args=ArgsDict(args_dict={'x': 'a'}))],
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 ToolReturn(tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc)),
@@ -507,7 +507,7 @@ def test_override_model(env: TestEnv):
     env.set('GEMINI_API_KEY', 'foobar')
     agent = Agent('gemini-1.5-flash', result_type=tuple[int, str], defer_model_check=True)
 
-    with agent.override_model('test'):
+    with agent.override(model='test'):
         result = agent.run_sync('Hello')
         assert result.data == snapshot((0, 'a'))
 
@@ -515,6 +515,6 @@ def test_override_model(env: TestEnv):
 def test_override_model_no_model():
     agent = Agent()
 
-    with pytest.raises(UserError, match=r'`model` must be set either.+Even when `override_model\(\)` is customizing'):
-        with agent.override_model('test'):
+    with pytest.raises(UserError, match=r'`model` must be set either.+Even when `override\(model=...\)` is customiz'):
+        with agent.override(model='test'):
             agent.run_sync('Hello')

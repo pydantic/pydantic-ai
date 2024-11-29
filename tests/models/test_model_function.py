@@ -327,11 +327,11 @@ def test_call_all():
             UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
             ModelStructuredResponse(
                 calls=[
-                    ToolCall.from_object('foo', {'x': 0}),
-                    ToolCall.from_object('bar', {'x': 0}),
-                    ToolCall.from_object('baz', {'x': 0}),
-                    ToolCall.from_object('qux', {'x': 0}),
-                    ToolCall.from_object('quz', {'x': 'a'}),
+                    ToolCall.from_dict('foo', {'x': 0}),
+                    ToolCall.from_dict('bar', {'x': 0}),
+                    ToolCall.from_dict('baz', {'x': 0}),
+                    ToolCall.from_dict('qux', {'x': 0}),
+                    ToolCall.from_dict('quz', {'x': 'a'}),
                 ],
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -376,7 +376,7 @@ def test_retry_result_type():
         nonlocal call_count
         call_count += 1
 
-        return ModelStructuredResponse(calls=[ToolCall.from_object('final_result', {'x': call_count})])
+        return ModelStructuredResponse(calls=[ToolCall.from_dict('final_result', {'x': call_count})])
 
     class Foo(BaseModel):
         x: int

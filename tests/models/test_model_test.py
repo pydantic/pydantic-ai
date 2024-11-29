@@ -94,11 +94,11 @@ def test_tool_retry():
         [
             UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
             ModelStructuredResponse(
-                calls=[ToolCall.from_object('my_ret', {'x': 0})],
+                calls=[ToolCall.from_dict('my_ret', {'x': 0})],
                 timestamp=IsNow(tz=timezone.utc),
             ),
             RetryPrompt(tool_name='my_ret', content='First call failed', timestamp=IsNow(tz=timezone.utc)),
-            ModelStructuredResponse(calls=[ToolCall.from_object('my_ret', {'x': 0})], timestamp=IsNow(tz=timezone.utc)),
+            ModelStructuredResponse(calls=[ToolCall.from_dict('my_ret', {'x': 0})], timestamp=IsNow(tz=timezone.utc)),
             ToolReturn(tool_name='my_ret', content='1', timestamp=IsNow(tz=timezone.utc)),
             ModelTextResponse(content='{"my_ret":"1"}', timestamp=IsNow(tz=timezone.utc)),
         ]

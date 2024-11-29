@@ -32,7 +32,7 @@ logfire.configure(send_to_logfire='if-token-present')
 logfire.instrument_asyncpg()
 
 DB_SCHEMA = """
-CREATE TABLE IF NOT EXISTS records (
+CREATE TABLE records (
     created_at timestamptz,
     start_timestamp timestamptz,
     end_timestamp timestamptz,
@@ -73,7 +73,7 @@ class InvalidRequest(BaseModel):
 
 
 Response: TypeAlias = Union[Success, InvalidRequest]
-agent: Agent[Deps, Response] = Agent(
+agent = Agent(
     'gemini-1.5-flash',
     # Type ignore while we wait for PEP-0747, nonetheless unions will work fine everywhere else
     result_type=Response,  # type: ignore
@@ -86,6 +86,8 @@ async def system_prompt() -> str:
     return f"""\
 Given the following PostgreSQL table of records, your job is to
 write a SQL query that suits the user's request.
+
+Database schema:
 
 {DB_SCHEMA}
 

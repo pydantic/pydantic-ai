@@ -98,7 +98,7 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary]) -> None:
             'logfire.span_type': 'span',
             'response': IsJson(
                 {
-                    'calls': [{'tool_name': 'my_ret', 'args': {'args_object': {'x': 0}}, 'tool_id': None}],
+                    'calls': [{'tool_name': 'my_ret', 'args': {'args_dict': {'x': 0}}, 'tool_id': None}],
                     'timestamp': IsStr() & IsNow(iso_string=True, tz=timezone.utc),
                     'role': 'model-structured-response',
                 }
@@ -124,7 +124,7 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary]) -> None:
                                         'properties': {
                                             'args': {
                                                 'type': 'object',
-                                                'title': 'ArgsObject',
+                                                'title': 'ArgsDict',
                                                 'x-python-datatype': 'dataclass',
                                             }
                                         },

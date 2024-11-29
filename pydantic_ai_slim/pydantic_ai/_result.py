@@ -191,7 +191,7 @@ class ResultTool(Generic[ResultData]):
                 )
             else:
                 result = self.type_adapter.validate_python(
-                    tool_call.args.args_object, experimental_allow_partial=pyd_allow_partial
+                    tool_call.args.args_dict, experimental_allow_partial=pyd_allow_partial
                 )
         except ValidationError as e:
             if wrap_validation_errors:

@@ -1,5 +1,3 @@
-"""Utilities for testing apps built with PydanticAI."""
-
 from __future__ import annotations as _annotations
 
 import re
@@ -7,7 +5,7 @@ import string
 from collections.abc import AsyncIterator, Iterable, Iterator, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from typing import Any, Literal
 
 import pydantic_core
@@ -45,10 +43,10 @@ UnSet = UnSetType()
 class TestModel(Model):
     """A model specifically for testing purposes.
 
-    This will (by default) call all tools in the agent model, then return a tool response if possible,
+    This will (by default) call all tools in the agent, then return a tool response if possible,
     otherwise a plain response.
 
-    How useful this function will be is unknown, it may be useless, it may require significant changes to be useful.
+    How useful this model is will vary significantly.
 
     Apart from `__init__` derived by the `dataclass` decorator, all methods are private or match those
     of the base class.
@@ -142,7 +140,7 @@ class TestAgentModel(AgentModel):
 
     def _request(self, messages: list[Message]) -> ModelAnyResponse:
         if self.step == 0 and self.tool_calls:
-            calls = [ToolCall.from_object(name, self.gen_tool_args(args)) for name, args in self.tool_calls]
+            calls = [ToolCall.from_dict(name, self.gen_tool_args(args)) for name, args in self.tool_calls]
             self.step += 1
             self.last_message_count = len(messages)
             return ModelStructuredResponse(calls=calls)
@@ -152,7 +150,7 @@ class TestAgentModel(AgentModel):
         new_retry_names = {m.tool_name for m in new_messages if isinstance(m, RetryPrompt)}
         if new_retry_names:
             calls = [
-                ToolCall.from_object(name, self.gen_tool_args(args))
+                ToolCall.from_dict(name, self.gen_tool_args(args))
                 for name, args in self.tool_calls
                 if name in new_retry_names
             ]
@@ -179,11 +177,11 @@ class TestAgentModel(AgentModel):
                 result_tool = self.result_tools[self.seed % len(self.result_tools)]
                 if custom_result_args is not None:
                     self.step += 1
-                    return ModelStructuredResponse(calls=[ToolCall.from_object(result_tool.name, custom_result_args)])
+                    return ModelStructuredResponse(calls=[ToolCall.from_dict(result_tool.name, custom_result_args)])
                 else:
                     response_args = self.gen_tool_args(result_tool)
                     self.step += 1
-                    return ModelStructuredResponse(calls=[ToolCall.from_object(result_tool.name, response_args)])
+                    return ModelStructuredResponse(calls=[ToolCall.from_dict(result_tool.name, response_args)])
 
 
 @dataclass
@@ -320,8 +318,12 @@ class _JsonSchemaTestData:
 
         if schema.get('maxLength') == 0:
             return ''
-        else:
-            return self._char()
+
+        if fmt := schema.get('format'):
+            if fmt == 'date':
+                return (date(2024, 1, 1) + timedelta(days=self.seed)).isoformat()
+
+        return self._char()
 
     def _int_gen(self, schema: dict[str, Any]) -> int:
         """Generate an integer from a JSON Schema integer."""

@@ -14,7 +14,7 @@ from typing_extensions import Literal, TypeAlias
 
 from pydantic_ai import Agent, ModelRetry, UnexpectedModelBehavior, UserError, _utils
 from pydantic_ai.messages import (
-    ArgsObject,
+    ArgsDict,
     ModelStructuredResponse,
     ModelTextResponse,
     RetryPrompt,
@@ -422,7 +422,7 @@ async def test_text_success(get_gemini_client: GetGeminiClient):
 async def test_request_structured_response(get_gemini_client: GetGeminiClient):
     response = gemini_response(
         _content_function_call(
-            ModelStructuredResponse(calls=[ToolCall.from_object('final_result', {'response': [1, 2, 123]})])
+            ModelStructuredResponse(calls=[ToolCall.from_dict('final_result', {'response': [1, 2, 123]})])
         )
     )
     gemini_client = get_gemini_client(response)
@@ -438,7 +438,7 @@ async def test_request_structured_response(get_gemini_client: GetGeminiClient):
                 calls=[
                     ToolCall(
                         tool_name='final_result',
-                        args=ArgsObject(args_object={'response': [1, 2, 123]}),
+                        args=ArgsDict(args_dict={'response': [1, 2, 123]}),
                     )
                 ],
                 timestamp=IsNow(tz=timezone.utc),
@@ -451,12 +451,12 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
     responses = [
         gemini_response(
             _content_function_call(
-                ModelStructuredResponse(calls=[ToolCall.from_object('get_location', {'loc_name': 'San Fransisco'})])
+                ModelStructuredResponse(calls=[ToolCall.from_dict('get_location', {'loc_name': 'San Fransisco'})])
             )
         ),
         gemini_response(
             _content_function_call(
-                ModelStructuredResponse(calls=[ToolCall.from_object('get_location', {'loc_name': 'London'})])
+                ModelStructuredResponse(calls=[ToolCall.from_dict('get_location', {'loc_name': 'London'})])
             )
         ),
         gemini_response(_content_model_text('final response')),
@@ -482,7 +482,7 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
                 calls=[
                     ToolCall(
                         tool_name='get_location',
-                        args=ArgsObject(args_object={'loc_name': 'San Fransisco'}),
+                        args=ArgsDict(args_dict={'loc_name': 'San Fransisco'}),
                     )
                 ],
                 timestamp=IsNow(tz=timezone.utc),
@@ -494,7 +494,7 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
                 calls=[
                     ToolCall(
                         tool_name='get_location',
-                        args=ArgsObject(args_object={'loc_name': 'London'}),
+                        args=ArgsDict(args_dict={'loc_name': 'London'}),
                     )
                 ],
                 timestamp=IsNow(tz=timezone.utc),
@@ -531,7 +531,7 @@ async def test_heterogeneous_responses(get_gemini_client: GetGeminiClient):
                 _function_call_part_from_call(
                     ToolCall(
                         tool_name='get_location',
-                        args=ArgsObject(args_object={'loc_name': 'San Fransisco'}),
+                        args=ArgsDict(args_dict={'loc_name': 'San Fransisco'}),
                     )
                 ),
             ],
@@ -587,7 +587,7 @@ async def test_stream_structured(get_gemini_client: GetGeminiClient):
     responses = [
         gemini_response(
             _content_function_call(
-                ModelStructuredResponse(calls=[ToolCall.from_object('final_result', {'response': [1, 2]})])
+                ModelStructuredResponse(calls=[ToolCall.from_dict('final_result', {'response': [1, 2]})])
             ),
         ),
     ]
@@ -606,10 +606,10 @@ async def test_stream_structured(get_gemini_client: GetGeminiClient):
 async def test_stream_structured_tool_calls(get_gemini_client: GetGeminiClient):
     first_responses = [
         gemini_response(
-            _content_function_call(ModelStructuredResponse(calls=[ToolCall.from_object('foo', {'x': 'a'})])),
+            _content_function_call(ModelStructuredResponse(calls=[ToolCall.from_dict('foo', {'x': 'a'})])),
         ),
         gemini_response(
-            _content_function_call(ModelStructuredResponse(calls=[ToolCall.from_object('bar', {'y': 'b'})])),
+            _content_function_call(ModelStructuredResponse(calls=[ToolCall.from_dict('bar', {'y': 'b'})])),
         ),
     ]
     d1 = _gemini_streamed_response_ta.dump_json(first_responses, by_alias=True)
@@ -618,7 +618,7 @@ async def test_stream_structured_tool_calls(get_gemini_client: GetGeminiClient):
     second_responses = [
         gemini_response(
             _content_function_call(
-                ModelStructuredResponse(calls=[ToolCall.from_object('final_result', {'response': [1, 2]})])
+                ModelStructuredResponse(calls=[ToolCall.from_dict('final_result', {'response': [1, 2]})])
             ),
         ),
     ]
@@ -649,8 +649,8 @@ async def test_stream_structured_tool_calls(get_gemini_client: GetGeminiClient):
             UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
             ModelStructuredResponse(
                 calls=[
-                    ToolCall(tool_name='foo', args=ArgsObject(args_object={'x': 'a'})),
-                    ToolCall(tool_name='bar', args=ArgsObject(args_object={'y': 'b'})),
+                    ToolCall(tool_name='foo', args=ArgsDict(args_dict={'x': 'a'})),
+                    ToolCall(tool_name='bar', args=ArgsDict(args_dict={'y': 'b'})),
                 ],
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -660,7 +660,7 @@ async def test_stream_structured_tool_calls(get_gemini_client: GetGeminiClient):
                 calls=[
                     ToolCall(
                         tool_name='final_result',
-                        args=ArgsObject(args_object={'response': [1, 2]}),
+                        args=ArgsDict(args_dict={'response': [1, 2]}),
                     )
                 ],
                 timestamp=IsNow(tz=timezone.utc),
@@ -681,7 +681,7 @@ async def test_stream_text_heterogeneous(get_gemini_client: GetGeminiClient):
                     _function_call_part_from_call(
                         ToolCall(
                             tool_name='get_location',
-                            args=ArgsObject(args_object={'loc_name': 'San Fransisco'}),
+                            args=ArgsDict(args_dict={'loc_name': 'San Fransisco'}),
                         )
                     ),
                 ],

@@ -9,8 +9,8 @@ from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
+    ArgsDict,
     ArgsJson,
-    ArgsObject,
     Message,
     ModelStructuredResponse,
     ModelTextResponse,
@@ -44,7 +44,7 @@ async def test_streamed_text_response():
             [
                 UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
                 ModelStructuredResponse(
-                    calls=[ToolCall(tool_name='ret_a', args=ArgsObject(args_object={'x': 'a'}))],
+                    calls=[ToolCall(tool_name='ret_a', args=ArgsDict(args_dict={'x': 'a'}))],
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 ToolReturn(tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc)),
@@ -59,7 +59,7 @@ async def test_streamed_text_response():
             [
                 UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
                 ModelStructuredResponse(
-                    calls=[ToolCall(tool_name='ret_a', args=ArgsObject(args_object={'x': 'a'}))],
+                    calls=[ToolCall(tool_name='ret_a', args=ArgsDict(args_dict={'x': 'a'}))],
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 ToolReturn(tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc)),

@@ -250,7 +250,7 @@ def _estimate_cost(messages: Iterable[Message]) -> result.Cost:
                 if isinstance(call.args, ArgsJson):
                     args_str = call.args.args_json
                 else:
-                    args_str = pydantic_core.to_json(call.args.args_object).decode()
+                    args_str = pydantic_core.to_json(call.args.args_dict).decode()
 
                 response_tokens += 1 + _string_cost(args_str)
         else:

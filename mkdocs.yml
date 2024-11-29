@@ -155,6 +155,7 @@ plugins:
           import:
             - url: https://docs.python.org/3/objects.inv
             - url: https://docs.pydantic.dev/latest/objects.inv
+            - url: https://dirty-equals.helpmanual.io/latest/objects.inv
             - url: https://fastapi.tiangolo.com/objects.inv
             - url: https://typing-extensions.readthedocs.io/en/latest/objects.inv
             - url: https://rich.readthedocs.io/en/stable/objects.inv

@@ -12,7 +12,7 @@ from typing import Any, Callable, Generic, TypeVar, Union, cast, overload
 
 from pydantic import BaseModel
 from pydantic.json_schema import JsonSchemaValue
-from typing_extensions import ParamSpec, TypeAlias, is_typeddict
+from typing_extensions import ParamSpec, TypeAlias, TypeGuard, is_typeddict
 
 _P = ParamSpec('_P')
 _R = TypeVar('_R')
@@ -66,10 +66,6 @@ Option: TypeAlias = Union[Some[T], None]
 """Analogous to Rust's `Option` type, usage: `Option[Thing]` is equivalent to `Some[Thing] | None`."""
 
 
-Left = TypeVar('Left')
-Right = TypeVar('Right')
-
-
 class Unset:
     """A singleton to represent an unset value."""
 
@@ -77,6 +73,14 @@ class Unset:
 
 
 UNSET = Unset()
+
+
+def is_set(t_or_unset: T | Unset) -> TypeGuard[T]:
+    return t_or_unset is not UNSET
+
+
+Left = TypeVar('Left')
+Right = TypeVar('Right')
 
 
 class Either(Generic[Left, Right]):
