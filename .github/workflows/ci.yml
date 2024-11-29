@@ -26,7 +26,7 @@ jobs:
           enable-cache: true
 
       - name: Install dependencies
-        run: uv sync --python 3.12 --frozen --all-extras --no-dev --group lint
+        run: uv sync --python 3.12 --frozen --all-extras --all-packages --group lint
 
       - uses: pre-commit/action@v3.0.0
         with:
@@ -87,6 +87,7 @@ jobs:
           uv run
           --python 3.12
           --frozen
+          --package pydantic-ai-slim
           --extra openai
           --extra vertexai
           --extra groq
@@ -116,9 +117,15 @@ jobs:
           enable-cache: true
 
       - run: mkdir coverage
+
+      # run tests with just `pydantic-ai-slim` dependencies
+      - run: uv run --frozen --package pydantic-ai-slim coverage run -m pytest
+        env:
+          COVERAGE_FILE: coverage/.coverage.${{ runner.os }}-py${{ matrix.python-version }}-slim
+
       - run: uv run --frozen coverage run -m pytest
         env:
-          COVERAGE_FILE: coverage/.coverage.${{ runner.os }}-py${{ matrix.python-version }}
+          COVERAGE_FILE: coverage/.coverage.${{ runner.os }}-py${{ matrix.python-version }}-standard
 
       - run: uv run --frozen --all-extras coverage run -m pytest
         env:
@@ -149,6 +156,7 @@ jobs:
         with:
           enable-cache: true
 
+      - run: uv sync --frozen --package pydantic-ai-slim
       - run: uv run --frozen coverage combine coverage
 
       - run: uv run --frozen coverage html --show-contexts --title "PydanticAI coverage for ${{ github.sha }}"
