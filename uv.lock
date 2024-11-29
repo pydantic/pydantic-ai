@@ -1507,17 +1507,6 @@ examples = [
 ]
 
 [package.dev-dependencies]
-dev = [
-    { name = "anyio" },
-    { name = "coverage", extra = ["toml"] },
-    { name = "devtools" },
-    { name = "dirty-equals" },
-    { name = "inline-snapshot" },
-    { name = "pytest" },
-    { name = "pytest-examples" },
-    { name = "pytest-mock" },
-    { name = "pytest-pretty" },
-]
 docs = [
     { name = "mkdocs" },
     { name = "mkdocs-glightbox" },
@@ -1537,17 +1526,6 @@ requires-dist = [
 ]
 
 [package.metadata.requires-dev]
-dev = [
-    { name = "anyio", specifier = ">=4.5.0" },
-    { name = "coverage", extras = ["toml"], specifier = ">=7.6.2" },
-    { name = "devtools", specifier = ">=0.12.2" },
-    { name = "dirty-equals", specifier = ">=0.8.0" },
-    { name = "inline-snapshot", specifier = ">=0.14" },
-    { name = "pytest", specifier = ">=8.3.3" },
-    { name = "pytest-examples", specifier = ">=0.0.14" },
-    { name = "pytest-mock", specifier = ">=3.14.0" },
-    { name = "pytest-pretty", specifier = ">=1.2.0" },
-]
 docs = [
     { name = "mkdocs", specifier = ">=1.6.1" },
     { name = "mkdocs-glightbox", specifier = ">=0.4.0" },
