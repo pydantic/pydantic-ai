@@ -1,3 +1,5 @@
+from __future__ import annotations as _annotations
+
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any

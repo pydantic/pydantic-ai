@@ -147,6 +147,7 @@ To do this, we need to set up logfire, and add the following to our code:
 
 ```py title="bank_support_with_logfire.py"
 import logfire
+
 logfire.configure()  # (1)!
 logfire.instrument_asyncpg()  # (2)!
 ```
