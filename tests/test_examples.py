@@ -1,10 +1,13 @@
 from __future__ import annotations as _annotations
 
+import json
+import os
 import re
 import sys
 from collections.abc import AsyncIterator, Iterable
 from dataclasses import dataclass, field
 from datetime import date
+from pathlib import Path
 from types import ModuleType
 from typing import Any
 
@@ -51,8 +54,8 @@ def register_fake_db():
         users: FakeTable = field(default_factory=FakeTable)
         _forecasts: dict[int, str] = field(default_factory=dict)
 
-        async def execute(self, query: str) -> None:
-            pass
+        async def execute(self, query: str) -> list[dict[str, Any]]:
+            return [{'id': 123, 'name': 'John Doe'}]
 
         async def store_forecast(self, user_id: int, forecast: str) -> None:
             self._forecasts[user_id] = forecast
@@ -129,6 +132,7 @@ def test_docs_examples(
     mocker: MockerFixture,
     client_with_handler: ClientWithHandler,
     env: TestEnv,
+    tmp_path: Path,
 ):
     mocker.patch('pydantic_ai.agent.models.infer_model', side_effect=mock_infer_model)
     mocker.patch('pydantic_ai._utils.group_by_temporal', side_effect=mock_group_by_temporal)
@@ -145,6 +149,14 @@ def test_docs_examples(
     env.set('GROQ_API_KEY', 'testing')
 
     prefix_settings = example.prefix_settings()
+    opt_title = prefix_settings.get('title')
+    cwd = Path.cwd()
+
+    if opt_title == 'test_sql_app.py':
+        os.chdir(tmp_path)
+        examples = [{'request': f'sql prompt {i}', 'sql': f'SELECT {i}'} for i in range(15)]
+        with (tmp_path / 'examples.json').open('w') as f:
+            json.dump(examples, f)
 
     ruff_ignore: list[str] = ['D']
     # `from bank_database import DatabaseConn` wrongly sorted in imports
@@ -153,7 +165,7 @@ def test_docs_examples(
         ruff_ignore.append('I001')
 
     line_length = 88
-    if prefix_settings.get('title') in ('streamed_hello_world.py', 'streamed_user_profile.py'):
+    if opt_title in ('streamed_hello_world.py', 'streamed_user_profile.py'):
         line_length = 120
 
     eval_example.set_config(ruff_ignore=ruff_ignore, target_version='py39', line_length=line_length)
@@ -173,8 +185,8 @@ def test_docs_examples(
         eval_example.lint(example)
         module_dict = eval_example.run_print_check(example, call=call_name)
 
-    debug(prefix_settings)
-    if title := prefix_settings.get('title'):
+    os.chdir(cwd)
+    if title := opt_title:
         if title.endswith('.py'):
             module_name = title[:-3]
             sys.modules[module_name] = module = ModuleType(module_name)
@@ -274,6 +286,9 @@ async def model_logic(messages: list[Message], info: AgentInfo) -> ModelAnyRespo
                 return ModelTextResponse(content=response)
             else:
                 return ModelStructuredResponse(calls=[response])
+
+        if re.fullmatch(r'sql prompt \d+', m.content):
+            return ModelTextResponse(content='SELECT 1')
 
     elif m.role == 'tool-return' and m.tool_name == 'roulette_wheel':
         win = m.content == 'winner'
