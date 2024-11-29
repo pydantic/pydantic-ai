@@ -19,7 +19,7 @@ from . import (
     models,
     result,
 )
-from .dependencies import AgentDeps, CallContext, ToolContextFunc, ToolParams, ToolPlainFunc
+from .dependencies import AgentDeps, RunContext, ToolContextFunc, ToolParams, ToolPlainFunc
 from .result import ResultData
 
 __all__ = ('Agent',)
@@ -334,13 +334,13 @@ class Agent(Generic[AgentDeps, ResultData]):
 
     @overload
     def system_prompt(
-        self, func: Callable[[CallContext[AgentDeps]], str], /
-    ) -> Callable[[CallContext[AgentDeps]], str]: ...
+        self, func: Callable[[RunContext[AgentDeps]], str], /
+    ) -> Callable[[RunContext[AgentDeps]], str]: ...
 
     @overload
     def system_prompt(
-        self, func: Callable[[CallContext[AgentDeps]], Awaitable[str]], /
-    ) -> Callable[[CallContext[AgentDeps]], Awaitable[str]]: ...
+        self, func: Callable[[RunContext[AgentDeps]], Awaitable[str]], /
+    ) -> Callable[[RunContext[AgentDeps]], Awaitable[str]]: ...
 
     @overload
     def system_prompt(self, func: Callable[[], str], /) -> Callable[[], str]: ...
@@ -353,7 +353,7 @@ class Agent(Generic[AgentDeps, ResultData]):
     ) -> _system_prompt.SystemPromptFunc[AgentDeps]:
         """Decorator to register a system prompt function.
 
-        Optionally takes [`CallContext`][pydantic_ai.dependencies.CallContext] as it's only argument.
+        Optionally takes [`RunContext`][pydantic_ai.dependencies.RunContext] as it's only argument.
         Can decorate a sync or async functions.
 
         Overloads for every possible signature of `system_prompt` are included so the decorator doesn't obscure
@@ -361,7 +361,7 @@ class Agent(Generic[AgentDeps, ResultData]):
 
         Example:
         ```py
-        from pydantic_ai import Agent, CallContext
+        from pydantic_ai import Agent, RunContext
 
         agent = Agent('test', deps_type=str)
 
@@ -370,7 +370,7 @@ class Agent(Generic[AgentDeps, ResultData]):
             return 'foobar'
 
         @agent.system_prompt
-        async def async_system_prompt(ctx: CallContext[str]) -> str:
+        async def async_system_prompt(ctx: RunContext[str]) -> str:
             return f'{ctx.deps} is the best'
 
         result = agent.run_sync('foobar', deps='spam')
@@ -383,13 +383,13 @@ class Agent(Generic[AgentDeps, ResultData]):
 
     @overload
     def result_validator(
-        self, func: Callable[[CallContext[AgentDeps], ResultData], ResultData], /
-    ) -> Callable[[CallContext[AgentDeps], ResultData], ResultData]: ...
+        self, func: Callable[[RunContext[AgentDeps], ResultData], ResultData], /
+    ) -> Callable[[RunContext[AgentDeps], ResultData], ResultData]: ...
 
     @overload
     def result_validator(
-        self, func: Callable[[CallContext[AgentDeps], ResultData], Awaitable[ResultData]], /
-    ) -> Callable[[CallContext[AgentDeps], ResultData], Awaitable[ResultData]]: ...
+        self, func: Callable[[RunContext[AgentDeps], ResultData], Awaitable[ResultData]], /
+    ) -> Callable[[RunContext[AgentDeps], ResultData], Awaitable[ResultData]]: ...
 
     @overload
     def result_validator(self, func: Callable[[ResultData], ResultData], /) -> Callable[[ResultData], ResultData]: ...
@@ -404,7 +404,7 @@ class Agent(Generic[AgentDeps, ResultData]):
     ) -> _result.ResultValidatorFunc[AgentDeps, ResultData]:
         """Decorator to register a result validator function.
 
-        Optionally takes [`CallContext`][pydantic_ai.dependencies.CallContext] as it's first argument.
+        Optionally takes [`RunContext`][pydantic_ai.dependencies.RunContext] as it's first argument.
         Can decorate a sync or async functions.
 
         Overloads for every possible signature of `result_validator` are included so the decorator doesn't obscure
@@ -412,7 +412,7 @@ class Agent(Generic[AgentDeps, ResultData]):
 
         Example:
         ```py
-        from pydantic_ai import Agent, CallContext, ModelRetry
+        from pydantic_ai import Agent, ModelRetry, RunContext
 
         agent = Agent('test', deps_type=str)
 
@@ -423,7 +423,7 @@ class Agent(Generic[AgentDeps, ResultData]):
             return data
 
         @agent.result_validator
-        async def result_validator_deps(ctx: CallContext[str], data: str) -> str:
+        async def result_validator_deps(ctx: RunContext[str], data: str) -> str:
             if ctx.deps in data:
                 raise ModelRetry('wrong response')
             return data
@@ -452,7 +452,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         retries: int | None = None,
     ) -> Any:
         """Decorator to register a tool function which takes
-        [`CallContext`][pydantic_ai.dependencies.CallContext] as its first argument.
+        [`RunContext`][pydantic_ai.dependencies.RunContext] as its first argument.
 
         Can decorate a sync or async functions.
 
@@ -464,16 +464,16 @@ class Agent(Generic[AgentDeps, ResultData]):
 
         Example:
         ```py
-        from pydantic_ai import Agent, CallContext
+        from pydantic_ai import Agent, RunContext
 
         agent = Agent('test', deps_type=int)
 
         @agent.tool
-        def foobar(ctx: CallContext[int], x: int) -> int:
+        def foobar(ctx: RunContext[int], x: int) -> int:
             return ctx.deps + x
 
         @agent.tool(retries=2)
-        async def spam(ctx: CallContext[str], y: float) -> float:
+        async def spam(ctx: RunContext[str], y: float) -> float:
             return ctx.deps + y
 
         result = agent.run_sync('foobar', deps=1)
@@ -510,7 +510,7 @@ class Agent(Generic[AgentDeps, ResultData]):
     ) -> Callable[[ToolPlainFunc[ToolParams]], ToolPlainFunc[ToolParams]]: ...
 
     def tool_plain(self, func: ToolPlainFunc[ToolParams] | None = None, /, *, retries: int | None = None) -> Any:
-        """Decorator to register a tool function which DOES NOT take `CallContext` as an argument.
+        """Decorator to register a tool function which DOES NOT take `RunContext` as an argument.
 
         Can decorate a sync or async functions.
 
@@ -522,16 +522,16 @@ class Agent(Generic[AgentDeps, ResultData]):
 
         Example:
         ```py
-        from pydantic_ai import Agent, CallContext
+        from pydantic_ai import Agent, RunContext
 
         agent = Agent('test')
 
         @agent.tool
-        def foobar(ctx: CallContext[int]) -> int:
+        def foobar(ctx: RunContext[int]) -> int:
             return 123
 
         @agent.tool(retries=2)
-        async def spam(ctx: CallContext[str]) -> float:
+        async def spam(ctx: RunContext[str]) -> float:
             return 3.14
 
         result = agent.run_sync('foobar', deps=1)

@@ -25,7 +25,7 @@ from devtools import debug
 from pydantic import BaseModel, Field
 from typing_extensions import TypeAlias
 
-from pydantic_ai import Agent, CallContext, ModelRetry
+from pydantic_ai import Agent, ModelRetry, RunContext
 
 # 'if-token-present' means nothing will be sent (and the example will work) if you don't have logfire configured
 logfire.configure(send_to_logfire='if-token-present')
@@ -109,7 +109,7 @@ Example
 
 
 @agent.result_validator
-async def validate_result(ctx: CallContext[Deps], result: Response) -> Response:
+async def validate_result(ctx: RunContext[Deps], result: Response) -> Response:
     if isinstance(result, InvalidRequest):
         return result
 

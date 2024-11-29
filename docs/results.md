@@ -114,7 +114,7 @@ from typing import Union
 from fake_database import DatabaseConn, QueryError
 from pydantic import BaseModel
 
-from pydantic_ai import Agent, CallContext, ModelRetry
+from pydantic_ai import Agent, RunContext, ModelRetry
 
 
 class Success(BaseModel):
@@ -135,7 +135,7 @@ agent: Agent[DatabaseConn, Response] = Agent(
 
 
 @agent.result_validator
-async def validate_result(ctx: CallContext[DatabaseConn], result: Response) -> Response:
+async def validate_result(ctx: RunContext[DatabaseConn], result: Response) -> Response:
     if isinstance(result, InvalidRequest):
         return result
     try:

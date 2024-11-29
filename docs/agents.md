@@ -18,7 +18,7 @@ In typing terms, agents are generic in their dependency and result types, e.g., 
 Here's a toy example of an agent that simulates a roulette wheel:
 
 ```py title="roulette_wheel.py"
-from pydantic_ai import Agent, CallContext
+from pydantic_ai import Agent, RunContext
 
 roulette_agent = Agent(  # (1)!
     'openai:gpt-4o',
@@ -32,7 +32,7 @@ roulette_agent = Agent(  # (1)!
 
 
 @roulette_agent.tool
-async def roulette_wheel(ctx: CallContext[int], square: int) -> str:  # (2)!
+async def roulette_wheel(ctx: RunContext[int], square: int) -> str:  # (2)!
     """check if the square is a winner"""
     return 'winner' if square == ctx.deps else 'loser'
 
@@ -49,7 +49,7 @@ print(result.data)
 ```
 
 1. Create an agent, which expects an integer dependency and returns a boolean result. This agent will have type `#!python Agent[int, bool]`.
-2. Define a tool that checks if the square is a winner. Here [`CallContext`][pydantic_ai.dependencies.CallContext] is parameterized with the dependency type `int`; if you got the dependency type wrong you'd get a typing error.
+2. Define a tool that checks if the square is a winner. Here [`RunContext`][pydantic_ai.dependencies.RunContext] is parameterized with the dependency type `int`; if you got the dependency type wrong you'd get a typing error.
 3. In reality, you might want to use a random number here e.g. `random.randint(0, 36)`.
 4. `result.data` will be a boolean indicating if the square is a winner. Pydantic performs the result validation, it'll be typed as a `bool` since its type is derived from the `result_type` generic parameter of the agent.
 
@@ -135,7 +135,7 @@ Here's an example using both types of system prompts:
 ```py title="system_prompts.py"
 from datetime import date
 
-from pydantic_ai import Agent, CallContext
+from pydantic_ai import Agent, RunContext
 
 agent = Agent(
     'openai:gpt-4o',
@@ -145,7 +145,7 @@ agent = Agent(
 
 
 @agent.system_prompt  # (3)!
-def add_the_users_name(ctx: CallContext[str]) -> str:
+def add_the_users_name(ctx: RunContext[str]) -> str:
     return f"The user's named is {ctx.deps}."
 
 
@@ -161,8 +161,8 @@ print(result.data)
 
 1. The agent expects a string dependency.
 2. Static system prompt defined at agent creation time.
-3. Dynamic system prompt defined via a decorator with [`CallContext`][pydantic_ai.dependencies.CallContext], this is called just after `run_sync`, not when the agent is created, so can benefit from runtime information like the dependencies used on that run.
-4. Another dynamic system prompt, system prompts don't have to have the `CallContext` parameter.
+3. Dynamic system prompt defined via a decorator with [`RunContext`][pydantic_ai.dependencies.RunContext], this is called just after `run_sync`, not when the agent is created, so can benefit from runtime information like the dependencies used on that run.
+4. Another dynamic system prompt, system prompts don't have to have the `RunContext` parameter.
 
 _(This example is complete, it can be run "as is")_
 
@@ -179,8 +179,8 @@ They're useful when it is impractical or impossible to put all the context an ag
 
 There are two different decorator functions to register tools:
 
-1. [`@agent.tool`][pydantic_ai.Agent.tool] — for tools that need access to the agent [context][pydantic_ai.dependencies.CallContext]
-2. [`@agent.tool_plain`][pydantic_ai.Agent.tool_plain] — for tools that do not need access to the agent [context][pydantic_ai.dependencies.CallContext]
+1. [`@agent.tool`][pydantic_ai.Agent.tool] — for tools that need access to the agent [context][pydantic_ai.dependencies.RunContext]
+2. [`@agent.tool_plain`][pydantic_ai.Agent.tool_plain] — for tools that do not need access to the agent [context][pydantic_ai.dependencies.RunContext]
 
 `@agent.tool` is the default since in the majority of cases tools will need access to the agent context.
 
@@ -189,7 +189,7 @@ Here's an example using both:
 ```py title="dice_game.py"
 import random
 
-from pydantic_ai import Agent, CallContext
+from pydantic_ai import Agent, RunContext
 
 agent = Agent(
     'gemini-1.5-flash',  # (1)!
@@ -209,7 +209,7 @@ def roll_die() -> str:
 
 
 @agent.tool  # (4)!
-def get_player_name(ctx: CallContext[str]) -> str:
+def get_player_name(ctx: RunContext[str]) -> str:
     """Get the player's name."""
     return ctx.deps
 
@@ -222,7 +222,7 @@ print(dice_result.data)
 1. This is a pretty simple task, so we can use the fast and cheap Gemini flash model.
 2. We pass the user's name as the dependency, to keep things simple we use just the name as a string as the dependency.
 3. This tool doesn't need any context, it just returns a random number. You could probably use a dynamic system prompt in this case.
-4. This tool needs the player's name, so it uses `CallContext` to access dependencies which are just the player's name in this case.
+4. This tool needs the player's name, so it uses `RunContext` to access dependencies which are just the player's name in this case.
 5. Run the agent, passing the player's name as the dependency.
 
 _(This example is complete, it can be run "as is")_
@@ -325,7 +325,7 @@ As the name suggests, function tools use the model's "tools" or "functions" API 
 
 ### Function tools and schema
 
-Function parameters are extracted from the function signature, and all parameters except `CallContext` are used to build the schema for that tool call.
+Function parameters are extracted from the function signature, and all parameters except `RunContext` are used to build the schema for that tool call.
 
 Even better, PydanticAI extracts the docstring from functions and (thanks to [griffe](https://mkdocstrings.github.io/griffe/)) extracts parameter descriptions from the docstring and adds them to the schema.
 
@@ -395,7 +395,7 @@ Validation errors from both function tool parameter validation and [structured r
 You can also raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] from within a [tool](#function-tools) or [result validator function](results.md#result-validators-functions) to tell the model it should retry generating a response.
 
 - The default retry count is **1** but can be altered for the [entire agent][pydantic_ai.Agent.__init__], a [specific tool][pydantic_ai.Agent.tool], or a [result validator][pydantic_ai.Agent.__init__].
-- You can access the current retry count from within a tool or result validator via [`ctx.retry`][pydantic_ai.dependencies.CallContext].
+- You can access the current retry count from within a tool or result validator via [`ctx.retry`][pydantic_ai.dependencies.RunContext].
 
 Here's an example:
 
@@ -403,7 +403,7 @@ Here's an example:
 from fake_database import DatabaseConn
 from pydantic import BaseModel
 
-from pydantic_ai import Agent, CallContext, ModelRetry
+from pydantic_ai import Agent, RunContext, ModelRetry
 
 
 class ChatResult(BaseModel):
@@ -419,7 +419,7 @@ agent = Agent(
 
 
 @agent.tool(retries=2)
-def get_user_by_name(ctx: CallContext[DatabaseConn], name: str) -> int:
+def get_user_by_name(ctx: RunContext[DatabaseConn], name: str) -> int:
     """Get a user's ID from their full name."""
     print(name)
     #> John
@@ -533,7 +533,7 @@ Consider the following script with type mistakes:
 ```py title="type_mistakes.py" hl_lines="18 28"
 from dataclasses import dataclass
 
-from pydantic_ai import Agent, CallContext
+from pydantic_ai import Agent, RunContext
 
 
 @dataclass
@@ -549,7 +549,7 @@ agent = Agent(
 
 
 @agent.system_prompt
-def add_user_name(ctx: CallContext[str]) -> str:  # (2)!
+def add_user_name(ctx: RunContext[str]) -> str:  # (2)!
     return f"The user's name is {ctx.deps}."
 
 
@@ -569,7 +569,7 @@ Running `mypy` on this will give the following output:
 
 ```bash
 ➤ uv run mypy type_mistakes.py
-type_mistakes.py:18: error: Argument 1 to "system_prompt" of "Agent" has incompatible type "Callable[[CallContext[str]], str]"; expected "Callable[[CallContext[User]], str]"  [arg-type]
+type_mistakes.py:18: error: Argument 1 to "system_prompt" of "Agent" has incompatible type "Callable[[RunContext[str]], str]"; expected "Callable[[RunContext[User]], str]"  [arg-type]
 type_mistakes.py:28: error: Argument 1 to "foobar" has incompatible type "bool"; expected "bytes"  [arg-type]
 Found 2 errors in 1 file (checked 1 source file)
 ```

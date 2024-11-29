@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Generic, cast
 
 from . import _utils
-from .dependencies import AgentDeps, CallContext, SystemPromptFunc
+from .dependencies import AgentDeps, RunContext, SystemPromptFunc
 
 
 @dataclass
@@ -21,7 +21,7 @@ class SystemPromptRunner(Generic[AgentDeps]):
 
     async def run(self, deps: AgentDeps) -> str:
         if self._takes_ctx:
-            args = (CallContext(deps, 0, None),)
+            args = (RunContext(deps, 0, None),)
         else:
             args = ()
 

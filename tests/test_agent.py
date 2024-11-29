@@ -6,7 +6,7 @@ import pytest
 from inline_snapshot import snapshot
 from pydantic import BaseModel
 
-from pydantic_ai import Agent, CallContext, ModelRetry, UnexpectedModelBehavior, UserError
+from pydantic_ai import Agent, ModelRetry, RunContext, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
     ArgsDict,
     ArgsJson,
@@ -111,7 +111,7 @@ def test_result_validator():
     agent = Agent(FunctionModel(return_model), result_type=Foo)
 
     @agent.result_validator
-    def validate_result(ctx: CallContext[None], r: Foo) -> Foo:
+    def validate_result(ctx: RunContext[None], r: Foo) -> Foo:
         assert ctx.tool_name == 'final_result'
         if r.a == 42:
             return r
@@ -227,7 +227,7 @@ def test_response_union_allow_str(input_union_callable: Callable[[], Any]):
     got_tool_call_name = 'unset'
 
     @agent.result_validator
-    def validate_result(ctx: CallContext[None], r: Any) -> Any:
+    def validate_result(ctx: RunContext[None], r: Any) -> Any:
         nonlocal got_tool_call_name
         got_tool_call_name = ctx.tool_name
         return r
@@ -303,7 +303,7 @@ class Bar(BaseModel):
     got_tool_call_name = 'unset'
 
     @agent.result_validator
-    def validate_result(ctx: CallContext[None], r: Any) -> Any:
+    def validate_result(ctx: RunContext[None], r: Any) -> Any:
         nonlocal got_tool_call_name
         got_tool_call_name = ctx.tool_name
         return r

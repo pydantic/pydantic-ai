@@ -51,7 +51,7 @@ _(This example is complete, it can be run "as is")_
 
 ## Accessing Dependencies
 
-Dependencies are accessed through the [`CallContext`][pydantic_ai.dependencies.CallContext] type, this should be the first parameter of system prompt functions etc.
+Dependencies are accessed through the [`RunContext`][pydantic_ai.dependencies.RunContext] type, this should be the first parameter of system prompt functions etc.
 
 
 ```py title="system_prompt_dependencies.py" hl_lines="20-27"
@@ -59,7 +59,7 @@ from dataclasses import dataclass
 
 import httpx
 
-from pydantic_ai import Agent, CallContext
+from pydantic_ai import Agent, RunContext
 
 
 @dataclass
@@ -75,7 +75,7 @@ agent = Agent(
 
 
 @agent.system_prompt  # (1)!
-async def get_system_prompt(ctx: CallContext[MyDeps]) -> str:  # (2)!
+async def get_system_prompt(ctx: RunContext[MyDeps]) -> str:  # (2)!
     response = await ctx.deps.http_client.get(  # (3)!
         'https://example.com',
         headers={'Authorization': f'Bearer {ctx.deps.api_key}'},  # (4)!
@@ -92,10 +92,10 @@ async def main():
         #> Did you hear about the toothpaste scandal? They called it Colgate.
 ```
 
-1. [`CallContext`][pydantic_ai.dependencies.CallContext] may optionally be passed to a [`system_prompt`][pydantic_ai.Agent.system_prompt] function as the only argument.
-2. [`CallContext`][pydantic_ai.dependencies.CallContext] is parameterized with the type of the dependencies, if this type is incorrect, static type checkers will raise an error.
-3. Access dependencies through the [`.deps`][pydantic_ai.dependencies.CallContext.deps] attribute.
-4. Access dependencies through the [`.deps`][pydantic_ai.dependencies.CallContext.deps] attribute.
+1. [`RunContext`][pydantic_ai.dependencies.RunContext] may optionally be passed to a [`system_prompt`][pydantic_ai.Agent.system_prompt] function as the only argument.
+2. [`RunContext`][pydantic_ai.dependencies.RunContext] is parameterized with the type of the dependencies, if this type is incorrect, static type checkers will raise an error.
+3. Access dependencies through the [`.deps`][pydantic_ai.dependencies.RunContext.deps] attribute.
+4. Access dependencies through the [`.deps`][pydantic_ai.dependencies.RunContext.deps] attribute.
 
 _(This example is complete, it can be run "as is")_
 
@@ -117,7 +117,7 @@ from dataclasses import dataclass
 
 import httpx
 
-from pydantic_ai import Agent, CallContext
+from pydantic_ai import Agent, RunContext
 
 
 @dataclass
@@ -133,7 +133,7 @@ agent = Agent(
 
 
 @agent.system_prompt
-def get_system_prompt(ctx: CallContext[MyDeps]) -> str:  # (2)!
+def get_system_prompt(ctx: RunContext[MyDeps]) -> str:  # (2)!
     response = ctx.deps.http_client.get(
         'https://example.com', headers={'Authorization': f'Bearer {ctx.deps.api_key}'}
     )
@@ -165,7 +165,7 @@ from dataclasses import dataclass
 
 import httpx
 
-from pydantic_ai import Agent, CallContext, ModelRetry
+from pydantic_ai import Agent, ModelRetry, RunContext
 
 
 @dataclass
@@ -181,14 +181,14 @@ agent = Agent(
 
 
 @agent.system_prompt
-async def get_system_prompt(ctx: CallContext[MyDeps]) -> str:
+async def get_system_prompt(ctx: RunContext[MyDeps]) -> str:
     response = await ctx.deps.http_client.get('https://example.com')
     response.raise_for_status()
     return f'Prompt: {response.text}'
 
 
 @agent.tool  # (1)!
-async def get_joke_material(ctx: CallContext[MyDeps], subject: str) -> str:
+async def get_joke_material(ctx: RunContext[MyDeps], subject: str) -> str:
     response = await ctx.deps.http_client.get(
         'https://example.com#jokes',
         params={'subject': subject},
@@ -199,7 +199,7 @@ async def get_joke_material(ctx: CallContext[MyDeps], subject: str) -> str:
 
 
 @agent.result_validator  # (2)!
-async def validate_result(ctx: CallContext[MyDeps], final_response: str) -> str:
+async def validate_result(ctx: RunContext[MyDeps], final_response: str) -> str:
     response = await ctx.deps.http_client.post(
         'https://example.com#validate',
         headers={'Authorization': f'Bearer {ctx.deps.api_key}'},
@@ -219,8 +219,8 @@ async def main():
         #> Did you hear about the toothpaste scandal? They called it Colgate.
 ```
 
-1. To pass `CallContext` to a tool, use the [`tool`][pydantic_ai.Agent.tool] decorator.
-2. `CallContext` may optionally be passed to a [`result_validator`][pydantic_ai.Agent.result_validator] function as the first argument.
+1. To pass `RunContext` to a tool, use the [`tool`][pydantic_ai.Agent.tool] decorator.
+2. `RunContext` may optionally be passed to a [`result_validator`][pydantic_ai.Agent.result_validator] function as the first argument.
 
 _(This example is complete, it can be run "as is")_
 
@@ -238,7 +238,7 @@ from dataclasses import dataclass
 
 import httpx
 
-from pydantic_ai import Agent, CallContext
+from pydantic_ai import Agent, RunContext
 
 
 @dataclass
@@ -256,7 +256,7 @@ joke_agent = Agent('openai:gpt-4o', deps_type=MyDeps)
 
 
 @joke_agent.system_prompt
-async def get_system_prompt(ctx: CallContext[MyDeps]) -> str:
+async def get_system_prompt(ctx: RunContext[MyDeps]) -> str:
     return await ctx.deps.system_prompt_factory()  # (2)!
 
 
@@ -303,7 +303,7 @@ Since dependencies can be any python type, and agents are just python objects, a
 ```py title="agents_as_dependencies.py"
 from dataclasses import dataclass
 
-from pydantic_ai import Agent, CallContext
+from pydantic_ai import Agent, RunContext
 
 
 @dataclass
@@ -324,7 +324,7 @@ factory_agent = Agent('gemini-1.5-pro', result_type=list[str])
 
 
 @joke_agent.tool
-async def joke_factory(ctx: CallContext[MyDeps], count: int) -> str:
+async def joke_factory(ctx: RunContext[MyDeps], count: int) -> str:
     r = await ctx.deps.factory_agent.run(f'Please generate {count} jokes.')
     return '\n'.join(r.data)
 

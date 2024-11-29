@@ -13,7 +13,7 @@ else:
 
 __all__ = (
     'AgentDeps',
-    'CallContext',
+    'RunContext',
     'ResultValidatorFunc',
     'SystemPromptFunc',
     'ToolReturnValue',
@@ -28,7 +28,7 @@ AgentDeps = TypeVar('AgentDeps')
 
 
 @dataclass
-class CallContext(Generic[AgentDeps]):
+class RunContext(Generic[AgentDeps]):
     """Information about the current call."""
 
     deps: AgentDeps
@@ -43,19 +43,19 @@ ToolParams = ParamSpec('ToolParams')
 """Retrieval function param spec."""
 
 SystemPromptFunc = Union[
-    Callable[[CallContext[AgentDeps]], str],
-    Callable[[CallContext[AgentDeps]], Awaitable[str]],
+    Callable[[RunContext[AgentDeps]], str],
+    Callable[[RunContext[AgentDeps]], Awaitable[str]],
     Callable[[], str],
     Callable[[], Awaitable[str]],
 ]
-"""A function that may or maybe not take `CallContext` as an argument, and may or may not be async.
+"""A function that may or maybe not take `RunContext` as an argument, and may or may not be async.
 
 Usage `SystemPromptFunc[AgentDeps]`.
 """
 
 ResultValidatorFunc = Union[
-    Callable[[CallContext[AgentDeps], ResultData], ResultData],
-    Callable[[CallContext[AgentDeps], ResultData], Awaitable[ResultData]],
+    Callable[[RunContext[AgentDeps], ResultData], ResultData],
+    Callable[[RunContext[AgentDeps], ResultData], Awaitable[ResultData]],
     Callable[[ResultData], ResultData],
     Callable[[ResultData], Awaitable[ResultData]],
 ]
@@ -71,13 +71,13 @@ JsonData: TypeAlias = 'None | str | int | float | Sequence[JsonData] | Mapping[s
 
 ToolReturnValue = Union[JsonData, Awaitable[JsonData]]
 """Return value of a tool function."""
-ToolContextFunc = Callable[Concatenate[CallContext[AgentDeps], ToolParams], ToolReturnValue]
-"""A tool function that takes `CallContext` as the first argument.
+ToolContextFunc = Callable[Concatenate[RunContext[AgentDeps], ToolParams], ToolReturnValue]
+"""A tool function that takes `RunContext` as the first argument.
 
 Usage `ToolContextFunc[AgentDeps, ToolParams]`.
 """
 ToolPlainFunc = Callable[ToolParams, ToolReturnValue]
-"""A tool function that does not take `CallContext` as the first argument.
+"""A tool function that does not take `RunContext` as the first argument.
 
 Usage `ToolPlainFunc[ToolParams]`.
 """

@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 
-from pydantic_ai import Agent, CallContext
+from pydantic_ai import Agent, RunContext
 from pydantic_ai.models.test import TestModel
 
 
@@ -14,7 +14,7 @@ agent = Agent(TestModel(), deps_type=MyDeps)
 
 
 @agent.tool
-async def example_tool(ctx: CallContext[MyDeps]) -> str:
+async def example_tool(ctx: RunContext[MyDeps]) -> str:
     return f'{ctx.deps}'
 
 

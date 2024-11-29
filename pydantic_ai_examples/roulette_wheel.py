@@ -10,7 +10,7 @@ import asyncio
 from dataclasses import dataclass
 from typing import Literal
 
-from pydantic_ai import Agent, CallContext
+from pydantic_ai import Agent, RunContext
 
 
 # Define the dependencies class
@@ -34,7 +34,7 @@ roulette_agent = Agent(
 
 @roulette_agent.tool
 async def roulette_wheel(
-    ctx: CallContext[Deps], square: int
+    ctx: RunContext[Deps], square: int
 ) -> Literal['winner', 'loser']:
     """Check if the bet square is a winner.
 
