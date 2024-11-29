@@ -299,6 +299,7 @@ Let's assume we have the following app for running SQL generated from a user pro
 ```py title="sql_app.py"
 import json
 from pathlib import Path
+from typing import Union
 
 from pydantic_ai import Agent, CallContext
 
@@ -307,7 +308,7 @@ from fake_database import DatabaseConn
 
 class SqlSystemPrompt:  # (1)!
     def __init__(
-        self, examples: list[dict[str, str]] | None = None, db: str = 'PostgreSQL'
+        self, examples: Union[list[dict[str, str]], None] = None, db: str = 'PostgreSQL'
     ):
         if examples is None:
             # if examples aren't provided, load them from file, this is the default
