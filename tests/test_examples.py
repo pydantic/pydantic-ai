@@ -38,7 +38,13 @@ except ImportError:
     VertexAIModel = None
 
 
-pytestmark = pytest.mark.skipif(VertexAIModel is None, reason='google-auth not installed')
+try:
+    import logfire
+except ImportError:
+    logfire = None
+
+
+pytestmark = pytest.mark.skipif(VertexAIModel is None or logfire is None, reason='google-auth or logfire not installed')
 
 
 def find_filter_examples() -> Iterable[CodeExample]:
