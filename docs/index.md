@@ -10,10 +10,10 @@ PydanticAI is a Python Agent Framework designed to make it less painful to build
 
 ## Why use PydanticAI
 
-* Built by the team behind Pydantic (the validation layer of the OpenAI SDK, the Anthropic SDK, LangChain, LlamaIndex, AutoGPT, Transformers, Instructor and many more)
-* Model-agnostic — currently both OpenAI, Gemini, and Groq are supported, Anthropic [is coming soon](https://github.com/pydantic/pydantic-ai/issues/63). And there is a simple interface to implement support for other models.
-* Type-safe
-* Control flow and composing agents is done with vanilla python, allowing you to make use of the same Python development best practices you'd use in any other (non-AI) project
+* Built by the team behind Pydantic (the validation layer of the OpenAI SDK, the Anthropic SDK, LangChain, LlamaIndex, AutoGPT, Transformers, CrewAI, Instructor and many more)
+* Model-agnostic — currently OpenAI, Gemini, and Groq are supported, Anthropic [is coming soon](https://github.com/pydantic/pydantic-ai/issues/63). And there is a simple interface to implement support for other models.
+* [Type-safe](agents.md#static-type-checking)
+* Control flow and agent composition is done with vanilla Python, allowing you to make use of the same Python development best practices you'd use in any other (non-AI) project
 * [Structured response](results.md#structured-result-validation) validation with Pydantic
 * [Streamed responses](results.md#streamed-results), including validation of streamed _structured_ responses with Pydantic
 * Novel, type-safe [dependency injection system](dependencies.md), useful for testing and eval-driven iterative development
@@ -124,66 +124,47 @@ async def main():
 
 1. This [agent](agents.md) will act as first-tier support in a bank. Agents are generic in the type of dependencies they accept and the type of result they return. In this case, the support agent has type `#!python Agent[SupportDependencies, SupportResult]`.
 2. Here we configure the agent to use [OpenAI's GPT-4o model](api/models/openai.md), you can also set the model when running the agent.
-3. The `SupportDependencies` dataclass is used to pass data, connections, and logic into the model that will be needed when running [system prompt](agents.md#system-prompts) and [tool](agents.md#function-tools) functions. PydanticAI's system of dependency injection provides a type-safe way to customise the behavior of your agents, and can be especially useful when running unit tests and evals.
+3. The `SupportDependencies` dataclass is used to pass data, connections, and logic into the model that will be needed when running [system prompt](agents.md#system-prompts) and [tool](agents.md#function-tools) functions. PydanticAI's system of dependency injection provides a [type-safe](agents.md#static-type-checking) way to customise the behavior of your agents, and can be especially useful when running [unit tests](testing-evals.md) and evals.
 4. Static [system prompts](agents.md#system-prompts) can be registered with the [`system_prompt` keyword argument][pydantic_ai.Agent.__init__] to the agent.
 5. Dynamic [system prompts](agents.md#system-prompts) can be registered with the [`@agent.system_prompt`][pydantic_ai.Agent.system_prompt] decorator, and can make use of dependency injection. Dependencies are carried via the [`RunContext`][pydantic_ai.dependencies.RunContext] argument, which is parameterized with the `deps_type` from above. If the type annotation here is wrong, static type checkers will catch it.
-6. [Tools](agents.md#function-tools) let you register "tools" which the LLM may call while responding to a user. Again, dependencies are carried via [`RunContext`][pydantic_ai.dependencies.RunContext], and any other arguments become the tool schema passed to the LLM. Pydantic is used to validate these arguments, and errors are passed back to the LLM so it can retry.
+6. [`tool`](agents.md#function-tools) let you register functions which the LLM may call while responding to a user. Again, dependencies are carried via [`RunContext`][pydantic_ai.dependencies.RunContext], and any other arguments become the tool schema passed to the LLM. Pydantic is used to validate these arguments, and errors are passed back to the LLM so it can retry.
 7. The docstring of a tool is also passed to the LLM as the description of the tool. Parameter descriptions are [extracted](agents.md#function-tools-and-schema) from the docstring and added to the tool schema sent to the LLM.
 8. [Run the agent](agents.md#running-agents) asynchronously, conducting a conversation with the LLM until a final response is reached. Even in this fairly simple case, the agent will exchange multiple messages with the LLM as tools are called to retrieve a result.
 9. The response from the agent will, be guaranteed to be a `SupportResult`, if validation fails [reflection](agents.md#reflection-and-self-correction) will mean the agent is prompted to try again.
 10. The result will be validated with Pydantic to guarantee it is a `SupportResult`, since the agent is generic, it'll also be typed as a `SupportResult` to aid with static type checking.
-11. In a real use case, you'd add many more tools and a longer system prompt to the agent to extend the context it's equipped with and support it can provide.
+11. In a real use case, you'd add more tools and a longer system prompt to the agent to extend the context it's equipped with and support it can provide.
 12. This is a simple sketch of a database connection, used to keep the example short and readable. In reality, you'd be connecting to an external database (e.g. PostgreSQL) to get information about customers.
-13. This [Pydantic](https://docs.pydantic.dev) model is used to constrain the structured data returned by the agent. From this simple definition, Pydantic builds the JSON Schema that tells the LLM how to return the data, and performs validation to guarantee the data is correct at the end of the conversation.
-
-To help make things more clear, here is a diagram of what is happening in the `#!python await support_agent.run('What is my balance?', deps=deps)` call within `main`:
-```mermaid
-sequenceDiagram
-    participant DatabaseConn
-    participant Agent
-    participant LLM
-
-    Note over Agent: Dynamic system prompt<br>add_customer_name()
-    Agent ->> DatabaseConn: Retrieve customer name
-    activate DatabaseConn
-    DatabaseConn -->> Agent: "John"
-    deactivate DatabaseConn
-
-    Note over Agent: User query
-
-    Agent ->> LLM: Request<br>System: "You are a support agent..."<br>System: "The customer's name is John"<br>User: "What is my balance?"
-    activate LLM
-    Note over LLM: LLM decides to use a tool
-    LLM ->> Agent: Call tool<br>customer_balance()
-    deactivate LLM
-    activate Agent
-    Note over Agent: Retrieve account balance
-
-    Agent ->> DatabaseConn: Retrieve balance<br>Include pending
-    activate DatabaseConn
-    DatabaseConn -->> Agent: "$123.45"
-    deactivate DatabaseConn
-
-    Agent -->> LLM: ToolReturn<br>"$123.45"
-    deactivate Agent
-    activate LLM
-    Note over LLM: LLM processes response
-
-    LLM ->> Agent: StructuredResponse<br>SupportResult
-    deactivate LLM
-    activate Agent
-    Note over Agent: Support session complete
-    deactivate Agent
-```
-
+13. This [Pydantic](https://docs.pydantic.dev) model is used to constrain the structured data returned by the agent. From this simple definition, Pydantic builds the JSON Schema that tells the LLM how to return the data, and performs validation to guarantee the data is correct at the end of the run.
 
 !!! tip "Complete `bank_support.py` example"
     The code included here is incomplete for the sake of brevity (the definition of `DatabaseConn` is missing); you can find the complete `bank_support.py` example [here](examples/bank-support.md).
+
+## Instrumentation with Pydantic Logfire
+
+To understand the flow of the above runs, we can watch the agent in action using Pydantic Logfire.
+
+To do this, we need to set up logfire, and add the following to our code:
+
+```py title="bank_support_with_logfire.py"
+import logfire
+
+logfire.configure()  # (1)!
+logfire.instrument_asyncpg()  # (2)!
+```
+
+1. Configure logfire, this will fail if not project is set up.
+2. In our demo, `DatabaseConn` uses [`asyncpg`]() to connect to a PostgreSQL database, so [`logfire.instrument_asyncpg()`](https://magicstack.github.io/asyncpg/current/) is used to log the database queries.
+
+That's enough to get the following view of your agent in action:
+
+{{ video('9078b98c4f75d01f912a0368bbbdb97a', 25, 55) }}
+
+See [Monitoring and Performance](logfire.md) to learn more.
 
 ## Next Steps
 
 To try PydanticAI yourself, follow the instructions [in the examples](examples/index.md).
 
-Read the [conceptual documentation](agents.md) to learn more about building applications with PydanticAI.
+Read the [docs](agents.md) to learn more about building applications with PydanticAI.
 
 Read the [API Reference](api/agent.md) to understand PydanticAI's interface.

@@ -75,8 +75,8 @@ class Agent(Generic[AgentDeps, ResultData]):
     def __init__(
         self,
         model: models.Model | models.KnownModelName | None = None,
-        result_type: type[ResultData] = str,
         *,
+        result_type: type[ResultData] = str,
         system_prompt: str | Sequence[str] = (),
         deps_type: type[AgentDeps] = NoneType,
         retries: int = 1,
@@ -150,14 +150,6 @@ class Agent(Generic[AgentDeps, ResultData]):
 
         deps = self._get_deps(deps)
 
-        new_message_index, messages = await self._prepare_messages(deps, user_prompt, message_history)
-        self.last_run_messages = messages
-
-        for tool in self._function_tools.values():
-            tool.reset()
-
-        cost = result.Cost()
-
         with _logfire.span(
             'agent run {prompt=}',
             prompt=user_prompt,
@@ -165,6 +157,14 @@ class Agent(Generic[AgentDeps, ResultData]):
             custom_model=custom_model,
             model_name=model_used.name(),
         ) as run_span:
+            new_message_index, messages = await self._prepare_messages(deps, user_prompt, message_history)
+            self.last_run_messages = messages
+
+            for tool in self._function_tools.values():
+                tool.reset()
+
+            cost = result.Cost()
+
             run_step = 0
             while True:
                 run_step += 1
@@ -243,14 +243,6 @@ class Agent(Generic[AgentDeps, ResultData]):
 
         deps = self._get_deps(deps)
 
-        new_message_index, messages = await self._prepare_messages(deps, user_prompt, message_history)
-        self.last_run_messages = messages
-
-        for tool in self._function_tools.values():
-            tool.reset()
-
-        cost = result.Cost()
-
         with _logfire.span(
             'agent run stream {prompt=}',
             prompt=user_prompt,
@@ -258,6 +250,14 @@ class Agent(Generic[AgentDeps, ResultData]):
             custom_model=custom_model,
             model_name=model_used.name(),
         ) as run_span:
+            new_message_index, messages = await self._prepare_messages(deps, user_prompt, message_history)
+            self.last_run_messages = messages
+
+            for tool in self._function_tools.values():
+                tool.reset()
+
+            cost = result.Cost()
+
             run_step = 0
             while True:
                 run_step += 1

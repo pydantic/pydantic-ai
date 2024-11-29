@@ -5,8 +5,7 @@ import os
 import re
 import sys
 from collections.abc import AsyncIterator, Iterable
-from dataclasses import dataclass, field
-from datetime import date
+from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -39,84 +38,13 @@ except ImportError:
     VertexAIModel = None
 
 
-pytestmark = pytest.mark.skipif(VertexAIModel is None, reason='google-auth not installed')
+try:
+    import logfire
+except ImportError:
+    logfire = None
 
 
-@pytest.fixture(scope='module', autouse=True)
-def register_fake_db():
-    class FakeTable:
-        def get(self, name: str) -> int | None:
-            if name == 'John Doe':
-                return 123
-
-    @dataclass
-    class DatabaseConn:
-        users: FakeTable = field(default_factory=FakeTable)
-        _forecasts: dict[int, str] = field(default_factory=dict)
-
-        async def execute(self, query: str) -> list[dict[str, Any]]:
-            return [{'id': 123, 'name': 'John Doe'}]
-
-        async def store_forecast(self, user_id: int, forecast: str) -> None:
-            self._forecasts[user_id] = forecast
-
-        async def get_forecast(self, user_id: int) -> str | None:
-            return self._forecasts.get(user_id)
-
-    class QueryError(RuntimeError):
-        pass
-
-    module_name = 'fake_database'
-    sys.modules[module_name] = module = ModuleType(module_name)
-    module.__dict__.update({'DatabaseConn': DatabaseConn, 'QueryError': QueryError})
-
-    yield
-
-    sys.modules.pop(module_name)
-
-
-@pytest.fixture(scope='module', autouse=True)
-def register_bank_db():
-    class DatabaseConn:
-        @classmethod
-        async def customer_name(cls, *, id: int) -> str | None:
-            if id == 123:
-                return 'John'
-
-        @classmethod
-        async def customer_balance(cls, *, id: int, include_pending: bool) -> float:
-            if id == 123:
-                return 123.45
-            else:
-                raise ValueError('Customer not found')
-
-    module_name = 'bank_database'
-    sys.modules[module_name] = module = ModuleType(module_name)
-    module.__dict__.update({'DatabaseConn': DatabaseConn})
-
-    yield
-
-    sys.modules.pop(module_name)
-
-
-@pytest.fixture(scope='module', autouse=True)
-def weather_service():
-    class WeatherService:
-        def get_historic_weather(self, location: str, forecast_date: date) -> str:
-            return 'Sunny with a chance of rain'
-
-        def get_forecast(self, location: str, forecast_date: date) -> str:
-            return 'Rainy with a chance of sun'
-
-        async def __aenter__(self) -> WeatherService:
-            return self
-
-        async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
-            pass
-
-    module_name = 'weather_service'
-    sys.modules[module_name] = module = ModuleType(module_name)
-    module.__dict__.update({'WeatherService': WeatherService})
+pytestmark = pytest.mark.skipif(VertexAIModel is None or logfire is None, reason='google-auth or logfire not installed')
 
 
 def find_filter_examples() -> Iterable[CodeExample]:
@@ -147,6 +75,8 @@ def test_docs_examples(
     env.set('OPENAI_API_KEY', 'testing')
     env.set('GEMINI_API_KEY', 'testing')
     env.set('GROQ_API_KEY', 'testing')
+
+    sys.path.append('tests/example_modules')
 
     prefix_settings = example.prefix_settings()
     opt_title = prefix_settings.get('title')

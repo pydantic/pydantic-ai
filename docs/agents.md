@@ -119,6 +119,67 @@ print(result2.data)
 
 _(This example is complete, it can be run "as is")_
 
+## Type safe by design {#static-type-checking}
+
+PydanticAI is designed to work well with static type checkers, like mypy and pyright.
+
+!!! tip "Typing is (somewhat) optional"
+    PydanticAI is designed to make type checking as useful as possible for you if you choose to use it, but you don't have to use types everywhere all the time.
+
+    That said, because PydanticAI uses Pydantic, and Pydantic uses type hints as the definition for schema and validation, some types (specifically type hints on parameters to tools, and the `result_type` arguments to [`Agent`][pydantic_ai.Agent]) are used at runtime.
+
+    We (the library developers) have messed up if type hints are confusing you more than they're help you, if you find this, please create an [issue](https://github.com/pydantic/pydantic-ai/issues) explaining what's annoying you!
+
+In particular, agents are generic in both the type of their dependencies and the type of results they return, so you can use the type hints to ensure you're using the right types.
+
+Consider the following script with type mistakes:
+
+```py title="type_mistakes.py" hl_lines="18 28"
+from dataclasses import dataclass
+
+from pydantic_ai import Agent, RunContext
+
+
+@dataclass
+class User:
+    name: str
+
+
+agent = Agent(
+    'test',
+    deps_type=User,  # (1)!
+    result_type=bool,
+)
+
+
+@agent.system_prompt
+def add_user_name(ctx: RunContext[str]) -> str:  # (2)!
+    return f"The user's name is {ctx.deps}."
+
+
+def foobar(x: bytes) -> None:
+    pass
+
+
+result = agent.run_sync('Does their name start with "A"?', deps=User('Adam'))
+foobar(result.data)  # (3)!
+```
+
+1. The agent is defined as expecting an instance of `User` as `deps`.
+2. But here `add_user_name` is defined as taking a `str` as the dependency, not a `User`.
+3. Since the agent is defined as returning a `bool`, this will raise a type error since `foobar` expects `bytes`.
+
+Running `mypy` on this will give the following output:
+
+```bash
+➤ uv run mypy type_mistakes.py
+type_mistakes.py:18: error: Argument 1 to "system_prompt" of "Agent" has incompatible type "Callable[[RunContext[str]], str]"; expected "Callable[[RunContext[User]], str]"  [arg-type]
+type_mistakes.py:28: error: Argument 1 to "foobar" has incompatible type "bool"; expected "bytes"  [arg-type]
+Found 2 errors in 1 file (checked 1 source file)
+```
+
+Running `pyright` would identify the same issues.
+
 ## System Prompts
 
 System prompts might seem simple at first glance since they're just strings (or sequences of strings that are concatenated), but crafting the right system prompt is key to getting the model to behave as you want.
@@ -514,64 +575,3 @@ else:
 1. Define a tool that will raise `ModelRetry` repeatedly in this case.
 
 _(This example is complete, it can be run "as is")_
-
-## Static Type Checking
-
-PydanticAI is designed to work well with static type checkers, like mypy and pyright.
-
-!!! tip "mypy vs. pyright"
-    [mypy](https://github.com/python/mypy) and [pyright](https://github.com/microsoft/pyright) are both static type checkers for Python.
-
-    Mypy was the first and is still generally considered the default, in part because it was developed parly by Guido van Rossum, the creator of Python.
-
-    Pyright is generally faster and more sophisticated. It is develoepd by Eric Trout for use in VSCode, since that's its primary use case, it's terminal output is more verbose and harder to read than that of mypy.
-
-In particular, agents are generic in both the type of their dependencies and the type of results they return, so you can use the type hints to ensure you're using the right types.
-
-Consider the following script with type mistakes:
-
-```py title="type_mistakes.py" hl_lines="18 28"
-from dataclasses import dataclass
-
-from pydantic_ai import Agent, RunContext
-
-
-@dataclass
-class User:
-    name: str
-
-
-agent = Agent(
-    'test',
-    deps_type=User,  # (1)!
-    result_type=bool,
-)
-
-
-@agent.system_prompt
-def add_user_name(ctx: RunContext[str]) -> str:  # (2)!
-    return f"The user's name is {ctx.deps}."
-
-
-def foobar(x: bytes) -> None:
-    pass
-
-
-result = agent.run_sync('Does their name start with "A"?', deps=User('Adam'))
-foobar(result.data)  # (3)!
-```
-
-1. The agent is defined as expecting an instance of `User` as `deps`.
-2. But here `add_user_name` is defined as taking a `str` as the dependency, not a `User`.
-3. Since the agent is defined as returning a `bool`, this will raise a type error since `foobar` expects `bytes`.
-
-Running `mypy` on this will give the following output:
-
-```bash
-➤ uv run mypy type_mistakes.py
-type_mistakes.py:18: error: Argument 1 to "system_prompt" of "Agent" has incompatible type "Callable[[RunContext[str]], str]"; expected "Callable[[RunContext[User]], str]"  [arg-type]
-type_mistakes.py:28: error: Argument 1 to "foobar" has incompatible type "bool"; expected "bytes"  [arg-type]
-Found 2 errors in 1 file (checked 1 source file)
-```
-
-Running `pyright` would identify the same issues.

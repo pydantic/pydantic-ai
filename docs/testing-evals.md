@@ -3,7 +3,7 @@
 With PydanticAI and LLM integrations in general, there are two distinct kinds of test:
 
 1. **Unit tests** — tests of your application code, and whether it's behaving correctly
-2. **"Evals"** — tests of the LLM, and how good or bad its responses are
+2. **Evals** — tests of the LLM, and how good or bad its responses are
 
 For the most part, these two kinds of tests have pretty separate goals and considerations.
 
