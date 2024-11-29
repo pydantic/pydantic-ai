@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "pydantic-ai"
-version = "0.0.6"
+version = "0.0.7"
 description = "Agent Framework / shim to use Pydantic with LLMs"
 authors = [
     { name = "Samuel Colvin", email = "samuel@pydantic.dev" },
@@ -33,10 +33,10 @@ classifiers = [
     "Topic :: Internet",
 ]
 requires-python = ">=3.9"
-dependencies = ["pydantic-ai-slim[openai,vertexai,groq]==0.0.6"]
+dependencies = ["pydantic-ai-slim[openai,vertexai,groq]==0.0.7"]
 
 [project.optional-dependencies]
-examples = ["pydantic-ai-examples==0.0.6"]
+examples = ["pydantic-ai-examples==0.0.7"]
 
 [tool.uv.sources]
 pydantic-ai-slim = { workspace = true }
