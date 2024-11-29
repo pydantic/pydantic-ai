@@ -87,6 +87,7 @@ jobs:
           uv run
           --python 3.12
           --frozen
+          --package pydantic-ai-slim
           --extra openai
           --extra vertexai
           --extra groq
