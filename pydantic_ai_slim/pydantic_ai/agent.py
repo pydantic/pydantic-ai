@@ -75,8 +75,8 @@ class Agent(Generic[AgentDeps, ResultData]):
     def __init__(
         self,
         model: models.Model | models.KnownModelName | None = None,
-        result_type: type[ResultData] = str,
         *,
+        result_type: type[ResultData] = str,
         system_prompt: str | Sequence[str] = (),
         deps_type: type[AgentDeps] = NoneType,
         retries: int = 1,
