@@ -1612,6 +1612,19 @@ vertexai = [
     { name = "requests" },
 ]
 
+[package.dev-dependencies]
+dev = [
+    { name = "anyio" },
+    { name = "coverage", extra = ["toml"] },
+    { name = "devtools" },
+    { name = "dirty-equals" },
+    { name = "inline-snapshot" },
+    { name = "pytest" },
+    { name = "pytest-examples" },
+    { name = "pytest-mock" },
+    { name = "pytest-pretty" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "eval-type-backport", specifier = ">=0.2.0" },
@@ -1624,6 +1637,19 @@ requires-dist = [
     { name = "openai", marker = "extra == 'openai'", specifier = ">=1.54.3" },
     { name = "pydantic", specifier = ">=2.10" },
     { name = "requests", marker = "extra == 'vertexai'", specifier = ">=2.32.3" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "anyio", specifier = ">=4.5.0" },
+    { name = "coverage", extras = ["toml"], specifier = ">=7.6.2" },
+    { name = "devtools", specifier = ">=0.12.2" },
+    { name = "dirty-equals", specifier = ">=0.8.0" },
+    { name = "inline-snapshot", specifier = ">=0.14" },
+    { name = "pytest", specifier = ">=8.3.3" },
+    { name = "pytest-examples", specifier = ">=0.0.14" },
+    { name = "pytest-mock", specifier = ">=3.14.0" },
+    { name = "pytest-pretty", specifier = ">=1.2.0" },
 ]
 
 [[package]]

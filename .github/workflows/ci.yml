@@ -117,9 +117,8 @@ jobs:
 
       - run: mkdir coverage
 
-      # run tests without install `pydantic-ai` which installs openai etc., we want just `pydantic-ai-slim` dependencies
-      - run: uv sync --no-install-workspace --package pydantic-ai-slim
-      - run: uv run --no-sync coverage run -m pytest
+      # run tests with just `pydantic-ai-slim` dependencies
+      - run: uv run --frozen --package pydantic-ai-slim coverage run -m pytest
         env:
           COVERAGE_FILE: coverage/.coverage.${{ runner.os }}-py${{ matrix.python-version }}-slim
 
