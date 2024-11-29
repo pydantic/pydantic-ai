@@ -20,7 +20,7 @@ import logfire
 from devtools import debug
 from httpx import AsyncClient
 
-from pydantic_ai import Agent, CallContext, ModelRetry
+from pydantic_ai import Agent, ModelRetry, RunContext
 
 # 'if-token-present' means nothing will be sent (and the example will work) if you don't have logfire configured
 logfire.configure(send_to_logfire='if-token-present')
@@ -43,7 +43,7 @@ weather_agent = Agent(
 
 @weather_agent.tool
 async def get_lat_lng(
-    ctx: CallContext[Deps], location_description: str
+    ctx: RunContext[Deps], location_description: str
 ) -> dict[str, float]:
     """Get the latitude and longitude of a location.
 
@@ -72,7 +72,7 @@ async def get_lat_lng(
 
 
 @weather_agent.tool
-async def get_weather(ctx: CallContext[Deps], lat: float, lng: float) -> dict[str, Any]:
+async def get_weather(ctx: RunContext[Deps], lat: float, lng: float) -> dict[str, Any]:
     """Get the weather at a location.
 
     Args:

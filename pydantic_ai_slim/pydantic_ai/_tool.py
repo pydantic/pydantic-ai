@@ -9,7 +9,7 @@ from pydantic import ValidationError
 from pydantic_core import SchemaValidator
 
 from . import _pydantic, _utils, messages
-from .dependencies import AgentDeps, CallContext, ToolContextFunc, ToolParams, ToolPlainFunc
+from .dependencies import AgentDeps, RunContext, ToolContextFunc, ToolParams, ToolPlainFunc
 from .exceptions import ModelRetry, UnexpectedModelBehavior
 
 # Usage `ToolEitherFunc[AgentDependencies, P]`
@@ -87,7 +87,7 @@ class Tool(Generic[AgentDeps, ToolParams]):
         if self.single_arg_name:
             args_dict = {self.single_arg_name: args_dict}
 
-        args = [CallContext(deps, self._current_retry, message.tool_name)] if self.function.is_left() else []
+        args = [RunContext(deps, self._current_retry, message.tool_name)] if self.function.is_left() else []
         for positional_field in self.positional_fields:
             args.append(args_dict.pop(positional_field))
         if self.var_positional_field:

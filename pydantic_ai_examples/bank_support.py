@@ -9,7 +9,7 @@ from dataclasses import dataclass
 
 from pydantic import BaseModel, Field
 
-from pydantic_ai import Agent, CallContext
+from pydantic_ai import Agent, RunContext
 
 
 class DatabaseConn:
@@ -57,14 +57,14 @@ support_agent = Agent(
 
 
 @support_agent.system_prompt
-async def add_customer_name(ctx: CallContext[SupportDependencies]) -> str:
+async def add_customer_name(ctx: RunContext[SupportDependencies]) -> str:
     customer_name = await ctx.deps.db.customer_name(id=ctx.deps.customer_id)
     return f"The customer's name is {customer_name!r}"
 
 
 @support_agent.tool
 async def customer_balance(
-    ctx: CallContext[SupportDependencies], include_pending: bool
+    ctx: RunContext[SupportDependencies], include_pending: bool
 ) -> str:
     """Returns the customer's current account balance."""
     balance = await ctx.deps.db.customer_balance(

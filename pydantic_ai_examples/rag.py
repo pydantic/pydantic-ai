@@ -34,7 +34,7 @@ from openai import AsyncOpenAI
 from pydantic import TypeAdapter
 from typing_extensions import AsyncGenerator
 
-from pydantic_ai import CallContext
+from pydantic_ai import RunContext
 from pydantic_ai.agent import Agent
 
 # 'if-token-present' means nothing will be sent (and the example will work) if you don't have logfire configured
@@ -52,7 +52,7 @@ agent = Agent('openai:gpt-4o', deps_type=Deps)
 
 
 @agent.tool
-async def retrieve(context: CallContext[Deps], search_query: str) -> str:
+async def retrieve(context: RunContext[Deps], search_query: str) -> str:
     """Retrieve documentation sections based on a search query.
 
     Args:

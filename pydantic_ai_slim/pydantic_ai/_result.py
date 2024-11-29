@@ -11,7 +11,7 @@ from pydantic import TypeAdapter, ValidationError
 from typing_extensions import Self, TypeAliasType, TypedDict
 
 from . import _utils, messages
-from .dependencies import AgentDeps, CallContext, ResultValidatorFunc
+from .dependencies import AgentDeps, ResultValidatorFunc, RunContext
 from .exceptions import ModelRetry
 from .messages import ModelStructuredResponse, ToolCall
 from .result import ResultData
@@ -42,7 +42,7 @@ class ResultValidator(Generic[AgentDeps, ResultData]):
             Result of either the validated result data (ok) or a retry message (Err).
         """
         if self._takes_ctx:
-            args = CallContext(deps, retry, tool_call.tool_name if tool_call else None), result
+            args = RunContext(deps, retry, tool_call.tool_name if tool_call else None), result
         else:
             args = (result,)
 

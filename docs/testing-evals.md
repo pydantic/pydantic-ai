@@ -40,7 +40,7 @@ Let's write unit tests for the following application code:
 import asyncio
 from datetime import date
 
-from pydantic_ai import Agent, CallContext
+from pydantic_ai import Agent, RunContext
 
 from fake_database import DatabaseConn  # (1)!
 from weather_service import WeatherService  # (2)!
@@ -54,7 +54,7 @@ weather_agent = Agent(
 
 @weather_agent.tool
 def weather_forecast(
-    ctx: CallContext[WeatherService], location: str, forecast_date: date
+    ctx: RunContext[WeatherService], location: str, forecast_date: date
 ) -> str:
     if forecast_date < date.today():  # (3)!
         return ctx.deps.get_historic_weather(location, forecast_date)
@@ -301,7 +301,7 @@ import json
 from pathlib import Path
 from typing import Union
 
-from pydantic_ai import Agent, CallContext
+from pydantic_ai import Agent, RunContext
 
 from fake_database import DatabaseConn
 
@@ -349,7 +349,7 @@ sql_agent = Agent(
 
 
 @sql_agent.system_prompt
-async def system_prompt(ctx: CallContext[SqlSystemPrompt]) -> str:
+async def system_prompt(ctx: RunContext[SqlSystemPrompt]) -> str:
     return ctx.deps.build_prompt()
 
 

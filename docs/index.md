@@ -58,7 +58,7 @@ Here is a concise example using PydanticAI to build a support agent for a bank:
 from dataclasses import dataclass
 
 from pydantic import BaseModel, Field
-from pydantic_ai import Agent, CallContext
+from pydantic_ai import Agent, RunContext
 
 from bank_database import DatabaseConn
 
@@ -87,14 +87,14 @@ support_agent = Agent(  # (1)!
 
 
 @support_agent.system_prompt  # (5)!
-async def add_customer_name(ctx: CallContext[SupportDependencies]) -> str:
+async def add_customer_name(ctx: RunContext[SupportDependencies]) -> str:
     customer_name = await ctx.deps.db.customer_name(id=ctx.deps.customer_id)
     return f"The customer's name is {customer_name!r}"
 
 
 @support_agent.tool  # (6)!
 async def customer_balance(
-    ctx: CallContext[SupportDependencies], include_pending: bool
+    ctx: RunContext[SupportDependencies], include_pending: bool
 ) -> str:
     """Returns the customer's current account balance."""  # (7)!
     balance = await ctx.deps.db.customer_balance(
@@ -126,8 +126,8 @@ async def main():
 2. Here we configure the agent to use [OpenAI's GPT-4o model](api/models/openai.md), you can also set the model when running the agent.
 3. The `SupportDependencies` dataclass is used to pass data, connections, and logic into the model that will be needed when running [system prompt](agents.md#system-prompts) and [tool](agents.md#function-tools) functions. PydanticAI's system of dependency injection provides a type-safe way to customise the behavior of your agents, and can be especially useful when running unit tests and evals.
 4. Static [system prompts](agents.md#system-prompts) can be registered with the [`system_prompt` keyword argument][pydantic_ai.Agent.__init__] to the agent.
-5. Dynamic [system prompts](agents.md#system-prompts) can be registered with the [`@agent.system_prompt`][pydantic_ai.Agent.system_prompt] decorator, and can make use of dependency injection. Dependencies are carried via the [`CallContext`][pydantic_ai.dependencies.CallContext] argument, which is parameterized with the `deps_type` from above. If the type annotation here is wrong, static type checkers will catch it.
-6. [Tools](agents.md#function-tools) let you register "tools" which the LLM may call while responding to a user. Again, dependencies are carried via [`CallContext`][pydantic_ai.dependencies.CallContext], and any other arguments become the tool schema passed to the LLM. Pydantic is used to validate these arguments, and errors are passed back to the LLM so it can retry.
+5. Dynamic [system prompts](agents.md#system-prompts) can be registered with the [`@agent.system_prompt`][pydantic_ai.Agent.system_prompt] decorator, and can make use of dependency injection. Dependencies are carried via the [`RunContext`][pydantic_ai.dependencies.RunContext] argument, which is parameterized with the `deps_type` from above. If the type annotation here is wrong, static type checkers will catch it.
+6. [Tools](agents.md#function-tools) let you register "tools" which the LLM may call while responding to a user. Again, dependencies are carried via [`RunContext`][pydantic_ai.dependencies.RunContext], and any other arguments become the tool schema passed to the LLM. Pydantic is used to validate these arguments, and errors are passed back to the LLM so it can retry.
 7. The docstring of a tool is also passed to the LLM as the description of the tool. Parameter descriptions are [extracted](agents.md#function-tools-and-schema) from the docstring and added to the tool schema sent to the LLM.
 8. [Run the agent](agents.md#running-agents) asynchronously, conducting a conversation with the LLM until a final response is reached. Even in this fairly simple case, the agent will exchange multiple messages with the LLM as tools are called to retrieve a result.
 9. The response from the agent will, be guaranteed to be a `SupportResult`, if validation fails [reflection](agents.md#reflection-and-self-correction) will mean the agent is prompted to try again.

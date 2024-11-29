@@ -78,13 +78,13 @@ def function_schema(either_function: _tool.ToolEitherFunc[AgentDeps, ToolParams]
 
             if index == 0 and takes_ctx:
                 if not _is_call_ctx(annotation):
-                    errors.append('First argument must be a CallContext instance when using `.tool`')
+                    errors.append('First argument must be a RunContext instance when using `.tool`')
                 continue
             elif not takes_ctx and _is_call_ctx(annotation):
-                errors.append('CallContext instance can only be used with `.tool`')
+                errors.append('RunContext instance can only be used with `.tool`')
                 continue
             elif index != 0 and _is_call_ctx(annotation):
-                errors.append('CallContext instance can only be used as the first argument')
+                errors.append('RunContext instance can only be used as the first argument')
                 continue
 
         field_name = p.name
@@ -191,10 +191,10 @@ def _build_schema(
 
 
 def _is_call_ctx(annotation: Any) -> bool:
-    from .dependencies import CallContext
+    from .dependencies import RunContext
 
-    return annotation is CallContext or (
-        _typing_extra.is_generic_alias(annotation) and get_origin(annotation) is CallContext
+    return annotation is RunContext or (
+        _typing_extra.is_generic_alias(annotation) and get_origin(annotation) is RunContext
     )
 
 

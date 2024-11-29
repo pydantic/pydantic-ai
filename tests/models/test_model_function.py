@@ -10,7 +10,7 @@ from dirty_equals import IsStr
 from inline_snapshot import snapshot
 from pydantic import BaseModel
 
-from pydantic_ai import Agent, CallContext, ModelRetry
+from pydantic_ai import Agent, ModelRetry, RunContext
 from pydantic_ai.messages import (
     Message,
     ModelAnyResponse,
@@ -121,7 +121,7 @@ async def get_location(location_description: str) -> str:
 
 
 @weather_agent.tool
-async def get_weather(_: CallContext[None], lat: int, lng: int):
+async def get_weather(_: RunContext[None], lat: int, lng: int):
     if (lat, lng) == (51, 0):
         # it always rains in London
         return 'Raining'
@@ -201,7 +201,7 @@ var_args_agent = Agent(FunctionModel(call_function_model), deps_type=int)
 
 
 @var_args_agent.tool
-def get_var_args(ctx: CallContext[int], *args: int):
+def get_var_args(ctx: RunContext[int], *args: int):
     assert ctx.deps == 123
     return json.dumps({'args': args})
 
@@ -235,7 +235,7 @@ def test_deps_none():
     agent = Agent(FunctionModel(call_tool))
 
     @agent.tool
-    async def get_none(ctx: CallContext[None]):
+    async def get_none(ctx: RunContext[None]):
         nonlocal called
 
         called = True
@@ -252,7 +252,7 @@ def test_deps_none():
 
 
 def test_deps_init():
-    def get_check_foobar(ctx: CallContext[tuple[str, str]]) -> str:
+    def get_check_foobar(ctx: RunContext[tuple[str, str]]) -> str:
         nonlocal called
 
         called = True
@@ -279,7 +279,7 @@ agent_all = Agent()
 
 
 @agent_all.tool
-async def foo(_: CallContext[None], x: int) -> str:
+async def foo(_: RunContext[None], x: int) -> str:
     return str(x + 1)
 
 

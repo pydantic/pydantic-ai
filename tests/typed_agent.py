@@ -5,7 +5,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Callable, Union, assert_type
 
-from pydantic_ai import Agent, CallContext, ModelRetry
+from pydantic_ai import Agent, ModelRetry, RunContext
 from pydantic_ai.result import RunResult
 
 
@@ -20,7 +20,7 @@ assert_type(typed_agent, Agent[MyDeps, str])
 
 
 @typed_agent.system_prompt
-async def system_prompt_ok1(ctx: CallContext[MyDeps]) -> str:
+async def system_prompt_ok1(ctx: RunContext[MyDeps]) -> str:
     return f'{ctx.deps}'
 
 
@@ -30,7 +30,7 @@ def system_prompt_ok2() -> str:
 
 
 # we have overloads for every possible signature of system_prompt, so the type of decorated functions is correct
-assert_type(system_prompt_ok1, Callable[[CallContext[MyDeps]], Awaitable[str]])
+assert_type(system_prompt_ok1, Callable[[RunContext[MyDeps]], Awaitable[str]])
 assert_type(system_prompt_ok2, Callable[[], str])
 
 
@@ -45,14 +45,14 @@ def expect_error(error_type: type[Exception]) -> Iterator[None]:
 
 
 @typed_agent.tool
-async def ok_tool(ctx: CallContext[MyDeps], x: str) -> str:
+async def ok_tool(ctx: RunContext[MyDeps], x: str) -> str:
     assert_type(ctx.deps, MyDeps)
     total = ctx.deps.foo + ctx.deps.bar
     return f'{x} {total}'
 
 
 # we can't add overloads for every possible signature of tool, so the type of ok_tool is obscured
-assert_type(ok_tool, Callable[[CallContext[MyDeps], str], str])  # type: ignore[assert-type]
+assert_type(ok_tool, Callable[[RunContext[MyDeps], str], str])  # type: ignore[assert-type]
 
 
 @typed_agent.tool_plain
@@ -66,13 +66,13 @@ def ok_json_list(x: str) -> list[Union[str, int]]:
 
 
 @typed_agent.tool
-async def bad_tool1(ctx: CallContext[MyDeps], x: str) -> str:
+async def bad_tool1(ctx: RunContext[MyDeps], x: str) -> str:
     total = ctx.deps.foo + ctx.deps.spam  # type: ignore[attr-defined]
     return f'{x} {total}'
 
 
 @typed_agent.tool  # type: ignore[arg-type]
-async def bad_tool2(ctx: CallContext[int], x: str) -> str:
+async def bad_tool2(ctx: RunContext[int], x: str) -> str:
     return f'{x} {ctx.deps}'
 
 
@@ -94,7 +94,7 @@ def ok_validator_simple(data: str) -> str:
 
 
 @typed_agent.result_validator
-async def ok_validator_ctx(ctx: CallContext[MyDeps], data: str) -> str:
+async def ok_validator_ctx(ctx: RunContext[MyDeps], data: str) -> str:
     if ctx.deps.foo == 1:
         raise ModelRetry('foo is 1')
     return data
@@ -102,11 +102,11 @@ async def ok_validator_ctx(ctx: CallContext[MyDeps], data: str) -> str:
 
 # we have overloads for every possible signature of result_validator, so the type of decorated functions is correct
 assert_type(ok_validator_simple, Callable[[str], str])
-assert_type(ok_validator_ctx, Callable[[CallContext[MyDeps], str], Awaitable[str]])
+assert_type(ok_validator_ctx, Callable[[RunContext[MyDeps], str], Awaitable[str]])
 
 
 @typed_agent.result_validator  # type: ignore[arg-type]
-async def result_validator_wrong(ctx: CallContext[int], result: str) -> str:
+async def result_validator_wrong(ctx: RunContext[int], result: str) -> str:
     return result
 
 
