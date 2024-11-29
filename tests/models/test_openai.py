@@ -89,7 +89,7 @@ class MockOpenAI:
     ) -> AsyncOpenAI:
         return cast(AsyncOpenAI, cls(stream=list(stream)))  # pyright: ignore[reportArgumentType]
 
-    async def chat_completions_create(
+    async def chat_completions_create(  # pragma: no cover
         self, *_args: Any, stream: bool = False, **_kwargs: Any
     ) -> chat.ChatCompletion | MockAsyncStream:
         if stream:

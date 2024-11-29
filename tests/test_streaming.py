@@ -245,7 +245,7 @@ async def test_call_tool_wrong_name():
     agent = Agent(FunctionModel(stream_function=stream_structured_function), result_type=tuple[str, int])
 
     @agent.tool_plain
-    async def ret_a(x: str) -> str:
+    async def ret_a(x: str) -> str:  # pragma: no cover
         return x
 
     with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum retries \(1\) for result validation'):
