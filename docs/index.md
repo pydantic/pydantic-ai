@@ -136,54 +136,34 @@ async def main():
 12. This is a simple sketch of a database connection, used to keep the example short and readable. In reality, you'd be connecting to an external database (e.g. PostgreSQL) to get information about customers.
 13. This [Pydantic](https://docs.pydantic.dev) model is used to constrain the structured data returned by the agent. From this simple definition, Pydantic builds the JSON Schema that tells the LLM how to return the data, and performs validation to guarantee the data is correct at the end of the run.
 
-To help make things more clear, here is a diagram of what is happening in the `#!python await support_agent.run('What is my balance?', deps=deps)` call within `main`:
-```mermaid
-sequenceDiagram
-    participant DatabaseConn
-    participant Agent
-    participant LLM
-
-    Note over Agent: Dynamic system prompt<br>add_customer_name()
-    Agent ->> DatabaseConn: Retrieve customer name
-    activate DatabaseConn
-    DatabaseConn -->> Agent: "John"
-    deactivate DatabaseConn
-
-    Note over Agent: User query
-
-    Agent ->> LLM: Request<br>System: "You are a support agent..."<br>System: "The customer's name is John"<br>User: "What is my balance?"
-    activate LLM
-    Note over LLM: LLM decides to use a tool
-    LLM ->> Agent: Call tool<br>customer_balance()
-    deactivate LLM
-    activate Agent
-    Note over Agent: Retrieve account balance
-
-    Agent ->> DatabaseConn: Retrieve balance<br>Include pending
-    activate DatabaseConn
-    DatabaseConn -->> Agent: "$123.45"
-    deactivate DatabaseConn
-
-    Agent -->> LLM: ToolReturn<br>"$123.45"
-    deactivate Agent
-    activate LLM
-    Note over LLM: LLM processes response
-
-    LLM ->> Agent: StructuredResponse<br>SupportResult
-    deactivate LLM
-    activate Agent
-    Note over Agent: Support session complete
-    deactivate Agent
-```
-
-
 !!! tip "Complete `bank_support.py` example"
     The code included here is incomplete for the sake of brevity (the definition of `DatabaseConn` is missing); you can find the complete `bank_support.py` example [here](examples/bank-support.md).
+
+## Instrumentation with Pydantic Logfire
+
+To understand the flow of the above runs, we can watch the agent in action using Pydantic Logfire.
+
+To do this, we need to set up logfire, and add the following to our code:
+
+```py title="bank_support_with_logfire.py"
+import logfire
+logfire.configure()  # (1)!
+logfire.instrument_asyncpg()  # (2)!
+```
+
+1. Configure logfire, this will fail if not project is set up.
+2. In our demo, `DatabaseConn` uses [`asyncpg`]() to connect to a PostgreSQL database, so [`logfire.instrument_asyncpg()`](https://magicstack.github.io/asyncpg/current/) is used to log the database queries.
+
+That's enough to get the following view of your agent in action:
+
+{{ video('9078b98c4f75d01f912a0368bbbdb97a', 25, 55) }}
+
+See [Monitoring and Performance](logfire.md) to learn more.
 
 ## Next Steps
 
 To try PydanticAI yourself, follow the instructions [in the examples](examples/index.md).
 
-Read the [conceptual documentation](agents.md) to learn more about building applications with PydanticAI.
+Read the [docs](agents.md) to learn more about building applications with PydanticAI.
 
 Read the [API Reference](api/agent.md) to understand PydanticAI's interface.

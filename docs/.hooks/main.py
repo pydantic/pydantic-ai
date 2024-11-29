@@ -57,18 +57,19 @@ def sub_example(m: re.Match[str]) -> str:
 
 
 def render_video(markdown: str) -> str:
-    return re.sub(r'\{\{ *video\((["\'])(.+?)\1(?:, (\d+))?\) *\}\}', sub_cf_video, markdown)
+    return re.sub(r'\{\{ *video\((["\'])(.+?)\1(?:, (\d+))?(?:, (\d+))?\) *\}\}', sub_cf_video, markdown)
 
 
 def sub_cf_video(m: re.Match[str]) -> str:
     video_id = m.group(2)
     time = m.group(3)
     time = f'{time}s' if time else ''
+    padding_top = m.group(4) or '67'
 
     domain = 'https://customer-nmegqx24430okhaq.cloudflarestream.com'
     poster = f'{domain}/{video_id}/thumbnails/thumbnail.jpg?time={time}&height=600'
     return f"""
-<div style="position: relative; padding-top: 67%;">
+<div style="position: relative; padding-top: {padding_top}%;">
   <iframe
     src="{domain}/{video_id}/iframe?poster={urllib.parse.quote_plus(poster)}"
     loading="lazy"
