@@ -82,6 +82,10 @@ def test_docs_examples(
     opt_title = prefix_settings.get('title')
     cwd = Path.cwd()
 
+    if opt_title == 'bank_support_with_logfire.py':
+        # don't format and no need to run
+        return
+
     if opt_title == 'test_sql_app.py':
         os.chdir(tmp_path)
         examples = [{'request': f'sql prompt {i}', 'sql': f'SELECT {i}'} for i in range(15)]

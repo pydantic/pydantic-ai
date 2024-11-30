@@ -24,7 +24,7 @@ To use Logfire with PydanticAI, install `pydantic-ai` or `pydantic-ai-slim` with
 pip/uv-add 'pydantic-ai[logfire]'
 ```
 
-From there, follow the [Logfire setup docs](logfire.md#integrating-logfire) to configure Logfire.
+From there, follow the [Logfire setup docs](logfire.md#using-logfire) to configure Logfire.
 
 ## Running Examples
 

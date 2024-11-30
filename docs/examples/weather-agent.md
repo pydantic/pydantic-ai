@@ -4,6 +4,7 @@ Demonstrates:
 
 * [tools](../agents.md#function-tools)
 * [agent dependencies](../dependencies.md)
+* [streaming text responses](../results.md#streaming-text)
 
 In this case the idea is a "weather" agent — the user can ask for the weather in multiple locations,
 the agent will use the `get_lat_lng` tool to get the latitude and longitude of the locations, then use

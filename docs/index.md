@@ -145,11 +145,14 @@ To understand the flow of the above runs, we can watch the agent in action using
 
 To do this, we need to set up logfire, and add the following to our code:
 
-```py title="bank_support_with_logfire.py"
-import logfire
+```py title="bank_support_with_logfire.py"  hl_lines="4-6"
+...
+from bank_database import DatabaseConn
 
+import logfire
 logfire.configure()  # (1)!
 logfire.instrument_asyncpg()  # (2)!
+...
 ```
 
 1. Configure logfire, this will fail if not project is set up.
