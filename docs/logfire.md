@@ -1,4 +1,4 @@
-# Monitoring and Performance
+# Debugging and Monitoring
 
 Applications that use LLMs have some challenges that are well known and understood: LLMs are **slow**, **unreliable** and **expensive**.
 
@@ -15,10 +15,10 @@ LLM Observability tools that just let you understand how your model is performin
 
 ## Pydantic Logfire
 
-[Pydantic Logfire](https://pydantic.dev/logfire) is an observability platform from the developers of Pydantic and PydanticAI, that aims to let you understand your entire application: Gen AI, classic predictive AI, HTTP traffic, database queries and everything else a modern application needs.
+[Pydantic Logfire](https://pydantic.dev/logfire) is an observability platform developed by the team who created and maintain Pydantic and PydanticAI. Logfire aims to let you understand your entire application: Gen AI, classic predictive AI, HTTP traffic, database queries and everything else a modern application needs.
 
 !!! tip "Pydantic Logfire is a commercial product"
-    Logfire is a commercially supported, hosted platform with an extremely generous and perpetual free tier.
+    Logfire is a commercially supported, hosted platform with an extremely generous and perpetual [free tier](https://pydantic.dev/pricing/).
     You can sign up and start using Logfire in a couple of minutes.
 
 PydanticAI has built-in (but optional) support for Logfire via the [`logfire-api`](https://github.com/pydantic/logfire/tree/main/logfire-api) no-op package.
@@ -29,14 +29,53 @@ Here's an example showing details of running the [Weather Agent](examples/weathe
 
 ![Weather Agent Logfire](img/logfire-weather-agent.png)
 
-## Integrating Logfire
+## Using Logfire
 
-TODO
+To use logfire, you'll need a logfire [account](https://logfire.pydantic.dev), and logfire installed:
 
-## Debugging
+```bash
+pip/uv-add 'pydantic-ai[logfire]'
+```
 
-TODO
+Then authenticate your local environment with logfire:
 
-## Monitoring Performance
+```bash
+py-cli logfire auth
+```
 
-TODO
+And configure a project to send data to:
+
+```bash
+py-cli logfire projects new
+```
+
+(Or use an existing project with `logfire projects use`)
+
+The last step is to add logfire to your code:
+
+```python title="adding_logfire.py"
+import logfire
+
+logfire.configure()
+```
+
+The [logfire documentation](https://logfire.pydantic.dev/docs/) has more details on how to use logfire, including how to instrument other libraries like Pydantic, HTTPX and FastAPI.
+
+Since Logfire is build on [OpenTelemetry](https://opentelemetry.io/), you can use the Logfire Python SDK to send data to any OpenTelemetry collector.
+
+Once you have logfire set up, there are two primary ways it can help you understand your application:
+
+* **Debugging** — Using the live view to see what's happening in your application in real-time.
+* **Monitoring** — Using SQL and dashboards to observe the behavior of your application, Logfire is effectively a SQL database that stores information about how your application is running.
+
+### Debugging
+
+To demonstrate how Logfire can let you visualise the flow of a PydanticAI run, here's the view you get from Logfire while running the [chat app examples](examples/chat-app.md):
+
+{{ video('a764aff5840534dc77eba7d028707bfa', 25) }}
+
+### Monitoring Performance
+
+We can also query data with SQL in Logfire to monitor the performance of an application. Here's a real world example of using Logfire to monitor PydanticAI runs inside Logfire itself:
+
+![Logfire monitoring PydanticAI](img/logfire-monitoring-pydanticai.png)

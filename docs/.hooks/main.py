@@ -18,25 +18,33 @@ def on_page_markdown(markdown: str, page: Page, config: Config, files: Files) ->
 
 
 def replace_uv_python_run(markdown: str) -> str:
-    return re.sub(r'```bash\n(.*?)(python/uv[\- ]run|pip/uv[\- ]add)(.+?)\n```', sub_run, markdown)
+    return re.sub(r'```bash\n(.*?)(python/uv[\- ]run|pip/uv[\- ]add|py-cli)(.+?)\n```', sub_run, markdown)
 
 
 def sub_run(m: re.Match[str]) -> str:
     prefix = m.group(1)
     command = m.group(2)
-    install = 'pip' in command
+    if 'pip' in command:
+        pip_base = 'pip install'
+        uv_base = 'uv add'
+    elif command == 'py-cli':
+        pip_base = ''
+        uv_base = 'uv run'
+    else:
+        pip_base = 'python'
+        uv_base = 'uv run'
     suffix = m.group(3)
     return f"""\
 === "pip"
 
     ```bash
-    {prefix}{'pip install' if install else 'python'}{suffix}
+    {prefix}{pip_base}{suffix}
     ```
 
 === "uv"
 
     ```bash
-    {prefix}uv {'add' if install else 'run'}{suffix}
+    {prefix}{uv_base}{suffix}
     ```"""
 
 

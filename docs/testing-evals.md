@@ -398,7 +398,7 @@ To get a quantitative measure of performance, we assign points to each run as fo
 
 We use 5-fold cross-validation to judge the performance of the agent using our existing set of examples.
 
-```py title="test_sql_app.py"
+```py title="sql_app_evals.py"
 import json
 import statistics
 from pathlib import Path

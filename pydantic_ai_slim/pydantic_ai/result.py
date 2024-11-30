@@ -1,8 +1,8 @@
 from __future__ import annotations as _annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator
-from dataclasses import dataclass
+from collections.abc import AsyncIterator, Callable
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Generic, TypeVar, cast
 
@@ -49,11 +49,11 @@ class Cost:
         This is provided so it's trivial to sum costs from multiple requests and runs.
         """
         counts: dict[str, int] = {}
-        for field in 'request_tokens', 'response_tokens', 'total_tokens':
-            self_value = getattr(self, field)
-            other_value = getattr(other, field)
+        for f in 'request_tokens', 'response_tokens', 'total_tokens':
+            self_value = getattr(self, f)
+            other_value = getattr(other, f)
             if self_value is not None or other_value is not None:
-                counts[field] = (self_value or 0) + (other_value or 0)
+                counts[f] = (self_value or 0) + (other_value or 0)
 
         details = self.details.copy() if self.details is not None else None
         if other.details is not None:
@@ -122,7 +122,8 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
     _result_schema: _result.ResultSchema[ResultData] | None
     _deps: AgentDeps
     _result_validators: list[_result.ResultValidator[AgentDeps, ResultData]]
-    is_complete: bool = False
+    _on_complete: Callable[[list[messages.Message]], None]
+    is_complete: bool = field(default=False, init=False)
     """Whether the stream has all been received.
 
     This is set to `True` when one of
@@ -312,3 +313,4 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
         else:
             assert structured_message is not None, 'Either text or structured_message should provided, not both'
             self._all_messages.append(structured_message)
+        self._on_complete(self._all_messages)
