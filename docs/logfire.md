@@ -70,8 +70,12 @@ Once you have logfire set up, there are two primary ways it can help you underst
 
 ### Debugging
 
-TODO
+To demonstrate how Logfire can let you visualise the flow of a PydanticAI run, here's the view you get from Logfire while running the [chat app examples](examples/chat-app.md):
+
+{{ video('a764aff5840534dc77eba7d028707bfa', 25) }}
 
 ### Monitoring Performance
 
-TODO
+We can also query data with SQL in Logfire to monitor the performance of an application. Here's a real world example of using Logfire to monitor PydanticAI runs inside Logfire itself:
+
+![Logfire monitoring PydanticAI](img/logfire-monitoring-pydanticai.png)

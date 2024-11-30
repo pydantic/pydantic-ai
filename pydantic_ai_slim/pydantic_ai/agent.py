@@ -284,6 +284,7 @@ class Agent(Generic[AgentDeps, ResultData]):
                                     self._result_schema,
                                     deps,
                                     self._result_validators,
+                                    lambda m: run_span.set_attribute('all_messages', messages),
                                 )
                                 return
                             else:
