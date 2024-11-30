@@ -86,7 +86,7 @@ def test_docs_examples(
         # don't format and no need to run
         return
 
-    if opt_title == 'test_sql_app.py':
+    if opt_title == 'sql_app_evals.py':
         os.chdir(tmp_path)
         examples = [{'request': f'sql prompt {i}', 'sql': f'SELECT {i}'} for i in range(15)]
         with (tmp_path / 'examples.json').open('w') as f:
