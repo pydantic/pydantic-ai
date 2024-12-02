@@ -1508,6 +1508,7 @@ examples = [
 
 [package.dev-dependencies]
 docs = [
+    { name = "black" },
     { name = "mkdocs" },
     { name = "mkdocs-glightbox" },
     { name = "mkdocs-material", extra = ["imaging"] },
@@ -1527,6 +1528,7 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 docs = [
+    { name = "black", specifier = ">=24.10.0" },
     { name = "mkdocs", specifier = ">=1.6.1" },
     { name = "mkdocs-glightbox", specifier = ">=0.4.0" },
     { name = "mkdocs-material", extras = ["imaging"], specifier = ">=9.5.45" },
