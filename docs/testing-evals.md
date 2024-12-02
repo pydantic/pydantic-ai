@@ -361,6 +361,11 @@ async def user_search(user_prompt: str) -> list[dict[str, str]]:
     return await conn.execute(result.data)
 ```
 
+1. The `SqlSystemPrompt` class is used to build the system prompt, it can be customised with a list of examples and a database type. We implement this as a separate class passed as a dep to the agent so we can override both the inputs and the logic during evals via dependency injection.
+2. The `build_prompt` method constructs the system prompt from the examples and the database type.
+3. Some people think that LLMs are more likely to generate good responses if examples are formatted as XML as it's to identify the end of a string, see [#93](https://github.com/pydantic/pydantic-ai/issues/93).
+4. In reality, you would have more logic here, making it impractical to run the agent independently of the wider application.
+
 `examples.json` looks something like this:
 
 
