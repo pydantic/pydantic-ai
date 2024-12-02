@@ -13,3 +13,4 @@ env*/
 /pydantic_ai_examples/.chat_app_messages.jsonl
 .cache/
 .docs-insiders-install
+.vscode/
