@@ -39,7 +39,7 @@ Structured results (like tools) use Pydantic to build the JSON schema used for t
 !!! note "Bring on PEP-747"
     Until [PEP-747](https://peps.python.org/pep-0747/) "Annotating Type Forms" lands, unions are not valid as `type`s in Python.
 
-    When creating the agent we nee to `# type: ignore` the `result_type` argument, and add a type hint to tell type checkers about the type of the agent.
+    When creating the agent we need to `# type: ignore` the `result_type` argument, and add a type hint to tell type checkers about the type of the agent.
 
 Here's an example of returning either text or a structured value
 
