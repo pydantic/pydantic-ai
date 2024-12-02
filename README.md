@@ -10,21 +10,11 @@
   <em>Agent Framework / shim to use Pydantic with LLMs</em>
 </div>
 <div align="center">
-  <a href="https://github.com/pydantic/pydantic-ai/actions/workflows/ci.yml?query=branch%3Amain">
-    <img src="https://github.com/pydantic/pydantic-ai/actions/workflows/ci.yml/badge.svg?event=push" alt="CI">
-  </a>
-  <a href="https://coverage-badge.samuelcolvin.workers.dev/redirect/pydantic/pydantic-ai">
-    <img src="https://coverage-badge.samuelcolvin.workers.dev/pydantic/pydantic-ai.svg" alt="Coverage">
-  </a>
-  <a href="https://pypi.python.org/pypi/pydantic-ai">
-    <img src="https://img.shields.io/pypi/v/pydantic-ai.svg" alt="PyPI">
-  </a>
-  <a href="https://github.com/pydantic/pydantic-ai">
-    <img src="https://img.shields.io/pypi/pyversions/pydantic-ai.svg" alt="versions">
-  </a>
-  <a href="https://github.com/pydantic/pydantic-ai/blob/main/LICENSE">
-    <img src="https://img.shields.io/github/license/pydantic/pydantic-ai.svg?v" alt="license">
-  </a>
+  <a href="https://github.com/pydantic/pydantic-ai/actions/workflows/ci.yml?query=branch%3Amain"><img src="https://github.com/pydantic/pydantic-ai/actions/workflows/ci.yml/badge.svg?event=push" alt="CI"></a>
+  <a href="https://coverage-badge.samuelcolvin.workers.dev/redirect/pydantic/pydantic-ai"><img src="https://coverage-badge.samuelcolvin.workers.dev/pydantic/pydantic-ai.svg" alt="Coverage"></a>
+  <a href="https://pypi.python.org/pypi/pydantic-ai"><img src="https://img.shields.io/pypi/v/pydantic-ai.svg" alt="PyPI"></a>
+  <a href="https://github.com/pydantic/pydantic-ai"><img src="https://img.shields.io/pypi/pyversions/pydantic-ai.svg" alt="versions"></a>
+  <a href="https://github.com/pydantic/pydantic-ai/blob/main/LICENSE"><img src="https://img.shields.io/github/license/pydantic/pydantic-ai.svg?v" alt="license"></a>
 </div>
 
 ---
