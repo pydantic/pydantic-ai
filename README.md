@@ -61,7 +61,8 @@ agent = Agent(
 )
 
 # Run the agent synchronously, conducting a conversation with the LLM.
-# Here the exchange should be very short: PydanticAI will send the system prompt and the user query to the LLM, the model will return a text response. See below for a more complex run.
+# Here the exchange should be very short: PydanticAI will send the system prompt and the user query to the LLM,
+# the model will return a text response. See below for a more complex run.
 result = agent.run_sync('Where does "hello world" come from?')
 print(result.data)
 """
