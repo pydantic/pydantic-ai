@@ -20,6 +20,7 @@ from pydantic_ai.messages import (
     ToolReturn,
     UserPrompt,
 )
+from pydantic_ai.models import cached_async_http_client
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.result import Cost, RunResult
@@ -522,6 +523,15 @@ def test_override_model_no_model(set_event_loop: None):
 
 def test_run_sync_multiple(set_event_loop: None):
     agent = Agent('test')
-    for _ in range(3):
+
+    @agent.tool_plain
+    async def make_request() -> str:
+        # raised a `RuntimeError: Event loop is closed` on repeat runs when we used `asyncio.run()`
+        client = cached_async_http_client()
+        # use this as I suspect it's about the fastest globally available endpoint
+        response = await client.get('https://cloudflare.com/cdn-cgi/trace')
+        return str(response.status_code)
+
+    for _ in range(2):
         result = agent.run_sync('Hello')
-        assert result.data == 'success (no tool calls)'
+        assert result.data == '{"make_request":"200"}'
