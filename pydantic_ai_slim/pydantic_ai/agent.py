@@ -206,7 +206,7 @@ class Agent(Generic[AgentDeps, ResultData]):
     ) -> result.RunResult[ResultData]:
         """Run the agent with a user prompt synchronously.
 
-        This is a convenience method that wraps `self.run` with `asyncio.run()`.
+        This is a convenience method that wraps `self.run` with `loop.run_until_complete()`.
 
         Args:
             user_prompt: User input to start/continue the conversation.
@@ -217,7 +217,8 @@ class Agent(Generic[AgentDeps, ResultData]):
         Returns:
             The result of the run.
         """
-        return asyncio.run(self.run(user_prompt, message_history=message_history, model=model, deps=deps))
+        loop = asyncio.get_event_loop()
+        return loop.run_until_complete(self.run(user_prompt, message_history=message_history, model=model, deps=deps))
 
     @asynccontextmanager
     async def run_stream(

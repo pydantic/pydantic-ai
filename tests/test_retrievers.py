@@ -73,7 +73,7 @@ async def get_json_schema(_messages: list[Message], info: AgentInfo) -> ModelAny
     return ModelTextResponse(json.dumps(r.json_schema))
 
 
-def test_docstring_google():
+def test_docstring_google(set_event_loop: None):
     agent = Agent(FunctionModel(get_json_schema))
     agent.tool_plain(google_style_docstring)
 
@@ -104,7 +104,7 @@ def sphinx_style_docstring(foo: int, /) -> str:  # pragma: no cover
     return str(foo)
 
 
-def test_docstring_sphinx():
+def test_docstring_sphinx(set_event_loop: None):
     agent = Agent(FunctionModel(get_json_schema))
     agent.tool_plain(sphinx_style_docstring)
 
@@ -136,7 +136,7 @@ def numpy_style_docstring(*, foo: int, bar: str) -> str:  # pragma: no cover
     return f'{foo} {bar}'
 
 
-def test_docstring_numpy():
+def test_docstring_numpy(set_event_loop: None):
     agent = Agent(FunctionModel(get_json_schema))
     agent.tool_plain(numpy_style_docstring)
 
@@ -161,7 +161,7 @@ def unknown_docstring(**kwargs: int) -> str:  # pragma: no cover
     return str(kwargs)
 
 
-def test_docstring_unknown():
+def test_docstring_unknown(set_event_loop: None):
     agent = Agent(FunctionModel(get_json_schema))
     agent.tool_plain(unknown_docstring)
 
@@ -190,7 +190,7 @@ async def google_style_docstring_no_body(
     return f'{foo} {bar}'
 
 
-def test_docstring_google_no_body():
+def test_docstring_google_no_body(set_event_loop: None):
     agent = Agent(FunctionModel(get_json_schema))
     agent.tool_plain(google_style_docstring_no_body)
 
@@ -209,7 +209,7 @@ def test_docstring_google_no_body():
     )
 
 
-def test_takes_just_model():
+def test_takes_just_model(set_event_loop: None):
     agent = Agent()
 
     class Foo(BaseModel):
@@ -235,7 +235,7 @@ def test_takes_just_model():
     assert result.data == snapshot('{"takes_just_model":"0 a"}')
 
 
-def test_takes_model_and_int():
+def test_takes_model_and_int(set_event_loop: None):
     agent = Agent()
 
     class Foo(BaseModel):

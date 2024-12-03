@@ -27,7 +27,7 @@ from pydantic_ai.result import Cost, RunResult
 from .conftest import IsNow, TestEnv
 
 
-def test_result_tuple():
+def test_result_tuple(set_event_loop: None):
     def return_tuple(_: list[Message], info: AgentInfo) -> ModelAnyResponse:
         assert info.result_tools is not None
         args_json = '{"response": ["foo", "bar"]}'
@@ -44,7 +44,7 @@ class Foo(BaseModel):
     b: str
 
 
-def test_result_pydantic_model():
+def test_result_pydantic_model(set_event_loop: None):
     def return_model(_: list[Message], info: AgentInfo) -> ModelAnyResponse:
         assert info.result_tools is not None
         args_json = '{"a": 1, "b": "foo"}'
@@ -57,7 +57,7 @@ def test_result_pydantic_model():
     assert result.data.model_dump() == {'a': 1, 'b': 'foo'}
 
 
-def test_result_pydantic_model_retry():
+def test_result_pydantic_model_retry(set_event_loop: None):
     def return_model(messages: list[Message], info: AgentInfo) -> ModelAnyResponse:
         assert info.result_tools is not None
         if len(messages) == 1:
@@ -99,7 +99,7 @@ def test_result_pydantic_model_retry():
     assert result.all_messages_json().startswith(b'[{"content":"Hello"')
 
 
-def test_result_validator():
+def test_result_validator(set_event_loop: None):
     def return_model(messages: list[Message], info: AgentInfo) -> ModelAnyResponse:
         assert info.result_tools is not None
         if len(messages) == 1:
@@ -135,7 +135,7 @@ def test_result_validator():
     )
 
 
-def test_plain_response():
+def test_plain_response(set_event_loop: None):
     call_index = 0
 
     def return_tuple(_: list[Message], info: AgentInfo) -> ModelAnyResponse:
@@ -170,7 +170,7 @@ def test_plain_response():
     )
 
 
-def test_response_tuple():
+def test_response_tuple(set_event_loop: None):
     m = TestModel()
 
     agent = Agent(m, result_type=tuple[str, str])
@@ -215,7 +215,7 @@ def test_response_tuple():
     [lambda: Union[str, Foo], lambda: Union[Foo, str], lambda: str | Foo, lambda: Foo | str],
     ids=['Union[str, Foo]', 'Union[Foo, str]', 'str | Foo', 'Foo | str'],
 )
-def test_response_union_allow_str(input_union_callable: Callable[[], Any]):
+def test_response_union_allow_str(set_event_loop: None, input_union_callable: Callable[[], Any]):
     try:
         union = input_union_callable()
     except TypeError:
@@ -277,7 +277,7 @@ def test_response_union_allow_str(input_union_callable: Callable[[], Any]):
         ),
     ],
 )
-def test_response_multiple_return_tools(create_module: Callable[[str], Any], union_code: str):
+def test_response_multiple_return_tools(set_event_loop: None, create_module: Callable[[str], Any], union_code: str):
     module_code = f'''
 from pydantic import BaseModel
 from typing import Union
@@ -356,7 +356,7 @@ class Bar(BaseModel):
     assert got_tool_call_name == snapshot('final_result_Bar')
 
 
-def test_run_with_history_new():
+def test_run_with_history_new(set_event_loop: None):
     m = TestModel()
 
     agent = Agent(m, system_prompt='Foobar')
@@ -440,7 +440,7 @@ def test_run_with_history_new():
     )
 
 
-def test_empty_tool_calls():
+def test_empty_tool_calls(set_event_loop: None):
     def empty(_: list[Message], _info: AgentInfo) -> ModelAnyResponse:
         return ModelStructuredResponse(calls=[])
 
@@ -450,7 +450,7 @@ def test_empty_tool_calls():
         agent.run_sync('Hello')
 
 
-def test_unknown_tool():
+def test_unknown_tool(set_event_loop: None):
     def empty(_: list[Message], _info: AgentInfo) -> ModelAnyResponse:
         return ModelStructuredResponse(calls=[ToolCall.from_json('foobar', '{}')])
 
@@ -472,7 +472,7 @@ def test_unknown_tool():
     )
 
 
-def test_unknown_tool_fix():
+def test_unknown_tool_fix(set_event_loop: None):
     def empty(m: list[Message], _info: AgentInfo) -> ModelAnyResponse:
         if len(m) > 1:
             return ModelTextResponse(content='success')
@@ -495,7 +495,7 @@ def test_unknown_tool_fix():
     )
 
 
-def test_model_requests_blocked(env: TestEnv):
+def test_model_requests_blocked(env: TestEnv, set_event_loop: None):
     env.set('GEMINI_API_KEY', 'foobar')
     agent = Agent('gemini-1.5-flash', result_type=tuple[str, str], defer_model_check=True)
 
@@ -503,7 +503,7 @@ def test_model_requests_blocked(env: TestEnv):
         agent.run_sync('Hello')
 
 
-def test_override_model(env: TestEnv):
+def test_override_model(env: TestEnv, set_event_loop: None):
     env.set('GEMINI_API_KEY', 'foobar')
     agent = Agent('gemini-1.5-flash', result_type=tuple[int, str], defer_model_check=True)
 
@@ -512,9 +512,16 @@ def test_override_model(env: TestEnv):
         assert result.data == snapshot((0, 'a'))
 
 
-def test_override_model_no_model():
+def test_override_model_no_model(set_event_loop: None):
     agent = Agent()
 
     with pytest.raises(UserError, match=r'`model` must be set either.+Even when `override\(model=...\)` is customiz'):
         with agent.override(model='test'):
             agent.run_sync('Hello')
+
+
+def test_run_sync_multiple(set_event_loop: None):
+    agent = Agent('test')
+    for _ in range(3):
+        result = agent.run_sync('Hello')
+        assert result.data == 'success (no tool calls)'

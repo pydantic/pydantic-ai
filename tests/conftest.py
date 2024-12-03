@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+import asyncio
 import importlib.util
 import os
 import re
@@ -162,3 +163,11 @@ def try_import() -> Iterator[Callable[[], bool]]:
         pass
     else:
         import_success = True
+
+
+@pytest.fixture
+def set_event_loop() -> Iterator[None]:
+    new_loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(new_loop)
+    yield
+    new_loop.close()

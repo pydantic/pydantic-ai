@@ -59,7 +59,7 @@ def get_logfire_summary(capfire: CaptureLogfire) -> Callable[[], LogfireSummary]
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
-def test_logfire(get_logfire_summary: Callable[[], LogfireSummary]) -> None:
+def test_logfire(get_logfire_summary: Callable[[], LogfireSummary], set_event_loop: None) -> None:
     agent = Agent(model=TestModel())
 
     @agent.tool_plain
