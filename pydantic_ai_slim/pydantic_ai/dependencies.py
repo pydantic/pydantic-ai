@@ -17,8 +17,9 @@ __all__ = (
     'ResultValidatorFunc',
     'SystemPromptFunc',
     'ToolReturnValue',
-    'ToolContextFunc',
-    'ToolPlainFunc',
+    'ToolFuncContext',
+    'ToolFuncPlain',
+    'ToolFuncEither',
     'ToolParams',
     'JsonData',
 )
@@ -71,13 +72,21 @@ JsonData: TypeAlias = 'None | str | int | float | Sequence[JsonData] | Mapping[s
 
 ToolReturnValue = Union[JsonData, Awaitable[JsonData]]
 """Return value of a tool function."""
-ToolContextFunc = Callable[Concatenate[RunContext[AgentDeps], ToolParams], ToolReturnValue]
+ToolFuncContext = Callable[Concatenate[RunContext[AgentDeps], ToolParams], ToolReturnValue]
 """A tool function that takes `RunContext` as the first argument.
 
 Usage `ToolContextFunc[AgentDeps, ToolParams]`.
 """
-ToolPlainFunc = Callable[ToolParams, ToolReturnValue]
+ToolFuncPlain = Callable[ToolParams, ToolReturnValue]
 """A tool function that does not take `RunContext` as the first argument.
 
 Usage `ToolPlainFunc[ToolParams]`.
+"""
+ToolFuncEither = ToolFuncContext[AgentDeps, ToolParams] | ToolFuncPlain[ToolParams]
+"""Either kind of tool function.
+
+This is just a union of [`ToolFuncContext`][pydantic_ai.dependencies.ToolFuncContext] and
+[`ToolFuncPlain`][pydantic_ai.dependencies.ToolFuncPlain].
+
+Usage `ToolFuncEither[AgentDeps, ToolParams]`.
 """

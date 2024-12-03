@@ -6,7 +6,7 @@ This module has to use numerous internal Pydantic APIs and is therefore brittle 
 from __future__ import annotations as _annotations
 
 from inspect import Parameter, signature
-from typing import TYPE_CHECKING, Any, TypedDict, cast, get_origin
+from typing import TYPE_CHECKING, Any, Callable, TypedDict, cast, get_origin
 
 from pydantic import ConfigDict, TypeAdapter
 from pydantic._internal import _decorators, _generate_schema, _typing_extra
@@ -20,8 +20,7 @@ from ._griffe import doc_descriptions
 from ._utils import ObjectJsonSchema, check_object_json_schema, is_model_like
 
 if TYPE_CHECKING:
-    from . import _tool
-    from .dependencies import AgentDeps, ToolParams
+    pass
 
 
 __all__ = 'function_schema', 'LazyTypeAdapter'
@@ -39,17 +38,16 @@ class FunctionSchema(TypedDict):
     var_positional_field: str | None
 
 
-def function_schema(either_function: _tool.ToolEitherFunc[AgentDeps, ToolParams]) -> FunctionSchema:  # noqa: C901
+def function_schema(function: Callable[..., Any], takes_ctx: bool) -> FunctionSchema:  # noqa: C901
     """Build a Pydantic validator and JSON schema from a tool function.
 
     Args:
-        either_function: The function to build a validator and JSON schema for.
+        function: The function to build a validator and JSON schema for.
+        takes_ctx: Whether the function takes a `RunContext` first argument.
 
     Returns:
         A `FunctionSchema` instance.
     """
-    function = either_function.whichever()
-    takes_ctx = either_function.is_left()
     config = ConfigDict(title=function.__name__)
     config_wrapper = ConfigWrapper(config)
     gen_schema = _generate_schema.GenerateSchema(config_wrapper)

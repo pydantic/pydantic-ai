@@ -12,15 +12,15 @@ from typing_extensions import assert_never
 from . import (
     _result,
     _system_prompt,
-    _tool as _r,
     _utils,
     exceptions,
     messages as _messages,
     models,
     result,
 )
-from .dependencies import AgentDeps, RunContext, ToolContextFunc, ToolParams, ToolPlainFunc
+from .dependencies import AgentDeps, RunContext, ToolFuncContext, ToolFuncEither, ToolFuncPlain, ToolParams
 from .result import ResultData
+from .tool import Tool
 
 __all__ = ('Agent',)
 
@@ -58,7 +58,7 @@ class Agent(Generic[AgentDeps, ResultData]):
     _result_validators: list[_result.ResultValidator[AgentDeps, ResultData]] = field(repr=False)
     _allow_text_result: bool = field(repr=False)
     _system_prompts: tuple[str, ...] = field(repr=False)
-    _function_tools: dict[str, _r.Tool[AgentDeps, Any]] = field(repr=False)
+    _function_tools: dict[str, Tool[AgentDeps]] = field(repr=False)
     _default_retries: int = field(repr=False)
     _system_prompt_functions: list[_system_prompt.SystemPromptRunner[AgentDeps]] = field(repr=False)
     _deps_type: type[AgentDeps] = field(repr=False)
@@ -83,6 +83,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         result_tool_name: str = 'final_result',
         result_tool_description: str | None = None,
         result_retries: int | None = None,
+        tools: Sequence[Tool[AgentDeps]] = (),
         defer_model_check: bool = False,
     ):
         """Create an agent.
@@ -101,6 +102,8 @@ class Agent(Generic[AgentDeps, ResultData]):
             result_tool_name: The name of the tool to use for the final result.
             result_tool_description: The description of the final result tool.
             result_retries: The maximum number of retries to allow for result validation, defaults to `retries`.
+            tools: Tools to register with the agent, you can also register tools via the decorators
+                [`@agent.tool`][pydantic_ai.Agent.tool] and [`@agent.tool_plain`][pydantic_ai.Agent.tool_plain].
             defer_model_check: by default, if you provide a [named][pydantic_ai.models.KnownModelName] model,
                 it's evaluated to create a [`Model`][pydantic_ai.models.Model] instance immediately,
                 which checks for the necessary environment variables. Set this to `false`
@@ -119,7 +122,9 @@ class Agent(Generic[AgentDeps, ResultData]):
         self._allow_text_result = self._result_schema is None or self._result_schema.allow_text_result
 
         self._system_prompts = (system_prompt,) if isinstance(system_prompt, str) else tuple(system_prompt)
-        self._function_tools: dict[str, _r.Tool[AgentDeps, Any]] = {}
+        self._function_tools = {}
+        for tool in tools:
+            self._register_tool(tool)
         self._deps_type = deps_type
         self._default_retries = retries
         self._system_prompt_functions = []
@@ -439,16 +444,16 @@ class Agent(Generic[AgentDeps, ResultData]):
         return func
 
     @overload
-    def tool(self, func: ToolContextFunc[AgentDeps, ToolParams], /) -> ToolContextFunc[AgentDeps, ToolParams]: ...
+    def tool(self, func: ToolFuncContext[AgentDeps, ToolParams], /) -> ToolFuncContext[AgentDeps, ToolParams]: ...
 
     @overload
     def tool(
         self, /, *, retries: int | None = None
-    ) -> Callable[[ToolContextFunc[AgentDeps, ToolParams]], ToolContextFunc[AgentDeps, ToolParams]]: ...
+    ) -> Callable[[ToolFuncContext[AgentDeps, ToolParams]], ToolFuncContext[AgentDeps, ToolParams]]: ...
 
     def tool(
         self,
-        func: ToolContextFunc[AgentDeps, ToolParams] | None = None,
+        func: ToolFuncContext[AgentDeps, ToolParams] | None = None,
         /,
         *,
         retries: int | None = None,
@@ -491,27 +496,27 @@ class Agent(Generic[AgentDeps, ResultData]):
         if func is None:
 
             def tool_decorator(
-                func_: ToolContextFunc[AgentDeps, ToolParams],
-            ) -> ToolContextFunc[AgentDeps, ToolParams]:
+                func_: ToolFuncContext[AgentDeps, ToolParams],
+            ) -> ToolFuncContext[AgentDeps, ToolParams]:
                 # noinspection PyTypeChecker
-                self._register_tool(_utils.Either(left=func_), retries)
+                self._register_function(func_, True, retries)
                 return func_
 
             return tool_decorator
         else:
             # noinspection PyTypeChecker
-            self._register_tool(_utils.Either(left=func), retries)
+            self._register_function(func, True, retries)
             return func
 
     @overload
-    def tool_plain(self, func: ToolPlainFunc[ToolParams], /) -> ToolPlainFunc[ToolParams]: ...
+    def tool_plain(self, func: ToolFuncPlain[ToolParams], /) -> ToolFuncPlain[ToolParams]: ...
 
     @overload
     def tool_plain(
         self, /, *, retries: int | None = None
-    ) -> Callable[[ToolPlainFunc[ToolParams]], ToolPlainFunc[ToolParams]]: ...
+    ) -> Callable[[ToolFuncPlain[ToolParams]], ToolFuncPlain[ToolParams]]: ...
 
-    def tool_plain(self, func: ToolPlainFunc[ToolParams] | None = None, /, *, retries: int | None = None) -> Any:
+    def tool_plain(self, func: ToolFuncPlain[ToolParams] | None = None, /, *, retries: int | None = None) -> Any:
         """Decorator to register a tool function which DOES NOT take `RunContext` as an argument.
 
         Can decorate a sync or async functions.
@@ -548,23 +553,26 @@ class Agent(Generic[AgentDeps, ResultData]):
         """
         if func is None:
 
-            def tool_decorator(
-                func_: ToolPlainFunc[ToolParams],
-            ) -> ToolPlainFunc[ToolParams]:
+            def tool_decorator(func_: ToolFuncPlain[ToolParams]) -> ToolFuncPlain[ToolParams]:
                 # noinspection PyTypeChecker
-                self._register_tool(_utils.Either(right=func_), retries)
+                self._register_function(func_, False, retries)
                 return func_
 
             return tool_decorator
         else:
-            self._register_tool(_utils.Either(right=func), retries)
+            self._register_function(func, False, retries)
             return func
 
-    def _register_tool(self, func: _r.ToolEitherFunc[AgentDeps, ToolParams], retries: int | None) -> None:
-        """Private utility to register a tool function."""
+    def _register_function(
+        self, func: ToolFuncEither[AgentDeps, ToolParams], takes_ctx: bool, retries: int | None
+    ) -> None:
+        """Private utility to register a function as a tool."""
         retries_ = retries if retries is not None else self._default_retries
-        tool = _r.Tool[AgentDeps, ToolParams](func, retries_)
+        tool = Tool(func, takes_ctx, retries_)
+        self._register_tool(tool)
 
+    def _register_tool(self, tool: Tool[AgentDeps]) -> None:
+        """Private utility to register a tool instance."""
         if self._result_schema and tool.name in self._result_schema.tools:
             raise ValueError(f'Tool name conflicts with result schema name: {tool.name!r}')
 

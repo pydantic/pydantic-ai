@@ -9,45 +9,45 @@ from pydantic import ValidationError
 from pydantic_core import SchemaValidator
 
 from . import _pydantic, _utils, messages
-from .dependencies import AgentDeps, RunContext, ToolContextFunc, ToolParams, ToolPlainFunc
+from .dependencies import AgentDeps, RunContext, ToolFuncEither
 from .exceptions import ModelRetry, UnexpectedModelBehavior
 
-# Usage `ToolEitherFunc[AgentDependencies, P]`
-ToolEitherFunc = _utils.Either[ToolContextFunc[AgentDeps, ToolParams], ToolPlainFunc[ToolParams]]
+__all__ = ('Tool',)
 
 
-@dataclass(init=False)
-class Tool(Generic[AgentDeps, ToolParams]):
+@dataclass
+class Tool(Generic[AgentDeps]):
     """A tool function for an agent."""
 
-    name: str
-    description: str
-    function: ToolEitherFunc[AgentDeps, ToolParams] = field(repr=False)
-    is_async: bool
-    single_arg_name: str | None
-    positional_fields: list[str]
-    var_positional_field: str | None
-    validator: SchemaValidator = field(repr=False)
-    json_schema: _utils.ObjectJsonSchema
-    max_retries: int
-    _current_retry: int = 0
-    outer_typed_dict_key: str | None = None
+    function: ToolFuncEither[AgentDeps, ...]
+    """The Python function to call as the tool."""
+    takes_ctx: bool
+    """Whether the function takes a [`RunContext`][pydantic_ai.dependencies.RunContext] first argument."""
+    max_retries: int = 1
+    """Maximum number of retries allowed for this tool."""
+    name: str = ''
+    """Name of the tool, inferred from the function if left blank."""
+    description: str = ''
+    """Description of the tool, inferred from the function if left blank."""
+    is_async: bool = field(init=False)
+    single_arg_name: str | None = field(init=False)
+    positional_fields: list[str] = field(init=False)
+    var_positional_field: str | None = field(init=False)
+    validator: SchemaValidator = field(init=False, repr=False)
+    json_schema: _utils.ObjectJsonSchema = field(init=False)
+    _current_retry: int = field(default=0, init=False)
+    outer_typed_dict_key: str | None = field(default=None, init=False)
 
-    def __init__(self, function: ToolEitherFunc[AgentDeps, ToolParams], retries: int):
-        """Build a Tool dataclass from a function."""
-        self.function = function
-        # noinspection PyTypeChecker
-        f = _pydantic.function_schema(function)
-        raw_function = function.whichever()
-        self.name = raw_function.__name__
-        self.description = f['description']
-        self.is_async = inspect.iscoroutinefunction(raw_function)
+    def __post_init__(self):
+        f = _pydantic.function_schema(self.function, self.takes_ctx)
+        self.name = self.name or self.function.__name__
+        self.description = self.description or f['description']
+        self.is_async = inspect.iscoroutinefunction(self.function)
         self.single_arg_name = f['single_arg_name']
         self.positional_fields = f['positional_fields']
         self.var_positional_field = f['var_positional_field']
         self.validator = f['validator']
         self.json_schema = f['json_schema']
-        self.max_retries = retries
 
     def reset(self) -> None:
         """Reset the current retry count."""
@@ -66,10 +66,10 @@ class Tool(Generic[AgentDeps, ToolParams]):
         args, kwargs = self._call_args(deps, args_dict, message)
         try:
             if self.is_async:
-                function = cast(Callable[[Any], Awaitable[str]], self.function.whichever())
+                function = cast(Callable[[Any], Awaitable[str]], self.function)
                 response_content = await function(*args, **kwargs)
             else:
-                function = cast(Callable[[Any], str], self.function.whichever())
+                function = cast(Callable[[Any], str], self.function)
                 response_content = await _utils.run_in_executor(function, *args, **kwargs)
         except ModelRetry as e:
             return self._on_error(e, message)
@@ -87,7 +87,7 @@ class Tool(Generic[AgentDeps, ToolParams]):
         if self.single_arg_name:
             args_dict = {self.single_arg_name: args_dict}
 
-        args = [RunContext(deps, self._current_retry, message.tool_name)] if self.function.is_left() else []
+        args = [RunContext(deps, self._current_retry, message.tool_name)] if self.takes_ctx else []
         for positional_field in self.positional_fields:
             args.append(args_dict.pop(positional_field))
         if self.var_positional_field:

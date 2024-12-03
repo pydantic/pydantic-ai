@@ -31,6 +31,7 @@ nav:
     - examples/chat-app.md
   - API Reference:
     - api/agent.md
+    - api/tool.md
     - api/result.md
     - api/messages.md
     - api/dependencies.md

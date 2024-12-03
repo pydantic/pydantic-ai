@@ -5,7 +5,7 @@ import pytest
 from inline_snapshot import snapshot
 from pydantic import BaseModel, Field
 
-from pydantic_ai import Agent, RunContext, UserError
+from pydantic_ai import Agent, RunContext, Tool, UserError
 from pydantic_ai.messages import Message, ModelAnyResponse, ModelTextResponse
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -273,3 +273,25 @@ def test_takes_model_and_int(set_event_loop: None):
 
     result = agent.run_sync('', model=TestModel())
     assert result.data == snapshot('{"takes_just_model":"0 a 0"}')
+
+
+def test_init_tool_plain(set_event_loop: None):
+    call_args: list[int] = []
+
+    def plain_tool(x: int) -> int:
+        call_args.append(x)
+        return x + 1
+
+    agent = Agent('test', tools=[Tool(plain_tool, False)])
+    result = agent.run_sync('foobar')
+    assert result.data == snapshot('{"plain_tool":1}')
+    assert call_args == snapshot([0])
+
+
+def test_init_tool_ctx(set_event_loop: None):
+    def ctx_tool(ctx: RunContext[int], x: int) -> int:
+        return x + ctx.deps
+
+    agent = Agent('test', tools=[Tool(ctx_tool, True)], deps_type=int)
+    result = agent.run_sync('foobar', deps=5)
+    assert result.data == snapshot('{"ctx_tool":5}')
