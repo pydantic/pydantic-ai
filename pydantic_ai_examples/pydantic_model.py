@@ -25,9 +25,9 @@ class MyModel(BaseModel):
 
 model = cast(KnownModelName, os.getenv('PYDANTIC_AI_MODEL', 'openai:gpt-4o'))
 print(f'Using model: {model}')
-pydantic_agent = Agent(model, result_type=MyModel)
+agent = Agent(model, result_type=MyModel)
 
 if __name__ == '__main__':
-    result = pydantic_agent.run_sync('The windy city in the US of A.')
+    result = agent.run_sync('The windy city in the US of A.')
     print(result.data)
     print(result.cost())
