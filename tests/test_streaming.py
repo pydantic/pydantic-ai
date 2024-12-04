@@ -31,13 +31,15 @@ pytestmark = pytest.mark.anyio
 async def test_streamed_text_response():
     m = TestModel()
 
-    agent = Agent(m)
+    test_agent = Agent(m)
+    assert test_agent.name is None
 
-    @agent.tool_plain
+    @test_agent.tool_plain
     async def ret_a(x: str) -> str:
         return f'{x}-apple'
 
-    async with agent.run_stream('Hello') as result:
+    async with test_agent.run_stream('Hello') as result:
+        assert test_agent.name == 'test_agent'
         assert not result.is_structured
         assert not result.is_complete
         assert result.all_messages() == snapshot(
@@ -71,9 +73,10 @@ async def test_streamed_text_response():
 async def test_streamed_structured_response():
     m = TestModel()
 
-    agent = Agent(m, result_type=tuple[str, str])
+    agent = Agent(m, result_type=tuple[str, str], name='fig_jam')
 
     async with agent.run_stream('') as result:
+        assert agent.name == 'fig_jam'
         assert result.is_structured
         assert not result.is_complete
         response = await result.get_data()

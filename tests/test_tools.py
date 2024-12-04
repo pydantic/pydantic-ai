@@ -335,7 +335,7 @@ def test_tool_return_conflict():
 
 
 def test_init_ctx_tool_invalid():
-    def plain_tool(x: int) -> int:
+    def plain_tool(x: int) -> int:  # pragma: no cover
         return x + 1
 
     m = r'First parameter of tools that take context must be annotated with RunContext\[\.\.\.\]'
