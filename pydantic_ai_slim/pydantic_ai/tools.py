@@ -1,13 +1,13 @@
 from __future__ import annotations as _annotations
 
 import inspect
-from collections.abc import Awaitable, Mapping, Sequence
+from collections.abc import Awaitable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Callable, Generic, TypeVar, Union, cast
 
 from pydantic import ValidationError
 from pydantic_core import SchemaValidator
-from typing_extensions import Concatenate, ParamSpec, TypeAlias, final
+from typing_extensions import Concatenate, ParamSpec, final
 
 from . import _pydantic, _utils, messages
 from .exceptions import ModelRetry, UnexpectedModelBehavior
@@ -23,12 +23,10 @@ __all__ = (
     'RunContext',
     'ResultValidatorFunc',
     'SystemPromptFunc',
-    'ToolReturnValue',
     'ToolFuncContext',
     'ToolFuncPlain',
     'ToolFuncEither',
     'ToolParams',
-    'JsonData',
     'Tool',
 )
 
@@ -75,17 +73,12 @@ but may or maybe not take `CallInfo` as a first argument, and may or may not be 
 Usage `ResultValidator[AgentDeps, ResultData]`.
 """
 
-JsonData: TypeAlias = 'None | str | int | float | Sequence[JsonData] | Mapping[str, JsonData]'
-"""Type representing any JSON data."""
-
-ToolReturnValue = Union[JsonData, Awaitable[JsonData]]
-"""Return value of a tool function."""
-ToolFuncContext = Callable[Concatenate[RunContext[AgentDeps], ToolParams], ToolReturnValue]
+ToolFuncContext = Callable[Concatenate[RunContext[AgentDeps], ToolParams], Any]
 """A tool function that takes `RunContext` as the first argument.
 
 Usage `ToolContextFunc[AgentDeps, ToolParams]`.
 """
-ToolFuncPlain = Callable[ToolParams, ToolReturnValue]
+ToolFuncPlain = Callable[ToolParams, Any]
 """A tool function that does not take `RunContext` as the first argument.
 
 Usage `ToolPlainFunc[ToolParams]`.
@@ -146,8 +139,8 @@ class Tool(Generic[AgentDeps]):
             function: The Python function to call as the tool.
             takes_ctx: Whether the function takes a [`RunContext`][pydantic_ai.tools.RunContext] first argument.
             max_retries: Maximum number of retries allowed for this tool, set to the agent default if `None`.
-            name: Name of the tool, inferred from the function if left blank.
-            description: Description of the tool, inferred from the function if left blank.
+            name: Name of the tool, inferred from the function if `None`.
+            description: Description of the tool, inferred from the function if `None`.
         """
         f = _pydantic.function_schema(function, takes_ctx)
         self.function = function

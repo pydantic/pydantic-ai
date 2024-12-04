@@ -61,8 +61,13 @@ def ok_tool_plain(x: str) -> dict[str, str]:
 
 
 @typed_agent.tool_plain
-def ok_json_list(x: str) -> list[Union[str, int]]:
+async def ok_json_list(x: str) -> list[Union[str, int]]:
     return [x, 1]
+
+
+@typed_agent.tool
+async def ok_ctx(ctx: RunContext[MyDeps], x: str) -> list[int | str]:
+    return [ctx.deps.foo, ctx.deps.bar, x]
 
 
 @typed_agent.tool
@@ -74,11 +79,6 @@ async def bad_tool1(ctx: RunContext[MyDeps], x: str) -> str:
 @typed_agent.tool  # type: ignore[arg-type]
 async def bad_tool2(ctx: RunContext[int], x: str) -> str:
     return f'{x} {ctx.deps}'
-
-
-@typed_agent.tool_plain  # type: ignore[arg-type]
-async def bad_tool_return(x: int) -> list[MyDeps]:
-    return [MyDeps(1, x)]
 
 
 with expect_error(ValueError):
