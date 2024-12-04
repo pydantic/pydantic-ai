@@ -6,7 +6,7 @@ This module has to use numerous internal Pydantic APIs and is therefore brittle 
 from __future__ import annotations as _annotations
 
 from inspect import Parameter, signature
-from typing import TYPE_CHECKING, Any, TypedDict, cast, get_origin
+from typing import TYPE_CHECKING, Any, Callable, TypedDict, cast, get_origin
 
 from pydantic import ConfigDict, TypeAdapter
 from pydantic._internal import _decorators, _generate_schema, _typing_extra
@@ -20,8 +20,7 @@ from ._griffe import doc_descriptions
 from ._utils import ObjectJsonSchema, check_object_json_schema, is_model_like
 
 if TYPE_CHECKING:
-    from . import _tool
-    from .dependencies import AgentDeps, ToolParams
+    pass
 
 
 __all__ = 'function_schema', 'LazyTypeAdapter'
@@ -39,17 +38,16 @@ class FunctionSchema(TypedDict):
     var_positional_field: str | None
 
 
-def function_schema(either_function: _tool.ToolEitherFunc[AgentDeps, ToolParams]) -> FunctionSchema:  # noqa: C901
+def function_schema(function: Callable[..., Any], takes_ctx: bool) -> FunctionSchema:  # noqa: C901
     """Build a Pydantic validator and JSON schema from a tool function.
 
     Args:
-        either_function: The function to build a validator and JSON schema for.
+        function: The function to build a validator and JSON schema for.
+        takes_ctx: Whether the function takes a `RunContext` first argument.
 
     Returns:
         A `FunctionSchema` instance.
     """
-    function = either_function.whichever()
-    takes_ctx = either_function.is_left()
     config = ConfigDict(title=function.__name__)
     config_wrapper = ConfigWrapper(config)
     gen_schema = _generate_schema.GenerateSchema(config_wrapper)
@@ -78,13 +76,13 @@ def function_schema(either_function: _tool.ToolEitherFunc[AgentDeps, ToolParams]
 
             if index == 0 and takes_ctx:
                 if not _is_call_ctx(annotation):
-                    errors.append('First argument must be a RunContext instance when using `.tool`')
+                    errors.append('First parameter of tools that take context must be annotated with RunContext[...]')
                 continue
             elif not takes_ctx and _is_call_ctx(annotation):
-                errors.append('RunContext instance can only be used with `.tool`')
+                errors.append('RunContext annotations can only be used with tools that take context')
                 continue
             elif index != 0 and _is_call_ctx(annotation):
-                errors.append('RunContext instance can only be used as the first argument')
+                errors.append('RunContext annotations can only be used as the first argument')
                 continue
 
         field_name = p.name
@@ -159,6 +157,24 @@ def function_schema(either_function: _tool.ToolEitherFunc[AgentDeps, ToolParams]
     )
 
 
+def takes_ctx(function: Callable[..., Any]) -> bool:
+    """Check if a function takes a `RunContext` first argument.
+
+    Args:
+        function: The function to check.
+
+    Returns:
+        `True` if the function takes a `RunContext` as first argument, `False` otherwise.
+    """
+    sig = signature(function)
+    try:
+        _, first_param = next(iter(sig.parameters.items()))
+    except StopIteration:
+        return False
+    else:
+        return first_param.annotation is not sig.empty and _is_call_ctx(first_param.annotation)
+
+
 def _build_schema(
     fields: dict[str, core_schema.TypedDictField],
     var_kwargs_schema: core_schema.CoreSchema | None,
@@ -191,7 +207,7 @@ def _build_schema(
 
 
 def _is_call_ctx(annotation: Any) -> bool:
-    from .dependencies import RunContext
+    from .tools import RunContext
 
     return annotation is RunContext or (
         _typing_extra.is_generic_alias(annotation) and get_origin(annotation) is RunContext

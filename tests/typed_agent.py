@@ -5,7 +5,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Callable, Union, assert_type
 
-from pydantic_ai import Agent, ModelRetry, RunContext
+from pydantic_ai import Agent, ModelRetry, RunContext, Tool
 from pydantic_ai.result import RunResult
 
 
@@ -151,3 +151,30 @@ def run_sync3() -> None:
     result = union_agent.run_sync('testing')
     assert_type(result, RunResult[Union[Foo, Bar]])
     assert_type(result.data, Union[Foo, Bar])
+
+
+def foobar_ctx(ctx: RunContext[int], x: str, y: int) -> str:
+    return f'{x} {y}'
+
+
+def foobar_plain(x: str, y: int) -> str:
+    return f'{x} {y}'
+
+
+Tool(foobar_ctx, True)
+Tool(foobar_plain, False)
+
+# unfortunately we can't type check these cases, since from a typing perspect `foobar_ctx` is valid as a plain tool
+Tool(foobar_ctx, False)
+Tool(foobar_plain, True)
+
+Agent('test', tools=[foobar_ctx], deps_type=int)
+Agent('test', tools=[foobar_plain], deps_type=int)
+Agent('test', tools=[foobar_plain])
+Agent('test', tools=[Tool(foobar_ctx, True)], deps_type=int)
+Agent('test', tools=[Tool(foobar_plain, False)], deps_type=int)
+Agent('test', tools=[Tool(foobar_ctx, True), foobar_ctx, foobar_plain], deps_type=int)
+
+Agent('test', tools=[foobar_ctx], deps_type=str)  # pyright: ignore[reportArgumentType]
+Agent('test', tools=[foobar_ctx])  # pyright: ignore[reportArgumentType]
+Agent('test', tools=[Tool(foobar_ctx, True)])  # pyright: ignore[reportArgumentType]

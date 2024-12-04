@@ -5,7 +5,7 @@ import pytest
 from inline_snapshot import snapshot
 from pydantic import BaseModel, Field
 
-from pydantic_ai import Agent, RunContext, UserError
+from pydantic_ai import Agent, RunContext, Tool, UserError
 from pydantic_ai.messages import Message, ModelAnyResponse, ModelTextResponse
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -22,7 +22,7 @@ def test_tool_no_ctx():
 
     assert str(exc_info.value) == snapshot(
         'Error generating schema for test_tool_no_ctx.<locals>.invalid_tool:\n'
-        '  First argument must be a RunContext instance when using `.tool`'
+        '  First parameter of tools that take context must be annotated with RunContext[...]'
     )
 
 
@@ -37,7 +37,7 @@ def test_tool_plain_with_ctx():
 
     assert str(exc_info.value) == snapshot(
         'Error generating schema for test_tool_plain_with_ctx.<locals>.invalid_tool:\n'
-        '  RunContext instance can only be used with `.tool`'
+        '  RunContext annotations can only be used with tools that take context'
     )
 
 
@@ -52,8 +52,8 @@ def test_tool_ctx_second():
 
     assert str(exc_info.value) == snapshot(
         'Error generating schema for test_tool_ctx_second.<locals>.invalid_tool:\n'
-        '  First argument must be a RunContext instance when using `.tool`\n'
-        '  RunContext instance can only be used as the first argument'
+        '  First parameter of tools that take context must be annotated with RunContext[...]\n'
+        '  RunContext annotations can only be used as the first argument'
     )
 
 
@@ -273,3 +273,73 @@ def test_takes_model_and_int(set_event_loop: None):
 
     result = agent.run_sync('', model=TestModel())
     assert result.data == snapshot('{"takes_just_model":"0 a 0"}')
+
+
+# pyright: reportPrivateUsage=false
+def test_init_tool_plain(set_event_loop: None):
+    call_args: list[int] = []
+
+    def plain_tool(x: int) -> int:
+        call_args.append(x)
+        return x + 1
+
+    agent = Agent('test', tools=[Tool(plain_tool, False)], retries=7)
+    result = agent.run_sync('foobar')
+    assert result.data == snapshot('{"plain_tool":1}')
+    assert call_args == snapshot([0])
+    assert agent._function_tools['plain_tool'].takes_ctx is False
+    assert agent._function_tools['plain_tool'].max_retries == 7
+
+    agent_infer = Agent('test', tools=[plain_tool], retries=7)
+    result = agent_infer.run_sync('foobar')
+    assert result.data == snapshot('{"plain_tool":1}')
+    assert call_args == snapshot([0, 0])
+    assert agent_infer._function_tools['plain_tool'].takes_ctx is False
+    assert agent_infer._function_tools['plain_tool'].max_retries == 7
+
+
+def ctx_tool(ctx: RunContext[int], x: int) -> int:
+    return x + ctx.deps
+
+
+# pyright: reportPrivateUsage=false
+def test_init_tool_ctx(set_event_loop: None):
+    agent = Agent('test', tools=[Tool(ctx_tool, True, max_retries=3)], deps_type=int, retries=7)
+    result = agent.run_sync('foobar', deps=5)
+    assert result.data == snapshot('{"ctx_tool":5}')
+    assert agent._function_tools['ctx_tool'].takes_ctx is True
+    assert agent._function_tools['ctx_tool'].max_retries == 3
+
+    agent_infer = Agent('test', tools=[ctx_tool], deps_type=int)
+    result = agent_infer.run_sync('foobar', deps=6)
+    assert result.data == snapshot('{"ctx_tool":6}')
+    assert agent_infer._function_tools['ctx_tool'].takes_ctx is True
+
+
+def test_repeat_tool():
+    with pytest.raises(UserError, match="Tool name conflicts with existing tool: 'ctx_tool'"):
+        Agent('test', tools=[Tool(ctx_tool, True), ctx_tool], deps_type=int)
+
+
+def test_tool_return_conflict():
+    # this is okay
+    Agent('test', tools=[ctx_tool], deps_type=int)
+    # this is also okay
+    Agent('test', tools=[ctx_tool], deps_type=int, result_type=int)
+    # this raises an error
+    with pytest.raises(UserError, match="Tool name conflicts with result schema name: 'ctx_tool'"):
+        Agent('test', tools=[ctx_tool], deps_type=int, result_type=int, result_tool_name='ctx_tool')
+
+
+def test_init_ctx_tool_invalid():
+    def plain_tool(x: int) -> int:
+        return x + 1
+
+    m = r'First parameter of tools that take context must be annotated with RunContext\[\.\.\.\]'
+    with pytest.raises(UserError, match=m):
+        Tool(plain_tool, True)
+
+
+def test_init_plain_tool_invalid():
+    with pytest.raises(UserError, match='RunContext annotations can only be used with tools that take context'):
+        Tool(ctx_tool, False)

@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import asyncio
+import dataclasses
 from collections.abc import AsyncIterator, Awaitable, Iterator, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
@@ -12,15 +13,14 @@ from typing_extensions import assert_never
 from . import (
     _result,
     _system_prompt,
-    _tool as _r,
     _utils,
     exceptions,
     messages as _messages,
     models,
     result,
 )
-from .dependencies import AgentDeps, RunContext, ToolContextFunc, ToolParams, ToolPlainFunc
 from .result import ResultData
+from .tools import AgentDeps, RunContext, Tool, ToolFuncContext, ToolFuncEither, ToolFuncPlain, ToolParams
 
 __all__ = ('Agent',)
 
@@ -34,7 +34,7 @@ NoneType = type(None)
 class Agent(Generic[AgentDeps, ResultData]):
     """Class for defining "agents" - a way to have a specific type of "conversation" with an LLM.
 
-    Agents are generic in the dependency type they take [`AgentDeps`][pydantic_ai.dependencies.AgentDeps]
+    Agents are generic in the dependency type they take [`AgentDeps`][pydantic_ai.tools.AgentDeps]
     and the result data type they return, [`ResultData`][pydantic_ai.result.ResultData].
 
     By default, if neither generic parameter is customised, agents have type `Agent[None, str]`.
@@ -58,7 +58,7 @@ class Agent(Generic[AgentDeps, ResultData]):
     _result_validators: list[_result.ResultValidator[AgentDeps, ResultData]] = field(repr=False)
     _allow_text_result: bool = field(repr=False)
     _system_prompts: tuple[str, ...] = field(repr=False)
-    _function_tools: dict[str, _r.Tool[AgentDeps, Any]] = field(repr=False)
+    _function_tools: dict[str, Tool[AgentDeps]] = field(repr=False)
     _default_retries: int = field(repr=False)
     _system_prompt_functions: list[_system_prompt.SystemPromptRunner[AgentDeps]] = field(repr=False)
     _deps_type: type[AgentDeps] = field(repr=False)
@@ -83,6 +83,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         result_tool_name: str = 'final_result',
         result_tool_description: str | None = None,
         result_retries: int | None = None,
+        tools: Sequence[Tool[AgentDeps] | ToolFuncEither[AgentDeps, ...]] = (),
         defer_model_check: bool = False,
     ):
         """Create an agent.
@@ -101,6 +102,8 @@ class Agent(Generic[AgentDeps, ResultData]):
             result_tool_name: The name of the tool to use for the final result.
             result_tool_description: The description of the final result tool.
             result_retries: The maximum number of retries to allow for result validation, defaults to `retries`.
+            tools: Tools to register with the agent, you can also register tools via the decorators
+                [`@agent.tool`][pydantic_ai.Agent.tool] and [`@agent.tool_plain`][pydantic_ai.Agent.tool_plain].
             defer_model_check: by default, if you provide a [named][pydantic_ai.models.KnownModelName] model,
                 it's evaluated to create a [`Model`][pydantic_ai.models.Model] instance immediately,
                 which checks for the necessary environment variables. Set this to `false`
@@ -119,9 +122,11 @@ class Agent(Generic[AgentDeps, ResultData]):
         self._allow_text_result = self._result_schema is None or self._result_schema.allow_text_result
 
         self._system_prompts = (system_prompt,) if isinstance(system_prompt, str) else tuple(system_prompt)
-        self._function_tools: dict[str, _r.Tool[AgentDeps, Any]] = {}
-        self._deps_type = deps_type
+        self._function_tools = {}
         self._default_retries = retries
+        for tool in tools:
+            self._register_tool(Tool.infer(tool))
+        self._deps_type = deps_type
         self._system_prompt_functions = []
         self._max_result_retries = result_retries if result_retries is not None else retries
         self._current_result_retry = 0
@@ -355,7 +360,7 @@ class Agent(Generic[AgentDeps, ResultData]):
     ) -> _system_prompt.SystemPromptFunc[AgentDeps]:
         """Decorator to register a system prompt function.
 
-        Optionally takes [`RunContext`][pydantic_ai.dependencies.RunContext] as it's only argument.
+        Optionally takes [`RunContext`][pydantic_ai.tools.RunContext] as it's only argument.
         Can decorate a sync or async functions.
 
         Overloads for every possible signature of `system_prompt` are included so the decorator doesn't obscure
@@ -406,7 +411,7 @@ class Agent(Generic[AgentDeps, ResultData]):
     ) -> _result.ResultValidatorFunc[AgentDeps, ResultData]:
         """Decorator to register a result validator function.
 
-        Optionally takes [`RunContext`][pydantic_ai.dependencies.RunContext] as it's first argument.
+        Optionally takes [`RunContext`][pydantic_ai.tools.RunContext] as it's first argument.
         Can decorate a sync or async functions.
 
         Overloads for every possible signature of `result_validator` are included so the decorator doesn't obscure
@@ -439,22 +444,22 @@ class Agent(Generic[AgentDeps, ResultData]):
         return func
 
     @overload
-    def tool(self, func: ToolContextFunc[AgentDeps, ToolParams], /) -> ToolContextFunc[AgentDeps, ToolParams]: ...
+    def tool(self, func: ToolFuncContext[AgentDeps, ToolParams], /) -> ToolFuncContext[AgentDeps, ToolParams]: ...
 
     @overload
     def tool(
         self, /, *, retries: int | None = None
-    ) -> Callable[[ToolContextFunc[AgentDeps, ToolParams]], ToolContextFunc[AgentDeps, ToolParams]]: ...
+    ) -> Callable[[ToolFuncContext[AgentDeps, ToolParams]], ToolFuncContext[AgentDeps, ToolParams]]: ...
 
     def tool(
         self,
-        func: ToolContextFunc[AgentDeps, ToolParams] | None = None,
+        func: ToolFuncContext[AgentDeps, ToolParams] | None = None,
         /,
         *,
         retries: int | None = None,
     ) -> Any:
         """Decorator to register a tool function which takes
-        [`RunContext`][pydantic_ai.dependencies.RunContext] as its first argument.
+        [`RunContext`][pydantic_ai.tools.RunContext] as its first argument.
 
         Can decorate a sync or async functions.
 
@@ -491,27 +496,27 @@ class Agent(Generic[AgentDeps, ResultData]):
         if func is None:
 
             def tool_decorator(
-                func_: ToolContextFunc[AgentDeps, ToolParams],
-            ) -> ToolContextFunc[AgentDeps, ToolParams]:
+                func_: ToolFuncContext[AgentDeps, ToolParams],
+            ) -> ToolFuncContext[AgentDeps, ToolParams]:
                 # noinspection PyTypeChecker
-                self._register_tool(_utils.Either(left=func_), retries)
+                self._register_function(func_, True, retries)
                 return func_
 
             return tool_decorator
         else:
             # noinspection PyTypeChecker
-            self._register_tool(_utils.Either(left=func), retries)
+            self._register_function(func, True, retries)
             return func
 
     @overload
-    def tool_plain(self, func: ToolPlainFunc[ToolParams], /) -> ToolPlainFunc[ToolParams]: ...
+    def tool_plain(self, func: ToolFuncPlain[ToolParams], /) -> ToolFuncPlain[ToolParams]: ...
 
     @overload
     def tool_plain(
         self, /, *, retries: int | None = None
-    ) -> Callable[[ToolPlainFunc[ToolParams]], ToolPlainFunc[ToolParams]]: ...
+    ) -> Callable[[ToolFuncPlain[ToolParams]], ToolFuncPlain[ToolParams]]: ...
 
-    def tool_plain(self, func: ToolPlainFunc[ToolParams] | None = None, /, *, retries: int | None = None) -> Any:
+    def tool_plain(self, func: ToolFuncPlain[ToolParams] | None = None, /, *, retries: int | None = None) -> Any:
         """Decorator to register a tool function which DOES NOT take `RunContext` as an argument.
 
         Can decorate a sync or async functions.
@@ -548,28 +553,34 @@ class Agent(Generic[AgentDeps, ResultData]):
         """
         if func is None:
 
-            def tool_decorator(
-                func_: ToolPlainFunc[ToolParams],
-            ) -> ToolPlainFunc[ToolParams]:
+            def tool_decorator(func_: ToolFuncPlain[ToolParams]) -> ToolFuncPlain[ToolParams]:
                 # noinspection PyTypeChecker
-                self._register_tool(_utils.Either(right=func_), retries)
+                self._register_function(func_, False, retries)
                 return func_
 
             return tool_decorator
         else:
-            self._register_tool(_utils.Either(right=func), retries)
+            self._register_function(func, False, retries)
             return func
 
-    def _register_tool(self, func: _r.ToolEitherFunc[AgentDeps, ToolParams], retries: int | None) -> None:
-        """Private utility to register a tool function."""
+    def _register_function(
+        self, func: ToolFuncEither[AgentDeps, ToolParams], takes_ctx: bool, retries: int | None
+    ) -> None:
+        """Private utility to register a function as a tool."""
         retries_ = retries if retries is not None else self._default_retries
-        tool = _r.Tool[AgentDeps, ToolParams](func, retries_)
+        tool = Tool(func, takes_ctx, max_retries=retries_)
+        self._register_tool(tool)
 
-        if self._result_schema and tool.name in self._result_schema.tools:
-            raise ValueError(f'Tool name conflicts with result schema name: {tool.name!r}')
+    def _register_tool(self, tool: Tool[AgentDeps]) -> None:
+        """Private utility to register a tool instance."""
+        if tool.max_retries is None:
+            tool = dataclasses.replace(tool, max_retries=self._default_retries)
 
         if tool.name in self._function_tools:
-            raise ValueError(f'Tool name conflicts with existing tool: {tool.name!r}')
+            raise exceptions.UserError(f'Tool name conflicts with existing tool: {tool.name!r}')
+
+        if self._result_schema and tool.name in self._result_schema.tools:
+            raise exceptions.UserError(f'Tool name conflicts with result schema name: {tool.name!r}')
 
         self._function_tools[tool.name] = tool
 

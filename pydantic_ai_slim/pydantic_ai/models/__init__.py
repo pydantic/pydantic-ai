@@ -259,20 +259,30 @@ def infer_model(model: Model | KnownModelName) -> Model:
 class AbstractToolDefinition(Protocol):
     """Abstract definition of a function/tool.
 
-    This is used for both tools and result tools.
+    This is used for both function tools and result tools.
     """
 
-    name: str
-    """The name of the tool."""
-    description: str
-    """The description of the tool."""
-    json_schema: ObjectJsonSchema
-    """The JSON schema for the tool's arguments."""
-    outer_typed_dict_key: str | None
-    """The key in the outer [TypedDict] that wraps a result tool.
+    @property
+    def name(self) -> str:
+        """The name of the tool."""
+        ...
 
-    This will only be set for result tools which don't have an `object` JSON schema.
-    """
+    @property
+    def description(self) -> str:
+        """The description of the tool."""
+        ...
+
+    @property
+    def json_schema(self) -> ObjectJsonSchema:
+        """The JSON schema for the tool's arguments."""
+        ...
+
+    @property
+    def outer_typed_dict_key(self) -> str | None:
+        """The key in the outer [TypedDict] that wraps a result tool.
+
+        This will only be set for result tools which don't have an `object` JSON schema.
+        """
 
 
 @cache
