@@ -2,9 +2,11 @@ from __future__ import annotations as _annotations
 
 import asyncio
 import dataclasses
+import inspect
 from collections.abc import AsyncIterator, Awaitable, Iterator, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
+from types import FrameType
 from typing import Any, Callable, Generic, cast, final, overload
 
 import logfire_api
@@ -54,6 +56,8 @@ class Agent(Generic[AgentDeps, ResultData]):
     # dataclass fields mostly for my sanity — knowing what attributes are available
     model: models.Model | models.KnownModelName | None
     """The default model configured for this agent."""
+    name: str | None
+    """The name of the agent, used for logging."""
     _result_schema: _result.ResultSchema[ResultData] | None = field(repr=False)
     _result_validators: list[_result.ResultValidator[AgentDeps, ResultData]] = field(repr=False)
     _allow_text_result: bool = field(repr=False)
@@ -79,6 +83,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         result_type: type[ResultData] = str,
         system_prompt: str | Sequence[str] = (),
         deps_type: type[AgentDeps] = NoneType,
+        name: str | None = None,
         retries: int = 1,
         result_tool_name: str = 'final_result',
         result_tool_description: str | None = None,
@@ -98,6 +103,8 @@ class Agent(Generic[AgentDeps, ResultData]):
                 parameterize the agent, and therefore get the best out of static type checking.
                 If you're not using deps, but want type checking to pass, you can set `deps=None` to satisfy Pyright
                 or add a type hint `: Agent[None, <return type>]`.
+            name: The name of the agent, used for logging. If `None`, we try to infer the agent name from the call frame
+                when the agent is first run.
             retries: The default number of retries to allow before raising an error.
             result_tool_name: The name of the tool to use for the final result.
             result_tool_description: The description of the final result tool.
@@ -115,6 +122,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         else:
             self.model = models.infer_model(model)
 
+        self.name = name
         self._result_schema = _result.ResultSchema[result_type].build(
             result_type, result_tool_name, result_tool_description
         )
@@ -139,6 +147,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         message_history: list[_messages.Message] | None = None,
         model: models.Model | models.KnownModelName | None = None,
         deps: AgentDeps = None,
+        infer_name: bool = True,
     ) -> result.RunResult[ResultData]:
         """Run the agent with a user prompt in async mode.
 
@@ -147,16 +156,19 @@ class Agent(Generic[AgentDeps, ResultData]):
             message_history: History of the conversation so far.
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
             deps: Optional dependencies to use for this run.
+            infer_name: Whether to try to infer the agent name from the call frame if it's not set.
 
         Returns:
             The result of the run.
         """
+        if infer_name and self.name is None:
+            self._infer_name(inspect.currentframe())
         model_used, custom_model, agent_model = await self._get_agent_model(model)
 
         deps = self._get_deps(deps)
 
         with _logfire.span(
-            'agent run {prompt=}',
+            '{agent.name} run {prompt=}',
             prompt=user_prompt,
             agent=self,
             custom_model=custom_model,
@@ -208,6 +220,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         message_history: list[_messages.Message] | None = None,
         model: models.Model | models.KnownModelName | None = None,
         deps: AgentDeps = None,
+        infer_name: bool = True,
     ) -> result.RunResult[ResultData]:
         """Run the agent with a user prompt synchronously.
 
@@ -218,12 +231,17 @@ class Agent(Generic[AgentDeps, ResultData]):
             message_history: History of the conversation so far.
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
             deps: Optional dependencies to use for this run.
+            infer_name: Whether to try to infer the agent name from the call frame if it's not set.
 
         Returns:
             The result of the run.
         """
+        if infer_name and self.name is None:
+            self._infer_name(inspect.currentframe())
         loop = asyncio.get_event_loop()
-        return loop.run_until_complete(self.run(user_prompt, message_history=message_history, model=model, deps=deps))
+        return loop.run_until_complete(
+            self.run(user_prompt, message_history=message_history, model=model, deps=deps, infer_name=False)
+        )
 
     @asynccontextmanager
     async def run_stream(
@@ -233,6 +251,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         message_history: list[_messages.Message] | None = None,
         model: models.Model | models.KnownModelName | None = None,
         deps: AgentDeps = None,
+        infer_name: bool = True,
     ) -> AsyncIterator[result.StreamedRunResult[AgentDeps, ResultData]]:
         """Run the agent with a user prompt in async mode, returning a streamed response.
 
@@ -241,16 +260,21 @@ class Agent(Generic[AgentDeps, ResultData]):
             message_history: History of the conversation so far.
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
             deps: Optional dependencies to use for this run.
+            infer_name: Whether to try to infer the agent name from the call frame if it's not set.
 
         Returns:
             The result of the run.
         """
+        if infer_name and self.name is None:
+            # f_back because `asynccontextmanager` adds one frame
+            if frame := inspect.currentframe():
+                self._infer_name(frame.f_back)
         model_used, custom_model, agent_model = await self._get_agent_model(model)
 
         deps = self._get_deps(deps)
 
         with _logfire.span(
-            'agent run stream {prompt=}',
+            '{agent.name} run stream {prompt=}',
             prompt=user_prompt,
             agent=self,
             custom_model=custom_model,
@@ -797,6 +821,19 @@ class Agent(Generic[AgentDeps, ResultData]):
             return some_deps.value
         else:
             return deps
+
+    def _infer_name(self, function_frame: FrameType | None) -> None:
+        """Infer the agent name from the call frame.
+
+        Usage should be `self._infer_name(inspect.currentframe())`.
+        """
+        assert self.name is None, 'Name already set'
+        if function_frame is not None:
+            if parent_frame := function_frame.f_back:
+                for name, item in parent_frame.f_locals.items():
+                    if item is self:
+                        self.name = name
+                        return
 
 
 @dataclass
