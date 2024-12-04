@@ -1495,7 +1495,7 @@ wheels = [
 
 [[package]]
 name = "pydantic-ai"
-version = "0.0.8"
+version = "0.0.9"
 source = { editable = "." }
 dependencies = [
     { name = "pydantic-ai-slim", extra = ["groq", "openai", "vertexai"] },
@@ -1542,7 +1542,7 @@ lint = [
 
 [[package]]
 name = "pydantic-ai-examples"
-version = "0.0.8"
+version = "0.0.9"
 source = { editable = "pydantic_ai_examples" }
 dependencies = [
     { name = "asyncpg" },
@@ -1567,7 +1567,7 @@ requires-dist = [
 
 [[package]]
 name = "pydantic-ai-slim"
-version = "0.0.8"
+version = "0.0.9"
 source = { editable = "pydantic_ai_slim" }
 dependencies = [
     { name = "eval-type-backport" },
