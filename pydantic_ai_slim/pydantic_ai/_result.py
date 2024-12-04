@@ -11,10 +11,10 @@ from pydantic import TypeAdapter, ValidationError
 from typing_extensions import Self, TypeAliasType, TypedDict
 
 from . import _utils, messages
-from .dependencies import AgentDeps, ResultValidatorFunc, RunContext
 from .exceptions import ModelRetry
 from .messages import ModelStructuredResponse, ToolCall
 from .result import ResultData
+from .tool import AgentDeps, ResultValidatorFunc, RunContext
 
 
 @dataclass

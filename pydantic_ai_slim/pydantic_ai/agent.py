@@ -18,9 +18,8 @@ from . import (
     models,
     result,
 )
-from .dependencies import AgentDeps, RunContext, ToolFuncContext, ToolFuncEither, ToolFuncPlain, ToolParams
 from .result import ResultData
-from .tool import Tool
+from .tool import AgentDeps, RunContext, Tool, ToolFuncContext, ToolFuncEither, ToolFuncPlain, ToolParams
 
 __all__ = ('Agent',)
 
