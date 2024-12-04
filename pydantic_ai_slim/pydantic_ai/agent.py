@@ -267,7 +267,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         """
         if infer_name and self.name is None:
             # f_back because `asynccontextmanager` adds one frame
-            if frame := inspect.currentframe():
+            if frame := inspect.currentframe():  # pragma: no branch
                 self._infer_name(frame.f_back)
         model_used, custom_model, agent_model = await self._get_agent_model(model)
 
@@ -828,8 +828,8 @@ class Agent(Generic[AgentDeps, ResultData]):
         Usage should be `self._infer_name(inspect.currentframe())`.
         """
         assert self.name is None, 'Name already set'
-        if function_frame is not None:
-            if parent_frame := function_frame.f_back:
+        if function_frame is not None:  # pragma: no branch
+            if parent_frame := function_frame.f_back:  # pragma: no branch
                 for name, item in parent_frame.f_locals.items():
                     if item is self:
                         self.name = name
