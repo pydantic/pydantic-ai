@@ -57,7 +57,10 @@ class Agent(Generic[AgentDeps, ResultData]):
     model: models.Model | models.KnownModelName | None
     """The default model configured for this agent."""
     name: str | None
-    """The name of the agent, used for logging."""
+    """The name of the agent, used for logging.
+
+    If `None`, we try to infer the agent name from the call frame when the agent is first run.
+    """
     _result_schema: _result.ResultSchema[ResultData] | None = field(repr=False)
     _result_validators: list[_result.ResultValidator[AgentDeps, ResultData]] = field(repr=False)
     _allow_text_result: bool = field(repr=False)

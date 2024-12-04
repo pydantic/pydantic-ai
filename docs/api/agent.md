@@ -4,6 +4,7 @@
     options:
       members:
         - __init__
+        - name
         - run
         - run_sync
         - run_stream
