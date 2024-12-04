@@ -82,7 +82,7 @@ ToolFuncPlain = Callable[ToolParams, ToolReturnValue]
 
 Usage `ToolPlainFunc[ToolParams]`.
 """
-ToolFuncEither = ToolFuncContext[AgentDeps, ToolParams] | ToolFuncPlain[ToolParams]
+ToolFuncEither = Union[ToolFuncContext[AgentDeps, ToolParams], ToolFuncPlain[ToolParams]]
 """Either kind of tool function.
 
 This is just a union of [`ToolFuncContext`][pydantic_ai.dependencies.ToolFuncContext] and

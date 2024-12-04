@@ -40,7 +40,7 @@ To run the examples, follow instructions in the [examples docs](examples/index.m
 
 ## Slim Install
 
-If you know which model you're going to use and want to avoid installing superfluous package, you can use the [`pydantic-ai-slim`](https://pypi.org/project/pydantic-ai-slim/) package.
+If you know which model you're going to use and want to avoid installing superfluous packages, you can use the [`pydantic-ai-slim`](https://pypi.org/project/pydantic-ai-slim/) package.
 
 If you're using just [`OpenAIModel`][pydantic_ai.models.openai.OpenAIModel], run:
 
