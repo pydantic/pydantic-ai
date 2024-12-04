@@ -27,6 +27,8 @@ from pydantic_ai.result import Cost, RunResult
 
 from .conftest import IsNow, TestEnv
 
+pytestmark = pytest.mark.anyio
+
 
 def test_result_tuple(set_event_loop: None):
     def return_tuple(_: list[Message], info: AgentInfo) -> ModelAnyResponse:
@@ -69,7 +71,10 @@ def test_result_pydantic_model_retry(set_event_loop: None):
 
     agent = Agent(FunctionModel(return_model), result_type=Foo)
 
+    assert agent.name is None
+
     result = agent.run_sync('Hello')
+    assert agent.name == 'agent'
     assert isinstance(result.data, Foo)
     assert result.data.model_dump() == {'a': 42, 'b': 'foo'}
     assert result.all_messages() == snapshot(
@@ -535,3 +540,37 @@ def test_run_sync_multiple(set_event_loop: None):
     for _ in range(2):
         result = agent.run_sync('Hello')
         assert result.data == '{"make_request":"200"}'
+
+
+async def test_agent_name():
+    my_agent = Agent('test')
+
+    assert my_agent.name is None
+
+    await my_agent.run('Hello', infer_name=False)
+    assert my_agent.name is None
+
+    await my_agent.run('Hello')
+    assert my_agent.name == 'my_agent'
+
+
+async def test_agent_name_already_set():
+    my_agent = Agent('test', name='fig_tree')
+
+    assert my_agent.name == 'fig_tree'
+
+    await my_agent.run('Hello')
+    assert my_agent.name == 'fig_tree'
+
+
+async def test_agent_name_changes():
+    my_agent = Agent('test')
+
+    await my_agent.run('Hello')
+    assert my_agent.name == 'my_agent'
+
+    new_agent = my_agent
+    del my_agent
+
+    await new_agent.run('Hello')
+    assert new_agent.name == 'my_agent'
