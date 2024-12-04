@@ -1,15 +1,13 @@
 from __future__ import annotations as _annotations
 
 import json
-from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import TYPE_CHECKING, Annotated, Any, Literal, Union
+from typing import Annotated, Any, Literal, Union
 
 import pydantic
 import pydantic_core
 from pydantic import TypeAdapter
-from typing_extensions import TypeAlias, TypeAliasType
 
 from . import _pydantic
 from ._utils import now_utc as _now_utc
@@ -44,13 +42,7 @@ class UserPrompt:
     """Message type identifier, this type is available on all message as a discriminator."""
 
 
-JsonData: TypeAlias = 'Union[str, int, float, None, Sequence[JsonData], Mapping[str, JsonData]]'
-if not TYPE_CHECKING:
-    # work around for https://github.com/pydantic/pydantic/issues/10873
-    # this is need for pydantic to work both `json_ta` and `MessagesTypeAdapter` at the bottom of this file
-    JsonData = TypeAliasType('JsonData', 'Union[str, int, float, None, Sequence[JsonData], Mapping[str, JsonData]]')
-
-json_ta: TypeAdapter[JsonData] = TypeAdapter(JsonData)
+tool_return_ta: TypeAdapter[Any] = TypeAdapter(Any)
 
 
 @dataclass
@@ -59,7 +51,7 @@ class ToolReturn:
 
     tool_name: str
     """The name of the "tool" was called."""
-    content: JsonData
+    content: Any
     """The return value."""
     tool_id: str | None = None
     """Optional tool identifier, this is used by some models including OpenAI."""
@@ -72,15 +64,14 @@ class ToolReturn:
         if isinstance(self.content, str):
             return self.content
         else:
-            content = json_ta.validate_python(self.content)
-            return json_ta.dump_json(content).decode()
+            return tool_return_ta.dump_json(self.content).decode()
 
-    def model_response_object(self) -> dict[str, JsonData]:
+    def model_response_object(self) -> dict[str, Any]:
         # gemini supports JSON dict return values, but no other JSON types, hence we wrap anything else in a dict
         if isinstance(self.content, dict):
-            return json_ta.validate_python(self.content)  # pyright: ignore[reportReturnType]
+            return tool_return_ta.dump_python(self.content, mode='json')  # pyright: ignore[reportUnknownMemberType]
         else:
-            return {'return_value': json_ta.validate_python(self.content)}
+            return {'return_value': tool_return_ta.dump_python(self.content, mode='json')}
 
 
 @dataclass

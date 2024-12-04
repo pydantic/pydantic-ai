@@ -1,13 +1,13 @@
 from __future__ import annotations as _annotations
 
 import inspect
-from collections.abc import Awaitable, Mapping, Sequence
+from collections.abc import Awaitable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Callable, Generic, TypeVar, Union, cast
 
 from pydantic import ValidationError
 from pydantic_core import SchemaValidator
-from typing_extensions import Concatenate, ParamSpec, TypeAlias, final
+from typing_extensions import Concatenate, ParamSpec, final
 
 from . import _pydantic, _utils, messages
 from .exceptions import ModelRetry, UnexpectedModelBehavior
@@ -28,7 +28,6 @@ __all__ = (
     'ToolFuncPlain',
     'ToolFuncEither',
     'ToolParams',
-    'JsonData',
     'Tool',
 )
 
@@ -75,10 +74,7 @@ but may or maybe not take `CallInfo` as a first argument, and may or may not be 
 Usage `ResultValidator[AgentDeps, ResultData]`.
 """
 
-JsonData: TypeAlias = 'None | str | int | float | Sequence[JsonData] | Mapping[str, JsonData]'
-"""Type representing any JSON data."""
-
-ToolReturnValue = Union[JsonData, Awaitable[JsonData]]
+ToolReturnValue = Union[Any, Awaitable[Any]]
 """Return value of a tool function."""
 ToolFuncContext = Callable[Concatenate[RunContext[AgentDeps], ToolParams], ToolReturnValue]
 """A tool function that takes `RunContext` as the first argument.

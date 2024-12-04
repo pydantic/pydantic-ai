@@ -4,6 +4,7 @@ from typing import Annotated
 import pytest
 from inline_snapshot import snapshot
 from pydantic import BaseModel, Field
+from pydantic_core import PydanticSerializationError
 
 from pydantic_ai import Agent, RunContext, Tool, UserError
 from pydantic_ai.messages import Message, ModelAnyResponse, ModelTextResponse
@@ -209,12 +210,14 @@ def test_docstring_google_no_body(set_event_loop: None):
     )
 
 
+class Foo(BaseModel):
+    x: int
+    y: str
+
+
 def test_takes_just_model(set_event_loop: None):
     agent = Agent()
 
-    class Foo(BaseModel):
-        x: int
-        y: str
 
     @agent.tool_plain
     def takes_just_model(model: Foo) -> str:
@@ -343,3 +346,50 @@ def test_init_ctx_tool_invalid():
 def test_init_plain_tool_invalid():
     with pytest.raises(UserError, match='RunContext annotations can only be used with tools that take context'):
         Tool(ctx_tool, False)
+
+
+def test_return_pydantic_model(set_event_loop: None):
+    agent = Agent('test')
+
+    @agent.tool_plain
+    def return_pydantic_model(x: int) -> Foo:
+        return Foo(x=x, y='a')
+
+    result = agent.run_sync('')
+    assert result.data == snapshot('{"return_pydantic_model":{"x":0,"y":"a"}}')
+
+
+def test_return_bytes(set_event_loop: None):
+    agent = Agent('test')
+
+    @agent.tool_plain
+    def return_pydantic_model() -> bytes:
+        return '🐈 Hello'.encode()
+
+    result = agent.run_sync('')
+    assert result.data == snapshot('{"return_pydantic_model":"🐈 Hello"}')
+
+
+def test_return_bytes_invalid(set_event_loop: None):
+    agent = Agent('test')
+
+    @agent.tool_plain
+    def return_pydantic_model() -> bytes:
+        return b'\00 \x81'
+
+    with pytest.raises(PydanticSerializationError, match='invalid utf-8 sequence of 1 bytes from index 2'):
+        agent.run_sync('')
+
+
+def test_return_unknown(set_event_loop: None):
+    agent = Agent('test')
+
+    class Foobar:
+        pass
+
+    @agent.tool_plain
+    def return_pydantic_model() -> Foobar:
+        return Foobar()
+
+    with pytest.raises(PydanticSerializationError, match='Unable to serialize unknown type:'):
+        agent.run_sync('')
