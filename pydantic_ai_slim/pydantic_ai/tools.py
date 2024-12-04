@@ -23,7 +23,6 @@ __all__ = (
     'RunContext',
     'ResultValidatorFunc',
     'SystemPromptFunc',
-    'ToolReturnValue',
     'ToolFuncContext',
     'ToolFuncPlain',
     'ToolFuncEither',
@@ -74,14 +73,12 @@ but may or maybe not take `CallInfo` as a first argument, and may or may not be 
 Usage `ResultValidator[AgentDeps, ResultData]`.
 """
 
-ToolReturnValue = Union[Any, Awaitable[Any]]
-"""Return value of a tool function."""
-ToolFuncContext = Callable[Concatenate[RunContext[AgentDeps], ToolParams], ToolReturnValue]
+ToolFuncContext = Callable[Concatenate[RunContext[AgentDeps], ToolParams], Any]
 """A tool function that takes `RunContext` as the first argument.
 
 Usage `ToolContextFunc[AgentDeps, ToolParams]`.
 """
-ToolFuncPlain = Callable[ToolParams, ToolReturnValue]
+ToolFuncPlain = Callable[ToolParams, Any]
 """A tool function that does not take `RunContext` as the first argument.
 
 Usage `ToolPlainFunc[ToolParams]`.
@@ -142,8 +139,8 @@ class Tool(Generic[AgentDeps]):
             function: The Python function to call as the tool.
             takes_ctx: Whether the function takes a [`RunContext`][pydantic_ai.tools.RunContext] first argument.
             max_retries: Maximum number of retries allowed for this tool, set to the agent default if `None`.
-            name: Name of the tool, inferred from the function if left blank.
-            description: Description of the tool, inferred from the function if left blank.
+            name: Name of the tool, inferred from the function if `None`.
+            description: Description of the tool, inferred from the function if `None`.
         """
         f = _pydantic.function_schema(function, takes_ctx)
         self.function = function
