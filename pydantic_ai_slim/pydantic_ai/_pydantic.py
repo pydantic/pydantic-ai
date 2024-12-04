@@ -76,13 +76,13 @@ def function_schema(function: Callable[..., Any], takes_ctx: bool) -> FunctionSc
 
             if index == 0 and takes_ctx:
                 if not _is_call_ctx(annotation):
-                    errors.append('First argument must be a RunContext instance when using `.tool`')
+                    errors.append('First parameter of tools that take context must be annotated with RunContext[...]')
                 continue
             elif not takes_ctx and _is_call_ctx(annotation):
-                errors.append('RunContext instance can only be used with `.tool`')
+                errors.append('RunContext annotations can only be used with tools that take context')
                 continue
             elif index != 0 and _is_call_ctx(annotation):
-                errors.append('RunContext instance can only be used as the first argument')
+                errors.append('RunContext annotations can only be used as the first argument')
                 continue
 
         field_name = p.name

@@ -234,7 +234,7 @@ async def model_logic(messages: list[Message], info: AgentInfo) -> ModelAnyRespo
     elif m.role == 'tool-return' and m.tool_name == 'roll_die':
         return ModelStructuredResponse(calls=[ToolCall(tool_name='get_player_name', args=ArgsDict({}))])
     elif m.role == 'tool-return' and m.tool_name == 'get_player_name':
-        return ModelTextResponse(content="Congratulations Adam, you guessed correctly! You're a winner!")
+        return ModelTextResponse(content="Congratulations Anne, you guessed correctly! You're a winner!")
     if m.role == 'retry-prompt' and isinstance(m.content, str) and m.content.startswith("No user found with name 'Joh"):
         return ModelStructuredResponse(
             calls=[ToolCall(tool_name='get_user_by_name', args=ArgsDict({'name': 'John Doe'}))]

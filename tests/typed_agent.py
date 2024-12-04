@@ -175,5 +175,6 @@ Agent('test', tools=[Tool(foobar_ctx, True)], deps_type=int)
 Agent('test', tools=[Tool(foobar_plain, False)], deps_type=int)
 Agent('test', tools=[Tool(foobar_ctx, True), foobar_ctx, foobar_plain], deps_type=int)
 
+Agent('test', tools=[foobar_ctx], deps_type=str)  # pyright: ignore[reportArgumentType]
 Agent('test', tools=[foobar_ctx])  # pyright: ignore[reportArgumentType]
 Agent('test', tools=[Tool(foobar_ctx, True)])  # pyright: ignore[reportArgumentType]

@@ -22,7 +22,7 @@ def test_tool_no_ctx():
 
     assert str(exc_info.value) == snapshot(
         'Error generating schema for test_tool_no_ctx.<locals>.invalid_tool:\n'
-        '  First argument must be a RunContext instance when using `.tool`'
+        '  First parameter of tools that take context must be annotated with RunContext[...]'
     )
 
 
@@ -37,7 +37,7 @@ def test_tool_plain_with_ctx():
 
     assert str(exc_info.value) == snapshot(
         'Error generating schema for test_tool_plain_with_ctx.<locals>.invalid_tool:\n'
-        '  RunContext instance can only be used with `.tool`'
+        '  RunContext annotations can only be used with tools that take context'
     )
 
 
@@ -52,8 +52,8 @@ def test_tool_ctx_second():
 
     assert str(exc_info.value) == snapshot(
         'Error generating schema for test_tool_ctx_second.<locals>.invalid_tool:\n'
-        '  First argument must be a RunContext instance when using `.tool`\n'
-        '  RunContext instance can only be used as the first argument'
+        '  First parameter of tools that take context must be annotated with RunContext[...]\n'
+        '  RunContext annotations can only be used as the first argument'
     )
 
 
@@ -329,3 +329,17 @@ def test_tool_return_conflict():
     # this raises an error
     with pytest.raises(UserError, match="Tool name conflicts with result schema name: 'ctx_tool'"):
         Agent('test', tools=[ctx_tool], deps_type=int, result_type=int, result_tool_name='ctx_tool')
+
+
+def test_init_ctx_tool_invalid():
+    def plain_tool(x: int) -> int:
+        return x + 1
+
+    m = r'First parameter of tools that take context must be annotated with RunContext\[\.\.\.\]'
+    with pytest.raises(UserError, match=m):
+        Tool(plain_tool, True)
+
+
+def test_init_plain_tool_invalid():
+    with pytest.raises(UserError, match='RunContext annotations can only be used with tools that take context'):
+        Tool(ctx_tool, False)

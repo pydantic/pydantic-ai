@@ -161,7 +161,7 @@ def foobar(x: bytes) -> None:
     pass
 
 
-result = agent.run_sync('Does their name start with "A"?', deps=User('Adam'))
+result = agent.run_sync('Does their name start with "A"?', deps=User('Anne'))
 foobar(result.data)  # (3)!
 ```
 
@@ -238,12 +238,13 @@ They're useful when it is impractical or impossible to put all the context an ag
 
     The main semantic difference between PydanticAI Tools and RAG is RAG is synonymous with vector search, while PydanticAI tools are more general-purpose. (Note: we may add support for vector search functionality in the future, particularly an API for generating embeddings. See [#58](https://github.com/pydantic/pydantic-ai/issues/58))
 
-There are two different decorator functions to register tools:
+There are a number of ways to register tools with an agent:
 
-1. [`@agent.tool`][pydantic_ai.Agent.tool] — for tools that need access to the agent [context][pydantic_ai.tools.RunContext]
-2. [`@agent.tool_plain`][pydantic_ai.Agent.tool_plain] — for tools that do not need access to the agent [context][pydantic_ai.tools.RunContext]
+* via the [`@agent.tool`][pydantic_ai.Agent.tool] decorator — for tools that need access to the agent [context][pydantic_ai.tools.RunContext]
+* via the [`@agent.tool_plain`][pydantic_ai.Agent.tool_plain] decorator — for tools that do not need access to the agent [context][pydantic_ai.tools.RunContext]
+* via the [`tools`][pydantic_ai.Agent.__init__] keyword argument to `Agent` which can take either plain functions, or instances of [`Tool`][pydantic_ai.tools.Tool]
 
-`@agent.tool` is the default since in the majority of cases tools will need access to the agent context.
+`@agent.tool` is considered the default decorator since in the majority of cases tools will need access to the agent context.
 
 Here's an example using both:
 
@@ -275,9 +276,9 @@ def get_player_name(ctx: RunContext[str]) -> str:
     return ctx.deps
 
 
-dice_result = agent.run_sync('My guess is 4', deps='Adam')  # (5)!
+dice_result = agent.run_sync('My guess is 4', deps='Anne')  # (5)!
 print(dice_result.data)
-#> Congratulations Adam, you guessed correctly! You're a winner!
+#> Congratulations Anne, you guessed correctly! You're a winner!
 ```
 
 1. This is a pretty simple task, so we can use the fast and cheap Gemini flash model.
@@ -330,13 +331,13 @@ print(dice_result.all_messages())
     ),
     ToolReturn(
         tool_name='get_player_name',
-        content='Adam',
+        content='Anne',
         tool_id=None,
         timestamp=datetime.datetime(...),
         role='tool-return',
     ),
     ModelTextResponse(
-        content="Congratulations Adam, you guessed correctly! You're a winner!",
+        content="Congratulations Anne, you guessed correctly! You're a winner!",
         timestamp=datetime.datetime(...),
         role='model-text-response',
     ),
@@ -370,15 +371,58 @@ sequenceDiagram
     deactivate LLM
     activate Agent
     Note over Agent: Retrieves player name
-    Agent -->> LLM: ToolReturn<br>"Adam"
+    Agent -->> LLM: ToolReturn<br>"Anne"
     deactivate Agent
     activate LLM
     Note over LLM: LLM constructs final response
 
-    LLM ->> Agent: ModelTextResponse<br>"Congratulations Adam, ..."
+    LLM ->> Agent: ModelTextResponse<br>"Congratulations Anne, ..."
     deactivate LLM
     Note over Agent: Game session complete
 ```
+
+### Registering Function tools via the argument
+
+As well as using the decorators, we can also register tools via the `tools` argument to the [`Agent` constructor][pydantic_ai.Agent.__init__]. This is useful when you want to re-use tools, and can also give more fine-grained control over the tools.
+
+```py title="dice_game_tool_kwarg.py"
+import random
+
+from pydantic_ai import Agent, RunContext, Tool
+
+
+def roll_die() -> str:
+    """Roll a six-sided die and return the result."""
+    return str(random.randint(1, 6))
+
+
+def get_player_name(ctx: RunContext[str]) -> str:
+    """Get the player's name."""
+    return ctx.deps
+
+
+agent_a = Agent(
+    'gemini-1.5-flash',
+    deps_type=str,
+    tools=[roll_die, get_player_name],  # (2)!
+)
+agent_b = Agent(
+    'gemini-1.5-flash',
+    deps_type=str,
+    tools=[  # (2)!
+        Tool(roll_die, takes_ctx=False),
+        Tool(get_player_name, takes_ctx=True),
+    ],
+)
+dice_result = agent_b.run_sync('My guess is 4', deps='Anne')  # (5)!
+print(dice_result.data)
+#> Congratulations Anne, you guessed correctly! You're a winner!
+```
+
+1. The simplest way to register tools via the `Agent` constructor is to pass a list of functions, the function signature is inspected to determine if the tool needs the agent context.
+2. `agent_a` and `agent_b` are identical — but we can use [`Tool`][pydantic_ai.tools.Tool] to give more fine-grained control over how tools are defined, e.g. setting their name or description.
+
+_(This example is complete, it can be run "as is")_
 
 ### Function Tools vs. Structured Results
 
