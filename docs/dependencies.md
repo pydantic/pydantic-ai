@@ -51,7 +51,7 @@ _(This example is complete, it can be run "as is")_
 
 ## Accessing Dependencies
 
-Dependencies are accessed through the [`RunContext`][pydantic_ai.dependencies.RunContext] type, this should be the first parameter of system prompt functions etc.
+Dependencies are accessed through the [`RunContext`][pydantic_ai.tools.RunContext] type, this should be the first parameter of system prompt functions etc.
 
 
 ```py title="system_prompt_dependencies.py" hl_lines="20-27"
@@ -92,10 +92,10 @@ async def main():
         #> Did you hear about the toothpaste scandal? They called it Colgate.
 ```
 
-1. [`RunContext`][pydantic_ai.dependencies.RunContext] may optionally be passed to a [`system_prompt`][pydantic_ai.Agent.system_prompt] function as the only argument.
-2. [`RunContext`][pydantic_ai.dependencies.RunContext] is parameterized with the type of the dependencies, if this type is incorrect, static type checkers will raise an error.
-3. Access dependencies through the [`.deps`][pydantic_ai.dependencies.RunContext.deps] attribute.
-4. Access dependencies through the [`.deps`][pydantic_ai.dependencies.RunContext.deps] attribute.
+1. [`RunContext`][pydantic_ai.tools.RunContext] may optionally be passed to a [`system_prompt`][pydantic_ai.Agent.system_prompt] function as the only argument.
+2. [`RunContext`][pydantic_ai.tools.RunContext] is parameterized with the type of the dependencies, if this type is incorrect, static type checkers will raise an error.
+3. Access dependencies through the [`.deps`][pydantic_ai.tools.RunContext.deps] attribute.
+4. Access dependencies through the [`.deps`][pydantic_ai.tools.RunContext.deps] attribute.
 
 _(This example is complete, it can be run "as is")_
 

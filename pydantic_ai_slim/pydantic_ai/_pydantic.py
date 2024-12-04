@@ -157,6 +157,24 @@ def function_schema(function: Callable[..., Any], takes_ctx: bool) -> FunctionSc
     )
 
 
+def takes_ctx(function: Callable[..., Any]) -> bool:
+    """Check if a function takes a `RunContext` first argument.
+
+    Args:
+        function: The function to check.
+
+    Returns:
+        `True` if the function takes a `RunContext` as first argument, `False` otherwise.
+    """
+    sig = signature(function)
+    try:
+        _, first_param = next(iter(sig.parameters.items()))
+    except StopIteration:
+        return False
+    else:
+        return first_param.annotation is not sig.empty and _is_call_ctx(first_param.annotation)
+
+
 def _build_schema(
     fields: dict[str, core_schema.TypedDictField],
     var_kwargs_schema: core_schema.CoreSchema | None,

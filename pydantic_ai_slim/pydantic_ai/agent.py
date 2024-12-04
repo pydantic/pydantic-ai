@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import asyncio
+import dataclasses
 from collections.abc import AsyncIterator, Awaitable, Iterator, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
@@ -33,7 +34,7 @@ NoneType = type(None)
 class Agent(Generic[AgentDeps, ResultData]):
     """Class for defining "agents" - a way to have a specific type of "conversation" with an LLM.
 
-    Agents are generic in the dependency type they take [`AgentDeps`][pydantic_ai.dependencies.AgentDeps]
+    Agents are generic in the dependency type they take [`AgentDeps`][pydantic_ai.tools.AgentDeps]
     and the result data type they return, [`ResultData`][pydantic_ai.result.ResultData].
 
     By default, if neither generic parameter is customised, agents have type `Agent[None, str]`.
@@ -82,7 +83,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         result_tool_name: str = 'final_result',
         result_tool_description: str | None = None,
         result_retries: int | None = None,
-        tools: Sequence[Tool[AgentDeps]] = (),
+        tools: Sequence[Tool[AgentDeps] | ToolFuncEither[AgentDeps, ...]] = (),
         defer_model_check: bool = False,
     ):
         """Create an agent.
@@ -122,10 +123,10 @@ class Agent(Generic[AgentDeps, ResultData]):
 
         self._system_prompts = (system_prompt,) if isinstance(system_prompt, str) else tuple(system_prompt)
         self._function_tools = {}
-        for tool in tools:
-            self._register_tool(tool)
-        self._deps_type = deps_type
         self._default_retries = retries
+        for tool in tools:
+            self._register_tool(Tool.infer(tool))
+        self._deps_type = deps_type
         self._system_prompt_functions = []
         self._max_result_retries = result_retries if result_retries is not None else retries
         self._current_result_retry = 0
@@ -359,7 +360,7 @@ class Agent(Generic[AgentDeps, ResultData]):
     ) -> _system_prompt.SystemPromptFunc[AgentDeps]:
         """Decorator to register a system prompt function.
 
-        Optionally takes [`RunContext`][pydantic_ai.dependencies.RunContext] as it's only argument.
+        Optionally takes [`RunContext`][pydantic_ai.tools.RunContext] as it's only argument.
         Can decorate a sync or async functions.
 
         Overloads for every possible signature of `system_prompt` are included so the decorator doesn't obscure
@@ -410,7 +411,7 @@ class Agent(Generic[AgentDeps, ResultData]):
     ) -> _result.ResultValidatorFunc[AgentDeps, ResultData]:
         """Decorator to register a result validator function.
 
-        Optionally takes [`RunContext`][pydantic_ai.dependencies.RunContext] as it's first argument.
+        Optionally takes [`RunContext`][pydantic_ai.tools.RunContext] as it's first argument.
         Can decorate a sync or async functions.
 
         Overloads for every possible signature of `result_validator` are included so the decorator doesn't obscure
@@ -458,7 +459,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         retries: int | None = None,
     ) -> Any:
         """Decorator to register a tool function which takes
-        [`RunContext`][pydantic_ai.dependencies.RunContext] as its first argument.
+        [`RunContext`][pydantic_ai.tools.RunContext] as its first argument.
 
         Can decorate a sync or async functions.
 
@@ -567,16 +568,19 @@ class Agent(Generic[AgentDeps, ResultData]):
     ) -> None:
         """Private utility to register a function as a tool."""
         retries_ = retries if retries is not None else self._default_retries
-        tool = Tool(func, takes_ctx, retries_)
+        tool = Tool(func, takes_ctx, max_retries=retries_)
         self._register_tool(tool)
 
     def _register_tool(self, tool: Tool[AgentDeps]) -> None:
         """Private utility to register a tool instance."""
-        if self._result_schema and tool.name in self._result_schema.tools:
-            raise ValueError(f'Tool name conflicts with result schema name: {tool.name!r}')
+        if tool.max_retries is None:
+            tool = dataclasses.replace(tool, max_retries=self._default_retries)
 
         if tool.name in self._function_tools:
-            raise ValueError(f'Tool name conflicts with existing tool: {tool.name!r}')
+            raise exceptions.UserError(f'Tool name conflicts with existing tool: {tool.name!r}')
+
+        if self._result_schema and tool.name in self._result_schema.tools:
+            raise exceptions.UserError(f'Tool name conflicts with result schema name: {tool.name!r}')
 
         self._function_tools[tool.name] = tool
 

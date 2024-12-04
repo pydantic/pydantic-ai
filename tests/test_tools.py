@@ -275,6 +275,7 @@ def test_takes_model_and_int(set_event_loop: None):
     assert result.data == snapshot('{"takes_just_model":"0 a 0"}')
 
 
+# pyright: reportPrivateUsage=false
 def test_init_tool_plain(set_event_loop: None):
     call_args: list[int] = []
 
@@ -282,16 +283,49 @@ def test_init_tool_plain(set_event_loop: None):
         call_args.append(x)
         return x + 1
 
-    agent = Agent('test', tools=[Tool(plain_tool, False)])
+    agent = Agent('test', tools=[Tool(plain_tool, False)], retries=7)
     result = agent.run_sync('foobar')
     assert result.data == snapshot('{"plain_tool":1}')
     assert call_args == snapshot([0])
+    assert agent._function_tools['plain_tool'].takes_ctx is False
+    assert agent._function_tools['plain_tool'].max_retries == 7
+
+    agent_infer = Agent('test', tools=[plain_tool], retries=7)
+    result = agent_infer.run_sync('foobar')
+    assert result.data == snapshot('{"plain_tool":1}')
+    assert call_args == snapshot([0, 0])
+    assert agent_infer._function_tools['plain_tool'].takes_ctx is False
+    assert agent_infer._function_tools['plain_tool'].max_retries == 7
 
 
+def ctx_tool(ctx: RunContext[int], x: int) -> int:
+    return x + ctx.deps
+
+
+# pyright: reportPrivateUsage=false
 def test_init_tool_ctx(set_event_loop: None):
-    def ctx_tool(ctx: RunContext[int], x: int) -> int:
-        return x + ctx.deps
-
-    agent = Agent('test', tools=[Tool(ctx_tool, True)], deps_type=int)
+    agent = Agent('test', tools=[Tool(ctx_tool, True, max_retries=3)], deps_type=int, retries=7)
     result = agent.run_sync('foobar', deps=5)
     assert result.data == snapshot('{"ctx_tool":5}')
+    assert agent._function_tools['ctx_tool'].takes_ctx is True
+    assert agent._function_tools['ctx_tool'].max_retries == 3
+
+    agent_infer = Agent('test', tools=[ctx_tool], deps_type=int)
+    result = agent_infer.run_sync('foobar', deps=6)
+    assert result.data == snapshot('{"ctx_tool":6}')
+    assert agent_infer._function_tools['ctx_tool'].takes_ctx is True
+
+
+def test_repeat_tool():
+    with pytest.raises(UserError, match="Tool name conflicts with existing tool: 'ctx_tool'"):
+        Agent('test', tools=[Tool(ctx_tool, True), ctx_tool], deps_type=int)
+
+
+def test_tool_return_conflict():
+    # this is okay
+    Agent('test', tools=[ctx_tool], deps_type=int)
+    # this is also okay
+    Agent('test', tools=[ctx_tool], deps_type=int, result_type=int)
+    # this raises an error
+    with pytest.raises(UserError, match="Tool name conflicts with result schema name: 'ctx_tool'"):
+        Agent('test', tools=[ctx_tool], deps_type=int, result_type=int, result_tool_name='ctx_tool')

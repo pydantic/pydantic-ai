@@ -31,10 +31,9 @@ nav:
     - examples/chat-app.md
   - API Reference:
     - api/agent.md
-    - api/tool.md
+    - api/tools.md
     - api/result.md
     - api/messages.md
-    - api/dependencies.md
     - api/exceptions.md
     - api/models/base.md
     - api/models/openai.md

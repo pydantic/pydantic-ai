@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any, Callable, Generic, TypeVar, Union, cast
 
 from pydantic import ValidationError
 from pydantic_core import SchemaValidator
-from typing_extensions import Concatenate, ParamSpec, TypeAlias
+from typing_extensions import Concatenate, ParamSpec, TypeAlias, final
 
 from . import _pydantic, _utils, messages
 from .exceptions import ModelRetry, UnexpectedModelBehavior
@@ -93,27 +93,25 @@ Usage `ToolPlainFunc[ToolParams]`.
 ToolFuncEither = Union[ToolFuncContext[AgentDeps, ToolParams], ToolFuncPlain[ToolParams]]
 """Either kind of tool function.
 
-This is just a union of [`ToolFuncContext`][pydantic_ai.dependencies.ToolFuncContext] and
-[`ToolFuncPlain`][pydantic_ai.dependencies.ToolFuncPlain].
+This is just a union of [`ToolFuncContext`][pydantic_ai.tools.ToolFuncContext] and
+[`ToolFuncPlain`][pydantic_ai.tools.ToolFuncPlain].
 
 Usage `ToolFuncEither[AgentDeps, ToolParams]`.
 """
 
+A = TypeVar('A')
 
-@dataclass
+
+@final
+@dataclass(init=False)
 class Tool(Generic[AgentDeps]):
     """A tool function for an agent."""
 
     function: ToolFuncEither[AgentDeps, ...]
-    """The Python function to call as the tool."""
     takes_ctx: bool
-    """Whether the function takes a [`RunContext`][pydantic_ai.dependencies.RunContext] first argument."""
-    max_retries: int = 1
-    """Maximum number of retries allowed for this tool."""
-    name: str = ''
-    """Name of the tool, inferred from the function if left blank."""
-    description: str = ''
-    """Description of the tool, inferred from the function if left blank."""
+    max_retries: int | None
+    name: str
+    description: str
     _is_async: bool = field(init=False)
     _single_arg_name: str | None = field(init=False)
     _positional_fields: list[str] = field(init=False)
@@ -122,16 +120,62 @@ class Tool(Generic[AgentDeps]):
     _json_schema: _utils.ObjectJsonSchema = field(init=False)
     _current_retry: int = field(default=0, init=False)
 
-    def __post_init__(self):
-        f = _pydantic.function_schema(self.function, self.takes_ctx)
-        self.name = self.name or self.function.__name__
-        self.description = self.description or f['description']
+    def __init__(
+        self,
+        function: ToolFuncEither[AgentDeps, ...],
+        takes_ctx: bool,
+        *,
+        max_retries: int | None = None,
+        name: str | None = None,
+        description: str | None = None,
+    ):
+        """Create a new tool instance.
+
+        Example usage:
+
+        ```py
+        from pydantic_ai import Agent, RunContext, Tool
+
+        async def my_tool(ctx: RunContext[int], x: int, y: int) -> str:
+            return f'{ctx.deps} {x} {y}'
+
+        agent = Agent('test', tools=[Tool(my_tool, True)])
+        ```
+
+        Args:
+            function: The Python function to call as the tool.
+            takes_ctx: Whether the function takes a [`RunContext`][pydantic_ai.tools.RunContext] first argument.
+            max_retries: Maximum number of retries allowed for this tool, set to the agent default if `None`.
+            name: Name of the tool, inferred from the function if left blank.
+            description: Description of the tool, inferred from the function if left blank.
+        """
+        f = _pydantic.function_schema(function, takes_ctx)
+        self.function = function
+        self.takes_ctx = takes_ctx
+        self.max_retries = max_retries
+        self.name = name or function.__name__
+        self.description = description or f['description']
         self._is_async = inspect.iscoroutinefunction(self.function)
         self._single_arg_name = f['single_arg_name']
         self._positional_fields = f['positional_fields']
         self._var_positional_field = f['var_positional_field']
         self._validator = f['validator']
         self._json_schema = f['json_schema']
+
+    @staticmethod
+    def infer(function: ToolFuncEither[A, ...] | Tool[A]) -> Tool[A]:
+        """Create a tool from a pure function, inferring whether it takes `RunContext` as its first argument.
+
+        Args:
+            function: The tool function to wrap; or for convenience, a `Tool` instance.
+
+        Returns:
+            A new `Tool` instance.
+        """
+        if isinstance(function, Tool):
+            return function
+        else:
+            return Tool(function, takes_ctx=_pydantic.takes_ctx(function))
 
     def reset(self) -> None:
         """Reset the current retry count."""
@@ -189,8 +233,7 @@ class Tool(Generic[AgentDeps]):
 
     def _on_error(self, exc: ValidationError | ModelRetry, call_message: messages.ToolCall) -> messages.RetryPrompt:
         self._current_retry += 1
-        if self._current_retry > self.max_retries:
-            # TODO custom error with details of the tool
+        if self.max_retries is None or self._current_retry > self.max_retries:
             raise UnexpectedModelBehavior(f'Tool exceeded max retries count of {self.max_retries}') from exc
         else:
             if isinstance(exc, ValidationError):

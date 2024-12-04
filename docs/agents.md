@@ -49,7 +49,7 @@ print(result.data)
 ```
 
 1. Create an agent, which expects an integer dependency and returns a boolean result. This agent will have type `#!python Agent[int, bool]`.
-2. Define a tool that checks if the square is a winner. Here [`RunContext`][pydantic_ai.dependencies.RunContext] is parameterized with the dependency type `int`; if you got the dependency type wrong you'd get a typing error.
+2. Define a tool that checks if the square is a winner. Here [`RunContext`][pydantic_ai.tools.RunContext] is parameterized with the dependency type `int`; if you got the dependency type wrong you'd get a typing error.
 3. In reality, you might want to use a random number here e.g. `random.randint(0, 36)`.
 4. `result.data` will be a boolean indicating if the square is a winner. Pydantic performs the result validation, it'll be typed as a `bool` since its type is derived from the `result_type` generic parameter of the agent.
 
@@ -222,7 +222,7 @@ print(result.data)
 
 1. The agent expects a string dependency.
 2. Static system prompt defined at agent creation time.
-3. Dynamic system prompt defined via a decorator with [`RunContext`][pydantic_ai.dependencies.RunContext], this is called just after `run_sync`, not when the agent is created, so can benefit from runtime information like the dependencies used on that run.
+3. Dynamic system prompt defined via a decorator with [`RunContext`][pydantic_ai.tools.RunContext], this is called just after `run_sync`, not when the agent is created, so can benefit from runtime information like the dependencies used on that run.
 4. Another dynamic system prompt, system prompts don't have to have the `RunContext` parameter.
 
 _(This example is complete, it can be run "as is")_
@@ -240,8 +240,8 @@ They're useful when it is impractical or impossible to put all the context an ag
 
 There are two different decorator functions to register tools:
 
-1. [`@agent.tool`][pydantic_ai.Agent.tool] — for tools that need access to the agent [context][pydantic_ai.dependencies.RunContext]
-2. [`@agent.tool_plain`][pydantic_ai.Agent.tool_plain] — for tools that do not need access to the agent [context][pydantic_ai.dependencies.RunContext]
+1. [`@agent.tool`][pydantic_ai.Agent.tool] — for tools that need access to the agent [context][pydantic_ai.tools.RunContext]
+2. [`@agent.tool_plain`][pydantic_ai.Agent.tool_plain] — for tools that do not need access to the agent [context][pydantic_ai.tools.RunContext]
 
 `@agent.tool` is the default since in the majority of cases tools will need access to the agent context.
 
@@ -445,7 +445,7 @@ agent.run_sync('hello', model=FunctionModel(print_schema))
 
 _(This example is complete, it can be run "as is")_
 
-The return type of tool can be any valid JSON object ([`JsonData`][pydantic_ai.dependencies.JsonData]) as some models (e.g. Gemini) support semi-structured return values, some expect text (OpenAI) but seem to be just as good at extracting meaning from the data. If a Python object is returned and the model expects a string, the value will be serialized to JSON.
+The return type of tool can be any valid JSON object ([`JsonData`][pydantic_ai.tools.JsonData]) as some models (e.g. Gemini) support semi-structured return values, some expect text (OpenAI) but seem to be just as good at extracting meaning from the data. If a Python object is returned and the model expects a string, the value will be serialized to JSON.
 
 If a tool has a single parameter that can be represented as an object in JSON schema (e.g. dataclass, TypedDict, pydantic model), the schema for the tool is simplified to be just that object. (TODO example)
 
@@ -456,7 +456,7 @@ Validation errors from both function tool parameter validation and [structured r
 You can also raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] from within a [tool](#function-tools) or [result validator function](results.md#result-validators-functions) to tell the model it should retry generating a response.
 
 - The default retry count is **1** but can be altered for the [entire agent][pydantic_ai.Agent.__init__], a [specific tool][pydantic_ai.Agent.tool], or a [result validator][pydantic_ai.Agent.__init__].
-- You can access the current retry count from within a tool or result validator via [`ctx.retry`][pydantic_ai.dependencies.RunContext].
+- You can access the current retry count from within a tool or result validator via [`ctx.retry`][pydantic_ai.tools.RunContext].
 
 Here's an example:
 
