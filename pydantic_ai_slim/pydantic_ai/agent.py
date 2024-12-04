@@ -19,7 +19,7 @@ from . import (
     result,
 )
 from .result import ResultData
-from .tool import AgentDeps, RunContext, Tool, ToolFuncContext, ToolFuncEither, ToolFuncPlain, ToolParams
+from .tools import AgentDeps, RunContext, Tool, ToolFuncContext, ToolFuncEither, ToolFuncPlain, ToolParams
 
 __all__ = ('Agent',)
 

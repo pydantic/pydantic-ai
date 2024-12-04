@@ -189,7 +189,7 @@ def _build_schema(
 
 
 def _is_call_ctx(annotation: Any) -> bool:
-    from .tool import RunContext
+    from .tools import RunContext
 
     return annotation is RunContext or (
         _typing_extra.is_generic_alias(annotation) and get_origin(annotation) is RunContext

@@ -9,7 +9,7 @@ from typing import Generic, TypeVar, cast
 import logfire_api
 
 from . import _result, _utils, exceptions, messages, models
-from .tool import AgentDeps
+from .tools import AgentDeps
 
 __all__ = (
     'ResultData',

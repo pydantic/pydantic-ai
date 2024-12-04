@@ -14,7 +14,7 @@ from . import _utils, messages
 from .exceptions import ModelRetry
 from .messages import ModelStructuredResponse, ToolCall
 from .result import ResultData
-from .tool import AgentDeps, ResultValidatorFunc, RunContext
+from .tools import AgentDeps, ResultValidatorFunc, RunContext
 
 
 @dataclass
