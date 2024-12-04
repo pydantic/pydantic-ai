@@ -381,9 +381,9 @@ sequenceDiagram
     Note over Agent: Game session complete
 ```
 
-### Registering Function tools via the argument
+### Registering Function Tools via kwarg
 
-As well as using the decorators, we can also register tools via the `tools` argument to the [`Agent` constructor][pydantic_ai.Agent.__init__]. This is useful when you want to re-use tools, and can also give more fine-grained control over the tools.
+As well as using the decorators, we can register tools via the `tools` argument to the [`Agent` constructor][pydantic_ai.Agent.__init__]. This is useful when you want to re-use tools, and can also give more fine-grained control over the tools.
 
 ```py title="dice_game_tool_kwarg.py"
 import random
@@ -404,7 +404,7 @@ def get_player_name(ctx: RunContext[str]) -> str:
 agent_a = Agent(
     'gemini-1.5-flash',
     deps_type=str,
-    tools=[roll_die, get_player_name],  # (2)!
+    tools=[roll_die, get_player_name],  # (1)!
 )
 agent_b = Agent(
     'gemini-1.5-flash',
@@ -414,12 +414,12 @@ agent_b = Agent(
         Tool(get_player_name, takes_ctx=True),
     ],
 )
-dice_result = agent_b.run_sync('My guess is 4', deps='Anne')  # (5)!
+dice_result = agent_b.run_sync('My guess is 4', deps='Anne')
 print(dice_result.data)
 #> Congratulations Anne, you guessed correctly! You're a winner!
 ```
 
-1. The simplest way to register tools via the `Agent` constructor is to pass a list of functions, the function signature is inspected to determine if the tool needs the agent context.
+1. The simplest way to register tools via the `Agent` constructor is to pass a list of functions, the function signature is inspected to determine if the tool takes [`RunContext`][pydantic_ai.tools.RunContext].
 2. `agent_a` and `agent_b` are identical — but we can use [`Tool`][pydantic_ai.tools.Tool] to give more fine-grained control over how tools are defined, e.g. setting their name or description.
 
 _(This example is complete, it can be run "as is")_
