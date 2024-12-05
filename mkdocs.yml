@@ -12,6 +12,7 @@ copyright: © Pydantic Services Inc. 2024 to present
 nav:
   - Introduction: index.md
   - install.md
+  - help.md
   - Documentation:
     - agents.md
     - dependencies.md
