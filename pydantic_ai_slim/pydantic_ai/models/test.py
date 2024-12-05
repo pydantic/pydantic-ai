@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 import re
 import string
-from collections.abc import AsyncIterator, Iterable, Iterator, Mapping, Sequence
+from collections.abc import AsyncIterator, Iterable, Iterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
@@ -21,7 +21,7 @@ from ..messages import (
     ToolReturn,
 )
 from ..result import Cost
-from ..tools import AbstractToolDefinition
+from ..tools import ToolDefinition
 from . import (
     AgentModel,
     EitherStreamedResponse,
@@ -56,19 +56,20 @@ class TestModel(Model):
     seed: int = 0
     """Seed for generating random data."""
     # these fields are set when the model is called by the agent
-    agent_model_tools: Mapping[str, AbstractToolDefinition] | None = field(default=None, init=False)
+    agent_model_tools: dict[str, ToolDefinition] | None = field(default=None, init=False)
     agent_model_allow_text_result: bool | None = field(default=None, init=False)
-    agent_model_result_tools: list[AbstractToolDefinition] | None = field(default=None, init=False)
+    agent_model_result_tools: dict[str, ToolDefinition] | None = field(default=None, init=False)
 
-    async def agent_model(
+    async def prepare(
         self,
-        function_tools: Mapping[str, AbstractToolDefinition],
+        *,
+        function_tools: dict[str, ToolDefinition],
         allow_text_result: bool,
-        result_tools: Sequence[AbstractToolDefinition] | None,
+        result_tools: dict[str, ToolDefinition] | None,
     ) -> AgentModel:
         self.agent_model_tools = function_tools
         self.agent_model_allow_text_result = allow_text_result
-        self.agent_model_result_tools = list(result_tools) if result_tools is not None else None
+        self.agent_model_result_tools = result_tools
 
         if self.call_tools == 'all':
             tool_calls = [(r.name, r) for r in function_tools.values()]
@@ -82,7 +83,7 @@ class TestModel(Model):
             result: _utils.Either[str | None, Any | None] = _utils.Either(left=self.custom_result_text)
         elif self.custom_result_args is not None:
             assert result_tools is not None, 'No result tools provided, but `custom_result_args` is set.'
-            result_tool = result_tools[0]
+            result_tool = next(iter(result_tools.values()))
 
             if k := result_tool.outer_typed_dict_key:
                 result = _utils.Either(right={k: self.custom_result_args})
@@ -94,7 +95,9 @@ class TestModel(Model):
             result = _utils.Either(right=None)
         else:
             result = _utils.Either(left=None)
-        return TestAgentModel(tool_calls, result, self.agent_model_result_tools, self.seed)
+
+        result_tools_list = list(result_tools.values()) if result_tools is not None else None
+        return TestAgentModel(tool_calls, result, result_tools_list, self.seed)
 
     def name(self) -> str:
         return 'test-model'
@@ -107,10 +110,10 @@ class TestAgentModel(AgentModel):
     # NOTE: Avoid test discovery by pytest.
     __test__ = False
 
-    tool_calls: list[tuple[str, AbstractToolDefinition]]
+    tool_calls: list[tuple[str, ToolDefinition]]
     # left means the text is plain text; right means it's a function call
     result: _utils.Either[str | None, Any | None]
-    result_tools: list[AbstractToolDefinition] | None
+    result_tools: list[ToolDefinition] | None
     seed: int
     step: int = 0
     last_message_count: int = 0
@@ -127,7 +130,7 @@ class TestAgentModel(AgentModel):
         else:
             yield TestStreamStructuredResponse(msg, cost)
 
-    def gen_tool_args(self, tool_def: AbstractToolDefinition) -> Any:
+    def gen_tool_args(self, tool_def: ToolDefinition) -> Any:
         return _JsonSchemaTestData(tool_def.parameters_json_schema, self.seed).generate()
 
     def _request(self, messages: list[Message]) -> ModelAnyResponse:

@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 import os
 import re
-from collections.abc import AsyncIterator, Iterable, Mapping, Sequence
+from collections.abc import AsyncIterator, Iterable
 from contextlib import asynccontextmanager
 from copy import deepcopy
 from dataclasses import dataclass, field
@@ -25,7 +25,7 @@ from ..messages import (
     ToolCall,
     ToolReturn,
 )
-from ..tools import AbstractToolDefinition
+from ..tools import ToolDefinition
 from . import (
     AgentModel,
     EitherStreamedResponse,
@@ -88,11 +88,12 @@ class GeminiModel(Model):
         self.http_client = http_client or cached_async_http_client()
         self.url = url_template.format(model=model_name)
 
-    async def agent_model(
+    async def prepare(
         self,
-        function_tools: Mapping[str, AbstractToolDefinition],
+        *,
+        function_tools: dict[str, ToolDefinition],
         allow_text_result: bool,
-        result_tools: Sequence[AbstractToolDefinition] | None,
+        result_tools: dict[str, ToolDefinition] | None,
     ) -> GeminiAgentModel:
         return GeminiAgentModel(
             http_client=self.http_client,
@@ -142,14 +143,14 @@ class GeminiAgentModel(AgentModel):
         model_name: GeminiModelName,
         auth: AuthProtocol,
         url: str,
-        function_tools: Mapping[str, AbstractToolDefinition],
+        function_tools: dict[str, ToolDefinition],
         allow_text_result: bool,
-        result_tools: Sequence[AbstractToolDefinition] | None,
+        result_tools: dict[str, ToolDefinition] | None,
     ):
         check_allow_model_requests()
         tools = [_function_from_abstract_tool(t) for t in function_tools.values()]
         if result_tools is not None:
-            tools += [_function_from_abstract_tool(t) for t in result_tools]
+            tools += [_function_from_abstract_tool(t) for t in result_tools.values()]
 
         if allow_text_result:
             tool_config = None
@@ -504,7 +505,7 @@ class _GeminiFunction(TypedDict):
     """
 
 
-def _function_from_abstract_tool(tool: AbstractToolDefinition) -> _GeminiFunction:
+def _function_from_abstract_tool(tool: ToolDefinition) -> _GeminiFunction:
     json_schema = _GeminiJsonSchema(tool.parameters_json_schema).simplify()
     f = _GeminiFunction(
         name=tool.name,

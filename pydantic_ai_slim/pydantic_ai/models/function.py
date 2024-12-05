@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 import inspect
 import re
-from collections.abc import AsyncIterator, Awaitable, Iterable, Mapping, Sequence
+from collections.abc import AsyncIterator, Awaitable, Iterable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -14,7 +14,7 @@ from typing_extensions import TypeAlias, assert_never, overload
 
 from .. import _utils, result
 from ..messages import ArgsJson, Message, ModelAnyResponse, ModelStructuredResponse, ToolCall
-from ..tools import AbstractToolDefinition
+from ..tools import ToolDefinition
 from . import AgentModel, EitherStreamedResponse, Model, StreamStructuredResponse, StreamTextResponse
 
 
@@ -51,13 +51,13 @@ class FunctionModel(Model):
         self.function = function
         self.stream_function = stream_function
 
-    async def agent_model(
+    async def prepare(
         self,
-        function_tools: Mapping[str, AbstractToolDefinition],
+        *,
+        function_tools: dict[str, ToolDefinition],
         allow_text_result: bool,
-        result_tools: Sequence[AbstractToolDefinition] | None,
+        result_tools: dict[str, ToolDefinition] | None,
     ) -> AgentModel:
-        result_tools = list(result_tools) if result_tools is not None else None
         return FunctionAgentModel(
             self.function, self.stream_function, AgentInfo(function_tools, allow_text_result, result_tools)
         )
@@ -78,7 +78,7 @@ class AgentInfo:
     This is passed as the second to functions used within [`FunctionModel`][pydantic_ai.models.function.FunctionModel].
     """
 
-    function_tools: Mapping[str, AbstractToolDefinition]
+    function_tools: dict[str, ToolDefinition]
     """The function tools available on this agent.
 
     These are the tools registered via the [`tool`][pydantic_ai.Agent.tool] and
@@ -86,7 +86,7 @@ class AgentInfo:
     """
     allow_text_result: bool
     """Whether a plain text result is allowed."""
-    result_tools: list[AbstractToolDefinition] | None
+    result_tools: dict[str, ToolDefinition] | None
     """The tools that can called as the final result of the run."""
 
 

@@ -1,6 +1,6 @@
 from __future__ import annotations as _annotations
 
-from collections.abc import AsyncIterator, Iterable, Mapping, Sequence
+from collections.abc import AsyncIterator, Iterable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -21,7 +21,7 @@ from ..messages import (
     ToolReturn,
 )
 from ..result import Cost
-from ..tools import AbstractToolDefinition
+from ..tools import ToolDefinition
 from . import (
     AgentModel,
     EitherStreamedResponse,
@@ -107,16 +107,17 @@ class GroqModel(Model):
         else:
             self.client = AsyncGroq(api_key=api_key, http_client=cached_async_http_client())
 
-    async def agent_model(
+    async def prepare(
         self,
-        function_tools: Mapping[str, AbstractToolDefinition],
+        *,
+        function_tools: dict[str, ToolDefinition],
         allow_text_result: bool,
-        result_tools: Sequence[AbstractToolDefinition] | None,
+        result_tools: dict[str, ToolDefinition] | None,
     ) -> AgentModel:
         check_allow_model_requests()
         tools = [self._map_tool_definition(r) for r in function_tools.values()]
         if result_tools is not None:
-            tools += [self._map_tool_definition(r) for r in result_tools]
+            tools += [self._map_tool_definition(r) for r in result_tools.values()]
         return GroqAgentModel(
             self.client,
             self.model_name,
@@ -128,7 +129,7 @@ class GroqModel(Model):
         return f'groq:{self.model_name}'
 
     @staticmethod
-    def _map_tool_definition(f: AbstractToolDefinition) -> chat.ChatCompletionToolParam:
+    def _map_tool_definition(f: ToolDefinition) -> chat.ChatCompletionToolParam:
         return {
             'type': 'function',
             'function': {

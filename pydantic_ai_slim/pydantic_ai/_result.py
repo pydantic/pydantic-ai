@@ -14,7 +14,7 @@ from . import _utils, messages
 from .exceptions import ModelRetry
 from .messages import ModelStructuredResponse, ToolCall
 from .result import ResultData
-from .tools import AgentDeps, ObjectJsonSchema, ResultValidatorFunc, RunContext
+from .tools import AgentDeps, ResultValidatorFunc, RunContext, ToolDefinition
 
 
 @dataclass
@@ -94,10 +94,7 @@ class ResultSchema(Generic[ResultData]):
             allow_text_result = False
 
         def _build_tool(a: Any, tool_name_: str, multiple: bool) -> ResultTool[ResultData]:
-            return cast(
-                ResultTool[ResultData],
-                ResultTool.build(a, tool_name_, description, multiple),  # pyright: ignore[reportUnknownMemberType]
-            )
+            return cast(ResultTool[ResultData], ResultTool(a, tool_name_, description, multiple))
 
         tools: dict[str, ResultTool[ResultData]] = {}
         if args := get_union_args(response_type):
@@ -121,34 +118,34 @@ class ResultSchema(Generic[ResultData]):
         """Return the names of the tools."""
         return list(self.tools.keys())
 
+    def tool_defs(self) -> dict[str, ToolDefinition]:
+        """Get tool definitions to register with the model."""
+        return {k: t.tool_def for k, t in self.tools.items()}
+
 
 DEFAULT_DESCRIPTION = 'The final response which ends this conversation'
 
 
-@dataclass
+@dataclass(init=False)
 class ResultTool(Generic[ResultData]):
-    name: str
-    description: str
+    tool_def: ToolDefinition
     type_adapter: TypeAdapter[Any]
-    parameters_json_schema: ObjectJsonSchema
-    outer_typed_dict_key: str | None
 
-    @classmethod
-    def build(cls, response_type: type[ResultData], name: str, description: str | None, multiple: bool) -> Self | None:
+    def __init__(self, response_type: type[ResultData], name: str, description: str | None, multiple: bool):
         """Build a ResultTool dataclass from a response type."""
         assert response_type is not str, 'ResultTool does not support str as a response type'
 
         if _utils.is_model_like(response_type):
-            type_adapter = TypeAdapter(response_type)
+            self.type_adapter = TypeAdapter(response_type)
             outer_typed_dict_key: str | None = None
             # noinspection PyArgumentList
-            parameters_json_schema = _utils.check_object_json_schema(type_adapter.json_schema())
+            parameters_json_schema = _utils.check_object_json_schema(self.type_adapter.json_schema())
         else:
             response_data_typed_dict = TypedDict('response_data_typed_dict', {'response': response_type})  # noqa
-            type_adapter = TypeAdapter(response_data_typed_dict)
+            self.type_adapter = TypeAdapter(response_data_typed_dict)
             outer_typed_dict_key = 'response'
             # noinspection PyArgumentList
-            parameters_json_schema = _utils.check_object_json_schema(type_adapter.json_schema())
+            parameters_json_schema = _utils.check_object_json_schema(self.type_adapter.json_schema())
             # including `response_data_typed_dict` as a title here doesn't add anything and could confuse the LLM
             parameters_json_schema.pop('title')
 
@@ -162,10 +159,9 @@ class ResultTool(Generic[ResultData]):
             if multiple:
                 tool_description = f'{union_arg_name(response_type)}: {tool_description}'
 
-        return cls(
+        self.tool_def = ToolDefinition(
             name=name,
             description=tool_description,
-            type_adapter=type_adapter,
             parameters_json_schema=parameters_json_schema,
             outer_typed_dict_key=outer_typed_dict_key,
         )
@@ -204,7 +200,7 @@ class ResultTool(Generic[ResultData]):
             else:
                 raise
         else:
-            if k := self.outer_typed_dict_key:
+            if k := self.tool_def.outer_typed_dict_key:
                 result = result[k]
             return result
 

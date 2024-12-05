@@ -1,6 +1,5 @@
 from __future__ import annotations as _annotations
 
-from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -10,7 +9,7 @@ from httpx import AsyncClient as AsyncHTTPClient
 
 from .._utils import run_in_executor
 from ..exceptions import UserError
-from ..tools import AbstractToolDefinition
+from ..tools import ToolDefinition
 from . import Model, cached_async_http_client
 from .gemini import GeminiAgentModel, GeminiModelName
 
@@ -108,11 +107,12 @@ class VertexAIModel(Model):
         self.auth = None
         self.url = None
 
-    async def agent_model(
+    async def prepare(
         self,
-        function_tools: Mapping[str, AbstractToolDefinition],
+        *,
+        function_tools: dict[str, ToolDefinition],
         allow_text_result: bool,
-        result_tools: Sequence[AbstractToolDefinition] | None,
+        result_tools: dict[str, ToolDefinition] | None,
     ) -> GeminiAgentModel:
         url, auth = await self._ainit()
         return GeminiAgentModel(

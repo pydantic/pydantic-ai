@@ -7,7 +7,7 @@ specific LLM being used.
 from __future__ import annotations as _annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator, Iterable, Iterator, Mapping, Sequence
+from collections.abc import AsyncIterator, Iterable, Iterator
 from contextlib import asynccontextmanager, contextmanager
 from datetime import datetime
 from functools import cache
@@ -20,7 +20,7 @@ from ..messages import Message, ModelAnyResponse, ModelStructuredResponse
 
 if TYPE_CHECKING:
     from ..result import Cost
-    from ..tools import AbstractToolDefinition
+    from ..tools import ToolDefinition
 
 
 KnownModelName = Literal[
@@ -61,13 +61,14 @@ class Model(ABC):
     """Abstract class for a model."""
 
     @abstractmethod
-    async def agent_model(
+    async def prepare(
         self,
-        function_tools: Mapping[str, AbstractToolDefinition],
+        *,
+        function_tools: dict[str, ToolDefinition],
         allow_text_result: bool,
-        result_tools: Sequence[AbstractToolDefinition] | None,
+        result_tools: dict[str, ToolDefinition] | None,
     ) -> AgentModel:
-        """Create an agent model.
+        """Create an agent model, this is called for each step of an agent run.
 
         This is async in case slow/async config checks need to be performed that can't be done in `__init__`.
 
@@ -87,7 +88,7 @@ class Model(ABC):
 
 
 class AgentModel(ABC):
-    """Model configured for a specific agent."""
+    """Model configured for each step of an Agent run."""
 
     @abstractmethod
     async def request(self, messages: list[Message]) -> tuple[ModelAnyResponse, Cost]:

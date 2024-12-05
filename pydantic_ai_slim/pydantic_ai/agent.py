@@ -22,7 +22,16 @@ from . import (
     result,
 )
 from .result import ResultData
-from .tools import AgentDeps, RunContext, Tool, ToolFuncContext, ToolFuncEither, ToolFuncPlain, ToolParams
+from .tools import (
+    AgentDeps,
+    RunContext,
+    Tool,
+    ToolDefinition,
+    ToolFuncContext,
+    ToolFuncEither,
+    ToolFuncPlain,
+    ToolParams,
+)
 
 __all__ = ('Agent',)
 
@@ -166,7 +175,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         """
         if infer_name and self.name is None:
             self._infer_name(inspect.currentframe())
-        model_used, custom_model, agent_model = await self._get_agent_model(model)
+        model_used, mode_selection = await self._get_model(model)
 
         deps = self._get_deps(deps)
 
@@ -174,7 +183,7 @@ class Agent(Generic[AgentDeps, ResultData]):
             '{agent_name} run {prompt=}',
             prompt=user_prompt,
             agent=self,
-            custom_model=custom_model,
+            mode_selection=mode_selection,
             model_name=model_used.name(),
             agent_name=self.name or 'agent',
         ) as run_span:
@@ -182,14 +191,17 @@ class Agent(Generic[AgentDeps, ResultData]):
             self.last_run_messages = messages
 
             for tool in self._function_tools.values():
-                tool.reset()
+                tool.current_retry = 0
 
             cost = result.Cost()
 
             run_step = 0
             while True:
                 run_step += 1
-                with _logfire.span('model request {run_step=}', run_step=run_step) as model_req_span:
+                with _logfire.span('preparing model and tools {run_step=}', run_step=run_step):
+                    agent_model = await self._prepare_model(model_used, deps)
+
+                with _logfire.span('model request', run_step=run_step) as model_req_span:
                     model_response, request_cost = await agent_model.request(messages)
                     model_req_span.set_attribute('response', model_response)
                     model_req_span.set_attribute('cost', request_cost)
@@ -198,7 +210,7 @@ class Agent(Generic[AgentDeps, ResultData]):
                 messages.append(model_response)
                 cost += request_cost
 
-                with _logfire.span('handle model response') as handle_span:
+                with _logfire.span('handle model response', run_step=run_step) as handle_span:
                     either = await self._handle_model_response(model_response, deps)
 
                     if isinstance(either, _MarkFinalResult):
@@ -273,7 +285,7 @@ class Agent(Generic[AgentDeps, ResultData]):
             # f_back because `asynccontextmanager` adds one frame
             if frame := inspect.currentframe():  # pragma: no branch
                 self._infer_name(frame.f_back)
-        model_used, custom_model, agent_model = await self._get_agent_model(model)
+        model_used, mode_selection = await self._get_model(model)
 
         deps = self._get_deps(deps)
 
@@ -281,7 +293,7 @@ class Agent(Generic[AgentDeps, ResultData]):
             '{agent_name} run stream {prompt=}',
             prompt=user_prompt,
             agent=self,
-            custom_model=custom_model,
+            mode_selection=mode_selection,
             model_name=model_used.name(),
             agent_name=self.name or 'agent',
         ) as run_span:
@@ -289,13 +301,17 @@ class Agent(Generic[AgentDeps, ResultData]):
             self.last_run_messages = messages
 
             for tool in self._function_tools.values():
-                tool.reset()
+                tool.current_retry = 0
 
             cost = result.Cost()
 
             run_step = 0
             while True:
                 run_step += 1
+
+                with _logfire.span('preparing model and tools {run_step=}', run_step=run_step):
+                    agent_model = await self._prepare_model(model_used, deps)
+
                 with _logfire.span('model request {run_step=}', run_step=run_step) as model_req_span:
                     async with agent_model.request_stream(messages) as model_response:
                         model_req_span.set_attribute('response_type', model_response.__class__.__name__)
@@ -613,16 +629,14 @@ class Agent(Generic[AgentDeps, ResultData]):
 
         self._function_tools[tool.name] = tool
 
-    async def _get_agent_model(
-        self, model: models.Model | models.KnownModelName | None
-    ) -> tuple[models.Model, models.Model | None, models.AgentModel]:
+    async def _get_model(self, model: models.Model | models.KnownModelName | None) -> tuple[models.Model, str]:
         """Create a model configured for this agent.
 
         Args:
             model: model to use for this run, required if `model` was not set when creating the agent.
 
         Returns:
-            a tuple of `(model used, custom_model if any, agent_model)`
+            a tuple of `(model used, how the model was selected)`
         """
         model_: models.Model
         if some_model := self._override_model:
@@ -633,19 +647,35 @@ class Agent(Generic[AgentDeps, ResultData]):
                     '(Even when `override(model=...)` is customizing the model that will actually be called)'
                 )
             model_ = some_model.value
-            custom_model = None
+            mode_selection = 'override-model'
         elif model is not None:
-            custom_model = model_ = models.infer_model(model)
+            model_ = models.infer_model(model)
+            mode_selection = 'custom'
         elif self.model is not None:
             # noinspection PyTypeChecker
             model_ = self.model = models.infer_model(self.model)
-            custom_model = None
+            mode_selection = 'from-agent'
         else:
             raise exceptions.UserError('`model` must be set either when creating the agent or when calling it.')
 
-        result_tools = list(self._result_schema.tools.values()) if self._result_schema else None
-        agent_model = await model_.agent_model(self._function_tools, self._allow_text_result, result_tools)
-        return model_, custom_model, agent_model
+        return model_, mode_selection
+
+    async def _prepare_model(self, model: models.Model, deps: AgentDeps) -> models.AgentModel:
+        """Create an agent model by building tools."""
+        function_tools: dict[str, ToolDefinition] = {}
+
+        async def add_tool(key: str, tool: Tool[AgentDeps]) -> None:
+            ctx = RunContext(deps, tool.current_retry, tool.name)
+            if tool_def := await tool.get_definition(ctx):
+                function_tools[key] = tool_def
+
+        await asyncio.gather(*(add_tool(k, t) for k, t in self._function_tools.items()))
+
+        return await model.prepare(
+            function_tools=function_tools,
+            allow_text_result=self._allow_text_result,
+            result_tools=self._result_schema.tool_defs() if self._result_schema is not None else None,
+        )
 
     async def _prepare_messages(
         self, deps: AgentDeps, user_prompt: str, message_history: list[_messages.Message] | None

@@ -3,11 +3,11 @@ from __future__ import annotations as _annotations
 import inspect
 from collections.abc import Awaitable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Callable, Generic, Protocol, TypeVar, Union, cast
+from typing import TYPE_CHECKING, Any, Callable, Generic, TypeVar, Union, cast
 
 from pydantic import ValidationError
 from pydantic_core import SchemaValidator
-from typing_extensions import Concatenate, ParamSpec, TypeAlias, final
+from typing_extensions import Concatenate, ParamSpec, TypeAlias
 
 from . import _pydantic, _utils, messages
 from .exceptions import ModelRetry, UnexpectedModelBehavior
@@ -29,7 +29,7 @@ __all__ = (
     'ToolParams',
     'Tool',
     'ObjectJsonSchema',
-    'AbstractToolDefinition',
+    'ToolDefinition',
 )
 
 AgentDeps = TypeVar('AgentDeps')
@@ -44,7 +44,7 @@ class RunContext(Generic[AgentDeps]):
     """Dependencies for the agent."""
     retry: int
     """Number of retries so far."""
-    tool_name: str | None
+    tool_name: str | None = None
     """Name of the tool being called."""
 
 
@@ -97,7 +97,6 @@ Usage `ToolFuncEither[AgentDeps, ToolParams]`.
 A = TypeVar('A')
 
 
-@final
 @dataclass(init=False)
 class Tool(Generic[AgentDeps]):
     """A tool function for an agent."""
@@ -112,8 +111,8 @@ class Tool(Generic[AgentDeps]):
     _positional_fields: list[str] = field(init=False)
     _var_positional_field: str | None = field(init=False)
     _validator: SchemaValidator = field(init=False, repr=False)
-    _json_schema: ObjectJsonSchema = field(init=False)
-    _current_retry: int = field(default=0, init=False)
+    _parameters_json_schema: ObjectJsonSchema = field(init=False)
+    current_retry: int = field(default=0, init=False)
 
     def __init__(
         self,
@@ -155,7 +154,7 @@ class Tool(Generic[AgentDeps]):
         self._positional_fields = f['positional_fields']
         self._var_positional_field = f['var_positional_field']
         self._validator = f['validator']
-        self._json_schema = f['json_schema']
+        self._parameters_json_schema = f['json_schema']
 
     @staticmethod
     def infer(function: ToolFuncEither[A, ...] | Tool[A]) -> Tool[A]:
@@ -172,9 +171,17 @@ class Tool(Generic[AgentDeps]):
         else:
             return Tool(function, takes_ctx=_pydantic.takes_ctx(function))
 
-    def reset(self) -> None:
-        """Reset the current retry count."""
-        self._current_retry = 0
+    async def get_definition(self, ctx: RunContext[AgentDeps]) -> ToolDefinition | None:
+        """Get the tool definition.
+
+        Returns:
+            return a `ToolDefinition` or `None` if the tools should not be registered for this run.
+        """
+        return ToolDefinition(
+            name=self.name,
+            description=self.description,
+            parameters_json_schema=self._parameters_json_schema,
+        )
 
     async def run(self, deps: AgentDeps, message: messages.ToolCall) -> messages.Message:
         """Run the tool function asynchronously."""
@@ -197,20 +204,12 @@ class Tool(Generic[AgentDeps]):
         except ModelRetry as e:
             return self._on_error(e, message)
 
-        self._current_retry = 0
+        self.current_retry = 0
         return messages.ToolReturn(
             tool_name=message.tool_name,
             content=response_content,
             tool_id=message.tool_id,
         )
-
-    @property
-    def parameters_json_schema(self) -> ObjectJsonSchema:
-        return self._json_schema
-
-    @property
-    def outer_typed_dict_key(self) -> str | None:
-        return None
 
     def _call_args(
         self, deps: AgentDeps, args_dict: dict[str, Any], message: messages.ToolCall
@@ -218,7 +217,7 @@ class Tool(Generic[AgentDeps]):
         if self._single_arg_name:
             args_dict = {self._single_arg_name: args_dict}
 
-        args = [RunContext(deps, self._current_retry, message.tool_name)] if self.takes_ctx else []
+        args = [RunContext(deps, self.current_retry, message.tool_name)] if self.takes_ctx else []
         for positional_field in self._positional_fields:
             args.append(args_dict.pop(positional_field))
         if self._var_positional_field:
@@ -227,8 +226,8 @@ class Tool(Generic[AgentDeps]):
         return args, args_dict
 
     def _on_error(self, exc: ValidationError | ModelRetry, call_message: messages.ToolCall) -> messages.RetryPrompt:
-        self._current_retry += 1
-        if self.max_retries is None or self._current_retry > self.max_retries:
+        self.current_retry += 1
+        if self.max_retries is None or self.current_retry > self.max_retries:
             raise UnexpectedModelBehavior(f'Tool exceeded max retries count of {self.max_retries}') from exc
         else:
             if isinstance(exc, ValidationError):
@@ -245,37 +244,30 @@ class Tool(Generic[AgentDeps]):
 ObjectJsonSchema: TypeAlias = dict[str, Any]
 """Type representing JSON schema of an object, e.g. where `"type": "object"`.
 
-This type is used to define tools parameters (aka arguments) in
-[AbstractToolDefinition][pydantic_ai.tools.AbstractToolDefinition].
+This type is used to define tools parameters (aka arguments) in [ToolDefinition][pydantic_ai.tools.ToolDefinition].
 
 With PEP-728 this should be a TypedDict with `type: Literal['object']`, and `extra_items=Any`
 """
 
 
-class AbstractToolDefinition(Protocol):
-    """Abstract definition of a tool.
+@dataclass
+class ToolDefinition:
+    """Definition of a tool passed to a model.
 
-    This is used for both function tools  result tools.
+    This is used for both function tools result tools.
     """
 
-    @property
-    def name(self) -> str:
-        """The name of the tool."""
-        ...
+    name: str
+    """The name of the tool."""
 
-    @property
-    def description(self) -> str:
-        """The description of the tool."""
-        ...
+    description: str
+    """The description of the tool."""
 
-    @property
-    def parameters_json_schema(self) -> ObjectJsonSchema:
-        """The JSON schema for the tool's parameters."""
-        ...
+    parameters_json_schema: ObjectJsonSchema
+    """The JSON schema for the tool's parameters."""
 
-    @property
-    def outer_typed_dict_key(self) -> str | None:
-        """The key in the outer [TypedDict] that wraps a result tool.
+    outer_typed_dict_key: str | None = None
+    """The key in the outer [TypedDict] that wraps a result tool.
 
-        This will only be set for result tools which don't have an `object` JSON schema.
-        """
+    This will only be set for result tools which don't have an `object` JSON schema.
+    """
