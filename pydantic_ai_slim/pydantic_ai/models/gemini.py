@@ -25,8 +25,8 @@ from ..messages import (
     ToolCall,
     ToolReturn,
 )
+from ..tools import AbstractToolDefinition
 from . import (
-    AbstractToolDefinition,
     AgentModel,
     EitherStreamedResponse,
     Model,
@@ -505,7 +505,7 @@ class _GeminiFunction(TypedDict):
 
 
 def _function_from_abstract_tool(tool: AbstractToolDefinition) -> _GeminiFunction:
-    json_schema = _GeminiJsonSchema(tool.json_schema).simplify()
+    json_schema = _GeminiJsonSchema(tool.parameters_json_schema).simplify()
     f = _GeminiFunction(
         name=tool.name,
         description=tool.description,

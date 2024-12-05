@@ -192,13 +192,13 @@ def test_response_tuple(set_event_loop: None):
     assert len(m.agent_model_result_tools) == 1
 
     # to match the protocol, we just extract the attributes we care about
-    fields = 'name', 'description', 'json_schema', 'outer_typed_dict_key'
+    fields = 'name', 'description', 'parameters_json_schema', 'outer_typed_dict_key'
     agent_model_result_tool = {f: getattr(m.agent_model_result_tools[0], f) for f in fields}
     assert agent_model_result_tool == snapshot(
         {
             'name': 'final_result',
             'description': 'The final response which ends this conversation',
-            'json_schema': {
+            'parameters_json_schema': {
                 'properties': {
                     'response': {
                         'maxItems': 2,
@@ -251,13 +251,13 @@ def test_response_union_allow_str(set_event_loop: None, input_union_callable: Ca
     assert len(m.agent_model_result_tools) == 1
 
     # to match the protocol, we just extract the attributes we care about
-    fields = 'name', 'description', 'json_schema', 'outer_typed_dict_key'
+    fields = 'name', 'description', 'parameters_json_schema', 'outer_typed_dict_key'
     agent_model_result_tool = {f: getattr(m.agent_model_result_tools[0], f) for f in fields}
     assert agent_model_result_tool == snapshot(
         {
             'name': 'final_result',
             'description': 'The final response which ends this conversation',
-            'json_schema': {
+            'parameters_json_schema': {
                 'properties': {'a': {'title': 'A', 'type': 'integer'}, 'b': {'title': 'B', 'type': 'string'}},
                 'title': 'Foo',
                 'required': ['a', 'b'],
@@ -325,14 +325,14 @@ class Bar(BaseModel):
     assert len(m.agent_model_result_tools) == 2
 
     # to match the protocol, we just extract the attributes we care about
-    fields = 'name', 'description', 'json_schema', 'outer_typed_dict_key'
+    fields = 'name', 'description', 'parameters_json_schema', 'outer_typed_dict_key'
     agent_model_result_tools = [{f: getattr(t, f) for f in fields} for t in m.agent_model_result_tools]
     assert agent_model_result_tools == snapshot(
         [
             {
                 'name': 'final_result_Foo',
                 'description': 'Foo: The final response which ends this conversation',
-                'json_schema': {
+                'parameters_json_schema': {
                     'properties': {
                         'a': {'title': 'A', 'type': 'integer'},
                         'b': {'title': 'B', 'type': 'string'},
@@ -346,7 +346,7 @@ class Bar(BaseModel):
             {
                 'name': 'final_result_Bar',
                 'description': 'This is a bar model.',
-                'json_schema': {
+                'parameters_json_schema': {
                     'properties': {'b': {'title': 'B', 'type': 'string'}},
                     'required': ['b'],
                     'title': 'Bar',

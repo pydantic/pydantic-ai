@@ -14,7 +14,7 @@ from . import _utils, messages
 from .exceptions import ModelRetry
 from .messages import ModelStructuredResponse, ToolCall
 from .result import ResultData
-from .tools import AgentDeps, ResultValidatorFunc, RunContext
+from .tools import AgentDeps, ObjectJsonSchema, ResultValidatorFunc, RunContext
 
 
 @dataclass
@@ -130,7 +130,7 @@ class ResultTool(Generic[ResultData]):
     name: str
     description: str
     type_adapter: TypeAdapter[Any]
-    json_schema: _utils.ObjectJsonSchema
+    parameters_json_schema: ObjectJsonSchema
     outer_typed_dict_key: str | None
 
     @classmethod
@@ -142,17 +142,17 @@ class ResultTool(Generic[ResultData]):
             type_adapter = TypeAdapter(response_type)
             outer_typed_dict_key: str | None = None
             # noinspection PyArgumentList
-            json_schema = _utils.check_object_json_schema(type_adapter.json_schema())
+            parameters_json_schema = _utils.check_object_json_schema(type_adapter.json_schema())
         else:
             response_data_typed_dict = TypedDict('response_data_typed_dict', {'response': response_type})  # noqa
             type_adapter = TypeAdapter(response_data_typed_dict)
             outer_typed_dict_key = 'response'
             # noinspection PyArgumentList
-            json_schema = _utils.check_object_json_schema(type_adapter.json_schema())
+            parameters_json_schema = _utils.check_object_json_schema(type_adapter.json_schema())
             # including `response_data_typed_dict` as a title here doesn't add anything and could confuse the LLM
-            json_schema.pop('title')
+            parameters_json_schema.pop('title')
 
-        if json_schema_description := json_schema.pop('description', None):
+        if json_schema_description := parameters_json_schema.pop('description', None):
             if description is None:
                 tool_description = json_schema_description
             else:
@@ -166,7 +166,7 @@ class ResultTool(Generic[ResultData]):
             name=name,
             description=tool_description,
             type_adapter=type_adapter,
-            json_schema=json_schema,
+            parameters_json_schema=parameters_json_schema,
             outer_typed_dict_key=outer_typed_dict_key,
         )
 

@@ -10,7 +10,8 @@ from httpx import AsyncClient as AsyncHTTPClient
 
 from .._utils import run_in_executor
 from ..exceptions import UserError
-from . import AbstractToolDefinition, Model, cached_async_http_client
+from ..tools import AbstractToolDefinition
+from . import Model, cached_async_http_client
 from .gemini import GeminiAgentModel, GeminiModelName
 
 try:

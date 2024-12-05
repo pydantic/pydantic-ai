@@ -8,11 +8,14 @@ from dataclasses import dataclass, is_dataclass
 from datetime import datetime, timezone
 from functools import partial
 from types import GenericAlias
-from typing import Any, Callable, Generic, TypeVar, Union, cast, overload
+from typing import TYPE_CHECKING, Any, Callable, Generic, TypeVar, Union, cast, overload
 
 from pydantic import BaseModel
 from pydantic.json_schema import JsonSchemaValue
 from typing_extensions import ParamSpec, TypeAlias, TypeGuard, is_typeddict
+
+if TYPE_CHECKING:
+    from .tools import ObjectJsonSchema
 
 _P = ParamSpec('_P')
 _R = TypeVar('_R')
@@ -37,10 +40,6 @@ def is_model_like(type_: Any) -> bool:
         and not isinstance(type_, GenericAlias)
         and (issubclass(type_, BaseModel) or is_dataclass(type_) or is_typeddict(type_))
     )
-
-
-# With PEP-728 this should be a TypedDict with `type: Literal['object']`, and `extra_items=Any`
-ObjectJsonSchema: TypeAlias = dict[str, Any]
 
 
 def check_object_json_schema(schema: JsonSchemaValue) -> ObjectJsonSchema:

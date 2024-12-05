@@ -12,7 +12,7 @@ from inline_snapshot import snapshot
 from pydantic import BaseModel
 from typing_extensions import Literal, TypeAlias
 
-from pydantic_ai import Agent, ModelRetry, UnexpectedModelBehavior, UserError, _utils
+from pydantic_ai import Agent, ModelRetry, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
     ArgsDict,
     ModelStructuredResponse,
@@ -42,6 +42,7 @@ from pydantic_ai.models.gemini import (
     _GeminiUsageMetaData,
 )
 from pydantic_ai.result import Cost
+from pydantic_ai.tools import ObjectJsonSchema
 
 from ..conftest import ClientWithHandler, IsNow, TestEnv
 
@@ -90,7 +91,7 @@ class TestToolDefinition:
     __test__ = False
     name: str
     description: str
-    json_schema: _utils.ObjectJsonSchema
+    parameters_json_schema: ObjectJsonSchema
     outer_typed_dict_key: str | None = None
 
 

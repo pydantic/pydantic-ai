@@ -21,8 +21,8 @@ from ..messages import (
     ToolReturn,
 )
 from ..result import Cost
+from ..tools import AbstractToolDefinition
 from . import (
-    AbstractToolDefinition,
     AgentModel,
     EitherStreamedResponse,
     Model,
@@ -134,7 +134,7 @@ class GroqModel(Model):
             'function': {
                 'name': f.name,
                 'description': f.description,
-                'parameters': f.json_schema,
+                'parameters': f.parameters_json_schema,
             },
         }
 

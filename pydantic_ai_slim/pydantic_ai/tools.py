@@ -3,11 +3,11 @@ from __future__ import annotations as _annotations
 import inspect
 from collections.abc import Awaitable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Callable, Generic, TypeVar, Union, cast
+from typing import TYPE_CHECKING, Any, Callable, Generic, Protocol, TypeVar, Union, cast
 
 from pydantic import ValidationError
 from pydantic_core import SchemaValidator
-from typing_extensions import Concatenate, ParamSpec, final
+from typing_extensions import Concatenate, ParamSpec, TypeAlias, final
 
 from . import _pydantic, _utils, messages
 from .exceptions import ModelRetry, UnexpectedModelBehavior
@@ -28,6 +28,8 @@ __all__ = (
     'ToolFuncEither',
     'ToolParams',
     'Tool',
+    'ObjectJsonSchema',
+    'AbstractToolDefinition',
 )
 
 AgentDeps = TypeVar('AgentDeps')
@@ -110,7 +112,7 @@ class Tool(Generic[AgentDeps]):
     _positional_fields: list[str] = field(init=False)
     _var_positional_field: str | None = field(init=False)
     _validator: SchemaValidator = field(init=False, repr=False)
-    _json_schema: _utils.ObjectJsonSchema = field(init=False)
+    _json_schema: ObjectJsonSchema = field(init=False)
     _current_retry: int = field(default=0, init=False)
 
     def __init__(
@@ -203,7 +205,7 @@ class Tool(Generic[AgentDeps]):
         )
 
     @property
-    def json_schema(self) -> _utils.ObjectJsonSchema:
+    def parameters_json_schema(self) -> ObjectJsonSchema:
         return self._json_schema
 
     @property
@@ -238,3 +240,42 @@ class Tool(Generic[AgentDeps]):
                 content=content,
                 tool_id=call_message.tool_id,
             )
+
+
+ObjectJsonSchema: TypeAlias = dict[str, Any]
+"""Type representing JSON schema of an object, e.g. where `"type": "object"`.
+
+This type is used to define tools parameters (aka arguments) in
+[AbstractToolDefinition][pydantic_ai.tools.AbstractToolDefinition].
+
+With PEP-728 this should be a TypedDict with `type: Literal['object']`, and `extra_items=Any`
+"""
+
+
+class AbstractToolDefinition(Protocol):
+    """Abstract definition of a tool.
+
+    This is used for both function tools  result tools.
+    """
+
+    @property
+    def name(self) -> str:
+        """The name of the tool."""
+        ...
+
+    @property
+    def description(self) -> str:
+        """The description of the tool."""
+        ...
+
+    @property
+    def parameters_json_schema(self) -> ObjectJsonSchema:
+        """The JSON schema for the tool's parameters."""
+        ...
+
+    @property
+    def outer_typed_dict_key(self) -> str | None:
+        """The key in the outer [TypedDict] that wraps a result tool.
+
+        This will only be set for result tools which don't have an `object` JSON schema.
+        """

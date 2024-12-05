@@ -14,14 +14,8 @@ from typing_extensions import TypeAlias, assert_never, overload
 
 from .. import _utils, result
 from ..messages import ArgsJson, Message, ModelAnyResponse, ModelStructuredResponse, ToolCall
-from . import (
-    AbstractToolDefinition,
-    AgentModel,
-    EitherStreamedResponse,
-    Model,
-    StreamStructuredResponse,
-    StreamTextResponse,
-)
+from ..tools import AbstractToolDefinition
+from . import AgentModel, EitherStreamedResponse, Model, StreamStructuredResponse, StreamTextResponse
 
 
 @dataclass(init=False)

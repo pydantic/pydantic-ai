@@ -17,10 +17,10 @@ from pydantic.plugin._schema_validator import create_schema_validator
 from pydantic_core import SchemaValidator, core_schema
 
 from ._griffe import doc_descriptions
-from ._utils import ObjectJsonSchema, check_object_json_schema, is_model_like
+from ._utils import check_object_json_schema, is_model_like
 
 if TYPE_CHECKING:
-    pass
+    from .tools import ObjectJsonSchema
 
 
 __all__ = 'function_schema', 'LazyTypeAdapter'

@@ -71,7 +71,7 @@ async def google_style_docstring(foo: int, bar: str) -> str:  # pragma: no cover
 async def get_json_schema(_messages: list[Message], info: AgentInfo) -> ModelAnyResponse:
     assert len(info.function_tools) == 1
     r = next(iter(info.function_tools.values()))
-    return ModelTextResponse(json.dumps(r.json_schema))
+    return ModelTextResponse(json.dumps(r.parameters_json_schema))
 
 
 def test_docstring_google(set_event_loop: None):

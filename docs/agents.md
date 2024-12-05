@@ -462,7 +462,7 @@ def print_schema(messages: list[Message], info: AgentInfo) -> ModelAnyResponse:
     tool = info.function_tools['foobar']
     print(tool.description)
     #> Get me foobar.
-    print(tool.json_schema)
+    print(tool.parameters_json_schema)
     """
     {
         'description': 'Get me foobar.',

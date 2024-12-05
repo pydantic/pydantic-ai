@@ -21,8 +21,8 @@ from ..messages import (
     ToolReturn,
 )
 from ..result import Cost
+from ..tools import AbstractToolDefinition
 from . import (
-    AbstractToolDefinition,
     AgentModel,
     EitherStreamedResponse,
     Model,
@@ -128,7 +128,7 @@ class TestAgentModel(AgentModel):
             yield TestStreamStructuredResponse(msg, cost)
 
     def gen_tool_args(self, tool_def: AbstractToolDefinition) -> Any:
-        return _JsonSchemaTestData(tool_def.json_schema, self.seed).generate()
+        return _JsonSchemaTestData(tool_def.parameters_json_schema, self.seed).generate()
 
     def _request(self, messages: list[Message]) -> ModelAnyResponse:
         if self.step == 0 and self.tool_calls:
