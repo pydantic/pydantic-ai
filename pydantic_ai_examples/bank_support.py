@@ -2,7 +2,7 @@
 
 Run with:
 
-    uv run -m pydantic_ai_examples.bank_supports
+    uv run -m pydantic_ai_examples.bank_support
 """
 
 from dataclasses import dataclass
