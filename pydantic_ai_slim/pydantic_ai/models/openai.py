@@ -124,7 +124,7 @@ class OpenAIAgentModel(AgentModel):
     """Implementation of `AgentModel` for OpenAI models."""
 
     client: AsyncOpenAI
-    model_name: ChatModel
+    model_name: ChatModel | str
     allow_text_result: bool
     tools: list[chat.ChatCompletionToolParam]
 

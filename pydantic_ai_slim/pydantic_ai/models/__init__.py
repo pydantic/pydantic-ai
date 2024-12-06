@@ -257,7 +257,7 @@ def infer_model(model: Model | KnownModelName) -> Model:
     elif model.startswith('ollama:'):
         from .ollama import OllamaModel
 
-        return OllamaModel(model[7:])  # pyright: ignore[reportArgumentType]
+        return OllamaModel(model[7:])  # As type is currently str, do not need to ignore reportArgumentType
     else:
         raise UserError(f'Unknown model: {model}')
 

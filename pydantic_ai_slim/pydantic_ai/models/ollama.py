@@ -15,14 +15,37 @@ from . import (
 
 try:
     from openai import AsyncOpenAI
-    from openai.types import ChatModel, chat
+    from openai.types import chat
 except ImportError as e:
     raise ImportError(
         'Please install `openai` to use the OpenAI model, '
         "you can use the `openai` optional group — `pip install 'pydantic-ai[openai]'`"
     ) from e
 
+# Only required in the below typing is enforced
+# try:
+#     from ollama import list, ListResponse
+# except ImportError as e:
+#     raise ImportError(
+#         'Please install `ollama` to use the Ollama model, '
+#         "you can use the `ollama` optional group — `pip install 'pydantic-ai[ollama]'`"
+#     ) from e
+
+
 from .openai import OpenAIAgentModel
+
+# NB: Currently commented out but this is
+# a possible approach to type the ollama model names
+# # This is really nasty, but ollama doesn't
+# # expose a type of all available models, and as
+# # there are 100's and being udpated all the time,
+# # it seems difficult to maintain a list of all possible
+# # versions statically.
+# # This code gets the ones that are _currently_ available
+# # to the user as they are ones that they have already downloaded
+# ollama_ls: ListResponse = list()
+# ollama_available_models: list[str] = [x.model for x in ollama_ls.models]
+# OllamaModelName = Literal[tuple(ollama_available_models)]
 
 
 # Inherits from this model
@@ -35,12 +58,12 @@ class OllamaModel(Model):
     Apart from `__init__`, all methods are private or match those of the base class.
     """
 
-    model_name: ChatModel
+    model_name: str
     client: AsyncOpenAI = field(repr=False)
 
     def __init__(
         self,
-        model_name: ChatModel,
+        model_name: str,
         *,
         base_url: str = 'http://localhost:11434/v1/',
         openai_client: AsyncOpenAI | None = None,
@@ -51,19 +74,19 @@ class OllamaModel(Model):
         Ollama has built-in compatability with the OpenAI chat completions API ([source](https://ollama.com/blog/openai-compatibility)), and so these models are built ontop of that
 
         Args:
-            model_name: The name of the OpenAI model to use. List of model names available
-                [here](https://github.com/openai/openai-python/blob/v1.54.3/src/openai/types/chat_model.py#L7)
-                (Unfortunately, despite being ask to do so, OpenAI do not provide `.inv` files for their API).
+            model_name: The name of the Ollama model to use. List of models available [here](https://ollama.com/library)
+                NB: You must first download the model (ollama pull <MODEL-NAME>) in order to use the model
             base_url: The base url for the ollama requests. The default value is the ollama default
             openai_client: An existing
                 [`AsyncOpenAI`](https://github.com/openai/openai-python?tab=readme-ov-file#async-usage)
                 client to use, if provided, `api_key` and `http_client` must be `None`.
             http_client: An existing `httpx.AsyncClient` to use for making HTTP requests.
         """
-        self.model_name: ChatModel = model_name
+        self.model_name: str = model_name
         if openai_client is not None:
             assert http_client is None, 'Cannot provide both `openai_client` and `http_client`'
             self.client = openai_client
+            print('Using existing client')
         elif http_client is not None:
             # API key is not required for ollama but a value is required to create the client
             self.client = AsyncOpenAI(base_url=base_url, api_key='ollama', http_client=http_client)
