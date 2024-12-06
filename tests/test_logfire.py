@@ -95,41 +95,8 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary], set_event_lo
             'code.function': 'run',
             'code.lineno': 123,
             'prompt': 'Hello',
-            'agent': IsJson(
-                {
-                    'model': {
-                        'call_tools': 'all',
-                        'custom_result_text': None,
-                        'custom_result_args': None,
-                        'seed': 0,
-                        'agent_model_tools': {
-                            'my_ret': {
-                                'function': IsStr(regex='<function test_logfire.<locals>.my_ret at 0x.+>'),
-                                'takes_ctx': False,
-                                'max_retries': 1,
-                                'name': 'my_ret',
-                                'description': '',
-                                '_is_async': True,
-                                '_single_arg_name': None,
-                                '_positional_fields': [],
-                                '_var_positional_field': None,
-                                '_json_schema': {
-                                    'properties': {'x': {'title': 'X', 'type': 'integer'}},
-                                    'required': ['x'],
-                                    'type': 'object',
-                                    'additionalProperties': False,
-                                },
-                                '_current_retry': 0,
-                            }
-                        },
-                        'agent_model_allow_text_result': True,
-                        'agent_model_result_tools': None,
-                    },
-                    'name': 'my_agent',
-                    'last_run_messages': None,
-                }
-            ),
-            'logfire.null_args': ('custom_model',),
+            'agent': '{"model":{"call_tools":"all","custom_result_text":null,"custom_result_args":null,"seed":0,"agent_model_function_tools":null,"agent_model_allow_text_result":null,"agent_model_result_tools":null,"agent_model_cache":null},"name":"my_agent","last_run_messages":null}',
+            'mode_selection': 'from-agent',
             'model_name': 'test-model',
             'agent_name': 'my_agent',
             'logfire.msg_template': '{agent_name} run {prompt=}',
@@ -168,29 +135,10 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary], set_event_lo
                             'title': 'Agent',
                             'x-python-datatype': 'dataclass',
                             'properties': {
-                                'model': {
-                                    'type': 'object',
-                                    'title': 'TestModel',
-                                    'x-python-datatype': 'dataclass',
-                                    'properties': {
-                                        'agent_model_tools': {
-                                            'type': 'object',
-                                            'properties': {
-                                                'my_ret': {
-                                                    'type': 'object',
-                                                    'title': 'Tool',
-                                                    'x-python-datatype': 'dataclass',
-                                                    'properties': {
-                                                        'function': {'type': 'object', 'x-python-datatype': 'unknown'}
-                                                    },
-                                                }
-                                            },
-                                        }
-                                    },
-                                }
+                                'model': {'type': 'object', 'title': 'TestModel', 'x-python-datatype': 'dataclass'}
                             },
                         },
-                        'custom_model': {},
+                        'mode_selection': {},
                         'model_name': {},
                         'agent_name': {},
                         'all_messages': {

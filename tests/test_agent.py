@@ -381,13 +381,11 @@ def test_run_with_history_new(set_event_loop: None):
             ModelTextResponse(content='{"ret_a":"a-apple"}', timestamp=IsNow(tz=timezone.utc)),
         ]
     )
-    m.agent_model_cache = None
 
     # if we pass new_messages, system prompt is inserted before the message_history messages
     result2 = agent.run_sync('Hello again', message_history=result1.new_messages())
     assert result2 == snapshot(
         RunResult(
-            data='{"ret_a":"a-apple"}',
             _all_messages=[
                 SystemPrompt(content='Foobar'),
                 UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
@@ -397,24 +395,17 @@ def test_run_with_history_new(set_event_loop: None):
                 ),
                 ToolReturn(tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc)),
                 ModelTextResponse(content='{"ret_a":"a-apple"}', timestamp=IsNow(tz=timezone.utc)),
-                # second call, notice no repeated system prompt
                 UserPrompt(content='Hello again', timestamp=IsNow(tz=timezone.utc)),
-                ModelStructuredResponse(
-                    calls=[ToolCall(tool_name='ret_a', args=ArgsDict(args_dict={'x': 'a'}))],
-                    timestamp=IsNow(tz=timezone.utc),
-                ),
-                ToolReturn(tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc)),
                 ModelTextResponse(content='{"ret_a":"a-apple"}', timestamp=IsNow(tz=timezone.utc)),
             ],
             _new_message_index=5,
+            data='{"ret_a":"a-apple"}',
             _cost=Cost(),
         )
     )
     new_msg_roles = [msg.role for msg in result2.new_messages()]
-    assert new_msg_roles == snapshot(['user', 'model-structured-response', 'tool-return', 'model-text-response'])
+    assert new_msg_roles == snapshot(['user', 'model-text-response'])
     assert result2.new_messages_json().startswith(b'[{"content":"Hello again",')
-
-    m.agent_model_cache = None
 
     # if we pass all_messages, system prompt is NOT inserted before the message_history messages,
     # so only one system prompt
@@ -434,11 +425,6 @@ def test_run_with_history_new(set_event_loop: None):
                 ModelTextResponse(content='{"ret_a":"a-apple"}', timestamp=IsNow(tz=timezone.utc)),
                 # second call, notice no repeated system prompt
                 UserPrompt(content='Hello again', timestamp=IsNow(tz=timezone.utc)),
-                ModelStructuredResponse(
-                    calls=[ToolCall(tool_name='ret_a', args=ArgsDict(args_dict={'x': 'a'}))],
-                    timestamp=IsNow(tz=timezone.utc),
-                ),
-                ToolReturn(tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc)),
                 ModelTextResponse(content='{"ret_a":"a-apple"}', timestamp=IsNow(tz=timezone.utc)),
             ],
             _new_message_index=5,
@@ -541,7 +527,6 @@ def test_run_sync_multiple(set_event_loop: None):
     for _ in range(2):
         result = agent.run_sync('Hello')
         assert result.data == '{"make_request":"200"}'
-        agent.model.agent_model_cache = None
 
 
 async def test_agent_name():

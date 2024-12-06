@@ -106,8 +106,8 @@ class TestModel(Model):
         else:
             result = _utils.Either(left=None)
 
-        result_tools = list(result_tools.values()) if result_tools is not None else None
-        return TestAgentModel(tool_calls, result, result_tools, self.seed)
+        result_tools_list = list(result_tools.values()) if result_tools is not None else None
+        return TestAgentModel(tool_calls, result, result_tools_list, self.seed)
 
     def name(self) -> str:
         return 'test-model'
@@ -125,8 +125,6 @@ class TestAgentModel(AgentModel):
     result: _utils.Either[str | None, Any | None]
     result_tools: list[ToolDefinition] | None
     seed: int
-    step: int = 0
-    last_message_count: int = 0
 
     async def request(self, messages: list[Message]) -> tuple[ModelAnyResponse, Cost]:
         return self._request(messages), Cost()
@@ -144,14 +142,15 @@ class TestAgentModel(AgentModel):
         return _JsonSchemaTestData(tool_def.parameters_json_schema, self.seed).generate()
 
     def _request(self, messages: list[Message]) -> ModelAnyResponse:
-        if self.step == 0 and self.tool_calls:
+        # if there are tools, the first thing we want to do is call all of them
+        if self.tool_calls and not any(m.role == 'model-structured-response' for m in messages):
             calls = [ToolCall.from_dict(name, self.gen_tool_args(args)) for name, args in self.tool_calls]
-            self.step += 1
-            self.last_message_count = len(messages)
             return ModelStructuredResponse(calls=calls)
 
-        new_messages = messages[self.last_message_count :]
-        self.last_message_count = len(messages)
+        # get messages since the last model response
+        new_messages = _get_new_messages(messages)
+
+        # check if there are any retry prompts, if so retry them
         new_retry_names = {m.tool_name for m in new_messages if isinstance(m, RetryPrompt)}
         if new_retry_names:
             calls = [
@@ -159,34 +158,42 @@ class TestAgentModel(AgentModel):
                 for name, args in self.tool_calls
                 if name in new_retry_names
             ]
-            self.step += 1
             return ModelStructuredResponse(calls=calls)
-        else:
-            if response_text := self.result.left:
-                self.step += 1
-                if response_text.value is None:
-                    # build up details of tool responses
-                    output: dict[str, Any] = {}
-                    for message in messages:
-                        if isinstance(message, ToolReturn):
-                            output[message.tool_name] = message.content
-                    if output:
-                        return ModelTextResponse(content=pydantic_core.to_json(output).decode())
-                    else:
-                        return ModelTextResponse(content='success (no tool calls)')
+
+        if response_text := self.result.left:
+            if response_text.value is None:
+                # build up details of tool responses
+                output: dict[str, Any] = {}
+                for message in messages:
+                    if isinstance(message, ToolReturn):
+                        output[message.tool_name] = message.content
+                if output:
+                    return ModelTextResponse(content=pydantic_core.to_json(output).decode())
                 else:
-                    return ModelTextResponse(content=response_text.value)
+                    return ModelTextResponse(content='success (no tool calls)')
             else:
-                assert self.result_tools is not None, 'No result tools provided'
-                custom_result_args = self.result.right
-                result_tool = self.result_tools[self.seed % len(self.result_tools)]
-                if custom_result_args is not None:
-                    self.step += 1
-                    return ModelStructuredResponse(calls=[ToolCall.from_dict(result_tool.name, custom_result_args)])
-                else:
-                    response_args = self.gen_tool_args(result_tool)
-                    self.step += 1
-                    return ModelStructuredResponse(calls=[ToolCall.from_dict(result_tool.name, response_args)])
+                return ModelTextResponse(content=response_text.value)
+        else:
+            assert self.result_tools is not None, 'No result tools provided'
+            custom_result_args = self.result.right
+            result_tool = self.result_tools[self.seed % len(self.result_tools)]
+            if custom_result_args is not None:
+                return ModelStructuredResponse(calls=[ToolCall.from_dict(result_tool.name, custom_result_args)])
+            else:
+                response_args = self.gen_tool_args(result_tool)
+                return ModelStructuredResponse(calls=[ToolCall.from_dict(result_tool.name, response_args)])
+
+
+def _get_new_messages(messages: list[Message]) -> list[Message]:
+    last_model_index = None
+    for i, m in enumerate(messages):
+        if m.role in ('model-structured-response', 'model-text-response'):
+            last_model_index = i
+
+    if last_model_index is not None:
+        return messages[last_model_index + 1 :]
+    else:
+        return []
 
 
 @dataclass

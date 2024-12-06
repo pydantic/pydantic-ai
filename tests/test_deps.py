@@ -21,23 +21,19 @@ async def example_tool(ctx: RunContext[MyDeps]) -> str:
 def test_deps_used(set_event_loop: None):
     result = agent.run_sync('foobar', deps=MyDeps(foo=1, bar=2))
     assert result.data == '{"example_tool":"MyDeps(foo=1, bar=2)"}'
-    agent.model.agent_model_cache = None
 
 
 def test_deps_override(set_event_loop: None):
     with agent.override(deps=MyDeps(foo=3, bar=4)):
         result = agent.run_sync('foobar', deps=MyDeps(foo=1, bar=2))
         assert result.data == '{"example_tool":"MyDeps(foo=3, bar=4)"}'
-        agent.model.agent_model_cache = None
 
         with agent.override(deps=MyDeps(foo=5, bar=6)):
             result = agent.run_sync('foobar', deps=MyDeps(foo=1, bar=2))
             assert result.data == '{"example_tool":"MyDeps(foo=5, bar=6)"}'
-            agent.model.agent_model_cache = None
 
         result = agent.run_sync('foobar', deps=MyDeps(foo=1, bar=2))
         assert result.data == '{"example_tool":"MyDeps(foo=3, bar=4)"}'
-        agent.model.agent_model_cache = None
 
     result = agent.run_sync('foobar', deps=MyDeps(foo=1, bar=2))
     assert result.data == '{"example_tool":"MyDeps(foo=1, bar=2)"}'
