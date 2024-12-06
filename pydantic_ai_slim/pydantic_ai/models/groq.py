@@ -107,7 +107,7 @@ class GroqModel(Model):
         else:
             self.client = AsyncGroq(api_key=api_key, http_client=cached_async_http_client())
 
-    async def prepare(
+    async def agent_model(
         self,
         *,
         function_tools: dict[str, ToolDefinition],

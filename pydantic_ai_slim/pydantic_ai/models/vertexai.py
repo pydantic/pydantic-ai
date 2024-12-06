@@ -107,7 +107,7 @@ class VertexAIModel(Model):
         self.auth = None
         self.url = None
 
-    async def prepare(
+    async def agent_model(
         self,
         *,
         function_tools: dict[str, ToolDefinition],

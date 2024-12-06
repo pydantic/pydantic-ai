@@ -671,7 +671,7 @@ class Agent(Generic[AgentDeps, ResultData]):
 
         await asyncio.gather(*(add_tool(k, t) for k, t in self._function_tools.items()))
 
-        return await model.prepare(
+        return await model.agent_model(
             function_tools=function_tools,
             allow_text_result=self._allow_text_result,
             result_tools=self._result_schema.tool_defs() if self._result_schema is not None else None,

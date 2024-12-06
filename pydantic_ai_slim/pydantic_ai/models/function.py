@@ -51,7 +51,7 @@ class FunctionModel(Model):
         self.function = function
         self.stream_function = stream_function
 
-    async def prepare(
+    async def agent_model(
         self,
         *,
         function_tools: dict[str, ToolDefinition],

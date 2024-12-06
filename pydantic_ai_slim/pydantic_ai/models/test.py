@@ -59,9 +59,9 @@ class TestModel(Model):
     agent_model_function_tools: dict[str, ToolDefinition] | None = field(default=None, init=False)
     agent_model_allow_text_result: bool | None = field(default=None, init=False)
     agent_model_result_tools: dict[str, ToolDefinition] | None = field(default=None, init=False)
-    agent_model: TestAgentModel | None = field(default=None, init=False)
+    agent_model_cache: TestAgentModel | None = field(default=None, init=False)
 
-    async def prepare(
+    async def agent_model(
         self,
         *,
         function_tools: dict[str, ToolDefinition],
@@ -71,9 +71,9 @@ class TestModel(Model):
         self.agent_model_function_tools = function_tools
         self.agent_model_allow_text_result = allow_text_result
         self.agent_model_result_tools = result_tools
-        if self.agent_model is None:
-            self.agent_model = self._build_agent(function_tools, allow_text_result, result_tools)
-        return self.agent_model
+        if self.agent_model_cache is None:
+            self.agent_model_cache = self._build_agent(function_tools, allow_text_result, result_tools)
+        return self.agent_model_cache
 
     def _build_agent(
         self,

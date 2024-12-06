@@ -381,7 +381,7 @@ def test_run_with_history_new(set_event_loop: None):
             ModelTextResponse(content='{"ret_a":"a-apple"}', timestamp=IsNow(tz=timezone.utc)),
         ]
     )
-    m.agent_model = None
+    m.agent_model_cache = None
 
     # if we pass new_messages, system prompt is inserted before the message_history messages
     result2 = agent.run_sync('Hello again', message_history=result1.new_messages())
@@ -414,7 +414,7 @@ def test_run_with_history_new(set_event_loop: None):
     assert new_msg_roles == snapshot(['user', 'model-structured-response', 'tool-return', 'model-text-response'])
     assert result2.new_messages_json().startswith(b'[{"content":"Hello again",')
 
-    m.agent_model = None
+    m.agent_model_cache = None
 
     # if we pass all_messages, system prompt is NOT inserted before the message_history messages,
     # so only one system prompt
@@ -541,7 +541,7 @@ def test_run_sync_multiple(set_event_loop: None):
     for _ in range(2):
         result = agent.run_sync('Hello')
         assert result.data == '{"make_request":"200"}'
-        agent.model.agent_model = None
+        agent.model.agent_model_cache = None
 
 
 async def test_agent_name():

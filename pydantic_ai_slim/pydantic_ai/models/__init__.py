@@ -61,7 +61,7 @@ class Model(ABC):
     """Abstract class for a model."""
 
     @abstractmethod
-    async def prepare(
+    async def agent_model(
         self,
         *,
         function_tools: dict[str, ToolDefinition],

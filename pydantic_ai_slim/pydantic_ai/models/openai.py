@@ -87,7 +87,7 @@ class OpenAIModel(Model):
         else:
             self.client = AsyncOpenAI(api_key=api_key, http_client=cached_async_http_client())
 
-    async def prepare(
+    async def agent_model(
         self,
         *,
         function_tools: dict[str, ToolDefinition],

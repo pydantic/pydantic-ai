@@ -88,7 +88,7 @@ class GeminiModel(Model):
         self.http_client = http_client or cached_async_http_client()
         self.url = url_template.format(model=model_name)
 
-    async def prepare(
+    async def agent_model(
         self,
         *,
         function_tools: dict[str, ToolDefinition],
