@@ -395,6 +395,7 @@ def test_run_with_history_new(set_event_loop: None):
                 ),
                 ToolReturn(tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc)),
                 ModelTextResponse(content='{"ret_a":"a-apple"}', timestamp=IsNow(tz=timezone.utc)),
+                # second call, notice no repeated system prompt
                 UserPrompt(content='Hello again', timestamp=IsNow(tz=timezone.utc)),
                 ModelTextResponse(content='{"ret_a":"a-apple"}', timestamp=IsNow(tz=timezone.utc)),
             ],

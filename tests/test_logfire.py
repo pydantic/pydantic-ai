@@ -95,7 +95,22 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary], set_event_lo
             'code.function': 'run',
             'code.lineno': 123,
             'prompt': 'Hello',
-            'agent': '{"model":{"call_tools":"all","custom_result_text":null,"custom_result_args":null,"seed":0,"agent_model_function_tools":null,"agent_model_allow_text_result":null,"agent_model_result_tools":null,"agent_model_cache":null},"name":"my_agent","last_run_messages":null}',
+            'agent': IsJson(
+                {
+                    'model': {
+                        'call_tools': 'all',
+                        'custom_result_text': None,
+                        'custom_result_args': None,
+                        'seed': 0,
+                        'agent_model_function_tools': None,
+                        'agent_model_allow_text_result': None,
+                        'agent_model_result_tools': None,
+                        'agent_model_cache': None,
+                    },
+                    'name': 'my_agent',
+                    'last_run_messages': None,
+                }
+            ),
             'mode_selection': 'from-agent',
             'model_name': 'test-model',
             'agent_name': 'my_agent',
