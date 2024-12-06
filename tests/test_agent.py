@@ -574,3 +574,21 @@ async def test_agent_name_changes():
 
     await new_agent.run('Hello')
     assert new_agent.name == 'my_agent'
+
+
+def test_name_from_global(set_event_loop: None, create_module: Callable[[str], Any]):
+    module_code = """
+from pydantic_ai import Agent
+
+my_agent = Agent('test')
+
+def foo():
+    result = my_agent.run_sync('Hello')
+    return result.data
+"""
+
+    mod = create_module(module_code)
+
+    assert mod.my_agent.name is None
+    assert mod.foo() == snapshot('success (no tool calls)')
+    assert mod.my_agent.name == 'my_agent'

@@ -171,11 +171,12 @@ class Agent(Generic[AgentDeps, ResultData]):
         deps = self._get_deps(deps)
 
         with _logfire.span(
-            '{agent.name} run {prompt=}',
+            '{agent_name} run {prompt=}',
             prompt=user_prompt,
             agent=self,
             custom_model=custom_model,
             model_name=model_used.name(),
+            agent_name=self.name or 'agent',
         ) as run_span:
             new_message_index, messages = await self._prepare_messages(deps, user_prompt, message_history)
             self.last_run_messages = messages
@@ -277,11 +278,12 @@ class Agent(Generic[AgentDeps, ResultData]):
         deps = self._get_deps(deps)
 
         with _logfire.span(
-            '{agent.name} run stream {prompt=}',
+            '{agent_name} run stream {prompt=}',
             prompt=user_prompt,
             agent=self,
             custom_model=custom_model,
             model_name=model_used.name(),
+            agent_name=self.name or 'agent',
         ) as run_span:
             new_message_index, messages = await self._prepare_messages(deps, user_prompt, message_history)
             self.last_run_messages = messages
@@ -837,6 +839,12 @@ class Agent(Generic[AgentDeps, ResultData]):
                     if item is self:
                         self.name = name
                         return
+                if parent_frame.f_locals != parent_frame.f_globals:
+                    # if we couldn't find the agent in locals and globals are a different dict, try globals
+                    for name, item in parent_frame.f_globals.items():
+                        if item is self:
+                            self.name = name
+                            return
 
 
 @dataclass

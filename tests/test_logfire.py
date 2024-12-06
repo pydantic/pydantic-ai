@@ -60,13 +60,13 @@ def get_logfire_summary(capfire: CaptureLogfire) -> Callable[[], LogfireSummary]
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
 def test_logfire(get_logfire_summary: Callable[[], LogfireSummary], set_event_loop: None) -> None:
-    agent = Agent(model=TestModel())
+    my_agent = Agent(model=TestModel())
 
-    @agent.tool_plain
+    @my_agent.tool_plain
     async def my_ret(x: int) -> str:
         return str(x + 1)
 
-    result = agent.run_sync('Hello')
+    result = my_agent.run_sync('Hello')
     assert result.data == snapshot('{"my_ret":"1"}')
 
     summary = get_logfire_summary()
@@ -74,7 +74,7 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary], set_event_lo
         [
             {
                 'id': 0,
-                'message': 'agent run prompt=Hello',
+                'message': 'my_agent run prompt=Hello',
                 'children': [
                     {'id': 1, 'message': 'model request -> model-structured-response'},
                     {
@@ -87,6 +87,162 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary], set_event_lo
                 ],
             }
         ]
+    )
+    assert summary.attributes[0] == snapshot(
+        {
+            'code.filepath': 'agent.py',
+            'code.function': 'run',
+            'code.lineno': 123,
+            'prompt': 'Hello',
+            'agent': IsJson(
+                {
+                    'model': {
+                        'call_tools': 'all',
+                        'custom_result_text': None,
+                        'custom_result_args': None,
+                        'seed': 0,
+                        'agent_model_tools': {
+                            'my_ret': {
+                                'function': IsStr(regex='<function test_logfire.<locals>.my_ret at 0x.+>'),
+                                'takes_ctx': False,
+                                'max_retries': 1,
+                                'name': 'my_ret',
+                                'description': '',
+                                '_is_async': True,
+                                '_single_arg_name': None,
+                                '_positional_fields': [],
+                                '_var_positional_field': None,
+                                '_json_schema': {
+                                    'properties': {'x': {'title': 'X', 'type': 'integer'}},
+                                    'required': ['x'],
+                                    'type': 'object',
+                                    'additionalProperties': False,
+                                },
+                                '_current_retry': 0,
+                            }
+                        },
+                        'agent_model_allow_text_result': True,
+                        'agent_model_result_tools': None,
+                    },
+                    'name': 'my_agent',
+                    'last_run_messages': None,
+                }
+            ),
+            'logfire.null_args': ('custom_model',),
+            'model_name': 'test-model',
+            'agent_name': 'my_agent',
+            'logfire.msg_template': '{agent_name} run {prompt=}',
+            'logfire.msg': 'my_agent run prompt=Hello',
+            'logfire.span_type': 'span',
+            'all_messages': IsJson(
+                [
+                    {'content': 'Hello', 'timestamp': IsStr(regex=r'\d{4}-\d{2}-.+'), 'role': 'user'},
+                    {
+                        'calls': [{'tool_name': 'my_ret', 'args': {'args_dict': {'x': 0}}, 'tool_id': None}],
+                        'timestamp': IsStr(regex=r'\d{4}-\d{2}-.+'),
+                        'role': 'model-structured-response',
+                    },
+                    {
+                        'tool_name': 'my_ret',
+                        'content': '1',
+                        'tool_id': None,
+                        'timestamp': IsStr(regex=r'\d{4}-\d{2}-.+'),
+                        'role': 'tool-return',
+                    },
+                    {
+                        'content': '{"my_ret":"1"}',
+                        'timestamp': IsStr(regex=r'\d{4}-\d{2}-.+'),
+                        'role': 'model-text-response',
+                    },
+                ]
+            ),
+            'cost': IsJson({'request_tokens': None, 'response_tokens': None, 'total_tokens': None, 'details': None}),
+            'logfire.json_schema': IsJson(
+                {
+                    'type': 'object',
+                    'properties': {
+                        'prompt': {},
+                        'agent': {
+                            'type': 'object',
+                            'title': 'Agent',
+                            'x-python-datatype': 'dataclass',
+                            'properties': {
+                                'model': {
+                                    'type': 'object',
+                                    'title': 'TestModel',
+                                    'x-python-datatype': 'dataclass',
+                                    'properties': {
+                                        'agent_model_tools': {
+                                            'type': 'object',
+                                            'properties': {
+                                                'my_ret': {
+                                                    'type': 'object',
+                                                    'title': 'Tool',
+                                                    'x-python-datatype': 'dataclass',
+                                                    'properties': {
+                                                        'function': {'type': 'object', 'x-python-datatype': 'unknown'}
+                                                    },
+                                                }
+                                            },
+                                        }
+                                    },
+                                }
+                            },
+                        },
+                        'custom_model': {},
+                        'model_name': {},
+                        'agent_name': {},
+                        'all_messages': {
+                            'type': 'array',
+                            'prefixItems': [
+                                {
+                                    'type': 'object',
+                                    'title': 'UserPrompt',
+                                    'x-python-datatype': 'dataclass',
+                                    'properties': {'timestamp': {'type': 'string', 'format': 'date-time'}},
+                                },
+                                {
+                                    'type': 'object',
+                                    'title': 'ModelStructuredResponse',
+                                    'x-python-datatype': 'dataclass',
+                                    'properties': {
+                                        'calls': {
+                                            'type': 'array',
+                                            'items': {
+                                                'type': 'object',
+                                                'title': 'ToolCall',
+                                                'x-python-datatype': 'dataclass',
+                                                'properties': {
+                                                    'args': {
+                                                        'type': 'object',
+                                                        'title': 'ArgsDict',
+                                                        'x-python-datatype': 'dataclass',
+                                                    }
+                                                },
+                                            },
+                                        },
+                                        'timestamp': {'type': 'string', 'format': 'date-time'},
+                                    },
+                                },
+                                {
+                                    'type': 'object',
+                                    'title': 'ToolReturn',
+                                    'x-python-datatype': 'dataclass',
+                                    'properties': {'timestamp': {'type': 'string', 'format': 'date-time'}},
+                                },
+                                {
+                                    'type': 'object',
+                                    'title': 'ModelTextResponse',
+                                    'x-python-datatype': 'dataclass',
+                                    'properties': {'timestamp': {'type': 'string', 'format': 'date-time'}},
+                                },
+                            ],
+                        },
+                        'cost': {'type': 'object', 'title': 'Cost', 'x-python-datatype': 'dataclass'},
+                    },
+                }
+            ),
+        }
     )
     assert summary.attributes[1] == snapshot(
         {
