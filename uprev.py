@@ -12,6 +12,7 @@ Usage:
 """
 
 import re
+import subprocess
 import sys
 
 from pathlib import Path
@@ -70,12 +71,13 @@ if count_root == 2 and count_ex == 2 and count_slim == 1:
     root_pp.write_text(root_pp_text)
     examples_pp.write_text(examples_pp_text)
     slim_pp.write_text(slim_pp_text)
+    print('running `make sync`...')
+    subprocess.run(['make', 'sync'], check=True)
     print(
         f'SUCCESS: replaced version in\n'
-        f'* {root_pp}\n'
-        f'* {examples_pp}\n'
-        f'* {slim_pp}\n\n'
-        'Now run `make sync` to update the lock files.',
+        f'  {root_pp}\n'
+        f'  {examples_pp}\n'
+        f'  {slim_pp}'
     )
 else:
     print(
