@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 import pytest
-from dirty_equals import IsInt
+from dirty_equals import IsInt, IsJson, IsStr
 from inline_snapshot import snapshot
 from typing_extensions import NotRequired, TypedDict
 
