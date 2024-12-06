@@ -422,7 +422,7 @@ async def test_stream_structure():
     ) -> AsyncIterator[DeltaToolCalls]:
         assert agent_info.result_tools is not None
         assert len(agent_info.result_tools) == 1
-        name = agent_info.result_tools[0].name
+        name = agent_info.result_tools['final_result'].name
         yield {0: DeltaToolCall(name=name)}
         yield {0: DeltaToolCall(json_args='{"x": ')}
         yield {0: DeltaToolCall(json_args='1}')}

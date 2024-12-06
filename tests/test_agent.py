@@ -185,7 +185,7 @@ def test_response_tuple(set_event_loop: None):
     result = agent.run_sync('Hello')
     assert result.data == snapshot(('a', 'a'))
 
-    assert m.agent_model_tools == snapshot({})
+    assert m.agent_model_function_tools == snapshot({})
     assert m.agent_model_allow_text_result is False
 
     assert m.agent_model_result_tools is not None
@@ -244,7 +244,7 @@ def test_response_union_allow_str(set_event_loop: None, input_union_callable: Ca
     assert result.data == snapshot('success (no tool calls)')
     assert got_tool_call_name == snapshot(None)
 
-    assert m.agent_model_tools == snapshot({})
+    assert m.agent_model_function_tools == snapshot({})
     assert m.agent_model_allow_text_result is True
 
     assert m.agent_model_result_tools is not None
@@ -318,7 +318,7 @@ class Bar(BaseModel):
     assert result.data == mod.Foo(a=0, b='a')
     assert got_tool_call_name == snapshot('final_result_Foo')
 
-    assert m.agent_model_tools == snapshot({})
+    assert m.agent_model_function_tools == snapshot({})
     assert m.agent_model_allow_text_result is False
 
     assert m.agent_model_result_tools is not None

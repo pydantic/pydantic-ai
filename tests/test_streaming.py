@@ -88,7 +88,7 @@ async def test_structured_response_iter():
     async def text_stream(_messages: list[Message], agent_info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
         assert agent_info.result_tools is not None
         assert len(agent_info.result_tools) == 1
-        name = agent_info.result_tools[0].name
+        name = agent_info.result_tools['final_result'].name
         json_data = json.dumps({'response': [1, 2, 3, 4]})
         yield {0: DeltaToolCall(name=name)}
         yield {0: DeltaToolCall(json_args=json_data[:15])}
@@ -184,7 +184,7 @@ async def test_call_tool():
             assert isinstance(last, ToolReturn)
             assert agent_info.result_tools is not None
             assert len(agent_info.result_tools) == 1
-            name = agent_info.result_tools[0].name
+            name = agent_info.result_tools['final_result'].name
             json_data = json.dumps({'response': [last.content, 2]})
             yield {0: DeltaToolCall(name=name)}
             yield {0: DeltaToolCall(json_args=json_data[:5])}
