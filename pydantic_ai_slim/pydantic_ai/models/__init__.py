@@ -49,6 +49,8 @@ KnownModelName = Literal[
     'gemini-1.5-pro',
     'vertexai:gemini-1.5-flash',
     'vertexai:gemini-1.5-pro',
+    'ollama:llama-3.2:latest',
+    'ollama:qwen2.5-coder:latest',
     'test',
 ]
 """Known model names that can be used with the `model` parameter of [`Agent`][pydantic_ai.Agent].
@@ -252,6 +254,10 @@ def infer_model(model: Model | KnownModelName) -> Model:
         from .vertexai import VertexAIModel
 
         return VertexAIModel(model[9:])  # pyright: ignore[reportArgumentType]
+    elif model.startswith('ollama:'):
+        from .ollama import OllamaModel
+
+        return OllamaModel(model[7:])  # pyright: ignore[reportArgumentType]
     else:
         raise UserError(f'Unknown model: {model}')
 

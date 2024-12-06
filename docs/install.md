@@ -323,3 +323,13 @@ model = GroqModel('llama-3.1-70b-versatile', api_key='your-api-key')
 agent = Agent(model)
 ...
 ```
+
+### Ollama
+
+To use [Ollama](https://ollama.com/), you must first download the Ollama client, and then download a model.
+
+You must also ensure the Ollama server is running when trying to make requests to it
+
+#### `base_url` argument
+
+The [`base_url` argument](pydantic_ai.models.ollama.OllamaModel.__init__) is currently set to the default Ollama server value.
