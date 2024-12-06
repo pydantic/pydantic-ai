@@ -1,11 +1,10 @@
 from __future__ import annotations as _annotations
 
 from dataclasses import dataclass
-from datetime import timezone
 from typing import Any, Callable
 
 import pytest
-from dirty_equals import IsInt, IsJson, IsNow, IsStr
+from dirty_equals import IsInt
 from inline_snapshot import snapshot
 from typing_extensions import NotRequired, TypedDict
 
@@ -76,14 +75,16 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary], set_event_lo
                 'id': 0,
                 'message': 'my_agent run prompt=Hello',
                 'children': [
-                    {'id': 1, 'message': 'model request -> model-structured-response'},
+                    {'id': 1, 'message': 'preparing model and tools run_step=1'},
+                    {'id': 2, 'message': 'model request -> model-structured-response'},
                     {
-                        'id': 2,
+                        'id': 3,
                         'message': 'handle model response -> tool-return',
-                        'children': [{'id': 3, 'message': "running tools=['my_ret']"}],
+                        'children': [{'id': 4, 'message': "running tools=['my_ret']"}],
                     },
-                    {'id': 4, 'message': 'model request -> model-text-response'},
-                    {'id': 5, 'message': 'handle model response -> final result'},
+                    {'id': 5, 'message': 'preparing model and tools run_step=2'},
+                    {'id': 6, 'message': 'model request -> model-text-response'},
+                    {'id': 7, 'message': 'handle model response -> final result'},
                 ],
             }
         ]
@@ -250,48 +251,9 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary], set_event_lo
             'code.function': 'run',
             'code.lineno': IsInt(),
             'run_step': 1,
-            'logfire.msg_template': 'model request {run_step=}',
+            'logfire.msg_template': 'preparing model and tools {run_step=}',
             'logfire.span_type': 'span',
-            'response': IsJson(
-                {
-                    'calls': [{'tool_name': 'my_ret', 'args': {'args_dict': {'x': 0}}, 'tool_id': None}],
-                    'timestamp': IsStr() & IsNow(iso_string=True, tz=timezone.utc),
-                    'role': 'model-structured-response',
-                }
-            ),
-            'cost': IsJson({'request_tokens': None, 'response_tokens': None, 'total_tokens': None, 'details': None}),
-            'logfire.msg': 'model request -> model-structured-response',
-            'logfire.json_schema': IsJson(
-                {
-                    'type': 'object',
-                    'properties': {
-                        'run_step': {},
-                        'response': {
-                            'type': 'object',
-                            'title': 'ModelStructuredResponse',
-                            'x-python-datatype': 'dataclass',
-                            'properties': {
-                                'calls': {
-                                    'type': 'array',
-                                    'items': {
-                                        'type': 'object',
-                                        'title': 'ToolCall',
-                                        'x-python-datatype': 'dataclass',
-                                        'properties': {
-                                            'args': {
-                                                'type': 'object',
-                                                'title': 'ArgsDict',
-                                                'x-python-datatype': 'dataclass',
-                                            }
-                                        },
-                                    },
-                                },
-                                'timestamp': {'type': 'string', 'format': 'date-time'},
-                            },
-                        },
-                        'cost': {'type': 'object', 'title': 'Cost', 'x-python-datatype': 'dataclass'},
-                    },
-                }
-            ),
+            'logfire.msg': 'preparing model and tools run_step=1',
+            'logfire.json_schema': '{"type":"object","properties":{"run_step":{}}}',
         }
     )

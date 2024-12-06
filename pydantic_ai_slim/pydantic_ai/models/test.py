@@ -59,7 +59,7 @@ class TestModel(Model):
     agent_model_function_tools: dict[str, ToolDefinition] | None = field(default=None, init=False)
     agent_model_allow_text_result: bool | None = field(default=None, init=False)
     agent_model_result_tools: dict[str, ToolDefinition] | None = field(default=None, init=False)
-    _agent_model: TestAgentModel | None = field(default=None, init=False)
+    agent_model: TestAgentModel | None = field(default=None, init=False)
 
     async def prepare(
         self,
@@ -71,40 +71,43 @@ class TestModel(Model):
         self.agent_model_function_tools = function_tools
         self.agent_model_allow_text_result = allow_text_result
         self.agent_model_result_tools = result_tools
-        if self._agent_model is None:
-            self._agent_model = self._build_agent()
-        return self._agent_model
+        if self.agent_model is None:
+            self.agent_model = self._build_agent(function_tools, allow_text_result, result_tools)
+        return self.agent_model
 
-    def _build_agent(self):
+    def _build_agent(
+        self,
+        function_tools: dict[str, ToolDefinition],
+        allow_text_result: bool,
+        result_tools: dict[str, ToolDefinition] | None,
+    ) -> TestAgentModel:
         if self.call_tools == 'all':
-            tool_calls = [(r.name, r) for r in self.agent_model_function_tools.values()]
+            tool_calls = [(r.name, r) for r in function_tools.values()]
         else:
-            tools_to_call = (self.agent_model_function_tools[name] for name in self.call_tools)
+            tools_to_call = (function_tools[name] for name in self.call_tools)
             tool_calls = [(r.name, r) for r in tools_to_call]
 
         if self.custom_result_text is not None:
-            assert self.agent_model_allow_text_result, 'Plain response not allowed, but `custom_result_text` is set.'
+            assert allow_text_result, 'Plain response not allowed, but `custom_result_text` is set.'
             assert self.custom_result_args is None, 'Cannot set both `custom_result_text` and `custom_result_args`.'
             result: _utils.Either[str | None, Any | None] = _utils.Either(left=self.custom_result_text)
         elif self.custom_result_args is not None:
-            assert (
-                self.agent_model_result_tools is not None
-            ), 'No result tools provided, but `custom_result_args` is set.'
-            result_tool = next(iter(self.agent_model_result_tools.values()))
+            assert result_tools is not None, 'No result tools provided, but `custom_result_args` is set.'
+            result_tool = next(iter(result_tools.values()))
 
             if k := result_tool.outer_typed_dict_key:
                 result = _utils.Either(right={k: self.custom_result_args})
             else:
                 result = _utils.Either(right=self.custom_result_args)
-        elif self.agent_model_allow_text_result:
+        elif allow_text_result:
             result = _utils.Either(left=None)
-        elif self.agent_model_result_tools is not None:
+        elif result_tools is not None:
             result = _utils.Either(right=None)
         else:
             result = _utils.Either(left=None)
 
-        result_tools_list = list(self.agent_model_function_tools.values()) if self.agent_model_function_tools else None
-        return TestAgentModel(tool_calls, result, result_tools_list, self.seed)
+        result_tools = list(result_tools.values()) if result_tools is not None else None
+        return TestAgentModel(tool_calls, result, result_tools, self.seed)
 
     def name(self) -> str:
         return 'test-model'

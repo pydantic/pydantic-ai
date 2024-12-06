@@ -126,6 +126,12 @@ class Either(Generic[Left, Right]):
     def whichever(self) -> Left | Right:
         return self._left.value if self._left is not None else self.right
 
+    def __repr__(self):
+        if left := self._left:
+            return f'Either(left={left.value!r})'
+        else:
+            return f'Either(right={self.right!r})'
+
 
 @asynccontextmanager
 async def group_by_temporal(
