@@ -1,5 +1,5 @@
 import json
-from typing import Annotated
+from typing import Annotated, Any
 
 import pytest
 from inline_snapshot import snapshot
@@ -10,6 +10,7 @@ from pydantic_ai import Agent, RunContext, Tool, UserError
 from pydantic_ai.messages import Message, ModelAnyResponse, ModelTextResponse
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.tools import ToolDefinition
 
 
 def test_tool_no_ctx():
@@ -286,7 +287,7 @@ def test_init_tool_plain(set_event_loop: None):
         call_args.append(x)
         return x + 1
 
-    agent = Agent('test', tools=[Tool(plain_tool, False)], retries=7)
+    agent = Agent('test', tools=[Tool(plain_tool)], retries=7)
     result = agent.run_sync('foobar')
     assert result.data == snapshot('{"plain_tool":1}')
     assert call_args == snapshot([0])
@@ -307,7 +308,7 @@ def ctx_tool(ctx: RunContext[int], x: int) -> int:
 
 # pyright: reportPrivateUsage=false
 def test_init_tool_ctx(set_event_loop: None):
-    agent = Agent('test', tools=[Tool(ctx_tool, True, max_retries=3)], deps_type=int, retries=7)
+    agent = Agent('test', tools=[Tool(ctx_tool, takes_ctx=True, max_retries=3)], deps_type=int, retries=7)
     result = agent.run_sync('foobar', deps=5)
     assert result.data == snapshot('{"ctx_tool":5}')
     assert agent._function_tools['ctx_tool'].takes_ctx is True
@@ -321,7 +322,7 @@ def test_init_tool_ctx(set_event_loop: None):
 
 def test_repeat_tool():
     with pytest.raises(UserError, match="Tool name conflicts with existing tool: 'ctx_tool'"):
-        Agent('test', tools=[Tool(ctx_tool, True), ctx_tool], deps_type=int)
+        Agent('test', tools=[Tool(ctx_tool), ctx_tool], deps_type=int)
 
 
 def test_tool_return_conflict():
@@ -340,12 +341,12 @@ def test_init_ctx_tool_invalid():
 
     m = r'First parameter of tools that take context must be annotated with RunContext\[\.\.\.\]'
     with pytest.raises(UserError, match=m):
-        Tool(plain_tool, True)
+        Tool(plain_tool, takes_ctx=True)
 
 
 def test_init_plain_tool_invalid():
     with pytest.raises(UserError, match='RunContext annotations can only be used with tools that take context'):
-        Tool(ctx_tool, False)
+        Tool(ctx_tool, takes_ctx=False)
 
 
 def test_return_pydantic_model(set_event_loop: None):
@@ -393,3 +394,26 @@ def test_return_unknown(set_event_loop: None):
 
     with pytest.raises(PydanticSerializationError, match='Unable to serialize unknown type:'):
         agent.run_sync('')
+
+
+def test_dynamic_tool(set_event_loop: None):
+    class MyTool(Tool[int]):
+        def __init__(self, **kwargs: Any):
+            kwargs.update(function=self.tool_function, takes_ctx=False)
+            super().__init__(**kwargs)
+
+        def tool_function(self, x: int, y: str) -> str:
+            return f'{self.__class__.__name__} {x} {y}'
+
+        async def prepare(self, ctx: RunContext[int]) -> ToolDefinition | None:
+            if ctx.deps == 42:
+                return None
+            else:
+                return await super().prepare(ctx)
+
+    agent = Agent('test', tools=[MyTool()], deps_type=int)
+    r = agent.run_sync('', deps=1)
+    assert r.data == snapshot('{"tool_function":"MyTool 0 a"}')
+
+    r = agent.run_sync('', deps=42)
+    assert r.data == snapshot('success (no tool calls)')

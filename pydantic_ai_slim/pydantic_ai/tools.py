@@ -117,8 +117,8 @@ class Tool(Generic[AgentDeps]):
     def __init__(
         self,
         function: ToolFuncEither[AgentDeps, ...],
-        takes_ctx: bool,
         *,
+        takes_ctx: bool | None = None,
         max_retries: int | None = None,
         name: str | None = None,
         description: str | None = None,
@@ -133,16 +133,20 @@ class Tool(Generic[AgentDeps]):
         async def my_tool(ctx: RunContext[int], x: int, y: int) -> str:
             return f'{ctx.deps} {x} {y}'
 
-        agent = Agent('test', tools=[Tool(my_tool, True)])
+        agent = Agent('test', tools=[Tool(my_tool)])
         ```
 
         Args:
             function: The Python function to call as the tool.
-            takes_ctx: Whether the function takes a [`RunContext`][pydantic_ai.tools.RunContext] first argument.
+            takes_ctx: Whether the function takes a [`RunContext`][pydantic_ai.tools.RunContext] first argument,
+                this is inferred if unset.
             max_retries: Maximum number of retries allowed for this tool, set to the agent default if `None`.
             name: Name of the tool, inferred from the function if `None`.
             description: Description of the tool, inferred from the function if `None`.
         """
+        if takes_ctx is None:
+            takes_ctx = _pydantic.takes_ctx(function)
+
         f = _pydantic.function_schema(function, takes_ctx)
         self.function = function
         self.takes_ctx = takes_ctx
@@ -156,22 +160,7 @@ class Tool(Generic[AgentDeps]):
         self._validator = f['validator']
         self._parameters_json_schema = f['json_schema']
 
-    @staticmethod
-    def infer(function: ToolFuncEither[A, ...] | Tool[A]) -> Tool[A]:
-        """Create a tool from a pure function, inferring whether it takes `RunContext` as its first argument.
-
-        Args:
-            function: The tool function to wrap; or for convenience, a `Tool` instance.
-
-        Returns:
-            A new `Tool` instance.
-        """
-        if isinstance(function, Tool):
-            return function
-        else:
-            return Tool(function, takes_ctx=_pydantic.takes_ctx(function))
-
-    async def get_definition(self, ctx: RunContext[AgentDeps]) -> ToolDefinition | None:
+    async def prepare(self, ctx: RunContext[AgentDeps]) -> ToolDefinition | None:
         """Get the tool definition.
 
         Returns:

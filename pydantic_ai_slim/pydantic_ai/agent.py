@@ -145,7 +145,10 @@ class Agent(Generic[AgentDeps, ResultData]):
         self._function_tools = {}
         self._default_retries = retries
         for tool in tools:
-            self._register_tool(Tool.infer(tool))
+            if isinstance(tool, Tool):
+                self._register_tool(tool)
+            else:
+                self._register_tool(Tool(tool))
         self._deps_type = deps_type
         self._system_prompt_functions = []
         self._max_result_retries = result_retries if result_retries is not None else retries
@@ -613,7 +616,7 @@ class Agent(Generic[AgentDeps, ResultData]):
     ) -> None:
         """Private utility to register a function as a tool."""
         retries_ = retries if retries is not None else self._default_retries
-        tool = Tool(func, takes_ctx, max_retries=retries_)
+        tool = Tool(func, takes_ctx=takes_ctx, max_retries=retries_)
         self._register_tool(tool)
 
     def _register_tool(self, tool: Tool[AgentDeps]) -> None:
@@ -666,7 +669,7 @@ class Agent(Generic[AgentDeps, ResultData]):
 
         async def add_tool(key: str, tool: Tool[AgentDeps]) -> None:
             ctx = RunContext(deps, tool.current_retry, tool.name)
-            if tool_def := await tool.get_definition(ctx):
+            if tool_def := await tool.prepare(ctx):
                 function_tools[key] = tool_def
 
         await asyncio.gather(*(add_tool(k, t) for k, t in self._function_tools.items()))

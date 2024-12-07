@@ -161,20 +161,22 @@ def foobar_plain(x: str, y: int) -> str:
     return f'{x} {y}'
 
 
-Tool(foobar_ctx, True)
-Tool(foobar_plain, False)
+Tool(foobar_ctx, takes_ctx=True)
+Tool(foobar_ctx)
+Tool(foobar_plain, takes_ctx=False)
+Tool(foobar_plain)
 
 # unfortunately we can't type check these cases, since from a typing perspect `foobar_ctx` is valid as a plain tool
-Tool(foobar_ctx, False)
-Tool(foobar_plain, True)
+Tool(foobar_ctx, takes_ctx=False)
+Tool(foobar_plain, takes_ctx=True)
 
 Agent('test', tools=[foobar_ctx], deps_type=int)
 Agent('test', tools=[foobar_plain], deps_type=int)
 Agent('test', tools=[foobar_plain])
-Agent('test', tools=[Tool(foobar_ctx, True)], deps_type=int)
-Agent('test', tools=[Tool(foobar_plain, False)], deps_type=int)
-Agent('test', tools=[Tool(foobar_ctx, True), foobar_ctx, foobar_plain], deps_type=int)
+Agent('test', tools=[Tool(foobar_ctx)], deps_type=int)
+Agent('test', tools=[Tool(foobar_plain)], deps_type=int)
+Agent('test', tools=[Tool(foobar_ctx), foobar_ctx, foobar_plain], deps_type=int)
 
 Agent('test', tools=[foobar_ctx], deps_type=str)  # pyright: ignore[reportArgumentType]
 Agent('test', tools=[foobar_ctx])  # pyright: ignore[reportArgumentType]
-Agent('test', tools=[Tool(foobar_ctx, True)])  # pyright: ignore[reportArgumentType]
+Agent('test', tools=[Tool(foobar_ctx)])  # pyright: ignore[reportArgumentType]

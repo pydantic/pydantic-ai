@@ -2,6 +2,7 @@ import sys
 from datetime import timezone
 from typing import Any, Callable, Union
 
+import httpx
 import pytest
 from inline_snapshot import snapshot
 from pydantic import BaseModel
@@ -522,8 +523,12 @@ def test_run_sync_multiple(set_event_loop: None):
         # raised a `RuntimeError: Event loop is closed` on repeat runs when we used `asyncio.run()`
         client = cached_async_http_client()
         # use this as I suspect it's about the fastest globally available endpoint
-        response = await client.get('https://cloudflare.com/cdn-cgi/trace')
-        return str(response.status_code)
+        try:
+            response = await client.get('https://cloudflare.com/cdn-cgi/trace')
+        except httpx.ConnectError:
+            pytest.skip('offline')
+        else:
+            return str(response.status_code)
 
     for _ in range(2):
         result = agent.run_sync('Hello')
