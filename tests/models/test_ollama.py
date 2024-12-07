@@ -19,7 +19,7 @@ with try_import() as imports_successful:
 
     from pydantic_ai.models.ollama import OllamaModel
 
-from .test_openai import MockOpenAI, completion_message
+    from .test_openai import MockOpenAI, completion_message
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
