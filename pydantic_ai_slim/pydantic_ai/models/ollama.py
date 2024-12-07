@@ -51,9 +51,9 @@ from .openai import OpenAIAgentModel
 # Inherits from this model
 @dataclass(init=False)
 class OllamaModel(Model):
-    """A model that uses the OpenAI API.
+    """A model that implements Ollama using the OpenAI API.
 
-    Internally, this uses the [OpenAI Python client](https://github.com/openai/openai-python) to interact with the API.
+    Internally, this uses the [OpenAI Python client](https://github.com/openai/openai-python) to interact with the Ollama server.
 
     Apart from `__init__`, all methods are private or match those of the base class.
     """
