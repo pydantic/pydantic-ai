@@ -6,9 +6,7 @@ build-backend = "hatchling.build"
 name = "pydantic-ai-examples"
 version = "0.0.11"
 description = "Examples of how to use PydanticAI and what it can do."
-authors = [
-    { name = "Samuel Colvin", email = "samuel@pydantic.dev" },
-]
+authors = [{ name = "Samuel Colvin", email = "samuel@pydantic.dev" }]
 license = "MIT"
 readme = "README.md"
 classifiers = [
@@ -41,6 +39,7 @@ dependencies = [
     "python-multipart>=0.0.17",
     "rich>=13.9.2",
     "uvicorn>=0.32.0",
+    "fastmcp==0.3.4",
 ]
 
 [tool.hatch.build]

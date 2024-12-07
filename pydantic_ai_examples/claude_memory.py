@@ -2,32 +2,33 @@ r"""MCP server implementation to give Claude desktop memory.
 
 Copy the appropriate {PROVIDER}_API_KEY into an .env file, for example:
 
-    » echo OPENAI_API_KEY=$OPENAI_API_KEY > .env
+    echo OPENAI_API_KEY=$OPENAI_API_KEY > .env
 
 Install the server with:
 
-    » uvx fastmcp install pydantic_ai_examples/claude_memory.py -f .env --with-editable .
+    uv run -m pydantic_ai_examples.claude_memory
 
 Open Claude desktop and look for the 🔨 in the bottom right.
 
-    » open -a Claude
+    open -a Claude
 
 Review or edit your claude_desktop_config.json.
 
-    » vim  ~/Library/Application\ Support/Claude/claude_desktop_config.json
+    vim  ~/Library/Application\ Support/Claude/claude_desktop_config.json
 
 Delete the memory file to start fresh.
 
-    » rm ~/.fastmcp/memory.json
+    rm ~/.fastmcp/memory.json
 """
 
 import os
 from pathlib import Path
-from typing import Annotated, TypedDict
+from typing import Annotated
 
 from fastmcp import FastMCP
 from pydantic import Field
 from pydantic_core import from_json, to_json
+from typing_extensions import TypedDict
 
 from pydantic_ai import Agent
 
@@ -51,7 +52,8 @@ Biographer = Agent[None, MemoryKV](
 )
 
 
-@server.tool()  # Claude will call this
+# Claude will call this
+@server.tool()  # pyright: ignore[reportUntypedFunctionDecorator, reportUnknownMemberType]
 async def save_memories(memories: list[ConciseString]) -> str:
     MEMORY_PATH.parent.mkdir(parents=True, exist_ok=True)
     result = await Biographer.run(f'Memories: {memories}', deps=None)
@@ -66,11 +68,31 @@ def _display_memory() -> dict[str, list[str]]:
     return {}
 
 
-@server.tool()  # Claude will call this
+# Claude will call this
+@server.tool()  # pyright: ignore[reportUntypedFunctionDecorator, reportUnknownMemberType]
 def display_memory() -> dict[str, list[str]]:
     return _display_memory()
 
 
-@server.resource('memory://user')  # allow user to copy/paste this
+# allow user to copy/paste this
+@server.resource('memory://user')  # pyright: ignore[reportUntypedFunctionDecorator, reportUnknownMemberType]
 def memory_of_user() -> dict[str, list[str]]:
     return _display_memory()
+
+
+if __name__ == '__main__':
+    import subprocess
+
+    subprocess.run(
+        [
+            'uv',
+            'run',
+            'fastmcp',
+            'install',
+            __file__,
+            '-f',
+            '.env',
+            '--with-editable',
+            '.',
+        ]
+    )
