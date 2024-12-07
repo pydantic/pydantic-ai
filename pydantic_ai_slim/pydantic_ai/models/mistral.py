@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from typing import List, Literal
 
 from httpx import AsyncClient as AsyncHTTPClient
-from mistralai import UsageInfo
+from mistralai import ContentChunk
 from mistralai.types.basemodel import Unset
 from typing_extensions import assert_never
 
@@ -29,32 +29,23 @@ from . import (
 )
 
 try:
-    from mistralai import Mistral, models, utils
+    from mistralai.models import ChatCompletionResponse
+    from mistralai.models import CompletionEvent
+    from mistralai.utils.eventstreaming import EventStreamAsync
+    from mistralai import Mistral, models
     from mistralai.models.assistantmessage import (
         AssistantMessage,
-        AssistantMessageContent,
-        AssistantMessageContentTypedDict,
-        AssistantMessageRole,
-        AssistantMessageTypedDict,
     )
     from mistralai.models.chatcompletionchoice import (
         ChatCompletionChoice,
         ChatCompletionChoiceTypedDict,
     )
-    from mistralai.models.function import Function, FunctionTypedDict
+    from mistralai.models.function import Function
     from mistralai.models.toolmessage import (
         ToolMessage,
-        ToolMessageContent,
-        ToolMessageContentTypedDict,
-        ToolMessageRole,
-        ToolMessageTypedDict,
     )
     from mistralai.models.usermessage import (
         UserMessage,
-        UserMessageContent,
-        UserMessageContentTypedDict,
-        UserMessageRole,
-        UserMessageTypedDict,
     )
     from mistralai.types import UNSET
 except ImportError as e:
@@ -148,9 +139,11 @@ class MistralAgentModel(AgentModel):
     async def request_stream(
         self, messages: list[Message]
     ) -> AsyncIterator[EitherStreamedResponse]:
-        response = await self._completions_create(messages, True)
-        async with response:
-            yield await self._process_streamed_response(response)
+        response = await self._stream_create(messages, True)
+        async for chunk in response:
+            content = chunk.data.choices[0].delta.content
+            if content is not None:     
+                yield await self._process_streamed_response(content)
 
     # @overload
     # async def _completions_create(
@@ -166,7 +159,7 @@ class MistralAgentModel(AgentModel):
 
     async def _completions_create(
         self, messages: list[Message], stream: bool
-    ) -> models.ChatCompletionResponse:
+    ) -> ChatCompletionResponse:
         # standalone function to make it easier to override
         if not self.tools:
             tool_choice: Literal["none", "required", "auto"] | None = None
@@ -176,24 +169,44 @@ class MistralAgentModel(AgentModel):
             tool_choice = "auto"
 
         mistral_messages = [self._map_message(m) for m in messages]
-        return await self.client.chat.complete_async(
+        response = await self.client.chat.complete_async(
             model=str(self.model_name),
             messages=mistral_messages,
             temperature=0.0,
             n=1,
-            # parallel_tool_calls=True if self.tools else NOT_GIVEN,
             tools=self.tools or UNSET,
             tool_choice=tool_choice or None,
             stream=stream,
-        ) or models.ChatCompletionResponse(  # TODO: See when return None
-            id="",
-            object="",
-            model="",
-            usage=UsageInfo(prompt_tokens=0, completion_tokens=0, total_tokens=0),
-        )
+        ) 
+        assert response "TODO: fix this" # TODO: see when None
+        return response
+    
+    async def _stream_create(
+        self, messages: list[Message], stream: bool
+    ) -> EventStreamAsync[CompletionEvent]:
+        # standalone function to make it easier to override
+        if not self.tools:
+            tool_choice: Literal["none", "required", "auto"] | None = None
+        elif not self.allow_text_result:
+            tool_choice = "required"
+        else:
+            tool_choice = "auto"
+
+        mistral_messages = [self._map_message(m) for m in messages]
+        response = await self.client.chat.stream_async(
+            model=str(self.model_name),
+            messages=mistral_messages,
+            temperature=0.0,
+            n=1,
+            tools=self.tools or UNSET,
+            tool_choice=tool_choice or None,
+            stream=stream,
+        ) 
+        assert response "TODO: fix this" # TODO: see when None
+        return response
 
     @staticmethod
-    def _process_response(response: models.ChatCompletionResponse) -> ModelAnyResponse:
+    def _process_response(response: ChatCompletionResponse) -> ModelAnyResponse:
         """Process a non-streamed response, and prepare a message to return."""
         timestamp: datetime | None
         if response.created:
@@ -231,16 +244,10 @@ class MistralAgentModel(AgentModel):
 
     @staticmethod
     async def _process_streamed_response(
-        response: models.ChatCompletionResponse,
+        response: ContentChunk,
     ) -> EitherStreamedResponse:
         """Process a streamed response, and prepare a streaming response to return."""
-        assert False
-        try:
-            first_chunk = await response.__anext__()
-        except StopAsyncIteration as e:  # pragma: no cover
-            raise UnexpectedModelBehavior(
-                "Streamed response ended without content or tool calls"
-            ) from e
+        response.type
         timestamp = datetime.fromtimestamp(first_chunk.created, tz=timezone.utc)
         delta = first_chunk.choices[0].delta
         start_cost = _map_cost(first_chunk)
@@ -325,7 +332,7 @@ def _map_tool_call(t: ToolCall) -> models.ToolCall:
     )
 
 
-def _map_cost(completion: models.ChatCompletionResponse) -> result.Cost:
+def _map_cost(completion: ChatCompletionResponse) -> result.Cost:
 
     usage = completion.usage
 
