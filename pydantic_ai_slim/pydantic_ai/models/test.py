@@ -55,11 +55,21 @@ class TestModel(Model):
     """If set, these args will be passed to the result tool."""
     seed: int = 0
     """Seed for generating random data."""
-    # these fields are set when the model is called by the agent, they can be use when you want check
-    # these arguments in tests
     agent_model_function_tools: dict[str, ToolDefinition] | None = field(default=None, init=False)
+    """Definition of function tools passed to the model.
+
+    This is set when the model is called, so will reflect the function tools from the last step of the last run.
+    """
     agent_model_allow_text_result: bool | None = field(default=None, init=False)
+    """Whether plain text responses from the model are allowed.
+
+    This is set when the model is called, so will reflect the value from the last step of the last run.
+    """
     agent_model_result_tools: dict[str, ToolDefinition] | None = field(default=None, init=False)
+    """Definition of result tools passed to the model.
+
+    This is set when the model is called, so will reflect the result tools from the last step of the last run.
+    """
 
     async def agent_model(
         self,

@@ -7,6 +7,7 @@ from typing import Callable, Union, assert_type
 
 from pydantic_ai import Agent, ModelRetry, RunContext, Tool
 from pydantic_ai.result import RunResult
+from pydantic_ai.tools import ToolDefinition
 
 
 @dataclass
@@ -53,6 +54,30 @@ async def ok_tool(ctx: RunContext[MyDeps], x: str) -> str:
 
 # we can't add overloads for every possible signature of tool, so the type of ok_tool is obscured
 assert_type(ok_tool, Callable[[RunContext[MyDeps], str], str])  # type: ignore[assert-type]
+
+
+async def prep_ok(ctx: RunContext[MyDeps], tool_def: ToolDefinition) -> ToolDefinition | None:
+    if ctx.deps.foo == 42:
+        return None
+    else:
+        return tool_def
+
+
+@typed_agent.tool(prepare=prep_ok)
+def ok_tool_prepare(ctx: RunContext[MyDeps], x: int, y: str) -> str:
+    return f'{ctx.deps.foo} {x} {y}'
+
+
+async def prep_wrong_type(ctx: RunContext[int], tool_def: ToolDefinition) -> ToolDefinition | None:
+    if ctx.deps == 42:
+        return None
+    else:
+        return tool_def
+
+
+@typed_agent.tool(prepare=prep_wrong_type)  # type: ignore[arg-type]
+def wrong_tool_prepare(ctx: RunContext[MyDeps], x: int, y: str) -> str:
+    return f'{ctx.deps.foo} {x} {y}'
 
 
 @typed_agent.tool_plain
@@ -180,3 +205,23 @@ Agent('test', tools=[Tool(foobar_ctx), foobar_ctx, foobar_plain], deps_type=int)
 Agent('test', tools=[foobar_ctx], deps_type=str)  # pyright: ignore[reportArgumentType]
 Agent('test', tools=[foobar_ctx])  # pyright: ignore[reportArgumentType]
 Agent('test', tools=[Tool(foobar_ctx)])  # pyright: ignore[reportArgumentType]
+
+# prepare example from docs:
+
+
+def greet(name: str) -> str:
+    return f'hello {name}'
+
+
+async def prepare_greet(ctx: RunContext[str], tool_def: ToolDefinition) -> ToolDefinition | None:
+    d = f'Name of the {ctx.deps} to greet.'
+    tool_def.parameters_json_schema['properties']['name']['description'] = d
+    return tool_def
+
+
+greet_tool = Tool(greet, prepare=prepare_greet)
+assert_type(greet_tool, Tool[str])
+greet_agent = Agent[str, str]('test', tools=[greet_tool], deps_type=str)
+
+result = greet_agent.run_sync('testing...', deps='human')
+assert result.data == '{"greet":"hello a"}'

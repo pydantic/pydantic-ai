@@ -31,6 +31,7 @@ from .tools import (
     ToolFuncEither,
     ToolFuncPlain,
     ToolParams,
+    ToolPrepareFunc,
 )
 
 __all__ = ('Agent',)
@@ -496,7 +497,11 @@ class Agent(Generic[AgentDeps, ResultData]):
 
     @overload
     def tool(
-        self, /, *, retries: int | None = None
+        self,
+        /,
+        *,
+        retries: int | None = None,
+        prepare: ToolPrepareFunc[AgentDeps] | None = None,
     ) -> Callable[[ToolFuncContext[AgentDeps, ToolParams]], ToolFuncContext[AgentDeps, ToolParams]]: ...
 
     def tool(
@@ -505,9 +510,9 @@ class Agent(Generic[AgentDeps, ResultData]):
         /,
         *,
         retries: int | None = None,
+        prepare: ToolPrepareFunc[AgentDeps] | None = None,
     ) -> Any:
-        """Decorator to register a tool function which takes
-        [`RunContext`][pydantic_ai.tools.RunContext] as its first argument.
+        """Decorator to register a tool function which takes [`RunContext`][pydantic_ai.tools.RunContext] as its first argument.
 
         Can decorate a sync or async functions.
 
@@ -540,20 +545,23 @@ class Agent(Generic[AgentDeps, ResultData]):
             func: The tool function to register.
             retries: The number of retries to allow for this tool, defaults to the agent's default retries,
                 which defaults to 1.
-        """  # noqa: D205
+            prepare: custom method to prepare the tool definition for each step, return `None` to omit this
+                tool from a given step. This is useful if you want to customise a tool at call time,
+                or omit it completely from a step.
+        """
         if func is None:
 
             def tool_decorator(
                 func_: ToolFuncContext[AgentDeps, ToolParams],
             ) -> ToolFuncContext[AgentDeps, ToolParams]:
                 # noinspection PyTypeChecker
-                self._register_function(func_, True, retries)
+                self._register_function(func_, True, retries, prepare)
                 return func_
 
             return tool_decorator
         else:
             # noinspection PyTypeChecker
-            self._register_function(func, True, retries)
+            self._register_function(func, True, retries, prepare)
             return func
 
     @overload
@@ -561,10 +569,21 @@ class Agent(Generic[AgentDeps, ResultData]):
 
     @overload
     def tool_plain(
-        self, /, *, retries: int | None = None
+        self,
+        /,
+        *,
+        retries: int | None = None,
+        prepare: ToolPrepareFunc[AgentDeps] | None = None,
     ) -> Callable[[ToolFuncPlain[ToolParams]], ToolFuncPlain[ToolParams]]: ...
 
-    def tool_plain(self, func: ToolFuncPlain[ToolParams] | None = None, /, *, retries: int | None = None) -> Any:
+    def tool_plain(
+        self,
+        func: ToolFuncPlain[ToolParams] | None = None,
+        /,
+        *,
+        retries: int | None = None,
+        prepare: ToolPrepareFunc[AgentDeps] | None = None,
+    ) -> Any:
         """Decorator to register a tool function which DOES NOT take `RunContext` as an argument.
 
         Can decorate a sync or async functions.
@@ -598,30 +617,38 @@ class Agent(Generic[AgentDeps, ResultData]):
             func: The tool function to register.
             retries: The number of retries to allow for this tool, defaults to the agent's default retries,
                 which defaults to 1.
+            prepare: custom method to prepare the tool definition for each step, return `None` to omit this
+                tool from a given step. This is useful if you want to customise a tool at call time,
+                or omit it completely from a step.
         """
         if func is None:
 
             def tool_decorator(func_: ToolFuncPlain[ToolParams]) -> ToolFuncPlain[ToolParams]:
                 # noinspection PyTypeChecker
-                self._register_function(func_, False, retries)
+                self._register_function(func_, False, retries, prepare)
                 return func_
 
             return tool_decorator
         else:
-            self._register_function(func, False, retries)
+            self._register_function(func, False, retries, prepare)
             return func
 
     def _register_function(
-        self, func: ToolFuncEither[AgentDeps, ToolParams], takes_ctx: bool, retries: int | None
+        self,
+        func: ToolFuncEither[AgentDeps, ToolParams],
+        takes_ctx: bool,
+        retries: int | None,
+        prepare: ToolPrepareFunc[AgentDeps] | None,
     ) -> None:
         """Private utility to register a function as a tool."""
         retries_ = retries if retries is not None else self._default_retries
-        tool = Tool(func, takes_ctx=takes_ctx, max_retries=retries_)
+        tool = Tool(func, takes_ctx=takes_ctx, max_retries=retries_, prepare=prepare)
         self._register_tool(tool)
 
     def _register_tool(self, tool: Tool[AgentDeps]) -> None:
         """Private utility to register a tool instance."""
         if tool.max_retries is None:
+            # noinspection PyTypeChecker
             tool = dataclasses.replace(tool, max_retries=self._default_retries)
 
         if tool.name in self._function_tools:
@@ -669,7 +696,7 @@ class Agent(Generic[AgentDeps, ResultData]):
 
         async def add_tool(key: str, tool: Tool[AgentDeps]) -> None:
             ctx = RunContext(deps, tool.current_retry, tool.name)
-            if tool_def := await tool.prepare(ctx):
+            if tool_def := await tool.prepare_tool_def(ctx):
                 function_tools[key] = tool_def
 
         await asyncio.gather(*(add_tool(k, t) for k, t in self._function_tools.items()))

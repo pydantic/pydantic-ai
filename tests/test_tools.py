@@ -1,4 +1,5 @@
 import json
+from dataclasses import dataclass
 from typing import Annotated, Any
 
 import pytest
@@ -219,7 +220,6 @@ class Foo(BaseModel):
 def test_takes_just_model(set_event_loop: None):
     agent = Agent()
 
-
     @agent.tool_plain
     def takes_just_model(model: Foo) -> str:
         return f'{model.x} {model.y}'
@@ -241,10 +241,6 @@ def test_takes_just_model(set_event_loop: None):
 
 def test_takes_model_and_int(set_event_loop: None):
     agent = Agent()
-
-    class Foo(BaseModel):
-        x: int
-        y: str
 
     @agent.tool_plain
     def takes_just_model(model: Foo, z: int) -> str:
@@ -396,24 +392,62 @@ def test_return_unknown(set_event_loop: None):
         agent.run_sync('')
 
 
-def test_dynamic_tool(set_event_loop: None):
+def test_dynamic_cls_tool(set_event_loop: None):
+    @dataclass
     class MyTool(Tool[int]):
-        def __init__(self, **kwargs: Any):
+        spam: int
+
+        def __init__(self, spam: int = 0, **kwargs: Any):
+            self.spam = spam
             kwargs.update(function=self.tool_function, takes_ctx=False)
             super().__init__(**kwargs)
 
         def tool_function(self, x: int, y: str) -> str:
-            return f'{self.__class__.__name__} {x} {y}'
+            return f'{self.spam} {x} {y}'
 
-        async def prepare(self, ctx: RunContext[int]) -> ToolDefinition | None:
-            if ctx.deps == 42:
-                return None
-            else:
-                return await super().prepare(ctx)
+        async def prepare_tool_def(self, ctx: RunContext[int]) -> ToolDefinition | None:
+            if ctx.deps != 42:
+                return await super().prepare_tool_def(ctx)
 
-    agent = Agent('test', tools=[MyTool()], deps_type=int)
+    agent = Agent('test', tools=[MyTool(spam=777)], deps_type=int)
     r = agent.run_sync('', deps=1)
-    assert r.data == snapshot('{"tool_function":"MyTool 0 a"}')
+    assert r.data == snapshot('{"tool_function":"777 0 a"}')
+
+    r = agent.run_sync('', deps=42)
+    assert r.data == snapshot('success (no tool calls)')
+
+
+def test_dynamic_plain_tool_decorator(set_event_loop: None):
+    agent = Agent('test', deps_type=int)
+
+    async def prepare_tool_def(ctx: RunContext[int], tool_def: ToolDefinition) -> ToolDefinition | None:
+        if ctx.deps != 42:
+            return tool_def
+
+    @agent.tool_plain(prepare=prepare_tool_def)
+    def foobar(x: int, y: str) -> str:
+        return f'{x} {y}'
+
+    r = agent.run_sync('', deps=1)
+    assert r.data == snapshot('{"foobar":"0 a"}')
+
+    r = agent.run_sync('', deps=42)
+    assert r.data == snapshot('success (no tool calls)')
+
+
+def test_dynamic_tool_decorator(set_event_loop: None):
+    agent = Agent('test', deps_type=int)
+
+    async def prepare_tool_def(ctx: RunContext[int], tool_def: ToolDefinition) -> ToolDefinition | None:
+        if ctx.deps != 42:
+            return tool_def
+
+    @agent.tool(prepare=prepare_tool_def)
+    def foobar(ctx: RunContext[int], x: int, y: str) -> str:
+        return f'{ctx.deps} {x} {y}'
+
+    r = agent.run_sync('', deps=1)
+    assert r.data == snapshot('{"foobar":"1 0 a"}')
 
     r = agent.run_sync('', deps=42)
     assert r.data == snapshot('success (no tool calls)')
