@@ -18,6 +18,8 @@ from ..messages import (
     ModelAnyResponse,
     ModelStructuredResponse,
     ModelTextResponse,
+    RetryPrompt,
+    ToolReturn,
 )
 from ..messages import ToolCall as PydanticToolCall
 from . import (
@@ -38,10 +40,7 @@ try:
     from mistralai.models.assistantmessage import (
         AssistantMessage,
     )
-    from mistralai.models.chatcompletionchoice import (
-        ChatCompletionChoice,
-        ChatCompletionChoiceTypedDict,
-    )
+
     from mistralai.models.function import Function
     from mistralai.models.toolmessage import (
         ToolMessage,
@@ -231,6 +230,12 @@ class MistralAgentModel(AgentModel):
                     args_json=c.function.arguments,
                     tool_id=c.id,
                 )
+                if isinstance(c.function.arguments, str) else 
+                PydanticToolCall.from_dict(
+                    tool_name=c.function.name,
+                    args_dict=c.function.arguments,
+                    tool_id=c.id,
+                )
                 for c in tools_calls
             ]
             return ModelStructuredResponse(
@@ -258,7 +263,7 @@ class MistralAgentModel(AgentModel):
         timestamp = datetime.fromtimestamp(first_chunk.created or 0, tz=timezone.utc)
         delta = first_chunk.choices[0].delta
         start_cost = _map_cost(first_chunk)
-
+        
         # the first chunk may only contain `role`, so we iterate until we get either `tool_calls` or `content`
         while delta.tool_calls is None and delta.content is None:
             try:
@@ -318,7 +323,7 @@ class MistralAgentModel(AgentModel):
             assert_never(message)
 
 
-def _guard_tool_id(t: PydanticToolCall) -> str:
+def _guard_tool_id(t: PydanticToolCall | RetryPrompt | ToolReturn) -> str:
     """Type guard that checks a `tool_id` is not None both for static typing and runtime."""
     assert t.tool_id is not None, f"Mistral requires `tool_id` to be set: {t}"
     return t.tool_id
