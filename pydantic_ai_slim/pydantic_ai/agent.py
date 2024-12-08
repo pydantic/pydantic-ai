@@ -215,11 +215,14 @@ class Agent(Generic[AgentDeps, ResultData]):
                 cost += request_cost
 
                 with _logfire.span('handle model response', run_step=run_step) as handle_span:
-                    either = await self._handle_model_response(model_response, deps)
+                    final_result, response_messages = await self._handle_model_response(model_response, deps)
 
-                    if isinstance(either, _MarkFinalResult):
-                        # we have a final result, end the conversation
-                        result_data = either.data
+                    # Add all messages to the conversation
+                    messages.extend(response_messages)
+
+                    # Check if we got a final result
+                    if final_result is not None:
+                        result_data = final_result.data
                         run_span.set_attribute('all_messages', messages)
                         run_span.set_attribute('cost', cost)
                         handle_span.set_attribute('result', result_data)
@@ -227,11 +230,9 @@ class Agent(Generic[AgentDeps, ResultData]):
                         return result.RunResult(messages, new_message_index, result_data, cost)
                     else:
                         # continue the conversation
-                        tool_responses = either
-                        handle_span.set_attribute('tool_responses', tool_responses)
-                        response_msgs = ' '.join(m.role for m in tool_responses)
+                        handle_span.set_attribute('tool_responses', response_messages)
+                        response_msgs = ' '.join(r.role for r in response_messages)
                         handle_span.message = f'handle model response -> {response_msgs}'
-                        messages.extend(tool_responses)
 
     def run_sync(
         self,
@@ -324,10 +325,16 @@ class Agent(Generic[AgentDeps, ResultData]):
                         model_req_span.__exit__(None, None, None)
 
                         with _logfire.span('handle model response') as handle_span:
-                            either = await self._handle_streamed_model_response(model_response, deps)
+                            final_result, response_messages = await self._handle_streamed_model_response(
+                                model_response, deps
+                            )
 
-                            if isinstance(either, _MarkFinalResult):
-                                result_stream = either.data
+                            # Add all messages to the conversation
+                            messages.extend(response_messages)
+
+                            # Check if we got a final result
+                            if final_result is not None:
+                                result_stream = final_result.data
                                 run_span.set_attribute('all_messages', messages)
                                 handle_span.set_attribute('result_type', result_stream.__class__.__name__)
                                 handle_span.message = 'handle model response -> final result'
@@ -343,11 +350,10 @@ class Agent(Generic[AgentDeps, ResultData]):
                                 )
                                 return
                             else:
-                                tool_responses = either
-                                handle_span.set_attribute('tool_responses', tool_responses)
-                                response_msgs = ' '.join(m.role for m in tool_responses)
+                                # continue the conversation
+                                handle_span.set_attribute('tool_responses', response_messages)
+                                response_msgs = ' '.join(r.role for r in response_messages)
                                 handle_span.message = f'handle model response -> {response_msgs}'
-                                messages.extend(tool_responses)
                                 # the model_response should have been fully streamed by now, we can add it's cost
                                 cost += model_response.cost()
 
@@ -725,11 +731,11 @@ class Agent(Generic[AgentDeps, ResultData]):
 
     async def _handle_model_response(
         self, model_response: _messages.ModelAnyResponse, deps: AgentDeps
-    ) -> _MarkFinalResult[ResultData] | list[_messages.Message]:
+    ) -> tuple[_MarkFinalResult[ResultData] | None, list[_messages.Message]]:
         """Process a non-streamed response from the model.
 
         Returns:
-            Return `Either` — left: final result data, right: list of messages to send back to the model.
+            A tuple of `(final_result, messages)`. If `final_result` is not `None`, the conversation should end.
         """
         if model_response.role == 'model-text-response':
             # plain string response
@@ -739,15 +745,15 @@ class Agent(Generic[AgentDeps, ResultData]):
                     result_data = await self._validate_result(result_data_input, deps, None)
                 except _result.ToolRetryError as e:
                     self._incr_result_retry()
-                    return [e.tool_retry]
+                    return None, [e.tool_retry]
                 else:
-                    return _MarkFinalResult(result_data)
+                    return _MarkFinalResult(result_data), []
             else:
                 self._incr_result_retry()
                 response = _messages.RetryPrompt(
                     content='Plain text responses are not permitted, please call one of the functions instead.',
                 )
-                return [response]
+                return None, [response]
         elif model_response.role == 'model-structured-response':
             if self._result_schema is not None:
                 # if there's a result schema, and any of the calls match one of its tools, return the result
@@ -759,9 +765,15 @@ class Agent(Generic[AgentDeps, ResultData]):
                         result_data = await self._validate_result(result_data, deps, call)
                     except _result.ToolRetryError as e:
                         self._incr_result_retry()
-                        return [e.tool_retry]
+                        return None, [e.tool_retry]
                     else:
-                        return _MarkFinalResult(result_data)
+                        # Add a ToolReturn message for the schema tool call
+                        tool_return = _messages.ToolReturn(
+                            tool_name=call.tool_name,
+                            content='Final result processed.',
+                            tool_id=call.tool_id,
+                        )
+                        return _MarkFinalResult(result_data), [tool_return]
 
             if not model_response.calls:
                 raise exceptions.UnexpectedModelBehavior('Received empty tool call message')
@@ -776,26 +788,24 @@ class Agent(Generic[AgentDeps, ResultData]):
                     messages.append(self._unknown_tool(call.tool_name))
 
             with _logfire.span('running {tools=}', tools=[t.get_name() for t in tasks]):
-                messages += await asyncio.gather(*tasks)
-            return messages
+                task_results: Sequence[_messages.Message] = await asyncio.gather(*tasks)
+                messages.extend(task_results)
+            return None, messages
         else:
             assert_never(model_response)
 
     async def _handle_streamed_model_response(
         self, model_response: models.EitherStreamedResponse, deps: AgentDeps
-    ) -> _MarkFinalResult[models.EitherStreamedResponse] | list[_messages.Message]:
+    ) -> tuple[_MarkFinalResult[models.EitherStreamedResponse] | None, list[_messages.Message]]:
         """Process a streamed response from the model.
 
-        TODO: change the response type to `models.EitherStreamedResponse | list[_messages.Message]` once we drop 3.9
-        (with 3.9 we get `TypeError: Subscripted generics cannot be used with class and instance checks`)
-
         Returns:
-            Return `Either` — left: final result data, right: list of messages to send back to the model.
+            A tuple of (final_result, messages). If final_result is not None, the conversation should end.
         """
         if isinstance(model_response, models.StreamTextResponse):
             # plain string response
             if self._allow_text_result:
-                return _MarkFinalResult(model_response)
+                return _MarkFinalResult(model_response), []
             else:
                 self._incr_result_retry()
                 response = _messages.RetryPrompt(
@@ -805,7 +815,7 @@ class Agent(Generic[AgentDeps, ResultData]):
                 async for _ in model_response:
                     pass
 
-                return [response]
+                return None, [response]
         else:
             assert isinstance(model_response, models.StreamStructuredResponse), f'Unexpected response: {model_response}'
             if self._result_schema is not None:
@@ -819,8 +829,14 @@ class Agent(Generic[AgentDeps, ResultData]):
                         break
                     structured_msg = model_response.get()
 
-                if self._result_schema.find_tool(structured_msg):
-                    return _MarkFinalResult(model_response)
+                if match := self._result_schema.find_tool(structured_msg):
+                    call, _ = match
+                    tool_return = _messages.ToolReturn(
+                        tool_name=call.tool_name,
+                        content='Final result processed.',
+                        tool_id=call.tool_id,
+                    )
+                    return _MarkFinalResult(model_response), [tool_return]
 
             # the model is calling a tool function, consume the response to get the next message
             async for _ in model_response:
@@ -839,8 +855,9 @@ class Agent(Generic[AgentDeps, ResultData]):
                     messages.append(self._unknown_tool(call.tool_name))
 
             with _logfire.span('running {tools=}', tools=[t.get_name() for t in tasks]):
-                messages += await asyncio.gather(*tasks)
-            return messages
+                task_results: Sequence[_messages.Message] = await asyncio.gather(*tasks)
+                messages.extend(task_results)
+            return None, messages
 
     async def _validate_result(
         self, result_data: ResultData, deps: AgentDeps, tool_call: _messages.ToolCall | None
@@ -912,6 +929,8 @@ class _MarkFinalResult(Generic[ResultData]):
     """Marker class to indicate that the result is the final result.
 
     This allows us to use `isinstance`, which wouldn't be possible if we were returning `ResultData` directly.
+
+    It also avoids problems in the case where the result type is itself `None`, but is set.
     """
 
     data: ResultData

@@ -206,6 +206,11 @@ async def test_call_tool():
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 ToolReturn(tool_name='ret_a', content='hello world', timestamp=IsNow(tz=timezone.utc)),
+                ToolReturn(
+                    tool_name='final_result',
+                    content='Final result processed.',
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
             ]
         )
         assert await result.get_data() == snapshot(('hello world', 2))
@@ -217,6 +222,11 @@ async def test_call_tool():
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 ToolReturn(tool_name='ret_a', content='hello world', timestamp=IsNow(tz=timezone.utc)),
+                ToolReturn(
+                    tool_name='final_result',
+                    content='Final result processed.',
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
                 ModelStructuredResponse(
                     calls=[
                         ToolCall(

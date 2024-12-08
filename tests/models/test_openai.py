@@ -193,6 +193,12 @@ async def test_request_structured_response(allow_model_requests: None):
                 ],
                 timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc),
             ),
+            ToolReturn(
+                tool_name='final_result',
+                content='Final result processed.',
+                tool_id='123',
+                timestamp=IsNow(tz=timezone.utc),
+            ),
         ]
     )
 
@@ -264,7 +270,7 @@ async def test_request_tool_call(allow_model_requests: None):
                         tool_id='1',
                     )
                 ],
-                timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc),
             ),
             RetryPrompt(
                 tool_name='get_location',
@@ -280,7 +286,7 @@ async def test_request_tool_call(allow_model_requests: None):
                         tool_id='2',
                     )
                 ],
-                timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc),
             ),
             ToolReturn(
                 tool_name='get_location',
@@ -288,7 +294,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 tool_id='2',
                 timestamp=IsNow(tz=timezone.utc),
             ),
-            ModelTextResponse(content='final response', timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)),
+            ModelTextResponse(content='final response', timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc)),
         ]
     )
     assert result.cost() == snapshot(
