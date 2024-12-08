@@ -589,7 +589,7 @@ print(result.data)
 #> success (no tool calls)
 result = agent.run_sync('testing...', deps=42)
 print(result.data)
-#> {"hitchhiker_tool":"42 0 a"}
+#> {"hitchhiker":"42 a"}
 ```
 
 _(This example is complete, it can be run "as is")_

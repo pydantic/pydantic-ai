@@ -98,8 +98,8 @@ def test_docs_examples(
     # waiting for https://github.com/pydantic/pytest-examples/issues/43
     if 'import DatabaseConn' in example.source:
         ruff_ignore.append('I001')
-    elif 'async def my_tool(' in example.source:
-        # not sure what's going on here, just ignore it for now
+    elif 'async def my_tool(' in example.source or 'async def only_if_42(' in example.source:
+        # until https://github.com/pydantic/pytest-examples/issues/46 is fixed
         ruff_ignore.append('I001')
 
     line_length = 88

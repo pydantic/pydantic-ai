@@ -97,10 +97,14 @@ Usage `ToolFuncEither[AgentDeps, ToolParams]`.
 ToolPrepareFunc: TypeAlias = 'Callable[[RunContext[AgentDeps], ToolDefinition], Awaitable[ToolDefinition | None]]'
 """Definition of a function that can prepare a tool definition at call time.
 
-Example:
+See [tool docs](../agents.md#tool-prepare) for more information.
+
+Example — here `only_if_42` is valid as a `ToolPrepareFunc`:
 
 ```py
-from pydantic_ai import Agent, RunContext
+from typing import Union
+
+from pydantic_ai import RunContext, Tool
 from pydantic_ai.tools import ToolDefinition
 
 async def only_if_42(
@@ -108,7 +112,6 @@ async def only_if_42(
 ) -> Union[ToolDefinition, None]:
     if ctx.deps == 42:
         return tool_def
-
 
 def hitchhiker(ctx: RunContext[int], answer: str) -> str:
     return f'{ctx.deps} {answer}'
