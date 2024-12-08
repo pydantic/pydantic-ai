@@ -197,7 +197,7 @@ class Tool(Generic[AgentDeps]):
             description: Description of the tool, inferred from the function if `None`.
             prepare: custom method to prepare the tool definition for each step, return `None` to omit this
                 tool from a given step. This is useful if you want to customise a tool at call time,
-                or omit it completely from a step.
+                or omit it completely from a step. See [`ToolPrepareFunc`][pydantic_ai.tools.ToolPrepareFunc].
         """
         if takes_ctx is None:
             takes_ctx = _pydantic.takes_ctx(function)

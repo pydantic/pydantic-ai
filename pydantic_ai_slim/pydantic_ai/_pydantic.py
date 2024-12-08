@@ -167,12 +167,12 @@ def takes_ctx(function: Callable[..., Any]) -> bool:
         `True` if the function takes a `RunContext` as first argument, `False` otherwise.
     """
     sig = signature(function)
-    type_hints = _typing_extra.get_function_type_hints(function)
     try:
         first_param_name = next(iter(sig.parameters.keys()))
     except StopIteration:
         return False
     else:
+        type_hints = _typing_extra.get_function_type_hints(function)
         annotation = type_hints[first_param_name]
         return annotation is not sig.empty and _is_call_ctx(annotation)
 

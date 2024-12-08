@@ -547,7 +547,7 @@ class Agent(Generic[AgentDeps, ResultData]):
                 which defaults to 1.
             prepare: custom method to prepare the tool definition for each step, return `None` to omit this
                 tool from a given step. This is useful if you want to customise a tool at call time,
-                or omit it completely from a step.
+                or omit it completely from a step. See [`ToolPrepareFunc`][pydantic_ai.tools.ToolPrepareFunc].
         """
         if func is None:
 
@@ -619,7 +619,7 @@ class Agent(Generic[AgentDeps, ResultData]):
                 which defaults to 1.
             prepare: custom method to prepare the tool definition for each step, return `None` to omit this
                 tool from a given step. This is useful if you want to customise a tool at call time,
-                or omit it completely from a step.
+                or omit it completely from a step. See [`ToolPrepareFunc`][pydantic_ai.tools.ToolPrepareFunc].
         """
         if func is None:
 
@@ -691,7 +691,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         return model_, mode_selection
 
     async def _prepare_model(self, model: models.Model, deps: AgentDeps) -> models.AgentModel:
-        """Create an agent model by building tools."""
+        """Create building tools and create an agent model."""
         function_tools: dict[str, ToolDefinition] = {}
 
         async def add_tool(key: str, tool: Tool[AgentDeps]) -> None:
