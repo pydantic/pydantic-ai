@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from typing import Callable, Literal
 
 from httpx import AsyncClient as AsyncHTTPClient
-from mistralai import CompletionChunk, FunctionCall
+from mistralai import CompletionChunk, FunctionCall, TextChunk
 from mistralai.types.basemodel import Unset
 from typing_extensions import assert_never
 
@@ -28,6 +28,7 @@ from . import (
     AgentModel,
     EitherStreamedResponse,
     Model,
+    StreamTextResponse,
     cached_async_http_client,
     check_allow_model_requests,
 )
@@ -103,7 +104,7 @@ class MistralModel(Model):
         result_tools: Sequence[AbstractToolDefinition] | None,
     ) -> AgentModel:
         check_allow_model_requests()
-        tools = [self._map_tool_definition(r) for r in function_tools.values()]
+        tools: list[Tool | ToolTypedDict | None] = [self._map_tool_definition(r) for r in function_tools.values()]
         if result_tools is not None:
             tools += [self._map_tool_definition(r) for r in result_tools]
         return MistralAgentModel(
@@ -253,45 +254,37 @@ class MistralAgentModel(AgentModel):
         response: EventStreamAsync[CompletionEvent],
     ) -> EitherStreamedResponse:
         """Process a streamed response, and prepare a streaming response to return."""
-        first_chunk: CompletionChunk
         try:
-            chunk = await response.__anext__()
-            first_chunk = chunk.data
+            first_chunk = await response.__anext__()
         except StopAsyncIteration as e:  # pragma: no cover
-            raise UnexpectedModelBehavior(
-                "Streamed response ended without content or tool calls"
-            ) from e
-        # TODO: To finish
-        assert False
-        # timestamp = datetime.fromtimestamp(first_chunk.created or 0, tz=timezone.utc)
-        # delta = first_chunk.choices[0].delta
-        # start_cost = _map_cost(first_chunk)
+            raise UnexpectedModelBehavior('Streamed response ended without content or tool calls') from e
+        timestamp = datetime.fromtimestamp(first_chunk.data.created or 0, tz=timezone.utc) # TODO: see 0 now or not
+        choice = first_chunk.data.choices[0]
+        delta = choice.delta
+        start_cost = _map_cost(first_chunk.data)
 
-        # # the first chunk may only contain `role`, so we iterate until we get either `tool_calls` or `content`
-        # while delta.tool_calls is None and delta.content is None:
-        #     try:
-        #         next_chunk = await response.__anext__()
-        #     except StopAsyncIteration as e:
-        #         raise UnexpectedModelBehavior(
-        #             "Streamed response ended without content or tool calls"
-        #         ) from e
-        #     delta = next_chunk.choices[0].delta
-        #     start_cost += _map_cost(next_chunk)
+        
+        # the first chunk may only contain `role`, so we iterate until we get either `tool_calls` or `content`
+        while delta.tool_calls is None or isinstance(delta.tool_calls, Unset) and delta.content is None or len(delta.content) == 0:
+                try:
+                    next_chunk = await response.__anext__()
+                except StopAsyncIteration as e:
+                    raise UnexpectedModelBehavior('Streamed response ended without content or tool calls') from e
+                delta = next_chunk.data.choices[0].delta
+                start_cost += _map_cost(next_chunk.data)
 
-        # if delta.content is not None:
-        #     return OpenAIStreamTextResponse(
-        #         delta.content, response, timestamp, start_cost
-        #     )
-        # else:
-        #     assert (
-        #         delta.tool_calls is not None
-        #     ), f"Expected delta with tool_calls, got {delta}"
-        #     return OpenAIStreamStructuredResponse(
-        #         response,
-        #         {c.index: c for c in delta.tool_calls},
-        #         timestamp,
-        #         start_cost,
-        #     )
+        if delta.tool_calls is not None and isinstance(delta.tool_calls, Unset):
+            return MistralStreamTextResponse(delta.content, response, timestamp, start_cost)
+        else:
+            assert False # TODO:
+            assert delta.tool_calls is not None, f'Expected delta with tool_calls, got {delta}'
+            return GroqStreamStructuredResponse(
+                response,
+                {c.index: c for c in delta.tool_calls},
+                timestamp,
+                start_cost,
+            )
+
 
     @staticmethod
     def _map_message(message: Message) -> models.Messages:
@@ -357,3 +350,97 @@ def _map_cost(response: ChatCompletionResponse | CompletionChunk) -> result.Cost
             total_tokens=usage.total_tokens,
             details=None,
         )
+
+
+@dataclass
+class MistralStreamTextResponse(StreamTextResponse):
+    """Implementation of `StreamTextResponse` for Groq models."""
+
+    _first: str | None
+    _response: EventStreamAsync[CompletionEvent]
+    _timestamp: datetime
+    _cost: result.Cost
+    _buffer: list[str] = field(default_factory=list, init=False)
+
+
+    async def __anext__(self) -> None:
+        if self._first is not None:
+            self._buffer.append(self._first)
+            self._first = None
+            return None
+
+        chunk = await self._response.generator.__anext__()
+        self._cost = _map_cost(chunk.data)
+
+        try:
+            choice = chunk.data.choices[0]
+        except IndexError:
+            raise StopAsyncIteration()
+
+        # we don't raise StopAsyncIteration on the last chunk because usage comes after this
+        if choice.finish_reason is None:
+            assert choice.delta.content is not None, f'Expected delta with content, invalid chunk: {chunk!r}'
+        if choice.delta.content is not None:
+            if isinstance(choice.delta.content, str):
+                self._buffer.append(choice.delta.content)
+            elif isinstance(choice.delta.content, TextChunk):
+                self._buffer.append(choice.delta.content.text)
+
+    def get(self, *, final: bool = False) -> Iterable[str]:
+        yield from self._buffer
+        self._buffer.clear()
+
+    def cost(self) -> result.Cost:
+        return self._cost
+
+    def timestamp(self) -> datetime:
+        return self._timestamp
+
+# @dataclass
+# class MistralStreamStructuredResponse(StreamStructuredResponse):
+#     """Implementation of `StreamStructuredResponse` for Groq models."""
+
+#     _response: AsyncStream[ChatCompletionChunk]
+#     _delta_tool_calls: dict[int, ChoiceDeltaToolCall]
+#     _timestamp: datetime
+#     _cost: result.Cost
+
+#     async def __anext__(self) -> None:
+#         chunk = await self._response.__anext__()
+#         self._cost = _map_cost(chunk)
+
+#         try:
+#             choice = chunk.choices[0]
+#         except IndexError:
+#             raise StopAsyncIteration()
+
+#         if choice.finish_reason is not None:
+#             raise StopAsyncIteration()
+
+#         assert choice.delta.content is None, f'Expected tool calls, got content instead, invalid chunk: {chunk!r}'
+
+#         for new in choice.delta.tool_calls or []:
+#             if current := self._delta_tool_calls.get(new.index):
+#                 if current.function is None:
+#                     current.function = new.function
+#                 elif new.function is not None:
+#                     current.function.name = _utils.add_optional(current.function.name, new.function.name)
+#                     current.function.arguments = _utils.add_optional(current.function.arguments, new.function.arguments)
+#             else:
+#                 self._delta_tool_calls[new.index] = new
+
+#     def get(self, *, final: bool = False) -> ModelStructuredResponse:
+#         calls: list[ToolCall] = []
+#         for c in self._delta_tool_calls.values():
+#             if f := c.function:
+#                 if f.name is not None and f.arguments is not None:
+#                     calls.append(ToolCall.from_json(f.name, f.arguments, c.id))
+
+#         return ModelStructuredResponse(calls, timestamp=self._timestamp)
+
+#     def cost(self) -> Cost:
+#         return self._cost
+
+#     def timestamp(self) -> datetime:
+#         return self._timestamp
+    
