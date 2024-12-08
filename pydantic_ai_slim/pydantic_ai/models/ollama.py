@@ -55,7 +55,6 @@ allow any name in the type hints.
 """
 
 
-# Inherits from this model
 @dataclass(init=False)
 class OllamaModel(Model):
     """A model that implements Ollama using the OpenAI API.
@@ -78,19 +77,19 @@ class OllamaModel(Model):
     ):
         """Initialize an Ollama model.
 
-        Ollama has built-in compatability with the OpenAI chat completions API ([source](https://ollama.com/blog/openai-compatibility)), and so these models are built ontop of that
+        Ollama has built-in compatability for the OpenAI chat completions API ([source](https://ollama.com/blog/openai-compatibility)), so we reuse the
+        [`OpenAIModel`][pydantic_ai.models.openai.OpenAIModel] here.
 
         Args:
             model_name: The name of the Ollama model to use. List of models available [here](https://ollama.com/library)
-                NB: You must first download the model (ollama pull <MODEL-NAME>) in order to use the model
+                You must first download the model (`ollama pull <MODEL-NAME>`) in order to use the model
             base_url: The base url for the ollama requests. The default value is the ollama default
             openai_client: An existing
                 [`AsyncOpenAI`](https://github.com/openai/openai-python?tab=readme-ov-file#async-usage)
-                client to use, if provided, `api_key` and `http_client` must be `None`.
+                client to use, if provided, `base_url` and `http_client` must be `None`.
             http_client: An existing `httpx.AsyncClient` to use for making HTTP requests.
         """
-        self.model_name: OllamaModelName = model_name
-        # openai_model_name: OpenAIChatModel = cast(OpenAIChatModel, model_name)
+        self.model_name = model_name
         if openai_client is not None:
             assert http_client is None, 'Cannot provide both `openai_client` and `http_client`'
             self.openai_model = OpenAIModel(model_name=model_name, openai_client=openai_client, http_client=http_client)

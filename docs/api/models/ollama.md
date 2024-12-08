@@ -4,8 +4,6 @@
 
 For details on how to set up authentication with this model, see [model configuration for Ollama](../../install.md#ollama).
 
-::: pydantic_ai.models.ollama
-
 ## Example usage
 
 With `ollama` installed, you can run the server with the model you want to use:
@@ -38,3 +36,5 @@ print(result.cost())
 ```
 
 See [`OllamaModel`][pydantic_ai.models.ollama.OllamaModel] for more information
+
+::: pydantic_ai.models.ollama
