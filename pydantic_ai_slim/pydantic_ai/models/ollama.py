@@ -71,7 +71,7 @@ class OllamaModel(Model):
         self,
         model_name: OllamaModelName,
         *,
-        base_url: str = 'http://localhost:11434/v1/',
+        base_url: str | None = 'http://localhost:11434/v1/',
         openai_client: AsyncOpenAI | None = None,
         http_client: AsyncHTTPClient | None = None,
     ):
@@ -91,7 +91,7 @@ class OllamaModel(Model):
         """
         self.model_name = model_name
         if openai_client is not None:
-            assert http_client is None, 'Cannot provide both `openai_client` and `http_client`'
+            assert base_url is None, 'Cannot provide both `openai_client` and `base_url`'
             self.openai_model = OpenAIModel(model_name=model_name, openai_client=openai_client, http_client=http_client)
         elif http_client is not None:
             # API key is not required for ollama but a value is required to create the client
