@@ -42,6 +42,7 @@ try:
     from mistralai.models.toolmessage import ToolMessage
     from mistralai.models.usermessage import UserMessage
     from mistralai.types import UNSET
+    from mistralai.models import Tool, ToolTypedDict
 except ImportError as e:
     raise ImportError(
         "Please install `mistral` to use the Mistral model, "
@@ -106,7 +107,7 @@ class MistralModel(Model):
     @staticmethod
     def _map_tool_definition(
         f: AbstractToolDefinition,
-    ) -> models.Tool | models.ToolTypedDict:
+    ) -> Tool | ToolTypedDict:
         """Convert an `AbstractToolDefinition` to a `Tool` or `ToolTypedDict`.
 
         This is a utility function used to convert our internal representation of a tool to the
@@ -125,7 +126,7 @@ class MistralAgentModel(AgentModel):
     client: Mistral
     model_name: str
     allow_text_result: bool
-    tools: list[models.Tool | models.ToolTypedDict] = field(default_factory=list)
+    tools: list[Tool | ToolTypedDict] = field(default_factory=list)
 
     async def request(
         self, messages: list[Message]
