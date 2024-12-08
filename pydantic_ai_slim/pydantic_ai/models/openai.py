@@ -195,7 +195,7 @@ class OpenAIAgentModel(AgentModel):
         while True:
             try:
                 chunk = await response.__anext__()
-            except StopAsyncIteration as e:  # pragma: no cover
+            except StopAsyncIteration as e:
                 raise UnexpectedModelBehavior('Streamed response ended without content or tool calls') from e
 
             timestamp = timestamp or datetime.fromtimestamp(chunk.created, tz=timezone.utc)
