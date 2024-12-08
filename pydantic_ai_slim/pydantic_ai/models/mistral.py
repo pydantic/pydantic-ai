@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from typing import List, Literal
 
 from httpx import AsyncClient as AsyncHTTPClient
-from mistralai import ContentChunk, FunctionCall
+from mistralai import CompletionChunk, FunctionCall
 from mistralai.types.basemodel import Unset
 from typing_extensions import assert_never
 
@@ -142,10 +142,9 @@ class MistralAgentModel(AgentModel):
         self, messages: list[Message]
     ) -> AsyncIterator[EitherStreamedResponse]:
         response = await self._stream_create(messages, True)
-        async for chunk in response:
-            content = chunk.data.choices[0].delta.content
-            if content is not None:     
-                yield await self._process_streamed_response(content)
+        async with response:
+            yield await self._process_streamed_response(response)   
+                
 
     # @overload
     # async def _completions_create(
@@ -246,11 +245,17 @@ class MistralAgentModel(AgentModel):
 
     @staticmethod
     async def _process_streamed_response(
-        response: ContentChunk,
+        response: EventStreamAsync[CompletionEvent],
     ) -> EitherStreamedResponse:
         """Process a streamed response, and prepare a streaming response to return."""
-        response.type
-        timestamp = datetime.fromtimestamp(first_chunk.created, tz=timezone.utc)
+        first_chunk: CompletionChunk
+        try:
+            chunk = await response.__anext__()
+            first_chunk = chunk.data
+        except StopAsyncIteration as e:  # pragma: no cover
+            raise UnexpectedModelBehavior('Streamed response ended without content or tool calls') from e
+        
+        timestamp = datetime.fromtimestamp(first_chunk.created or 0, tz=timezone.utc)
         delta = first_chunk.choices[0].delta
         start_cost = _map_cost(first_chunk)
 
@@ -259,21 +264,15 @@ class MistralAgentModel(AgentModel):
             try:
                 next_chunk = await response.__anext__()
             except StopAsyncIteration as e:
-                raise UnexpectedModelBehavior(
-                    "Streamed response ended without content or tool calls"
-                ) from e
+                raise UnexpectedModelBehavior('Streamed response ended without content or tool calls') from e
             delta = next_chunk.choices[0].delta
             start_cost += _map_cost(next_chunk)
 
         if delta.content is not None:
-            return MistralStreamTextResponse(
-                delta.content, response, timestamp, start_cost
-            )
+            return OpenAIStreamTextResponse(delta.content, response, timestamp, start_cost)
         else:
-            assert (
-                delta.tool_calls is not None
-            ), f"Expected delta with tool_calls, got {delta}"
-            return MistralStreamStructuredResponse(
+            assert delta.tool_calls is not None, f'Expected delta with tool_calls, got {delta}'
+            return OpenAIStreamStructuredResponse(
                 response,
                 {c.index: c for c in delta.tool_calls},
                 timestamp,
@@ -334,12 +333,14 @@ def _map_tool_call(t: PydanticToolCall) -> ToolCall:
     )
 
 
-def _map_cost(completion: ChatCompletionResponse) -> result.Cost:
-
-    usage = completion.usage
-
-    return result.Cost(
-        request_tokens=usage.prompt_tokens,
-        response_tokens=usage.completion_tokens,
-        total_tokens=usage.total_tokens,
-    )
+def _map_cost(response: ChatCompletionResponse | CompletionChunk) -> result.Cost:
+    usage = response.usage
+    if usage is None:
+        return result.Cost()
+    else:
+        return result.Cost(
+            request_tokens=usage.prompt_tokens,
+            response_tokens=usage.completion_tokens,
+            total_tokens=usage.total_tokens,
+            details=None,
+        )
