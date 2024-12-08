@@ -1,6 +1,6 @@
 import json
 from dataclasses import dataclass
-from typing import Annotated, Any, Union
+from typing import Annotated, Any, Callable, Union
 
 import pytest
 from inline_snapshot import snapshot
@@ -451,3 +451,18 @@ def test_dynamic_tool_decorator(set_event_loop: None):
 
     r = agent.run_sync('', deps=42)
     assert r.data == snapshot('success (no tool calls)')
+
+
+def test_future_run_context(set_event_loop: None, create_module: Callable[[str], Any]):
+    mod = create_module("""
+from __future__ import annotations
+
+from pydantic_ai import Agent, RunContext
+
+def ctx_tool(ctx: RunContext[int], x: int) -> int:
+    return x + ctx.deps
+
+agent = Agent('test', tools=[ctx_tool], deps_type=int)
+    """)
+    result = mod.agent.run_sync('foobar', deps=5)
+    assert result.data == snapshot('{"ctx_tool":5}')
