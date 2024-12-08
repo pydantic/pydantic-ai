@@ -83,6 +83,10 @@ jobs:
         with:
           enable-cache: true
 
+      - uses: pydantic/ollama-action@main
+        with:
+          model: qwen:0.5b
+
       - run: >
           uv run
           --python 3.12

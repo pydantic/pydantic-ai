@@ -48,11 +48,18 @@ def groq(http_client: httpx.AsyncClient, _tmp_path: Path) -> Model:
     return GroqModel('llama-3.1-70b-versatile', http_client=http_client)
 
 
+def ollama(http_client: httpx.AsyncClient, _tmp_path: Path) -> Model:
+    from pydantic_ai.models.ollama import OllamaModel
+
+    return OllamaModel('qwen:0.5b', http_client=http_client)
+
+
 params = [
     pytest.param(openai, id='openai'),
     pytest.param(gemini, id='gemini'),
     pytest.param(vertexai, id='vertexai'),
     pytest.param(groq, id='groq'),
+    pytest.param(ollama, id='ollama'),
 ]
 GetModel = Callable[[httpx.AsyncClient, Path], Model]
 
@@ -83,14 +90,18 @@ async def test_stream(http_client: httpx.AsyncClient, tmp_path: Path, get_model:
     assert 'paris' in data.lower()
     print('Stream cost:', result.cost())
     cost = result.cost()
-    assert cost.total_tokens is not None and cost.total_tokens > 0
+    if get_model.__name__ != 'ollama':
+        assert cost.total_tokens is not None and cost.total_tokens > 0
 
 
 class MyModel(BaseModel):
     city: str
 
 
-@pytest.mark.parametrize('get_model', params)
+structured_params = [p for p in params if p.id != 'ollama']
+
+
+@pytest.mark.parametrize('get_model', structured_params)
 async def test_structured(http_client: httpx.AsyncClient, tmp_path: Path, get_model: GetModel):
     agent = Agent(get_model(http_client, tmp_path), result_type=MyModel)
     result = await agent.run('What is the capital of the UK?')
