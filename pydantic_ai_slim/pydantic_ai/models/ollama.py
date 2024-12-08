@@ -1,7 +1,7 @@
 from __future__ import annotations as _annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal, Union
 
 from httpx import AsyncClient as AsyncHTTPClient
@@ -24,7 +24,7 @@ except ImportError as e:
     ) from e
 
 
-from .openai import OpenAIAgentModel, OpenAIModel
+from .openai import OpenAIAgentModel
 
 CommonOllamaModelNames = Literal[
     'codellama',
@@ -68,7 +68,7 @@ class OllamaModel(Model):
     """
 
     model_name: OllamaModelName
-    openai_model: OpenAIModel
+    client: AsyncOpenAI = field(repr=False)
 
     def __init__(
         self,
