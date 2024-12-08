@@ -533,14 +533,12 @@ def test_run_with_history_new_structured(set_event_loop: None):
             ModelStructuredResponse(
                 calls=[ToolCall(tool_name='final_result', args=ArgsDict(args_dict={'a': 0}), tool_id=None)],
                 timestamp=IsNow(tz=timezone.utc),
-                role='model-structured-response',
             ),
             ToolReturn(
                 tool_name='final_result',
                 content='Final result processed.',
                 tool_id=None,
                 timestamp=IsNow(tz=timezone.utc),
-                role='tool-return',
             ),
         ]
     )

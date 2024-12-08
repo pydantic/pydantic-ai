@@ -735,7 +735,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         """Process a non-streamed response from the model.
 
         Returns:
-            A tuple of (final_result, messages). If final_result is not None, the conversation should end.
+            A tuple of `(final_result, messages)`. If `final_result` is not `None`, the conversation should end.
         """
         if model_response.role == 'model-text-response':
             # plain string response
@@ -929,6 +929,8 @@ class _MarkFinalResult(Generic[ResultData]):
     """Marker class to indicate that the result is the final result.
 
     This allows us to use `isinstance`, which wouldn't be possible if we were returning `ResultData` directly.
+
+    It also avoids problems in the case where the result type is itself `None`, but is set.
     """
 
     data: ResultData

@@ -190,7 +190,7 @@ async def test_request_structured_response(allow_model_requests: None):
                         tool_id='123',
                     )
                 ],
-                timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc),
             ),
             ToolReturn(
                 tool_name='final_result',
@@ -283,7 +283,7 @@ async def test_request_tool_call(allow_model_requests: None):
                         tool_id='2',
                     )
                 ],
-                timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc),
             ),
             ToolReturn(
                 tool_name='get_location',
@@ -291,11 +291,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 tool_id='2',
                 timestamp=IsNow(tz=timezone.utc),
             ),
-            ModelTextResponse(
-                content='final response',
-                timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
-                role='model-text-response',
-            ),
+            ModelTextResponse(content='final response', timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc)),
         ]
     )
 
