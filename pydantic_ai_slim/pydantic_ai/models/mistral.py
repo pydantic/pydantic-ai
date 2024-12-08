@@ -7,18 +7,19 @@ from datetime import datetime, timezone
 from typing import List, Literal
 
 from httpx import AsyncClient as AsyncHTTPClient
-from mistralai import ContentChunk
+from mistralai import ContentChunk, FunctionCall
 from mistralai.types.basemodel import Unset
 from typing_extensions import assert_never
 
 from .. import UnexpectedModelBehavior, result
 from ..messages import (
+    ArgsDict,
     Message,
     ModelAnyResponse,
     ModelStructuredResponse,
     ModelTextResponse,
-    ToolCall,
 )
+from ..messages import ToolCall as PydanticToolCall
 from . import (
     AbstractToolDefinition,
     AgentModel,
@@ -29,6 +30,7 @@ from . import (
 )
 
 try:
+    from mistralai.models import ToolCall 
     from mistralai.models import ChatCompletionResponse
     from mistralai.models import CompletionEvent
     from mistralai.utils.eventstreaming import EventStreamAsync
@@ -224,8 +226,8 @@ class MistralAgentModel(AgentModel):
             choice.message.tool_calls, Unset
         ):
             tools_calls = choice.message.tool_calls
-            tools: List[ToolCall] = [
-                ToolCall.from_json(
+            tools: List[PydanticToolCall] = [
+                PydanticToolCall.from_json(
                     tool_name=c.function.name,
                     args_json=c.function.arguments,
                     tool_id=c.id,
@@ -317,18 +319,18 @@ class MistralAgentModel(AgentModel):
             assert_never(message)
 
 
-def _guard_tool_id(t: ToolCall) -> str:
+def _guard_tool_id(t: PydanticToolCall) -> str:
     """Type guard that checks a `tool_id` is not None both for static typing and runtime."""
     assert t.tool_id is not None, f"Mistral requires `tool_id` to be set: {t}"
     return t.tool_id
 
 
-def _map_tool_call(t: ToolCall) -> models.ToolCall:
-    # assert isinstance(t.args, ArgsJson), f"Expected ArgsJson, got {t.args}"
-    return models.ToolCall(
+def _map_tool_call(t: PydanticToolCall) -> ToolCall:
+    assert isinstance(t.args, ArgsDict), f"Expected ArgsDict, got {t.args}"
+    return ToolCall(
         id=_guard_tool_id(t),
         type="function",
-        function={"name": t.tool_name, "arguments": t.args.args_json},
+        function=FunctionCall(name= t.tool_name, arguments=t.args.args_dict),
     )
 
 
