@@ -37,17 +37,10 @@ try:
     from mistralai.models import CompletionEvent
     from mistralai.utils.eventstreaming import EventStreamAsync
     from mistralai import Mistral, models
-    from mistralai.models.assistantmessage import (
-        AssistantMessage,
-    )
-
+    from mistralai.models.assistantmessage import AssistantMessage
     from mistralai.models.function import Function
-    from mistralai.models.toolmessage import (
-        ToolMessage,
-    )
-    from mistralai.models.usermessage import (
-        UserMessage,
-    )
+    from mistralai.models.toolmessage import ToolMessage
+    from mistralai.models.usermessage import UserMessage
     from mistralai.types import UNSET
 except ImportError as e:
     raise ImportError(
