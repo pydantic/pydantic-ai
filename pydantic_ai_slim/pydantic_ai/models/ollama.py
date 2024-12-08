@@ -1,13 +1,12 @@
 from __future__ import annotations as _annotations
 
-from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Literal, Union
 
 from httpx import AsyncClient as AsyncHTTPClient
 
+from ..tools import ToolDefinition
 from . import (
-    AbstractToolDefinition,
     AgentModel,
     Model,
     cached_async_http_client,
@@ -104,9 +103,10 @@ class OllamaModel(Model):
 
     async def agent_model(
         self,
-        function_tools: Mapping[str, AbstractToolDefinition],
+        *,
+        function_tools: list[ToolDefinition],
         allow_text_result: bool,
-        result_tools: Sequence[AbstractToolDefinition] | None,
+        result_tools: list[ToolDefinition],
     ) -> AgentModel:
         return await self.openai_model.agent_model(
             function_tools=function_tools,

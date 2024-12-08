@@ -214,6 +214,10 @@ async def main():
 
 _(This example is complete, it can be run "as is")_
 
+!!! warning "Result message not included in `messages`"
+    The final result message will **NOT** be added to result messages if you use `.stream_text(delta=True)`,
+    see [Messages and chat history](message-history.md) for more information.
+
 ### Streaming Structured Responses
 
 Not all types are supported with partial validation in Pydantic, see [pydantic/pydantic#10748](https://github.com/pydantic/pydantic/pull/10748), generally for model-like structures it's currently best to use `TypeDict`.

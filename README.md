@@ -120,7 +120,7 @@ support_agent = Agent(
 )
 
 
-# Dynamic system prompts can can make use of dependency injection.
+# Dynamic system prompts can make use of dependency injection.
 # Dependencies are carried via the `RunContext` argument, which is parameterized with the `deps_type` from above.
 # If the type annotation here is wrong, static type checkers will catch it.
 @support_agent.system_prompt

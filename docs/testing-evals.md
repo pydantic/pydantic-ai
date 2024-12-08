@@ -209,8 +209,6 @@ def call_weather_forecast(  # (1)!
 ) -> ModelAnyResponse:
     if len(messages) == 2:
         # first call, call the weather forecast tool
-        assert set(info.function_tools.keys()) == {'weather_forecast'}
-
         user_prompt = messages[1]
         m = re.search(r'\d{4}-\d{2}-\d{2}', user_prompt.content)
         assert m is not None

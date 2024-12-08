@@ -14,7 +14,7 @@ and [`StreamedRunResult`][pydantic_ai.result.StreamedRunResult] (returned by [`A
 * [`new_messages()`][pydantic_ai.result.RunResult.new_messages]: returns only the messages from the current run, excluding system prompts, this is generally the data you want when you want to use the messages in further runs to continue the conversation. There's also a variant that returns JSON bytes, [`new_messages_json()`][pydantic_ai.result.RunResult.new_messages_json].
 
 !!! info "StreamedRunResult and complete messages"
-    On [`StreamedRunResult`][pydantic_ai.result.StreamedRunResult], the messages returned from these methods will only include the final response message once the stream has finished.
+    On [`StreamedRunResult`][pydantic_ai.result.StreamedRunResult], the messages returned from these methods will only include the final result message once the stream has finished.
 
     E.g. you've awaited one of the following coroutines:
 
@@ -22,6 +22,8 @@ and [`StreamedRunResult`][pydantic_ai.result.StreamedRunResult] (returned by [`A
     * [`StreamedRunResult.stream_text()`][pydantic_ai.result.StreamedRunResult.stream_text]
     * [`StreamedRunResult.stream_structured()`][pydantic_ai.result.StreamedRunResult.stream_structured]
     * [`StreamedRunResult.get_data()`][pydantic_ai.result.StreamedRunResult.get_data]
+
+    **Note:** The final result message will NOT be added to result messages if you use [`.stream_text(delta=True)`][pydantic_ai.result.StreamedRunResult.stream_text] since in this case the result content is never built as one string.
 
 Example of accessing methods on a [`RunResult`][pydantic_ai.result.RunResult] :
 
