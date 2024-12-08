@@ -420,7 +420,7 @@ print(dice_result.data)
 ```
 
 1. The simplest way to register tools via the `Agent` constructor is to pass a list of functions, the function signature is inspected to determine if the tool takes [`RunContext`][pydantic_ai.tools.RunContext].
-2. `agent_a` and `agent_b` are identical — but we can use [`Tool`][pydantic_ai.tools.Tool] to give more fine-grained control over how tools are defined, e.g. setting their name or description.
+2. `agent_a` and `agent_b` are identical — but we can use [`Tool`][pydantic_ai.tools.Tool] to reuse tool definitions and give more fine-grained control over how tools are defined, e.g. setting their name or description, or using a custom [`prepare`](#tool-prepare) method.
 
 _(This example is complete, it can be run "as is")_
 
@@ -459,10 +459,10 @@ def foobar(a: int, b: str, c: dict[str, list[float]]) -> str:
 
 
 def print_schema(messages: list[Message], info: AgentInfo) -> ModelAnyResponse:
-    tool = info.function_tools['foobar']
+    tool = info.function_tools[0]
     print(tool.description)
     #> Get me foobar.
-    print(tool.json_schema)
+    print(tool.parameters_json_schema)
     """
     {
         'description': 'Get me foobar.',
@@ -491,7 +491,167 @@ _(This example is complete, it can be run "as is")_
 
 The return type of tool can be anything which Pydantic can serialize to JSON as some models (e.g. Gemini) support semi-structured return values, some expect text (OpenAI) but seem to be just as good at extracting meaning from the data. If a Python object is returned and the model expects a string, the value will be serialized to JSON.
 
-If a tool has a single parameter that can be represented as an object in JSON schema (e.g. dataclass, TypedDict, pydantic model), the schema for the tool is simplified to be just that object. (TODO example)
+If a tool has a single parameter that can be represented as an object in JSON schema (e.g. dataclass, TypedDict, pydantic model), the schema for the tool is simplified to be just that object.
+
+Here's an example, we use [`TestModel.agent_model_function_tools`][pydantic_ai.models.test.TestModel.agent_model_function_tools] to inspect the tool schema that would be passed to the model.
+
+```py title="single_parameter_tool.py"
+from pydantic import BaseModel
+
+from pydantic_ai import Agent
+from pydantic_ai.models.test import TestModel
+
+agent = Agent()
+
+
+class Foobar(BaseModel):
+    """This is a Foobar"""
+
+    x: int
+    y: str
+    z: float = 3.14
+
+
+@agent.tool_plain
+def foobar(f: Foobar) -> str:
+    return str(f)
+
+
+test_model = TestModel()
+result = agent.run_sync('hello', model=test_model)
+print(result.data)
+#> {"foobar":"x=0 y='a' z=3.14"}
+print(test_model.agent_model_function_tools)
+"""
+[
+    ToolDefinition(
+        name='foobar',
+        description='',
+        parameters_json_schema={
+            'description': 'This is a Foobar',
+            'properties': {
+                'x': {'title': 'X', 'type': 'integer'},
+                'y': {'title': 'Y', 'type': 'string'},
+                'z': {'default': 3.14, 'title': 'Z', 'type': 'number'},
+            },
+            'required': ['x', 'y'],
+            'title': 'Foobar',
+            'type': 'object',
+        },
+        outer_typed_dict_key=None,
+    )
+]
+"""
+```
+
+_(This example is complete, it can be run "as is")_
+
+### Dynamic Function tools {#tool-prepare}
+
+Tools can optionally be defined with another function: `prepare`, which is called at each step of a run to
+customize the definition of the tool passed to the model, or omit the tool completely from that step.
+
+A `prepare` method can be registered via the `prepare` kwarg to any of the tool registration mechanisms:
+
+* [`@agent.tool`][pydantic_ai.Agent.tool] decorator
+* [`@agent.tool_plain`][pydantic_ai.Agent.tool_plain] decorator
+* [`Tool`][pydantic_ai.tools.Tool] dataclass
+
+The `prepare` method, should be of type [`ToolPrepareFunc`][pydantic_ai.tools.ToolPrepareFunc], a function which takes [`RunContext`][pydantic_ai.tools.RunContext] and a pre-built [`ToolDefinition`][pydantic_ai.tools.ToolDefinition], and should either return that `ToolDefinition` with or without modifying it, return a new `ToolDefinition`, or return `None` to indicate this tools should not be registered for that step.
+
+Here's a simple `prepare` method that only includes the tool if the value of the dependency is `42`.
+
+As with the previous example, we use [`TestModel`][pydantic_ai.models.test.TestModel] to demonstrate the behavior without calling a real model.
+
+```py title="tool_only_if_42.py"
+from typing import Union
+
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.tools import ToolDefinition
+
+agent = Agent('test')
+
+
+async def only_if_42(
+    ctx: RunContext[int], tool_def: ToolDefinition
+) -> Union[ToolDefinition, None]:
+    if ctx.deps == 42:
+        return tool_def
+
+
+@agent.tool(prepare=only_if_42)
+def hitchhiker(ctx: RunContext[int], answer: str) -> str:
+    return f'{ctx.deps} {answer}'
+
+
+result = agent.run_sync('testing...', deps=41)
+print(result.data)
+#> success (no tool calls)
+result = agent.run_sync('testing...', deps=42)
+print(result.data)
+#> {"hitchhiker":"42 a"}
+```
+
+_(This example is complete, it can be run "as is")_
+
+Here's a more complex example where we change the description of the `name` parameter to based on the value of `deps`
+
+For the sake of variation, we create this tool using the [`Tool`][pydantic_ai.tools.Tool] dataclass.
+
+```py title="customize_name.py"
+from __future__ import annotations
+
+from typing import Literal
+
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.models.test import TestModel
+from pydantic_ai.tools import Tool, ToolDefinition
+
+
+def greet(name: str) -> str:
+    return f'hello {name}'
+
+
+async def prepare_greet(
+    ctx: RunContext[Literal['human', 'machine']], tool_def: ToolDefinition
+) -> ToolDefinition | None:
+    d = f'Name of the {ctx.deps} to greet.'
+    tool_def.parameters_json_schema['properties']['name']['description'] = d
+    return tool_def
+
+
+greet_tool = Tool(greet, prepare=prepare_greet)
+test_model = TestModel()
+agent = Agent(test_model, tools=[greet_tool], deps_type=Literal['human', 'machine'])
+
+result = agent.run_sync('testing...', deps='human')
+print(result.data)
+#> {"greet":"hello a"}
+print(test_model.agent_model_function_tools)
+"""
+[
+    ToolDefinition(
+        name='greet',
+        description='',
+        parameters_json_schema={
+            'properties': {
+                'name': {
+                    'title': 'Name',
+                    'type': 'string',
+                    'description': 'Name of the human to greet.',
+                }
+            },
+            'required': ['name'],
+            'type': 'object',
+            'additionalProperties': False,
+        },
+        outer_typed_dict_key=None,
+    )
+]
+"""
+```
+
+_(This example is complete, it can be run "as is")_
 
 ## Reflection and self-correction
 

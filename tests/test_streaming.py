@@ -172,7 +172,7 @@ async def test_call_tool():
         if len(messages) == 1:
             assert agent_info.function_tools is not None
             assert len(agent_info.function_tools) == 1
-            name = next(iter(agent_info.function_tools))
+            name = agent_info.function_tools[0].name
             first = messages[0]
             assert isinstance(first, UserPrompt)
             json_string = json.dumps({'x': first.content})

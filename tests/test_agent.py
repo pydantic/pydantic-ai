@@ -2,6 +2,7 @@ import sys
 from datetime import timezone
 from typing import Any, Callable, Union
 
+import httpx
 import pytest
 from inline_snapshot import snapshot
 from pydantic import BaseModel
@@ -24,6 +25,7 @@ from pydantic_ai.models import cached_async_http_client
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.result import Cost, RunResult
+from pydantic_ai.tools import ToolDefinition
 
 from .conftest import IsNow, TestEnv
 
@@ -185,34 +187,33 @@ def test_response_tuple(set_event_loop: None):
     result = agent.run_sync('Hello')
     assert result.data == snapshot(('a', 'a'))
 
-    assert m.agent_model_tools == snapshot({})
+    assert m.agent_model_function_tools == snapshot([])
     assert m.agent_model_allow_text_result is False
 
     assert m.agent_model_result_tools is not None
     assert len(m.agent_model_result_tools) == 1
 
-    # to match the protocol, we just extract the attributes we care about
-    fields = 'name', 'description', 'json_schema', 'outer_typed_dict_key'
-    agent_model_result_tool = {f: getattr(m.agent_model_result_tools[0], f) for f in fields}
-    assert agent_model_result_tool == snapshot(
-        {
-            'name': 'final_result',
-            'description': 'The final response which ends this conversation',
-            'json_schema': {
-                'properties': {
-                    'response': {
-                        'maxItems': 2,
-                        'minItems': 2,
-                        'prefixItems': [{'type': 'string'}, {'type': 'string'}],
-                        'title': 'Response',
-                        'type': 'array',
-                    }
+    assert m.agent_model_result_tools == snapshot(
+        [
+            ToolDefinition(
+                name='final_result',
+                description='The final response which ends this conversation',
+                parameters_json_schema={
+                    'properties': {
+                        'response': {
+                            'maxItems': 2,
+                            'minItems': 2,
+                            'prefixItems': [{'type': 'string'}, {'type': 'string'}],
+                            'title': 'Response',
+                            'type': 'array',
+                        }
+                    },
+                    'required': ['response'],
+                    'type': 'object',
                 },
-                'required': ['response'],
-                'type': 'object',
-            },
-            'outer_typed_dict_key': 'response',
-        }
+                outer_typed_dict_key='response',
+            )
+        ]
     )
 
 
@@ -244,27 +245,28 @@ def test_response_union_allow_str(set_event_loop: None, input_union_callable: Ca
     assert result.data == snapshot('success (no tool calls)')
     assert got_tool_call_name == snapshot(None)
 
-    assert m.agent_model_tools == snapshot({})
+    assert m.agent_model_function_tools == snapshot([])
     assert m.agent_model_allow_text_result is True
 
     assert m.agent_model_result_tools is not None
     assert len(m.agent_model_result_tools) == 1
 
-    # to match the protocol, we just extract the attributes we care about
-    fields = 'name', 'description', 'json_schema', 'outer_typed_dict_key'
-    agent_model_result_tool = {f: getattr(m.agent_model_result_tools[0], f) for f in fields}
-    assert agent_model_result_tool == snapshot(
-        {
-            'name': 'final_result',
-            'description': 'The final response which ends this conversation',
-            'json_schema': {
-                'properties': {'a': {'title': 'A', 'type': 'integer'}, 'b': {'title': 'B', 'type': 'string'}},
-                'title': 'Foo',
-                'required': ['a', 'b'],
-                'type': 'object',
-            },
-            'outer_typed_dict_key': None,
-        }
+    assert m.agent_model_result_tools == snapshot(
+        [
+            ToolDefinition(
+                name='final_result',
+                description='The final response which ends this conversation',
+                parameters_json_schema={
+                    'properties': {
+                        'a': {'title': 'A', 'type': 'integer'},
+                        'b': {'title': 'B', 'type': 'string'},
+                    },
+                    'required': ['a', 'b'],
+                    'title': 'Foo',
+                    'type': 'object',
+                },
+            )
+        ]
     )
 
 
@@ -318,21 +320,18 @@ class Bar(BaseModel):
     assert result.data == mod.Foo(a=0, b='a')
     assert got_tool_call_name == snapshot('final_result_Foo')
 
-    assert m.agent_model_tools == snapshot({})
+    assert m.agent_model_function_tools == snapshot([])
     assert m.agent_model_allow_text_result is False
 
     assert m.agent_model_result_tools is not None
     assert len(m.agent_model_result_tools) == 2
 
-    # to match the protocol, we just extract the attributes we care about
-    fields = 'name', 'description', 'json_schema', 'outer_typed_dict_key'
-    agent_model_result_tools = [{f: getattr(t, f) for f in fields} for t in m.agent_model_result_tools]
-    assert agent_model_result_tools == snapshot(
+    assert m.agent_model_result_tools == snapshot(
         [
-            {
-                'name': 'final_result_Foo',
-                'description': 'Foo: The final response which ends this conversation',
-                'json_schema': {
+            ToolDefinition(
+                name='final_result_Foo',
+                description='Foo: The final response which ends this conversation',
+                parameters_json_schema={
                     'properties': {
                         'a': {'title': 'A', 'type': 'integer'},
                         'b': {'title': 'B', 'type': 'string'},
@@ -341,19 +340,17 @@ class Bar(BaseModel):
                     'title': 'Foo',
                     'type': 'object',
                 },
-                'outer_typed_dict_key': None,
-            },
-            {
-                'name': 'final_result_Bar',
-                'description': 'This is a bar model.',
-                'json_schema': {
+            ),
+            ToolDefinition(
+                name='final_result_Bar',
+                description='This is a bar model.',
+                parameters_json_schema={
                     'properties': {'b': {'title': 'B', 'type': 'string'}},
                     'required': ['b'],
                     'title': 'Bar',
                     'type': 'object',
                 },
-                'outer_typed_dict_key': None,
-            },
+            ),
         ]
     )
 
@@ -388,7 +385,6 @@ def test_run_with_history_new(set_event_loop: None):
     result2 = agent.run_sync('Hello again', message_history=result1.new_messages())
     assert result2 == snapshot(
         RunResult(
-            data='{"ret_a":"a-apple"}',
             _all_messages=[
                 SystemPrompt(content='Foobar'),
                 UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
@@ -400,19 +396,15 @@ def test_run_with_history_new(set_event_loop: None):
                 ModelTextResponse(content='{"ret_a":"a-apple"}', timestamp=IsNow(tz=timezone.utc)),
                 # second call, notice no repeated system prompt
                 UserPrompt(content='Hello again', timestamp=IsNow(tz=timezone.utc)),
-                ModelStructuredResponse(
-                    calls=[ToolCall(tool_name='ret_a', args=ArgsDict(args_dict={'x': 'a'}))],
-                    timestamp=IsNow(tz=timezone.utc),
-                ),
-                ToolReturn(tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc)),
                 ModelTextResponse(content='{"ret_a":"a-apple"}', timestamp=IsNow(tz=timezone.utc)),
             ],
             _new_message_index=5,
+            data='{"ret_a":"a-apple"}',
             _cost=Cost(),
         )
     )
     new_msg_roles = [msg.role for msg in result2.new_messages()]
-    assert new_msg_roles == snapshot(['user', 'model-structured-response', 'tool-return', 'model-text-response'])
+    assert new_msg_roles == snapshot(['user', 'model-text-response'])
     assert result2.new_messages_json().startswith(b'[{"content":"Hello again",')
 
     # if we pass all_messages, system prompt is NOT inserted before the message_history messages,
@@ -433,11 +425,6 @@ def test_run_with_history_new(set_event_loop: None):
                 ModelTextResponse(content='{"ret_a":"a-apple"}', timestamp=IsNow(tz=timezone.utc)),
                 # second call, notice no repeated system prompt
                 UserPrompt(content='Hello again', timestamp=IsNow(tz=timezone.utc)),
-                ModelStructuredResponse(
-                    calls=[ToolCall(tool_name='ret_a', args=ArgsDict(args_dict={'x': 'a'}))],
-                    timestamp=IsNow(tz=timezone.utc),
-                ),
-                ToolReturn(tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc)),
                 ModelTextResponse(content='{"ret_a":"a-apple"}', timestamp=IsNow(tz=timezone.utc)),
             ],
             _new_message_index=5,
@@ -534,8 +521,12 @@ def test_run_sync_multiple(set_event_loop: None):
         # raised a `RuntimeError: Event loop is closed` on repeat runs when we used `asyncio.run()`
         client = cached_async_http_client()
         # use this as I suspect it's about the fastest globally available endpoint
-        response = await client.get('https://cloudflare.com/cdn-cgi/trace')
-        return str(response.status_code)
+        try:
+            response = await client.get('https://cloudflare.com/cdn-cgi/trace')
+        except httpx.ConnectError:
+            pytest.skip('offline')
+        else:
+            return str(response.status_code)
 
     for _ in range(2):
         result = agent.run_sync('Hello')

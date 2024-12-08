@@ -12,7 +12,7 @@ from inline_snapshot import snapshot
 from pydantic import BaseModel
 from typing_extensions import Literal, TypeAlias
 
-from pydantic_ai import Agent, ModelRetry, UnexpectedModelBehavior, UserError, _utils
+from pydantic_ai import Agent, ModelRetry, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
     ArgsDict,
     ModelStructuredResponse,
@@ -42,6 +42,7 @@ from pydantic_ai.models.gemini import (
     _GeminiUsageMetaData,
 )
 from pydantic_ai.result import Cost
+from pydantic_ai.tools import ToolDefinition
 
 from ..conftest import ClientWithHandler, IsNow, TestEnv
 
@@ -76,7 +77,7 @@ def test_api_key_empty(env: TestEnv):
 
 async def test_agent_model_simple(allow_model_requests: None):
     m = GeminiModel('gemini-1.5-flash', api_key='via-arg')
-    agent_model = await m.agent_model({}, True, None)
+    agent_model = await m.agent_model(function_tools=[], allow_text_result=True, result_tools=[])
     assert isinstance(agent_model.http_client, httpx.AsyncClient)
     assert agent_model.model_name == 'gemini-1.5-flash'
     assert isinstance(agent_model.auth, ApiKeyAuth)
@@ -85,24 +86,15 @@ async def test_agent_model_simple(allow_model_requests: None):
     assert agent_model.tool_config is None
 
 
-@dataclass
-class TestToolDefinition:
-    __test__ = False
-    name: str
-    description: str
-    json_schema: _utils.ObjectJsonSchema
-    outer_typed_dict_key: str | None = None
-
-
 async def test_agent_model_tools(allow_model_requests: None):
     m = GeminiModel('gemini-1.5-flash', api_key='via-arg')
-    tools = {
-        'foo': TestToolDefinition(
+    tools = [
+        ToolDefinition(
             'foo',
             'This is foo',
             {'type': 'object', 'title': 'Foo', 'properties': {'bar': {'type': 'number', 'title': 'Bar'}}},
         ),
-        'apple': TestToolDefinition(
+        ToolDefinition(
             'apple',
             'This is apple',
             {
@@ -112,13 +104,13 @@ async def test_agent_model_tools(allow_model_requests: None):
                 },
             },
         ),
-    }
-    result_tool = TestToolDefinition(
+    ]
+    result_tool = ToolDefinition(
         'result',
         'This is the tool for the final Result',
         {'type': 'object', 'title': 'Result', 'properties': {'spam': {'type': 'number'}}, 'required': ['spam']},
     )
-    agent_model = await m.agent_model(tools, True, [result_tool])
+    agent_model = await m.agent_model(function_tools=tools, allow_text_result=True, result_tools=[result_tool])
     assert agent_model.tools == snapshot(
         _GeminiTools(
             function_declarations=[
@@ -152,12 +144,12 @@ async def test_agent_model_tools(allow_model_requests: None):
 
 async def test_require_response_tool(allow_model_requests: None):
     m = GeminiModel('gemini-1.5-flash', api_key='via-arg')
-    result_tool = TestToolDefinition(
+    result_tool = ToolDefinition(
         'result',
         'This is the tool for the final Result',
         {'type': 'object', 'title': 'Result', 'properties': {'spam': {'type': 'number'}}},
     )
-    agent_model = await m.agent_model({}, False, [result_tool])
+    agent_model = await m.agent_model(function_tools=[], allow_text_result=False, result_tools=[result_tool])
     assert agent_model.tools == snapshot(
         _GeminiTools(
             function_declarations=[
@@ -209,12 +201,12 @@ async def test_json_def_replaced(allow_model_requests: None):
     )
 
     m = GeminiModel('gemini-1.5-flash', api_key='via-arg')
-    result_tool = TestToolDefinition(
+    result_tool = ToolDefinition(
         'result',
         'This is the tool for the final Result',
         json_schema,
     )
-    agent_model = await m.agent_model({}, True, [result_tool])
+    agent_model = await m.agent_model(function_tools=[], allow_text_result=True, result_tools=[result_tool])
     assert agent_model.tools == snapshot(
         _GeminiTools(
             function_declarations=[
@@ -255,12 +247,12 @@ async def test_json_def_replaced_any_of(allow_model_requests: None):
     json_schema = Locations.model_json_schema()
 
     m = GeminiModel('gemini-1.5-flash', api_key='via-arg')
-    result_tool = TestToolDefinition(
+    result_tool = ToolDefinition(
         'result',
         'This is the tool for the final Result',
         json_schema,
     )
-    agent_model = await m.agent_model({}, True, [result_tool])
+    agent_model = await m.agent_model(function_tools=[], allow_text_result=True, result_tools=[result_tool])
     assert agent_model.tools == snapshot(
         _GeminiTools(
             function_declarations=[
@@ -318,13 +310,13 @@ async def test_json_def_recursive(allow_model_requests: None):
     )
 
     m = GeminiModel('gemini-1.5-flash', api_key='via-arg')
-    result_tool = TestToolDefinition(
+    result_tool = ToolDefinition(
         'result',
         'This is the tool for the final Result',
         json_schema,
     )
     with pytest.raises(UserError, match=r'Recursive `\$ref`s in JSON Schema are not supported by Gemini'):
-        await m.agent_model({}, True, [result_tool])
+        await m.agent_model(function_tools=[], allow_text_result=True, result_tools=[result_tool])
 
 
 @dataclass
