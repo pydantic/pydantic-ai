@@ -459,7 +459,7 @@ def foobar(a: int, b: str, c: dict[str, list[float]]) -> str:
 
 
 def print_schema(messages: list[Message], info: AgentInfo) -> ModelAnyResponse:
-    tool = info.function_tools['foobar']
+    tool = info.function_tools[0]
     print(tool.description)
     #> Get me foobar.
     print(tool.parameters_json_schema)
@@ -523,8 +523,8 @@ print(result.data)
 #> {"foobar":"x=0 y='a' z=3.14"}
 print(test_model.agent_model_function_tools)
 """
-{
-    'foobar': ToolDefinition(
+[
+    ToolDefinition(
         name='foobar',
         description='',
         parameters_json_schema={
@@ -540,7 +540,7 @@ print(test_model.agent_model_function_tools)
         },
         outer_typed_dict_key=None,
     )
-}
+]
 """
 ```
 
@@ -629,8 +629,8 @@ print(result.data)
 #> {"greet":"hello a"}
 print(test_model.agent_model_function_tools)
 """
-{
-    'greet': ToolDefinition(
+[
+    ToolDefinition(
         name='greet',
         description='',
         parameters_json_schema={
@@ -647,7 +647,7 @@ print(test_model.agent_model_function_tools)
         },
         outer_typed_dict_key=None,
     )
-}
+]
 """
 ```
 

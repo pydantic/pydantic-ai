@@ -54,9 +54,9 @@ class FunctionModel(Model):
     async def agent_model(
         self,
         *,
-        function_tools: dict[str, ToolDefinition],
+        function_tools: list[ToolDefinition],
         allow_text_result: bool,
-        result_tools: dict[str, ToolDefinition] | None,
+        result_tools: list[ToolDefinition],
     ) -> AgentModel:
         return FunctionAgentModel(
             self.function, self.stream_function, AgentInfo(function_tools, allow_text_result, result_tools)
@@ -78,7 +78,7 @@ class AgentInfo:
     This is passed as the second to functions used within [`FunctionModel`][pydantic_ai.models.function.FunctionModel].
     """
 
-    function_tools: dict[str, ToolDefinition]
+    function_tools: list[ToolDefinition]
     """The function tools available on this agent.
 
     These are the tools registered via the [`tool`][pydantic_ai.Agent.tool] and
@@ -86,7 +86,7 @@ class AgentInfo:
     """
     allow_text_result: bool
     """Whether a plain text result is allowed."""
-    result_tools: dict[str, ToolDefinition] | None
+    result_tools: list[ToolDefinition]
     """The tools that can called as the final result of the run."""
 
 

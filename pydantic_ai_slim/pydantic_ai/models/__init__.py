@@ -64,9 +64,9 @@ class Model(ABC):
     async def agent_model(
         self,
         *,
-        function_tools: dict[str, ToolDefinition],
+        function_tools: list[ToolDefinition],
         allow_text_result: bool,
-        result_tools: dict[str, ToolDefinition] | None,
+        result_tools: list[ToolDefinition],
     ) -> AgentModel:
         """Create an agent model, this is called for each step of an agent run.
 

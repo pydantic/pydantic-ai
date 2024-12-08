@@ -110,9 +110,9 @@ class VertexAIModel(Model):
     async def agent_model(
         self,
         *,
-        function_tools: dict[str, ToolDefinition],
+        function_tools: list[ToolDefinition],
         allow_text_result: bool,
-        result_tools: dict[str, ToolDefinition] | None,
+        result_tools: list[ToolDefinition],
     ) -> GeminiAgentModel:
         url, auth = await self._ainit()
         return GeminiAgentModel(

@@ -91,9 +91,9 @@ class GeminiModel(Model):
     async def agent_model(
         self,
         *,
-        function_tools: dict[str, ToolDefinition],
+        function_tools: list[ToolDefinition],
         allow_text_result: bool,
-        result_tools: dict[str, ToolDefinition] | None,
+        result_tools: list[ToolDefinition],
     ) -> GeminiAgentModel:
         return GeminiAgentModel(
             http_client=self.http_client,
@@ -143,14 +143,14 @@ class GeminiAgentModel(AgentModel):
         model_name: GeminiModelName,
         auth: AuthProtocol,
         url: str,
-        function_tools: dict[str, ToolDefinition],
+        function_tools: list[ToolDefinition],
         allow_text_result: bool,
-        result_tools: dict[str, ToolDefinition] | None,
+        result_tools: list[ToolDefinition],
     ):
         check_allow_model_requests()
-        tools = [_function_from_abstract_tool(t) for t in function_tools.values()]
-        if result_tools is not None:
-            tools += [_function_from_abstract_tool(t) for t in result_tools.values()]
+        tools = [_function_from_abstract_tool(t) for t in function_tools]
+        if result_tools:
+            tools += [_function_from_abstract_tool(t) for t in result_tools]
 
         if allow_text_result:
             tool_config = None

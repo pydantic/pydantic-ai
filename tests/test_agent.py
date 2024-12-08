@@ -36,7 +36,7 @@ def test_result_tuple(set_event_loop: None):
     def return_tuple(_: list[Message], info: AgentInfo) -> ModelAnyResponse:
         assert info.result_tools is not None
         args_json = '{"response": ["foo", "bar"]}'
-        return ModelStructuredResponse(calls=[ToolCall.from_json(info.result_tools['final_result'].name, args_json)])
+        return ModelStructuredResponse(calls=[ToolCall.from_json(info.result_tools[0].name, args_json)])
 
     agent = Agent(FunctionModel(return_tuple), result_type=tuple[str, str])
 
@@ -53,7 +53,7 @@ def test_result_pydantic_model(set_event_loop: None):
     def return_model(_: list[Message], info: AgentInfo) -> ModelAnyResponse:
         assert info.result_tools is not None
         args_json = '{"a": 1, "b": "foo"}'
-        return ModelStructuredResponse(calls=[ToolCall.from_json(info.result_tools['final_result'].name, args_json)])
+        return ModelStructuredResponse(calls=[ToolCall.from_json(info.result_tools[0].name, args_json)])
 
     agent = Agent(FunctionModel(return_model), result_type=Foo)
 
@@ -69,7 +69,7 @@ def test_result_pydantic_model_retry(set_event_loop: None):
             args_json = '{"a": "wrong", "b": "foo"}'
         else:
             args_json = '{"a": 42, "b": "foo"}'
-        return ModelStructuredResponse(calls=[ToolCall.from_json(info.result_tools['final_result'].name, args_json)])
+        return ModelStructuredResponse(calls=[ToolCall.from_json(info.result_tools[0].name, args_json)])
 
     agent = Agent(FunctionModel(return_model), result_type=Foo)
 
@@ -114,7 +114,7 @@ def test_result_validator(set_event_loop: None):
             args_json = '{"a": 41, "b": "foo"}'
         else:
             args_json = '{"a": 42, "b": "foo"}'
-        return ModelStructuredResponse(calls=[ToolCall.from_json(info.result_tools['final_result'].name, args_json)])
+        return ModelStructuredResponse(calls=[ToolCall.from_json(info.result_tools[0].name, args_json)])
 
     agent = Agent(FunctionModel(return_model), result_type=Foo)
 
@@ -155,9 +155,7 @@ def test_plain_response(set_event_loop: None):
             return ModelTextResponse(content='hello')
         else:
             args_json = '{"response": ["foo", "bar"]}'
-            return ModelStructuredResponse(
-                calls=[ToolCall.from_json(info.result_tools['final_result'].name, args_json)]
-            )
+            return ModelStructuredResponse(calls=[ToolCall.from_json(info.result_tools[0].name, args_json)])
 
     agent = Agent(FunctionModel(return_tuple), result_type=tuple[str, str])
 
@@ -189,15 +187,15 @@ def test_response_tuple(set_event_loop: None):
     result = agent.run_sync('Hello')
     assert result.data == snapshot(('a', 'a'))
 
-    assert m.agent_model_function_tools == snapshot({})
+    assert m.agent_model_function_tools == snapshot([])
     assert m.agent_model_allow_text_result is False
 
     assert m.agent_model_result_tools is not None
     assert len(m.agent_model_result_tools) == 1
 
     assert m.agent_model_result_tools == snapshot(
-        {
-            'final_result': ToolDefinition(
+        [
+            ToolDefinition(
                 name='final_result',
                 description='The final response which ends this conversation',
                 parameters_json_schema={
@@ -215,7 +213,7 @@ def test_response_tuple(set_event_loop: None):
                 },
                 outer_typed_dict_key='response',
             )
-        }
+        ]
     )
 
 
@@ -247,15 +245,15 @@ def test_response_union_allow_str(set_event_loop: None, input_union_callable: Ca
     assert result.data == snapshot('success (no tool calls)')
     assert got_tool_call_name == snapshot(None)
 
-    assert m.agent_model_function_tools == snapshot({})
+    assert m.agent_model_function_tools == snapshot([])
     assert m.agent_model_allow_text_result is True
 
     assert m.agent_model_result_tools is not None
     assert len(m.agent_model_result_tools) == 1
 
     assert m.agent_model_result_tools == snapshot(
-        {
-            'final_result': ToolDefinition(
+        [
+            ToolDefinition(
                 name='final_result',
                 description='The final response which ends this conversation',
                 parameters_json_schema={
@@ -268,7 +266,7 @@ def test_response_union_allow_str(set_event_loop: None, input_union_callable: Ca
                     'type': 'object',
                 },
             )
-        }
+        ]
     )
 
 
@@ -322,15 +320,15 @@ class Bar(BaseModel):
     assert result.data == mod.Foo(a=0, b='a')
     assert got_tool_call_name == snapshot('final_result_Foo')
 
-    assert m.agent_model_function_tools == snapshot({})
+    assert m.agent_model_function_tools == snapshot([])
     assert m.agent_model_allow_text_result is False
 
     assert m.agent_model_result_tools is not None
     assert len(m.agent_model_result_tools) == 2
 
     assert m.agent_model_result_tools == snapshot(
-        {
-            'final_result_Foo': ToolDefinition(
+        [
+            ToolDefinition(
                 name='final_result_Foo',
                 description='Foo: The final response which ends this conversation',
                 parameters_json_schema={
@@ -343,7 +341,7 @@ class Bar(BaseModel):
                     'type': 'object',
                 },
             ),
-            'final_result_Bar': ToolDefinition(
+            ToolDefinition(
                 name='final_result_Bar',
                 description='This is a bar model.',
                 parameters_json_schema={
@@ -353,7 +351,7 @@ class Bar(BaseModel):
                     'type': 'object',
                 },
             ),
-        }
+        ]
     )
 
     result = agent.run_sync('Hello', model=TestModel(seed=1))

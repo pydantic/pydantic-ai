@@ -110,14 +110,14 @@ class GroqModel(Model):
     async def agent_model(
         self,
         *,
-        function_tools: dict[str, ToolDefinition],
+        function_tools: list[ToolDefinition],
         allow_text_result: bool,
-        result_tools: dict[str, ToolDefinition] | None,
+        result_tools: list[ToolDefinition],
     ) -> AgentModel:
         check_allow_model_requests()
-        tools = [self._map_tool_definition(r) for r in function_tools.values()]
-        if result_tools is not None:
-            tools += [self._map_tool_definition(r) for r in result_tools.values()]
+        tools = [self._map_tool_definition(r) for r in function_tools]
+        if result_tools:
+            tools += [self._map_tool_definition(r) for r in result_tools]
         return GroqAgentModel(
             self.client,
             self.model_name,

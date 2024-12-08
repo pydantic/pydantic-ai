@@ -692,19 +692,19 @@ class Agent(Generic[AgentDeps, ResultData]):
 
     async def _prepare_model(self, model: models.Model, deps: AgentDeps) -> models.AgentModel:
         """Create building tools and create an agent model."""
-        function_tools: dict[str, ToolDefinition] = {}
+        function_tools: list[ToolDefinition] = []
 
-        async def add_tool(key: str, tool: Tool[AgentDeps]) -> None:
+        async def add_tool(tool: Tool[AgentDeps]) -> None:
             ctx = RunContext(deps, tool.current_retry, tool.name)
             if tool_def := await tool.prepare_tool_def(ctx):
-                function_tools[key] = tool_def
+                function_tools.append(tool_def)
 
-        await asyncio.gather(*(add_tool(k, t) for k, t in self._function_tools.items()))
+        await asyncio.gather(*map(add_tool, self._function_tools.values()))
 
         return await model.agent_model(
             function_tools=function_tools,
             allow_text_result=self._allow_text_result,
-            result_tools=self._result_schema.tool_defs() if self._result_schema is not None else None,
+            result_tools=self._result_schema.tool_defs() if self._result_schema is not None else [],
         )
 
     async def _prepare_messages(

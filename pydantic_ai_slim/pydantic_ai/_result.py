@@ -118,9 +118,9 @@ class ResultSchema(Generic[ResultData]):
         """Return the names of the tools."""
         return list(self.tools.keys())
 
-    def tool_defs(self) -> dict[str, ToolDefinition]:
+    def tool_defs(self) -> list[ToolDefinition]:
         """Get tool definitions to register with the model."""
-        return {k: t.tool_def for k, t in self.tools.items()}
+        return [t.tool_def for t in self.tools.values()]
 
 
 DEFAULT_DESCRIPTION = 'The final response which ends this conversation'

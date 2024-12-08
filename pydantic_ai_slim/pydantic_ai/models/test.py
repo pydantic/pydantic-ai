@@ -55,7 +55,7 @@ class TestModel(Model):
     """If set, these args will be passed to the result tool."""
     seed: int = 0
     """Seed for generating random data."""
-    agent_model_function_tools: dict[str, ToolDefinition] | None = field(default=None, init=False)
+    agent_model_function_tools: list[ToolDefinition] | None = field(default=None, init=False)
     """Definition of function tools passed to the model.
 
     This is set when the model is called, so will reflect the function tools from the last step of the last run.
@@ -65,7 +65,7 @@ class TestModel(Model):
 
     This is set when the model is called, so will reflect the value from the last step of the last run.
     """
-    agent_model_result_tools: dict[str, ToolDefinition] | None = field(default=None, init=False)
+    agent_model_result_tools: list[ToolDefinition] | None = field(default=None, init=False)
     """Definition of result tools passed to the model.
 
     This is set when the model is called, so will reflect the result tools from the last step of the last run.
@@ -74,18 +74,19 @@ class TestModel(Model):
     async def agent_model(
         self,
         *,
-        function_tools: dict[str, ToolDefinition],
+        function_tools: list[ToolDefinition],
         allow_text_result: bool,
-        result_tools: dict[str, ToolDefinition] | None,
+        result_tools: list[ToolDefinition],
     ) -> AgentModel:
         self.agent_model_function_tools = function_tools
         self.agent_model_allow_text_result = allow_text_result
         self.agent_model_result_tools = result_tools
 
         if self.call_tools == 'all':
-            tool_calls = [(r.name, r) for r in function_tools.values()]
+            tool_calls = [(r.name, r) for r in function_tools]
         else:
-            tools_to_call = (function_tools[name] for name in self.call_tools)
+            function_tools_lookup = {t.name: t for t in function_tools}
+            tools_to_call = (function_tools_lookup[name] for name in self.call_tools)
             tool_calls = [(r.name, r) for r in tools_to_call]
 
         if self.custom_result_text is not None:
@@ -94,7 +95,7 @@ class TestModel(Model):
             result: _utils.Either[str | None, Any | None] = _utils.Either(left=self.custom_result_text)
         elif self.custom_result_args is not None:
             assert result_tools is not None, 'No result tools provided, but `custom_result_args` is set.'
-            result_tool = next(iter(result_tools.values()))
+            result_tool = result_tools[0]
 
             if k := result_tool.outer_typed_dict_key:
                 result = _utils.Either(right={k: self.custom_result_args})
@@ -102,13 +103,12 @@ class TestModel(Model):
                 result = _utils.Either(right=self.custom_result_args)
         elif allow_text_result:
             result = _utils.Either(left=None)
-        elif result_tools is not None:
+        elif result_tools:
             result = _utils.Either(right=None)
         else:
             result = _utils.Either(left=None)
 
-        result_tools_list = list(result_tools.values()) if result_tools is not None else None
-        return TestAgentModel(tool_calls, result, result_tools_list, self.seed)
+        return TestAgentModel(tool_calls, result, result_tools, self.seed)
 
     def name(self) -> str:
         return 'test-model'
@@ -124,7 +124,7 @@ class TestAgentModel(AgentModel):
     tool_calls: list[tuple[str, ToolDefinition]]
     # left means the text is plain text; right means it's a function call
     result: _utils.Either[str | None, Any | None]
-    result_tools: list[ToolDefinition] | None
+    result_tools: list[ToolDefinition]
     seed: int
 
     async def request(self, messages: list[Message]) -> tuple[ModelAnyResponse, Cost]:
@@ -175,7 +175,7 @@ class TestAgentModel(AgentModel):
             else:
                 return ModelTextResponse(content=response_text.value)
         else:
-            assert self.result_tools is not None, 'No result tools provided'
+            assert self.result_tools, 'No result tools provided'
             custom_result_args = self.result.right
             result_tool = self.result_tools[self.seed % len(self.result_tools)]
             if custom_result_args is not None:

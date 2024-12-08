@@ -87,7 +87,7 @@ def test_simple(set_event_loop: None):
 
 async def weather_model(messages: list[Message], info: AgentInfo) -> ModelAnyResponse:  # pragma: no cover
     assert info.allow_text_result
-    assert info.function_tools.keys() == {'get_location', 'get_weather'}
+    assert {t.name for t in info.function_tools} == {'get_location', 'get_weather'}
     last = messages[-1]
     if last.role == 'user':
         return ModelStructuredResponse(
@@ -225,7 +225,7 @@ def test_var_args(set_event_loop: None):
 async def call_tool(messages: list[Message], info: AgentInfo) -> ModelAnyResponse:
     if len(messages) == 1:
         assert len(info.function_tools) == 1
-        tool_id = next(iter(info.function_tools.keys()))
+        tool_id = info.function_tools[0].name
         return ModelStructuredResponse(calls=[ToolCall.from_json(tool_id, '{}')])
     else:
         return ModelTextResponse('final response')
@@ -350,7 +350,7 @@ def test_call_all(set_event_loop: None):
 def test_retry_str(set_event_loop: None):
     call_count = 0
 
-    async def try_again(messages: list[Message], _: AgentInfo) -> ModelAnyResponse:
+    async def try_again(msgs_: list[Message], _agent_info: AgentInfo) -> ModelAnyResponse:
         nonlocal call_count
         call_count += 1
 
@@ -422,7 +422,7 @@ async def test_stream_structure():
     ) -> AsyncIterator[DeltaToolCalls]:
         assert agent_info.result_tools is not None
         assert len(agent_info.result_tools) == 1
-        name = agent_info.result_tools['final_result'].name
+        name = agent_info.result_tools[0].name
         yield {0: DeltaToolCall(name=name)}
         yield {0: DeltaToolCall(json_args='{"x": ')}
         yield {0: DeltaToolCall(json_args='1}')}
