@@ -49,8 +49,23 @@ KnownModelName = Literal[
     'gemini-1.5-pro',
     'vertexai:gemini-1.5-flash',
     'vertexai:gemini-1.5-pro',
-    'ollama:llama-3.2:latest',
-    'ollama:qwen2.5-coder:latest',
+    'ollama:codellama',
+    'ollama:gemma',
+    'ollama:gemma2',
+    'ollama:llama3',
+    'ollama:llama3.1',
+    'ollama:llama3.2',
+    'ollama:llama3.2-vision',
+    'ollama:llama3.3',
+    'ollama:mistral',
+    'ollama:mistral-nemo',
+    'ollama:mixtral',
+    'ollama:phi3',
+    'ollama:qwq',
+    'ollama:qwen',
+    'ollama:qwen2',
+    'ollama:qwen2.5',
+    'ollama:starcoder2',
     'test',
 ]
 """Known model names that can be used with the `model` parameter of [`Agent`][pydantic_ai.Agent].
@@ -257,7 +272,7 @@ def infer_model(model: Model | KnownModelName) -> Model:
     elif model.startswith('ollama:'):
         from .ollama import OllamaModel
 
-        return OllamaModel(model[7:])  # As type is currently str, do not need to ignore reportArgumentType
+        return OllamaModel(model[7:])
     else:
         raise UserError(f'Unknown model: {model}')
 
