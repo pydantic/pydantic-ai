@@ -5,7 +5,7 @@ from typing import Any, Callable, Union
 import httpx
 import pytest
 from inline_snapshot import snapshot
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from pydantic_ai import Agent, ModelRetry, RunContext, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
@@ -105,6 +105,50 @@ def test_result_pydantic_model_retry(set_event_loop: None):
         ]
     )
     assert result.all_messages_json().startswith(b'[{"content":"Hello"')
+
+
+def test_result_pydantic_model_validation_error(set_event_loop: None):
+    def return_model(messages: list[Message], info: AgentInfo) -> ModelAnyResponse:
+        assert info.result_tools is not None
+        if len(messages) == 1:
+            args_json = '{"a": 1, "b": "foo"}'
+        else:
+            args_json = '{"a": 1, "b": "bar"}'
+        return ModelStructuredResponse(calls=[ToolCall.from_json(info.result_tools[0].name, args_json)])
+
+    class Bar(BaseModel):
+        a: int
+        b: str
+
+        @field_validator('b')
+        def check_b(cls, v: str) -> str:
+            if v == 'foo':
+                raise ValueError('must not be foo')
+            return v
+
+    agent = Agent(FunctionModel(return_model), result_type=Bar)
+
+    result = agent.run_sync('Hello')
+    assert isinstance(result.data, Bar)
+    assert result.data.model_dump() == snapshot({'a': 1, 'b': 'bar'})
+    message_roles = [m.role for m in result.all_messages()]
+    assert message_roles == snapshot(['user', 'model-structured-response', 'retry-prompt', 'model-structured-response'])
+
+    retry_prompt = result.all_messages()[2]
+    assert isinstance(retry_prompt, RetryPrompt)
+    assert retry_prompt.model_response() == snapshot("""\
+1 validation errors: [
+  {
+    "type": "value_error",
+    "loc": [
+      "b"
+    ],
+    "msg": "Value error, must not be foo",
+    "input": "foo"
+  }
+]
+
+Fix the errors and try again.""")
 
 
 def test_result_validator(set_event_loop: None):
