@@ -28,6 +28,7 @@ from . import (
     AgentModel,
     EitherStreamedResponse,
     Model,
+    StreamStructuredResponse,
     StreamTextResponse,
     cached_async_http_client,
     check_allow_model_requests,
@@ -255,7 +256,7 @@ class MistralAgentModel(AgentModel):
     ) -> EitherStreamedResponse:
         """Process a streamed response, and prepare a streaming response to return."""
         try:
-            first_chunk = await response.__anext__()
+            first_chunk = await response.generator.__anext__()
         except StopAsyncIteration as e:  # pragma: no cover
             raise UnexpectedModelBehavior('Streamed response ended without content or tool calls') from e
         timestamp = datetime.fromtimestamp(first_chunk.data.created or 0, tz=timezone.utc) # TODO: see 0 now or not
@@ -276,11 +277,9 @@ class MistralAgentModel(AgentModel):
         if delta.tool_calls is not None and isinstance(delta.tool_calls, Unset):
             return MistralStreamTextResponse(delta.content, response, timestamp, start_cost)
         else:
-            assert False # TODO:
-            assert delta.tool_calls is not None, f'Expected delta with tool_calls, got {delta}'
-            return GroqStreamStructuredResponse(
+            return MistralStreamStructuredResponse(
                 response,
-                {c.index: c for c in delta.tool_calls},
+                {c.id: c for c in delta.tool_calls},
                 timestamp,
                 start_cost,
             )
@@ -396,51 +395,56 @@ class MistralStreamTextResponse(StreamTextResponse):
     def timestamp(self) -> datetime:
         return self._timestamp
 
-# @dataclass
-# class MistralStreamStructuredResponse(StreamStructuredResponse):
-#     """Implementation of `StreamStructuredResponse` for Groq models."""
+@dataclass
+class MistralStreamStructuredResponse(StreamStructuredResponse):
+    """Implementation of `StreamStructuredResponse` for Groq models."""
 
-#     _response: AsyncStream[ChatCompletionChunk]
-#     _delta_tool_calls: dict[int, ChoiceDeltaToolCall]
-#     _timestamp: datetime
-#     _cost: result.Cost
+    _response: EventStreamAsync[CompletionEvent]
+    _delta_tool_calls: dict[str, ToolCall]
+    _timestamp: datetime
+    _cost: result.Cost
 
-#     async def __anext__(self) -> None:
-#         chunk = await self._response.__anext__()
-#         self._cost = _map_cost(chunk)
+    async def __anext__(self) -> None:
+        chunk = await self._response.__anext__()
+        self._cost = _map_cost(chunk.data)
 
-#         try:
-#             choice = chunk.choices[0]
-#         except IndexError:
-#             raise StopAsyncIteration()
+        try:
+            choice = chunk.data.choices[0]
+        except IndexError:
+            raise StopAsyncIteration()
 
-#         if choice.finish_reason is not None:
-#             raise StopAsyncIteration()
+        if choice.finish_reason is not None:
+            raise StopAsyncIteration()
 
-#         assert choice.delta.content is None, f'Expected tool calls, got content instead, invalid chunk: {chunk!r}'
+        assert choice.delta.content is None, f'Expected tool calls, got content instead, invalid chunk: {chunk!r}'
 
-#         for new in choice.delta.tool_calls or []:
-#             if current := self._delta_tool_calls.get(new.index):
-#                 if current.function is None:
-#                     current.function = new.function
-#                 elif new.function is not None:
-#                     current.function.name = _utils.add_optional(current.function.name, new.function.name)
-#                     current.function.arguments = _utils.add_optional(current.function.arguments, new.function.arguments)
-#             else:
-#                 self._delta_tool_calls[new.index] = new
+        for new in choice.delta.tool_calls or []:
+            if current := self._delta_tool_calls.get(new.id):
+                current.function = new.function
+                    
+            else:
+                self._delta_tool_calls[new.id] = new
 
-#     def get(self, *, final: bool = False) -> ModelStructuredResponse:
-#         calls: list[ToolCall] = []
-#         for c in self._delta_tool_calls.values():
-#             if f := c.function:
-#                 if f.name is not None and f.arguments is not None:
-#                     calls.append(ToolCall.from_json(f.name, f.arguments, c.id))
+    def get(self, *, final: bool = False) -> ModelStructuredResponse:
+        calls: list[PydanticToolCall] = []
+        for c in self._delta_tool_calls.values():
+            if f := c.function:
+                tool = PydanticToolCall.from_json(
+                        tool_name=f.name,
+                        args_json=f.arguments,
+                        tool_id=c.id,
+                    ) if isinstance(f.arguments, str) else PydanticToolCall.from_dict(
+                        tool_name=f.name,
+                        args_dict=f.arguments,
+                        tool_id=c.id)        
+                calls.append(tool)
+                    
 
-#         return ModelStructuredResponse(calls, timestamp=self._timestamp)
+        return ModelStructuredResponse(calls, timestamp=self._timestamp)
 
-#     def cost(self) -> Cost:
-#         return self._cost
+    def cost(self) -> result.Cost:
+        return self._cost
 
-#     def timestamp(self) -> datetime:
-#         return self._timestamp
-    
+    def timestamp(self) -> datetime:
+        return self._timestamp
+
