@@ -266,7 +266,7 @@ class MistralAgentModel(AgentModel):
 
         
         # the first chunk may only contain `role`, so we iterate until we get either `tool_calls` or `content`
-        while delta.tool_calls is None or isinstance(delta.tool_calls, Unset) and delta.content is None or len(delta.content) == 0:
+        while delta.tool_calls is None or isinstance(delta.tool_calls, Unset) and delta.content is None or isinstance(delta.content, Unset):
                 try:
                     next_chunk = await response.__anext__()
                 except StopAsyncIteration as e:
