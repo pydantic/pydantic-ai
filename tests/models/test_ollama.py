@@ -28,10 +28,10 @@ pytestmark = [
 
 
 def test_init():
-    m = OllamaModel('llama-3.2', base_url='foobar/')
+    m = OllamaModel('llama3.2', base_url='foobar/')
     assert m.openai_model.client.api_key == 'ollama'
     assert m.openai_model.client.base_url == 'foobar/'
-    assert m.name() == 'ollama:llama-3.2'
+    assert m.name() == 'ollama:llama3.2'
 
 
 async def test_request_simple_success(allow_model_requests: None):
