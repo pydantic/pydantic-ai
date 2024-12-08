@@ -440,3 +440,21 @@ async def test_no_content(allow_model_requests: None):
     with pytest.raises(UnexpectedModelBehavior, match='Streamed response ended without con'):
         async with agent.run_stream(''):
             pass
+
+
+async def test_no_delta(allow_model_requests: None):
+    stream = (
+        chunk([]),
+        text_chunk('hello '),
+        text_chunk('world'),
+    )
+    mock_client = MockOpenAI.create_mock_stream(stream)
+    m = OpenAIModel('gpt-4', openai_client=mock_client)
+    agent = Agent(m)
+
+    async with agent.run_stream('') as result:
+        assert not result.is_structured
+        assert not result.is_complete
+        assert [c async for c in result.stream(debounce_by=None)] == snapshot(['hello ', 'hello world'])
+        assert result.is_complete
+        assert result.cost() == snapshot(Cost(request_tokens=6, response_tokens=3, total_tokens=9))

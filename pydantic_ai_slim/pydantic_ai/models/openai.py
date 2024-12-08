@@ -37,11 +37,11 @@ try:
     from openai.types import ChatModel, chat
     from openai.types.chat import ChatCompletionChunk
     from openai.types.chat.chat_completion_chunk import ChoiceDeltaToolCall
-except ImportError as e:
+except ImportError as _import_error:
     raise ImportError(
         'Please install `openai` to use the OpenAI model, '
         "you can use the `openai` optional group — `pip install 'pydantic-ai[openai]'`"
-    ) from e
+    ) from _import_error
 
 
 @dataclass(init=False)
@@ -189,33 +189,31 @@ class OpenAIAgentModel(AgentModel):
     @staticmethod
     async def _process_streamed_response(response: AsyncStream[ChatCompletionChunk]) -> EitherStreamedResponse:
         """Process a streamed response, and prepare a streaming response to return."""
-        try:
-            first_chunk = await response.__anext__()
-        except StopAsyncIteration as e:  # pragma: no cover
-            raise UnexpectedModelBehavior('Streamed response ended without content or tool calls') from e
-        timestamp = datetime.fromtimestamp(first_chunk.created, tz=timezone.utc)
-        delta = first_chunk.choices[0].delta
-        start_cost = _map_cost(first_chunk)
-
-        # the first chunk may only contain `role`, so we iterate until we get either `tool_calls` or `content`
-        while delta.tool_calls is None and delta.content is None:
+        timestamp: datetime | None = None
+        start_cost = Cost()
+        # the first chunk may contain enough information so we iterate until we get either `tool_calls` or `content`
+        while True:
             try:
-                next_chunk = await response.__anext__()
-            except StopAsyncIteration as e:
+                chunk = await response.__anext__()
+            except StopAsyncIteration as e:  # pragma: no cover
                 raise UnexpectedModelBehavior('Streamed response ended without content or tool calls') from e
-            delta = next_chunk.choices[0].delta
-            start_cost += _map_cost(next_chunk)
 
-        if delta.content is not None:
-            return OpenAIStreamTextResponse(delta.content, response, timestamp, start_cost)
-        else:
-            assert delta.tool_calls is not None, f'Expected delta with tool_calls, got {delta}'
-            return OpenAIStreamStructuredResponse(
-                response,
-                {c.index: c for c in delta.tool_calls},
-                timestamp,
-                start_cost,
-            )
+            timestamp = timestamp or datetime.fromtimestamp(chunk.created, tz=timezone.utc)
+            start_cost += _map_cost(chunk)
+
+            if chunk.choices:
+                delta = chunk.choices[0].delta
+
+                if delta.content is not None:
+                    return OpenAIStreamTextResponse(delta.content, response, timestamp, start_cost)
+                elif delta.tool_calls is not None:
+                    return OpenAIStreamStructuredResponse(
+                        response,
+                        {c.index: c for c in delta.tool_calls},
+                        timestamp,
+                        start_cost,
+                    )
+                # else continue until we get either delta.content or delta.tool_calls
 
     @staticmethod
     def _map_message(message: Message) -> chat.ChatCompletionMessageParam:
