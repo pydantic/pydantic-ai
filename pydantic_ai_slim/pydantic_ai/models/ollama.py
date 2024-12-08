@@ -1,7 +1,7 @@
 from __future__ import annotations as _annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Literal, Union
 
 from httpx import AsyncClient as AsyncHTTPClient
@@ -11,12 +11,10 @@ from . import (
     AgentModel,
     Model,
     cached_async_http_client,
-    check_allow_model_requests,
 )
 
 try:
     from openai import AsyncOpenAI
-    from openai.types import chat
 except ImportError as e:
     raise ImportError(
         'Please install `openai` to use the OpenAI model, '
@@ -24,7 +22,7 @@ except ImportError as e:
     ) from e
 
 
-from .openai import OpenAIAgentModel
+from .openai import OpenAIModel
 
 CommonOllamaModelNames = Literal[
     'codellama',
@@ -67,12 +65,12 @@ class OllamaModel(Model):
     Apart from `__init__`, all methods are private or match those of the base class.
     """
 
-    model_name: OllamaModelName
-    client: AsyncOpenAI = field(repr=False)
+    model_name: str | OllamaModelName
+    openai_model: OpenAIModel
 
     def __init__(
         self,
-        model_name: OllamaModelName,
+        model_name: str | OllamaModelName,
         *,
         base_url: str = 'http://localhost:11434/v1/',
         openai_client: AsyncOpenAI | None = None,
@@ -91,16 +89,19 @@ class OllamaModel(Model):
                 client to use, if provided, `api_key` and `http_client` must be `None`.
             http_client: An existing `httpx.AsyncClient` to use for making HTTP requests.
         """
-        self.model_name: OllamaModelName = model_name
+        self.model_name: str | OllamaModelName = model_name
+        # openai_model_name: OpenAIChatModel = cast(OpenAIChatModel, model_name)
         if openai_client is not None:
             assert http_client is None, 'Cannot provide both `openai_client` and `http_client`'
-            self.client = openai_client
+            self.openai_model = OpenAIModel(model_name=model_name, openai_client=openai_client, http_client=http_client)
         elif http_client is not None:
             # API key is not required for ollama but a value is required to create the client
-            self.client = AsyncOpenAI(base_url=base_url, api_key='ollama', http_client=http_client)
+            oai_client = AsyncOpenAI(base_url=base_url, api_key='ollama', http_client=http_client)
+            self.openai_model = OpenAIModel(model_name=model_name, openai_client=oai_client, http_client=http_client)
         else:
             # API key is not required for ollama but a value is required to create the client
-            self.client = AsyncOpenAI(base_url=base_url, api_key='ollama', http_client=cached_async_http_client())
+            oai_client = AsyncOpenAI(base_url=base_url, api_key='ollama', http_client=cached_async_http_client())
+            self.openai_model = OpenAIModel(model_name=model_name, openai_client=oai_client, http_client=http_client)
 
     async def agent_model(
         self,
@@ -108,27 +109,11 @@ class OllamaModel(Model):
         allow_text_result: bool,
         result_tools: Sequence[AbstractToolDefinition] | None,
     ) -> AgentModel:
-        check_allow_model_requests()
-        tools = [self._map_tool_definition(r) for r in function_tools.values()]
-        if result_tools is not None:
-            tools += [self._map_tool_definition(r) for r in result_tools]
-        return OpenAIAgentModel(
-            self.client,
-            self.model_name,
-            allow_text_result,
-            tools,
+        return await self.openai_model.agent_model(
+            function_tools=function_tools,
+            allow_text_result=allow_text_result,
+            result_tools=result_tools,
         )
 
     def name(self) -> str:
         return f'ollama:{self.model_name}'
-
-    @staticmethod
-    def _map_tool_definition(f: AbstractToolDefinition) -> chat.ChatCompletionToolParam:
-        return {
-            'type': 'function',
-            'function': {
-                'name': f.name,
-                'description': f.description,
-                'parameters': f.json_schema,
-            },
-        }

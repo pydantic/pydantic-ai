@@ -29,8 +29,8 @@ pytestmark = [
 
 def test_init():
     m = OllamaModel('llama-3.2:latest', base_url='foobar/')
-    assert m.client.api_key == 'ollama'
-    assert m.client.base_url == 'foobar/'
+    assert m.openai_model.client.api_key == 'ollama'
+    assert m.openai_model.client.base_url == 'foobar/'
     assert m.name() == 'ollama:llama-3.2:latest'
 
 
