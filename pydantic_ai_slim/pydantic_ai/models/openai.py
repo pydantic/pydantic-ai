@@ -43,7 +43,7 @@ except ImportError as e:
         "you can use the `openai` optional group — `pip install 'pydantic-ai[openai]'`"
     ) from e
 
-OpenAIChatModel = Union[ChatModel, str]
+OpenAIModelName = Union[ChatModel, str]
 """
 Using this more broad type for the model name instead of the ChatModel definition
 allows this model to be used more easily with other model types (ie, Ollama)
@@ -59,12 +59,12 @@ class OpenAIModel(Model):
     Apart from `__init__`, all methods are private or match those of the base class.
     """
 
-    model_name: OpenAIChatModel
+    model_name: OpenAIModelName
     client: AsyncOpenAI = field(repr=False)
 
     def __init__(
         self,
-        model_name: OpenAIChatModel,
+        model_name: OpenAIModelName,
         *,
         api_key: str | None = None,
         openai_client: AsyncOpenAI | None = None,
@@ -83,7 +83,7 @@ class OpenAIModel(Model):
                 client to use, if provided, `api_key` and `http_client` must be `None`.
             http_client: An existing `httpx.AsyncClient` to use for making HTTP requests.
         """
-        self.model_name: OpenAIChatModel | str = model_name
+        self.model_name: OpenAIModelName | str = model_name
         if openai_client is not None:
             assert http_client is None, 'Cannot provide both `openai_client` and `http_client`'
             assert api_key is None, 'Cannot provide both `openai_client` and `api_key`'
@@ -130,7 +130,7 @@ class OpenAIAgentModel(AgentModel):
     """Implementation of `AgentModel` for OpenAI models."""
 
     client: AsyncOpenAI
-    model_name: OpenAIChatModel
+    model_name: OpenAIModelName
     allow_text_result: bool
     tools: list[chat.ChatCompletionToolParam]
 

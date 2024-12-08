@@ -65,12 +65,12 @@ class OllamaModel(Model):
     Apart from `__init__`, all methods are private or match those of the base class.
     """
 
-    model_name: str | OllamaModelName
+    model_name: OllamaModelName
     openai_model: OpenAIModel
 
     def __init__(
         self,
-        model_name: str | OllamaModelName,
+        model_name: OllamaModelName,
         *,
         base_url: str = 'http://localhost:11434/v1/',
         openai_client: AsyncOpenAI | None = None,
@@ -89,7 +89,7 @@ class OllamaModel(Model):
                 client to use, if provided, `api_key` and `http_client` must be `None`.
             http_client: An existing `httpx.AsyncClient` to use for making HTTP requests.
         """
-        self.model_name: str | OllamaModelName = model_name
+        self.model_name: OllamaModelName = model_name
         # openai_model_name: OpenAIChatModel = cast(OpenAIChatModel, model_name)
         if openai_client is not None:
             assert http_client is None, 'Cannot provide both `openai_client` and `http_client`'
