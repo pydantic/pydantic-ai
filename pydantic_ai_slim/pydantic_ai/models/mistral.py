@@ -206,20 +206,19 @@ class MistralAgentModel(AgentModel):
     @staticmethod
     def _process_response(response: ChatCompletionResponse) -> ModelAnyResponse:
         """Process a non-streamed response, and prepare a message to return."""
-        timestamp: datetime | None
+        timestamp: datetime
         if response.created:
             timestamp = datetime.fromtimestamp(response.created, tz=timezone.utc)
         else:
-            timestamp = datetime.now(tz=timezone.utc)  # TODO: see when datatime
-
+            timestamp = _now_utc()
+  
         choices = response.choices  # TODO: Adjust this part.
         assert choices
         assert choices[0]
-
         choice = choices[0]
 
-        if choice.message.tool_calls is not None and not isinstance(
-            choice.message.tool_calls, Unset
+        if choice.message.tool_calls is not None and not isinstance( # TODO: see if unset check if the correct way
+            choice.message.tool_calls, Unset 
         ):
             tools_calls = choice.message.tool_calls
             tools: List[PydanticToolCall] = [
@@ -238,13 +237,13 @@ class MistralAgentModel(AgentModel):
             ]
             return ModelStructuredResponse(
                 tools,
-                timestamp=timestamp or None,
+                timestamp=timestamp,
             )
         else:
-            assert choice.message.content is not None, choice
-            return ModelTextResponse(
-                choice.message.content, timestamp=timestamp or None
-            )
+            content = choice.message.content
+            assert content, f'Unexpected null content is assitant msg: {choice.message}'
+            assert not isinstance(content, list), f'Unexpected ContentChunk from stream, need to be response not stream: {content}'
+            return ModelTextResponse(content, timestamp=timestamp)
 
     @staticmethod
     async def _process_streamed_response(
