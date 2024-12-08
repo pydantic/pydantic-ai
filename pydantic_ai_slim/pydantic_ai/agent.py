@@ -755,42 +755,65 @@ class Agent(Generic[AgentDeps, ResultData]):
                 )
                 return None, [response]
         elif model_response.role == 'model-structured-response':
-            if self._result_schema is not None:
-                # if there's a result schema, and any of the calls match one of its tools, return the result
-                # NOTE: this means we ignore any other tools called here
-                if match := self._result_schema.find_tool(model_response):
-                    call, result_tool = match
-                    try:
-                        result_data = result_tool.validate(call)
-                        result_data = await self._validate_result(result_data, deps, call)
-                    except _result.ToolRetryError as e:
-                        self._incr_result_retry()
-                        return None, [e.tool_retry]
-                    else:
-                        # Add a ToolReturn message for the schema tool call
-                        tool_return = _messages.ToolReturn(
-                            tool_name=call.tool_name,
-                            content='Final result processed.',
-                            tool_id=call.tool_id,
-                        )
-                        return _MarkFinalResult(result_data), [tool_return]
-
             if not model_response.calls:
                 raise exceptions.UnexpectedModelBehavior('Received empty tool call message')
 
-            # otherwise we run all tool functions in parallel
             messages: list[_messages.Message] = []
             tasks: list[asyncio.Task[_messages.Message]] = []
-            for call in model_response.calls:
-                if tool := self._function_tools.get(call.tool_name):
-                    tasks.append(asyncio.create_task(tool.run(deps, call), name=call.tool_name))
-                else:
-                    messages.append(self._unknown_tool(call.tool_name))
+            final_result: _MarkFinalResult[ResultData] | None = None
 
-            with _logfire.span('running {tools=}', tools=[t.get_name() for t in tasks]):
-                task_results: Sequence[_messages.Message] = await asyncio.gather(*tasks)
-                messages.extend(task_results)
-            return None, messages
+            # Process all tool calls
+            for call in model_response.calls:
+                tool_message: _messages.Message | None = None
+
+                # First check if it's a result tool
+                if (
+                    self._result_schema is not None
+                    and call.tool_name in self._result_schema.tool_names()
+                    and (match := self._result_schema.find_tool(model_response))
+                ):
+                    call_, result_tool = match
+                    if call_.tool_name == call.tool_name:  # ensure we're processing the right call
+                        if final_result is None:
+                            # This is the first result tool - try to use it
+                            try:
+                                result_data = result_tool.validate(call)
+                                result_data = await self._validate_result(result_data, deps, call)
+                                final_result = _MarkFinalResult(result_data)
+                                tool_message = _messages.ToolReturn(
+                                    tool_name=call.tool_name,
+                                    content='Final result processed.',
+                                    tool_id=call.tool_id,
+                                )
+                            except _result.ToolRetryError as e:
+                                self._incr_result_retry()
+                                tool_message = e.tool_retry
+                        else:
+                            # We already have a final result - mark this one as unused
+                            tool_message = _messages.ToolReturn(
+                                tool_name=call.tool_name,
+                                content='Result tool not used - a final result was already processed.',
+                                tool_id=call.tool_id,
+                            )
+
+                # Then check if it's a regular tool
+                elif tool := self._function_tools.get(call.tool_name):
+                    tasks.append(asyncio.create_task(tool.run(deps, call), name=call.tool_name))
+
+                # Finally mark as unknown if no other match
+                else:
+                    tool_message = self._unknown_tool(call.tool_name)
+
+                if tool_message is not None:
+                    messages.append(tool_message)
+
+            # Run all regular tool tasks
+            if tasks:
+                with _logfire.span('running {tools=}', tools=[t.get_name() for t in tasks]):
+                    task_results: Sequence[_messages.Message] = await asyncio.gather(*tasks)
+                    messages.extend(task_results)
+
+            return final_result, messages
         else:
             assert_never(model_response)
 

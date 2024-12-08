@@ -7,7 +7,7 @@ import pytest
 from inline_snapshot import snapshot
 from pydantic import BaseModel, field_validator
 
-from pydantic_ai import Agent, ModelRetry, RunContext, UnexpectedModelBehavior, UserError
+from pydantic_ai import Agent, ModelRetry, RunContext, UnexpectedModelBehavior, UserError, _utils
 from pydantic_ai.messages import (
     ArgsDict,
     ArgsJson,
@@ -23,7 +23,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models import cached_async_http_client
 from pydantic_ai.models.function import AgentInfo, FunctionModel
-from pydantic_ai.models.test import TestModel
+from pydantic_ai.models.test import AgentModel, TestAgentModel, TestModel
 from pydantic_ai.result import Cost, RunResult
 from pydantic_ai.tools import ToolDefinition
 
@@ -769,3 +769,138 @@ def foo():
     assert mod.my_agent.name is None
     assert mod.foo() == snapshot('success (no tool calls)')
     assert mod.my_agent.name == 'my_agent'
+
+
+class TestMultipleToolCalls:
+    """Tests for scenarios where the model returns multiple tool calls."""
+
+    pytestmark = pytest.mark.usefixtures('set_event_loop')
+
+    class ResultType(BaseModel):
+        """Result type used by all tests."""
+
+        value: str
+
+    class TestModel(TestModel):
+        """Base test model that can be configured with specific tool calls."""
+
+        def __init__(self, tool_names: list[str]):
+            """Initialize with a list of tool names to call."""
+            super().__init__()
+            self.tool_names = tool_names
+
+        async def agent_model(
+            self,
+            *,
+            function_tools: list[ToolDefinition],
+            allow_text_result: bool,
+            result_tools: list[ToolDefinition],
+        ) -> AgentModel:
+            # Convert the configured names into actual tool calls
+            tool_calls: list[tuple[str, ToolDefinition]] = []
+            for name in self.tool_names:
+                if name == 'final_result':
+                    tool_calls.append((name, result_tools[0]))
+                else:
+                    tool = next(t for t in function_tools if t.name == name)
+                    tool_calls.append((name, tool))
+
+            return TestAgentModel(
+                tool_calls=tool_calls,
+                result=_utils.Either(right={}),
+                result_tools=result_tools,
+                seed=0,
+            )
+
+    def test_multiple_final_tools(self):
+        """Test that when multiple final result tools are called:
+        1. The first result tool is used as the final result
+        2. Subsequent result tools are marked as unused
+        """
+        model = self.TestModel(
+            [
+                'final_result',
+                'final_result',
+            ]
+        )
+        agent = Agent(model, result_type=self.ResultType)
+
+        result = agent.run_sync('test multiple final tools')
+        messages = result.all_messages()
+
+        # Verify the result came from the first tool
+        assert result.data.value == 'a'
+
+        # Verify we got tool returns for both calls
+        tool_returns = [m for m in messages if isinstance(m, ToolReturn)]
+        assert len(tool_returns) == 2
+
+        # Verify one was processed and one was marked unused
+        assert any(m.content == 'Final result processed.' for m in tool_returns)
+        assert any(m.content == 'Result tool not used - a final result was already processed.' for m in tool_returns)
+
+    def test_regular_and_final_tools(self):
+        """Test that when both regular and final tools are called:
+        1. All tools get processed
+        2. Regular tool results are collected
+        3. Final tool result is used
+        """
+        model = self.TestModel(
+            [
+                'regular_tool',
+                'final_result',
+            ]
+        )
+        agent = Agent(model, result_type=self.ResultType)
+
+        @agent.tool_plain
+        def regular_tool(x: int) -> int:
+            """A regular tool that returns its input."""
+            return x
+
+        result = agent.run_sync('test regular and final tools')
+        messages = result.all_messages()
+
+        # Verify the result came from the final tool
+        assert result.data.value == 'a'
+
+        # Verify we got tool returns for both calls
+        tool_returns = [m for m in messages if isinstance(m, ToolReturn)]
+        assert len(tool_returns) == 2
+
+        # Verify both tools were processed
+        assert any(m.content == 'Final result processed.' for m in tool_returns)
+        assert any(m.content == 0 for m in tool_returns)
+
+    def test_final_then_regular_tools(self):
+        """Test that when a final tool is called before regular tools:
+        1. All tools still get processed
+        2. Regular tool results are collected
+        3. Final tool result is used
+        """
+        model = self.TestModel(
+            [
+                'final_result',
+                'regular_tool',
+            ]
+        )
+        agent = Agent(model, result_type=self.ResultType)
+
+        @agent.tool_plain
+        def regular_tool(x: int) -> int:
+            """A regular tool that returns its input."""
+            return x
+
+        result = agent.run_sync('test final then regular tools')
+        messages = result.all_messages()
+
+        # Verify the result came from the final tool
+        assert result.data.value == 'a'
+
+        # Verify we got tool returns for both calls
+        tool_returns = [m for m in messages if isinstance(m, ToolReturn)]
+        assert len(tool_returns) == 2
+
+        # Verify both tools were processed
+        assert any(m.content == 'Final result processed.' for m in tool_returns)
+        assert any(m.content == 0 for m in tool_returns)
