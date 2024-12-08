@@ -102,6 +102,11 @@ def test_result_pydantic_model_retry(set_event_loop: None):
                 calls=[ToolCall.from_json('final_result', '{"a": 42, "b": "foo"}')],
                 timestamp=IsNow(tz=timezone.utc),
             ),
+            ToolReturn(
+                tool_name='final_result',
+                content='Final result processed.',
+                timestamp=IsNow(tz=timezone.utc),
+            ),
         ]
     )
     assert result.all_messages_json().startswith(b'[{"content":"Hello"')
@@ -132,7 +137,9 @@ def test_result_pydantic_model_validation_error(set_event_loop: None):
     assert isinstance(result.data, Bar)
     assert result.data.model_dump() == snapshot({'a': 1, 'b': 'bar'})
     message_roles = [m.role for m in result.all_messages()]
-    assert message_roles == snapshot(['user', 'model-structured-response', 'retry-prompt', 'model-structured-response'])
+    assert message_roles == snapshot(
+        ['user', 'model-structured-response', 'retry-prompt', 'model-structured-response', 'tool-return']
+    )
 
     retry_prompt = result.all_messages()[2]
     assert isinstance(retry_prompt, RetryPrompt)
@@ -183,6 +190,11 @@ def test_result_validator(set_event_loop: None):
             ModelStructuredResponse(
                 calls=[ToolCall.from_json('final_result', '{"a": 42, "b": "foo"}')], timestamp=IsNow(tz=timezone.utc)
             ),
+            ToolReturn(
+                tool_name='final_result',
+                content='Final result processed.',
+                timestamp=IsNow(tz=timezone.utc),
+            ),
         ]
     )
 
@@ -216,6 +228,11 @@ def test_plain_response(set_event_loop: None):
             ),
             ModelStructuredResponse(
                 calls=[ToolCall(tool_name='final_result', args=ArgsJson(args_json='{"response": ["foo", "bar"]}'))],
+                timestamp=IsNow(tz=timezone.utc),
+            ),
+            ToolReturn(
+                tool_name='final_result',
+                content='Final result processed.',
                 timestamp=IsNow(tz=timezone.utc),
             ),
         ]
@@ -431,21 +448,31 @@ def test_run_with_history_new(set_event_loop: None):
         RunResult(
             _all_messages=[
                 SystemPrompt(content='Foobar'),
-                UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
+                UserPrompt(
+                    content='Hello',
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
                 ModelStructuredResponse(
                     calls=[ToolCall(tool_name='ret_a', args=ArgsDict(args_dict={'x': 'a'}))],
                     timestamp=IsNow(tz=timezone.utc),
                 ),
-                ToolReturn(tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc)),
-                ModelStructuredResponse(
-                    calls=[ToolCall(tool_name='final_result', args=ArgsDict(args_dict={'a': 0}))],
+                ToolReturn(
+                    tool_name='ret_a',
+                    content='a-apple',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
-                ToolReturn(
-                    tool_name='final_result', content='Final result processed.', timestamp=IsNow(tz=timezone.utc)
+                ModelTextResponse(
+                    content='{"ret_a":"a-apple"}',
+                    timestamp=IsNow(tz=timezone.utc),
                 ),
-                UserPrompt(content='Hello again', timestamp=IsNow(tz=timezone.utc)),
-                ModelTextResponse(content='{"ret_a":"a-apple"}', timestamp=IsNow(tz=timezone.utc)),
+                UserPrompt(
+                    content='Hello again',
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
+                ModelTextResponse(
+                    content='{"ret_a":"a-apple"}',
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
             ],
             _new_message_index=5,
             data='{"ret_a":"a-apple"}',
@@ -482,7 +509,7 @@ def test_run_with_history_new(set_event_loop: None):
     )
 
 
-def test_run_with_history_new_structured():
+def test_run_with_history_new_structured(set_event_loop: None):
     m = TestModel()
 
     class Response(BaseModel):
@@ -541,11 +568,6 @@ def test_run_with_history_new_structured():
                 # second call, notice no repeated system prompt
                 UserPrompt(content='Hello again', timestamp=IsNow(tz=timezone.utc)),
                 ModelStructuredResponse(
-                    calls=[ToolCall(tool_name='ret_a', args=ArgsDict(args_dict={'x': 'a'}))],
-                    timestamp=IsNow(tz=timezone.utc),
-                ),
-                ToolReturn(tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc)),
-                ModelStructuredResponse(
                     calls=[ToolCall(tool_name='final_result', args=ArgsDict(args_dict={'a': 0}))],
                     timestamp=IsNow(tz=timezone.utc),
                 ),
@@ -558,9 +580,7 @@ def test_run_with_history_new_structured():
         )
     )
     new_msg_roles = [msg.role for msg in result2.new_messages()]
-    assert new_msg_roles == snapshot(
-        ['user', 'model-structured-response', 'tool-return', 'model-structured-response', 'tool-return']
-    )
+    assert new_msg_roles == snapshot(['user', 'model-structured-response', 'tool-return'])
     assert result2.new_messages_json().startswith(b'[{"content":"Hello again",')
 
     # if we pass all_messages, system prompt is NOT inserted before the message_history messages,
@@ -588,11 +608,6 @@ def test_run_with_history_new_structured():
                 # second call, notice no repeated system prompt
                 UserPrompt(content='Hello again', timestamp=IsNow(tz=timezone.utc)),
                 ModelStructuredResponse(
-                    calls=[ToolCall(tool_name='ret_a', args=ArgsDict(args_dict={'x': 'a'}))],
-                    timestamp=IsNow(tz=timezone.utc),
-                ),
-                ToolReturn(tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc)),
-                ModelStructuredResponse(
                     calls=[ToolCall(tool_name='final_result', args=ArgsDict(args_dict={'a': 0}))],
                     timestamp=IsNow(tz=timezone.utc),
                 ),
@@ -606,7 +621,7 @@ def test_run_with_history_new_structured():
     )
 
 
-def test_empty_tool_calls():
+def test_empty_tool_calls(set_event_loop: None):
     def empty(_: list[Message], _info: AgentInfo) -> ModelAnyResponse:
         return ModelStructuredResponse(calls=[])
 
