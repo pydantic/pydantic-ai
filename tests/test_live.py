@@ -51,7 +51,7 @@ def groq(http_client: httpx.AsyncClient, _tmp_path: Path) -> Model:
 def ollama(http_client: httpx.AsyncClient, _tmp_path: Path) -> Model:
     from pydantic_ai.models.ollama import OllamaModel
 
-    return OllamaModel('qwen:0.5b', http_client=http_client)
+    return OllamaModel('qwen2:0.5b', http_client=http_client)
 
 
 params = [

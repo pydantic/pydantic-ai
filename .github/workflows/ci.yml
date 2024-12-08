@@ -85,7 +85,7 @@ jobs:
 
       - uses: pydantic/ollama-action@main
         with:
-          model: qwen:0.5b
+          model: qwen2:0.5b
 
       - run: >
           uv run
