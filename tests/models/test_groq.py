@@ -450,3 +450,16 @@ async def test_no_content(allow_model_requests: None):
     with pytest.raises(UnexpectedModelBehavior, match='Streamed response ended without con'):
         async with agent.run_stream(''):
             pass  # pragma: no cover
+
+
+async def test_no_delta(allow_model_requests: None):
+    stream = chunk([]), text_chunk('hello '), text_chunk('world')
+    mock_client = MockGroq.create_mock_stream(stream)
+    m = GroqModel('llama-3.1-70b-versatile', groq_client=mock_client)
+    agent = Agent(m)
+
+    async with agent.run_stream('') as result:
+        assert not result.is_structured
+        assert not result.is_complete
+        assert [c async for c in result.stream(debounce_by=None)] == snapshot(['hello ', 'hello world'])
+        assert result.is_complete
