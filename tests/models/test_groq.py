@@ -190,7 +190,13 @@ async def test_request_structured_response(allow_model_requests: None):
                         tool_id='123',
                     )
                 ],
-                timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc),
+                timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+            ),
+            ToolReturn(
+                tool_name='final_result',
+                content='Final result processed.',
+                tool_id='123',
+                timestamp=IsNow(tz=timezone.utc),
             ),
         ]
     )
@@ -285,7 +291,11 @@ async def test_request_tool_call(allow_model_requests: None):
                 tool_id='2',
                 timestamp=IsNow(tz=timezone.utc),
             ),
-            ModelTextResponse(content='final response', timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)),
+            ModelTextResponse(
+                content='final response',
+                timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                role='model-text-response',
+            ),
         ]
     )
 
@@ -390,10 +400,15 @@ async def test_stream_structured(allow_model_requests: None):
         assert result.is_complete
 
     assert result.cost() == snapshot(Cost())
-    assert result.timestamp() == snapshot(datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc))
     assert result.all_messages() == snapshot(
         [
             UserPrompt(content='', timestamp=IsNow(tz=timezone.utc)),
+            ToolReturn(
+                tool_name='final_result',
+                content='Final result processed.',
+                tool_id=None,
+                timestamp=IsNow(tz=timezone.utc),
+            ),
             ModelStructuredResponse(
                 calls=[
                     ToolCall(tool_name='final_result', args=ArgsJson(args_json='{"first": "One", "second": "Two"}'))
