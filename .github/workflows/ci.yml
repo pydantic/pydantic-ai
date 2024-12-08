@@ -83,10 +83,9 @@ jobs:
         with:
           enable-cache: true
 
-      - run: curl -fsSL https://ollama.com/install.sh | sh
-      - run: ollama --version
-      # this seems to be about the smallest model available
-      - run: ollama pull qwen:0.5b
+      - uses: pydantic/ollama-action@main
+        with:
+          model: qwen:0.5b
 
       - run: >
           uv run
