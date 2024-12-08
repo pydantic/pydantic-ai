@@ -152,7 +152,6 @@ show_missing = true
 ignore_errors = true
 precision = 2
 exclude_lines = [
-    'def __repr__',
     'pragma: no cover',
     'raise NotImplementedError',
     'if TYPE_CHECKING:',

@@ -17,10 +17,10 @@ from pydantic.plugin._schema_validator import create_schema_validator
 from pydantic_core import SchemaValidator, core_schema
 
 from ._griffe import doc_descriptions
-from ._utils import ObjectJsonSchema, check_object_json_schema, is_model_like
+from ._utils import check_object_json_schema, is_model_like
 
 if TYPE_CHECKING:
-    pass
+    from .tools import ObjectJsonSchema
 
 
 __all__ = 'function_schema', 'LazyTypeAdapter'
@@ -168,11 +168,13 @@ def takes_ctx(function: Callable[..., Any]) -> bool:
     """
     sig = signature(function)
     try:
-        _, first_param = next(iter(sig.parameters.items()))
+        first_param_name = next(iter(sig.parameters.keys()))
     except StopIteration:
         return False
     else:
-        return first_param.annotation is not sig.empty and _is_call_ctx(first_param.annotation)
+        type_hints = _typing_extra.get_function_type_hints(function)
+        annotation = type_hints[first_param_name]
+        return annotation is not sig.empty and _is_call_ctx(annotation)
 
 
 def _build_schema(

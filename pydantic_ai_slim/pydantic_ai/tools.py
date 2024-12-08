@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any, Callable, Generic, TypeVar, Union, cast
 
 from pydantic import ValidationError
 from pydantic_core import SchemaValidator
-from typing_extensions import Concatenate, ParamSpec, final
+from typing_extensions import Concatenate, ParamSpec, TypeAlias
 
 from . import _pydantic, _utils, messages
 from .exceptions import ModelRetry, UnexpectedModelBehavior
@@ -27,7 +27,10 @@ __all__ = (
     'ToolFuncPlain',
     'ToolFuncEither',
     'ToolParams',
+    'ToolPrepareFunc',
     'Tool',
+    'ObjectJsonSchema',
+    'ToolDefinition',
 )
 
 AgentDeps = TypeVar('AgentDeps')
@@ -42,7 +45,7 @@ class RunContext(Generic[AgentDeps]):
     """Dependencies for the agent."""
     retry: int
     """Number of retries so far."""
-    tool_name: str | None
+    tool_name: str | None = None
     """Name of the tool being called."""
 
 
@@ -91,11 +94,37 @@ This is just a union of [`ToolFuncContext`][pydantic_ai.tools.ToolFuncContext] a
 
 Usage `ToolFuncEither[AgentDeps, ToolParams]`.
 """
+ToolPrepareFunc: TypeAlias = 'Callable[[RunContext[AgentDeps], ToolDefinition], Awaitable[ToolDefinition | None]]'
+"""Definition of a function that can prepare a tool definition at call time.
+
+See [tool docs](../agents.md#tool-prepare) for more information.
+
+Example — here `only_if_42` is valid as a `ToolPrepareFunc`:
+
+```py
+from typing import Union
+
+from pydantic_ai import RunContext, Tool
+from pydantic_ai.tools import ToolDefinition
+
+async def only_if_42(
+    ctx: RunContext[int], tool_def: ToolDefinition
+) -> Union[ToolDefinition, None]:
+    if ctx.deps == 42:
+        return tool_def
+
+def hitchhiker(ctx: RunContext[int], answer: str) -> str:
+    return f'{ctx.deps} {answer}'
+
+hitchhiker = Tool(hitchhiker, prepare=only_if_42)
+```
+
+Usage `ToolPrepareFunc[AgentDeps]`.
+"""
 
 A = TypeVar('A')
 
 
-@final
 @dataclass(init=False)
 class Tool(Generic[AgentDeps]):
     """A tool function for an agent."""
@@ -105,22 +134,24 @@ class Tool(Generic[AgentDeps]):
     max_retries: int | None
     name: str
     description: str
+    prepare: ToolPrepareFunc[AgentDeps] | None
     _is_async: bool = field(init=False)
     _single_arg_name: str | None = field(init=False)
     _positional_fields: list[str] = field(init=False)
     _var_positional_field: str | None = field(init=False)
     _validator: SchemaValidator = field(init=False, repr=False)
-    _json_schema: _utils.ObjectJsonSchema = field(init=False)
-    _current_retry: int = field(default=0, init=False)
+    _parameters_json_schema: ObjectJsonSchema = field(init=False)
+    current_retry: int = field(default=0, init=False)
 
     def __init__(
         self,
         function: ToolFuncEither[AgentDeps, ...],
-        takes_ctx: bool,
         *,
+        takes_ctx: bool | None = None,
         max_retries: int | None = None,
         name: str | None = None,
         description: str | None = None,
+        prepare: ToolPrepareFunc[AgentDeps] | None = None,
     ):
         """Create a new tool instance.
 
@@ -132,47 +163,77 @@ class Tool(Generic[AgentDeps]):
         async def my_tool(ctx: RunContext[int], x: int, y: int) -> str:
             return f'{ctx.deps} {x} {y}'
 
-        agent = Agent('test', tools=[Tool(my_tool, True)])
+        agent = Agent('test', tools=[Tool(my_tool)])
         ```
+
+        or with a custom prepare method:
+
+        ```py
+        from typing import Union
+
+        from pydantic_ai import Agent, RunContext, Tool
+        from pydantic_ai.tools import ToolDefinition
+
+        async def my_tool(ctx: RunContext[int], x: int, y: int) -> str:
+            return f'{ctx.deps} {x} {y}'
+
+        async def prep_my_tool(
+            ctx: RunContext[int], tool_def: ToolDefinition
+        ) -> Union[ToolDefinition, None]:
+            # only register the tool if `deps == 42`
+            if ctx.deps == 42:
+                return tool_def
+
+        agent = Agent('test', tools=[Tool(my_tool, prepare=prep_my_tool)])
+        ```
+
 
         Args:
             function: The Python function to call as the tool.
-            takes_ctx: Whether the function takes a [`RunContext`][pydantic_ai.tools.RunContext] first argument.
+            takes_ctx: Whether the function takes a [`RunContext`][pydantic_ai.tools.RunContext] first argument,
+                this is inferred if unset.
             max_retries: Maximum number of retries allowed for this tool, set to the agent default if `None`.
             name: Name of the tool, inferred from the function if `None`.
             description: Description of the tool, inferred from the function if `None`.
+            prepare: custom method to prepare the tool definition for each step, return `None` to omit this
+                tool from a given step. This is useful if you want to customise a tool at call time,
+                or omit it completely from a step. See [`ToolPrepareFunc`][pydantic_ai.tools.ToolPrepareFunc].
         """
+        if takes_ctx is None:
+            takes_ctx = _pydantic.takes_ctx(function)
+
         f = _pydantic.function_schema(function, takes_ctx)
         self.function = function
         self.takes_ctx = takes_ctx
         self.max_retries = max_retries
         self.name = name or function.__name__
         self.description = description or f['description']
+        self.prepare = prepare
         self._is_async = inspect.iscoroutinefunction(self.function)
         self._single_arg_name = f['single_arg_name']
         self._positional_fields = f['positional_fields']
         self._var_positional_field = f['var_positional_field']
         self._validator = f['validator']
-        self._json_schema = f['json_schema']
+        self._parameters_json_schema = f['json_schema']
 
-    @staticmethod
-    def infer(function: ToolFuncEither[A, ...] | Tool[A]) -> Tool[A]:
-        """Create a tool from a pure function, inferring whether it takes `RunContext` as its first argument.
+    async def prepare_tool_def(self, ctx: RunContext[AgentDeps]) -> ToolDefinition | None:
+        """Get the tool definition.
 
-        Args:
-            function: The tool function to wrap; or for convenience, a `Tool` instance.
+        By default, this method creates a tool definition, then either returns it, or calls `self.prepare`
+        if it's set.
 
         Returns:
-            A new `Tool` instance.
+            return a `ToolDefinition` or `None` if the tools should not be registered for this run.
         """
-        if isinstance(function, Tool):
-            return function
+        tool_def = ToolDefinition(
+            name=self.name,
+            description=self.description,
+            parameters_json_schema=self._parameters_json_schema,
+        )
+        if self.prepare is not None:
+            return await self.prepare(ctx, tool_def)
         else:
-            return Tool(function, takes_ctx=_pydantic.takes_ctx(function))
-
-    def reset(self) -> None:
-        """Reset the current retry count."""
-        self._current_retry = 0
+            return tool_def
 
     async def run(self, deps: AgentDeps, message: messages.ToolCall) -> messages.Message:
         """Run the tool function asynchronously."""
@@ -195,20 +256,12 @@ class Tool(Generic[AgentDeps]):
         except ModelRetry as e:
             return self._on_error(e, message)
 
-        self._current_retry = 0
+        self.current_retry = 0
         return messages.ToolReturn(
             tool_name=message.tool_name,
             content=response_content,
             tool_id=message.tool_id,
         )
-
-    @property
-    def json_schema(self) -> _utils.ObjectJsonSchema:
-        return self._json_schema
-
-    @property
-    def outer_typed_dict_key(self) -> str | None:
-        return None
 
     def _call_args(
         self, deps: AgentDeps, args_dict: dict[str, Any], message: messages.ToolCall
@@ -216,7 +269,7 @@ class Tool(Generic[AgentDeps]):
         if self._single_arg_name:
             args_dict = {self._single_arg_name: args_dict}
 
-        args = [RunContext(deps, self._current_retry, message.tool_name)] if self.takes_ctx else []
+        args = [RunContext(deps, self.current_retry, message.tool_name)] if self.takes_ctx else []
         for positional_field in self._positional_fields:
             args.append(args_dict.pop(positional_field))
         if self._var_positional_field:
@@ -225,8 +278,8 @@ class Tool(Generic[AgentDeps]):
         return args, args_dict
 
     def _on_error(self, exc: ValidationError | ModelRetry, call_message: messages.ToolCall) -> messages.RetryPrompt:
-        self._current_retry += 1
-        if self.max_retries is None or self._current_retry > self.max_retries:
+        self.current_retry += 1
+        if self.max_retries is None or self.current_retry > self.max_retries:
             raise UnexpectedModelBehavior(f'Tool exceeded max retries count of {self.max_retries}') from exc
         else:
             if isinstance(exc, ValidationError):
@@ -238,3 +291,35 @@ class Tool(Generic[AgentDeps]):
                 content=content,
                 tool_id=call_message.tool_id,
             )
+
+
+ObjectJsonSchema: TypeAlias = dict[str, Any]
+"""Type representing JSON schema of an object, e.g. where `"type": "object"`.
+
+This type is used to define tools parameters (aka arguments) in [ToolDefinition][pydantic_ai.tools.ToolDefinition].
+
+With PEP-728 this should be a TypedDict with `type: Literal['object']`, and `extra_items=Any`
+"""
+
+
+@dataclass
+class ToolDefinition:
+    """Definition of a tool passed to a model.
+
+    This is used for both function tools result tools.
+    """
+
+    name: str
+    """The name of the tool."""
+
+    description: str
+    """The description of the tool."""
+
+    parameters_json_schema: ObjectJsonSchema
+    """The JSON schema for the tool's parameters."""
+
+    outer_typed_dict_key: str | None = None
+    """The key in the outer [TypedDict] that wraps a result tool.
+
+    This will only be set for result tools which don't have an `object` JSON schema.
+    """

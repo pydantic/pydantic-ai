@@ -7,11 +7,11 @@ specific LLM being used.
 from __future__ import annotations as _annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator, Iterable, Iterator, Mapping, Sequence
+from collections.abc import AsyncIterator, Iterable, Iterator
 from contextlib import asynccontextmanager, contextmanager
 from datetime import datetime
 from functools import cache
-from typing import TYPE_CHECKING, Literal, Protocol, Union
+from typing import TYPE_CHECKING, Literal, Union
 
 import httpx
 
@@ -19,8 +19,8 @@ from ..exceptions import UserError
 from ..messages import Message, ModelAnyResponse, ModelStructuredResponse
 
 if TYPE_CHECKING:
-    from .._utils import ObjectJsonSchema
     from ..result import Cost
+    from ..tools import ToolDefinition
 
 
 KnownModelName = Literal[
@@ -63,11 +63,12 @@ class Model(ABC):
     @abstractmethod
     async def agent_model(
         self,
-        function_tools: Mapping[str, AbstractToolDefinition],
+        *,
+        function_tools: list[ToolDefinition],
         allow_text_result: bool,
-        result_tools: Sequence[AbstractToolDefinition] | None,
+        result_tools: list[ToolDefinition],
     ) -> AgentModel:
-        """Create an agent model.
+        """Create an agent model, this is called for each step of an agent run.
 
         This is async in case slow/async config checks need to be performed that can't be done in `__init__`.
 
@@ -87,7 +88,7 @@ class Model(ABC):
 
 
 class AgentModel(ABC):
-    """Model configured for a specific agent."""
+    """Model configured for each step of an Agent run."""
 
     @abstractmethod
     async def request(self, messages: list[Message]) -> tuple[ModelAnyResponse, Cost]:
@@ -254,35 +255,6 @@ def infer_model(model: Model | KnownModelName) -> Model:
         return VertexAIModel(model[9:])  # pyright: ignore[reportArgumentType]
     else:
         raise UserError(f'Unknown model: {model}')
-
-
-class AbstractToolDefinition(Protocol):
-    """Abstract definition of a function/tool.
-
-    This is used for both function tools and result tools.
-    """
-
-    @property
-    def name(self) -> str:
-        """The name of the tool."""
-        ...
-
-    @property
-    def description(self) -> str:
-        """The description of the tool."""
-        ...
-
-    @property
-    def json_schema(self) -> ObjectJsonSchema:
-        """The JSON schema for the tool's arguments."""
-        ...
-
-    @property
-    def outer_typed_dict_key(self) -> str | None:
-        """The key in the outer [TypedDict] that wraps a result tool.
-
-        This will only be set for result tools which don't have an `object` JSON schema.
-        """
 
 
 @cache
