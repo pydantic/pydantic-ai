@@ -264,36 +264,37 @@ class MistralAgentModel(AgentModel):
             raise UnexpectedModelBehavior(
                 "Streamed response ended without content or tool calls"
             ) from e
+        # TODO: To finish
+        assert False
+        # timestamp = datetime.fromtimestamp(first_chunk.created or 0, tz=timezone.utc)
+        # delta = first_chunk.choices[0].delta
+        # start_cost = _map_cost(first_chunk)
 
-        timestamp = datetime.fromtimestamp(first_chunk.created or 0, tz=timezone.utc)
-        delta = first_chunk.choices[0].delta
-        start_cost = _map_cost(first_chunk)
+        # # the first chunk may only contain `role`, so we iterate until we get either `tool_calls` or `content`
+        # while delta.tool_calls is None and delta.content is None:
+        #     try:
+        #         next_chunk = await response.__anext__()
+        #     except StopAsyncIteration as e:
+        #         raise UnexpectedModelBehavior(
+        #             "Streamed response ended without content or tool calls"
+        #         ) from e
+        #     delta = next_chunk.choices[0].delta
+        #     start_cost += _map_cost(next_chunk)
 
-        # the first chunk may only contain `role`, so we iterate until we get either `tool_calls` or `content`
-        while delta.tool_calls is None and delta.content is None:
-            try:
-                next_chunk = await response.__anext__()
-            except StopAsyncIteration as e:
-                raise UnexpectedModelBehavior(
-                    "Streamed response ended without content or tool calls"
-                ) from e
-            delta = next_chunk.choices[0].delta
-            start_cost += _map_cost(next_chunk)
-
-        if delta.content is not None:
-            return OpenAIStreamTextResponse(
-                delta.content, response, timestamp, start_cost
-            )
-        else:
-            assert (
-                delta.tool_calls is not None
-            ), f"Expected delta with tool_calls, got {delta}"
-            return OpenAIStreamStructuredResponse(
-                response,
-                {c.index: c for c in delta.tool_calls},
-                timestamp,
-                start_cost,
-            )
+        # if delta.content is not None:
+        #     return OpenAIStreamTextResponse(
+        #         delta.content, response, timestamp, start_cost
+        #     )
+        # else:
+        #     assert (
+        #         delta.tool_calls is not None
+        #     ), f"Expected delta with tool_calls, got {delta}"
+        #     return OpenAIStreamStructuredResponse(
+        #         response,
+        #         {c.index: c for c in delta.tool_calls},
+        #         timestamp,
+        #         start_cost,
+        #     )
 
     @staticmethod
     def _map_message(message: Message) -> models.Messages:
