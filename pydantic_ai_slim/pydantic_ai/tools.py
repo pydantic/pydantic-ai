@@ -97,6 +97,25 @@ Usage `ToolFuncEither[AgentDeps, ToolParams]`.
 ToolPrepareFunc: TypeAlias = 'Callable[[RunContext[AgentDeps], ToolDefinition], Awaitable[ToolDefinition | None]]'
 """Definition of a function that can prepare a tool definition at call time.
 
+Example:
+
+```py
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.tools import ToolDefinition
+
+async def only_if_42(
+    ctx: RunContext[int], tool_def: ToolDefinition
+) -> Union[ToolDefinition, None]:
+    if ctx.deps == 42:
+        return tool_def
+
+
+def hitchhiker(ctx: RunContext[int], answer: str) -> str:
+    return f'{ctx.deps} {answer}'
+
+hitchhiker = Tool(hitchhiker, prepare=only_if_42)
+```
+
 Usage `ToolPrepareFunc[AgentDeps]`.
 """
 

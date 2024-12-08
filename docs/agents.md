@@ -1,5 +1,3 @@
-from ollama import model
-
 ## Introduction
 
 Agents are PydanticAI's primary interface for interacting with LLMs.
@@ -422,7 +420,7 @@ print(dice_result.data)
 ```
 
 1. The simplest way to register tools via the `Agent` constructor is to pass a list of functions, the function signature is inspected to determine if the tool takes [`RunContext`][pydantic_ai.tools.RunContext].
-2. `agent_a` and `agent_b` are identical — but we can use [`Tool`][pydantic_ai.tools.Tool] to give more fine-grained control over how tools are defined, e.g. setting their name or description, or using a custom [`prepare`](#tool-prepare).
+2. `agent_a` and `agent_b` are identical — but we can use [`Tool`][pydantic_ai.tools.Tool] to reuse tool definitions and give more fine-grained control over how tools are defined, e.g. setting their name or description, or using a custom [`prepare`](#tool-prepare) method.
 
 _(This example is complete, it can be run "as is")_
 
@@ -550,7 +548,7 @@ _(This example is complete, it can be run "as is")_
 
 ### Dynamic Function tools {#tool-prepare}
 
-Tools can optionally be defined with another function: `prepare`, which is called at each step of a run which can
+Tools can optionally be defined with another function: `prepare`, which is called at each step of a run to
 customize the definition of the tool passed to the model, or omit the tool completely from that step.
 
 A `prepare` method can be registered via the `prepare` kwarg to any of the tool registration mechanisms:
@@ -559,12 +557,14 @@ A `prepare` method can be registered via the `prepare` kwarg to any of the tool 
 * [`@agent.tool_plain`][pydantic_ai.Agent.tool_plain] decorator
 * [`Tool`][pydantic_ai.tools.Tool] dataclass
 
-Here's a simple `prepare` method that only includes the tool if the value of the `dep` is `42`.
+The `prepare` method, should be of type [`ToolPrepareFunc`][pydantic_ai.tools.ToolPrepareFunc], a function which takes [`RunContext`][pydantic_ai.tools.RunContext] and a pre-built [`ToolDefinition`][pydantic_ai.tools.ToolDefinition], and should either return that `ToolDefinition` with or without modifying it, return a new `ToolDefinition`, or return `None` to indicate this tools should not be registered for that step.
 
-Again we use [`TestModel`][pydantic_ai.models.test.TestModel] to demonstrate the behavior without calling a real model.
+Here's a simple `prepare` method that only includes the tool if the value of the dependency is `42`.
+
+As with the previous example, we use [`TestModel`][pydantic_ai.models.test.TestModel] to demonstrate the behavior without calling a real model.
 
 ```py title="tool_only_if_42.py"
-from __future__ import annotations
+from typing import Union
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.tools import ToolDefinition
@@ -574,14 +574,14 @@ agent = Agent('test')
 
 async def only_if_42(
     ctx: RunContext[int], tool_def: ToolDefinition
-) -> ToolDefinition | None:
+) -> Union[ToolDefinition, None]:
     if ctx.deps == 42:
         return tool_def
 
 
 @agent.tool(prepare=only_if_42)
-def ok_tool_prepare(ctx: RunContext[int], x: int, y: str) -> str:
-    return f'{ctx.deps} {x} {y}'
+def hitchhiker(ctx: RunContext[int], answer: str) -> str:
+    return f'{ctx.deps} {answer}'
 
 
 result = agent.run_sync('testing...', deps=41)
@@ -589,12 +589,12 @@ print(result.data)
 #> success (no tool calls)
 result = agent.run_sync('testing...', deps=42)
 print(result.data)
-#> {"ok_tool_prepare":"42 0 a"}
+#> {"hitchhiker_tool":"42 0 a"}
 ```
 
 _(This example is complete, it can be run "as is")_
 
-Here's a more complex example where we change the description of the `name` parameter to based on the user's name from deps.
+Here's a more complex example where we change the description of the `name` parameter to based on the value of `deps`
 
 For the sake of variation, we create this tool using the [`Tool`][pydantic_ai.tools.Tool] dataclass.
 
