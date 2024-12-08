@@ -1,10 +1,10 @@
 from __future__ import annotations as _annotations
 
-from collections.abc import AsyncIterator, Mapping, Sequence
+from collections.abc import AsyncIterator, Iterable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Callable, List, Literal
+from typing import Callable, Literal
 
 from httpx import AsyncClient as AsyncHTTPClient
 from mistralai import CompletionChunk, FunctionCall
@@ -54,10 +54,10 @@ except ImportError as e:
     ) from e
 
 MistralModelName = Literal[
-    "mistral-small-latest",
-    "small-mistral",
-    "mistral-large-latest",
-    "codestral-latest",
+    'mistral-small-latest',
+    'small-mistral',
+    'mistral-large-latest',
+    'codestral-latest',
 ]
 
 
@@ -87,7 +87,7 @@ class MistralModel(Model):
         if client is not None:
             assert (
                 http_client is None
-            ), "Cannot provide both `mistral_client` and `http_client`"
+            ), 'Cannot provide both `mistral_client` and `http_client`'
             self.client = client
         elif http_client is not None:
             self.client = Mistral(api_key=api_key, async_client=http_client)
@@ -114,7 +114,7 @@ class MistralModel(Model):
         )
 
     def name(self) -> str:
-        return f"mistral:{self.model_name}"
+        return f'mistral:{self.model_name}'
 
     @staticmethod
     def _map_tool_definition(
@@ -128,7 +128,7 @@ class MistralModel(Model):
         function = Function(
             name=f.name, parameters=f.json_schema, description=f.description
         )
-        return models.Tool(function=function)
+        return Tool(function=function)
 
 
 @dataclass
@@ -138,7 +138,7 @@ class MistralAgentModel(AgentModel):
     client: Mistral
     model_name: str
     allow_text_result: bool
-    tools: list[Tool | ToolTypedDict] = field(default_factory=list)
+    tools: list[Tool] | list[ToolTypedDict]| None = None 
 
     async def request(
         self, messages: list[Message]
@@ -159,11 +159,11 @@ class MistralAgentModel(AgentModel):
     ) -> ChatCompletionResponse:
         # standalone function to make it easier to override
         if not self.tools:
-            tool_choice: Literal["none", "required", "auto"] | None = None
+            tool_choice: Literal['none', 'required', 'auto'] | None = None
         elif not self.allow_text_result:
-            tool_choice = "required"
+            tool_choice = 'required'
         else:
-            tool_choice = "auto"
+            tool_choice = 'auto'
 
         mistral_messages = [self._map_message(m) for m in messages]
         response = await self.client.chat.complete_async(
@@ -171,11 +171,11 @@ class MistralAgentModel(AgentModel):
             messages=mistral_messages,
             temperature=0.0,
             n=1,
-            tools=self.tools or UNSET,  # TODO: see lint error
+            tools=self.tools or UNSET, 
             tool_choice=tool_choice or None,
             stream=stream,
         )
-        assert response, "TODO: fix this"  # TODO: see when None
+        assert response, 'TODO: fix this'  # TODO: see when None
         return response
 
     async def _stream_create(
@@ -183,11 +183,11 @@ class MistralAgentModel(AgentModel):
     ) -> EventStreamAsync[CompletionEvent]:
         # standalone function to make it easier to override
         if not self.tools:
-            tool_choice: Literal["none", "required", "auto"] | None = None
+            tool_choice: Literal['none', 'required', 'auto'] | None = None
         elif not self.allow_text_result:
-            tool_choice = "required"
+            tool_choice = 'required'
         else:
-            tool_choice = "auto"
+            tool_choice = 'auto'
 
         mistral_messages = [self._map_message(m) for m in messages]
         response = await self.client.chat.stream_async(
@@ -195,11 +195,11 @@ class MistralAgentModel(AgentModel):
             messages=mistral_messages,
             temperature=0.0,
             n=1,
-            tools=self.tools or UNSET,  # TODO: see lint error
+            tools=self.tools or UNSET,
             tool_choice=tool_choice or None,
             stream=stream,
         )
-        assert response, "TODO: fix this"  # TODO: see when None
+        assert response, 'TODO: fix this'  # TODO: see when None
         return response
 
     @staticmethod
@@ -211,19 +211,16 @@ class MistralAgentModel(AgentModel):
         else:
             timestamp = _now_utc()
 
-        choices = response.choices  # TODO: Adjust this part.
-        assert choices
-        assert choices[0]
-        choice = choices[0]
+       
+        assert response.choices # TODO: see how improve
+        choice = response.choices[0]
 
         if (
             choice.message.tool_calls is not None
-            and not isinstance(  # TODO: see if unset check if the correct way
-                choice.message.tool_calls, Unset
-            )
+            and not isinstance(choice.message.tool_calls, Unset)
         ):
             tools_calls = choice.message.tool_calls
-            tools: List[PydanticToolCall] = [
+            tools = [
                 (
                     PydanticToolCall.from_json(
                         tool_name=c.function.name,
@@ -245,10 +242,10 @@ class MistralAgentModel(AgentModel):
             )
         else:
             content = choice.message.content
-            assert content, f"Unexpected null content is assitant msg: {choice.message}"
+            assert content, f'Unexpected null content is assitant msg: {choice.message}'
             assert not isinstance(
                 content, list
-            ), f"Unexpected ContentChunk from stream, need to be response not stream: {content}"
+            ), f'Unexpected ContentChunk from stream, need to be response not stream: {content}'
             return ModelTextResponse(content, timestamp=timestamp)
 
     @staticmethod
@@ -299,19 +296,19 @@ class MistralAgentModel(AgentModel):
     @staticmethod
     def _map_message(message: Message) -> models.Messages:
         """Just maps a `pydantic_ai.Message` to a `Mistral.types.ChatCompletionMessageParam`."""
-        if message.role == "system":
+        if message.role == 'system':
             # SystemPrompt ->
             return AssistantMessage(content=message.content)
-        elif message.role == "user":
+        elif message.role == 'user':
             # UserPrompt ->
             return UserMessage(content=message.content)
-        elif message.role == "tool-return":
+        elif message.role == 'tool-return':
             # ToolReturn ->
             return ToolMessage(
                 tool_call_id=_guard_tool_id(message),
                 content=message.model_response_str(),
             )
-        elif message.role == "retry-prompt":
+        elif message.role == 'retry-prompt':
             # RetryPrompt ->
             if message.tool_name is None:
                 return UserMessage(content=message.model_response())
@@ -320,12 +317,12 @@ class MistralAgentModel(AgentModel):
                     tool_call_id=_guard_tool_id(message),
                     content=message.model_response(),
                 )
-        elif message.role == "model-text-response":
+        elif message.role == 'model-text-response':
             # ModelTextResponse ->
             return AssistantMessage(content=message.content)
-        elif message.role == "model-structured-response":
+        elif message.role == 'model-structured-response':
             assert (
-                message.role == "model-structured-response"
+                message.role == 'model-structured-response'
             ), f'Expected role to be "llm-tool-calls", got {message.role}'
             # ModelStructuredResponse ->
             return AssistantMessage(
@@ -337,19 +334,18 @@ class MistralAgentModel(AgentModel):
 
 def _guard_tool_id(t: PydanticToolCall | RetryPrompt | ToolReturn) -> str:
     """Type guard that checks a `tool_id` is not None both for static typing and runtime."""
-    assert t.tool_id is not None, f"Mistral requires `tool_id` to be set: {t}"
+    assert t.tool_id is not None, f'Mistral requires `tool_id` to be set: {t}'
     return t.tool_id
 
 
 def _map_tool_call(t: PydanticToolCall) -> ToolCall:
-    assert isinstance(t.args, ArgsJson), f"Expected ArgsDict, got {t.args}"
+    assert isinstance(t.args, ArgsJson), f'Expected ArgsDict, got {t.args}'
     return ToolCall(
         id=_guard_tool_id(t),
-        type="function",
+        type='function',
         function=FunctionCall(name=t.tool_name, arguments=t.args.args_json),
     )
-
-
+    
 def _map_cost(response: ChatCompletionResponse | CompletionChunk) -> result.Cost:
     usage = response.usage
     if usage is None:
