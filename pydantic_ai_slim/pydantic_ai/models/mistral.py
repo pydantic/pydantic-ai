@@ -14,7 +14,7 @@ from typing_extensions import assert_never
 from .. import UnexpectedModelBehavior, result
 from .._utils import now_utc as _now_utc
 from ..messages import (
-    ArgsDict,
+    ArgsJson,
     Message,
     ModelAnyResponse,
     ModelStructuredResponse,
@@ -341,11 +341,11 @@ def _guard_tool_id(t: PydanticToolCall | RetryPrompt | ToolReturn) -> str:
 
 
 def _map_tool_call(t: PydanticToolCall) -> ToolCall:
-    assert isinstance(t.args, ArgsDict), f"Expected ArgsDict, got {t.args}"
+    assert isinstance(t.args, ArgsJson), f"Expected ArgsDict, got {t.args}"
     return ToolCall(
         id=_guard_tool_id(t),
         type="function",
-        function=FunctionCall(name=t.tool_name, arguments=t.args.args_dict),
+        function=FunctionCall(name=t.tool_name, arguments=t.args.args_json),
     )
 
 
