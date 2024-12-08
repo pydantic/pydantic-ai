@@ -48,12 +48,17 @@ except ImportError as e:
         "you can use the `mistral` optional group — `pip install 'pydantic-ai[mistral]'`"
     ) from e
 
-MistralModelName = Literal["small-mistral",]
+MistralModelName = Literal[
+        'mistral-small-latest', 
+        'small-mistral', 
+        'mistral-large-latest', 
+        'codestral-latest',
+    ]
 
 
 @dataclass(init=False)
 class MistralModel(Model):
-    model_name: MistralModelName
+    model_name: MistralModelName | str
     client: Mistral = field(repr=False)
 
     def __init__(
@@ -77,7 +82,6 @@ class MistralModel(Model):
             self.client = Mistral(
                 api_key=api_key, async_client=cached_async_http_client()
             )
-            # self.client.chat.complete_async
 
     async def agent_model(
         self,
