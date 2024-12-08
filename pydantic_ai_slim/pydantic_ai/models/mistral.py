@@ -4,7 +4,7 @@ from collections.abc import AsyncIterator, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import List, Literal
+from typing import Callable, List, Literal
 
 from httpx import AsyncClient as AsyncHTTPClient
 from mistralai import CompletionChunk, FunctionCall
@@ -12,6 +12,7 @@ from mistralai.types.basemodel import Unset
 from typing_extensions import assert_never
 
 from .. import UnexpectedModelBehavior, result
+from .._utils import now_utc as _now_utc
 from ..messages import (
     ArgsDict,
     Message,
@@ -19,9 +20,9 @@ from ..messages import (
     ModelStructuredResponse,
     ModelTextResponse,
     RetryPrompt,
+    ToolCall as PydanticToolCall,
     ToolReturn,
 )
-from ..messages import ToolCall as PydanticToolCall
 from . import (
     AbstractToolDefinition,
     AgentModel,
@@ -32,17 +33,20 @@ from . import (
 )
 
 try:
-    from mistralai.models import ToolCall 
-    from mistralai.models import ChatCompletionResponse
-    from mistralai.models import CompletionEvent
-    from mistralai.utils.eventstreaming import EventStreamAsync
     from mistralai import Mistral, models
+    from mistralai.models import (
+        ChatCompletionResponse,
+        CompletionEvent,
+        Tool,
+        ToolCall,
+        ToolTypedDict,
+    )
     from mistralai.models.assistantmessage import AssistantMessage
     from mistralai.models.function import Function
     from mistralai.models.toolmessage import ToolMessage
     from mistralai.models.usermessage import UserMessage
     from mistralai.types import UNSET
-    from mistralai.models import Tool, ToolTypedDict
+    from mistralai.utils.eventstreaming import EventStreamAsync
 except ImportError as e:
     raise ImportError(
         "Please install `mistral` to use the Mistral model, "
@@ -50,15 +54,23 @@ except ImportError as e:
     ) from e
 
 MistralModelName = Literal[
-        'mistral-small-latest', 
-        'small-mistral', 
-        'mistral-large-latest', 
-        'codestral-latest',
-    ]
+    "mistral-small-latest",
+    "small-mistral",
+    "mistral-large-latest",
+    "codestral-latest",
+]
 
 
 @dataclass(init=False)
 class MistralModel(Model):
+    """A model that uses Mistral.
+
+    Internally, this uses the [Mistral Python client](https://github.com/mistralai/client-python) to interact with the API.
+
+    [API Documentation](https://docs.mistral.ai/)
+
+    """
+
     model_name: MistralModelName | str
     client: Mistral = field(repr=False)
 
@@ -66,16 +78,16 @@ class MistralModel(Model):
         self,
         model_name: MistralModelName,
         *,
-        api_key: str | None = None,
+        api_key: str | Callable[[], str | None] | None = None,
         client: Mistral | None = None,
         http_client: AsyncHTTPClient | None = None,
     ):
         self.model_name = model_name
+
         if client is not None:
             assert (
                 http_client is None
             ), "Cannot provide both `mistral_client` and `http_client`"
-            assert api_key is None, "Cannot provide both `mistral_client` and `api_key`"
             self.client = client
         elif http_client is not None:
             self.client = Mistral(api_key=api_key, async_client=http_client)
@@ -140,20 +152,7 @@ class MistralAgentModel(AgentModel):
     ) -> AsyncIterator[EitherStreamedResponse]:
         response = await self._stream_create(messages, True)
         async with response:
-            yield await self._process_streamed_response(response)   
-                
-
-    # @overload
-    # async def _completions_create(
-    #     self, messages: list[Message], stream: Literal[True]
-    # ) -> AsyncStream[ChatCompletionChunk]:
-    #     pass
-
-    # @overload
-    # async def _completions_create(
-    #     self, messages: list[Message], stream: Literal[False]
-    # ) -> chat.ChatCompletion:
-    #     pass
+            yield await self._process_streamed_response(response)
 
     async def _completions_create(
         self, messages: list[Message], stream: bool
@@ -172,13 +171,13 @@ class MistralAgentModel(AgentModel):
             messages=mistral_messages,
             temperature=0.0,
             n=1,
-            tools=self.tools or UNSET,
+            tools=self.tools or UNSET,  # TODO: see lint error
             tool_choice=tool_choice or None,
             stream=stream,
-        ) 
-        assert response "TODO: fix this" # TODO: see when None
+        )
+        assert response, "TODO: fix this"  # TODO: see when None
         return response
-    
+
     async def _stream_create(
         self, messages: list[Message], stream: bool
     ) -> EventStreamAsync[CompletionEvent]:
@@ -196,11 +195,11 @@ class MistralAgentModel(AgentModel):
             messages=mistral_messages,
             temperature=0.0,
             n=1,
-            tools=self.tools or UNSET,
+            tools=self.tools or UNSET,  # TODO: see lint error
             tool_choice=tool_choice or None,
             stream=stream,
-        ) 
-        assert response "TODO: fix this" # TODO: see when None
+        )
+        assert response, "TODO: fix this"  # TODO: see when None
         return response
 
     @staticmethod
@@ -211,27 +210,32 @@ class MistralAgentModel(AgentModel):
             timestamp = datetime.fromtimestamp(response.created, tz=timezone.utc)
         else:
             timestamp = _now_utc()
-  
+
         choices = response.choices  # TODO: Adjust this part.
         assert choices
         assert choices[0]
         choice = choices[0]
 
-        if choice.message.tool_calls is not None and not isinstance( # TODO: see if unset check if the correct way
-            choice.message.tool_calls, Unset 
+        if (
+            choice.message.tool_calls is not None
+            and not isinstance(  # TODO: see if unset check if the correct way
+                choice.message.tool_calls, Unset
+            )
         ):
             tools_calls = choice.message.tool_calls
             tools: List[PydanticToolCall] = [
-                PydanticToolCall.from_json(
-                    tool_name=c.function.name,
-                    args_json=c.function.arguments,
-                    tool_id=c.id,
-                )
-                if isinstance(c.function.arguments, str) else 
-                PydanticToolCall.from_dict(
-                    tool_name=c.function.name,
-                    args_dict=c.function.arguments,
-                    tool_id=c.id,
+                (
+                    PydanticToolCall.from_json(
+                        tool_name=c.function.name,
+                        args_json=c.function.arguments,
+                        tool_id=c.id,
+                    )
+                    if isinstance(c.function.arguments, str)
+                    else PydanticToolCall.from_dict(
+                        tool_name=c.function.name,
+                        args_dict=c.function.arguments,
+                        tool_id=c.id,
+                    )
                 )
                 for c in tools_calls
             ]
@@ -241,8 +245,10 @@ class MistralAgentModel(AgentModel):
             )
         else:
             content = choice.message.content
-            assert content, f'Unexpected null content is assitant msg: {choice.message}'
-            assert not isinstance(content, list), f'Unexpected ContentChunk from stream, need to be response not stream: {content}'
+            assert content, f"Unexpected null content is assitant msg: {choice.message}"
+            assert not isinstance(
+                content, list
+            ), f"Unexpected ContentChunk from stream, need to be response not stream: {content}"
             return ModelTextResponse(content, timestamp=timestamp)
 
     @staticmethod
@@ -255,25 +261,33 @@ class MistralAgentModel(AgentModel):
             chunk = await response.__anext__()
             first_chunk = chunk.data
         except StopAsyncIteration as e:  # pragma: no cover
-            raise UnexpectedModelBehavior('Streamed response ended without content or tool calls') from e
-        
+            raise UnexpectedModelBehavior(
+                "Streamed response ended without content or tool calls"
+            ) from e
+
         timestamp = datetime.fromtimestamp(first_chunk.created or 0, tz=timezone.utc)
         delta = first_chunk.choices[0].delta
         start_cost = _map_cost(first_chunk)
-        
+
         # the first chunk may only contain `role`, so we iterate until we get either `tool_calls` or `content`
         while delta.tool_calls is None and delta.content is None:
             try:
                 next_chunk = await response.__anext__()
             except StopAsyncIteration as e:
-                raise UnexpectedModelBehavior('Streamed response ended without content or tool calls') from e
+                raise UnexpectedModelBehavior(
+                    "Streamed response ended without content or tool calls"
+                ) from e
             delta = next_chunk.choices[0].delta
             start_cost += _map_cost(next_chunk)
 
         if delta.content is not None:
-            return OpenAIStreamTextResponse(delta.content, response, timestamp, start_cost)
+            return OpenAIStreamTextResponse(
+                delta.content, response, timestamp, start_cost
+            )
         else:
-            assert delta.tool_calls is not None, f'Expected delta with tool_calls, got {delta}'
+            assert (
+                delta.tool_calls is not None
+            ), f"Expected delta with tool_calls, got {delta}"
             return OpenAIStreamStructuredResponse(
                 response,
                 {c.index: c for c in delta.tool_calls},
@@ -331,7 +345,7 @@ def _map_tool_call(t: PydanticToolCall) -> ToolCall:
     return ToolCall(
         id=_guard_tool_id(t),
         type="function",
-        function=FunctionCall(name= t.tool_name, arguments=t.args.args_dict),
+        function=FunctionCall(name=t.tool_name, arguments=t.args.args_dict),
     )
 
 
