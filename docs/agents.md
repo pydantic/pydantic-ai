@@ -422,7 +422,7 @@ print(dice_result.data)
 ```
 
 1. The simplest way to register tools via the `Agent` constructor is to pass a list of functions, the function signature is inspected to determine if the tool takes [`RunContext`][pydantic_ai.tools.RunContext].
-2. `agent_a` and `agent_b` are identical — but we can use [`Tool`][pydantic_ai.tools.Tool] to give more fine-grained control over how tools are defined, e.g. setting their name or description, or using a custom [`prepare`][#tool-prepare].
+2. `agent_a` and `agent_b` are identical — but we can use [`Tool`][pydantic_ai.tools.Tool] to give more fine-grained control over how tools are defined, e.g. setting their name or description, or using a custom [`prepare`](#tool-prepare).
 
 _(This example is complete, it can be run "as is")_
 
@@ -564,6 +564,8 @@ Here's a simple `prepare` method that only includes the tool if the value of the
 Again we use [`TestModel`][pydantic_ai.models.test.TestModel] to demonstrate the behavior without calling a real model.
 
 ```py title="tool_only_if_42.py"
+from __future__ import annotations
+
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.tools import ToolDefinition
 
@@ -597,6 +599,8 @@ Here's a more complex example where we change the description of the `name` para
 For the sake of variation, we create this tool using the [`Tool`][pydantic_ai.tools.Tool] dataclass.
 
 ```py title="customize_name.py"
+from __future__ import annotations
+
 from typing import Literal
 
 from pydantic_ai import Agent, RunContext

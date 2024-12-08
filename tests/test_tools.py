@@ -1,6 +1,6 @@
 import json
 from dataclasses import dataclass
-from typing import Annotated, Any
+from typing import Annotated, Any, Union
 
 import pytest
 from inline_snapshot import snapshot
@@ -405,7 +405,7 @@ def test_dynamic_cls_tool(set_event_loop: None):
         def tool_function(self, x: int, y: str) -> str:
             return f'{self.spam} {x} {y}'
 
-        async def prepare_tool_def(self, ctx: RunContext[int]) -> ToolDefinition | None:
+        async def prepare_tool_def(self, ctx: RunContext[int]) -> Union[ToolDefinition, None]:
             if ctx.deps != 42:
                 return await super().prepare_tool_def(ctx)
 
@@ -420,7 +420,7 @@ def test_dynamic_cls_tool(set_event_loop: None):
 def test_dynamic_plain_tool_decorator(set_event_loop: None):
     agent = Agent('test', deps_type=int)
 
-    async def prepare_tool_def(ctx: RunContext[int], tool_def: ToolDefinition) -> ToolDefinition | None:
+    async def prepare_tool_def(ctx: RunContext[int], tool_def: ToolDefinition) -> Union[ToolDefinition, None]:
         if ctx.deps != 42:
             return tool_def
 
@@ -438,7 +438,7 @@ def test_dynamic_plain_tool_decorator(set_event_loop: None):
 def test_dynamic_tool_decorator(set_event_loop: None):
     agent = Agent('test', deps_type=int)
 
-    async def prepare_tool_def(ctx: RunContext[int], tool_def: ToolDefinition) -> ToolDefinition | None:
+    async def prepare_tool_def(ctx: RunContext[int], tool_def: ToolDefinition) -> Union[ToolDefinition, None]:
         if ctx.deps != 42:
             return tool_def
 

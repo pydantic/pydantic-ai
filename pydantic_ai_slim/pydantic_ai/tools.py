@@ -147,6 +147,8 @@ class Tool(Generic[AgentDeps]):
         or with a custom prepare method:
 
         ```py
+        from typing import Union
+
         from pydantic_ai import Agent, RunContext, Tool
         from pydantic_ai.tools import ToolDefinition
 
@@ -155,7 +157,7 @@ class Tool(Generic[AgentDeps]):
 
         async def prep_my_tool(
             ctx: RunContext[int], tool_def: ToolDefinition
-        ) -> ToolDefinition | None:
+        ) -> Union[ToolDefinition, None]:
             # only register the tool if `deps == 42`
             if ctx.deps == 42:
                 return tool_def
