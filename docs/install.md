@@ -328,8 +328,4 @@ agent = Agent(model)
 
 To use [Ollama](https://ollama.com/), you must first download the Ollama client, and then download a model.
 
-You must also ensure the Ollama server is running when trying to make requests to it
-
-#### `base_url` argument
-
-The [`base_url` argument](pydantic_ai.models.ollama.OllamaModel.__init__) is currently set to the default Ollama server value.
+You must also ensure the Ollama server is running when trying to make requests to it. For more information, please see the [Ollama documentation](https://github.com/ollama/ollama/tree/main/docs)
