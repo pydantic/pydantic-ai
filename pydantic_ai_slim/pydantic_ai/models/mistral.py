@@ -1,12 +1,10 @@
 from __future__ import annotations as _annotations
 
-import json
-import re
 from collections.abc import AsyncIterator, Iterable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Callable, Dict, Literal, Optional
+from typing import Any, Callable, Dict, List, Literal, Optional
 
 from httpx import AsyncClient as AsyncHTTPClient
 from mistralai import CompletionChunk, FunctionCall, TextChunk
@@ -243,9 +241,14 @@ class MistralAgentModel(AgentModel):
             )
             
         elif self.result_tools: 
-            parameters_json_schemas = [tool.parameters_json_schema for tool in self.result_tools]
-            json_format = json.dumps(parameters_json_schemas, indent=4)
-            mistral_messages.append(UserMessage(content=f"""Answer in JSON Object format here the JSON Schema:\n{json_format}"""))
+            schema: str | List[Dict[str, Any]]
+            if len(self.result_tools) == 1:
+                schema = generate_example_from_schema(self.result_tools[0].parameters_json_schema)
+            else:
+                parameters_json_schemas = [tool.parameters_json_schema for tool in self.result_tools]
+                schema = generate_examples_from_schemas(parameters_json_schemas)
+            
+            mistral_messages.append(UserMessage(content=f"""Answer in JSON Object format here the JSON Schema:\n{schema}"""))
             response = await self.client.chat.stream_async(
                 model=str(self.model_name),
                 messages=mistral_messages,
@@ -532,53 +535,50 @@ class MistralStreamStructuredResponse(StreamStructuredResponse):
 
     def timestamp(self) -> datetime:
         return self._timestamp
+    
+    
+def generate_example_from_schema(schema: Dict[str, Any]) -> Any:
+    """Generates a JSON example from a JSON schema.
 
-
-
-
-
-
-def repair_json_string(json_str: str) -> Dict[str, Any]:
-    """Repairs a JSON string by cleaning up common issues.
-
-    :param json_str: The JSON string to repair.
-    :return: A cleaned-up JSON string.
+    :param schema: The JSON schema.
+    :return: A JSON example based on the schema.
     """
-    # Remove extra whitespace
-    json_str = re.sub(r'\s+', ' ', json_str).strip()
+    if schema.get('type') == 'object':
+        example = {}
+        if 'properties' in schema:
+            for key, value in schema['properties'].items():
+                example[key] = generate_example_from_schema(value)
+        return example
 
-    # Ensure proper escaping of special characters
-    #json_str = json_str.replace('\\', '\\\\')
-    #json_str = json_str.replace('"', '\\"')
+    if schema.get('type') == 'array':
+        if 'items' in schema:
+            return [generate_example_from_schema(schema['items'])]
 
-    # Correct any minor syntax errors (e.g., missing commas)
-    json_str = re.sub(r'}\s*{', '},{', json_str)
-    json_str = re.sub(r'}\s*\[', '],[', json_str)
-    json_str = re.sub(r'\]\s*\[', '],[', json_str)
+    if schema.get('type') == 'string':
+        return 'String value'
 
-    # Add missing commas between key-value pairs
-    json_str = re.sub(r'("[\w\s]+")\s*("[\w\s]+":)', r'\1,\2', json_str)
+    if schema.get('type') == 'number':
+        return 'Number value'
 
-    # Ensure balanced braces
-    open_braces = json_str.count('{')
-    close_braces = json_str.count('}')
+    if schema.get('type') == 'integer':
+        return 'integer value'
 
-    if open_braces > close_braces:
-        json_str += '}' * (open_braces - close_braces)
-    elif close_braces > open_braces:
-        json_str = '{' * (close_braces - open_braces) + json_str
+    if schema.get('type') == 'boolean':
+        return 'Boolean value'
 
+    if schema.get('type') == 'null':
+        return 'null value'
 
-    # Attempt to parse the JSON string to ensure it is valid
-    try:
-        result = json.loads(json_str)
-        if isinstance(result, dict):
-            return result
-        else:
-            return {}
-   
-    except json.JSONDecodeError as e:
-        print(f'Error repairing JSON string: {e}, json: {json_str}')
-        return {}
+    return None
 
+def generate_examples_from_schemas(schemas: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Generates JSON examples from a list of JSON schemas.
 
+    :param schemas: The list of JSON schemas.
+    :return: A list of JSON examples based on the schemas.
+    """
+    examples = []
+    for schema in schemas:
+        example = generate_example_from_schema(schema)
+        examples.append(example)
+    return examples
