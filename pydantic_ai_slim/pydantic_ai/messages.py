@@ -1,6 +1,5 @@
 from __future__ import annotations as _annotations
 
-import json
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Annotated, Any, Literal, Union
@@ -74,6 +73,9 @@ class ToolReturn:
             return {'return_value': tool_return_ta.dump_python(self.content, mode='json')}
 
 
+ErrorDetailsTa = _pydantic.LazyTypeAdapter(list[pydantic_core.ErrorDetails])
+
+
 @dataclass
 class RetryPrompt:
     """A message back to a model asking it to try again.
@@ -109,7 +111,8 @@ class RetryPrompt:
         if isinstance(self.content, str):
             description = self.content
         else:
-            description = f'{len(self.content)} validation errors: {json.dumps(self.content, indent=2)}'
+            json_errors = ErrorDetailsTa.dump_json(self.content, exclude={'__all__': {'ctx'}}, indent=2)
+            description = f'{len(self.content)} validation errors: {json_errors.decode()}'
         return f'{description}\n\nFix the errors and try again.'
 
 

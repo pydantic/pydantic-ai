@@ -192,6 +192,12 @@ async def test_request_structured_response(allow_model_requests: None):
                 ],
                 timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc),
             ),
+            ToolReturn(
+                tool_name='final_result',
+                content='Final result processed.',
+                tool_id='123',
+                timestamp=IsNow(tz=timezone.utc),
+            ),
         ]
     )
 
@@ -277,7 +283,7 @@ async def test_request_tool_call(allow_model_requests: None):
                         tool_id='2',
                     )
                 ],
-                timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc),
             ),
             ToolReturn(
                 tool_name='get_location',
@@ -285,7 +291,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 tool_id='2',
                 timestamp=IsNow(tz=timezone.utc),
             ),
-            ModelTextResponse(content='final response', timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)),
+            ModelTextResponse(content='final response', timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc)),
         ]
     )
 
@@ -390,10 +396,15 @@ async def test_stream_structured(allow_model_requests: None):
         assert result.is_complete
 
     assert result.cost() == snapshot(Cost())
-    assert result.timestamp() == snapshot(datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc))
     assert result.all_messages() == snapshot(
         [
             UserPrompt(content='', timestamp=IsNow(tz=timezone.utc)),
+            ToolReturn(
+                tool_name='final_result',
+                content='Final result processed.',
+                tool_id=None,
+                timestamp=IsNow(tz=timezone.utc),
+            ),
             ModelStructuredResponse(
                 calls=[
                     ToolCall(tool_name='final_result', args=ArgsJson(args_json='{"first": "One", "second": "Two"}'))
@@ -439,3 +450,16 @@ async def test_no_content(allow_model_requests: None):
     with pytest.raises(UnexpectedModelBehavior, match='Streamed response ended without con'):
         async with agent.run_stream(''):
             pass  # pragma: no cover
+
+
+async def test_no_delta(allow_model_requests: None):
+    stream = chunk([]), text_chunk('hello '), text_chunk('world')
+    mock_client = MockGroq.create_mock_stream(stream)
+    m = GroqModel('llama-3.1-70b-versatile', groq_client=mock_client)
+    agent = Agent(m)
+
+    async with agent.run_stream('') as result:
+        assert not result.is_structured
+        assert not result.is_complete
+        assert [c async for c in result.stream(debounce_by=None)] == snapshot(['hello ', 'hello world'])
+        assert result.is_complete

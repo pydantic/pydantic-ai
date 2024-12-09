@@ -1,6 +1,6 @@
 from __future__ import annotations as _annotations
 
-from collections.abc import AsyncIterator, Iterable, Mapping, Sequence
+from collections.abc import AsyncIterator, Iterable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -21,8 +21,8 @@ from ..messages import (
     ToolReturn,
 )
 from ..result import Cost
+from ..tools import ToolDefinition
 from . import (
-    AbstractToolDefinition,
     AgentModel,
     EitherStreamedResponse,
     Model,
@@ -37,11 +37,11 @@ try:
     from groq.types import chat
     from groq.types.chat import ChatCompletion, ChatCompletionChunk
     from groq.types.chat.chat_completion_chunk import ChoiceDeltaToolCall
-except ImportError as e:
+except ImportError as _import_error:
     raise ImportError(
         'Please install `groq` to use the Groq model, '
         "you can use the `groq` optional group — `pip install 'pydantic-ai[groq]'`"
-    ) from e
+    ) from _import_error
 
 GroqModelName = Literal[
     'llama-3.1-70b-versatile',
@@ -109,13 +109,14 @@ class GroqModel(Model):
 
     async def agent_model(
         self,
-        function_tools: Mapping[str, AbstractToolDefinition],
+        *,
+        function_tools: list[ToolDefinition],
         allow_text_result: bool,
-        result_tools: Sequence[AbstractToolDefinition] | None,
+        result_tools: list[ToolDefinition],
     ) -> AgentModel:
         check_allow_model_requests()
-        tools = [self._map_tool_definition(r) for r in function_tools.values()]
-        if result_tools is not None:
+        tools = [self._map_tool_definition(r) for r in function_tools]
+        if result_tools:
             tools += [self._map_tool_definition(r) for r in result_tools]
         return GroqAgentModel(
             self.client,
@@ -128,13 +129,13 @@ class GroqModel(Model):
         return f'groq:{self.model_name}'
 
     @staticmethod
-    def _map_tool_definition(f: AbstractToolDefinition) -> chat.ChatCompletionToolParam:
+    def _map_tool_definition(f: ToolDefinition) -> chat.ChatCompletionToolParam:
         return {
             'type': 'function',
             'function': {
                 'name': f.name,
                 'description': f.description,
-                'parameters': f.json_schema,
+                'parameters': f.parameters_json_schema,
             },
         }
 
@@ -208,33 +209,29 @@ class GroqAgentModel(AgentModel):
     @staticmethod
     async def _process_streamed_response(response: AsyncStream[ChatCompletionChunk]) -> EitherStreamedResponse:
         """Process a streamed response, and prepare a streaming response to return."""
-        try:
-            first_chunk = await response.__anext__()
-        except StopAsyncIteration as e:  # pragma: no cover
-            raise UnexpectedModelBehavior('Streamed response ended without content or tool calls') from e
-        timestamp = datetime.fromtimestamp(first_chunk.created, tz=timezone.utc)
-        delta = first_chunk.choices[0].delta
-        start_cost = _map_cost(first_chunk)
-
-        # the first chunk may only contain `role`, so we iterate until we get either `tool_calls` or `content`
-        while delta.tool_calls is None and delta.content is None:
+        timestamp: datetime | None = None
+        start_cost = Cost()
+        # the first chunk may contain enough information so we iterate until we get either `tool_calls` or `content`
+        while True:
             try:
-                next_chunk = await response.__anext__()
+                chunk = await response.__anext__()
             except StopAsyncIteration as e:
                 raise UnexpectedModelBehavior('Streamed response ended without content or tool calls') from e
-            delta = next_chunk.choices[0].delta
-            start_cost += _map_cost(next_chunk)
+            timestamp = timestamp or datetime.fromtimestamp(chunk.created, tz=timezone.utc)
+            start_cost += _map_cost(chunk)
 
-        if delta.content is not None:
-            return GroqStreamTextResponse(delta.content, response, timestamp, start_cost)
-        else:
-            assert delta.tool_calls is not None, f'Expected delta with tool_calls, got {delta}'
-            return GroqStreamStructuredResponse(
-                response,
-                {c.index: c for c in delta.tool_calls},
-                timestamp,
-                start_cost,
-            )
+            if chunk.choices:
+                delta = chunk.choices[0].delta
+
+                if delta.content is not None:
+                    return GroqStreamTextResponse(delta.content, response, timestamp, start_cost)
+                elif delta.tool_calls is not None:
+                    return GroqStreamStructuredResponse(
+                        response,
+                        {c.index: c for c in delta.tool_calls},
+                        timestamp,
+                        start_cost,
+                    )
 
     @staticmethod
     def _map_message(message: Message) -> chat.ChatCompletionMessageParam:

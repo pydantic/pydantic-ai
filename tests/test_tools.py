@@ -1,5 +1,6 @@
 import json
-from typing import Annotated
+from dataclasses import dataclass
+from typing import Annotated, Any, Callable, Union
 
 import pytest
 from inline_snapshot import snapshot
@@ -10,6 +11,7 @@ from pydantic_ai import Agent, RunContext, Tool, UserError
 from pydantic_ai.messages import Message, ModelAnyResponse, ModelTextResponse
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.tools import ToolDefinition
 
 
 def test_tool_no_ctx():
@@ -70,8 +72,8 @@ async def google_style_docstring(foo: int, bar: str) -> str:  # pragma: no cover
 
 async def get_json_schema(_messages: list[Message], info: AgentInfo) -> ModelAnyResponse:
     assert len(info.function_tools) == 1
-    r = next(iter(info.function_tools.values()))
-    return ModelTextResponse(json.dumps(r.json_schema))
+    r = info.function_tools[0]
+    return ModelTextResponse(json.dumps(r.parameters_json_schema))
 
 
 def test_docstring_google(set_event_loop: None):
@@ -218,7 +220,6 @@ class Foo(BaseModel):
 def test_takes_just_model(set_event_loop: None):
     agent = Agent()
 
-
     @agent.tool_plain
     def takes_just_model(model: Foo) -> str:
         return f'{model.x} {model.y}'
@@ -240,10 +241,6 @@ def test_takes_just_model(set_event_loop: None):
 
 def test_takes_model_and_int(set_event_loop: None):
     agent = Agent()
-
-    class Foo(BaseModel):
-        x: int
-        y: str
 
     @agent.tool_plain
     def takes_just_model(model: Foo, z: int) -> str:
@@ -286,7 +283,7 @@ def test_init_tool_plain(set_event_loop: None):
         call_args.append(x)
         return x + 1
 
-    agent = Agent('test', tools=[Tool(plain_tool, False)], retries=7)
+    agent = Agent('test', tools=[Tool(plain_tool)], retries=7)
     result = agent.run_sync('foobar')
     assert result.data == snapshot('{"plain_tool":1}')
     assert call_args == snapshot([0])
@@ -307,7 +304,7 @@ def ctx_tool(ctx: RunContext[int], x: int) -> int:
 
 # pyright: reportPrivateUsage=false
 def test_init_tool_ctx(set_event_loop: None):
-    agent = Agent('test', tools=[Tool(ctx_tool, True, max_retries=3)], deps_type=int, retries=7)
+    agent = Agent('test', tools=[Tool(ctx_tool, takes_ctx=True, max_retries=3)], deps_type=int, retries=7)
     result = agent.run_sync('foobar', deps=5)
     assert result.data == snapshot('{"ctx_tool":5}')
     assert agent._function_tools['ctx_tool'].takes_ctx is True
@@ -321,7 +318,7 @@ def test_init_tool_ctx(set_event_loop: None):
 
 def test_repeat_tool():
     with pytest.raises(UserError, match="Tool name conflicts with existing tool: 'ctx_tool'"):
-        Agent('test', tools=[Tool(ctx_tool, True), ctx_tool], deps_type=int)
+        Agent('test', tools=[Tool(ctx_tool), ctx_tool], deps_type=int)
 
 
 def test_tool_return_conflict():
@@ -340,12 +337,12 @@ def test_init_ctx_tool_invalid():
 
     m = r'First parameter of tools that take context must be annotated with RunContext\[\.\.\.\]'
     with pytest.raises(UserError, match=m):
-        Tool(plain_tool, True)
+        Tool(plain_tool, takes_ctx=True)
 
 
 def test_init_plain_tool_invalid():
     with pytest.raises(UserError, match='RunContext annotations can only be used with tools that take context'):
-        Tool(ctx_tool, False)
+        Tool(ctx_tool, takes_ctx=False)
 
 
 def test_return_pydantic_model(set_event_loop: None):
@@ -393,3 +390,79 @@ def test_return_unknown(set_event_loop: None):
 
     with pytest.raises(PydanticSerializationError, match='Unable to serialize unknown type:'):
         agent.run_sync('')
+
+
+def test_dynamic_cls_tool(set_event_loop: None):
+    @dataclass
+    class MyTool(Tool[int]):
+        spam: int
+
+        def __init__(self, spam: int = 0, **kwargs: Any):
+            self.spam = spam
+            kwargs.update(function=self.tool_function, takes_ctx=False)
+            super().__init__(**kwargs)
+
+        def tool_function(self, x: int, y: str) -> str:
+            return f'{self.spam} {x} {y}'
+
+        async def prepare_tool_def(self, ctx: RunContext[int]) -> Union[ToolDefinition, None]:
+            if ctx.deps != 42:
+                return await super().prepare_tool_def(ctx)
+
+    agent = Agent('test', tools=[MyTool(spam=777)], deps_type=int)
+    r = agent.run_sync('', deps=1)
+    assert r.data == snapshot('{"tool_function":"777 0 a"}')
+
+    r = agent.run_sync('', deps=42)
+    assert r.data == snapshot('success (no tool calls)')
+
+
+def test_dynamic_plain_tool_decorator(set_event_loop: None):
+    agent = Agent('test', deps_type=int)
+
+    async def prepare_tool_def(ctx: RunContext[int], tool_def: ToolDefinition) -> Union[ToolDefinition, None]:
+        if ctx.deps != 42:
+            return tool_def
+
+    @agent.tool_plain(prepare=prepare_tool_def)
+    def foobar(x: int, y: str) -> str:
+        return f'{x} {y}'
+
+    r = agent.run_sync('', deps=1)
+    assert r.data == snapshot('{"foobar":"0 a"}')
+
+    r = agent.run_sync('', deps=42)
+    assert r.data == snapshot('success (no tool calls)')
+
+
+def test_dynamic_tool_decorator(set_event_loop: None):
+    agent = Agent('test', deps_type=int)
+
+    async def prepare_tool_def(ctx: RunContext[int], tool_def: ToolDefinition) -> Union[ToolDefinition, None]:
+        if ctx.deps != 42:
+            return tool_def
+
+    @agent.tool(prepare=prepare_tool_def)
+    def foobar(ctx: RunContext[int], x: int, y: str) -> str:
+        return f'{ctx.deps} {x} {y}'
+
+    r = agent.run_sync('', deps=1)
+    assert r.data == snapshot('{"foobar":"1 0 a"}')
+
+    r = agent.run_sync('', deps=42)
+    assert r.data == snapshot('success (no tool calls)')
+
+
+def test_future_run_context(set_event_loop: None, create_module: Callable[[str], Any]):
+    mod = create_module("""
+from __future__ import annotations
+
+from pydantic_ai import Agent, RunContext
+
+def ctx_tool(ctx: RunContext[int], x: int) -> int:
+    return x + ctx.deps
+
+agent = Agent('test', tools=[ctx_tool], deps_type=int)
+    """)
+    result = mod.agent.run_sync('foobar', deps=5)
+    assert result.data == snapshot('{"ctx_tool":5}')
