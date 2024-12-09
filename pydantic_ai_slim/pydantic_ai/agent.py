@@ -75,8 +75,8 @@ class Agent(Generic[AgentDeps, ResultData]):
     end_strategy: EndStrategy
     """The strategy for handling multiple tool calls when a final result is found.
 
-    - "early": Stop processing other tool calls once a final result is found (old behavior)
-    - "correct": Process all tool calls even after finding a final result (new behavior)
+    - "correct": Process all tool calls even after finding a final result
+    - "early": Stop processing other tool calls once a final result is found
     """
     _result_schema: _result.ResultSchema[ResultData] | None = field(repr=False)
     _result_validators: list[_result.ResultValidator[AgentDeps, ResultData]] = field(repr=False)
@@ -138,9 +138,9 @@ class Agent(Generic[AgentDeps, ResultData]):
                 to defer the evaluation until the first run. Useful if you want to
                 [override the model][pydantic_ai.Agent.override] for testing.
             end_strategy: The strategy for handling tool calls that are requested alongside a final result.
-                "early" means stop processing other tool calls if a final result is found.
                 "correct" means process all tool calls even after finding a final result.
-                Defaults to "early".
+                "early" means stop processing other tool calls if a final result is found.
+                Defaults to "correct".
         """
         if model is None or defer_model_check:
             self.model = model
