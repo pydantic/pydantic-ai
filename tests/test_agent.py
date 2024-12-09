@@ -287,7 +287,7 @@ def test_response_union_allow_str(set_event_loop: None, input_union_callable: Ca
     try:
         union = input_union_callable()
     except TypeError:
-        raise pytest.skip('Python version does not support `|` syntax for unions')
+        pytest.skip('Python version does not support `|` syntax for unions')
 
     m = TestModel()
     agent: Agent[None, Union[str, Foo]] = Agent(m, result_type=union)
@@ -769,3 +769,254 @@ def foo():
     assert mod.my_agent.name is None
     assert mod.foo() == snapshot('success (no tool calls)')
     assert mod.my_agent.name == 'my_agent'
+
+
+class TestMultipleToolCalls:
+    """Tests for scenarios where the model returns multiple tool calls."""
+
+    pytestmark = pytest.mark.usefixtures('set_event_loop')
+
+    class ResultType(BaseModel):
+        """Result type used by all tests."""
+
+        value: str
+
+    def test_multiple_final_tools(self):
+        """Test that when multiple final result tools are called:
+        1. The first result tool is used as the final result
+        2. Subsequent result tools are marked as unused
+        """
+
+        def return_model(_: list[Message], info: AgentInfo) -> ModelAnyResponse:
+            assert info.result_tools is not None
+            return ModelStructuredResponse(
+                calls=[
+                    ToolCall.from_dict('final_result', {'value': 'first'}),
+                    ToolCall.from_dict('final_result', {'value': 'second'}),
+                ]
+            )
+
+        agent = Agent(FunctionModel(return_model), result_type=self.ResultType)
+        result = agent.run_sync('test multiple final tools')
+        messages = result.all_messages()
+
+        # Verify the result came from the first tool
+        assert result.data.value == 'first'
+
+        # Verify we got tool returns for both calls
+        tool_returns = [m for m in messages if isinstance(m, ToolReturn)]
+        assert len(tool_returns) == 2
+
+        # Verify one was processed and one was marked unused
+        assert any(m.content == 'Final result processed.' for m in tool_returns)
+        assert any(m.content == 'Result tool not used - a final result was already processed.' for m in tool_returns)
+
+    def test_regular_and_final_tools(self):
+        """Test that when both regular and final tools are called:
+        1. All tools get processed
+        2. Regular tool results are collected
+        3. Final tool result is used
+        """
+
+        def return_model(_: list[Message], info: AgentInfo) -> ModelAnyResponse:
+            assert info.result_tools is not None
+            return ModelStructuredResponse(
+                calls=[
+                    ToolCall.from_dict('regular_tool', {'x': 42}),
+                    ToolCall.from_dict('final_result', {'value': 'final'}),
+                ]
+            )
+
+        agent = Agent(FunctionModel(return_model), result_type=self.ResultType)
+
+        @agent.tool_plain
+        def regular_tool(x: int) -> int:
+            """A regular tool that returns its input."""
+            return x
+
+        result = agent.run_sync('test regular and final tools')
+        messages = result.all_messages()
+
+        # Verify the result came from the final tool
+        assert result.data.value == 'final'
+
+        # Verify we got tool returns for both calls
+        tool_returns = [m for m in messages if isinstance(m, ToolReturn)]
+        assert len(tool_returns) == 2
+
+        # Verify both tools were processed
+        assert any(m.content == 'Final result processed.' for m in tool_returns)
+        assert any(m.content == 42 for m in tool_returns)
+
+    def test_end_strategy_early(self):
+        """Test that when end_strategy is 'early', tool calls after a final result are not executed."""
+        tool_called = []
+
+        def return_model(_: list[Message], info: AgentInfo) -> ModelAnyResponse:
+            assert info.result_tools is not None
+            return ModelStructuredResponse(
+                calls=[
+                    ToolCall.from_dict('final_result', {'value': 'final'}),
+                    ToolCall.from_dict('regular_tool', {'x': 1}),
+                    ToolCall.from_dict('another_tool', {'y': 2}),
+                ]
+            )
+
+        agent = Agent(FunctionModel(return_model), result_type=self.ResultType, end_strategy='early')
+
+        @agent.tool_plain
+        def regular_tool(x: int) -> int:
+            """A regular tool that should not be called."""
+            tool_called.append('regular_tool')
+            return x
+
+        @agent.tool_plain
+        def another_tool(y: int) -> int:
+            """Another tool that should not be called."""
+            tool_called.append('another_tool')
+            return y
+
+        result = agent.run_sync('test end strategy early')
+        messages = result.all_messages()
+
+        # Verify the result came from the final tool
+        assert result.data.value == 'final'
+
+        # Verify no tools were called
+        assert tool_called == []
+
+        # Verify we got tool returns for all calls
+        tool_returns = [m for m in messages if isinstance(m, ToolReturn)]
+        assert len(tool_returns) == 3
+
+        # Verify final tool was processed but regular tools were skipped
+        assert any(m.content == 'Final result processed.' for m in tool_returns)
+        assert (
+            len([m for m in tool_returns if m.content == 'Tool not executed - a final result was already processed.'])
+            == 2
+        )
+
+    def test_end_strategy_correct(self):
+        """Test that when end_strategy is 'correct', all tool calls are executed even after a final result."""
+        tool_called: list[str] = []
+
+        def return_model(_: list[Message], info: AgentInfo) -> ModelAnyResponse:
+            assert info.result_tools is not None
+            return ModelStructuredResponse(
+                calls=[
+                    ToolCall.from_dict('final_result', {'value': 'final'}),
+                    ToolCall.from_dict('regular_tool', {'x': 1}),
+                    ToolCall.from_dict('another_tool', {'y': 2}),
+                ]
+            )
+
+        agent = Agent(FunctionModel(return_model), result_type=self.ResultType, end_strategy='correct')
+
+        @agent.tool_plain
+        def regular_tool(x: int) -> int:
+            """A regular tool that should be called."""
+            tool_called.append('regular_tool')
+            return x
+
+        @agent.tool_plain
+        def another_tool(y: int) -> int:
+            """Another tool that should be called."""
+            tool_called.append('another_tool')
+            return y
+
+        result = agent.run_sync('test end strategy correct')
+        messages = result.all_messages()
+
+        # Verify the result came from the final tool
+        assert result.data.value == 'final'
+
+        # Verify all tools were called
+        assert sorted(tool_called) == sorted(['regular_tool', 'another_tool'])
+
+        # Verify we got tool returns for all calls
+        tool_returns = [m for m in messages if isinstance(m, ToolReturn)]
+        assert len(tool_returns) == 3
+
+        # Verify all tools were processed
+        assert any(m.content == 'Final result processed.' for m in tool_returns)
+        assert any(m.content == 1 for m in tool_returns)  # regular_tool return
+        assert any(m.content == 2 for m in tool_returns)  # another_tool return
+
+    def test_end_strategy_early_no_final_tool(self):
+        """Test that when end_strategy is 'early' but there is no final tool, all tools are executed."""
+        tool_called: list[str] = []
+
+        agent = Agent(TestModel(), result_type=self.ResultType, end_strategy='early')
+
+        @agent.tool_plain
+        def regular_tool(x: int) -> int:
+            """A regular tool that should be called."""
+            tool_called.append('regular_tool')
+            return x
+
+        @agent.tool_plain
+        def another_tool(y: int) -> int:
+            """Another tool that should be called."""
+            tool_called.append('another_tool')
+            return y
+
+        result = agent.run_sync('test end strategy early no final tool')
+        messages = result.all_messages()
+
+        # Verify all tools were called since there was no final result
+        assert sorted(tool_called) == sorted(['regular_tool', 'another_tool'])
+
+        # Verify we got tool returns for all calls including the final result
+        tool_returns = [m for m in messages if isinstance(m, ToolReturn)]
+        assert len(tool_returns) == 3
+
+        # Verify both tools were processed
+        assert any(m.content == 0 for m in tool_returns)  # regular_tool return
+        assert any(m.content == 0 for m in tool_returns)  # another_tool return
+
+    def test_end_strategy_early_final_tool_middle(self):
+        """Test that when end_strategy is 'early', tools are not executed,
+        even if they appear before a final result in the tool call order."""
+        tool_called = []
+
+        def return_model(_: list[Message], info: AgentInfo) -> ModelAnyResponse:
+            assert info.result_tools is not None
+            return ModelStructuredResponse(
+                calls=[
+                    ToolCall.from_dict('regular_tool', {'x': 1}),
+                    ToolCall.from_dict('final_result', {'value': 'final'}),
+                    ToolCall.from_dict('another_tool', {'y': 2}),
+                ]
+            )
+
+        agent = Agent(FunctionModel(return_model), result_type=self.ResultType, end_strategy='early')
+
+        @agent.tool_plain
+        def regular_tool(x: int) -> int:
+            """A regular tool that should be called since it's before final_result."""
+            tool_called.append('regular_tool')
+            return x
+
+        @agent.tool_plain
+        def another_tool(y: int) -> int:
+            """A tool that should not be called since it's after final_result."""
+            tool_called.append('another_tool')
+            return y
+
+        result = agent.run_sync('test end strategy early final tool middle')
+        messages = result.all_messages()
+
+        # Verify no tools were called
+        assert tool_called == []
+
+        # Verify we got tool returns for all calls including the final result
+        tool_returns = [m for m in messages if isinstance(m, ToolReturn)]
+        assert len(tool_returns) == 3
+
+        # Verify final result was processed
+        assert any(m.content == 'Final result processed.' for m in tool_returns)
+        # Verify two tools were skipped
+        assert (
+            len([m for m in tool_returns if m.content == 'Tool not executed - a final result was already processed.'])
+            == 2
+        )
