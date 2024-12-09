@@ -156,9 +156,10 @@ class MistralAgentModel(AgentModel):
     async def request_stream(
         self, messages: list[Message]
     ) -> AsyncIterator[EitherStreamedResponse]:
-        response = await self._completions_create(messages, True)
+        json_mode = True if self.tools and self.tools[0].function.name == 'final_result' else False
+        response = await self._stream_completions_create(messages, json_mode)
         async with response:
-            yield await self._process_streamed_response(response)
+            yield await self._process_streamed_response(response, json_mode)
                 
     async def _completions_create(
         self, messages: list[Message], stream: bool
@@ -183,14 +184,14 @@ class MistralAgentModel(AgentModel):
         return response
         
     async def _stream_completions_create(
-        self, messages: list[Message], stream: bool
+        self, messages: list[Message], json_mode: bool
     ) -> EventStreamAsync[CompletionEvent]:
         
         response: Optional[EventStreamAsync[CompletionEvent]] = None
         mistral_messages = [self._map_message(m) for m in messages]
-        json_mode = True if self.tools and self.tools[0].function.name == 'final_result' else False
         
-        if json_mode and self.tools is not None:
+        if json_mode:
+            assert self.tools, 'Tool need to be null'
             json_format = json.dumps(self.tools[0].function.parameters, indent=4)
             mistral_messages.append(UserMessage(content=f"""Answer in JSON Object format:{json_format}"""))
             response = await self.client.chat.stream_async(
@@ -258,7 +259,7 @@ class MistralAgentModel(AgentModel):
 
     @staticmethod
     async def _process_streamed_response(
-        response: EventStreamAsync[CompletionEvent],
+        response: EventStreamAsync[CompletionEvent], 
         json_mode: bool
     ) -> EitherStreamedResponse:
         """Process a streamed response, and prepare a streaming response to return."""
@@ -278,14 +279,14 @@ class MistralAgentModel(AgentModel):
                 delta = chunk.data.choices[0].delta
                 if delta.content is not None and delta.content != '' and not isinstance(delta.content, Unset):
                     if json_mode:
-                        return MistralStreamTextResponse(delta.content, response, timestamp, start_cost)
-                    else:
                         return MistralStreamStructuredResponse(
                         response,
                         {c.id: c for c in delta.tool_calls},
                         timestamp,
                         start_cost,
                     )
+                    else:
+                        return MistralStreamTextResponse(delta.content, response, timestamp, start_cost)
            
 
     @staticmethod
