@@ -12,6 +12,7 @@ This installs the `pydantic_ai` package, core dependencies, and libraries requir
 
 * [OpenAI API](https://platform.openai.com/docs/overview)
 * [Google VertexAI API](https://cloud.google.com/vertex-ai) for Gemini models
+* [Anthropic API](https://docs.anthropic.com/en/api/getting-started)
 * [Groq API](https://console.groq.com/docs/overview)
 
 ## Use with Pydantic Logfire
@@ -58,6 +59,12 @@ If you're using just [`VertexAIModel`][pydantic_ai.models.vertexai.VertexAIModel
 
 ```bash
 pip/uv-add 'pydantic-ai-slim[vertexai]'
+```
+
+If you're just using [`Anthropic`][pydantic_ai.models.anthropic.AnthropicModel], run:
+
+```bash
+pip/uv-add 'pydantic-ai-slim[anthropic]'
 ```
 
 To use just [`GroqModel`][pydantic_ai.models.groq.GroqModel], run:
@@ -279,7 +286,50 @@ agent = Agent(model)
 
 ### Anthropic
 
-<!-- TODO: fill in install docs -->
+To use [Anthropic](https://docs.anthropic.com/en/home) through their API, go to [console.anthropic.com/settings/keys](https://console.anthropic.com/settings/keys) to generate an API key.
+
+[`AnthropicModelName`][pydantic_ai.models.anthropic.AnthropicModelName] contains a list of available Anthropic models.
+
+#### Environment variable
+
+Once you have the API key, you can set it as an environment variable:
+
+```bash
+export ANTHROPIC_API_KEY='your-api-key'
+```
+
+You can then use [`AnthropicModel`][pydantic_ai.models.anthropic.AnthropicModel] by name:
+
+```py title="anthropic_model_by_name.py"
+from pydantic_ai import Agent
+
+agent = Agent('claude-3-5-sonnet-latest')
+...
+```
+
+Or initialise the model directly with just the model name:
+
+```py title="anthropic_model_init.py"
+from pydantic_ai import Agent
+from pydantic_ai.models.anthropic import AnthropicModel
+
+model = AnthropicModel('claude-3-5-sonnet-latest')
+agent = Agent(model)
+...
+```
+
+#### `api_key` argument
+
+If you don't want to or can't set the environment variable, you can pass it at runtime via the [`api_key` argument][pydantic_ai.models.anthropic.AnthropicModel.__init__]:
+
+```py title="anthropic_model_api_key.py"
+from pydantic_ai import Agent
+from pydantic_ai.models.anthropic import AnthropicModel
+
+model = Anthropic('claude-3-5-sonnet-latest', api_key='your-api-key')
+agent = Agent(model)
+...
+```
 
 ### Groq
 

@@ -149,7 +149,7 @@ class ArgsDict:
 
 @dataclass
 class ToolCall:
-    """Either a tool call from the agent."""
+    """A tool call from the agent."""
 
     tool_name: str
     """The name of the tool to call."""

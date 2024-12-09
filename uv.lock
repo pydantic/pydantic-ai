@@ -23,6 +23,24 @@ wheels = [
 ]
 
 [[package]]
+name = "anthropic"
+version = "0.40.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "anyio" },
+    { name = "distro" },
+    { name = "httpx" },
+    { name = "jiter" },
+    { name = "pydantic" },
+    { name = "sniffio" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/4d/d9/c39005f04c602607d68d48d1c917b35af8d16b687b7ca427ca787c39d8b9/anthropic-0.40.0.tar.gz", hash = "sha256:3efeca6d9e97813f93ed34322c6c7ea2279bf0824cd0aa71b59ce222665e2b87", size = 190939 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/cb/18/a68cfb9a11990377650c36c25b5dfb0baece900e9e505b68e1aa06ad0227/anthropic-0.40.0-py3-none-any.whl", hash = "sha256:442028ae8790ff9e3b6f8912043918755af1230d193904ae2ef78cc22995280c", size = 199484 },
+]
+
+[[package]]
 name = "anyio"
 version = "4.6.2.post1"
 source = { registry = "https://pypi.org/simple" }
@@ -1498,7 +1516,7 @@ name = "pydantic-ai"
 version = "0.0.12"
 source = { editable = "." }
 dependencies = [
-    { name = "pydantic-ai-slim", extra = ["groq", "openai", "vertexai"] },
+    { name = "pydantic-ai-slim", extra = ["anthropic", "groq", "openai", "vertexai"] },
 ]
 
 [package.optional-dependencies]
@@ -1527,7 +1545,7 @@ lint = [
 requires-dist = [
     { name = "logfire", marker = "extra == 'logfire'", specifier = ">=2.3" },
     { name = "pydantic-ai-examples", marker = "extra == 'examples'", editable = "pydantic_ai_examples" },
-    { name = "pydantic-ai-slim", extras = ["openai", "vertexai", "groq"], editable = "pydantic_ai_slim" },
+    { name = "pydantic-ai-slim", extras = ["openai", "vertexai", "groq", "anthropic"], editable = "pydantic_ai_slim" },
 ]
 
 [package.metadata.requires-dev]
@@ -1552,7 +1570,7 @@ dependencies = [
     { name = "asyncpg" },
     { name = "fastapi" },
     { name = "logfire", extra = ["asyncpg", "fastapi"] },
-    { name = "pydantic-ai-slim", extra = ["groq", "openai", "vertexai"] },
+    { name = "pydantic-ai-slim", extra = ["anthropic", "groq", "openai", "vertexai"] },
     { name = "python-multipart" },
     { name = "rich" },
     { name = "uvicorn" },
@@ -1563,7 +1581,7 @@ requires-dist = [
     { name = "asyncpg", specifier = ">=0.30.0" },
     { name = "fastapi", specifier = ">=0.115.4" },
     { name = "logfire", extras = ["asyncpg", "fastapi"], specifier = ">=2.3" },
-    { name = "pydantic-ai-slim", extras = ["openai", "vertexai", "groq"], editable = "pydantic_ai_slim" },
+    { name = "pydantic-ai-slim", extras = ["openai", "vertexai", "groq", "anthropic"], editable = "pydantic_ai_slim" },
     { name = "python-multipart", specifier = ">=0.0.17" },
     { name = "rich", specifier = ">=13.9.2" },
     { name = "uvicorn", specifier = ">=0.32.0" },
@@ -1582,6 +1600,9 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+anthropic = [
+    { name = "anthropic" },
+]
 groq = [
     { name = "groq" },
 ]
@@ -1611,6 +1632,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "anthropic", marker = "extra == 'anthropic'", specifier = ">=0.40.0" },
     { name = "eval-type-backport", specifier = ">=0.2.0" },
     { name = "google-auth", marker = "extra == 'vertexai'", specifier = ">=2.36.0" },
     { name = "griffe", specifier = ">=1.3.2" },
