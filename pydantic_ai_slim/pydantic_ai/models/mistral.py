@@ -256,7 +256,7 @@ class MistralAgentModel(AgentModel):
     ) -> EitherStreamedResponse:
         """Process a streamed response, and prepare a streaming response to return."""
         try:
-            first_chunk = await response.generator.__anext__()
+            first_chunk = await response.__anext__()
         except StopAsyncIteration as e:  # pragma: no cover
             raise UnexpectedModelBehavior('Streamed response ended without content or tool calls') from e
         timestamp = datetime.fromtimestamp(first_chunk.data.created or 0, tz=timezone.utc) # TODO: see 0 now or not
@@ -265,8 +265,8 @@ class MistralAgentModel(AgentModel):
         start_cost = _map_cost(first_chunk.data)
 
         
-        # the first chunk may only contain `role`, so we iterate until we get either `tool_calls` or `content`
-        while delta.tool_calls is None or isinstance(delta.tool_calls, Unset) and delta.content is None or isinstance(delta.content, Unset):
+        # # the first chunk may only contain `role`, so we iterate until we get either `tool_calls` or `content`
+        while delta.tool_calls is None or isinstance(delta.tool_calls, Unset) and len(delta.content) == 0 or isinstance(delta.content, Unset):
                 try:
                     next_chunk = await response.__anext__()
                 except StopAsyncIteration as e:
@@ -275,7 +275,12 @@ class MistralAgentModel(AgentModel):
                 start_cost += _map_cost(next_chunk.data)
 
         if delta.tool_calls is not None and isinstance(delta.tool_calls, Unset):
-            return MistralStreamTextResponse(delta.content, response, timestamp, start_cost)
+            return MistralStreamTextResponse(
+                delta.content, 
+                response, 
+                timestamp, 
+                start_cost
+            )
         else:
             return MistralStreamStructuredResponse(
                 response,
@@ -363,12 +368,12 @@ class MistralStreamTextResponse(StreamTextResponse):
 
 
     async def __anext__(self) -> None:
-        if self._first is not None:
+        if self._first is not None and len(self._first) > 0:
             self._buffer.append(self._first)
             self._first = None
             return None
 
-        chunk = await self._response.generator.__anext__()
+        chunk = await self._response.__anext__()
         self._cost = _map_cost(chunk.data)
 
         try:
