@@ -1,6 +1,6 @@
 from __future__ import annotations as _annotations
 
-from collections.abc import AsyncIterator, Iterable, Mapping, Sequence
+from collections.abc import AsyncIterator, Iterable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -8,7 +8,6 @@ from typing import Callable, Literal
 
 from httpx import AsyncClient as AsyncHTTPClient
 from mistralai import CompletionChunk, FunctionCall, TextChunk
-from mistralai.types.basemodel import Unset
 from typing_extensions import assert_never
 
 from .. import UnexpectedModelBehavior, result
@@ -23,8 +22,8 @@ from ..messages import (
     ToolCall as PydanticToolCall,
     ToolReturn,
 )
+from ..tools import ToolDefinition
 from . import (
-    AbstractToolDefinition,
     AgentModel,
     EitherStreamedResponse,
     Model,
@@ -48,6 +47,7 @@ try:
     from mistralai.models.toolmessage import ToolMessage
     from mistralai.models.usermessage import UserMessage
     from mistralai.types import UNSET
+    from mistralai.types.basemodel import Unset
     from mistralai.utils.eventstreaming import EventStreamAsync
 except ImportError as e:
     raise ImportError(
@@ -100,14 +100,16 @@ class MistralModel(Model):
 
     async def agent_model(
         self,
-        function_tools: Mapping[str, AbstractToolDefinition],
+        *,
+        function_tools: list[ToolDefinition],
         allow_text_result: bool,
-        result_tools: Sequence[AbstractToolDefinition] | None,
+        result_tools: list[ToolDefinition],
     ) -> AgentModel:
+        tools = [self._map_tool_definition(r) for r in function_tools]
+        if result_tools:
+            tools += [self._map_tool_definition(r) for r in result_tools]        
         check_allow_model_requests()
-        tools: list[Tool | ToolTypedDict | None] = [self._map_tool_definition(r) for r in function_tools.values()]
-        if result_tools is not None:
-            tools += [self._map_tool_definition(r) for r in result_tools]
+
         return MistralAgentModel(
             self.client,
             self.model_name,
@@ -120,7 +122,7 @@ class MistralModel(Model):
 
     @staticmethod
     def _map_tool_definition(
-        f: AbstractToolDefinition,
+        f: ToolDefinition,
     ) -> Tool | ToolTypedDict:
         """Convert an `AbstractToolDefinition` to a `Tool` or `ToolTypedDict`.
 
@@ -128,7 +130,7 @@ class MistralModel(Model):
         representation expected by the Mistral API.
         """
         function = Function(
-            name=f.name, parameters=f.json_schema, description=f.description
+            name=f.name, parameters=f.parameters_json_schema, description=f.description
         )
         return Tool(function=function)
 
@@ -192,14 +194,18 @@ class MistralAgentModel(AgentModel):
             tool_choice = 'auto'
 
         mistral_messages = [self._map_message(m) for m in messages]
+        
         response = await self.client.chat.stream_async(
             model=str(self.model_name),
             messages=mistral_messages,
-            temperature=0.0,
+           # temperature=0.0,
             n=1,
             tools=self.tools or UNSET,
             tool_choice=tool_choice or None,
-            stream=stream,
+            stream=True,
+            # response_format = {
+            #     'type': 'json_object',
+            # },
         )
         assert response, 'TODO: fix this'  # TODO: see when None
         return response
@@ -255,39 +261,64 @@ class MistralAgentModel(AgentModel):
         response: EventStreamAsync[CompletionEvent],
     ) -> EitherStreamedResponse:
         """Process a streamed response, and prepare a streaming response to return."""
-        try:
-            first_chunk = await response.__anext__()
-        except StopAsyncIteration as e:  # pragma: no cover
-            raise UnexpectedModelBehavior('Streamed response ended without content or tool calls') from e
-        timestamp = datetime.fromtimestamp(first_chunk.data.created or 0, tz=timezone.utc) # TODO: see 0 now or not
-        choice = first_chunk.data.choices[0]
-        delta = choice.delta
-        start_cost = _map_cost(first_chunk.data)
+        timestamp: datetime | None = None
+        start_cost = result.Cost()
+        # the first chunk may contain enough information so we iterate until we get either `tool_calls` or `content`
+        while True:
+            try:
+                chunk = await response.__anext__()
+            except StopAsyncIteration as e:
+                raise UnexpectedModelBehavior('Streamed response ended without content or tool calls') from e
+
+            timestamp = timestamp or datetime.fromtimestamp(chunk.data.created, tz=timezone.utc)
+            start_cost += _map_cost(chunk.data)
+
+            if chunk.data.choices:
+                delta = chunk.data.choices[0].delta
+
+                if delta.content is not None and delta.content != '' and not isinstance(delta.content, Unset):
+                    return MistralStreamTextResponse(delta.content, response, timestamp, start_cost)
+                elif delta.tool_calls is not None and not isinstance(delta.tool_calls, Unset):
+                    return MistralStreamStructuredResponse(
+                        response,
+                        {c.id: c for c in delta.tool_calls},
+                        timestamp,
+                        start_cost,
+                    )
+                            
+        # try:
+        #     first_chunk = await response.__anext__()
+        # except StopAsyncIteration as e:  # pragma: no cover
+        #     raise UnexpectedModelBehavior('Streamed response ended without content or tool calls') from e
+        # timestamp = datetime.fromtimestamp(first_chunk.data.created or 0, tz=timezone.utc) # TODO: see 0 now or not
+        # choice = first_chunk.data.choices[0]
+        # delta = choice.delta
+        # start_cost = _map_cost(first_chunk.data)
 
         
-        # # the first chunk may only contain `role`, so we iterate until we get either `tool_calls` or `content`
-        while delta.tool_calls is None or isinstance(delta.tool_calls, Unset) and len(delta.content) == 0 or isinstance(delta.content, Unset):
-                try:
-                    next_chunk = await response.__anext__()
-                except StopAsyncIteration as e:
-                    raise UnexpectedModelBehavior('Streamed response ended without content or tool calls') from e
-                delta = next_chunk.data.choices[0].delta
-                start_cost += _map_cost(next_chunk.data)
+        # # # the first chunk may only contain `role`, so we iterate until we get either `tool_calls` or `content`
+        # while delta.tool_calls is None or isinstance(delta.tool_calls, Unset) and len(delta.content) == 0 or isinstance(delta.content, Unset):
+        #         try:
+        #             next_chunk = await response.__anext__()
+        #         except StopAsyncIteration as e:
+        #             raise UnexpectedModelBehavior('Streamed response ended without content or tool calls') from e
+        #         delta = next_chunk.data.choices[0].delta
+        #         start_cost += _map_cost(next_chunk.data)
 
-        if delta.tool_calls is not None and isinstance(delta.tool_calls, Unset):
-            return MistralStreamTextResponse(
-                delta.content, 
-                response, 
-                timestamp, 
-                start_cost
-            )
-        else:
-            return MistralStreamStructuredResponse(
-                response,
-                {c.id: c for c in delta.tool_calls},
-                timestamp,
-                start_cost,
-            )
+        # if delta.tool_calls is not None and isinstance(delta.tool_calls, Unset):
+        #     return MistralStreamTextResponse(
+        #         delta.content, 
+        #         response, 
+        #         timestamp, 
+        #         start_cost
+        #     )
+        # else:
+        #     return MistralStreamStructuredResponse(
+        #         response,
+        #         {c.id: c for c in delta.tool_calls},
+        #         timestamp,
+        #         start_cost,
+        #     )
 
 
     @staticmethod
@@ -344,10 +375,10 @@ def _map_tool_call(t: PydanticToolCall) -> ToolCall:
     )
     
 def _map_cost(response: ChatCompletionResponse | CompletionChunk) -> result.Cost:
-    usage = response.usage
-    if usage is None:
+    if response.usage is None:
         return result.Cost()
     else:
+        usage = response.usage
         return result.Cost(
             request_tokens=usage.prompt_tokens,
             response_tokens=usage.completion_tokens,
@@ -384,11 +415,11 @@ class MistralStreamTextResponse(StreamTextResponse):
         # we don't raise StopAsyncIteration on the last chunk because usage comes after this
         if choice.finish_reason is None:
             assert choice.delta.content is not None, f'Expected delta with content, invalid chunk: {chunk!r}'
-        if choice.delta.content is not None:
-            if isinstance(choice.delta.content, str):
-                self._buffer.append(choice.delta.content)
-            elif isinstance(choice.delta.content, TextChunk):
-                self._buffer.append(choice.delta.content.text)
+        if isinstance(choice.delta.content, str):
+            self._buffer.append(choice.delta.content)
+        elif isinstance(choice.delta.content, TextChunk):
+            self._buffer.append(choice.delta.content.text)
+            
 
     def get(self, *, final: bool = False) -> Iterable[str]:
         yield from self._buffer
@@ -452,4 +483,5 @@ class MistralStreamStructuredResponse(StreamStructuredResponse):
 
     def timestamp(self) -> datetime:
         return self._timestamp
+
 
