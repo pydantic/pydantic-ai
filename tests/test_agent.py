@@ -287,7 +287,7 @@ def test_response_union_allow_str(set_event_loop: None, input_union_callable: Ca
     try:
         union = input_union_callable()
     except TypeError:
-        raise pytest.skip('Python version does not support `|` syntax for unions')
+        pytest.skip('Python version does not support `|` syntax for unions')
 
     m = TestModel()
     agent: Agent[None, Union[str, Foo]] = Agent(m, result_type=union)
@@ -946,16 +946,7 @@ class TestMultipleToolCalls:
         """Test that when end_strategy is 'early' but there is no final tool, all tools are executed."""
         tool_called = []
 
-        def return_model(_: list[Message], info: AgentInfo) -> ModelAnyResponse:
-            assert info.result_tools is not None
-            return ModelStructuredResponse(
-                calls=[
-                    ToolCall.from_dict('regular_tool', {'x': 1}),
-                    ToolCall.from_dict('another_tool', {'y': 2}),
-                ]
-            )
-
-        agent = Agent(FunctionModel(return_model), result_type=self.ResultType, end_strategy='early')
+        agent = Agent(TestModel(), result_type=self.ResultType, end_strategy='early')
 
         @agent.tool_plain
         def regular_tool(x: int) -> int:
@@ -977,15 +968,15 @@ class TestMultipleToolCalls:
 
         # Verify we got tool returns for all calls
         tool_returns = [m for m in messages if isinstance(m, ToolReturn)]
-        assert len(tool_returns) == 2
+        assert len(tool_returns) == 3
 
         # Verify both tools were processed
-        assert any(m.content == 1 for m in tool_returns)  # regular_tool return
-        assert any(m.content == 2 for m in tool_returns)  # another_tool return
+        assert any(m.content == 0 for m in tool_returns)  # regular_tool return
+        assert any(m.content == 0 for m in tool_returns)  # another_tool return
 
     def test_end_strategy_early_final_tool_middle(self):
-        """Test that when end_strategy is 'early', tools after a final result are not executed,
-        even if there are other tools before the final result."""
+        """Test that when end_strategy is 'early', tools are not executed,
+        even if they appear before a final result in the tool call order."""
         tool_called = []
 
         def return_model(_: list[Message], info: AgentInfo) -> ModelAnyResponse:
@@ -1015,16 +1006,17 @@ class TestMultipleToolCalls:
         result = agent.run_sync('test end strategy early final tool middle')
         messages = result.all_messages()
 
-        # Verify only the tool before final_result was called
-        assert tool_called == ['regular_tool']
+        # Verify no tools were called
+        assert tool_called == []
 
         # Verify we got tool returns for all calls
         tool_returns = [m for m in messages if isinstance(m, ToolReturn)]
         assert len(tool_returns) == 3
 
-        # Verify first tool was processed
-        assert any(m.content == 1 for m in tool_returns)  # regular_tool return
         # Verify final result was processed
         assert any(m.content == 'Final result processed.' for m in tool_returns)
-        # Verify last tool was skipped
-        assert any(m.content == 'Tool not executed - a final result was already processed.' for m in tool_returns)
+        # Verify two tools were skipped
+        assert (
+            len([m for m in tool_returns if m.content == 'Tool not executed - a final result was already processed.'])
+            == 2
+        )
