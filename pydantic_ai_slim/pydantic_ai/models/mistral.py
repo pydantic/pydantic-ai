@@ -5,7 +5,7 @@ from collections.abc import AsyncIterator, Iterable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Callable, Literal
+from typing import Callable, Literal, Optional
 
 from httpx import AsyncClient as AsyncHTTPClient
 from mistralai import CompletionChunk, FunctionCall, TextChunk
@@ -31,7 +31,6 @@ from . import (
     StreamStructuredResponse,
     StreamTextResponse,
     cached_async_http_client,
-    check_allow_model_requests,
 )
 
 try:
@@ -106,10 +105,11 @@ class MistralModel(Model):
         allow_text_result: bool,
         result_tools: list[ToolDefinition],
     ) -> AgentModel:
-        tools = [self._map_tool_definition(r) for r in function_tools]
+        tools: list[Tool] | None = [self._map_tool_definition(r) for r in function_tools]
         if result_tools:
             tools += [self._map_tool_definition(r) for r in result_tools]        
-        check_allow_model_requests()
+        if not tools:
+            tools = None
 
         return MistralAgentModel(
             self.client,
@@ -124,7 +124,7 @@ class MistralModel(Model):
     @staticmethod
     def _map_tool_definition(
         f: ToolDefinition,
-    ) -> Tool | ToolTypedDict:
+    ) -> Tool:
         """Convert an `AbstractToolDefinition` to a `Tool` or `ToolTypedDict`.
 
         This is a utility function used to convert our internal representation of a tool to the
@@ -151,72 +151,63 @@ class MistralAgentModel(AgentModel):
         response = await self._completions_create(messages, False)
         return self._process_response(response), _map_cost(response)
 
+
     @asynccontextmanager
     async def request_stream(
         self, messages: list[Message]
     ) -> AsyncIterator[EitherStreamedResponse]:
-        response = await self._stream_create(messages, True)
+        response = await self._completions_create(messages, True)
         async with response:
             yield await self._process_streamed_response(response)
-
+                
     async def _completions_create(
         self, messages: list[Message], stream: bool
-    ) -> ChatCompletionResponse:
-        # standalone function to make it easier to override
-        if not self.tools:
-            tool_choice: Literal['none', 'required', 'auto'] | None = None
-        elif not self.allow_text_result:
+    ) ->  ChatCompletionResponse:
+        
+        mistral_messages = [self._map_message(m) for m in messages]
+        tool_choice: Literal['none', 'required', 'auto'] | None = None
+        if not self.allow_text_result:
             tool_choice = 'required'
         else:
             tool_choice = 'auto'
-
-        mistral_messages = [self._map_message(m) for m in messages]
+            
         response = await self.client.chat.complete_async(
             model=str(self.model_name),
             messages=mistral_messages,
-            temperature=0.0,
             n=1,
-            tools=self.tools or UNSET, 
-            tool_choice=tool_choice or None,
-            stream=stream,
-        )
-        assert response, 'TODO: fix this'  # TODO: see when None
+            tools=self.tools,
+            tool_choice=tool_choice,
+            stream=False
+            )
+        assert response
         return response
-
-    async def _stream_create(
+        
+    async def _stream_completions_create(
         self, messages: list[Message], stream: bool
     ) -> EventStreamAsync[CompletionEvent]:
-        # standalone function to make it easier to override
+        
+        response: Optional[EventStreamAsync[CompletionEvent]] = None
         mistral_messages = [self._map_message(m) for m in messages]
-        tools = self.tools 
-        if not self.tools:
-            tool_choice: Literal['none', 'required', 'auto'] | None = None
-        elif not self.allow_text_result:
-            tool_choice = 'required'
+        json_mode = True if self.tools and self.tools[0].function.name == 'final_result' else False
+        
+        if json_mode and self.tools is not None:
+            json_format = json.dumps(self.tools[0].function.parameters, indent=4)
+            mistral_messages.append(UserMessage(content=f"""Answer in JSON Object format:{json_format}"""))
+            response = await self.client.chat.stream_async(
+                model=str(self.model_name),
+                messages=mistral_messages,
+                stream=True,
+                response_format = {'type': 'json_object'},
+            )
+            
         else:
-            tool_choice = 'auto'
-            
-            
-        if self.tools and self.tools[0].function.name == 'final_result':
-            json_format = json.dumps( self.tools[0].function.parameters, indent=4)
-            mistral_messages.append(AssistantMessage(content=f"""Answer in JSON if format:{json_format}"""))
-            tools = UNSET
-            tool_choice = None
-        
-        
-        response = await self.client.chat.stream_async(
-            model=str(self.model_name),
-            messages=mistral_messages,
-           # temperature=0.0,
-            n=1,
-            tools=tools,
-            tool_choice=tool_choice or None,
-            stream=True,
-            response_format = {
-                 'type': 'json_object',
-            },
-        )
-        assert response, 'TODO: fix this'  # TODO: see when None
+            response = await self.client.chat.stream_async(
+                model=str(self.model_name),
+                messages=mistral_messages,
+                stream=True,
+                n=1
+            )
+        assert response
         return response
 
     @staticmethod
@@ -268,6 +259,7 @@ class MistralAgentModel(AgentModel):
     @staticmethod
     async def _process_streamed_response(
         response: EventStreamAsync[CompletionEvent],
+        json_mode: bool
     ) -> EitherStreamedResponse:
         """Process a streamed response, and prepare a streaming response to return."""
         timestamp: datetime | None = None
@@ -284,22 +276,17 @@ class MistralAgentModel(AgentModel):
 
             if chunk.data.choices:
                 delta = chunk.data.choices[0].delta
-                if delta.tool_calls and delta.tool_calls[0].function.name == 'final_result':
-                    return MistralStreamStructuredResponse(
+                if delta.content is not None and delta.content != '' and not isinstance(delta.content, Unset):
+                    if json_mode:
+                        return MistralStreamTextResponse(delta.content, response, timestamp, start_cost)
+                    else:
+                        return MistralStreamStructuredResponse(
                         response,
                         {c.id: c for c in delta.tool_calls},
                         timestamp,
                         start_cost,
                     )
-                elif delta.content is not None and delta.content != '' and not isinstance(delta.content, Unset):
-                    return MistralStreamTextResponse(delta.content, response, timestamp, start_cost)
-                elif delta.tool_calls is not None and not isinstance(delta.tool_calls, Unset):
-                    return MistralStreamStructuredResponse(
-                        response,
-                        {c.id: c for c in delta.tool_calls},
-                        timestamp,
-                        start_cost,
-                    )
+           
 
     @staticmethod
     def _map_message(message: Message) -> models.Messages:
