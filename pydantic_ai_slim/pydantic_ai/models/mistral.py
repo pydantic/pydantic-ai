@@ -285,41 +285,6 @@ class MistralAgentModel(AgentModel):
                         timestamp,
                         start_cost,
                     )
-                            
-        # try:
-        #     first_chunk = await response.__anext__()
-        # except StopAsyncIteration as e:  # pragma: no cover
-        #     raise UnexpectedModelBehavior('Streamed response ended without content or tool calls') from e
-        # timestamp = datetime.fromtimestamp(first_chunk.data.created or 0, tz=timezone.utc) # TODO: see 0 now or not
-        # choice = first_chunk.data.choices[0]
-        # delta = choice.delta
-        # start_cost = _map_cost(first_chunk.data)
-
-        
-        # # # the first chunk may only contain `role`, so we iterate until we get either `tool_calls` or `content`
-        # while delta.tool_calls is None or isinstance(delta.tool_calls, Unset) and len(delta.content) == 0 or isinstance(delta.content, Unset):
-        #         try:
-        #             next_chunk = await response.__anext__()
-        #         except StopAsyncIteration as e:
-        #             raise UnexpectedModelBehavior('Streamed response ended without content or tool calls') from e
-        #         delta = next_chunk.data.choices[0].delta
-        #         start_cost += _map_cost(next_chunk.data)
-
-        # if delta.tool_calls is not None and isinstance(delta.tool_calls, Unset):
-        #     return MistralStreamTextResponse(
-        #         delta.content, 
-        #         response, 
-        #         timestamp, 
-        #         start_cost
-        #     )
-        # else:
-        #     return MistralStreamStructuredResponse(
-        #         response,
-        #         {c.id: c for c in delta.tool_calls},
-        #         timestamp,
-        #         start_cost,
-        #     )
-
 
     @staticmethod
     def _map_message(message: Message) -> models.Messages:
