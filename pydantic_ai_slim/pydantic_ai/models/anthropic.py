@@ -11,7 +11,7 @@ from typing_extensions import assert_never
 
 from .. import UnexpectedModelBehavior, _utils, result
 from ..messages import (
-    ArgsJson,
+    ArgsDict,
     Message,
     ModelAnyResponse,
     ModelStructuredResponse,
@@ -35,12 +35,12 @@ from . import (
 try:
     from anthropic import NOT_GIVEN, AsyncAnthropic, AsyncStream
     from anthropic.types import (
-        ContentBlock,
         Message as AnthropicMessage,
         MessageParam,
         RawMessageDeltaEvent,
         RawMessageStartEvent,
         RawMessageStreamEvent,
+        TextBlock,
         ToolChoiceParam,
         ToolParam,
         ToolUseBlock,
@@ -199,15 +199,23 @@ class AnthropicAgentModel(AgentModel):
     @staticmethod
     def _process_response(response: AnthropicMessage) -> ModelAnyResponse:
         """Process a non-streamed response, and prepare a message to return."""
-        choice: ContentBlock = response.content[0]
-        if isinstance(choice, ToolUseBlock):
-            # TODO: fix this - different structure than groq and others
-            return ModelStructuredResponse(
-                [ToolCall.from_json(c.function.name, c.function.arguments, c.id) for c in choice.message.tool_calls],
-            )
-        else:
-            assert choice.text is not None, choice
-            return ModelTextResponse(choice.text)
+        content = response.content
+        first_response = content[0]
+        if len(content) == 1 and isinstance(first_response, TextBlock):
+            assert first_response.text is not None, first_response
+            return ModelTextResponse(first_response.text)
+
+        # TODO: this type ignore might be indicative of a greater issue here...
+        return ModelStructuredResponse(
+            [
+                ToolCall.from_dict(
+                    c.name,
+                    c.input,  # pyright: ignore[reportArgumentType], input is typed as `object`
+                    c.id,
+                )
+                for c in [tub for tub in content if isinstance(tub, ToolUseBlock)]
+            ],
+        )
 
     @staticmethod
     async def _process_streamed_response(response: AsyncStream[RawMessageStreamEvent]) -> EitherStreamedResponse:
@@ -223,6 +231,15 @@ class AnthropicAgentModel(AgentModel):
             timestamp = timestamp or _utils.now_utc()
             start_cost += _map_cost(chunk)
 
+            # TODO: probably need to handle these
+            # RawMessageStartEvent,
+            # RawMessageDeltaEvent,
+            # RawMessageStopEvent,
+            # RawContentBlockStartEvent,
+            # RawContentBlockDeltaEvent,
+            # RawContentBlockStopEvent,
+
+            # TODO: handle this appropriately
             if chunk.choices:
                 delta = chunk.choices[0].delta
 
@@ -239,7 +256,13 @@ class AnthropicAgentModel(AgentModel):
     @staticmethod
     def _map_message(message: Message) -> MessageParam:
         """Just maps a `pydantic_ai.Message` to a `anthropic.types.MessageParam`."""
-        # TODO: MessageParam only has 2 roles on the Anthropic end of things?
+        # TODO: Make sure we're appropriately mapping things in terms of content.
+        # content: Required[
+        #     Union[
+        #         str, Iterable[Union[TextBlockParam, ImageBlockParam, ToolUseBlockParam, ToolResultBlockParam, ContentBlock]]
+        #     ]
+        # ]
+        # also, make sure the roles are actually correct...
         if message.role == 'system':
             return MessageParam(role='assistant', content=message.content)
         elif message.role == 'user':
@@ -275,8 +298,9 @@ class AnthropicStreamTextResponse(StreamTextResponse):
         chunk = await self._response.__anext__()
         self._cost = _map_cost(chunk)
 
+        # TODO: handle this appropriately
         try:
-            choice = chunk.choices[0]
+            choice = chunk.content[0]
         except IndexError:
             raise StopAsyncIteration()
 
@@ -353,13 +377,12 @@ def _guard_tool_id(t: ToolCall | ToolReturn | RetryPrompt) -> str:
 
 
 def _map_tool_call(t: ToolCall) -> ToolUseBlockParam:
-    assert isinstance(t.args, ArgsJson), f'Expected ArgsJson, got {t.args}'
+    assert isinstance(t.args, ArgsDict), f'Expected ArgsDict, got {t.args}'
     return ToolUseBlockParam(
         id=_guard_tool_id(t),
         type='tool_use',
         name=t.tool_name,
-        # TODO: input shouldn't be none here?
-        input=None,
+        input=t.args.args_dict,
     )
 
 
