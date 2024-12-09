@@ -5,7 +5,7 @@ on:
     branches:
       - main
     tags:
-      - '**'
+      - "**"
   pull_request: {}
 
 env:
@@ -75,6 +75,7 @@ jobs:
 
   test-live:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     if: "github.event.pull_request.head.repo.full_name == github.repository || github.event_name == 'push'"
     steps:
       - uses: actions/checkout@v4
@@ -94,7 +95,7 @@ jobs:
           pytest tests/test_live.py -v
           --durations=100
         env:
-          PYDANTIC_AI_LIVE_TEST_DANGEROUS: 'CHARGE-ME!'
+          PYDANTIC_AI_LIVE_TEST_DANGEROUS: "CHARGE-ME!"
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GOOGLE_SERVICE_ACCOUNT_CONTENT: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_CONTENT }}
@@ -103,6 +104,7 @@ jobs:
   test:
     name: test on ${{ matrix.python-version }}
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:

@@ -74,7 +74,7 @@ class Agent(Generic[AgentDeps, ResultData]):
     """
     end_strategy: EndStrategy
     """The strategy for handling multiple tool calls when a final result is found.
-    
+
     - "early": Stop processing other tool calls once a final result is found (old behavior)
     - "correct": Process all tool calls even after finding a final result (new behavior)
     """
@@ -110,7 +110,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         result_retries: int | None = None,
         tools: Sequence[Tool[AgentDeps] | ToolFuncEither[AgentDeps, ...]] = (),
         defer_model_check: bool = False,
-        end_strategy: EndStrategy = 'correct',
+        end_strategy: EndStrategy = 'early',
     ):
         """Create an agent.
 
@@ -137,10 +137,10 @@ class Agent(Generic[AgentDeps, ResultData]):
                 which checks for the necessary environment variables. Set this to `false`
                 to defer the evaluation until the first run. Useful if you want to
                 [override the model][pydantic_ai.Agent.override] for testing.
-            end_strategy: The strategy for handling multiple tool calls when a final result is found.
-                "early" means stop processing other tool calls once a final result is found (old behavior).
-                "correct" means process all tool calls even after finding a final result (new behavior).
-                Defaults to "correct".
+            end_strategy: The strategy for handling tool calls that are requested alongside a final result.
+                "early" means stop processing other tool calls if a final result is found.
+                "correct" means process all tool calls even after finding a final result.
+                Defaults to "early".
         """
         if model is None or defer_model_check:
             self.model = model
