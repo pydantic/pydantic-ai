@@ -32,10 +32,6 @@ from ..messages import (
 )
 from ..result import Cost
 
-PYDANTIC_AI_API_BASE_URL = os.environ.get("PYDANTIC_AI_API_BASE_URL", "https://api.openai.com/v1")
-PYDANTIC_AI_API_KEY = os.environ.get("PYDANTIC_AI_API_KEY") or os.environ.get("OPENAI_API_KEY")
-PYDANTIC_AI_MODEL = os.environ.get("PYDANTIC_AI_MODEL")
-
 
 @dataclass(init=False)
 class GeneralModel(Model):
@@ -48,11 +44,10 @@ class GeneralModel(Model):
 
     def __init__(
             self,
-            *,
             http_client: AsyncHTTPClient | None = None,
-            base_url: str | None = PYDANTIC_AI_API_BASE_URL,
-            api_key: str | None = PYDANTIC_AI_API_KEY,
-            model_name: str | None = PYDANTIC_AI_MODEL
+            base_url: str | None = None,
+            api_key: str | None = None,
+            model_name: str | None = None
     ):
         """Initialize a general model.
 
@@ -60,14 +55,14 @@ class GeneralModel(Model):
             base_url: base URL of the API, can be either local or cloud. If not provided,
                 the `PYDANTIC_AI_API_BASE_URL` env variable will be used if available
             api_key: Optional API key to use for authentication, If not provided,
-                the `PYDANTIC_AI_API_KEY` or `OPENAI_API_KEY` env variable will be used if available
+                the `PYDANTIC_AI_API_KEY` env variable will be used if available
             model_name: The name of the model to use
 
         """
         self.http_client = http_client or cached_async_http_client()
-        self.base_url = base_url
-        self.api_key = api_key
-        self.model_name = model_name
+        self.base_url = base_url or os.getenv("PYDANTIC_AI_API_BASE_URL")
+        self.api_key = api_key or os.getenv('PYDANTIC_AI_API_KEY')
+        self.model_name = model_name or os.getenv('PYDANTIC_AI_MODEL')
 
     async def agent_model(
             self,
