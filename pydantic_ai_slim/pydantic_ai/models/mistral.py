@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+import json
 from collections.abc import AsyncIterator, Iterable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -142,7 +143,7 @@ class MistralAgentModel(AgentModel):
     client: Mistral
     model_name: str
     allow_text_result: bool
-    tools: list[Tool] | list[ToolTypedDict]| None = None 
+    tools: list[Tool] | None = None 
 
     async def request(
         self, messages: list[Message]
@@ -186,26 +187,34 @@ class MistralAgentModel(AgentModel):
         self, messages: list[Message], stream: bool
     ) -> EventStreamAsync[CompletionEvent]:
         # standalone function to make it easier to override
+        mistral_messages = [self._map_message(m) for m in messages]
+        tools = self.tools 
         if not self.tools:
             tool_choice: Literal['none', 'required', 'auto'] | None = None
         elif not self.allow_text_result:
             tool_choice = 'required'
         else:
             tool_choice = 'auto'
-
-        mistral_messages = [self._map_message(m) for m in messages]
+            
+            
+        if self.tools and self.tools[0].function.name == 'final_result':
+            json_format = json.dumps( self.tools[0].function.parameters, indent=4)
+            mistral_messages.append(AssistantMessage(content=f"""Answer in JSON if format:{json_format}"""))
+            tools = UNSET
+            tool_choice = None
+        
         
         response = await self.client.chat.stream_async(
             model=str(self.model_name),
             messages=mistral_messages,
            # temperature=0.0,
             n=1,
-            tools=self.tools or UNSET,
+            tools=tools,
             tool_choice=tool_choice or None,
             stream=True,
-            # response_format = {
-            #     'type': 'json_object',
-            # },
+            response_format = {
+                 'type': 'json_object',
+            },
         )
         assert response, 'TODO: fix this'  # TODO: see when None
         return response
@@ -275,8 +284,14 @@ class MistralAgentModel(AgentModel):
 
             if chunk.data.choices:
                 delta = chunk.data.choices[0].delta
-
-                if delta.content is not None and delta.content != '' and not isinstance(delta.content, Unset):
+                if delta.tool_calls and delta.tool_calls[0].function.name == 'final_result':
+                    return MistralStreamStructuredResponse(
+                        response,
+                        {c.id: c for c in delta.tool_calls},
+                        timestamp,
+                        start_cost,
+                    )
+                elif delta.content is not None and delta.content != '' and not isinstance(delta.content, Unset):
                     return MistralStreamTextResponse(delta.content, response, timestamp, start_cost)
                 elif delta.tool_calls is not None and not isinstance(delta.tool_calls, Unset):
                     return MistralStreamStructuredResponse(
