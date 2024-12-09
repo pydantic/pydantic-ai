@@ -769,3 +769,57 @@ def foo():
     assert mod.my_agent.name is None
     assert mod.foo() == snapshot('success (no tool calls)')
     assert mod.my_agent.name == 'my_agent'
+
+
+def test_message_limit_run(set_event_loop: None):
+    def return_model(messages: list[Message], info: AgentInfo) -> ModelAnyResponse:
+        assert info.result_tools is not None
+        if len(messages) > 5:
+            return ModelTextResponse(content='success')
+        else:
+            return ModelStructuredResponse(calls=[ToolCall.from_json(info.result_tools[0].name, '{}')])
+
+    agent = Agent(FunctionModel(return_model), result_type=str)
+
+    with pytest.raises(UnexpectedModelBehavior, match='Exceeded message limit of 5 messages'):
+        agent.run_sync('Hello', message_limit=5)
+
+
+def test_cost_limit_run(set_event_loop: None):
+    def return_model(messages: list[Message], info: AgentInfo) -> ModelAnyResponse:
+        assert info.result_tools is not None
+        return ModelTextResponse(content='success')
+
+    agent = Agent(FunctionModel(return_model), result_type=str)
+
+    with pytest.raises(UnexpectedModelBehavior, match='Exceeded cost limit of 10 tokens'):
+        agent.run_sync('Hello', cost_limit=10)
+
+
+async def test_message_limit_run_stream():
+    def return_model(messages: list[Message], info: AgentInfo) -> ModelAnyResponse:
+        assert info.result_tools is not None
+        if len(messages) > 5:
+            return ModelTextResponse(content='success')
+        else:
+            return ModelStructuredResponse(calls=[ToolCall.from_json(info.result_tools[0].name, '{}')])
+
+    agent = Agent(FunctionModel(return_model), result_type=str)
+
+    with pytest.raises(UnexpectedModelBehavior, match='Exceeded message limit of 5 messages'):
+        async with agent.run_stream('Hello', message_limit=5) as result:
+            async for _ in result.stream():
+                pass
+
+
+async def test_cost_limit_run_stream():
+    def return_model(messages: list[Message], info: AgentInfo) -> ModelAnyResponse:
+        assert info.result_tools is not None
+        return ModelTextResponse(content='success')
+
+    agent = Agent(FunctionModel(return_model), result_type=str)
+
+    with pytest.raises(UnexpectedModelBehavior, match='Exceeded cost limit of 10 tokens'):
+        async with agent.run_stream('Hello', cost_limit=10) as result:
+            async for _ in result.stream():
+                pass

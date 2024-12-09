@@ -164,6 +164,8 @@ class Agent(Generic[AgentDeps, ResultData]):
         model: models.Model | models.KnownModelName | None = None,
         deps: AgentDeps = None,
         infer_name: bool = True,
+        message_limit: int | None = None,
+        cost_limit: int | None = None,
     ) -> result.RunResult[ResultData]:
         """Run the agent with a user prompt in async mode.
 
@@ -173,6 +175,8 @@ class Agent(Generic[AgentDeps, ResultData]):
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
             deps: Optional dependencies to use for this run.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
+            message_limit: Optional limit on the number of messages in the conversation.
+            cost_limit: Optional limit on the cost of the run.
 
         Returns:
             The result of the run.
@@ -202,6 +206,15 @@ class Agent(Generic[AgentDeps, ResultData]):
             run_step = 0
             while True:
                 run_step += 1
+                if message_limit is not None and len(messages) > message_limit:
+                    raise exceptions.UnexpectedModelBehavior(
+                        f'Exceeded message limit of {message_limit} messages'
+                    )
+                if cost_limit is not None and cost.total_tokens is not None and cost.total_tokens > cost_limit:
+                    raise exceptions.UnexpectedModelBehavior(
+                        f'Exceeded cost limit of {cost_limit} tokens'
+                    )
+
                 with _logfire.span('preparing model and tools {run_step=}', run_step=run_step):
                     agent_model = await self._prepare_model(model_used, deps)
 
@@ -242,6 +255,8 @@ class Agent(Generic[AgentDeps, ResultData]):
         model: models.Model | models.KnownModelName | None = None,
         deps: AgentDeps = None,
         infer_name: bool = True,
+        message_limit: int | None = None,
+        cost_limit: int | None = None,
     ) -> result.RunResult[ResultData]:
         """Run the agent with a user prompt synchronously.
 
@@ -253,6 +268,8 @@ class Agent(Generic[AgentDeps, ResultData]):
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
             deps: Optional dependencies to use for this run.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
+            message_limit: Optional limit on the number of messages in the conversation.
+            cost_limit: Optional limit on the cost of the run.
 
         Returns:
             The result of the run.
@@ -261,7 +278,15 @@ class Agent(Generic[AgentDeps, ResultData]):
             self._infer_name(inspect.currentframe())
         loop = asyncio.get_event_loop()
         return loop.run_until_complete(
-            self.run(user_prompt, message_history=message_history, model=model, deps=deps, infer_name=False)
+            self.run(
+                user_prompt,
+                message_history=message_history,
+                model=model,
+                deps=deps,
+                infer_name=False,
+                message_limit=message_limit,
+                cost_limit=cost_limit,
+            )
         )
 
     @asynccontextmanager
@@ -273,6 +298,8 @@ class Agent(Generic[AgentDeps, ResultData]):
         model: models.Model | models.KnownModelName | None = None,
         deps: AgentDeps = None,
         infer_name: bool = True,
+        message_limit: int | None = None,
+        cost_limit: int | None = None,
     ) -> AsyncIterator[result.StreamedRunResult[AgentDeps, ResultData]]:
         """Run the agent with a user prompt in async mode, returning a streamed response.
 
@@ -282,6 +309,8 @@ class Agent(Generic[AgentDeps, ResultData]):
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
             deps: Optional dependencies to use for this run.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
+            message_limit: Optional limit on the number of messages in the conversation.
+            cost_limit: Optional limit on the cost of the run.
 
         Returns:
             The result of the run.
@@ -313,6 +342,15 @@ class Agent(Generic[AgentDeps, ResultData]):
             run_step = 0
             while True:
                 run_step += 1
+
+                if message_limit is not None and len(messages) > message_limit:
+                    raise exceptions.UnexpectedModelBehavior(
+                        f'Exceeded message limit of {message_limit} messages'
+                    )
+                if cost_limit is not None and cost.total_tokens is not None and cost.total_tokens > cost_limit:
+                    raise exceptions.UnexpectedModelBehavior(
+                        f'Exceeded cost limit of {cost_limit} tokens'
+                    )
 
                 with _logfire.span('preparing model and tools {run_step=}', run_step=run_step):
                     agent_model = await self._prepare_model(model_used, deps)
