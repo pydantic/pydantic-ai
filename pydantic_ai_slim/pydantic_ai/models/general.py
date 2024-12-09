@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 import json
 import os
-from collections.abc import Mapping, Sequence, AsyncIterator, Iterable
+from collections.abc import AsyncIterator, Iterable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -13,7 +13,6 @@ from _datetime import timezone
 from httpx import AsyncClient as AsyncHTTPClient, Response as HTTPResponse
 
 from . import (
-    AbstractToolDefinition,
     AgentModel,
     EitherStreamedResponse,
     Model,
@@ -31,6 +30,7 @@ from ..messages import (
     ToolCall,
 )
 from ..result import Cost
+from ..tools import ToolDefinition
 
 
 @dataclass(init=False)
@@ -66,12 +66,12 @@ class GeneralModel(Model):
 
     async def agent_model(
             self,
-            function_tools: Mapping[str, AbstractToolDefinition],
+            function_tools: list[ToolDefinition],
             allow_text_result: bool,
-            result_tools: Sequence[AbstractToolDefinition] | None,
+            result_tools: list[ToolDefinition],
     ) -> AgentModel:
         check_allow_model_requests()
-        tools = [self._map_tool_definition(r) for r in function_tools.values()]
+        tools = [self._map_tool_definition(r) for r in function_tools]
         if result_tools is not None:
             tools += [self._map_tool_definition(r) for r in result_tools]
 
@@ -88,13 +88,13 @@ class GeneralModel(Model):
         return f'general:{self.model_name}'
 
     @staticmethod
-    def _map_tool_definition(f: AbstractToolDefinition):
+    def _map_tool_definition(f: ToolDefinition):
         return {
             'type': 'function',
             'function': {
                 'name': f.name,
                 'description': f.description,
-                'parameters': f.json_schema,
+                'parameters': f.parameters_json_schema,
             },
         }
 
