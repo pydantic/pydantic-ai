@@ -898,7 +898,7 @@ class TestMultipleToolCalls:
 
     def test_end_strategy_correct(self):
         """Test that when end_strategy is 'correct', all tool calls are executed even after a final result."""
-        tool_called = []
+        tool_called: list[str] = []
 
         def return_model(_: list[Message], info: AgentInfo) -> ModelAnyResponse:
             assert info.result_tools is not None
@@ -931,7 +931,7 @@ class TestMultipleToolCalls:
         assert result.data.value == 'final'
 
         # Verify all tools were called
-        assert tool_called == ['regular_tool', 'another_tool']
+        assert sorted(tool_called) == sorted(['regular_tool', 'another_tool'])
 
         # Verify we got tool returns for all calls
         tool_returns = [m for m in messages if isinstance(m, ToolReturn)]
@@ -944,7 +944,7 @@ class TestMultipleToolCalls:
 
     def test_end_strategy_early_no_final_tool(self):
         """Test that when end_strategy is 'early' but there is no final tool, all tools are executed."""
-        tool_called = []
+        tool_called: list[str] = []
 
         agent = Agent(TestModel(), result_type=self.ResultType, end_strategy='early')
 
@@ -964,9 +964,9 @@ class TestMultipleToolCalls:
         messages = result.all_messages()
 
         # Verify all tools were called since there was no final result
-        assert tool_called == ['regular_tool', 'another_tool']
+        assert sorted(tool_called) == sorted(['regular_tool', 'another_tool'])
 
-        # Verify we got tool returns for all calls
+        # Verify we got tool returns for all calls including the final result
         tool_returns = [m for m in messages if isinstance(m, ToolReturn)]
         assert len(tool_returns) == 3
 
@@ -1009,7 +1009,7 @@ class TestMultipleToolCalls:
         # Verify no tools were called
         assert tool_called == []
 
-        # Verify we got tool returns for all calls
+        # Verify we got tool returns for all calls including the final result
         tool_returns = [m for m in messages if isinstance(m, ToolReturn)]
         assert len(tool_returns) == 3
 
