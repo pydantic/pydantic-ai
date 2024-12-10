@@ -141,8 +141,8 @@ class MistralAgentModel(AgentModel):
     client: Mistral
     model_name: str
     allow_text_result: bool
-    function_tools: list[ToolDefinition] | None 
-    result_tools: list[ToolDefinition] | None 
+    function_tools: list[ToolDefinition] | None
+    result_tools: list[ToolDefinition] | None
 
     async def request(
         self, messages: list[Message]
@@ -173,12 +173,12 @@ class MistralAgentModel(AgentModel):
         response = await self._stream_completions_create(messages)
         async with response:
             yield await self._process_streamed_response(
-                self.function_tools is not None, 
+                self.function_tools is not None,
                 self.result_tools,
                 response)
-                
+
     async def _completions_create(
-        self, messages: list[Message], 
+        self, messages: list[Message],
     ) ->  MistralChatCompletionResponse:
         """Make a non-streaming request to the model.
 
@@ -194,7 +194,7 @@ class MistralAgentModel(AgentModel):
             tool_choice = 'required'
         else:
             tool_choice = 'auto'
-            
+
         response = await self.client.chat.complete_async(
             model=str(self.model_name),
             messages=mistral_messages,
@@ -205,15 +205,15 @@ class MistralAgentModel(AgentModel):
             )
         assert response, 'A unexpected empty response.'
         return response
-        
-    
+
+
     async def _stream_completions_create(
         self, messages: list[Message],
     ) -> MistralEventStreamAsync[MistralCompletionEvent]:
         """Create a streaming completion request to the Mistral model.
 
-        This method handles different modes of operation based on the presence of 
-        `function_tools` and `result_tools`. It determines the tool choice strategy 
+        This method handles different modes of operation based on the presence of
+        `function_tools` and `result_tools`. It determines the tool choice strategy
         and constructs the appropriate request to stream responses from the model.
 
         Args:
@@ -227,7 +227,7 @@ class MistralAgentModel(AgentModel):
         """
         response: MistralEventStreamAsync[MistralCompletionEvent] | None = None
         mistral_messages = [self._map_message(m) for m in messages]
-        
+
         if self.result_tools and self.function_tools or self.function_tools:
             # Function calling Mode
             tool_choice: Literal['none', 'required', 'auto'] | None = None
@@ -235,7 +235,7 @@ class MistralAgentModel(AgentModel):
                 tool_choice = 'required'
             else:
                 tool_choice = 'auto'
-                            
+
             response = await self.client.chat.stream_async(
                 model=str(self.model_name),
                 messages=mistral_messages,
@@ -244,8 +244,8 @@ class MistralAgentModel(AgentModel):
                 tools=self._map_function_and_result_tools_definition(),
                 tool_choice=tool_choice,
             )
-            
-        elif self.result_tools: 
+
+        elif self.result_tools:
             # JSON Mode
             schema: str | list[dict[str, Any]]
             if len(self.result_tools) == 1:
@@ -253,7 +253,7 @@ class MistralAgentModel(AgentModel):
             else:
                 parameters_json_schemas = [tool.parameters_json_schema for tool in self.result_tools]
                 schema = _generate_jsom_simple_schemas(parameters_json_schemas)
-            
+
             mistral_messages.append(MistralUserMessage(content=f"""Answer in JSON Object format here the JSON Schema:\n{schema}"""))
             response = await self.client.chat.stream_async(
                 model=str(self.model_name),
@@ -261,7 +261,7 @@ class MistralAgentModel(AgentModel):
                 stream=True,
                 response_format = {'type': 'json_object'},
             )
-            
+
         else:
             # Stream Mode
             response = await self.client.chat.stream_async(
@@ -272,7 +272,7 @@ class MistralAgentModel(AgentModel):
             )
         assert response
         return response
-    
+
     def _map_function_and_result_tools_definition(self) -> list[MistralTool] | None:
         """Map function and result tools to MistralTool format.
 
@@ -308,7 +308,7 @@ class MistralAgentModel(AgentModel):
 
         assert response.choices, 'A unexpected empty response choice.'
         choice = response.choices[0]
-        
+
         if (
             choice.message.tool_calls is not None
             and not isinstance(choice.message.tool_calls, MistralUnset)
@@ -342,7 +342,7 @@ class MistralAgentModel(AgentModel):
             ), f'Unexpected ContentChunk from stream, need to be response not stream: {content}'
             return ModelTextResponse(content, timestamp=timestamp)
 
-          
+
     @staticmethod
     async def _process_streamed_response(
         is_function_tools: bool,
@@ -351,7 +351,7 @@ class MistralAgentModel(AgentModel):
     ) -> EitherStreamedResponse:
         """Process a streamed response, and prepare a streaming response to return."""
         start_cost = Cost()
-        
+
         # the first chunk may contain enough information so we iterate until we get either `tool_calls` or `content`
         while True:
             try:
@@ -361,18 +361,18 @@ class MistralAgentModel(AgentModel):
                 raise UnexpectedModelBehavior('Streamed response ended without content or tool calls') from e
 
             start_cost += _map_cost(chunk)
-            
+
             timestamp: datetime
             if chunk.created:
                 timestamp = datetime.fromtimestamp(chunk.created, tz=timezone.utc)
             else:
                 timestamp = _now_utc()
-                
+
             if chunk.choices:
-                
+
                 delta = chunk.choices[0].delta
                 content: str | None = None
-                
+
                 if isinstance(delta.content, list) and isinstance(delta.content[0], TextChunk):
                     content = delta.content[0].text
                 elif isinstance(delta.content, str):
@@ -380,11 +380,11 @@ class MistralAgentModel(AgentModel):
                 elif isinstance(delta.content, MistralUnset):
                     pass
                 else:
-                    assert False, f'Other type of instance, Will manage in the futur (Image, Reference), object:{delta.content}' 
-                    
+                    assert False, f'Other type of instance, Will manage in the futur (Image, Reference), object:{delta.content}'
+
                 if content and content == '':
                     content = None
-                    
+
                 tool_calls: list[MistralToolCall] | None = None
                 if isinstance(delta.tool_calls, list):
                     tool_calls = delta.tool_calls
@@ -393,19 +393,19 @@ class MistralAgentModel(AgentModel):
                     return MistralStreamStructuredResponse(
                             is_function_tools,
                             result_tools,
-                            response,   
+                            response,
                             None,
                             content,
                             timestamp,
                             start_cost,
-                        )   
-                elif content:                     
+                        )
+                elif content:
                     return MistralStreamTextResponse(
-                            content, 
-                            response, 
-                            timestamp, 
+                            content,
+                            response,
+                            timestamp,
                             start_cost
-                        )             
+                        )
                 elif tool_calls and not result_tools:
                     tool_calls_param = {c.id if c.id else 'null': c for c in tool_calls}
 
@@ -417,8 +417,8 @@ class MistralAgentModel(AgentModel):
                             content,
                             timestamp,
                             start_cost,
-                        )  
-           
+                        )
+
 
     @staticmethod
     def _map_message(message: Message) -> MistralMessages:
@@ -485,7 +485,7 @@ class MistralStreamTextResponse(StreamTextResponse):
             self._buffer.append(choice.delta.content)
         elif isinstance(choice.delta.content, TextChunk):
             self._buffer.append(choice.delta.content.text)
-            
+
 
     def get(self, *, final: bool = False) -> Iterable[str]:
         yield from self._buffer
@@ -501,10 +501,10 @@ class MistralStreamTextResponse(StreamTextResponse):
 class MistralStreamStructuredResponse(StreamStructuredResponse):
     """Implementation of `StreamStructuredResponse` for Mistral models."""
     _is_function_tools: bool
-    _result_tools: list[ToolDefinition] | None 
+    _result_tools: list[ToolDefinition] | None
     _response: MistralEventStreamAsync[MistralCompletionEvent]
     _delta_tool_calls: dict[str, MistralToolCall] | None
-    _delta_content: str | None 
+    _delta_content: str | None
     _timestamp: datetime
     _cost: Cost
 
@@ -514,7 +514,7 @@ class MistralStreamStructuredResponse(StreamStructuredResponse):
 
         try:
             choice = chunk.data.choices[0]
-            
+
         except IndexError:
             raise StopAsyncIteration()
 
@@ -530,8 +530,8 @@ class MistralStreamStructuredResponse(StreamStructuredResponse):
         elif isinstance(delta_content, MistralUnset):
             content = None
         else:
-            assert False, f'Other type of instance, Will manage in the futur (Image, Reference), object:{delta.content}' 
-                    
+            assert False, f'Other type of instance, Will manage in the futur (Image, Reference), object:{delta.content}'
+
         if self._delta_tool_calls and self._result_tools or self._delta_tool_calls:
             for new in choice.delta.tool_calls or []:
                 if current := self._delta_tool_calls.get(new.id or 'null'):
@@ -543,7 +543,7 @@ class MistralStreamStructuredResponse(StreamStructuredResponse):
                 self._delta_content = content
             else:
                 self._delta_content += content
-        
+
     def get(self, *, final: bool = False) -> ModelStructuredResponse:
         calls: list[PydanticToolCall] = []
         if self._delta_tool_calls and self._result_tools or self._delta_tool_calls:
@@ -556,17 +556,17 @@ class MistralStreamStructuredResponse(StreamStructuredResponse):
                         ) if isinstance(f.arguments, str) else PydanticToolCall.from_dict(
                             tool_name=f.name,
                             args_dict=f.arguments,
-                            tool_id=c.id)        
+                            tool_id=c.id)
                     calls.append(tool)
-        else:
-            decoded_object = repair_json(self._delta_content, return_objects=True)            
+        elif self._delta_content:
+            decoded_object = repair_json(self._delta_content, return_objects=True)
             if isinstance(decoded_object, dict):
                 tool = PydanticToolCall.from_dict(
                                 tool_name='final_result',
                                 args_dict=decoded_object,
-                            )       
+                            )
                 calls.append(tool)
-                        
+
         return ModelStructuredResponse(calls, timestamp=self._timestamp)
 
     def cost(self) -> Cost:
@@ -574,8 +574,8 @@ class MistralStreamStructuredResponse(StreamStructuredResponse):
 
     def timestamp(self) -> datetime:
         return self._timestamp
-    
-    
+
+
 def _generate_json_simple_schema(schema: dict[str, Any]) -> Any:
     """Generates a JSON example from a JSON schema.
 
@@ -583,7 +583,7 @@ def _generate_json_simple_schema(schema: dict[str, Any]) -> Any:
     :return: A JSON example based on the schema.
     """
     if schema.get('type') == 'object':
-        example = {}
+        example: dict[str, Any] = {}
         if 'properties' in schema:
             for key, value in schema['properties'].items():
                 example[key] = _generate_json_simple_schema(value)
@@ -635,8 +635,8 @@ def _map_tool_call(t: PydanticToolCall) -> MistralToolCall:
             id=t.tool_id,
             type='function',
             function=FunctionCall(name=t.tool_name, arguments=t.args.args_dict),
-        )       
-    
+        )
+
 def _map_cost(response: MistralChatCompletionResponse | CompletionChunk) -> Cost:
     if response.usage is None:
         return Cost()
