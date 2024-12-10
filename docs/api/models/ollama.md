@@ -44,7 +44,7 @@ from pydantic_ai.models.ollama import OllamaModel
 
 ollama_model = OllamaModel(
     model_name='qwen2.5-coder:7b',  # (1)!
-    base_url='http://192.168.1.74:11434/v1'  # (2)!
+    base_url='http://192.168.1.74:11434/v1',  # (2)!
 )
 
 class CityLocation(BaseModel):
