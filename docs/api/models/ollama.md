@@ -47,6 +47,7 @@ ollama_model = OllamaModel(
     base_url='http://192.168.1.74:11434/v1',  # (2)!
 )
 
+
 class CityLocation(BaseModel):
     city: str
     country: str
