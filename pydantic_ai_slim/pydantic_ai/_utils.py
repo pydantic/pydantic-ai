@@ -258,6 +258,6 @@ def now_utc() -> datetime:
 
 
 def guard_tool_call_id(t: ToolCall | ToolReturn | RetryPrompt, model_source: str) -> str:
-    """Type guard that checks a `tool_id` is not None both for static typing and runtime."""
+    """Type guard that checks a `tool_call_id` is not None both for static typing and runtime."""
     assert t.tool_call_id is not None, f'{model_source} requires `tool_call_id` to be set: {t}'
     return t.tool_call_id

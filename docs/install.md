@@ -326,7 +326,7 @@ If you don't want to or can't set the environment variable, you can pass it at r
 from pydantic_ai import Agent
 from pydantic_ai.models.anthropic import AnthropicModel
 
-model = Anthropic('claude-3-5-sonnet-latest', api_key='your-api-key')
+model = AnthropicModel('claude-3-5-sonnet-latest', api_key='your-api-key')
 agent = Agent(model)
 ...
 ```
