@@ -166,9 +166,7 @@ class ToolCall:
         return cls(tool_name, ArgsJson(args_json), tool_id)
 
     @classmethod
-    def from_dict(
-        cls, tool_name: str, args_dict: dict[str, Any], tool_id: str | None = None
-    ) -> ToolCall:
+    def from_dict(cls, tool_name: str, args_dict: dict[str, Any], tool_id: str | None = None) -> ToolCall:
         return cls(tool_name, ArgsDict(args_dict), tool_id)
 
     def has_content(self) -> bool:
