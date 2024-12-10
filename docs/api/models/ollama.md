@@ -43,8 +43,8 @@ from pydantic_ai import Agent
 from pydantic_ai.models.ollama import OllamaModel
 
 ollama_model = OllamaModel(
-    model_name='qwen2.5-coder:7b', # model running on the remote server
-    base_url='http://192.168.1.74:11434/v1' # the url of the remote server
+    model_name='qwen2.5-coder:7b',  # (1)!
+    base_url='http://192.168.1.74:11434/v1'  # (2)!
 )
 
 class CityLocation(BaseModel):
@@ -60,6 +60,9 @@ print(result.data)
 print(result.cost())
 #> Cost(request_tokens=56, response_tokens=8, total_tokens=64, details=None)
 ```
+
+1. The name of the model running on the remote server
+2. The url of the remote server
 
 See [`OllamaModel`][pydantic_ai.models.ollama.OllamaModel] for more information
 
