@@ -10,15 +10,14 @@ from httpx import AsyncClient as AsyncHTTPClient
 from typing_extensions import assert_never
 
 from .. import UnexpectedModelBehavior, _utils, result
+from .._utils import guard_tool_call_id as _guard_tool_call_id
 from ..messages import (
     ArgsJson,
     Message,
     ModelAnyResponse,
     ModelStructuredResponse,
     ModelTextResponse,
-    RetryPrompt,
     ToolCall,
-    ToolReturn,
 )
 from ..result import Cost
 from ..tools import ToolDefinition
@@ -246,7 +245,7 @@ class GroqAgentModel(AgentModel):
             # ToolReturn ->
             return chat.ChatCompletionToolMessageParam(
                 role='tool',
-                tool_call_id=_guard_tool_id(message),
+                tool_call_id=_guard_tool_call_id(t=message, model_source='Groq'),
                 content=message.model_response_str(),
             )
         elif message.role == 'retry-prompt':
@@ -256,7 +255,7 @@ class GroqAgentModel(AgentModel):
             else:
                 return chat.ChatCompletionToolMessageParam(
                     role='tool',
-                    tool_call_id=_guard_tool_id(message),
+                    tool_call_id=_guard_tool_call_id(t=message, model_source='Groq'),
                     content=message.model_response(),
                 )
         elif message.role == 'model-text-response':
@@ -366,16 +365,10 @@ class GroqStreamStructuredResponse(StreamStructuredResponse):
         return self._timestamp
 
 
-def _guard_tool_id(t: ToolCall | ToolReturn | RetryPrompt) -> str:
-    """Type guard that checks a `tool_id` is not None both for static typing and runtime."""
-    assert t.tool_id is not None, f'Groq requires `tool_id` to be set: {t}'
-    return t.tool_id
-
-
 def _map_tool_call(t: ToolCall) -> chat.ChatCompletionMessageToolCallParam:
     assert isinstance(t.args, ArgsJson), f'Expected ArgsJson, got {t.args}'
     return chat.ChatCompletionMessageToolCallParam(
-        id=_guard_tool_id(t),
+        id=_guard_tool_call_id(t=t, model_source='Groq'),
         type='function',
         function={'name': t.tool_name, 'arguments': t.args.args_json},
     )

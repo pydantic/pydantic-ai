@@ -11,15 +11,14 @@ from httpx import AsyncClient as AsyncHTTPClient
 from typing_extensions import assert_never
 
 from .. import UnexpectedModelBehavior, _utils, result
+from .._utils import guard_tool_call_id as _guard_tool_call_id
 from ..messages import (
     ArgsDict,
     Message,
     ModelAnyResponse,
     ModelStructuredResponse,
     ModelTextResponse,
-    RetryPrompt,
     ToolCall,
-    ToolReturn,
 )
 from ..result import Cost
 from ..tools import ToolDefinition
@@ -259,7 +258,7 @@ class AnthropicAgentModel(AgentModel):
                 role='assistant',
                 content=[
                     ToolResultBlockParam(
-                        tool_use_id=_guard_tool_id(message),
+                        tool_use_id=_guard_tool_call_id(t=message, model_source='Anthropic'),
                         type='tool_result',
                         content=message.model_response_str(),
                         is_error=False,
@@ -274,7 +273,7 @@ class AnthropicAgentModel(AgentModel):
                     role='user',
                     content=[
                         ToolUseBlockParam(
-                            id=_guard_tool_id(message),
+                            id=_guard_tool_call_id(t=message, model_source='Anthropic'),
                             input=message.model_response(),
                             name=message.tool_name,
                             type='tool_use',
@@ -349,16 +348,10 @@ class AnthropicStreamStructuredResponse(StreamStructuredResponse):
         return self._timestamp
 
 
-def _guard_tool_id(t: ToolCall | ToolReturn | RetryPrompt) -> str:
-    """Type guard that checks a `tool_id` is not None both for static typing and runtime."""
-    assert t.tool_id is not None, f'Anthropic requires `tool_id` to be set: {t}'
-    return t.tool_id
-
-
 def _map_tool_call(t: ToolCall) -> ToolUseBlockParam:
     assert isinstance(t.args, ArgsDict), f'Expected ArgsDict, got {t.args}'
     return ToolUseBlockParam(
-        id=_guard_tool_id(t),
+        id=_guard_tool_call_id(t=t, model_source='Anthropic'),
         type='tool_use',
         name=t.tool_name,
         input=t.args.args_dict,
@@ -369,10 +362,6 @@ def _map_cost(message: AnthropicMessage | RawMessageStreamEvent) -> result.Cost:
     if isinstance(message, AnthropicMessage):
         usage = message.usage
     else:
-        # TODO: I'm not sure if this usage counting is correct...
-        # But I've extracted usage info from the various types of messages that can be sent.
-        # Usage coming from the RawMessageDeltaEvent doesn't have input token data (see getattr below),
-        # does this mean that we're double counting output token data from the previous RawMessageStartEvent?
         if isinstance(message, RawMessageStartEvent):
             usage = message.message.usage
         elif isinstance(message, RawMessageDeltaEvent):
@@ -389,6 +378,7 @@ def _map_cost(message: AnthropicMessage | RawMessageStreamEvent) -> result.Cost:
         return result.Cost()
 
     return result.Cost(
+        # Usage coming from the RawMessageDeltaEvent doesn't have input token data, hence this getattr
         request_tokens=getattr(usage, 'input_tokens', None),
         response_tokens=usage.output_tokens,
     )
