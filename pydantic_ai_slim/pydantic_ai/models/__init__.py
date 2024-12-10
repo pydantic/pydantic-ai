@@ -49,6 +49,10 @@ KnownModelName = Literal[
     'gemini-1.5-pro',
     'vertexai:gemini-1.5-flash',
     'vertexai:gemini-1.5-pro',
+    'mistral:mistral-small-latest',
+    'mistral:small-mistral',
+    'mistral:mistral-large-latest',
+    'mistral:codestral-latest',    
     'ollama:codellama',
     'ollama:gemma',
     'ollama:gemma2',
@@ -270,6 +274,10 @@ def infer_model(model: Model | KnownModelName) -> Model:
         from .vertexai import VertexAIModel
 
         return VertexAIModel(model[9:])  # pyright: ignore[reportArgumentType]
+    elif model.startswith('mistral:'):
+        from .mistral import Mistral
+
+        return Mistral(model[8:])  # pyright: ignore[reportArgumentType]    
     elif model.startswith('ollama:'):
         from .ollama import OllamaModel
 
