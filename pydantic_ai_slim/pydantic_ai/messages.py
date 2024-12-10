@@ -52,8 +52,8 @@ class ToolReturn:
     """The name of the "tool" was called."""
     content: Any
     """The return value."""
-    tool_id: str | None = None
-    """Optional tool identifier, this is used by some models including OpenAI."""
+    tool_call_id: str | None = None
+    """Optional tool call identifier, this is used by some models including OpenAI."""
     timestamp: datetime = field(default_factory=_now_utc)
     """The timestamp, when the tool returned."""
     role: Literal['tool-return'] = 'tool-return'
@@ -100,8 +100,8 @@ class RetryPrompt:
     """
     tool_name: str | None = None
     """The name of the tool that was called, if any."""
-    tool_id: str | None = None
-    """The tool identifier, if any."""
+    tool_call_id: str | None = None
+    """Optional tool call identifier, this is used by some models including OpenAI."""
     timestamp: datetime = field(default_factory=_now_utc)
     """The timestamp, when the retry was triggered."""
     role: Literal['retry-prompt'] = 'retry-prompt'
@@ -158,12 +158,12 @@ class ToolCall:
 
     Either as JSON or a Python dictionary depending on how data was returned.
     """
-    tool_id: str | None = None
-    """Optional tool identifier, this is used by some models including OpenAI."""
+    tool_call_id: str | None = None
+    """Optional tool call identifier, this is used by some models including OpenAI."""
 
     @classmethod
-    def from_json(cls, tool_name: str, args_json: str, tool_id: str | None = None) -> ToolCall:
-        return cls(tool_name, ArgsJson(args_json), tool_id)
+    def from_json(cls, tool_name: str, args_json: str, tool_call_id: str | None = None) -> ToolCall:
+        return cls(tool_name, ArgsJson(args_json), tool_call_id)
 
     @classmethod
     def from_dict(cls, tool_name: str, args_dict: dict[str, Any], tool_id: str | None = None) -> ToolCall:
@@ -196,6 +196,7 @@ class ModelStructuredResponse:
 
 ModelAnyResponse = Union[ModelTextResponse, ModelStructuredResponse]
 """Any response from a model."""
+
 Message = Union[SystemPrompt, UserPrompt, ToolReturn, RetryPrompt, ModelTextResponse, ModelStructuredResponse]
 """Any message send to or returned by a model."""
 

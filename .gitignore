@@ -10,7 +10,6 @@ env*/
 /TODO.md
 /postgres-data/
 .DS_Store
-/pydantic_ai_examples/.chat_app_messages.jsonl
+/pydantic_ai_examples/.chat_app_messages.sqlite
 .cache/
-.docs-insiders-install
 .vscode/

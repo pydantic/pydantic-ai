@@ -120,14 +120,14 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary], set_event_lo
                 [
                     {'content': 'Hello', 'timestamp': IsStr(regex=r'\d{4}-\d{2}-.+'), 'role': 'user'},
                     {
-                        'calls': [{'tool_name': 'my_ret', 'args': {'args_dict': {'x': 0}}, 'tool_id': None}],
+                        'calls': [{'tool_name': 'my_ret', 'args': {'args_dict': {'x': 0}}, 'tool_call_id': None}],
                         'timestamp': IsStr(regex=r'\d{4}-\d{2}-.+'),
                         'role': 'model-structured-response',
                     },
                     {
                         'tool_name': 'my_ret',
                         'content': '1',
-                        'tool_id': None,
+                        'tool_call_id': None,
                         'timestamp': IsStr(regex=r'\d{4}-\d{2}-.+'),
                         'role': 'tool-return',
                     },

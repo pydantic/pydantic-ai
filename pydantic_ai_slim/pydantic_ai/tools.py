@@ -260,7 +260,7 @@ class Tool(Generic[AgentDeps]):
         return messages.ToolReturn(
             tool_name=message.tool_name,
             content=response_content,
-            tool_id=message.tool_id,
+            tool_call_id=message.tool_call_id,
         )
 
     def _call_args(
@@ -289,7 +289,7 @@ class Tool(Generic[AgentDeps]):
             return messages.RetryPrompt(
                 tool_name=call_message.tool_name,
                 content=content,
-                tool_id=call_message.tool_id,
+                tool_call_id=call_message.tool_call_id,
             )
 
 

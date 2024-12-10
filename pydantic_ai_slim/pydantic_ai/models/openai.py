@@ -234,7 +234,7 @@ class OpenAIAgentModel(AgentModel):
             # ToolReturn ->
             return chat.ChatCompletionToolMessageParam(
                 role='tool',
-                tool_call_id=_guard_tool_id(message),
+                tool_call_id=_guard_tool_call_id(message),
                 content=message.model_response_str(),
             )
         elif message.role == 'retry-prompt':
@@ -244,7 +244,7 @@ class OpenAIAgentModel(AgentModel):
             else:
                 return chat.ChatCompletionToolMessageParam(
                     role='tool',
-                    tool_call_id=_guard_tool_id(message),
+                    tool_call_id=_guard_tool_call_id(message),
                     content=message.model_response(),
                 )
         elif message.role == 'model-text-response':
@@ -351,16 +351,16 @@ class OpenAIStreamStructuredResponse(StreamStructuredResponse):
         return self._timestamp
 
 
-def _guard_tool_id(t: ToolCall | ToolReturn | RetryPrompt) -> str:
-    """Type guard that checks a `tool_id` is not None both for static typing and runtime."""
-    assert t.tool_id is not None, f'OpenAI requires `tool_id` to be set: {t}'
-    return t.tool_id
+def _guard_tool_call_id(t: ToolCall | ToolReturn | RetryPrompt) -> str:
+    """Type guard that checks a `tool_call_id` is not None both for static typing and runtime."""
+    assert t.tool_call_id is not None, f'OpenAI requires `tool_call_id` to be set: {t}'
+    return t.tool_call_id
 
 
 def _map_tool_call(t: ToolCall) -> chat.ChatCompletionMessageToolCallParam:
     assert isinstance(t.args, ArgsJson), f'Expected ArgsJson, got {t.args}'
     return chat.ChatCompletionMessageToolCallParam(
-        id=_guard_tool_id(t),
+        id=_guard_tool_call_id(t),
         type='function',
         function={'name': t.tool_name, 'arguments': t.args.args_json},
     )

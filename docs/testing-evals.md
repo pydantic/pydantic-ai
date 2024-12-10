@@ -144,7 +144,7 @@ async def test_forecast():
                             'forecast_date': '2024-01-01',  # (8)!
                         }
                     ),
-                    tool_id=None,
+                    tool_call_id=None,
                 )
             ],
             timestamp=IsNow(tz=timezone.utc),
@@ -153,7 +153,7 @@ async def test_forecast():
         ToolReturn(
             tool_name='weather_forecast',
             content='Sunny with a chance of rain',
-            tool_id=None,
+            tool_call_id=None,
             timestamp=IsNow(tz=timezone.utc),
             role='tool-return',
         ),
