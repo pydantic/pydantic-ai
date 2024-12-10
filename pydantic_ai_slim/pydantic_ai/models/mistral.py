@@ -126,21 +126,6 @@ class MistralAgentModel(AgentModel):
     function_tools: list[ToolDefinition] | None 
     result_tools: list[ToolDefinition] | None 
 
-    
-    @staticmethod
-    def _map_tool_definition(
-        f: ToolDefinition,
-    ) -> MistralTool:
-        """Convert an `AbstractToolDefinition` to a `Tool` or `ToolTypedDict`.
-
-        This is a utility function used to convert our internal representation of a tool to the
-        representation expected by the Mistral API.
-        """
-        function = MistralFunction(
-            name=f.name, parameters=f.parameters_json_schema, description=f.description
-        )
-        return MistralTool(function=function)
-        
     async def request(
         self, messages: list[Message]
     ) -> tuple[ModelAnyResponse, result.Cost]:
@@ -234,20 +219,20 @@ class MistralAgentModel(AgentModel):
         assert response
         return response
     
-    def _map_function_and_result_tools_definition(self) -> list[MistralTool] | None:   
-        tools: list[MistralTool] = []
-        
-        if self.function_tools:     
-            tools += [self._map_tool_definition(r) for r in self.function_tools]
-        
-        if self.result_tools:
-            tools += [self._map_tool_definition(r) for r in self.result_tools]        
-        
-        if tools:
-            return tools
-        else:
-            return None
-        
+    def _map_function_and_result_tools_definition(self) -> list[MistralTool] | None:
+        tools = []
+        all_tools = self.function_tools + self.result_tools
+        tools = [
+            MistralTool(
+                function=MistralFunction(
+                    name=r.name,
+                    parameters=r.parameters_json_schema,
+                    description=r.description
+                )
+            ) for r in all_tools
+        ]
+        return tools if tools else None
+
     @staticmethod
     def _process_response(response: MistralChatCompletionResponse) -> ModelAnyResponse:
         """Process a non-streamed response, and prepare a message to return."""
