@@ -32,6 +32,7 @@ from . import (
     cached_async_http_client,
     check_allow_model_requests,
 )
+from typing import cast, Any
 
 try:
     from anthropic import NOT_GIVEN, AsyncAnthropic, AsyncStream
@@ -209,15 +210,14 @@ class AnthropicAgentModel(AgentModel):
             assert first_response.text is not None, first_response
             return ModelTextResponse(first_response.text)
 
-        # TODO: this type ignore might be indicative of a greater issue here...
-        # TODO: note, we're sort of ignoring any textual messages here, do we need to save them in some way?
         return ModelStructuredResponse(
             [
                 ToolCall.from_dict(
                     c.name,
-                    c.input,  # pyright: ignore[reportArgumentType], input is typed as `object`
+                    cast(dict[str, Any], c.input),
                     c.id,
                 )
+                # TODO: note, we're sort of ignoring any textual messages here, do we need to save them in some way?
                 for c in [tub for tub in content if isinstance(tub, ToolUseBlock)]
             ],
         )
