@@ -328,7 +328,7 @@ class MistralAgentModel(AgentModel):
                 elif isinstance(delta.content, str):
                     content = delta.content
                 elif isinstance(delta.content, MistralUnset):
-                    continue
+                    pass
                 else:
                     assert False, f'Other type of instance, Will manage in the futur (Image, Reference), object:{delta.content}' 
                     
