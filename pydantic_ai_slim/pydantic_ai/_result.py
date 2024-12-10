@@ -57,7 +57,7 @@ class ResultValidator(Generic[AgentDeps, ResultData]):
             m = messages.RetryPrompt(content=r.message)
             if tool_call is not None:
                 m.tool_name = tool_call.tool_name
-                m.tool_id = tool_call.tool_id
+                m.tool_call_id = tool_call.tool_call_id
             raise ToolRetryError(m) from r
         else:
             return result_data
@@ -194,7 +194,7 @@ class ResultTool(Generic[ResultData]):
                 m = messages.RetryPrompt(
                     tool_name=tool_call.tool_name,
                     content=e.errors(include_url=False),
-                    tool_id=tool_call.tool_id,
+                    tool_call_id=tool_call.tool_call_id,
                 )
                 raise ToolRetryError(m) from e
             else:

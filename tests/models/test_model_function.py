@@ -215,7 +215,7 @@ def test_var_args(set_event_loop: None):
         {
             'tool_name': 'get_var_args',
             'content': '{"args": [1, 2, 3]}',
-            'tool_id': None,
+            'tool_call_id': None,
             'timestamp': IsStr() & IsNow(iso_string=True, tz=timezone.utc),
             'role': 'tool-return',
         }
@@ -225,8 +225,8 @@ def test_var_args(set_event_loop: None):
 async def call_tool(messages: list[Message], info: AgentInfo) -> ModelAnyResponse:
     if len(messages) == 1:
         assert len(info.function_tools) == 1
-        tool_id = info.function_tools[0].name
-        return ModelStructuredResponse(calls=[ToolCall.from_json(tool_id, '{}')])
+        tool_call_id = info.function_tools[0].name
+        return ModelStructuredResponse(calls=[ToolCall.from_json(tool_call_id, '{}')])
     else:
         return ModelTextResponse('final response')
 

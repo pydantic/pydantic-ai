@@ -308,7 +308,7 @@ print(dice_result.all_messages())
     ),
     ModelStructuredResponse(
         calls=[
-            ToolCall(tool_name='roll_die', args=ArgsDict(args_dict={}), tool_id=None)
+            ToolCall(tool_name='roll_die', args=ArgsDict(args_dict={}), tool_call_id=None)
         ],
         timestamp=datetime.datetime(...),
         role='model-structured-response',
@@ -316,14 +316,14 @@ print(dice_result.all_messages())
     ToolReturn(
         tool_name='roll_die',
         content='4',
-        tool_id=None,
+        tool_call_id=None,
         timestamp=datetime.datetime(...),
         role='tool-return',
     ),
     ModelStructuredResponse(
         calls=[
             ToolCall(
-                tool_name='get_player_name', args=ArgsDict(args_dict={}), tool_id=None
+                tool_name='get_player_name', args=ArgsDict(args_dict={}), tool_call_id=None
             )
         ],
         timestamp=datetime.datetime(...),
@@ -332,7 +332,7 @@ print(dice_result.all_messages())
     ToolReturn(
         tool_name='get_player_name',
         content='Anne',
-        tool_id=None,
+        tool_call_id=None,
         timestamp=datetime.datetime(...),
         role='tool-return',
     ),
@@ -747,7 +747,7 @@ except UnexpectedModelBehavior as e:
                 ToolCall(
                     tool_name='calc_volume',
                     args=ArgsDict(args_dict={'size': 6}),
-                    tool_id=None,
+                    tool_call_id=None,
                 )
             ],
             timestamp=datetime.datetime(...),
@@ -756,7 +756,7 @@ except UnexpectedModelBehavior as e:
         RetryPrompt(
             content='Please try again.',
             tool_name='calc_volume',
-            tool_id=None,
+            tool_call_id=None,
             timestamp=datetime.datetime(...),
             role='retry-prompt',
         ),
@@ -765,7 +765,7 @@ except UnexpectedModelBehavior as e:
                 ToolCall(
                     tool_name='calc_volume',
                     args=ArgsDict(args_dict={'size': 6}),
-                    tool_id=None,
+                    tool_call_id=None,
                 )
             ],
             timestamp=datetime.datetime(...),
