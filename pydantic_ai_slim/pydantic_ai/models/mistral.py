@@ -4,7 +4,7 @@ from collections.abc import AsyncIterator, Iterable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Callable, Dict, List, Literal, Optional
+from typing import Any, Callable, Literal
 
 from httpx import AsyncClient as AsyncHTTPClient
 from mistralai import CompletionChunk, FunctionCall, TextChunk
@@ -123,21 +123,9 @@ class MistralAgentModel(AgentModel):
     client: Mistral
     model_name: str
     allow_text_result: bool
-    function_tools: list[ToolDefinition] | None = None 
-    result_tools: list[ToolDefinition] | None = None 
-   
-    def _map_function_and_result_tools_definition(self) -> list[MistralTool] | None:   
-        tools: list[MistralTool] | None = []
-        
-        if self.function_tools:     
-            tools += [self._map_tool_definition(r) for r in self.function_tools]
-        
-        if self.result_tools:
-            tools += [self._map_tool_definition(r) for r in self.result_tools]        
-        
-        if not tools:
-            tools = None
-        return tools  
+    function_tools: list[ToolDefinition] | None 
+    result_tools: list[ToolDefinition] | None 
+
     
     @staticmethod
     def _map_tool_definition(
@@ -198,7 +186,7 @@ class MistralAgentModel(AgentModel):
         self, messages: list[Message],
     ) -> MistralEventStreamAsync[MistralCompletionEvent]:
         
-        response: Optional[MistralEventStreamAsync[MistralCompletionEvent]] = None
+        response: MistralEventStreamAsync[MistralCompletionEvent] | None = None
         mistral_messages = [self._map_message(m) for m in messages]
         
         if self.result_tools and self.function_tools or self.function_tools:
@@ -212,15 +200,15 @@ class MistralAgentModel(AgentModel):
             response = await self.client.chat.stream_async(
                 model=str(self.model_name),
                 messages=mistral_messages,
-                # stream=False,
-                # n=1,
+                # stream=False, # TODO: test
+                n=1,
                 tools=self._map_function_and_result_tools_definition(),
                 tool_choice=tool_choice,
             )
             
         elif self.result_tools: 
             # JSON Mode
-            schema: str | List[Dict[str, Any]]
+            schema: str | list[dict[str, Any]]
             if len(self.result_tools) == 1:
                 schema = _generate_json_simple_schema(self.result_tools[0].parameters_json_schema)
             else:
@@ -245,7 +233,21 @@ class MistralAgentModel(AgentModel):
             )
         assert response
         return response
-
+    
+    def _map_function_and_result_tools_definition(self) -> list[MistralTool] | None:   
+        tools: list[MistralTool] = []
+        
+        if self.function_tools:     
+            tools += [self._map_tool_definition(r) for r in self.function_tools]
+        
+        if self.result_tools:
+            tools += [self._map_tool_definition(r) for r in self.result_tools]        
+        
+        if tools:
+            return tools
+        else:
+            return None
+        
     @staticmethod
     def _process_response(response: MistralChatCompletionResponse) -> ModelAnyResponse:
         """Process a non-streamed response, and prepare a message to return."""
@@ -474,7 +476,7 @@ class MistralStreamStructuredResponse(StreamStructuredResponse):
         else:
             decoded_object = repair_json(self._delta_content, return_objects=True)
             
-            if isinstance(decoded_object, Dict):
+            if isinstance(decoded_object, dict):
                 tool = PydanticToolCall.from_dict(
                                 tool_name='final_result',
                                 args_dict=decoded_object,
@@ -493,7 +495,7 @@ class MistralStreamStructuredResponse(StreamStructuredResponse):
         return self._timestamp
     
     
-def _generate_json_simple_schema(schema: Dict[str, Any]) -> Any:
+def _generate_json_simple_schema(schema: dict[str, Any]) -> Any:
     """Generates a JSON example from a JSON schema.
 
     :param schema: The JSON schema.
@@ -527,7 +529,7 @@ def _generate_json_simple_schema(schema: Dict[str, Any]) -> Any:
 
     return None
 
-def _generate_jsom_simple_schemas(schemas: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def _generate_jsom_simple_schemas(schemas: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Generates JSON examples from a list of JSON schemas.
 
     :param schemas: The list of JSON schemas.
