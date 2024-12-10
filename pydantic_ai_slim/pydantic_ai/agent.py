@@ -810,7 +810,7 @@ class Agent(Generic[AgentDeps, ResultData]):
                         tool_return = _messages.ToolReturn(
                             tool_name=call.tool_name,
                             content='Final result processed.',
-                            tool_id=call.tool_id,
+                            tool_call_id=call.tool_call_id,
                         )
                         return _MarkFinalResult(result_data), [tool_return]
 
@@ -873,7 +873,7 @@ class Agent(Generic[AgentDeps, ResultData]):
                     tool_return = _messages.ToolReturn(
                         tool_name=call.tool_name,
                         content='Final result processed.',
-                        tool_id=call.tool_id,
+                        tool_call_id=call.tool_call_id,
                     )
                     return _MarkFinalResult(model_response), [tool_return]
 
