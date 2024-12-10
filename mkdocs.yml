@@ -138,7 +138,7 @@ watch:
 
 plugins:
   - search
-  - social
+  # - social
   - glightbox
   - mkdocstrings:
       handlers:

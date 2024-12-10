@@ -157,16 +157,6 @@ class Agent(Generic[AgentDeps, ResultData]):
     ) -> result.RunResult[ResultData]:
         """Run the agent with a user prompt in async mode.
 
-        Args:
-            user_prompt: User input to start/continue the conversation.
-            message_history: History of the conversation so far.
-            model: Optional model to use for this run, required if `model` was not set when creating the agent.
-            deps: Optional dependencies to use for this run.
-            infer_name: Whether to try to infer the agent name from the call frame if it's not set.
-
-        Returns:
-            The result of the run.
-
         Example:
         ```py
         from pydantic_ai import Agent
@@ -177,6 +167,16 @@ class Agent(Generic[AgentDeps, ResultData]):
         print(result_sync.data)
         #> Rome
         ```
+
+        Args:
+            user_prompt: User input to start/continue the conversation.
+            message_history: History of the conversation so far.
+            model: Optional model to use for this run, required if `model` was not set when creating the agent.
+            deps: Optional dependencies to use for this run.
+            infer_name: Whether to try to infer the agent name from the call frame if it's not set.
+
+        Returns:
+            The result of the run.
         """
         if infer_name and self.name is None:
             self._infer_name(inspect.currentframe())
@@ -244,16 +244,6 @@ class Agent(Generic[AgentDeps, ResultData]):
 
         This is a convenience method that wraps `self.run` with `loop.run_until_complete()`.
 
-        Args:
-            user_prompt: User input to start/continue the conversation.
-            message_history: History of the conversation so far.
-            model: Optional model to use for this run, required if `model` was not set when creating the agent.
-            deps: Optional dependencies to use for this run.
-            infer_name: Whether to try to infer the agent name from the call frame if it's not set.
-
-        Returns:
-            The result of the run.
-
         Example:
         ```py
         from pydantic_ai import Agent
@@ -265,6 +255,16 @@ class Agent(Generic[AgentDeps, ResultData]):
             print(result.data)
             #> Paris
         ```
+
+        Args:
+            user_prompt: User input to start/continue the conversation.
+            message_history: History of the conversation so far.
+            model: Optional model to use for this run, required if `model` was not set when creating the agent.
+            deps: Optional dependencies to use for this run.
+            infer_name: Whether to try to infer the agent name from the call frame if it's not set.
+
+        Returns:
+            The result of the run.
         """
         if infer_name and self.name is None:
             self._infer_name(inspect.currentframe())
@@ -285,16 +285,6 @@ class Agent(Generic[AgentDeps, ResultData]):
     ) -> AsyncIterator[result.StreamedRunResult[AgentDeps, ResultData]]:
         """Run the agent with a user prompt in async mode, returning a streamed response.
 
-        Args:
-            user_prompt: User input to start/continue the conversation.
-            message_history: History of the conversation so far.
-            model: Optional model to use for this run, required if `model` was not set when creating the agent.
-            deps: Optional dependencies to use for this run.
-            infer_name: Whether to try to infer the agent name from the call frame if it's not set.
-
-        Returns:
-            The result of the run.
-
         Example:
         ```py
         from pydantic_ai import Agent
@@ -306,6 +296,16 @@ class Agent(Generic[AgentDeps, ResultData]):
                 print(await response.get_data())
                 #> London
         ```
+
+        Args:
+            user_prompt: User input to start/continue the conversation.
+            message_history: History of the conversation so far.
+            model: Optional model to use for this run, required if `model` was not set when creating the agent.
+            deps: Optional dependencies to use for this run.
+            infer_name: Whether to try to infer the agent name from the call frame if it's not set.
+
+        Returns:
+            The result of the run.
         """
         if infer_name and self.name is None:
             # f_back because `asynccontextmanager` adds one frame
@@ -379,7 +379,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         """Context manager to temporarily override agent dependencies and model.
 
         This is particularly useful when testing.
-        You can find an example of this [here](https://ai.pydantic.dev/testing-evals/?h=override#overriding-model-via-pytest-fixtures).
+        You can find an example of this [here](../testing-evals.md#overriding-model-via-pytest-fixtures).
 
         Args:
             deps: The dependencies to use instead of the dependencies passed to the agent run.
