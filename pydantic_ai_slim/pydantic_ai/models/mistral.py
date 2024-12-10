@@ -257,9 +257,9 @@ class MistralAgentModel(AgentModel):
         else:
             timestamp = _now_utc()
 
-        choice = response.choices[0]
         assert response.choices, 'A unexpected empty response choice.'
-
+        choice = response.choices[0]
+        
         if (
             choice.message.tool_calls is not None
             and not isinstance(choice.message.tool_calls, MistralUnset)
@@ -300,47 +300,69 @@ class MistralAgentModel(AgentModel):
         response: MistralEventStreamAsync[MistralCompletionEvent],
     ) -> EitherStreamedResponse:
         """Process a streamed response, and prepare a streaming response to return."""
-        timestamp: datetime | None = None
         start_cost = result.Cost()
+        
         # the first chunk may contain enough information so we iterate until we get either `tool_calls` or `content`
         while True:
             try:
-                chunk = await response.__anext__()
+                event = await response.__anext__()
+                chunk = event.data
             except StopAsyncIteration as e:
                 raise UnexpectedModelBehavior('Streamed response ended without content or tool calls') from e
 
-            timestamp = timestamp or datetime.fromtimestamp(chunk.data.created, tz=timezone.utc)
-            start_cost += _map_cost(chunk.data)
+            start_cost += _map_cost(chunk)
+            
+            timestamp: datetime
+            if chunk.created:
+                timestamp = datetime.fromtimestamp(chunk.created, tz=timezone.utc)
+            else:
+                timestamp = _now_utc()
+                
+            if chunk.choices:
+                
+                delta = chunk.choices[0].delta
+                content: str | None = None
+                
+                if isinstance(delta.content, list) and isinstance(delta.content[0], TextChunk):
+                    content = delta.content[0].text
+                elif isinstance(delta.content, str):
+                    content = delta.content
+                elif isinstance(delta.content, MistralUnset):
+                    continue
+                else:
+                    assert False, f'Other type of instance, Will manage in the futur (Image, Reference), object:{delta.content}' 
+                    
+                if content and content == '':
+                    content = None
+                    
+                tool_calls: list[MistralToolCall] | None = None
+                if isinstance(delta.tool_calls, list):
+                    tool_calls = delta.tool_calls
 
-            if chunk.data.choices:
-                delta = chunk.data.choices[0].delta
-                if delta.content is not None and delta.content != '' and not isinstance(delta.content, MistralUnset):
-                    # TODO: Here with function
-                    if result_tools:
-                        return MistralStreamStructuredResponse(
-                            is_function_tools,
-                            result_tools,
-                            response,
-                            {},
-                            delta.content,
-                            timestamp,
-                            start_cost,
-                        )                          
-                        
-                    else:
-                        return MistralStreamTextResponse(delta.content, response, timestamp, start_cost)              
-                    # TODO: Here with json mode
-                    #if not result_tools and not is_function_tools:
-                    #     return MistralStreamTextResponse(delta.content, response, timestamp, start_cost)
-                        
-   
-                elif not result_tools and delta.tool_calls is not None  and not isinstance(delta.tool_calls, MistralUnset):
+                if content and result_tools:
+                    return MistralStreamStructuredResponse(
+                                                is_function_tools,
+                                                result_tools,
+                                                response,
+                                                {},
+                                                content,
+                                                timestamp,
+                                                start_cost,
+                                                )   
+                elif content:                     
+                    return MistralStreamTextResponse(
+                            content, 
+                            response, 
+                            timestamp, 
+                            start_cost
+                        )             
+                elif tool_calls and not result_tools:
                     return MistralStreamStructuredResponse(
                             is_function_tools,
                             result_tools,
                             response,
-                            {c.id: c for c in delta.tool_calls},
-                            delta.content,
+                            {c.id: c for c in tool_calls},
+                            content,
                             timestamp,
                             start_cost,
                         )  
