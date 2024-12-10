@@ -222,7 +222,8 @@ class AnthropicAgentModel(AgentModel):
         else:
             # TODO: we plan to support non-homogenous behavior in the future :)
             raise UnexpectedModelBehavior(
-                f'Unsupported response from Anthropic, expected all parts to be tool calls or text, got: {content!r}'
+                f'Not yet supported response from Anthropic, expected all parts to be tool calls or text, got heterogenous: {content!r}.'
+                'We anticipate supporting this in a future release.'
             )
 
     @staticmethod
