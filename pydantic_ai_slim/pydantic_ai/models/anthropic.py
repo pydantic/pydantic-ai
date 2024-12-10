@@ -73,6 +73,10 @@ class AnthropicModel(Model):
     Internally, this uses the [Anthropic Python client](https://github.com/anthropics/anthropic-sdk-python) to interact with the API.
 
     Apart from `__init__`, all methods are private or match those of the base class.
+
+    !!! note
+        The `AnthropicModel` class does not yet support streaming responses.
+        We anticipate adding support for streaming responses in a near-term future release.
     """
 
     model_name: AnthropicModelName
