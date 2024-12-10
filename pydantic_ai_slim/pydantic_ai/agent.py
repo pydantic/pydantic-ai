@@ -479,7 +479,7 @@ class Agent(Generic[AgentDeps, ResultData]):
     ) -> _result.ResultValidatorFunc[AgentDeps, ResultData]:
         """Decorator to register a result validator function.
 
-        Optionally takes [`RunContext`][pydantic_ai.tools.RunContext] as its only argument.
+        Optionally takes [`RunContext`][pydantic_ai.tools.RunContext] as its first argument.
         Can decorate a sync or async functions.
 
         Overloads for every possible signature of `result_validator` are included so the decorator doesn't obscure
