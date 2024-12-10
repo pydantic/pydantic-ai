@@ -3,19 +3,17 @@ from __future__ import annotations as _annotations
 import inspect
 from collections.abc import Awaitable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Callable, Generic, TypeVar, Union, cast
+from typing import Any, Callable, Generic, NoReturn, Union, cast
 
 from pydantic import ValidationError
 from pydantic_core import SchemaValidator
-from typing_extensions import Concatenate, ParamSpec, TypeAlias
+from typing_extensions import Concatenate, ParamSpec, TypeAlias, TypeVar
 
-from . import _pydantic, _utils, messages
+from . import _exceptions, _pydantic, _utils, messages
 from .exceptions import ModelRetry, UnexpectedModelBehavior
 
-if TYPE_CHECKING:
-    from .result import ResultData
-else:
-    ResultData = Any
+ResultData = TypeVar('ResultData', default=Any)
+"""Type variable for the result data of a run."""
 
 
 __all__ = (
@@ -38,7 +36,7 @@ AgentDeps = TypeVar('AgentDeps')
 
 
 @dataclass
-class RunContext(Generic[AgentDeps]):
+class RunContext(Generic[AgentDeps, ResultData]):
     """Information about the current call."""
 
     deps: AgentDeps
@@ -47,6 +45,11 @@ class RunContext(Generic[AgentDeps]):
     """Number of retries so far."""
     tool_name: str | None = None
     """Name of the tool being called."""
+
+    def stop_run(self, result: ResultData) -> NoReturn:
+        """Stop the call to `agent.run` as soon as possible, using the provided value as the result."""
+        # NOTE: this means we ignore any other tools called concurrently
+        raise _exceptions.StopAgentRun(result, tool_name=self.tool_name)
 
 
 ToolParams = ParamSpec('ToolParams')

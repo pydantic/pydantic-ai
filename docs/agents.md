@@ -557,7 +557,7 @@ A `prepare` method can be registered via the `prepare` kwarg to any of the tool 
 * [`@agent.tool_plain`][pydantic_ai.Agent.tool_plain] decorator
 * [`Tool`][pydantic_ai.tools.Tool] dataclass
 
-The `prepare` method, should be of type [`ToolPrepareFunc`][pydantic_ai.tools.ToolPrepareFunc], a function which takes [`RunContext`][pydantic_ai.tools.RunContext] and a pre-built [`ToolDefinition`][pydantic_ai.tools.ToolDefinition], and should either return that `ToolDefinition` with or without modifying it, return a new `ToolDefinition`, or return `None` to indicate this tools should not be registered for that step.
+The `prepare` method, should be of type [`ToolPrepareFunc`][pydantic_ai.tools.ToolPrepareFunc], a function which takes [`RunContext`][pydantic_ai.tools.RunContext] and a pre-built [`ToolDefinition`][pydantic_ai.tools.ToolDefinition], and should either return that `ToolDefinition` with or without modifying it, return a new `ToolDefinition`, or return `None` to indicate this tool should not be registered for that step.
 
 Here's a simple `prepare` method that only includes the tool if the value of the dependency is `42`.
 
@@ -594,7 +594,7 @@ print(result.data)
 
 _(This example is complete, it can be run "as is")_
 
-Here's a more complex example where we change the description of the `name` parameter to based on the value of `deps`
+Here's a more complex example where we change the description of the `name` parameter based on the value of `deps`
 
 For the sake of variation, we create this tool using the [`Tool`][pydantic_ai.tools.Tool] dataclass.
 
@@ -779,3 +779,34 @@ else:
 1. Define a tool that will raise `ModelRetry` repeatedly in this case.
 
 _(This example is complete, it can be run "as is")_
+
+
+## Early stopping
+
+Under some circumstances, you may stop an agent's `run` early from inside a tool call.
+
+To do this, you can use the `ctx.stop_run` method on the `RunContext`.
+[TODO: Add `agent.result_tool` decorator and also mention that here.]
+
+For example:
+
+```py title="early_stopping.py"
+from pydantic_ai import Agent, RunContext
+
+agent = Agent('test')
+
+
+@agent.tool
+def my_tool_call(ctx: RunContext[int], answer: str) -> str:
+    if ctx.deps == 42:
+        ctx.stop_run('Special dependency detected')
+    return f'Tool call: answer={answer}'
+
+
+result = agent.run_sync('testing...', deps=41)
+print(result.data)
+#> {"my_tool_call":"Tool call: answer=a"}
+result = agent.run_sync('testing...', deps=42)
+print(result.data)
+#> Special dependency detected
+```

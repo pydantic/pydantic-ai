@@ -13,6 +13,7 @@ import logfire_api
 from typing_extensions import assert_never
 
 from . import (
+    _exceptions,
     _result,
     _system_prompt,
     _utils,
@@ -787,9 +788,13 @@ class Agent(Generic[AgentDeps, ResultData]):
                 else:
                     messages.append(self._unknown_tool(call.tool_name))
 
-            with _logfire.span('running {tools=}', tools=[t.get_name() for t in tasks]):
-                task_results: Sequence[_messages.Message] = await asyncio.gather(*tasks)
-                messages.extend(task_results)
+            with _logfire.span('running {tools=}', tools=[t.get_name() for t in tasks]) as span:
+                try:
+                    task_results: Sequence[_messages.Message] = await asyncio.gather(*tasks)
+                    messages.extend(task_results)
+                except _exceptions.StopAgentRun as e:
+                    span.set_attribute('stop_agent_run', e.tool_name)
+                    return _MarkFinalResult(data=e.result), []
             return None, messages
         else:
             assert_never(model_response)
@@ -854,9 +859,13 @@ class Agent(Generic[AgentDeps, ResultData]):
                 else:
                     messages.append(self._unknown_tool(call.tool_name))
 
-            with _logfire.span('running {tools=}', tools=[t.get_name() for t in tasks]):
-                task_results: Sequence[_messages.Message] = await asyncio.gather(*tasks)
-                messages.extend(task_results)
+            with _logfire.span('running {tools=}', tools=[t.get_name() for t in tasks]) as span:
+                try:
+                    task_results: Sequence[_messages.Message] = await asyncio.gather(*tasks)
+                    messages.extend(task_results)
+                except _exceptions.StopAgentRun as e:
+                    span.set_attribute('stop_agent_run', e.tool_name)
+                    return _MarkFinalResult(data=e.result), []
             return None, messages
 
     async def _validate_result(
