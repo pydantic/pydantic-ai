@@ -314,22 +314,24 @@ class MistralAgentModel(AgentModel):
                 delta = chunk.data.choices[0].delta
                 if delta.content is not None and delta.content != '' and not isinstance(delta.content, MistralUnset):
                     # TODO: Here with function
-                    return MistralStreamTextResponse(delta.content, response, timestamp, start_cost)
-                
+                    if result_tools:
+                        return MistralStreamStructuredResponse(
+                            is_function_tools,
+                            result_tools,
+                            response,
+                            {},
+                            delta.content,
+                            timestamp,
+                            start_cost,
+                        )                          
+                        
+                    else:
+                        return MistralStreamTextResponse(delta.content, response, timestamp, start_cost)              
                     # TODO: Here with json mode
-                    # if not result_tools and not is_function_tools:
+                    #if not result_tools and not is_function_tools:
                     #     return MistralStreamTextResponse(delta.content, response, timestamp, start_cost)
                         
-                    # else:
-                    #     return MistralStreamStructuredResponse(
-                    #     is_function_tools,
-                    #     result_tools,
-                    #     response,
-                    #     {c.id: c for c in delta.tool_calls},
-                    #     delta.content,
-                    #     timestamp,
-                    #     start_cost,
-                    # )
+   
                 elif not result_tools and delta.tool_calls is not None  and not isinstance(delta.tool_calls, MistralUnset):
                     return MistralStreamStructuredResponse(
                             is_function_tools,
