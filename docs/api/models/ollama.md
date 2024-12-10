@@ -56,7 +56,7 @@ class CityLocation(BaseModel):
 
 agent = Agent(model=ollama_model, result_type=CityLocation)
 
-result = agent.run_sync('In what city and country were the olympics held in 2012?')
+result = agent.run_sync('Where the olympics held in 2012?')
 print(result.data)
 #> city='London' country='United Kingdom'
 print(result.cost())
