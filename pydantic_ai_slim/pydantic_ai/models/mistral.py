@@ -380,7 +380,7 @@ class MistralAgentModel(AgentModel):
                 elif isinstance(delta.content, MistralUnset):
                     pass
                 else:
-                    assert False, f'Other type of instance, Will manage in the futur (Image, Reference), object:{delta.content}'
+                    assert False, f'Other type of instance, Will manage in the futur (Image, Reference), object:{delta}'
 
                 if content and content == '':
                     content = None
@@ -530,7 +530,7 @@ class MistralStreamStructuredResponse(StreamStructuredResponse):
         elif isinstance(delta_content, MistralUnset):
             content = None
         else:
-            assert False, f'Other type of instance, Will manage in the futur (Image, Reference), object:{delta.content}'
+            assert False, f'Other type of instance, Will manage in the futur (Image, Reference), object:{delta_content}'
 
         if self._delta_tool_calls and self._result_tools or self._delta_tool_calls:
             for new in choice.delta.tool_calls or []:
