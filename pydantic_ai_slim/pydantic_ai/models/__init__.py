@@ -24,6 +24,8 @@ if TYPE_CHECKING:
 
 
 KnownModelName = Literal[
+    # TODO Add other Cohere models.
+    'cohere:command-r-plus-08-2024',
     'openai:gpt-4o',
     'openai:gpt-4o-mini',
     'openai:gpt-4-turbo',
@@ -253,27 +255,31 @@ def infer_model(model: Model | KnownModelName) -> Model:
         from .test import TestModel
 
         return TestModel()
-    elif model.startswith('openai:'):
+    elif model.startswith(cohere_prefix := 'cohere:'):
+        from .cohere import CohereModel
+
+        return CohereModel(model[len(cohere_prefix) :])
+    elif model.startswith(openai_prefix := 'openai:'):
         from .openai import OpenAIModel
 
-        return OpenAIModel(model[7:])
+        return OpenAIModel(model[len(openai_prefix) :])
     elif model.startswith('gemini'):
         from .gemini import GeminiModel
 
         # noinspection PyTypeChecker
         return GeminiModel(model)  # pyright: ignore[reportArgumentType]
-    elif model.startswith('groq:'):
+    elif model.startswith(groq_prefix := 'groq:'):
         from .groq import GroqModel
 
-        return GroqModel(model[5:])  # pyright: ignore[reportArgumentType]
-    elif model.startswith('vertexai:'):
+        return GroqModel(model[len(groq_prefix) :])  # pyright: ignore[reportArgumentType]
+    elif model.startswith(vertexai_prefix := 'vertexai:'):
         from .vertexai import VertexAIModel
 
-        return VertexAIModel(model[9:])  # pyright: ignore[reportArgumentType]
-    elif model.startswith('ollama:'):
+        return VertexAIModel(model[len(vertexai_prefix) :])  # pyright: ignore[reportArgumentType]
+    elif model.startswith(ollama_prefix := 'ollama:'):
         from .ollama import OllamaModel
 
-        return OllamaModel(model[7:])
+        return OllamaModel(model[len(ollama_prefix) :])
     else:
         raise UserError(f'Unknown model: {model}')
 
