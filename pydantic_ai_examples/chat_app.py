@@ -18,8 +18,8 @@ from typing import Annotated, Callable, TypeVar
 
 import fastapi
 import logfire
+from fastapi import Depends, Request
 from fastapi.responses import HTMLResponse, Response, StreamingResponse
-from opentelemetry.instrumentation.sqlite3 import SQLite3Instrumentor
 from pydantic import Field, TypeAdapter
 from typing_extensions import ParamSpec
 
@@ -35,17 +35,12 @@ from pydantic_ai.messages import (
 logfire.configure(send_to_logfire='if-token-present')
 
 agent = Agent('openai:gpt-4o')
-database: Database | None = None
 
 
 @asynccontextmanager
 async def lifespan(_app: fastapi.FastAPI):
-    global database
-
     async with Database.connect() as db:
-        database = db
-        yield
-        database = None
+        yield {'db': db}
 
 
 app = fastapi.FastAPI(lifespan=lifespan)
@@ -63,9 +58,12 @@ async def main_ts() -> Response:
     return Response((THIS_DIR / 'chat_app.ts').read_bytes(), media_type='text/plain')
 
 
+async def get_db(request: Request) -> Database:
+    return request.state.db
+
+
 @app.get('/chat/')
-async def get_chat() -> Response:
-    assert database is not None, 'Database not initialised'
+async def get_chat(database: Database = Depends(get_db)) -> Response:
     msgs = await database.get_messages()
     return Response(
         b'\n'.join(MessageTypeAdapter.dump_json(m) for m in msgs),
@@ -74,7 +72,9 @@ async def get_chat() -> Response:
 
 
 @app.post('/chat/')
-async def post_chat(prompt: Annotated[str, fastapi.Form()]) -> StreamingResponse:
+async def post_chat(
+    prompt: Annotated[str, fastapi.Form()], database: Database = Depends(get_db)
+) -> StreamingResponse:
     async def stream_messages():
         """Streams new line delimited JSON `Message`s to the client."""
         # stream the user prompt so that can be displayed straight away
@@ -129,7 +129,7 @@ class Database:
     @staticmethod
     def _connect(file: Path) -> sqlite3.Connection:
         con = sqlite3.connect(str(file))
-        SQLite3Instrumentor().instrument_connection(con)  # type: ignore
+        con = logfire.instrument_sqlite3(con)
         con.execute(
             'CREATE TABLE IF NOT EXISTS messages (id INT PRIMARY KEY, message_list TEXT);'
         )

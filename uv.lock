@@ -804,7 +804,7 @@ wheels = [
 
 [[package]]
 name = "logfire"
-version = "2.4.1"
+version = "2.6.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "executing" },
@@ -816,9 +816,9 @@ dependencies = [
     { name = "tomli", marker = "python_full_version < '3.11'" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/79/b2/b2952ce05b11a50b684a86562e04dbd622c2971e08975a30f98f1b8ac600/logfire-2.4.1.tar.gz", hash = "sha256:df8a3ba01e358170c189543e98d3244267a72b771ee338daccc657c3c56daf1f", size = 251008 }
+sdist = { url = "https://files.pythonhosted.org/packages/14/05/14c4f8a928be439fabef6174edce3697950de6cb17588063c2d6b160c660/logfire-2.6.2.tar.gz", hash = "sha256:23507de8fb64eb5ab0556f694b498a5455adc0c0636bf234aefc2aa220933b68", size = 253211 }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/93/7e/3d5f68a7d8c8d21fc0af1fd88ea04070240dedb88b1e40334424120762e5/logfire-2.4.1-py3-none-any.whl", hash = "sha256:54c7d2c3d1169850a3fe492186337d50f47e3a5d83cc021d37c58bea1adfff41", size = 171178 },
+    { url = "https://files.pythonhosted.org/packages/9f/1b/86975d00d1ef022505cd1f9d0e9eeade6023b8d48fde8376fcefc0f5515a/logfire-2.6.2-py3-none-any.whl", hash = "sha256:67ff148db4760ef2e79a903364302de913f3946ccdc6544d8396330320f64803", size = 172653 },
 ]
 
 [package.optional-dependencies]
@@ -827,6 +827,9 @@ asyncpg = [
 ]
 fastapi = [
     { name = "opentelemetry-instrumentation-fastapi" },
+]
+sqlite3 = [
+    { name = "opentelemetry-instrumentation-sqlite3" },
 ]
 
 [[package]]
@@ -1248,6 +1251,21 @@ wheels = [
 ]
 
 [[package]]
+name = "opentelemetry-instrumentation-dbapi"
+version = "0.49b2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "opentelemetry-api" },
+    { name = "opentelemetry-instrumentation" },
+    { name = "opentelemetry-semantic-conventions" },
+    { name = "wrapt" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/73/a5/a2bc4f57105133c21a16fbfb93cafb6a2efd0d0c4c2fba644f89b7693100/opentelemetry_instrumentation_dbapi-0.49b2.tar.gz", hash = "sha256:702fd576df514c47e81cb670c4f1b8884ea66f92e43d978ac787aeea852988a7", size = 12197 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/18/4a/3253fdafdd31631ba26d211983d50f2562268ee31c7c0ebb1415538b1bac/opentelemetry_instrumentation_dbapi-0.49b2-py3-none-any.whl", hash = "sha256:0ac831ba3e740a15c4e79565e212c004696169229d8078d61099f5dde5af340d", size = 11498 },
+]
+
+[[package]]
 name = "opentelemetry-instrumentation-fastapi"
 version = "0.49b2"
 source = { registry = "https://pypi.org/simple" }
@@ -1261,6 +1279,20 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/87/ed/a1275d5aac63edfad0afb012d2d5917412f09ac5f773c86b465b2b0d2549/opentelemetry_instrumentation_fastapi-0.49b2.tar.gz", hash = "sha256:3aa81ed7acf6aa5236d96e90a1218c5e84a9c0dce8fa63bf34ceee6218354b63", size = 19217 }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/d3/a9/ef2678c16caf5dc2f84628bfafdbc90139e3c78d9017afd07fbd51b1eeef/opentelemetry_instrumentation_fastapi-0.49b2-py3-none-any.whl", hash = "sha256:c66331d05bf806d7ca4f9579c1db7383aad31a9f6665dbaa2b7c9a4c1e830892", size = 12082 },
+]
+
+[[package]]
+name = "opentelemetry-instrumentation-sqlite3"
+version = "0.49b2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "opentelemetry-api" },
+    { name = "opentelemetry-instrumentation" },
+    { name = "opentelemetry-instrumentation-dbapi" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/fb/94/28873232ca6330c1c1fefe1799d2f32fb4dce6457fd0ad4a3546a8f30d85/opentelemetry_instrumentation_sqlite3-0.49b2.tar.gz", hash = "sha256:91a479f84d8fb384d93ef2ee563ab584babf1e1ebe0a47e98a30037d845e96ca", size = 7513 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e0/d5/dfb022aa06312c8ee870676e220e8438c1cec1b845956c02646b3959c0f5/opentelemetry_instrumentation_sqlite3-0.49b2-py3-none-any.whl", hash = "sha256:c4fd17133ea239fbcf7c03228c2a7fdfe9a891f85ff8197f8ed9ea04c5d08af0", size = 8700 },
 ]
 
 [[package]]
@@ -1551,7 +1583,7 @@ source = { editable = "pydantic_ai_examples" }
 dependencies = [
     { name = "asyncpg" },
     { name = "fastapi" },
-    { name = "logfire", extra = ["asyncpg", "fastapi"] },
+    { name = "logfire", extra = ["asyncpg", "fastapi", "sqlite3"] },
     { name = "pydantic-ai-slim", extra = ["groq", "openai", "vertexai"] },
     { name = "python-multipart" },
     { name = "rich" },
@@ -1562,7 +1594,7 @@ dependencies = [
 requires-dist = [
     { name = "asyncpg", specifier = ">=0.30.0" },
     { name = "fastapi", specifier = ">=0.115.4" },
-    { name = "logfire", extras = ["asyncpg", "fastapi"], specifier = ">=2.3" },
+    { name = "logfire", extras = ["asyncpg", "fastapi", "sqlite3"], specifier = ">=2.6" },
     { name = "pydantic-ai-slim", extras = ["openai", "vertexai", "groq"], editable = "pydantic_ai_slim" },
     { name = "python-multipart", specifier = ">=0.0.17" },
     { name = "rich", specifier = ">=13.9.2" },
