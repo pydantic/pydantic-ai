@@ -130,7 +130,8 @@ class Database:
     def _connect(file: Path) -> sqlite3.Connection:
         con = sqlite3.connect(str(file))
         con = logfire.instrument_sqlite3(con)
-        con.execute(
+        cur = con.cursor()
+        cur.execute(
             'CREATE TABLE IF NOT EXISTS messages (id INT PRIMARY KEY, message_list TEXT);'
         )
         con.commit()
