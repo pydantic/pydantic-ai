@@ -178,9 +178,18 @@ class AnthropicAgentModel(AgentModel):
         else:
             tool_choice = {'type': 'auto'}
 
-        anthropic_messages = [self._map_message(m) for m in messages]
+        system_prompt: str = ''
+        anthropic_messages: list[MessageParam] = []
+
+        for m in messages:
+            if m.role == 'system':
+                system_prompt += m.content
+            else:
+                anthropic_messages.append(self._map_message(m))
+
         return await self.client.messages.create(
             max_tokens=1024,
+            system=system_prompt or NOT_GIVEN,
             messages=anthropic_messages,
             model=self.model_name,
             temperature=0.0,
@@ -234,10 +243,7 @@ class AnthropicAgentModel(AgentModel):
     @staticmethod
     def _map_message(message: Message) -> MessageParam:
         """Just maps a `pydantic_ai.Message` to a `anthropic.types.MessageParam`."""
-        # separate out system prompts for anthropic
-        if message.role == 'system':
-            return MessageParam(role='user', content=message.content)
-        elif message.role == 'user':
+        if message.role == 'user':
             return MessageParam(role='user', content=message.content)
         elif message.role == 'tool-return':
             return MessageParam(
@@ -270,6 +276,10 @@ class AnthropicAgentModel(AgentModel):
             return MessageParam(role='assistant', content=message.content)
         elif message.role == 'model-structured-response':
             return MessageParam(role='assistant', content=[_map_tool_call(t) for t in message.calls])
+        elif message.role == 'system':
+            raise UnexpectedModelBehavior(
+                'System messages are handled separately for Anthropic, this is a bug, please report it.'
+            )
         else:
             assert_never(message)
 
