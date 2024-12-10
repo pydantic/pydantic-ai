@@ -308,7 +308,9 @@ print(dice_result.all_messages())
     ),
     ModelStructuredResponse(
         calls=[
-            ToolCall(tool_name='roll_die', args=ArgsDict(args_dict={}), tool_call_id=None)
+            ToolCall(
+                tool_name='roll_die', args=ArgsDict(args_dict={}), tool_call_id=None
+            )
         ],
         timestamp=datetime.datetime(...),
         role='model-structured-response',
@@ -323,7 +325,9 @@ print(dice_result.all_messages())
     ModelStructuredResponse(
         calls=[
             ToolCall(
-                tool_name='get_player_name', args=ArgsDict(args_dict={}), tool_call_id=None
+                tool_name='get_player_name',
+                args=ArgsDict(args_dict={}),
+                tool_call_id=None,
             )
         ],
         timestamp=datetime.datetime(...),

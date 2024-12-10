@@ -101,7 +101,7 @@ class RetryPrompt:
     tool_name: str | None = None
     """The name of the tool that was called, if any."""
     tool_call_id: str | None = None
-    """The tool call identifier, if any."""
+    """Optional tool call identifier, this is used by some models including OpenAI."""
     timestamp: datetime = field(default_factory=_now_utc)
     """The timestamp, when the retry was triggered."""
     role: Literal['retry-prompt'] = 'retry-prompt'
