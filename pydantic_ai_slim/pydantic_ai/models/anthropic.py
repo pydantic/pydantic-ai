@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Literal, overload
 
+from anthropic.types import ToolResultBlockParam
 from httpx import AsyncClient as AsyncHTTPClient
 from typing_extensions import assert_never
 
@@ -37,8 +38,11 @@ try:
     from anthropic.types import (
         Message as AnthropicMessage,
         MessageParam,
+        RawContentBlockDeltaEvent,
+        RawContentBlockStartEvent,
         RawMessageDeltaEvent,
         RawMessageStartEvent,
+        RawMessageStopEvent,
         RawMessageStreamEvent,
         TextBlock,
         ToolChoiceParam,
@@ -206,6 +210,7 @@ class AnthropicAgentModel(AgentModel):
             return ModelTextResponse(first_response.text)
 
         # TODO: this type ignore might be indicative of a greater issue here...
+        # TODO: note, we're sort of ignoring any textual messages here, do we need to save them in some way?
         return ModelStructuredResponse(
             [
                 ToolCall.from_dict(
@@ -231,46 +236,56 @@ class AnthropicAgentModel(AgentModel):
             timestamp = timestamp or _utils.now_utc()
             start_cost += _map_cost(chunk)
 
-            # TODO: probably need to handle these
-            # RawMessageStartEvent,
-            # RawMessageDeltaEvent,
-            # RawMessageStopEvent,
-            # RawContentBlockStartEvent,
-            # RawContentBlockDeltaEvent,
-            # RawContentBlockStopEvent,
-
-            # TODO: handle this appropriately
-            if chunk.choices:
-                delta = chunk.choices[0].delta
-
-                if delta.content is not None:
-                    return AnthropicStreamTextResponse(delta.content, response, timestamp, start_cost)
-                elif delta.tool_calls is not None:
-                    return AnthropicStreamStructuredResponse(
-                        response,
-                        {c.index: c for c in delta.tool_calls},
-                        timestamp,
-                        start_cost,
-                    )
+            # TODO: should be returning some sort of AnthropicStreamTextResponse or AnthropicStreamStructuredResponse
+            # depending on the type of chunk we get
+            if isinstance(chunk, RawMessageStartEvent):
+                pass
+            elif isinstance(chunk, RawMessageDeltaEvent):
+                pass
+            elif isinstance(chunk, RawMessageStopEvent):
+                pass
+            elif isinstance(chunk, RawContentBlockStartEvent):
+                pass
+            elif isinstance(chunk, RawContentBlockDeltaEvent):
+                pass
+            elif isinstance(chunk, RawContentBlockDeltaEvent):
+                pass
 
     @staticmethod
     def _map_message(message: Message) -> MessageParam:
         """Just maps a `pydantic_ai.Message` to a `anthropic.types.MessageParam`."""
-        # TODO: Make sure we're appropriately mapping things in terms of content.
-        # content: Required[
-        #     Union[
-        #         str, Iterable[Union[TextBlockParam, ImageBlockParam, ToolUseBlockParam, ToolResultBlockParam, ContentBlock]]
-        #     ]
-        # ]
-        # also, make sure the roles are actually correct...
+        # TODO: confirm the below roles are appropriate, make sure the roles are actually correct...
         if message.role == 'system':
-            return MessageParam(role='assistant', content=message.content)
+            return MessageParam(role='user', content=message.content)
         elif message.role == 'user':
             return MessageParam(role='user', content=message.content)
         elif message.role == 'tool-return':
-            return MessageParam(role='assistant', content=message.content)
+            return MessageParam(
+                role='assistant',
+                content=[
+                    ToolResultBlockParam(
+                        tool_use_id=_guard_tool_id(message),
+                        type='tool_result',
+                        content=message.model_response_str(),
+                        is_error=False,
+                    )
+                ],
+            )
         elif message.role == 'retry-prompt':
-            return MessageParam(role='user', content=message.model_response())
+            if message.tool_name is None:
+                return MessageParam(role='user', content=message.model_response())
+            else:
+                return MessageParam(
+                    role='user',
+                    content=[
+                        ToolUseBlockParam(
+                            id=_guard_tool_id(message),
+                            input=message.model_response(),
+                            name=message.tool_name,
+                            type='tool_use',
+                        ),
+                    ],
+                )
         elif message.role == 'model-text-response':
             return MessageParam(role='assistant', content=message.content)
         elif message.role == 'model-structured-response':
@@ -298,17 +313,7 @@ class AnthropicStreamTextResponse(StreamTextResponse):
         chunk = await self._response.__anext__()
         self._cost = _map_cost(chunk)
 
-        # TODO: handle this appropriately
-        try:
-            choice = chunk.content[0]
-        except IndexError:
-            raise StopAsyncIteration()
-
-        # we don't raise StopAsyncIteration on the last chunk because usage comes after this
-        if choice.finish_reason is None:
-            assert choice.delta.content is not None, f'Expected delta with content, invalid chunk: {chunk!r}'
-        if choice.delta.content is not None:
-            self._buffer.append(choice.delta.content)
+        # TODO: implement support here, need to figure out how to handle RawMessageStreamEvent chunks
 
     def get(self, *, final: bool = False) -> Iterable[str]:
         yield from self._buffer
@@ -326,7 +331,6 @@ class AnthropicStreamStructuredResponse(StreamStructuredResponse):
     """Implementation of `StreamStructuredResponse` for Anthropic models."""
 
     _response: AsyncStream[RawMessageStreamEvent]
-    _delta_tool_calls: dict[int, ChoiceDeltaToolCall]
     _timestamp: datetime
     _cost: result.Cost
 
@@ -334,32 +338,12 @@ class AnthropicStreamStructuredResponse(StreamStructuredResponse):
         chunk = await self._response.__anext__()
         self._cost = _map_cost(chunk)
 
-        try:
-            choice = chunk.choices[0]
-        except IndexError:
-            raise StopAsyncIteration()
-
-        if choice.finish_reason is not None:
-            raise StopAsyncIteration()
-
-        assert choice.delta.content is None, f'Expected tool calls, got content instead, invalid chunk: {chunk!r}'
-
-        for new in choice.delta.tool_calls or []:
-            if current := self._delta_tool_calls.get(new.index):
-                if current.function is None:
-                    current.function = new.function
-                elif new.function is not None:
-                    current.function.name = _utils.add_optional(current.function.name, new.function.name)
-                    current.function.arguments = _utils.add_optional(current.function.arguments, new.function.arguments)
-            else:
-                self._delta_tool_calls[new.index] = new
+        # TODO: implement support here, need to figure out how to handle RawMessageStreamEvent chunks
 
     def get(self, *, final: bool = False) -> ModelStructuredResponse:
         calls: list[ToolCall] = []
-        for c in self._delta_tool_calls.values():
-            if f := c.function:
-                if f.name is not None and f.arguments is not None:
-                    calls.append(ToolCall.from_json(f.name, f.arguments, c.id))
+
+        # TODO: implement support here, need to figure out how to handle RawMessageStreamEvent chunks
 
         return ModelStructuredResponse(calls, timestamp=self._timestamp)
 
@@ -387,15 +371,24 @@ def _map_tool_call(t: ToolCall) -> ToolUseBlockParam:
 
 
 def _map_cost(message: AnthropicMessage | RawMessageStreamEvent) -> result.Cost:
-    usage = None
     if isinstance(message, AnthropicMessage):
         usage = message.usage
     else:
         # TODO: I'm not sure if this usage counting is correct...
-        if isinstance(message, RawMessageDeltaEvent):
-            usage = message.usage
-        elif isinstance(message, RawMessageStartEvent):
+        # But I've extracted usage info from the various types of messages that can be sent.
+        # Usage coming from the RawMessageDeltaEvent doesn't have input token data (see getattr below),
+        # does this mean that we're double counting output token data from the previous RawMessageStartEvent?
+        if isinstance(message, RawMessageStartEvent):
             usage = message.message.usage
+        elif isinstance(message, RawMessageDeltaEvent):
+            usage = message.usage
+        else:
+            # No usage information provided in:
+            # - RawMessageStopEvent
+            # - RawContentBlockStartEvent
+            # - RawContentBlockDeltaEvent
+            # - RawContentBlockStopEvent
+            usage = None
 
     if usage is None:
         return result.Cost()

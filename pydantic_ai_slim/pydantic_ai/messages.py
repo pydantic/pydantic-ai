@@ -196,6 +196,7 @@ class ModelStructuredResponse:
 
 ModelAnyResponse = Union[ModelTextResponse, ModelStructuredResponse]
 """Any response from a model."""
+
 Message = Union[SystemPrompt, UserPrompt, ToolReturn, RetryPrompt, ModelTextResponse, ModelStructuredResponse]
 """Any message send to or returned by a model."""
 
