@@ -594,7 +594,7 @@ def _generate_jsom_simple_schemas(schemas: list[dict[str, Any]]) -> list[dict[st
     :param schemas: The list of JSON schemas.
     :return: A list of JSON examples based on the schemas.
     """
-    examples = []
+    examples: list[dict[str, Any]] = []
     for schema in schemas:
         example = _generate_json_simple_schema(schema)
         examples.append(example)
