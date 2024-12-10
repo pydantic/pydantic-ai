@@ -1,3 +1,5 @@
+# Chat App with FastAPI
+
 Simple chat app example build with FastAPI.
 
 Demonstrates:
