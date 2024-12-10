@@ -43,7 +43,7 @@ from pydantic_ai import Agent
 from pydantic_ai.models.ollama import OllamaModel
 
 ollama_model = OllamaModel(
-    model_name='qwen2.5-coder:7b', # the name of the model running on your remote server
+    model_name='qwen2.5-coder:7b', # model running on your remote server
     base_url='http://192.168.1.74:11434/v1' # the url of the remote server
 )
 
