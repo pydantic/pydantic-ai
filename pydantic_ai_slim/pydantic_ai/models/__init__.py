@@ -280,7 +280,7 @@ def infer_model(model: Model | KnownModelName) -> Model:
     elif model.startswith('claude'):
         from .anthropic import AnthropicModel
 
-        return AnthropicModel(model)  # pyright: ignore[reportArgumentType]
+        return AnthropicModel(model)
     else:
         raise UserError(f'Unknown model: {model}')
 
