@@ -178,9 +178,13 @@ class MistralAgentModel(AgentModel):
             A non-streaming response from the model.
         """
         mistral_messages = [self._map_message(m) for m in messages]
-        tool_choice: Literal['none', 'required', 'auto'] | None = None
-        if not self.allow_text_result:
-            tool_choice = 'required'
+        # Function calling Mode
+        # "auto": default mode. Model decides if it uses the tool or not.
+        # "any": forces tool use.
+        # "none": prevents tool use.
+        tool_choice: Literal['none', 'any', 'auto'] | None = None
+        if not self.function_tools and not self.result_tools:
+            tool_choice = 'none'
         else:
             tool_choice = 'auto'
 
@@ -218,19 +222,12 @@ class MistralAgentModel(AgentModel):
         mistral_messages = [self._map_message(m) for m in messages]
 
         if self.result_tools and self.function_tools or self.function_tools:
-            # Function calling Mode
-            tool_choice: Literal['none', 'required', 'auto'] | None = None
-            if not self.allow_text_result:
-                tool_choice = 'required'
-            else:
-                tool_choice = 'auto'
-
             response = await self.client.chat.stream_async(
                 model=str(self.model_name),
                 messages=mistral_messages,
                 n=1,
                 tools=self._map_function_and_result_tools_definition(),
-                tool_choice=tool_choice,
+                tool_choice='auto',
             )
 
         elif self.result_tools:
