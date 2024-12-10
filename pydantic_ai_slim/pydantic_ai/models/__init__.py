@@ -275,9 +275,9 @@ def infer_model(model: Model | KnownModelName) -> Model:
 
         return VertexAIModel(model[9:])  # pyright: ignore[reportArgumentType]
     elif model.startswith('mistral:'):
-        from .mistral import Mistral
+        from .mistral import MistralModel
 
-        return Mistral(model[8:])  # pyright: ignore[reportArgumentType]
+        return MistralModel(model[8:])  # pyright: ignore[reportArgumentType]
     elif model.startswith('ollama:'):
         from .ollama import OllamaModel
 
