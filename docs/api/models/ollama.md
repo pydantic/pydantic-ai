@@ -63,5 +63,4 @@ print(result.cost())
 
 See [`OllamaModel`][pydantic_ai.models.ollama.OllamaModel] for more information
 
-
 ::: pydantic_ai.models.ollama
