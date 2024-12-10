@@ -67,16 +67,8 @@ KnownModelName = Literal[
     'ollama:qwen2.5',
     'ollama:starcoder2',
     'claude-3-5-haiku-latest',
-    'claude-3-5-haiku-20241022',
     'claude-3-5-sonnet-latest',
-    'claude-3-5-sonnet-20241022',
-    'claude-3-5-sonnet-20240620',
     'claude-3-opus-latest',
-    'claude-3-opus-20240229',
-    'claude-3-sonnet-20240229',
-    'claude-3-haiku-20240307',
-    'claude-2.1',
-    'claude-2.0',
     'test',
 ]
 """Known model names that can be used with the `model` parameter of [`Agent`][pydantic_ai.Agent].

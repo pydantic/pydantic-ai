@@ -4,7 +4,7 @@ from collections.abc import AsyncIterator, Iterable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Literal, overload
+from typing import Any, Literal, Union, cast, overload
 
 from anthropic.types import ToolResultBlockParam
 from httpx import AsyncClient as AsyncHTTPClient
@@ -32,7 +32,6 @@ from . import (
     cached_async_http_client,
     check_allow_model_requests,
 )
-from typing import cast, Any
 
 try:
     from anthropic import NOT_GIVEN, AsyncAnthropic, AsyncStream
@@ -57,23 +56,19 @@ except ImportError as _import_error:
         "you can use the `anthropic` optional group — `pip install 'pydantic-ai[anthropic]'`"
     ) from _import_error
 
-# TODO: should we do the named anthropic model thing here, or only support models that aren't deprecated?
-AnthropicModelName = Literal[
+LatestAnthropicModelNames = Literal[
     'claude-3-5-haiku-latest',
-    'claude-3-5-haiku-20241022',
     'claude-3-5-sonnet-latest',
-    'claude-3-5-sonnet-20241022',
-    'claude-3-5-sonnet-20240620',
     'claude-3-opus-latest',
-    'claude-3-opus-20240229',
-    'claude-3-sonnet-20240229',
-    'claude-3-haiku-20240307',
-    'claude-2.1',
-    'claude-2.0',
 ]
-"""Named Anthropic models.
+"""Latest named Anthropic models."""
 
-See [the Anthropic docs](https://docs.anthropic.com/en/docs/about-claude/models) for a full list.
+AnthropicModelName = Union[str, LatestAnthropicModelNames]
+"""Possible Anthropic model names.
+
+Since Anthropic supports a variety of date-stamped models, we explicitly list the latest models but
+allow any name in the type hints.
+Since [the Anthropic docs](https://docs.anthropic.com/en/docs/about-claude/models) for a full list.
 """
 
 
