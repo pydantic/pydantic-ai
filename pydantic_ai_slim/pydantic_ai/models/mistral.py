@@ -186,7 +186,7 @@ class MistralAgentModel(AgentModel):
         if not self.function_tools and not self.result_tools:
             tool_choice = 'none'
         else:
-            tool_choice = 'auto'
+            tool_choice = 'any'
 
         response = await self.client.chat.complete_async(
             model=str(self.model_name),
@@ -227,7 +227,7 @@ class MistralAgentModel(AgentModel):
                 messages=mistral_messages,
                 n=1,
                 tools=self._map_function_and_result_tools_definition(),
-                tool_choice='auto',
+                tool_choice='any',
             )
 
         elif self.result_tools:
@@ -613,13 +613,12 @@ def _map_tool_call(t: PydanticToolCall) -> MistralToolCall:
 
 
 def _map_cost(response: MistralChatCompletionResponse | CompletionChunk) -> Cost:
-    if response.usage is None:
-        return Cost()
-    else:
-        usage = response.usage
+    if response.usage:
         return Cost(
-            request_tokens=usage.prompt_tokens,
-            response_tokens=usage.completion_tokens,
-            total_tokens=usage.total_tokens,
+            request_tokens=response.usage.prompt_tokens,
+            response_tokens=response.usage.completion_tokens,
+            total_tokens=response.usage.total_tokens,
             details=None,
         )
+    else:
+        return Cost()
