@@ -39,6 +39,7 @@ print(result.cost())
 
 ```py title="ollama_example_with_remote_server.py"
 from pydantic import BaseModel
+
 from pydantic_ai import Agent
 from pydantic_ai.models.ollama import OllamaModel
 
@@ -57,9 +58,9 @@ agent = Agent(model=ollama_model, result_type=CityLocation)
 
 result = agent.run_sync('In what city and country were the olympics held in 2012?')
 print(result.data)
-#> city='London' country='United Kingdom'
+# > city='London' country='United Kingdom'
 print(result.cost())
-#> Cost(request_tokens=56, response_tokens=8, total_tokens=64, details=None)
+# > Cost(request_tokens=56, response_tokens=8, total_tokens=64, details=None)
 ```
 
 1. The name of the model running on the remote server
