@@ -1,17 +1,16 @@
 from __future__ import annotations as _annotations
 
-from collections.abc import AsyncIterator, Iterable
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from datetime import datetime
 from typing import Any, Literal, Union, cast, overload
 
-from anthropic.types import ToolResultBlockParam
 from httpx import AsyncClient as AsyncHTTPClient
-from typing_extensions import assert_never
+from typing_extensions import TypeGuard, assert_never
 
-from .. import UnexpectedModelBehavior, _utils, result
+from .. import result
 from .._utils import guard_tool_call_id as _guard_tool_call_id
+from ..exceptions import UnexpectedModelBehavior
 from ..messages import (
     ArgsDict,
     Message,
@@ -20,14 +19,11 @@ from ..messages import (
     ModelTextResponse,
     ToolCall,
 )
-from ..result import Cost
 from ..tools import ToolDefinition
 from . import (
     AgentModel,
     EitherStreamedResponse,
     Model,
-    StreamStructuredResponse,
-    StreamTextResponse,
     cached_async_http_client,
     check_allow_model_requests,
 )
@@ -35,17 +31,16 @@ from . import (
 try:
     from anthropic import NOT_GIVEN, AsyncAnthropic, AsyncStream
     from anthropic.types import (
+        ContentBlock,
         Message as AnthropicMessage,
         MessageParam,
-        RawContentBlockDeltaEvent,
-        RawContentBlockStartEvent,
         RawMessageDeltaEvent,
         RawMessageStartEvent,
-        RawMessageStopEvent,
         RawMessageStreamEvent,
         TextBlock,
         ToolChoiceParam,
         ToolParam,
+        ToolResultBlockParam,
         ToolUseBlock,
         ToolUseBlockParam,
     )
@@ -185,7 +180,6 @@ class AnthropicAgentModel(AgentModel):
 
         anthropic_messages = [self._map_message(m) for m in messages]
         return await self.client.messages.create(
-            # TODO: might want to change max tokens (or make configurable for user), and same with other models...
             max_tokens=1024,
             messages=anthropic_messages,
             model=self.model_name,
@@ -199,63 +193,55 @@ class AnthropicAgentModel(AgentModel):
     def _process_response(response: AnthropicMessage) -> ModelAnyResponse:
         """Process a non-streamed response, and prepare a message to return."""
         content = response.content
-        first_response = content[0]
-        if len(content) == 1 and isinstance(first_response, TextBlock):
-            assert first_response.text is not None, first_response
-            return ModelTextResponse(first_response.text)
-
-        return ModelStructuredResponse(
-            [
-                ToolCall.from_dict(
-                    c.name,
-                    cast(dict[str, Any], c.input),
-                    c.id,
-                )
-                # TODO: note, we're sort of ignoring any textual messages here, do we need to save them in some way?
-                for c in [tub for tub in content if isinstance(tub, ToolUseBlock)]
-            ],
-        )
+        if _all_text_parts(content):
+            return ModelTextResponse(content=''.join(b.text for b in content))
+        elif _all_tool_use_parts(content):
+            return ModelStructuredResponse(
+                [
+                    ToolCall.from_dict(
+                        c.name,
+                        cast(dict[str, Any], c.input),
+                        c.id,
+                    )
+                    for c in content
+                ],
+            )
+        else:
+            # TODO: we plan to support non-homogenous behavior in the future :)
+            raise UnexpectedModelBehavior(
+                f'Unsupported response from Anthropic, expected all parts to be tool calls or text, got: {content!r}'
+            )
 
     @staticmethod
     async def _process_streamed_response(response: AsyncStream[RawMessageStreamEvent]) -> EitherStreamedResponse:
-        """Process a streamed response, and prepare a streaming response to return."""
-        timestamp: datetime | None = None
-        start_cost = Cost()
-        # the first chunk may contain enough information so we iterate until we get either `tool_calls` or `content`
-        while True:
-            try:
-                chunk = await response.__anext__()
-            except StopAsyncIteration as e:
-                raise UnexpectedModelBehavior('Streamed response ended without content or tool calls') from e
-            timestamp = timestamp or _utils.now_utc()
-            start_cost += _map_cost(chunk)
+        """TODO: Process a streamed response, and prepare a streaming response to return."""
+        # We don't yet support streamed responses from Anthropic, so we raise an error here for now.
+        # Streamed responses will be supported in a future release.
 
-            # TODO: should be returning some sort of AnthropicStreamTextResponse or AnthropicStreamStructuredResponse
-            # depending on the type of chunk we get
-            if isinstance(chunk, RawMessageStartEvent):
-                pass
-            elif isinstance(chunk, RawMessageDeltaEvent):
-                pass
-            elif isinstance(chunk, RawMessageStopEvent):
-                pass
-            elif isinstance(chunk, RawContentBlockStartEvent):
-                pass
-            elif isinstance(chunk, RawContentBlockDeltaEvent):
-                pass
-            elif isinstance(chunk, RawContentBlockDeltaEvent):
-                pass
+        raise RuntimeError('Streamed responses are not yet supported for Anthropic models.')
+
+        # Should be returning some sort of AnthropicStreamTextResponse or AnthropicStreamStructuredResponse
+        # depending on the type of chunk we get, but we need to establish how we handle (and when we get) the following:
+        # RawMessageStartEvent
+        # RawMessageDeltaEvent
+        # RawMessageStopEvent
+        # RawContentBlockStartEvent
+        # RawContentBlockDeltaEvent
+        # RawContentBlockDeltaEvent
+        #
+        # We might refactor streaming internally before we implement this...
 
     @staticmethod
     def _map_message(message: Message) -> MessageParam:
         """Just maps a `pydantic_ai.Message` to a `anthropic.types.MessageParam`."""
-        # TODO: confirm the below roles are appropriate, make sure the roles are actually correct...
+        # separate out system prompts for anthropic
         if message.role == 'system':
             return MessageParam(role='user', content=message.content)
         elif message.role == 'user':
             return MessageParam(role='user', content=message.content)
         elif message.role == 'tool-return':
             return MessageParam(
-                role='assistant',
+                role='user',
                 content=[
                     ToolResultBlockParam(
                         tool_use_id=_guard_tool_call_id(t=message, model_source='Anthropic'),
@@ -288,64 +274,12 @@ class AnthropicAgentModel(AgentModel):
             assert_never(message)
 
 
-@dataclass
-class AnthropicStreamTextResponse(StreamTextResponse):
-    """Implementation of `StreamTextResponse` for Anthropic models."""
-
-    _first: str | None
-    _response: AsyncStream[RawMessageStreamEvent]
-    _timestamp: datetime
-    _cost: result.Cost
-    _buffer: list[str] = field(default_factory=list, init=False)
-
-    async def __anext__(self) -> None:
-        if self._first is not None:
-            self._buffer.append(self._first)
-            self._first = None
-            return None
-
-        chunk = await self._response.__anext__()
-        self._cost = _map_cost(chunk)
-
-        # TODO: implement support here, need to figure out how to handle RawMessageStreamEvent chunks
-
-    def get(self, *, final: bool = False) -> Iterable[str]:
-        yield from self._buffer
-        self._buffer.clear()
-
-    def cost(self) -> Cost:
-        return self._cost
-
-    def timestamp(self) -> datetime:
-        return self._timestamp
+def _all_text_parts(parts: list[ContentBlock]) -> TypeGuard[list[TextBlock]]:
+    return all(isinstance(part, TextBlock) for part in parts)
 
 
-@dataclass
-class AnthropicStreamStructuredResponse(StreamStructuredResponse):
-    """Implementation of `StreamStructuredResponse` for Anthropic models."""
-
-    _response: AsyncStream[RawMessageStreamEvent]
-    _timestamp: datetime
-    _cost: result.Cost
-
-    async def __anext__(self) -> None:
-        chunk = await self._response.__anext__()
-        self._cost = _map_cost(chunk)
-
-        # TODO: implement support here, need to figure out how to handle RawMessageStreamEvent chunks
-
-    def get(self, *, final: bool = False) -> ModelStructuredResponse:
-        calls: list[ToolCall] = []
-
-        # TODO: implement support here, need to figure out how to handle RawMessageStreamEvent chunks
-
-        return ModelStructuredResponse(calls, timestamp=self._timestamp)
-
-    def cost(self) -> Cost:
-        return self._cost
-
-    def timestamp(self) -> datetime:
-        return self._timestamp
+def _all_tool_use_parts(parts: list[ContentBlock]) -> TypeGuard[list[ToolUseBlock]]:
+    return all(isinstance(part, ToolUseBlock) for part in parts)
 
 
 def _map_tool_call(t: ToolCall) -> ToolUseBlockParam:

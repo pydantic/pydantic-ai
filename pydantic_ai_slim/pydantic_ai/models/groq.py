@@ -262,10 +262,6 @@ class GroqAgentModel(AgentModel):
             # ModelTextResponse ->
             return chat.ChatCompletionAssistantMessageParam(role='assistant', content=message.content)
         elif message.role == 'model-structured-response':
-            # QUESTION: what's going on here? The assertion message doesn't seem relevant... same for openai logic.
-            assert (
-                message.role == 'model-structured-response'
-            ), f'Expected role to be "llm-tool-calls", got {message.role}'
             # ModelStructuredResponse ->
             return chat.ChatCompletionAssistantMessageParam(
                 role='assistant',

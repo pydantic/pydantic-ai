@@ -250,9 +250,6 @@ class OpenAIAgentModel(AgentModel):
             # ModelTextResponse ->
             return chat.ChatCompletionAssistantMessageParam(role='assistant', content=message.content)
         elif message.role == 'model-structured-response':
-            assert (
-                message.role == 'model-structured-response'
-            ), f'Expected role to be "llm-tool-calls", got {message.role}'
             # ModelStructuredResponse ->
             return chat.ChatCompletionAssistantMessageParam(
                 role='assistant',
