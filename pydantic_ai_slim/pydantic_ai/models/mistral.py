@@ -228,7 +228,6 @@ class MistralAgentModel(AgentModel):
             response = await self.client.chat.stream_async(
                 model=str(self.model_name),
                 messages=mistral_messages,
-                # stream=False, # TODO: test
                 n=1,
                 tools=self._map_function_and_result_tools_definition(),
                 tool_choice=tool_choice,
@@ -301,7 +300,7 @@ class MistralAgentModel(AgentModel):
                     PydanticToolCall.from_json(
                         tool_name=c.function.name,
                         args_json=c.function.arguments,
-                        tool_id=c.id,
+                        tool_call_id=c.id,
                     )
                     if isinstance(c.function.arguments, str)
                     else PydanticToolCall.from_dict(
@@ -406,7 +405,7 @@ class MistralAgentModel(AgentModel):
         elif message.role == 'tool-return':
             # ToolReturn ->
             return MistralToolMessage(
-                tool_call_id=message.tool_id,
+                tool_call_id=message.tool_call_id,
                 content=message.model_response_str(),
             )
         elif message.role == 'retry-prompt':
@@ -415,7 +414,7 @@ class MistralAgentModel(AgentModel):
                 return MistralUserMessage(content=message.model_response())
             else:
                 return MistralToolMessage(
-                    tool_call_id=message.tool_id,
+                    tool_call_id=message.tool_call_id,
                     content=message.model_response(),
                 )
         elif message.role == 'model-text-response':
@@ -529,7 +528,7 @@ class MistralStreamStructuredResponse(StreamStructuredResponse):
                         PydanticToolCall.from_json(
                             tool_name=f.name,
                             args_json=f.arguments,
-                            tool_id=c.id,
+                            tool_call_id=c.id,
                         )
                         if isinstance(f.arguments, str)
                         else PydanticToolCall.from_dict(tool_name=f.name, args_dict=f.arguments, tool_id=c.id)
@@ -604,13 +603,13 @@ def _generate_jsom_simple_schemas(schemas: list[dict[str, Any]]) -> list[dict[st
 def _map_tool_call(t: PydanticToolCall) -> MistralToolCall:
     if isinstance(t.args, ArgsJson):
         return MistralToolCall(
-            id=t.tool_id,
+            id=t.tool_call_id,
             type='function',
             function=FunctionCall(name=t.tool_name, arguments=t.args.args_json),
         )
     else:
         return MistralToolCall(
-            id=t.tool_id,
+            id=t.tool_call_id,
             type='function',
             function=FunctionCall(name=t.tool_name, arguments=t.args.args_dict),
         )
