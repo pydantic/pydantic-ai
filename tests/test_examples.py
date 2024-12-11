@@ -182,7 +182,7 @@ text_responses: dict[str, str | ToolCall] = {
             }
         ),
     ),
-    'Where the olympics held in 2012?': ToolCall(
+    'Where were the olympics held in 2012?': ToolCall(
         tool_name='final_result',
         args=ArgsDict({'city': 'London', 'country': 'United Kingdom'}),
     ),
