@@ -288,7 +288,7 @@ def infer_model(model: Model | KnownModelName) -> Model:
     elif model.startswith('sambanova:'):
         from .sambanova import SambaNovaModel
 
-        return SambaNovaModel(model[10:])  # pyright: ignore[reportArgumentType]
+        return SambaNovaModel(model[10:])
     else:
         raise UserError(f'Unknown model: {model}')
 

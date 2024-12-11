@@ -4,7 +4,7 @@ import json
 import os
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Literal, Union
+from typing import List, Literal, Union
 
 from httpx import AsyncClient as AsyncHTTPClient
 
@@ -19,8 +19,9 @@ from . import (
 from .openai import OpenAIAgentModel
 
 try:
-    from openai import AsyncOpenAI
+    from openai import AsyncOpenAI, AsyncStream
     from openai.types import chat
+    from openai.types.chat import ChatCompletionChunk
 except ImportError as e:
     raise ImportError(
         'Please install `openai` to use the OpenAI client, '
@@ -95,13 +96,14 @@ class SambaNovaModel(Model):
 
     async def agent_model(
         self,
+        *,
         function_tools: list[ToolDefinition],
         allow_text_result: bool,
         result_tools: list[ToolDefinition],
     ) -> AgentModel:
         check_allow_model_requests()
         tools = [self._map_tool_definition(r) for r in function_tools]
-        if result_tools is not None:
+        if result_tools:
             tools += [self._map_tool_definition(r) for r in result_tools]
         return SambaNovaAgentModel(
             self.client,
@@ -139,7 +141,7 @@ class SambaNovaAgentModel(OpenAIAgentModel):
         timestamp = datetime.fromtimestamp(response.created, tz=timezone.utc)
         choice = response.choices[0]
         if choice.message.tool_calls is not None:
-            calls = []
+            calls: List[ToolCall] = []
             for tool_call in choice.message.tool_calls:
                 if isinstance(tool_call.function.arguments, dict):
                     calls.append(
@@ -156,7 +158,9 @@ class SambaNovaAgentModel(OpenAIAgentModel):
             assert choice.message.content is not None, choice
             return ModelTextResponse(choice.message.content, timestamp=timestamp)
 
-    async def _completions_create(self, messages: list[Message], stream: bool) -> chat.ChatCompletion:
+    async def _completions_create(
+        self, messages: list[Message], stream: bool
+        ) -> chat.ChatCompletion | AsyncStream[ChatCompletionChunk]:
         if stream:
             if self.tools:
                 raise NotImplementedError('tool calling when streaming not supported')
