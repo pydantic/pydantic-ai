@@ -17,7 +17,7 @@ In typing terms, agents are generic in their dependency and result types, e.g., 
 
 Here's a toy example of an agent that simulates a roulette wheel:
 
-```py title="roulette_wheel.py"
+```python {title="roulette_wheel.py"}
 from pydantic_ai import Agent, RunContext
 
 roulette_agent = Agent(  # (1)!
@@ -67,7 +67,7 @@ There are three ways to run an agent:
 
 Here's a simple example demonstrating all three:
 
-```py title="run_agent.py"
+```python {title="run_agent.py"}
 from pydantic_ai import Agent
 
 agent = Agent('openai:gpt-4o')
@@ -95,7 +95,7 @@ You can also pass messages from previous runs to continue a conversation or prov
     to manage conflicts between event loops that occur between jupyter's event loops and `pydantic-ai`'s.
 
     Before you execute any agent runs, do the following:
-    ```py {test="skip", lint="skip"}
+    ```python {test="skip" lint="skip"}
     import nest_asyncio
     nest_asyncio.apply()
     ```
@@ -106,7 +106,7 @@ An agent **run** might represent an entire conversation — there's no limit to 
 
 Here's an example of a conversation comprised of multiple runs:
 
-```py title="conversation_example.py" hl_lines="13"
+```python {title="conversation_example.py" hl_lines="13"}
 from pydantic_ai import Agent
 
 agent = Agent('openai:gpt-4o')
@@ -144,7 +144,7 @@ In particular, agents are generic in both the type of their dependencies and the
 
 Consider the following script with type mistakes:
 
-```py title="type_mistakes.py" hl_lines="18 28"
+```python {title="type_mistakes.py" hl_lines="18 28"}
 from dataclasses import dataclass
 
 from pydantic_ai import Agent, RunContext
@@ -203,7 +203,7 @@ You can add both to a single agent; they're appended in the order they're define
 
 Here's an example using both types of system prompts:
 
-```py title="system_prompts.py"
+```python {title="system_prompts.py"}
 from datetime import date
 
 from pydantic_ai import Agent, RunContext
@@ -258,7 +258,7 @@ There are a number of ways to register tools with an agent:
 
 Here's an example using both:
 
-```py title="dice_game.py"
+```python {title="dice_game.py"}
 import random
 
 from pydantic_ai import Agent, RunContext
@@ -301,7 +301,7 @@ _(This example is complete, it can be run "as is")_
 
 Let's print the messages from that game to see what happened:
 
-```py title="dice_game_messages.py"
+```python {title="dice_game_messages.py"}
 from dice_game import dice_result
 
 print(dice_result.all_messages())
@@ -399,7 +399,7 @@ sequenceDiagram
 
 As well as using the decorators, we can register tools via the `tools` argument to the [`Agent` constructor][pydantic_ai.Agent.__init__]. This is useful when you want to re-use tools, and can also give more fine-grained control over the tools.
 
-```py title="dice_game_tool_kwarg.py"
+```python {title="dice_game_tool_kwarg.py"}
 import random
 
 from pydantic_ai import Agent, RunContext, Tool
@@ -452,7 +452,7 @@ Even better, PydanticAI extracts the docstring from functions and (thanks to [gr
 
 To demonstrate a tool's schema, here we use [`FunctionModel`][pydantic_ai.models.function.FunctionModel] to print the schema a model would receive:
 
-```py title="tool_schema.py"
+```python {title="tool_schema.py"}
 from pydantic_ai import Agent
 from pydantic_ai.messages import Message, ModelAnyResponse, ModelTextResponse
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -509,7 +509,7 @@ If a tool has a single parameter that can be represented as an object in JSON sc
 
 Here's an example, we use [`TestModel.agent_model_function_tools`][pydantic_ai.models.test.TestModel.agent_model_function_tools] to inspect the tool schema that would be passed to the model.
 
-```py title="single_parameter_tool.py"
+```python {title="single_parameter_tool.py"}
 from pydantic import BaseModel
 
 from pydantic_ai import Agent
@@ -577,7 +577,7 @@ Here's a simple `prepare` method that only includes the tool if the value of the
 
 As with the previous example, we use [`TestModel`][pydantic_ai.models.test.TestModel] to demonstrate the behavior without calling a real model.
 
-```py title="tool_only_if_42.py"
+```python {title="tool_only_if_42.py"}
 from typing import Union
 
 from pydantic_ai import Agent, RunContext
@@ -612,7 +612,7 @@ Here's a more complex example where we change the description of the `name` para
 
 For the sake of variation, we create this tool using the [`Tool`][pydantic_ai.tools.Tool] dataclass.
 
-```py title="customize_name.py"
+```python {title="customize_name.py"}
 from __future__ import annotations
 
 from typing import Literal
@@ -678,7 +678,7 @@ You can also raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] from within
 
 Here's an example:
 
-```py title="tool_retry.py"
+```python {title="tool_retry.py"}
 from fake_database import DatabaseConn
 from pydantic import BaseModel
 
@@ -726,7 +726,7 @@ If models behave unexpectedly (e.g., the retry limit is exceeded, or their API r
 
 In these cases, [`agent.last_run_messages`][pydantic_ai.Agent.last_run_messages] can be used to access the messages exchanged during the run to help diagnose the issue.
 
-```py
+```python
 from pydantic_ai import Agent, ModelRetry, UnexpectedModelBehavior
 
 agent = Agent('openai:gpt-4o')

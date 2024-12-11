@@ -87,7 +87,7 @@ class Either(Generic[Left, Right]):
 
     Usage:
 
-    ```py
+    ```python
     if left_thing := either.left:
         use_left(left_thing.value)
     else:
@@ -146,7 +146,7 @@ async def group_by_temporal(
 
     Usage:
 
-    ```py
+    ```python
     async with group_by_temporal(yield_groups(), 0.1) as groups_iter:
         async for groups in groups_iter:
             print(groups)

@@ -53,7 +53,7 @@ py-cli logfire projects new
 
 The last step is to add logfire to your code:
 
-```python title="adding_logfire.py"
+```python {title="adding_logfire.py"}
 import logfire
 
 logfire.configure()
