@@ -54,7 +54,7 @@ _(This example is complete, it can be run "as is")_
 Dependencies are accessed through the [`RunContext`][pydantic_ai.tools.RunContext] type, this should be the first parameter of system prompt functions etc.
 
 
-```python {title="system_prompt_dependencies.py", hl_lines="20-27"}
+```python {title="system_prompt_dependencies.py" hl_lines="20-27"}
 from dataclasses import dataclass
 
 import httpx
@@ -160,7 +160,7 @@ _(This example is complete, it can be run "as is")_
 
 As well as system prompts, dependencies can be used in [tools](agents.md#function-tools) and [result validators](results.md#result-validators-functions).
 
-```python {title="full_example.py", hl_lines="27-35 38-48"}
+```python {title="full_example.py" hl_lines="27-35 38-48"}
 from dataclasses import dataclass
 
 import httpx
@@ -275,7 +275,7 @@ async def application_code(prompt: str) -> str:  # (3)!
 3. Application code that calls the agent, in a real application this might be an API endpoint.
 4. Call the agent from within the application code, in a real application this call might be deep within a call stack. Note `app_deps` here will NOT be used when deps are overridden.
 
-```python {title="test_joke_app.py", hl_lines="10-12"}
+```python {title="test_joke_app.py" hl_lines="10-12"}
 from joke_app import MyDeps, application_code, joke_agent
 
 
