@@ -136,7 +136,7 @@ async def main():
         'postgresql://postgres:postgres@localhost:54320', 'pydantic_ai_sql_gen'
     ) as conn:
         deps = Deps(conn)
-        result = await agent.run(prompt, deps=deps)
+        result = await agent.run_async(prompt, deps=deps)
     debug(result.data)
 
 

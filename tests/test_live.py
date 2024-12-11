@@ -81,7 +81,7 @@ async def http_client(allow_model_requests: None) -> AsyncIterator[httpx.AsyncCl
 @pytest.mark.parametrize('get_model', params)
 async def test_text(http_client: httpx.AsyncClient, tmp_path: Path, get_model: GetModel):
     agent = Agent(get_model(http_client, tmp_path))
-    result = await agent.run('What is the capital of France?')
+    result = await agent.run_async('What is the capital of France?')
     print('Text response:', result.data)
     assert 'paris' in result.data.lower()
     print('Text cost:', result.cost())
@@ -115,7 +115,7 @@ structured_params = [p for p in params if p.id != 'ollama']
 @pytest.mark.parametrize('get_model', structured_params)
 async def test_structured(http_client: httpx.AsyncClient, tmp_path: Path, get_model: GetModel):
     agent = Agent(get_model(http_client, tmp_path), result_type=MyModel)
-    result = await agent.run('What is the capital of the UK?')
+    result = await agent.run_async('What is the capital of the UK?')
     print('Structured response:', result.data)
     assert result.data.city.lower() == 'london'
     print('Structured cost:', result.cost())

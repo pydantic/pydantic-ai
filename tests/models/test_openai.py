@@ -126,14 +126,14 @@ async def test_request_simple_success(allow_model_requests: None):
     m = OpenAIModel('gpt-4', openai_client=mock_client)
     agent = Agent(m)
 
-    result = await agent.run('hello')
+    result = await agent.run_async('hello')
     assert result.data == 'world'
     assert result.cost() == snapshot(Cost())
 
     # reset the index so we get the same response again
     mock_client.index = 0  # type: ignore
 
-    result = await agent.run('hello', message_history=result.new_messages())
+    result = await agent.run_async('hello', message_history=result.new_messages())
     assert result.data == 'world'
     assert result.cost() == snapshot(Cost())
     assert result.all_messages() == snapshot(
@@ -155,7 +155,7 @@ async def test_request_simple_usage(allow_model_requests: None):
     m = OpenAIModel('gpt-4', openai_client=mock_client)
     agent = Agent(m)
 
-    result = await agent.run('Hello')
+    result = await agent.run_async('Hello')
     assert result.data == 'world'
     assert result.cost() == snapshot(Cost(request_tokens=2, response_tokens=1, total_tokens=3))
 
@@ -178,7 +178,7 @@ async def test_request_structured_response(allow_model_requests: None):
     m = OpenAIModel('gpt-4', openai_client=mock_client)
     agent = Agent(m, result_type=list[int])
 
-    result = await agent.run('Hello')
+    result = await agent.run_async('Hello')
     assert result.data == [1, 2, 123]
     assert result.all_messages() == snapshot(
         [
@@ -256,7 +256,7 @@ async def test_request_tool_call(allow_model_requests: None):
         else:
             raise ModelRetry('Wrong location, please try again')
 
-    result = await agent.run('Hello')
+    result = await agent.run_async('Hello')
     assert result.data == 'final response'
     assert result.all_messages() == snapshot(
         [

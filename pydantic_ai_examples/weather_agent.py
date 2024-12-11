@@ -139,7 +139,7 @@ async def main():
         deps = Deps(
             client=client, weather_api_key=weather_api_key, geo_api_key=geo_api_key
         )
-        result = await weather_agent.run(
+        result = await weather_agent.run_async(
             'What is the weather like in London and in Wiltshire?', deps=deps
         )
         debug(result)

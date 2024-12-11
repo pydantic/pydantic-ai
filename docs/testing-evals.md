@@ -69,7 +69,7 @@ async def run_weather_forecast(  # (3)!
     async with WeatherService() as weather_service:
 
         async def run_forecast(prompt: str, user_id: int):
-            result = await weather_agent.run(prompt, deps=weather_service)
+            result = await weather_agent.run_async(prompt, deps=weather_service)
             await conn.store_forecast(user_id, result.data)
 
         # run all prompts in parallel
@@ -354,7 +354,7 @@ async def system_prompt(ctx: RunContext[SqlSystemPrompt]) -> str:
 async def user_search(user_prompt: str) -> list[dict[str, str]]:
     """Search the database based on the user's prompts."""
     ...  # (4)!
-    result = await sql_agent.run(user_prompt, deps=SqlSystemPrompt())
+    result = await sql_agent.run_async(user_prompt, deps=SqlSystemPrompt())
     conn = DatabaseConn()
     return await conn.execute(result.data)
 ```

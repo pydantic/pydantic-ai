@@ -159,7 +159,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         self._current_result_retry = 0
         self._result_validators = []
 
-    async def run(
+    async def run_async(
         self,
         user_prompt: str,
         *,
@@ -268,7 +268,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         agent = Agent('openai:gpt-4o')
 
         async def main():
-            result = await agent.run('What is the capital of France?')
+            result = await agent.run_async('What is the capital of France?')
             print(result.data)
             #> Paris
         ```
@@ -287,7 +287,7 @@ class Agent(Generic[AgentDeps, ResultData]):
             self._infer_name(inspect.currentframe())
         loop = asyncio.get_event_loop()
         return loop.run_until_complete(
-            self.run(user_prompt, message_history=message_history, model=model, deps=deps, infer_name=False)
+            self.run_async(user_prompt, message_history=message_history, model=model, deps=deps, infer_name=False)
         )
 
     @asynccontextmanager

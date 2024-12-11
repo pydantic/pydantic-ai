@@ -35,7 +35,7 @@ agent = Agent(
 async def main():
     async with httpx.AsyncClient() as client:
         deps = MyDeps('foobar', client)
-        result = await agent.run(
+        result = await agent.run_async(
             'Tell me a joke.',
             deps=deps,  # (3)!
         )
@@ -87,7 +87,7 @@ async def get_system_prompt(ctx: RunContext[MyDeps]) -> str:  # (2)!
 async def main():
     async with httpx.AsyncClient() as client:
         deps = MyDeps('foobar', client)
-        result = await agent.run('Tell me a joke.', deps=deps)
+        result = await agent.run_async('Tell me a joke.', deps=deps)
         print(result.data)
         #> Did you hear about the toothpaste scandal? They called it Colgate.
 ```
@@ -143,7 +143,7 @@ def get_system_prompt(ctx: RunContext[MyDeps]) -> str:  # (2)!
 
 async def main():
     deps = MyDeps('foobar', httpx.Client())
-    result = await agent.run(
+    result = await agent.run_async(
         'Tell me a joke.',
         deps=deps,
     )
@@ -214,7 +214,7 @@ async def validate_result(ctx: RunContext[MyDeps], final_response: str) -> str:
 async def main():
     async with httpx.AsyncClient() as client:
         deps = MyDeps('foobar', client)
-        result = await agent.run('Tell me a joke.', deps=deps)
+        result = await agent.run_async('Tell me a joke.', deps=deps)
         print(result.data)
         #> Did you hear about the toothpaste scandal? They called it Colgate.
 ```
@@ -266,7 +266,7 @@ async def application_code(prompt: str) -> str:  # (3)!
     # now deep within application code we call our agent
     async with httpx.AsyncClient() as client:
         app_deps = MyDeps('foobar', client)
-        result = await joke_agent.run(prompt, deps=app_deps)  # (4)!
+        result = await joke_agent.run_async(prompt, deps=app_deps)  # (4)!
     return result.data
 ```
 
@@ -325,7 +325,7 @@ factory_agent = Agent('gemini-1.5-pro', result_type=list[str])
 
 @joke_agent.tool
 async def joke_factory(ctx: RunContext[MyDeps], count: int) -> str:
-    r = await ctx.deps.factory_agent.run(f'Please generate {count} jokes.')
+    r = await ctx.deps.factory_agent.run_async(f'Please generate {count} jokes.')
     return '\n'.join(r.data)
 
 

@@ -724,10 +724,10 @@ async def test_agent_name():
 
     assert my_agent.name is None
 
-    await my_agent.run('Hello', infer_name=False)
+    await my_agent.run_async('Hello', infer_name=False)
     assert my_agent.name is None
 
-    await my_agent.run('Hello')
+    await my_agent.run_async('Hello')
     assert my_agent.name == 'my_agent'
 
 
@@ -736,20 +736,20 @@ async def test_agent_name_already_set():
 
     assert my_agent.name == 'fig_tree'
 
-    await my_agent.run('Hello')
+    await my_agent.run_async('Hello')
     assert my_agent.name == 'fig_tree'
 
 
 async def test_agent_name_changes():
     my_agent = Agent('test')
 
-    await my_agent.run('Hello')
+    await my_agent.run_async('Hello')
     assert my_agent.name == 'my_agent'
 
     new_agent = my_agent
     del my_agent
 
-    await new_agent.run('Hello')
+    await new_agent.run_async('Hello')
     assert new_agent.name == 'my_agent'
 
 

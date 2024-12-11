@@ -108,13 +108,13 @@ async def customer_balance(
 
 async def main():
     deps = SupportDependencies(customer_id=123, db=DatabaseConn())
-    result = await support_agent.run('What is my balance?', deps=deps)  # (8)!
+    result = await support_agent.run_async('What is my balance?', deps=deps)  # (8)!
     print(result.data)  # (10)!
     """
     support_advice='Hello John, your current account balance, including pending transactions, is $123.45.' block_card=False risk=1
     """
 
-    result = await support_agent.run('I just lost my card!', deps=deps)
+    result = await support_agent.run_async('I just lost my card!', deps=deps)
     print(result.data)
     """
     support_advice="I'm sorry to hear that, John. We are temporarily blocking your card to prevent unauthorized transactions." block_card=True risk=8

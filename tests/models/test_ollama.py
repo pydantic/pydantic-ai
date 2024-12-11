@@ -41,14 +41,14 @@ async def test_request_simple_success(allow_model_requests: None):
     m = OllamaModel('llama3.2', openai_client=mock_client, base_url=None)
     agent = Agent(m)
 
-    result = await agent.run('hello')
+    result = await agent.run_async('hello')
     assert result.data == 'world'
     assert result.cost() == snapshot(Cost())
 
     # reset the index so we get the same response again
     mock_client.index = 0  # type: ignore
 
-    result = await agent.run('hello', message_history=result.new_messages())
+    result = await agent.run_async('hello', message_history=result.new_messages())
     assert result.data == 'world'
     assert result.cost() == snapshot(Cost())
     assert result.all_messages() == snapshot(

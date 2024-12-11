@@ -153,7 +153,7 @@ async def main():
     deps = SupportDependencies(customer_id=123, db=DatabaseConn())
     # Run the agent asynchronously, conducting a conversation with the LLM until a final response is reached.
     # Even in this fairly simple case, the agent will exchange multiple messages with the LLM as tools are called to retrieve a result.
-    result = await support_agent.run('What is my balance?', deps=deps)
+    result = await support_agent.run_async('What is my balance?', deps=deps)
     # The result will be validated with Pydantic to guarantee it is a `SupportResult`, since the agent is generic,
     # it'll also be typed as a `SupportResult` to aid with static type checking.
     print(result.data)
@@ -161,7 +161,7 @@ async def main():
     support_advice='Hello John, your current account balance, including pending transactions, is $123.45.' block_card=False risk=1
     """
 
-    result = await support_agent.run('I just lost my card!', deps=deps)
+    result = await support_agent.run_async('I just lost my card!', deps=deps)
     print(result.data)
     """
     support_advice="I'm sorry to hear that, John. We are temporarily blocking your card to prevent unauthorized transactions." block_card=True risk=8

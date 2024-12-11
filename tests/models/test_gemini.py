@@ -389,7 +389,7 @@ async def test_text_success(get_gemini_client: GetGeminiClient):
     m = GeminiModel('gemini-1.5-flash', http_client=gemini_client)
     agent = Agent(m)
 
-    result = await agent.run('Hello')
+    result = await agent.run_async('Hello')
     assert result.data == 'Hello world'
     assert result.all_messages() == snapshot(
         [
@@ -399,7 +399,7 @@ async def test_text_success(get_gemini_client: GetGeminiClient):
     )
     assert result.cost() == snapshot(Cost(request_tokens=1, response_tokens=2, total_tokens=3))
 
-    result = await agent.run('Hello', message_history=result.new_messages())
+    result = await agent.run_async('Hello', message_history=result.new_messages())
     assert result.data == 'Hello world'
     assert result.all_messages() == snapshot(
         [
@@ -421,7 +421,7 @@ async def test_request_structured_response(get_gemini_client: GetGeminiClient):
     m = GeminiModel('gemini-1.5-flash', http_client=gemini_client)
     agent = Agent(m, result_type=list[int])
 
-    result = await agent.run('Hello')
+    result = await agent.run_async('Hello')
     assert result.data == [1, 2, 123]
     assert result.all_messages() == snapshot(
         [
@@ -469,7 +469,7 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
         else:
             raise ModelRetry('Wrong location, please try again')
 
-    result = await agent.run('Hello')
+    result = await agent.run_async('Hello')
     assert result.data == 'final response'
     assert result.all_messages() == snapshot(
         [
@@ -514,7 +514,7 @@ async def test_unexpected_response(client_with_handler: ClientWithHandler, env: 
     agent = Agent(m, system_prompt='this is the system prompt')
 
     with pytest.raises(UnexpectedModelBehavior) as exc_info:
-        await agent.run('Hello')
+        await agent.run_async('Hello')
 
     assert str(exc_info.value) == snapshot('Unexpected response from gemini 401, body:\ninvalid request')
 
@@ -538,7 +538,7 @@ async def test_heterogeneous_responses(get_gemini_client: GetGeminiClient):
     m = GeminiModel('gemini-1.5-flash', http_client=gemini_client)
     agent = Agent(m)
     with pytest.raises(UnexpectedModelBehavior) as exc_info:
-        await agent.run('Hello')
+        await agent.run_async('Hello')
 
     assert str(exc_info.value) == snapshot(
         'Unsupported response from Gemini, expected all parts to be function calls or text, got: '
