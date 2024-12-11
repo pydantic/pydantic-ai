@@ -170,8 +170,8 @@ class SambaNovaAgentModel(OpenAIAgentModel):
 
     async def _completions_create(
         self, messages: list[Message], stream: bool
-    ) -> Union[chat.ChatCompletion, AsyncStream[ChatCompletionChunk]]:
+    ) -> chat.ChatCompletion | AsyncStream[ChatCompletionChunk]:
         if stream:
             if self.tools:
                 raise NotImplementedError('tool calling when streaming not supported')
-        return await super()._completions_create(messages, stream) # type: ignore
+        return await super()._completions_create(messages, stream)  # type: ignore
