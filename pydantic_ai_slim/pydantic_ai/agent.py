@@ -801,23 +801,22 @@ class Agent(Generic[AgentDeps, ResultData]):
         self, model_response: _messages.ModelTextResponse, deps: AgentDeps
     ) -> tuple[_MarkFinalResult[ResultData] | None, list[_messages.Message]]:
         """Handle a plain text response from the model for non-streaming responses."""
-        # Check if we allow plain text results
-        if not self._allow_text_result:
-            self._incr_result_retry()
-            response = _messages.RetryPrompt(
-                content='Plain text responses are not permitted, please call one of the functions instead.',
-            )
-            return None, [response]
-
-        # Try to validate the text response as a result
-        result_data_input = cast(ResultData, model_response.content)
-        try:
-            result_data = await self._validate_result(result_data_input, deps, None)
-        except _result.ToolRetryError as e:
-            self._incr_result_retry()
-            return None, [e.tool_retry]
-
-        return _MarkFinalResult(result_data), []
+            if self._allow_text_result:
+                result_data_input = cast(ResultData, model_response.content)
+                try:
+                    result_data = await self._validate_result(result_data_input, deps, None)
+                except _result.ToolRetryError as e:
+                    self._incr_result_retry()
+                    return None, [e.tool_retry]
+                else:
+                    return _MarkFinalResult(result_data), []
+            else:
+                self._incr_result_retry()
+                response = _messages.RetryPrompt(
+                    content='Plain text responses are not permitted, please call one of the functions instead.',
+                )
+                return None, [response]
+        
 
     async def _handle_structured_response(
         self, model_response: _messages.ModelStructuredResponse, deps: AgentDeps
@@ -862,6 +861,10 @@ class Agent(Generic[AgentDeps, ResultData]):
                 try:
                     result_data = result_tool.validate(call)
                     result_data = await self._validate_result(result_data, deps, call)
+                except _result.ToolRetryError as e:
+                    self._incr_result_retry()
+                    messages.append(e.tool_retry)
+                else:
                     final_result = _MarkFinalResult(result_data)
                     messages.append(
                         _messages.ToolReturn(
@@ -870,9 +873,6 @@ class Agent(Generic[AgentDeps, ResultData]):
                             tool_call_id=call.tool_call_id,
                         )
                     )
-                except _result.ToolRetryError as e:
-                    self._incr_result_retry()
-                    messages.append(e.tool_retry)
             else:
                 # We already have a final result - mark this one as unused
                 messages.append(
