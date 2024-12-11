@@ -27,7 +27,7 @@ and [`StreamedRunResult`][pydantic_ai.result.StreamedRunResult] (returned by [`A
 
 Example of accessing methods on a [`RunResult`][pydantic_ai.result.RunResult] :
 
-```py title="run_result_messages.py" hl_lines="10 28"
+```python title="run_result_messages.py" hl_lines="10 28"
 from pydantic_ai import Agent
 
 agent = Agent('openai:gpt-4o', system_prompt='Be a helpful assistant.')
@@ -75,7 +75,7 @@ _(This example is complete, it can be run "as is")_
 
 Example of accessing methods on a [`StreamedRunResult`][pydantic_ai.result.StreamedRunResult] :
 
-```py title="streamed_run_result_messages.py" hl_lines="9 31"
+```python title="streamed_run_result_messages.py" hl_lines="9 31"
 from pydantic_ai import Agent
 
 agent = Agent('openai:gpt-4o', system_prompt='Be a helpful assistant.')
@@ -142,7 +142,7 @@ To use existing messages in a run, pass them to the `message_history` parameter 
     [`all_messages()`][pydantic_ai.result.RunResult.all_messages] or [`new_messages()`][pydantic_ai.result.RunResult.new_messages].
 
 
-```py title="Reusing messages in a conversation" hl_lines="9 13"
+```python title="Reusing messages in a conversation" hl_lines="9 13"
 from pydantic_ai import Agent
 
 agent = Agent('openai:gpt-4o', system_prompt='Be a helpful assistant.')
@@ -190,7 +190,7 @@ Since messages are defined by simple dataclasses, you can manually create and ma
 
 The message format is independent of the model used, so you can use messages in different agents, or the same agent with different models.
 
-```py
+```python
 from pydantic_ai import Agent
 
 agent = Agent('openai:gpt-4o', system_prompt='Be a helpful assistant.')

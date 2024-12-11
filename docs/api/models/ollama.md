@@ -15,7 +15,7 @@ ollama run llama3.2
 
 Then run your code, here's a minimal example:
 
-```py title="ollama_example.py"
+```python title="ollama_example.py"
 from pydantic import BaseModel
 
 from pydantic_ai import Agent
@@ -37,7 +37,7 @@ print(result.cost())
 
 ## Example using a remote server
 
-```py title="ollama_example_with_remote_server.py"
+```python title="ollama_example_with_remote_server.py"
 from pydantic import BaseModel
 
 from pydantic_ai import Agent

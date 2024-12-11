@@ -29,7 +29,7 @@ TODO screenshot.
 
 Python code that runs the chat app:
 
-```py title="chat_app.py"
+```python title="chat_app.py"
 #! pydantic_ai_examples/chat_app.py
 ```
 

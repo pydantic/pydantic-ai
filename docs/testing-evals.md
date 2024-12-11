@@ -36,7 +36,7 @@ The simplest and fastest way to exercise most of your application code is using 
 
 Let's write unit tests for the following application code:
 
-```py title="weather_app.py"
+```python title="weather_app.py"
 import asyncio
 from datetime import date
 
@@ -89,7 +89,7 @@ Here we have a function that takes a list of `#!python (user_prompt, user_id)` t
 
 Here's how we would write tests using [`TestModel`][pydantic_ai.models.test.TestModel]:
 
-```py title="test_weather_app.py"
+```python title="test_weather_app.py"
 from datetime import timezone
 import pytest
 
@@ -182,7 +182,7 @@ To fully exercise `weather_forecast`, we need to use [`FunctionModel`][pydantic_
 
 Here's an example of using `FunctionModel` to test the `weather_forecast` tool with custom inputs
 
-```py title="test_weather_app2.py"
+```python title="test_weather_app2.py"
 import re
 
 import pytest
@@ -244,7 +244,7 @@ If you're writing lots of tests that all require model to be overridden, you can
 
 Here's an example of a fixture that overrides the model with `TestModel`:
 
-```py title="tests.py"
+```python title="tests.py"
 import pytest
 from weather_app import weather_agent
 
@@ -294,7 +294,7 @@ The system prompt is the developer's primary tool in controlling an agent's beha
 
 Let's assume we have the following app for running SQL generated from a user prompt (this examples omits a lot of details for brevity, see the [SQL gen](examples/sql-gen.md) example for a more complete code):
 
-```py title="sql_app.py"
+```python title="sql_app.py"
 import json
 from pathlib import Path
 from typing import Union
@@ -401,7 +401,7 @@ To get a quantitative measure of performance, we assign points to each run as fo
 
 We use 5-fold cross-validation to judge the performance of the agent using our existing set of examples.
 
-```py title="sql_app_evals.py"
+```python title="sql_app_evals.py"
 import json
 import statistics
 from pathlib import Path

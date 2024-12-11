@@ -19,7 +19,7 @@ see [model configuration for Gemini via VertexAI](../../install.md#gemini-via-ve
 
 With the default google project already configured in your environment using "application default credentials":
 
-```py title="vertex_example_env.py"
+```python title="vertex_example_env.py"
 from pydantic_ai import Agent
 from pydantic_ai.models.vertexai import VertexAIModel
 
@@ -32,7 +32,7 @@ print(result.data)
 
 Or using a service account JSON file:
 
-```py title="vertex_example_service_account.py"
+```python title="vertex_example_service_account.py"
 from pydantic_ai import Agent
 from pydantic_ai.models.vertexai import VertexAIModel
 

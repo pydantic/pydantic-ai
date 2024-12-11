@@ -49,7 +49,7 @@ PydanticAI is in early beta, the API is still subject to change and there's a lo
 
 Here's a minimal example of PydanticAI:
 
-```py
+```python
 from pydantic_ai import Agent
 
 # Define a very simple agent including the model to use, you can also set the model when running the agent.
@@ -80,7 +80,7 @@ Here is a concise example using PydanticAI to build a support agent for a bank:
 
 **(Better documented example [in the docs](https://ai.pydantic.dev/#tools-dependency-injection-example))**
 
-```py
+```python
 from dataclasses import dataclass
 
 from pydantic import BaseModel, Field
