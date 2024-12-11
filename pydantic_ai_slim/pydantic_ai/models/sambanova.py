@@ -47,7 +47,7 @@ SambaNovaModelName = Union[SambaNovaModelNames, str]
 @dataclass(init=False)
 class SambaNovaModel(Model):
     """A model that uses the SambaNova models thought OpenAI client.
-    
+
     Internally, this uses the [OpenAI Python client](https://github.com/openai/openai-python) to interact
     with the SambaNova APIs
 
@@ -91,7 +91,7 @@ class SambaNovaModel(Model):
         elif http_client is not None:
             self.client = AsyncOpenAI(api_key=api_key, http_client=http_client)
         else:
-            self.client = AsyncOpenAI( base_url = base_url, api_key=api_key, http_client=cached_async_http_client())
+            self.client = AsyncOpenAI(base_url = base_url, api_key=api_key, http_client=cached_async_http_client())
 
     async def agent_model(
         self,
@@ -128,7 +128,7 @@ class SambaNovaModel(Model):
 @dataclass
 class SambaNovaAgentModel(OpenAIAgentModel):
     """Implementation of `AgentModel` for SambaNova models.
-   
+
     SambaNova models have built-in compatibility with OpenAI chat completions API,
     so we inherit from[`OpenAIModelAgent`][pydantic_ai.models.openai.OpenAIModel] here.
     """
@@ -143,13 +143,15 @@ class SambaNovaAgentModel(OpenAIAgentModel):
             for tool_call in choice.message.tool_calls:
                 if isinstance(tool_call.function.arguments, dict):
                     calls.append(
-                        ToolCall.from_json(tool_call.function.name, json.dumps(tool_call.function.arguments), tool_call.id)
+                        ToolCall.from_json(
+                            tool_call.function.name, json.dumps(tool_call.function.arguments), tool_call.id
+                            )
                     )
                 else:
                     calls.append(
                         ToolCall.from_json(tool_call.function.name, tool_call.function.arguments, tool_call.id)
                     )
-            return ModelStructuredResponse(calls,timestamp=timestamp)
+            return ModelStructuredResponse(calls, timestamp=timestamp)
         else:
             assert choice.message.content is not None, choice
             return ModelTextResponse(choice.message.content, timestamp=timestamp)
