@@ -15,7 +15,7 @@ class CityLocation(BaseModel):
 
 
 agent = Agent('gemini-1.5-flash', result_type=CityLocation)
-result = agent.run_sync('Where the olympics held in 2012?')
+result = agent.run_sync('Where were the olympics held in 2012?')
 print(result.data)
 #> city='London' country='United Kingdom'
 print(result.cost())
