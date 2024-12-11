@@ -326,8 +326,11 @@ def _map_cost(message: AnthropicMessage | RawMessageStreamEvent) -> result.Cost:
     if usage is None:
         return result.Cost()
 
+    request_tokens = getattr(usage, 'input_tokens', None)
+
     return result.Cost(
         # Usage coming from the RawMessageDeltaEvent doesn't have input token data, hence this getattr
-        request_tokens=getattr(usage, 'input_tokens', None),
+        request_tokens=request_tokens,
         response_tokens=usage.output_tokens,
+        total_tokens=(request_tokens or 0) + usage.output_tokens,
     )
