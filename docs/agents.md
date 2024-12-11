@@ -106,7 +106,7 @@ An agent **run** might represent an entire conversation — there's no limit to 
 
 Here's an example of a conversation comprised of multiple runs:
 
-```python {title="conversation_example.py",hl_lines="13"}
+```python {title="conversation_example.py", hl_lines="13"}
 from pydantic_ai import Agent
 
 agent = Agent('openai:gpt-4o')
@@ -144,7 +144,7 @@ In particular, agents are generic in both the type of their dependencies and the
 
 Consider the following script with type mistakes:
 
-```python {title="type_mistakes.py",hl_lines="18 28"}
+```python {title="type_mistakes.py", hl_lines="18 28"}
 from dataclasses import dataclass
 
 from pydantic_ai import Agent, RunContext
@@ -301,7 +301,7 @@ _(This example is complete, it can be run "as is")_
 
 Let's print the messages from that game to see what happened:
 
-```python {title="dice_game_messages.py"
+```python {title="dice_game_messages.py"}
 from dice_game import dice_result
 
 print(dice_result.all_messages())
@@ -399,7 +399,7 @@ sequenceDiagram
 
 As well as using the decorators, we can register tools via the `tools` argument to the [`Agent` constructor][pydantic_ai.Agent.__init__]. This is useful when you want to re-use tools, and can also give more fine-grained control over the tools.
 
-```python {title="dice_game_tool_kwarg.py"
+```python {title="dice_game_tool_kwarg.py"}
 import random
 
 from pydantic_ai import Agent, RunContext, Tool
@@ -452,7 +452,7 @@ Even better, PydanticAI extracts the docstring from functions and (thanks to [gr
 
 To demonstrate a tool's schema, here we use [`FunctionModel`][pydantic_ai.models.function.FunctionModel] to print the schema a model would receive:
 
-```python {title="tool_schema.py"
+```python {title="tool_schema.py"}
 from pydantic_ai import Agent
 from pydantic_ai.messages import Message, ModelAnyResponse, ModelTextResponse
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -509,7 +509,7 @@ If a tool has a single parameter that can be represented as an object in JSON sc
 
 Here's an example, we use [`TestModel.agent_model_function_tools`][pydantic_ai.models.test.TestModel.agent_model_function_tools] to inspect the tool schema that would be passed to the model.
 
-```python {title="single_parameter_tool.py"
+```python {title="single_parameter_tool.py"}
 from pydantic import BaseModel
 
 from pydantic_ai import Agent
@@ -577,7 +577,7 @@ Here's a simple `prepare` method that only includes the tool if the value of the
 
 As with the previous example, we use [`TestModel`][pydantic_ai.models.test.TestModel] to demonstrate the behavior without calling a real model.
 
-```python {title="tool_only_if_42.py"
+```python {title="tool_only_if_42.py"}
 from typing import Union
 
 from pydantic_ai import Agent, RunContext
@@ -612,7 +612,7 @@ Here's a more complex example where we change the description of the `name` para
 
 For the sake of variation, we create this tool using the [`Tool`][pydantic_ai.tools.Tool] dataclass.
 
-```python {title="customize_name.py"
+```python {title="customize_name.py"}
 from __future__ import annotations
 
 from typing import Literal
@@ -678,7 +678,7 @@ You can also raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] from within
 
 Here's an example:
 
-```python {title="tool_retry.py"
+```python {title="tool_retry.py"}
 from fake_database import DatabaseConn
 from pydantic import BaseModel
 
