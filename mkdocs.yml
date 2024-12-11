@@ -13,6 +13,7 @@ nav:
   - Introduction: index.md
   - install.md
   - help.md
+  - contributing.md
   - Documentation:
     - agents.md
     - dependencies.md
