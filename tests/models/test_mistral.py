@@ -9,19 +9,21 @@ from typing import Any, cast
 import pytest
 from inline_snapshot import snapshot
 
+from pydantic_ai.messages import ArgsJson, SystemPrompt
+
 from ..conftest import IsNow, try_import
 
 with try_import() as imports_successful:
     from mistralai import (
-        AssistantMessage,
-        ChatCompletionChoice,
-        CompletionChunk,
-        CompletionResponseStreamChoice,
-        CompletionResponseStreamChoiceFinishReason,
-        DeltaMessage,
+        AssistantMessage as MistralAssistantMessage,
+        ChatCompletionChoice as MistralChatCompletionChoice,
+        CompletionChunk as MistralCompletionChunk,
+        CompletionResponseStreamChoice as MistralCompletionResponseStreamChoice,
+        CompletionResponseStreamChoiceFinishReason as MistralCompletionResponseStreamChoiceFinishReason,
+        DeltaMessage as MistralDeltaMessage,
         FunctionCall as MistralFunctionCall,
         Mistral,
-        UsageInfo,
+        UsageInfo as MistralUsageInfo,
     )
     from mistralai.models import (
         ChatCompletionResponse as MistralChatCompletionResponse,
@@ -49,9 +51,9 @@ pytestmark = [
 
 @dataclass
 class MockAsyncStream:
-    _iter: Iterator[CompletionChunk]
+    _iter: Iterator[MistralCompletionChunk]
 
-    async def __anext__(self) -> CompletionChunk:
+    async def __anext__(self) -> MistralCompletionChunk:
         return _utils.sync_anext(self._iter)
 
     async def __aenter__(self):
@@ -110,39 +112,41 @@ class MockMistralAI:
         return response
 
 
-def completion_message(message: AssistantMessage, *, usage: UsageInfo | None = None) -> MistralChatCompletionResponse:
+def completion_message(
+    message: MistralAssistantMessage, *, usage: MistralUsageInfo | None = None
+) -> MistralChatCompletionResponse:
     return MistralChatCompletionResponse(
         id='123',
-        choices=[ChatCompletionChoice(finish_reason='stop', index=0, message=message)],
+        choices=[MistralChatCompletionChoice(finish_reason='stop', index=0, message=message)],
         created=1704067200,  # 2024-01-01
         model='mistral-large-latest',
         object='chat.completion',
-        usage=UsageInfo(prompt_tokens=0, completion_tokens=0, total_tokens=0),
+        usage=MistralUsageInfo(prompt_tokens=0, completion_tokens=0, total_tokens=0),
     )
 
 
 def chunk(
-    delta: list[DeltaMessage], finish_reason: CompletionResponseStreamChoiceFinishReason | None = None
+    delta: list[MistralDeltaMessage], finish_reason: MistralCompletionResponseStreamChoiceFinishReason | None = None
 ) -> MistralCompletionEvent:
     return MistralCompletionEvent(
-        data=CompletionChunk(
+        data=MistralCompletionChunk(
             id='x',
             choices=[
-                CompletionResponseStreamChoice(index=index, delta=delta, finish_reason=finish_reason)
+                MistralCompletionResponseStreamChoice(index=index, delta=delta, finish_reason=finish_reason)
                 for index, delta in enumerate(delta)
             ],
             created=1704067200,  # 2024-01-01
             model='gpt-4',
             object='chat.completion.chunk',
-            usage=UsageInfo(prompt_tokens=1, completion_tokens=2, total_tokens=3),
+            usage=MistralUsageInfo(prompt_tokens=1, completion_tokens=2, total_tokens=3),
         )
     )
 
 
 def text_chunk(
-    text: str, finish_reason: CompletionResponseStreamChoiceFinishReason | None = None
+    text: str, finish_reason: MistralCompletionResponseStreamChoiceFinishReason | None = None
 ) -> MistralCompletionEvent:
-    return chunk([DeltaMessage(content=text, role='assistant')], finish_reason=finish_reason)
+    return chunk([MistralDeltaMessage(content=text, role='assistant')], finish_reason=finish_reason)
 
 
 #####################
@@ -151,15 +155,19 @@ def text_chunk(
 
 
 async def test_multiple_completions(allow_model_requests: None):
+    # Given
     completions = [
-        completion_message(AssistantMessage(content='world')),
-        completion_message(AssistantMessage(content='hello again')),
+        completion_message(MistralAssistantMessage(content='world')),
+        completion_message(MistralAssistantMessage(content='hello again')),
     ]
     mock_client = MockMistralAI.create_mock(completions)
     m = MistralModel('mistral-large-latest', client=mock_client)
     agent = Agent(m)
 
+    # When
     result = await agent.run('hello')
+
+    # Then
     assert result.data == 'world'
     assert result.cost().request_tokens == 0
 
@@ -177,16 +185,20 @@ async def test_multiple_completions(allow_model_requests: None):
 
 
 async def test_three_completions(allow_model_requests: None):
+    # Given
     completions = [
-        completion_message(AssistantMessage(content='world')),
-        completion_message(AssistantMessage(content='hello again')),
-        completion_message(AssistantMessage(content='final message')),
+        completion_message(MistralAssistantMessage(content='world')),
+        completion_message(MistralAssistantMessage(content='hello again')),
+        completion_message(MistralAssistantMessage(content='final message')),
     ]
     mock_client = MockMistralAI.create_mock(completions)
     m = MistralModel('mistral-large-latest', client=mock_client)
     agent = Agent(m)
 
+    # When
     result = await agent.run('hello')
+
+    # Them
     assert result.data == 'world'
     assert result.cost().request_tokens == 0
 
@@ -215,12 +227,15 @@ async def test_three_completions(allow_model_requests: None):
 
 
 async def test_stream_text(allow_model_requests: None):
+    # Given
     stream = [text_chunk('hello '), text_chunk('world '), text_chunk('welcome '), text_chunk('mistral'), chunk([])]
     mock_client = MockMistralAI.create_stream_mock(stream)
     m = MistralModel('mistral-large-latest', client=mock_client)
     agent = Agent(model=m)
 
+    # When
     async with agent.run_stream('') as result:
+        # Then
         assert not result.is_structured
         assert not result.is_complete
         assert [c async for c in result.stream(debounce_by=None)] == snapshot(
@@ -231,12 +246,15 @@ async def test_stream_text(allow_model_requests: None):
 
 
 async def test_stream_text_finish_reason(allow_model_requests: None):
+    # Given
     stream = [text_chunk('hello '), text_chunk('world'), text_chunk('.', finish_reason='stop')]
     mock_client = MockMistralAI.create_stream_mock(stream)
     m = MistralModel('mistral-large-latest', client=mock_client)
     agent = Agent(model=m)
 
+    # When
     async with agent.run_stream('') as result:
+        # Then
         assert not result.is_structured
         assert not result.is_complete
         assert [c async for c in result.stream(debounce_by=None)] == snapshot(['hello ', 'hello world', 'hello world.'])
@@ -244,12 +262,15 @@ async def test_stream_text_finish_reason(allow_model_requests: None):
 
 
 async def test_no_delta(allow_model_requests: None):
+    # Given
     stream = [chunk([]), text_chunk('hello '), text_chunk('world')]
     mock_client = MockMistralAI.create_stream_mock(stream)
     m = MistralModel('mistral-large-latest', client=mock_client)
     agent = Agent(m)
 
+    # When
     async with agent.run_stream('') as result:
+        # Then
         assert not result.is_structured
         assert not result.is_complete
         assert [c async for c in result.stream(debounce_by=None)] == snapshot(['hello ', 'hello world'])
@@ -262,13 +283,14 @@ async def test_no_delta(allow_model_requests: None):
 #####################
 
 
-async def test_request_structured_with_arguments_dict_response(allow_model_requests: None):
+async def test_request_model_structured_with_arguments_dict_response(allow_model_requests: None):
     class CityLocation(BaseModel):
         city: str
         country: str
 
-    c = completion_message(
-        AssistantMessage(
+    # Given
+    completion = completion_message(
+        MistralAssistantMessage(
             content=None,
             role='assistant',
             tool_calls=[
@@ -280,20 +302,124 @@ async def test_request_structured_with_arguments_dict_response(allow_model_reque
             ],
         )
     )
-    mock_client = MockMistralAI.create_mock(c)
+    mock_client = MockMistralAI.create_mock(completion)
     m = MistralModel('mistral-large-latest', client=mock_client)
     agent = Agent(model=m, result_type=CityLocation)
 
-    result = await agent.run('Hello')
+    # When
+    result = await agent.run('User prompt value')
+
+    # Then
     assert result.data == CityLocation(city='paris', country='france')
     assert result.all_messages() == snapshot(
         [
-            UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
+            UserPrompt(content='User prompt value', timestamp=IsNow(tz=timezone.utc)),
             ModelStructuredResponse(
                 calls=[
                     ToolCall(
                         tool_name='final_result',
                         args=ArgsDict(args_dict={'city': 'paris', 'country': 'france'}),
+                        tool_call_id='123',
+                    )
+                ],
+                timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc),
+            ),
+            ToolReturn(
+                tool_name='final_result',
+                content='Final result processed.',
+                tool_call_id='123',
+                timestamp=IsNow(tz=timezone.utc),
+            ),
+        ]
+    )
+
+
+async def test_request_model_structured_with_arguments_str_response(allow_model_requests: None):
+    class CityLocation(BaseModel):
+        city: str
+        country: str
+
+    # Given
+    completion = completion_message(
+        MistralAssistantMessage(
+            content=None,
+            role='assistant',
+            tool_calls=[
+                MistralToolCall(
+                    id='123',
+                    function=MistralFunctionCall(
+                        arguments='{"city": "paris", "country": "france"}', name='final_result'
+                    ),
+                    type='function',
+                )
+            ],
+        )
+    )
+    mock_client = MockMistralAI.create_mock(completion)
+    m = MistralModel('mistral-large-latest', client=mock_client)
+    agent = Agent(model=m, result_type=CityLocation)
+
+    # When
+    result = await agent.run('User prompt value')
+
+    # Then
+    assert result.data == CityLocation(city='paris', country='france')
+    assert result.all_messages() == snapshot(
+        [
+            UserPrompt(content='User prompt value', timestamp=IsNow(tz=timezone.utc)),
+            ModelStructuredResponse(
+                calls=[
+                    ToolCall(
+                        tool_name='final_result',
+                        args=ArgsJson(args_json='{"city": "paris", "country": "france"}'),
+                        tool_call_id='123',
+                    )
+                ],
+                timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc),
+            ),
+            ToolReturn(
+                tool_name='final_result',
+                content='Final result processed.',
+                tool_call_id='123',
+                timestamp=IsNow(tz=timezone.utc),
+            ),
+        ]
+    )
+
+
+async def test_request_result_type_with_arguments_str_response(allow_model_requests: None):
+    # Given
+    completion = completion_message(
+        MistralAssistantMessage(
+            content=None,
+            role='assistant',
+            tool_calls=[
+                MistralToolCall(
+                    id='123',
+                    function=MistralFunctionCall(arguments='{"response": 42}', name='final_result'),
+                    type='function',
+                )
+            ],
+        )
+    )
+    mock_client = MockMistralAI.create_mock(completion)
+    m = MistralModel('mistral-large-latest', client=mock_client)
+    agent = Agent(model=m, result_type=int, system_prompt='System prompt value')
+
+    # When
+    result = await agent.run('User prompt value')
+
+    # Then
+    assert result.data == 42
+    assert result.all_messages() == snapshot(
+        [
+            SystemPrompt(content='System prompt value'),
+            UserPrompt(content='User prompt value', timestamp=IsNow(tz=timezone.utc)),
+            ModelStructuredResponse(
+                calls=[
+                    ToolCall(
+                        tool_name='final_result',
+                        args=ArgsJson(args_json='{"response": 42}'),
                         tool_call_id='123',
                     )
                 ],
