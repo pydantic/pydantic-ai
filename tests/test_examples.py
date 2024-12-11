@@ -81,11 +81,12 @@ def test_docs_examples(
 
     prefix_settings = example.prefix_settings()
     opt_title = prefix_settings.get('title')
+    opt_test = prefix_settings.get('test', '')
+    opt_lint = prefix_settings.get('lint', '')
     cwd = Path.cwd()
 
-    if opt_title == 'bank_support_with_logfire.py':
-        # don't format and no need to run
-        return
+    if opt_test.startswith('skip') and opt_lint.startswith('skip'):
+        pytest.skip('both running code and lint skipped')
 
     if opt_title == 'sql_app_evals.py':
         os.chdir(tmp_path)
@@ -107,7 +108,6 @@ def test_docs_examples(
         line_length = 120
 
     eval_example.set_config(ruff_ignore=ruff_ignore, target_version='py39', line_length=line_length)
-
     eval_example.print_callback = print_callback
 
     call_name = 'main'
@@ -116,19 +116,26 @@ def test_docs_examples(
             call_name = name
             break
 
-    if eval_example.update_examples:  # pragma: no cover
-        eval_example.format(example)
-        module_dict = eval_example.run_print_update(example, call=call_name)
-    else:
-        eval_example.lint(example)
-        module_dict = eval_example.run_print_check(example, call=call_name)
+    if not opt_lint.startswith('skip'):
+        if eval_example.update_examples:  # pragma: no cover
+            eval_example.format(example)
+        else:
+            eval_example.lint(example)
 
-    os.chdir(cwd)
-    if title := opt_title:
-        if title.endswith('.py'):
-            module_name = title[:-3]
-            sys.modules[module_name] = module = ModuleType(module_name)
-            module.__dict__.update(module_dict)
+    if opt_test.startswith('skip'):
+        pytest.skip(opt_test[4:].lstrip(' -') or 'running code skipped')
+    else:
+        if eval_example.update_examples:
+            module_dict = eval_example.run_print_update(example, call=call_name)
+        else:
+            module_dict = eval_example.run_print_check(example, call=call_name)
+
+        os.chdir(cwd)
+        if title := opt_title:
+            if title.endswith('.py'):
+                module_name = title[:-3]
+                sys.modules[module_name] = module = ModuleType(module_name)
+                module.__dict__.update(module_dict)
 
 
 def print_callback(s: str) -> str:

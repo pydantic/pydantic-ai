@@ -8,14 +8,14 @@ For details on how to set up authentication with this model, see [model configur
 
 With `ollama` installed, you can run the server with the model you want to use:
 
-```bash title="terminal-run-ollama"
+```bash {title="terminal-run-ollama"}
 ollama run llama3.2
 ```
 (this will pull the `llama3.2` model if you don't already have it downloaded)
 
 Then run your code, here's a minimal example:
 
-```py title="ollama_example.py"
+```python {title="ollama_example.py"}
 from pydantic import BaseModel
 
 from pydantic_ai import Agent
@@ -37,7 +37,7 @@ print(result.cost())
 
 ## Example using a remote server
 
-```py title="ollama_example_with_remote_server.py"
+```python {title="ollama_example_with_remote_server.py"}
 from pydantic import BaseModel
 
 from pydantic_ai import Agent

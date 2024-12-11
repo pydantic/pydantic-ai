@@ -53,7 +53,7 @@ class Agent(Generic[AgentDeps, ResultData]):
 
     Minimal usage example:
 
-    ```py
+    ```python
     from pydantic_ai import Agent
 
     agent = Agent('openai:gpt-4o')
@@ -171,7 +171,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         """Run the agent with a user prompt in async mode.
 
         Example:
-        ```py
+        ```python
         from pydantic_ai import Agent
 
         agent = Agent('openai:gpt-4o')
@@ -262,7 +262,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         This is a convenience method that wraps `self.run` with `loop.run_until_complete()`.
 
         Example:
-        ```py
+        ```python
         from pydantic_ai import Agent
 
         agent = Agent('openai:gpt-4o')
@@ -303,7 +303,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         """Run the agent with a user prompt in async mode, returning a streamed response.
 
         Example:
-        ```py
+        ```python
         from pydantic_ai import Agent
 
         agent = Agent('openai:gpt-4o')
@@ -461,7 +461,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         the type of the function, see `tests/typed_agent.py` for tests.
 
         Example:
-        ```py
+        ```python
         from pydantic_ai import Agent, RunContext
 
         agent = Agent('test', deps_type=str)
@@ -512,7 +512,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         the type of the function, see `tests/typed_agent.py` for tests.
 
         Example:
-        ```py
+        ```python
         from pydantic_ai import Agent, ModelRetry, RunContext
 
         agent = Agent('test', deps_type=str)
@@ -568,7 +568,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         so the signature of functions decorated with `@agent.tool` is obscured.
 
         Example:
-        ```py
+        ```python
         from pydantic_ai import Agent, RunContext
 
         agent = Agent('test', deps_type=int)
@@ -640,7 +640,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         so the signature of functions decorated with `@agent.tool` is obscured.
 
         Example:
-        ```py
+        ```python
         from pydantic_ai import Agent, RunContext
 
         agent = Agent('test')

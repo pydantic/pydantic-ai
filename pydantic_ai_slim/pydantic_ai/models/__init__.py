@@ -77,6 +77,9 @@ KnownModelName = Literal[
     'sambanova:Meta-Llama-Guard-3-8B',
     'sambanova:Qwen2.5-Coder-32B-Instruct',
     'sambanova:Qwen2.5-72B-Instruct',
+    'claude-3-5-haiku-latest',
+    'claude-3-5-sonnet-latest',
+    'claude-3-opus-latest',
     'test',
 ]
 """Known model names that can be used with the `model` parameter of [`Agent`][pydantic_ai.Agent].
@@ -289,6 +292,10 @@ def infer_model(model: Model | KnownModelName) -> Model:
         from .sambanova import SambaNovaModel
 
         return SambaNovaModel(model[10:])
+    elif model.startswith('claude'):
+        from .anthropic import AnthropicModel
+
+        return AnthropicModel(model)
     else:
         raise UserError(f'Unknown model: {model}')
 

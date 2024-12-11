@@ -11,7 +11,7 @@ PydanticAI is a Python Agent Framework designed to make it less painful to build
 ## Why use PydanticAI
 
 * Built by the team behind Pydantic (the validation layer of the OpenAI SDK, the Anthropic SDK, LangChain, LlamaIndex, AutoGPT, Transformers, CrewAI, Instructor and many more)
-* Model-agnostic — currently OpenAI, Gemini, and Groq are supported, Anthropic [is coming soon](https://github.com/pydantic/pydantic-ai/issues/63). And there is a simple interface to implement support for other models.
+* Model-agnostic — currently OpenAI, Gemini, Anthropic, and Groq are supported, Anthropic [is coming soon](https://github.com/pydantic/pydantic-ai/issues/63). And there is a simple interface to implement support for other models.
 * [Type-safe](agents.md#static-type-checking)
 * Control flow and agent composition is done with vanilla Python, allowing you to make use of the same Python development best practices you'd use in any other (non-AI) project
 * [Structured response](results.md#structured-result-validation) validation with Pydantic
@@ -27,7 +27,7 @@ PydanticAI is a Python Agent Framework designed to make it less painful to build
 
 Here's a minimal example of PydanticAI:
 
-```py title="hello_world.py"
+```python {title="hello_world.py"}
 from pydantic_ai import Agent
 
 agent = Agent(  # (1)!
@@ -54,7 +54,7 @@ Not very interesting yet, but we can easily add "tools", dynamic system prompts,
 
 Here is a concise example using PydanticAI to build a support agent for a bank:
 
-```py title="bank_support.py"
+```python {title="bank_support.py"}
 from dataclasses import dataclass
 
 from pydantic import BaseModel, Field
@@ -144,7 +144,7 @@ To understand the flow of the above runs, we can watch the agent in action using
 
 To do this, we need to set up logfire, and add the following to our code:
 
-```py title="bank_support_with_logfire.py"  hl_lines="4-6"
+```python {title="bank_support_with_logfire.py" hl_lines="4-6" test="skip" lint="skip"}
 ...
 from bank_database import DatabaseConn
 

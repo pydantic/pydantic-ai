@@ -225,8 +225,8 @@ def test_var_args(set_event_loop: None):
 async def call_tool(messages: list[Message], info: AgentInfo) -> ModelAnyResponse:
     if len(messages) == 1:
         assert len(info.function_tools) == 1
-        tool_call_id = info.function_tools[0].name
-        return ModelStructuredResponse(calls=[ToolCall.from_json(tool_call_id, '{}')])
+        tool_name = info.function_tools[0].name
+        return ModelStructuredResponse(calls=[ToolCall.from_json(tool_name, '{}')])
     else:
         return ModelTextResponse('final response')
 
