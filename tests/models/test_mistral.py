@@ -19,17 +19,27 @@ with try_import() as imports_successful:
         CompletionResponseStreamChoice,
         CompletionResponseStreamChoiceFinishReason,
         DeltaMessage,
+        FunctionCall as MistralFunctionCall,
         Mistral,
         UsageInfo,
     )
     from mistralai.models import (
         ChatCompletionResponse as MistralChatCompletionResponse,
         CompletionEvent as MistralCompletionEvent,
+        ToolCall as MistralToolCall,
     )
+    from pydantic import BaseModel
 
     from pydantic_ai import _utils
     from pydantic_ai.agent import Agent
-    from pydantic_ai.messages import ModelTextResponse, UserPrompt
+    from pydantic_ai.messages import (
+        ArgsDict,
+        ModelStructuredResponse,
+        ModelTextResponse,
+        ToolCall,
+        ToolReturn,
+        UserPrompt,
+    )
     from pydantic_ai.models.mistral import MistralModel
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='mistral not installed'),
@@ -56,13 +66,20 @@ class MockMistralAI:
     completions: MistralChatCompletionResponse | list[MistralChatCompletionResponse] | None = None
     stream: list[MistralCompletionEvent] | None = None
     index = 0
+    sync: bool = False
 
     @cached_property
     def chat(self) -> Any:
-        if self.stream:
+        if self.sync:
+            return type('Chat', (), {'complete': self.chat_completions_create})
+        elif self.stream:
             return type('Chat', (), {'stream_async': self.chat_completions_create})
         else:
             return type('Chat', (), {'complete_async': self.chat_completions_create})
+
+    @classmethod
+    def create_sync_mock(cls, completions: MistralChatCompletionResponse) -> Mistral:
+        return cast(Mistral, cls(completions=completions, sync=True))
 
     @classmethod
     def create_mock(cls, completions: MistralChatCompletionResponse | list[MistralChatCompletionResponse]) -> Mistral:
@@ -238,3 +255,55 @@ async def test_no_delta(allow_model_requests: None):
         assert [c async for c in result.stream(debounce_by=None)] == snapshot(['hello ', 'hello world'])
         assert result.is_complete
         assert result.cost().request_tokens == 1
+
+
+#####################
+## Completion Structured
+#####################
+
+
+async def test_request_structured_with_arguments_dict_response(allow_model_requests: None):
+    class CityLocation(BaseModel):
+        city: str
+        country: str
+
+    c = completion_message(
+        AssistantMessage(
+            content=None,
+            role='assistant',
+            tool_calls=[
+                MistralToolCall(
+                    id='123',
+                    function=MistralFunctionCall(arguments={'city': 'paris', 'country': 'france'}, name='final_result'),
+                    type='function',
+                )
+            ],
+        )
+    )
+    mock_client = MockMistralAI.create_mock(c)
+    m = MistralModel('mistral-large-latest', client=mock_client)
+    agent = Agent(model=m, result_type=CityLocation)
+
+    result = await agent.run('Hello')
+    assert result.data == CityLocation(city='paris', country='france')
+    assert result.all_messages() == snapshot(
+        [
+            UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
+            ModelStructuredResponse(
+                calls=[
+                    ToolCall(
+                        tool_name='final_result',
+                        args=ArgsDict(args_dict={'city': 'paris', 'country': 'france'}),
+                        tool_call_id='123',
+                    )
+                ],
+                timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc),
+            ),
+            ToolReturn(
+                tool_name='final_result',
+                content='Final result processed.',
+                tool_call_id='123',
+                timestamp=IsNow(tz=timezone.utc),
+            ),
+        ]
+    )

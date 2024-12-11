@@ -542,7 +542,7 @@ class MistralStreamStructuredResponse(StreamStructuredResponse):
 
             if decoded_object:
                 tool = PydanticToolCall.from_dict(
-                    tool_name='final_result',
+                    tool_name='final_result',  # TODO: Get tool_name
                     args_dict=decoded_object,
                 )
                 calls.append(tool)
