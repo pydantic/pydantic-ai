@@ -67,6 +67,16 @@ KnownModelName = Literal[
     'ollama:qwen2',
     'ollama:qwen2.5',
     'ollama:starcoder2',
+    'sambanova:Meta-Llama-3.1-8B-Instruct',
+    'sambanova:Meta-Llama-3.1-70B-Instruct',
+    'sambanova:Meta-Llama-3.1-405B-Instruct',
+    'sambanova:Meta-Llama-3.2-1B-Instruct',
+    'sambanova:Meta-Llama-3.2-3B-Instruct',
+    'sambanova:Llama-3.2-11B-Vision-Instruct',
+    'sambanova:Llama-3.2-90B-Vision-Instruct',
+    'sambanova:Meta-Llama-Guard-3-8B',
+    'sambanova:Qwen2.5-Coder-32B-Instruct',
+    'sambanova:Qwen2.5-72B-Instruct',
     'test',
 ]
 """Known model names that can be used with the `model` parameter of [`Agent`][pydantic_ai.Agent].
@@ -275,6 +285,10 @@ def infer_model(model: Model | KnownModelName) -> Model:
         from .ollama import OllamaModel
 
         return OllamaModel(model[7:])
+    elif model.startswith('sambanova:'):
+        from .sambanova import SambaNovaModel
+
+        return SambaNovaModel(model[10:])  # pyright: ignore[reportArgumentType]
     else:
         raise UserError(f'Unknown model: {model}')
 
