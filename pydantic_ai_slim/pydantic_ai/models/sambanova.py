@@ -85,12 +85,10 @@ class SambaNovaModel(Model):
         if api_key is None:
             api_key = os.environ.get('SAMBANOVA_API_KEY')
         if openai_client is not None:
-            assert base_url is None, 'Cannot provide both `openai_client` and `base_url`'
             assert http_client is None, 'Cannot provide both `openai_client` and `http_client`'
             assert api_key is None, 'Cannot provide both `openai_client` and `api_key`'
             self.client = openai_client
         elif http_client is not None:
-            assert base_url is None, 'Cannot provide both `http_client` and `base_url`'
             self.client = AsyncOpenAI(api_key=api_key, http_client=http_client)
         else:
             self.client = AsyncOpenAI( base_url = base_url, api_key=api_key, http_client=cached_async_http_client())
