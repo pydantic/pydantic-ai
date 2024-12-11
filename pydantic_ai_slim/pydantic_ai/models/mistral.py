@@ -7,7 +7,6 @@ from datetime import datetime, timezone
 from typing import Any, Callable, Literal
 
 from httpx import AsyncClient as AsyncHTTPClient
-from mistralai import CompletionChunk, FunctionCall, TextChunk
 from typing_extensions import assert_never
 
 from .. import UnexpectedModelBehavior
@@ -33,7 +32,12 @@ from . import (
 
 try:
     from json_repair import repair_json
-    from mistralai import Mistral
+    from mistralai import (
+        CompletionChunk as MistralCompletionChunk,
+        FunctionCall as MistralFunctionCall,
+        Mistral,
+        TextChunk as MistralTextChunk,
+    )
     from mistralai.models import (
         ChatCompletionResponse as MistralChatCompletionResponse,
         CompletionEvent as MistralCompletionEvent,
@@ -349,7 +353,7 @@ class MistralAgentModel(AgentModel):
                 delta = chunk.choices[0].delta
                 content: str | None = None
 
-                if isinstance(delta.content, list) and isinstance(delta.content[0], TextChunk):
+                if isinstance(delta.content, list) and isinstance(delta.content[0], MistralTextChunk):
                     content = delta.content[0].text
                 elif isinstance(delta.content, str):
                     content = delta.content
@@ -454,7 +458,7 @@ class MistralStreamTextResponse(StreamTextResponse):
             assert choice.delta.content is not None, f'Expected delta with content, invalid chunk: {chunk!r}'
         if isinstance(choice.delta.content, str):
             self._buffer.append(choice.delta.content)
-        elif isinstance(choice.delta.content, TextChunk):
+        elif isinstance(choice.delta.content, MistralTextChunk):
             self._buffer.append(choice.delta.content.text)
 
     def get(self, *, final: bool = False) -> Iterable[str]:
@@ -495,7 +499,7 @@ class MistralStreamStructuredResponse(StreamStructuredResponse):
 
         delta_content = choice.delta.content
         content: str | None = None
-        if isinstance(delta_content, list) and isinstance(delta_content[0], TextChunk):
+        if isinstance(delta_content, list) and isinstance(delta_content[0], MistralTextChunk):
             content = delta_content[0].text
         elif isinstance(delta_content, str):
             content = delta_content
@@ -605,17 +609,17 @@ def _map_tool_call(t: PydanticToolCall) -> MistralToolCall:
         return MistralToolCall(
             id=t.tool_call_id,
             type='function',
-            function=FunctionCall(name=t.tool_name, arguments=t.args.args_json),
+            function=MistralFunctionCall(name=t.tool_name, arguments=t.args.args_json),
         )
     else:
         return MistralToolCall(
             id=t.tool_call_id,
             type='function',
-            function=FunctionCall(name=t.tool_name, arguments=t.args.args_dict),
+            function=MistralFunctionCall(name=t.tool_name, arguments=t.args.args_dict),
         )
 
 
-def _map_cost(response: MistralChatCompletionResponse | CompletionChunk) -> Cost:
+def _map_cost(response: MistralChatCompletionResponse | MistralCompletionChunk) -> Cost:
     if response.usage:
         return Cost(
             request_tokens=response.usage.prompt_tokens,
