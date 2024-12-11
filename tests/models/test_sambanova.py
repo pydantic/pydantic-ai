@@ -31,7 +31,7 @@ def test_init():
     m = SambaNovaModel('Meta-Llama-3.1-8B-Instruct', api_key='foobar')
     assert m.client.api_key == 'foobar'
     assert str(m.client.base_url) == 'https://api.sambanova.ai/v1/'
-    assert m.name() == 'Meta-Llama-3.1-8B-Instruct'
+    assert m.name() == 'sambanova:Meta-Llama-3.1-8B-Instruct'
 
 
 async def test_request_simple_success(allow_model_requests: None):
