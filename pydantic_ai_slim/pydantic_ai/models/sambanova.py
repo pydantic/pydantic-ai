@@ -4,7 +4,7 @@ import json
 import os
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import List, Literal, Union
+from typing import List, Literal, Union, overload
 
 from httpx import AsyncClient as AsyncHTTPClient
 
@@ -158,9 +158,19 @@ class SambaNovaAgentModel(OpenAIAgentModel):
             assert choice.message.content is not None, choice
             return ModelTextResponse(choice.message.content, timestamp=timestamp)
 
+    @overload
+    async def _completions_create(
+        self, messages: list[Message], stream: Literal[True]
+    ) -> AsyncStream[ChatCompletionChunk]:
+        pass
+
+    @overload
+    async def _completions_create(self, messages: list[Message], stream: Literal[False]) -> chat.ChatCompletion:
+        pass
+
     async def _completions_create(
         self, messages: list[Message], stream: bool
-        ) -> chat.ChatCompletion | AsyncStream[ChatCompletionChunk]:
+    ) -> chat.ChatCompletion | AsyncStream[ChatCompletionChunk]:
         if stream:
             if self.tools:
                 raise NotImplementedError('tool calling when streaming not supported')
