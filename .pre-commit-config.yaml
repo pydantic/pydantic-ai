@@ -35,7 +35,12 @@ repos:
       - id: replace-py-code-blocks
         name: Replace ```py with ```python
         # first pattern matches ```py <info> and second matches lone ```py<eol>
-        entry: sed -i '' 's/```py \(.*\)/```python \1/; s/```py$/```python/'
+        entry: |
+          if [[ "$(uname)" == "Darwin" ]]; then
+            sed -i '' 's/```py \(.*\)/```python \1/; s/```py$/```python/' "$@"
+          else
+            sed -i 's/```py \(.*\)/```python \1/; s/```py$/```python/' "$@"
+          fi
         language: system
         files: \.py$|\.md$
-        pass_filenames: false
+        pass_filenames: true
