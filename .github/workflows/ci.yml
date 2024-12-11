@@ -75,7 +75,7 @@ jobs:
 
   test-live:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 5
     if: "github.event.pull_request.head.repo.full_name == github.repository || github.event_name == 'push'"
     steps:
       - uses: actions/checkout@v4
@@ -104,7 +104,7 @@ jobs:
   test:
     name: test on ${{ matrix.python-version }}
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 5
     strategy:
       fail-fast: false
       matrix:

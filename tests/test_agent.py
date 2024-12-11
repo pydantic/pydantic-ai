@@ -896,8 +896,8 @@ class TestMultipleToolCalls:
             == 2
         )
 
-    def test_end_strategy_correct(self):
-        """Test that when end_strategy is 'correct', all tool calls are executed even after a final result."""
+    def test_end_strategy_complete(self):
+        """Test that when end_strategy is 'complete', all tool calls are executed even after a final result."""
         tool_called: list[str] = []
 
         def return_model(_: list[Message], info: AgentInfo) -> ModelAnyResponse:
@@ -910,7 +910,7 @@ class TestMultipleToolCalls:
                 ]
             )
 
-        agent = Agent(FunctionModel(return_model), result_type=self.ResultType, end_strategy='correct')
+        agent = Agent(FunctionModel(return_model), result_type=self.ResultType, end_strategy='complete')
 
         @agent.tool_plain
         def regular_tool(x: int) -> int:
@@ -924,7 +924,7 @@ class TestMultipleToolCalls:
             tool_called.append('another_tool')
             return y
 
-        result = agent.run_sync('test end strategy correct')
+        result = agent.run_sync('test end strategy complete')
         messages = result.all_messages()
 
         # Verify the result came from the final tool
