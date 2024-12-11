@@ -73,7 +73,7 @@ KnownModelName = Literal[
     'sambanova:Meta-Llama-3.2-1B-Instruct',
     'sambanova:Meta-Llama-3.2-3B-Instruct',
     'sambanova:Llama-3.2-11B-Vision-Instruct',
-    'sambanova:Llama-3.2-90B-Vision-Instruct'
+    'sambanova:Llama-3.2-90B-Vision-Instruct',
     'sambanova:Meta-Llama-3.3-70B-Instruct',
     'sambanova:Meta-Llama-Guard-3-8B',
     'sambanova:Qwen2.5-Coder-32B-Instruct',
