@@ -125,15 +125,15 @@ def test_docs_examples(
             eval_example.lint(example)
             module_dict = eval_example.run_print_check(example, call=call_name)
 
+        os.chdir(cwd)
+        if title := opt_title:
+            if title.endswith('.py'):
+                module_name = title[:-3]
+                sys.modules[module_name] = module = ModuleType(module_name)
+                module.__dict__.update(module_dict)
+
     if opt_test.startswith('skip'):
         pytest.skip(opt_test[4:].lstrip(' -') or 'running code skipped')
-
-    os.chdir(cwd)
-    if title := opt_title:
-        if title.endswith('.py'):
-            module_name = title[:-3]
-            sys.modules[module_name] = module = ModuleType(module_name)
-            module.__dict__.update(module_dict)
 
 
 def print_callback(s: str) -> str:
