@@ -785,7 +785,7 @@ class Agent(Generic[AgentDeps, ResultData]):
     async def _handle_structured_response(
         self, model_response: _messages.ModelStructuredResponse, deps: AgentDeps
     ) -> tuple[_MarkFinalResult[ResultData] | None, list[_messages.Message]]:
-        """Handle a structured response containing tool calls from the model."""
+        """Handle a structured response containing tool calls from the model for non-streaming responses."""
         if not model_response.calls:
             raise exceptions.UnexpectedModelBehavior('Received empty tool call message')
 
