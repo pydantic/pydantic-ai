@@ -240,12 +240,13 @@ class MistralAgentModel(AgentModel):
                 schema = _generate_jsom_simple_schemas(parameters_json_schemas)
 
             mistral_messages.append(
-                MistralUserMessage(content=f"""Answer in JSON Object format here the JSON Schema:\n{schema}""")
+                MistralUserMessage(
+                    content=f"""Answer in JSON Object, respect this following format:\n```\n{schema}\n```\n"""
+                )
             )
             response = await self.client.chat.stream_async(
                 model=str(self.model_name),
                 messages=mistral_messages,
-                stream=True,
                 response_format={'type': 'json_object'},
             )
 
@@ -289,9 +290,8 @@ class MistralAgentModel(AgentModel):
 
         assert response.choices, 'A unexpected empty response choice.'
         choice = response.choices[0]
-
-        if choice.message.tool_calls is not None and not isinstance(choice.message.tool_calls, MistralUnset):
-            tools_calls = choice.message.tool_calls
+        tools_calls = choice.message.tool_calls
+        if tools_calls is not None and isinstance(tools_calls, list):
             tools = [
                 (
                     PydanticToolCall.from_json(
@@ -532,8 +532,11 @@ class MistralStreamStructuredResponse(StreamStructuredResponse):
                     )
                     calls.append(tool)
         elif self._delta_content:
-            decoded_object = repair_json(self._delta_content, return_objects=True)
-            if isinstance(decoded_object, dict):
+            # NOTE: Params set for the most efficient and fastest way.
+            decoded_object = repair_json(self._delta_content, return_objects=True, skip_json_loads=True)
+            assert isinstance(decoded_object, dict)
+
+            if decoded_object:
                 tool = PydanticToolCall.from_dict(
                     tool_name='final_result',
                     args_dict=decoded_object,
