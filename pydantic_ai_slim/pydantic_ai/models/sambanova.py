@@ -91,7 +91,7 @@ class SambaNovaModel(Model):
         elif http_client is not None:
             self.client = AsyncOpenAI(api_key=api_key, http_client=http_client)
         else:
-            self.client = AsyncOpenAI(base_url = base_url, api_key=api_key, http_client=cached_async_http_client())
+            self.client = AsyncOpenAI(base_url=base_url, api_key=api_key, http_client=cached_async_http_client())
 
     async def agent_model(
         self,
@@ -145,7 +145,7 @@ class SambaNovaAgentModel(OpenAIAgentModel):
                     calls.append(
                         ToolCall.from_json(
                             tool_call.function.name, json.dumps(tool_call.function.arguments), tool_call.id
-                            )
+                        )
                     )
                 else:
                     calls.append(
