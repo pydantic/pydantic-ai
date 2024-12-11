@@ -97,6 +97,7 @@ You can also pass messages from previous runs to continue a conversation or prov
     Before you execute any agent runs, do the following:
     ```py
     import nest_asyncio
+
     nest_asyncio.apply()
     ```
 
