@@ -1,22 +1,14 @@
-
 from __future__ import annotations as _annotations
 
-import os
 import json
-
+import os
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Literal, Union
 
 from httpx import AsyncClient as AsyncHTTPClient
 
-from ..messages import (
-    Message,
-    ModelAnyResponse,
-    ModelStructuredResponse,
-    ModelTextResponse,
-    ToolCall
-)
+from ..messages import Message, ModelAnyResponse, ModelStructuredResponse, ModelTextResponse, ToolCall
 from ..tools import ToolDefinition
 from . import (
     AgentModel,
@@ -24,7 +16,6 @@ from . import (
     cached_async_http_client,
     check_allow_model_requests,
 )
-
 from .openai import OpenAIAgentModel
 
 try:
@@ -52,13 +43,14 @@ SambaNovaModelNames = Literal[
 
 SambaNovaModelName = Union[SambaNovaModelNames, str]
 
+
 @dataclass(init=False)
 class SambaNovaModel(Model):
     """A model that uses the SambaNova models thought OpenAI client.
     
-    Internally, this uses the [OpenAI Python client](https://github.com/openai/openai-python) to interact 
+    Internally, this uses the [OpenAI Python client](https://github.com/openai/openai-python) to interact
     with the SambaNova APIs
-    
+
     Apart from `__init__`, all methods are private or match those of the base class.
     """
 
@@ -99,13 +91,9 @@ class SambaNovaModel(Model):
             self.client = openai_client
         elif http_client is not None:
             assert base_url is None, 'Cannot provide both `http_client` and `base_url`'
-            self.client = AsyncOpenAI(api_key=api_key,http_client=http_client)
+            self.client = AsyncOpenAI(api_key=api_key, http_client=http_client)
         else:
-            self.client = AsyncOpenAI(
-                base_url = base_url,
-                api_key=api_key,
-                http_client=cached_async_http_client()
-                )
+            self.client = AsyncOpenAI( base_url = base_url, api_key=api_key, http_client=cached_async_http_client())
 
     async def agent_model(
         self,
@@ -142,8 +130,8 @@ class SambaNovaModel(Model):
 @dataclass
 class SambaNovaAgentModel(OpenAIAgentModel):
     """Implementation of `AgentModel` for SambaNova models.
-        
-    SambaNova models have built-in compatibility with OpenAI chat completions API, 
+   
+    SambaNova models have built-in compatibility with OpenAI chat completions API,
     so we inherit from[`OpenAIModelAgent`][pydantic_ai.models.openai.OpenAIModel] here.
     """
 
@@ -156,18 +144,20 @@ class SambaNovaAgentModel(OpenAIAgentModel):
             calls = []
             for tool_call in choice.message.tool_calls:
                 if isinstance(tool_call.function.arguments, dict):
-                    calls.append(ToolCall.from_json(tool_call.function.name, json.dumps(tool_call.function.arguments), tool_call.id))
+                    calls.append(
+                        ToolCall.from_json(tool_call.function.name, json.dumps(tool_call.function.arguments), tool_call.id)
+                    )
                 else:
-                    calls.append(ToolCall.from_json(tool_call.function.name, tool_call.function.arguments, tool_call.id))
+                    calls.append(
+                        ToolCall.from_json(tool_call.function.name, tool_call.function.arguments, tool_call.id)
+                    )
             return ModelStructuredResponse(calls,timestamp=timestamp)
         else:
             assert choice.message.content is not None, choice
             return ModelTextResponse(choice.message.content, timestamp=timestamp)
 
-    async def _completions_create(
-        self, messages: list[Message], stream: bool
-    ) -> chat.ChatCompletion:
-        if stream == True:
+    async def _completions_create(self, messages: list[Message], stream: bool) -> chat.ChatCompletion:
+        if stream:
             if self.tools:
                 raise NotImplementedError('tool calling when streaming not supported')
         return await super()._completions_create(messages, stream)

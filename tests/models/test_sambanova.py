@@ -1,6 +1,5 @@
 from __future__ import annotations as _annotations
 
-from dataclasses import dataclass
 from datetime import datetime, timezone
 
 import pytest
@@ -26,6 +25,7 @@ pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
     pytest.mark.anyio,
 ]
+
 
 def test_init():
     m = SambaNovaModel('Meta-Llama-3.1-8B-Instruct', api_key='foobar')
