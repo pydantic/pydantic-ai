@@ -763,7 +763,7 @@ class Agent(Generic[AgentDeps, ResultData]):
     async def _handle_text_response(
         self, model_response: _messages.ModelTextResponse, deps: AgentDeps
     ) -> tuple[_MarkFinalResult[ResultData] | None, list[_messages.Message]]:
-        """Handle a plain text response from the model."""
+        """Handle a plain text response from the model for non-streaming responses."""
         # Check if we allow plain text results
         if not self._allow_text_result:
             self._incr_result_retry()
