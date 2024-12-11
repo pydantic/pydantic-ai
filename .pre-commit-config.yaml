@@ -34,7 +34,7 @@ repos:
         pass_filenames: false
       - id: replace-py-code-blocks
         name: Replace ```py with ```python
-        entry: sed -i '' 's/```py/```python/g'
+        entry: sed -i '' 's/```py\([[:space:]]*\)/```python\1/g'
         language: system
         files: \.py$|\.md$
         pass_filenames: true
