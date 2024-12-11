@@ -95,7 +95,7 @@ You can also pass messages from previous runs to continue a conversation or prov
     to manage conflicts between event loops that occur between jupyter's event loops and `pydantic-ai`'s.
 
     Before you execute any agent runs, do the following:
-    ```python {test="skip", lint="skip"}
+    ```python {test="skip" lint="skip"}
     import nest_asyncio
     nest_asyncio.apply()
     ```
@@ -106,7 +106,7 @@ An agent **run** might represent an entire conversation — there's no limit to 
 
 Here's an example of a conversation comprised of multiple runs:
 
-```python {title="conversation_example.py", hl_lines="13"}
+```python {title="conversation_example.py" hl_lines="13"}
 from pydantic_ai import Agent
 
 agent = Agent('openai:gpt-4o')
@@ -144,7 +144,7 @@ In particular, agents are generic in both the type of their dependencies and the
 
 Consider the following script with type mistakes:
 
-```python {title="type_mistakes.py", hl_lines="18 28"}
+```python {title="type_mistakes.py" hl_lines="18 28"}
 from dataclasses import dataclass
 
 from pydantic_ai import Agent, RunContext

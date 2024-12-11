@@ -21,6 +21,6 @@ Should give an output like this:
 
 ## Example Code
 
-```python {title="stream_whales.py"
+```python {title="stream_whales.py"}
 #! pydantic_ai_examples/stream_whales.py
 ```
