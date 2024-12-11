@@ -38,4 +38,4 @@ repos:
         entry: sed -i '' 's/```py \(.*\)/```python \1/; s/```py$/```python/'
         language: system
         files: \.py$|\.md$
-        pass_filenames: false
+        pass_filenames: true
