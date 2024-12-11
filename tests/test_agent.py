@@ -531,13 +531,13 @@ def test_run_with_history_new_structured(set_event_loop: None):
             ),
             ToolReturn(tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc)),
             ModelStructuredResponse(
-                calls=[ToolCall(tool_name='final_result', args=ArgsDict(args_dict={'a': 0}), tool_id=None)],
+                calls=[ToolCall(tool_name='final_result', args=ArgsDict(args_dict={'a': 0}), tool_call_id=None)],
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ToolReturn(
                 tool_name='final_result',
                 content='Final result processed.',
-                tool_id=None,
+                tool_call_id=None,
                 timestamp=IsNow(tz=timezone.utc),
             ),
         ]

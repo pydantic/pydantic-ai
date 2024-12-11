@@ -4,7 +4,7 @@
 
 For details on how to set up authentication with this model, see [model configuration for Ollama](../../install.md#ollama).
 
-## Example usage
+## Example local usage
 
 With `ollama` installed, you can run the server with the model you want to use:
 
@@ -34,6 +34,37 @@ print(result.data)
 print(result.cost())
 #> Cost(request_tokens=56, response_tokens=8, total_tokens=64, details=None)
 ```
+
+## Example using a remove server
+
+```py title="ollama_example_with_remote_server.py"
+from pydantic import BaseModel
+
+from pydantic_ai import Agent
+from pydantic_ai.models.ollama import OllamaModel
+
+ollama_model = OllamaModel(
+    model_name='qwen2.5-coder:7b',  # (1)!
+    base_url='http://192.168.1.74:11434/v1',  # (2)!
+)
+
+
+class CityLocation(BaseModel):
+    city: str
+    country: str
+
+
+agent = Agent(model=ollama_model, result_type=CityLocation)
+
+result = agent.run_sync('Where the olympics held in 2012?')
+print(result.data)
+#> city='London' country='United Kingdom'
+print(result.cost())
+#> Cost(request_tokens=56, response_tokens=8, total_tokens=64, details=None)
+```
+
+1. The name of the model running on the remote server
+2. The url of the remote server
 
 See [`OllamaModel`][pydantic_ai.models.ollama.OllamaModel] for more information
 

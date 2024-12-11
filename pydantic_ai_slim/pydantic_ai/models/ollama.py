@@ -91,15 +91,13 @@ class OllamaModel(Model):
         self.model_name = model_name
         if openai_client is not None:
             assert base_url is None, 'Cannot provide both `openai_client` and `base_url`'
-            self.openai_model = OpenAIModel(model_name=model_name, openai_client=openai_client, http_client=http_client)
-        elif http_client is not None:
-            # API key is not required for ollama but a value is required to create the client
-            oai_client = AsyncOpenAI(base_url=base_url, api_key='ollama', http_client=http_client)
-            self.openai_model = OpenAIModel(model_name=model_name, openai_client=oai_client, http_client=http_client)
+            assert http_client is None, 'Cannot provide both `openai_client` and `http_client`'
+            self.openai_model = OpenAIModel(model_name=model_name, openai_client=openai_client)
         else:
             # API key is not required for ollama but a value is required to create the client
-            oai_client = AsyncOpenAI(base_url=base_url, api_key='ollama', http_client=cached_async_http_client())
-            self.openai_model = OpenAIModel(model_name=model_name, openai_client=oai_client, http_client=http_client)
+            http_client_ = http_client or cached_async_http_client()
+            oai_client = AsyncOpenAI(base_url=base_url, api_key='ollama', http_client=http_client_)
+            self.openai_model = OpenAIModel(model_name=model_name, openai_client=oai_client)
 
     async def agent_model(
         self,
