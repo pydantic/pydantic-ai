@@ -95,7 +95,7 @@ You can also pass messages from previous runs to continue a conversation or prov
     to manage conflicts between event loops that occur between jupyter's event loops and `pydantic-ai`'s.
 
     Before you execute any agent runs, do the following:
-    ```py {test="skip", lint="skip"}
+    ```py test="skip", lint="skip"
     import nest_asyncio
     nest_asyncio.apply()
     ```
