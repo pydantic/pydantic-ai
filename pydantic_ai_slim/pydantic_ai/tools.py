@@ -3,19 +3,17 @@ from __future__ import annotations as _annotations
 import inspect
 from collections.abc import Awaitable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Callable, Generic, TypeVar, Union, cast
+from typing import Any, Callable, Generic, NoReturn, Union, cast
 
 from pydantic import ValidationError
 from pydantic_core import SchemaValidator
-from typing_extensions import Concatenate, ParamSpec, TypeAlias
+from typing_extensions import Concatenate, ParamSpec, TypeAlias, TypeVar
 
-from . import _pydantic, _utils, messages
+from . import _exceptions, _pydantic, _utils, messages
 from .exceptions import ModelRetry, UnexpectedModelBehavior
 
-if TYPE_CHECKING:
-    from .result import ResultData
-else:
-    ResultData = Any
+ResultData = TypeVar('ResultData', default=Any)
+"""Type variable for the result data of a run."""
 
 
 __all__ = (
@@ -38,7 +36,7 @@ AgentDeps = TypeVar('AgentDeps')
 
 
 @dataclass
-class RunContext(Generic[AgentDeps]):
+class RunContext(Generic[AgentDeps, ResultData]):
     """Information about the current call."""
 
     deps: AgentDeps
@@ -47,6 +45,14 @@ class RunContext(Generic[AgentDeps]):
     """Number of retries so far."""
     tool_name: str | None = None
     """Name of the tool being called."""
+    tool_call_id: str | None = None
+    """Id of the tool being called."""
+
+    def stop_run(self, result: ResultData) -> NoReturn:
+        """Stop the call to `agent.run` as soon as possible, using the provided value as the result."""
+        # NOTE: this means we ignore any other tools called concurrently
+        assert self.tool_name is not None, "Can't call stop_run outside of a tool call"
+        raise _exceptions.StopAgentRun(result, tool_name=self.tool_name, tool_call_id=self.tool_call_id)
 
 
 ToolParams = ParamSpec('ToolParams')
@@ -79,7 +85,7 @@ Usage `ResultValidator[AgentDeps, ResultData]`.
 ToolFuncContext = Callable[Concatenate[RunContext[AgentDeps], ToolParams], Any]
 """A tool function that takes `RunContext` as the first argument.
 
-Usage `ToolContextFunc[AgentDeps, ToolParams]`.
+Usage `ToolFuncContext[AgentDeps, ToolParams]`.
 """
 ToolFuncPlain = Callable[ToolParams, Any]
 """A tool function that does not take `RunContext` as the first argument.
@@ -269,7 +275,7 @@ class Tool(Generic[AgentDeps]):
         if self._single_arg_name:
             args_dict = {self._single_arg_name: args_dict}
 
-        args = [RunContext(deps, self.current_retry, message.tool_name)] if self.takes_ctx else []
+        args = [RunContext(deps, self.current_retry, message.tool_name, message.tool_call_id)] if self.takes_ctx else []
         for positional_field in self._positional_fields:
             args.append(args_dict.pop(positional_field))
         if self._var_positional_field:
