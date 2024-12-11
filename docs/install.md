@@ -90,7 +90,7 @@ export OPENAI_API_KEY='your-api-key'
 
 You can then use [`OpenAIModel`][pydantic_ai.models.openai.OpenAIModel] by name:
 
-```python title="openai_model_by_name.py"
+```python {title="openai_model_by_name.py"}
 from pydantic_ai import Agent
 
 agent = Agent('openai:gpt-4o')
@@ -99,7 +99,7 @@ agent = Agent('openai:gpt-4o')
 
 Or initialise the model directly with just the model name:
 
-```python title="openai_model_init.py"
+```python {title="openai_model_init.py"}
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIModel
 
@@ -112,7 +112,7 @@ agent = Agent(model)
 
 If you don't want to or can't set the environment variable, you can pass it at runtime via the [`api_key` argument][pydantic_ai.models.openai.OpenAIModel.__init__]:
 
-```python title="openai_model_api_key.py"
+```python {title="openai_model_api_key.py"}
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIModel
 
@@ -128,7 +128,7 @@ so you can customise the `organization`, `project`, `base_url` etc. as defined i
 
 You could also use the [`AsyncAzureOpenAI`](https://learn.microsoft.com/en-us/azure/ai-services/openai/how-to/switching-endpoints) client to use the Azure OpenAI API.
 
-```python title="openai_azure.py"
+```python {title="openai_azure.py"}
 from openai import AsyncAzureOpenAI
 
 from pydantic_ai import Agent
@@ -169,7 +169,7 @@ export GEMINI_API_KEY=your-api-key
 
 You can then use [`GeminiModel`][pydantic_ai.models.gemini.GeminiModel] by name:
 
-```python title="gemini_model_by_name.py"
+```python {title="gemini_model_by_name.py"}
 from pydantic_ai import Agent
 
 agent = Agent('gemini-1.5-flash')
@@ -178,7 +178,7 @@ agent = Agent('gemini-1.5-flash')
 
 Or initialise the model directly with just the model name:
 
-```python title="gemini_model_init.py"
+```python {title="gemini_model_init.py"}
 from pydantic_ai import Agent
 from pydantic_ai.models.gemini import GeminiModel
 
@@ -191,7 +191,7 @@ agent = Agent(model)
 
 If you don't want to or can't set the environment variable, you can pass it at runtime via the [`api_key` argument][pydantic_ai.models.gemini.GeminiModel.__init__]:
 
-```python title="gemini_model_api_key.py"
+```python {title="gemini_model_api_key.py"}
 from pydantic_ai import Agent
 from pydantic_ai.models.gemini import GeminiModel
 
@@ -226,7 +226,7 @@ Luckily if you're running PydanticAI inside GCP, or you have the [`gcloud` CLI](
 
 To use `VertexAIModel`, with [application default credentials](https://cloud.google.com/docs/authentication/application-default-credentials) configured (e.g. with `gcloud`), you can simply use:
 
-```python title="vertexai_application_default_credentials.py"
+```python {title="vertexai_application_default_credentials.py"}
 from pydantic_ai import Agent
 from pydantic_ai.models.vertexai import VertexAIModel
 
@@ -248,7 +248,7 @@ If instead of application default credentials, you want to authenticate with a s
 
 Once you have the JSON file, you can use it thus:
 
-```python title="vertexai_service_account.py"
+```python {title="vertexai_service_account.py"}
 from pydantic_ai import Agent
 from pydantic_ai.models.vertexai import VertexAIModel
 
@@ -266,7 +266,7 @@ Whichever way you authenticate, you can specify which region requests will be se
 
 Using a region close to your application can improve latency and might be important from a regulatory perspective.
 
-```python title="vertexai_region.py"
+```python {title="vertexai_region.py"}
 from pydantic_ai import Agent
 from pydantic_ai.models.vertexai import VertexAIModel
 
@@ -293,7 +293,7 @@ export GROQ_API_KEY='your-api-key'
 
 You can then use [`GroqModel`][pydantic_ai.models.groq.GroqModel] by name:
 
-```python title="groq_model_by_name.py"
+```python {title="groq_model_by_name.py"}
 from pydantic_ai import Agent
 
 agent = Agent('groq:llama-3.1-70b-versatile')
@@ -302,7 +302,7 @@ agent = Agent('groq:llama-3.1-70b-versatile')
 
 Or initialise the model directly with just the model name:
 
-```python title="groq_model_init.py"
+```python {title="groq_model_init.py"}
 from pydantic_ai import Agent
 from pydantic_ai.models.groq import GroqModel
 
@@ -315,7 +315,7 @@ agent = Agent(model)
 
 If you don't want to or can't set the environment variable, you can pass it at runtime via the [`api_key` argument][pydantic_ai.models.groq.GroqModel.__init__]:
 
-```python title="groq_model_api_key.py"
+```python {title="groq_model_api_key.py"}
 from pydantic_ai import Agent
 from pydantic_ai.models.groq import GroqModel
 

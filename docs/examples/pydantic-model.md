@@ -25,6 +25,6 @@ PYDANTIC_AI_MODEL=gemini-1.5-pro python/uv-run -m pydantic_ai_examples.pydantic_
 
 ## Example Code
 
-```python title="pydantic_model.py"
+```python {title="pydantic_model.py"
 #! pydantic_ai_examples/pydantic_model.py
 ```

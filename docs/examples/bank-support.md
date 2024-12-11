@@ -18,6 +18,6 @@ python/uv-run -m pydantic_ai_examples.bank_support
 
 ## Example Code
 
-```python title="bank_support.py"
+```python {title="bank_support.py"}
 #! pydantic_ai_examples/bank_support.py
 ```

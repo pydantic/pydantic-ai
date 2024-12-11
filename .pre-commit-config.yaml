@@ -34,6 +34,7 @@ repos:
         pass_filenames: false
       - id: replace-py-code-blocks
         name: Replace ```py with ```python
+        # first pattern matches ```py <info> and second matches lone ```py<eol>
         entry: sed -i '' 's/```py \(.*\)/```python \1/; s/```py$/```python/'
         language: system
         files: \.py$|\.md$
