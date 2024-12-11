@@ -60,7 +60,7 @@ class SambaNovaModel(Model):
         self,
         model_name: SambaNovaModelName,
         *,
-        base_url: str | None = 'https://api.sambanova.ai/v1',
+        base_url: str | None = 'https://api.sambanova.ai/v1/',
         api_key: str | None = None,
         openai_client: AsyncOpenAI | None = None,
         http_client: AsyncHTTPClient | None = None,
