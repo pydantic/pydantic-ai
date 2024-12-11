@@ -227,7 +227,7 @@ class MistralAgentModel(AgentModel):
                 messages=mistral_messages,
                 n=1,
                 tools=self._map_function_and_result_tools_definition(),
-                tool_choice='auto', # Note WARN: If use 'any' it will be infinity loop with Model.
+                tool_choice='auto',  # Note WARN: If use 'any' it will be infinity loop with Model.
             )
 
         elif self.result_tools:
