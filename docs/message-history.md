@@ -7,7 +7,7 @@ PydanticAI provides access to messages exchanged during an agent run. These mess
 After running an agent, you can access the messages exchanged during that run from the `result` object.
 
 Both [`RunResult`][pydantic_ai.result.RunResult]
-(returned by [`Agent.run`][pydantic_ai.Agent.run], [`Agent.run_sync`][pydantic_ai.Agent.run_sync])
+(returned by [`Agent.run_async`][pydantic_ai.Agent.run_async], [`Agent.run_sync`][pydantic_ai.Agent.run_sync])
 and [`StreamedRunResult`][pydantic_ai.result.StreamedRunResult] (returned by [`Agent.run_stream`][pydantic_ai.Agent.run_stream]) have the following methods:
 
 * [`all_messages()`][pydantic_ai.result.RunResult.all_messages]: returns all messages, including messages from prior runs and system prompts. There's also a variant that returns JSON bytes, [`all_messages_json()`][pydantic_ai.result.RunResult.all_messages_json].
@@ -128,7 +128,7 @@ _(This example is complete, it can be run "as is")_
 The primary use of message histories in PydanticAI is to maintain context across multiple agent runs.
 
 To use existing messages in a run, pass them to the `message_history` parameter of
-[`Agent.run`][pydantic_ai.Agent.run], [`Agent.run_sync`][pydantic_ai.Agent.run_sync] or
+[`Agent.run_async`][pydantic_ai.Agent.run_async], [`Agent.run_sync`][pydantic_ai.Agent.run_sync] or
 [`Agent.run_stream`][pydantic_ai.Agent.run_stream].
 
 !!! info "`all_messages()` vs. `new_messages()`"

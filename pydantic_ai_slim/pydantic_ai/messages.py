@@ -29,7 +29,7 @@ class SystemPrompt:
 class UserPrompt:
     """A user prompt, generally written by the end user.
 
-    Content comes from the `user_prompt` parameter of [`Agent.run`][pydantic_ai.Agent.run],
+    Content comes from the `user_prompt` parameter of [`Agent.run_async`][pydantic_ai.Agent.run_async],
     [`Agent.run_sync`][pydantic_ai.Agent.run_sync], and [`Agent.run_stream`][pydantic_ai.Agent.run_stream].
     """
 

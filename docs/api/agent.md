@@ -5,7 +5,7 @@
       members:
         - __init__
         - name
-        - run
+        - run_async
         - run_sync
         - run_stream
         - model
