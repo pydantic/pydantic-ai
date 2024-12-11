@@ -62,7 +62,7 @@ print(result.data)
 There are three ways to run an agent:
 
 1. [`agent.run()`][pydantic_ai.Agent.run] — a coroutine which returns a [`RunResult`][pydantic_ai.result.RunResult] containing a completed response
-2. [`agent.run_sync()`][pydantic_ai.Agent.run_sync] — a plain, synchronous function which returns a [`RunResult`][pydantic_ai.result.RunResult] containing a completed response (internally, this just calls `asyncio.run(self.run())`)
+2. [`agent.run_sync()`][pydantic_ai.Agent.run_sync] — a plain, synchronous function which returns a [`RunResult`][pydantic_ai.result.RunResult] containing a completed response (internally, this just calls `loop.run_until_complete(self.run())`)
 3. [`agent.run_stream()`][pydantic_ai.Agent.run_stream] — a coroutine which returns a [`StreamedRunResult`][pydantic_ai.result.StreamedRunResult], which contains methods to stream a response as an async iterable
 
 Here's a simple example demonstrating all three:
@@ -89,6 +89,16 @@ async def main():
 _(This example is complete, it can be run "as is")_
 
 You can also pass messages from previous runs to continue a conversation or provide context, as described in [Messages and Chat History](message-history.md).
+
+!!! note "jupyter notebooks"
+    If you're running `pydantic-ai` in a jupyter notebook, you might consider using [`nest-asyncio`](https://pypi.org/project/nest-asyncio/)
+    to manage conflicts between event loops that occur between jupyter's event loops and `pydantic-ai`'s.
+
+    Before you execute any agent runs, do the following:
+    ```py {test="skip", lint="skip"}
+    import nest_asyncio
+    nest_asyncio.apply()
+    ```
 
 ## Runs vs. Conversations
 
