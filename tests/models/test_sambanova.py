@@ -37,7 +37,6 @@ def test_init():
 async def test_request_simple_success(allow_model_requests: None):
     c = completion_message(ChatCompletionMessage(content='world', role='assistant'))
     mock_client = MockOpenAI.create_mock(c)
-    print('here')
     m = SambaNovaModel('Meta-Llama-3.1-8B-Instruct', openai_client=mock_client)
     agent = Agent(m)
 
