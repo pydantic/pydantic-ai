@@ -44,6 +44,7 @@ except ImportError as _import_error:
     ) from _import_error
 
 GroqModelName = Literal[
+    'llama-3.3-70b-versatile',
     'llama-3.1-70b-versatile',
     'llama3-groq-70b-8192-tool-use-preview',
     'llama3-groq-8b-8192-tool-use-preview',
