@@ -12,6 +12,7 @@ cd pydantic-ai
 2. Install `uv` and `pre-commit`
 
 We use pipx here, for other options see:
+
 * [`uv` getting install docs](https://docs.astral.sh/uv/getting-started/installation/)
 * [`pre-commit` install docs](https://pre-commit.com/#install)
 
