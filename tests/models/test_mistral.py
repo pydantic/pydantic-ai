@@ -8,7 +8,6 @@ from typing import Any, cast
 
 import pytest
 from inline_snapshot import snapshot
-from mistralai import AssistantMessage, ChatCompletionChoice, CompletionChunk, UsageInfo
 
 from pydantic_ai import _utils
 from pydantic_ai.agent import Agent
@@ -18,7 +17,7 @@ from pydantic_ai.models.mistral import MistralModel
 from ..conftest import IsNow, try_import
 
 with try_import() as imports_successful:
-    from mistralai import Mistral
+    from mistralai import AssistantMessage, ChatCompletionChoice, CompletionChunk, Mistral, UsageInfo
     from mistralai.models import (
         ChatCompletionResponse as MistralChatCompletionResponse,
         CompletionEvent as MistralCompletionEvent,
@@ -58,14 +57,6 @@ class MockMistralAI:
     def create_mock(cls, completions: MistralChatCompletionResponse | list[MistralChatCompletionResponse]) -> Mistral:
         return cast(Mistral, cls(completions=completions))
 
-    # @classmethod
-    # def create_mock_stream(
-    #
-
-    # cls, stream: Sequence[chat.ChatCompletionChunk] | Sequence[list[chat.ChatCompletionChunk]]
-    # ) -> AsyncOpenAI:
-    #     return cast(AsyncOpenAI, cls(stream=list(stream)))  # pyright: ignore[reportArgumentType]
-
     async def chat_completions_create(  # pragma: no cover
         self, *_args: Any, stream: bool = False, **_kwargs: Any
     ) -> MistralChatCompletionResponse | MockAsyncStream:
@@ -74,6 +65,7 @@ class MockMistralAI:
             # noinspection PyUnresolvedReferences
             if isinstance(self.stream[0], list):
                 response = MockAsyncStream(iter(self.stream[self.index]))  # type: ignore
+
             else:
                 response = MockAsyncStream(iter(self.stream))  # type: ignore
         else:
