@@ -9,11 +9,6 @@ from typing import Any, cast
 import pytest
 from inline_snapshot import snapshot
 
-from pydantic_ai import _utils
-from pydantic_ai.agent import Agent
-from pydantic_ai.messages import ModelTextResponse, UserPrompt
-from pydantic_ai.models.mistral import MistralModel
-
 from ..conftest import IsNow, try_import
 
 with try_import() as imports_successful:
@@ -32,6 +27,10 @@ with try_import() as imports_successful:
         CompletionEvent as MistralCompletionEvent,
     )
 
+    from pydantic_ai import _utils
+    from pydantic_ai.agent import Agent
+    from pydantic_ai.messages import ModelTextResponse, UserPrompt
+    from pydantic_ai.models.mistral import MistralModel
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='mistral not installed'),
     pytest.mark.anyio,
@@ -75,7 +74,7 @@ class MockMistralAI:
 
     async def chat_completions_create(  # pragma: no cover
         self, *_args: Any, stream: bool = False, **_kwargs: Any
-    ) -> MistralChatCompletionResponse | MockAsyncStream:
+    ) -> MistralChatCompletionResponse | MockAsyncStream | list[MistralChatCompletionResponse]:
         if stream:
             assert self.stream is not None, 'you can only used `stream=True` if `stream` is provided'
             # noinspection PyUnresolvedReferences
