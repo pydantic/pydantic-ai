@@ -149,7 +149,7 @@ class ArgsDict:
 
 @dataclass
 class ToolCall:
-    """Either a tool call from the agent."""
+    """A tool call from the agent."""
 
     tool_name: str
     """The name of the tool to call."""
@@ -166,8 +166,8 @@ class ToolCall:
         return cls(tool_name, ArgsJson(args_json), tool_call_id)
 
     @classmethod
-    def from_dict(cls, tool_name: str, args_dict: dict[str, Any], tool_id: str | None = None) -> ToolCall:
-        return cls(tool_name, ArgsDict(args_dict), tool_id)
+    def from_dict(cls, tool_name: str, args_dict: dict[str, Any], tool_call_id: str | None = None) -> ToolCall:
+        return cls(tool_name, ArgsDict(args_dict), tool_call_id)
 
     def has_content(self) -> bool:
         if isinstance(self.args, ArgsDict):

@@ -95,6 +95,7 @@ jobs:
           --extra openai
           --extra vertexai
           --extra groq
+          --extra anthropic
           pytest tests/test_live.py -v
           --durations=100
         env:
@@ -103,6 +104,7 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GOOGLE_SERVICE_ACCOUNT_CONTENT: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_CONTENT }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 
   test:
     name: test on ${{ matrix.python-version }}

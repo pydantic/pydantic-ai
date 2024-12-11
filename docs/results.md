@@ -3,7 +3,7 @@ The result values are wrapped in [`RunResult`][pydantic_ai.result.RunResult] and
 
 Both `RunResult` and `StreamedRunResult` are generic in the data they wrap, so typing information about the data returned by the agent is preserved.
 
-```py title="olympics.py"
+```python {title="olympics.py"}
 from pydantic import BaseModel
 
 from pydantic_ai import Agent
@@ -15,11 +15,11 @@ class CityLocation(BaseModel):
 
 
 agent = Agent('gemini-1.5-flash', result_type=CityLocation)
-result = agent.run_sync('Where the olympics held in 2012?')
+result = agent.run_sync('Where were the olympics held in 2012?')
 print(result.data)
 #> city='London' country='United Kingdom'
 print(result.cost())
-#> Cost(request_tokens=56, response_tokens=8, total_tokens=64, details=None)
+#> Cost(request_tokens=57, response_tokens=8, total_tokens=65, details=None)
 ```
 
 _(This example is complete, it can be run "as is")_
@@ -43,7 +43,7 @@ Structured results (like tools) use Pydantic to build the JSON schema used for t
 
 Here's an example of returning either text or a structured value
 
-```py title="box_or_error.py"
+```python {title="box_or_error.py"}
 from typing import Union
 
 from pydantic import BaseModel
@@ -80,7 +80,7 @@ _(This example is complete, it can be run "as is")_
 
 Here's an example of using a union return type which registered multiple tools, and wraps non-object schemas in an object:
 
-```py title="colors_or_sizes.py"
+```python {title="colors_or_sizes.py"}
 from typing import Union
 
 from pydantic_ai import Agent
@@ -108,7 +108,7 @@ Some validation is inconvenient or impossible to do in Pydantic validators, in p
 
 Here's a simplified variant of the [SQL Generation example](examples/sql-gen.md):
 
-```py title="sql_gen.py"
+```python {title="sql_gen.py"}
 from typing import Union
 
 from fake_database import DatabaseConn, QueryError
@@ -166,7 +166,7 @@ There two main challenges with streamed results:
 
 Example of streamed text result:
 
-```py title="streamed_hello_world.py"
+```python {title="streamed_hello_world.py"}
 from pydantic_ai import Agent
 
 agent = Agent('gemini-1.5-flash')  # (1)!
@@ -192,7 +192,7 @@ _(This example is complete, it can be run "as is")_
 
 We can also stream text as deltas rather than the entire text in each item:
 
-```py title="streamed_delta_hello_world.py"
+```python {title="streamed_delta_hello_world.py"}
 from pydantic_ai import Agent
 
 agent = Agent('gemini-1.5-flash')
@@ -224,7 +224,7 @@ Not all types are supported with partial validation in Pydantic, see [pydantic/p
 
 Here's an example of streaming a use profile as it's built:
 
-```py title="streamed_user_profile.py"
+```python {title="streamed_user_profile.py"}
 from datetime import date
 
 from typing_extensions import TypedDict
@@ -263,7 +263,7 @@ _(This example is complete, it can be run "as is")_
 
 If you want fine-grained control of validation, particularly catching validation errors, you can use the following pattern:
 
-```py title="streamed_user_profile.py"
+```python {title="streamed_user_profile.py"}
 from datetime import date
 
 from pydantic import ValidationError

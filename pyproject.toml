@@ -36,7 +36,8 @@ classifiers = [
     "Framework :: Pytest",
 ]
 requires-python = ">=3.9"
-dependencies = ["pydantic-ai-slim[openai,vertexai,groq,mistral]==0.0.12"]
+
+dependencies = ["pydantic-ai-slim[openai,vertexai,groq,anthropic, mistral]==0.0.12"]
 
 [project.urls]
 Homepage = "https://ai.pydantic.dev"
