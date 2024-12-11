@@ -30,7 +30,7 @@ pytestmark = [
 def test_init():
     m = SambaNovaModel('Meta-Llama-3.1-8B-Instruct', api_key='foobar')
     assert m.client.api_key == 'foobar'
-    assert m.client.base_url == 'https://api.sambanova.ai/v1'
+    assert str(m.client.base_url) == 'https://api.sambanova.ai/v1'
     assert m.name() == 'Meta-Llama-3.1-8B-Instruct'
 
 
