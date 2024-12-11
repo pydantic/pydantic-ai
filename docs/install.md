@@ -329,3 +329,50 @@ agent = Agent(model)
 To use [Ollama](https://ollama.com/), you must first download the Ollama client, and then download a model.
 
 You must also ensure the Ollama server is running when trying to make requests to it. For more information, please see the [Ollama documentation](https://github.com/ollama/ollama/tree/main/docs)
+
+### SambaNova
+
+To use [SambaNovaCloud](https://cloud.sambanova.ai/) through their API, go to [cloud.sambanova.ai/apis](https://cloud.sambanova.ai/apis) and click on Generate New API key.
+
+[`SambanovaModelNames`][pydantic_ai.models.sambanova.SambaNovaModelNames] contains a list of available SambaNovaCloud models.
+
+#### Environment variable
+
+Once you have the API key, you can set it as an environment variable:
+
+```bash
+export SAMBANOVA_API_KEY='your-api-key'
+```
+
+You can then use [`SambaNovaModel`][pydantic_ai.models.sambanova.SmabaNovaModel] by name:
+
+```py title="sambanova_model_by_name.py"
+from pydantic_ai import Agent
+
+agent = Agent('sambanova:Meta-Llama-3.1-70B-Instruct')
+...
+```
+
+Or initialize the model directly with just the model name:
+
+```py title="sambanova_model_init.py"
+from pydantic_ai import Agent
+from pydantic_ai.models.sambanova import SambaNovaModel
+
+model = SambaNovaModel('Meta-Llama-3.1-70B-Instruct')
+agent = Agent(model)
+...
+```
+
+#### `api_key` argument
+
+If you don't want to or can't set the environment variable, you can pass it at runtime via the [`api_key` argument][pydantic_ai.models.sambanova.SambaNovaModel.__init__]:
+
+```py title="sambanova_model_api_key.py"
+from pydantic_ai import Agent
+from pydantic_ai.models.sambanova import SambaNovaModel
+
+model = SambaNovaModel('Meta-Llama-3.1-70B-Instruct', api_key='your-api-key')
+agent = Agent(model)
+...
+```
