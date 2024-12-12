@@ -380,6 +380,14 @@ agent = Agent(model)
 
 ### Ollama
 
-To use [Ollama](https://ollama.com/), you must first download the Ollama client, and then download a model.
+To use [Ollama](https://ollama.com/), you must first download the Ollama client, and then download a model using [Model Library](https://github.com/ollama/ollama?tab=readme-ov-file#model-library)
+```python {title="ollama_model_init.py"}
+from pydantic_ai import Agent
+from pydantic_ai.models.ollama import  OllamaModel
+
+model =model = OllamaModel(model_name="llama3.1", base_url = "http://localhost:11434/v1")
+agent = Agent(model)
+...
+```
 
 You must also ensure the Ollama server is running when trying to make requests to it. For more information, please see the [Ollama documentation](https://github.com/ollama/ollama/tree/main/docs)
