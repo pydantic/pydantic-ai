@@ -475,8 +475,8 @@ def _generate_json_simple_schema(schema: dict[str, Any]) -> Any:
     """Generates a JSON example from a JSON schema."""
     if schema.get('type') == 'object':
         example: dict[str, Any] = {}
-        if 'properties' in schema:
-            for key, value in schema['properties'].items():
+        if properties := schema.get('properties'):
+            for key, value in properties.items():
                 example[key] = _generate_json_simple_schema(value)
         return example
 
