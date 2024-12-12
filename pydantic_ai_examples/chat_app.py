@@ -87,7 +87,7 @@ async def post_chat(
         async with agent.run_stream(prompt, message_history=messages) as result:
             async for text in result.stream(debounce_by=0.01):
                 # text here is a `str` and the frontend wants
-                # JSON encoded ModelTextResponse, so we create one
+                # JSON encoded ModelResponse, so we create one
                 m = ModelResponse.from_text(content=text, timestamp=result.timestamp())
                 yield MessageTypeAdapter.dump_json(m) + b'\n'
 

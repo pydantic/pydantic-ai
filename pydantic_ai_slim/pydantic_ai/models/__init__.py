@@ -184,9 +184,9 @@ class StreamStructuredResponse(ABC):
 
     @abstractmethod
     def get(self, *, final: bool = False) -> ModelResponse:
-        """Get the `ModelStructuredResponse` at this point.
+        """Get the `ModelResponse` at this point.
 
-        The `ModelStructuredResponse` may or may not be complete, depending on whether the stream is finished.
+        The `ModelResponse` may or may not be complete, depending on whether the stream is finished.
 
         Args:
             final: If True, this is the final call, after iteration is complete, the response should be fully validated.

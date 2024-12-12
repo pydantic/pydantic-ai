@@ -160,7 +160,7 @@ sequenceDiagram
     activate LLM
     Note over LLM: LLM constructs final response
 
-    LLM ->> Agent: ModelTextResponse<br>"Congratulations Anne, ..."
+    LLM ->> Agent: ModelResponse<br>"Congratulations Anne, ..."
     deactivate LLM
     Note over Agent: Game session complete
 ```
