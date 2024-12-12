@@ -188,7 +188,7 @@ async def test_request_structured_response(allow_model_requests: None):
                     ToolCall(
                         tool_name='final_result',
                         args=ArgsJson(args_json='{"response": [1, 2, 123]}'),
-                        tool_id='123',
+                        tool_call_id='123',
                     )
                 ],
                 timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc),
@@ -196,7 +196,7 @@ async def test_request_structured_response(allow_model_requests: None):
             ToolReturn(
                 tool_name='final_result',
                 content='Final result processed.',
-                tool_id='123',
+                tool_call_id='123',
                 timestamp=IsNow(tz=timezone.utc),
             ),
         ]
@@ -267,7 +267,7 @@ async def test_request_tool_call(allow_model_requests: None):
                     ToolCall(
                         tool_name='get_location',
                         args=ArgsJson(args_json='{"loc_name": "San Fransisco"}'),
-                        tool_id='1',
+                        tool_call_id='1',
                     )
                 ],
                 timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc),
@@ -275,7 +275,7 @@ async def test_request_tool_call(allow_model_requests: None):
             RetryPrompt(
                 tool_name='get_location',
                 content='Wrong location, please try again',
-                tool_id='1',
+                tool_call_id='1',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelStructuredResponse(
@@ -283,7 +283,7 @@ async def test_request_tool_call(allow_model_requests: None):
                     ToolCall(
                         tool_name='get_location',
                         args=ArgsJson(args_json='{"loc_name": "London"}'),
-                        tool_id='2',
+                        tool_call_id='2',
                     )
                 ],
                 timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc),
@@ -291,7 +291,7 @@ async def test_request_tool_call(allow_model_requests: None):
             ToolReturn(
                 tool_name='get_location',
                 content='{"lat": 51, "lng": 0}',
-                tool_id='2',
+                tool_call_id='2',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelTextResponse(content='final response', timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc)),

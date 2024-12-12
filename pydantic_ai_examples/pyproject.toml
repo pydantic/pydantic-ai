@@ -34,10 +34,10 @@ classifiers = [
 ]
 requires-python = ">=3.9"
 dependencies = [
-    "pydantic-ai-slim[openai,vertexai,groq]==0.0.12",
+    "pydantic-ai-slim[openai,vertexai,groq,anthropic]==0.0.12",
     "asyncpg>=0.30.0",
     "fastapi>=0.115.4",
-    "logfire[asyncpg,fastapi]>=2.3",
+    "logfire[asyncpg,fastapi,sqlite3]>=2.6",
     "python-multipart>=0.0.17",
     "rich>=13.9.2",
     "uvicorn>=0.32.0",

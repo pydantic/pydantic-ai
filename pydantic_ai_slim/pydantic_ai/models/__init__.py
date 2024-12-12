@@ -31,6 +31,7 @@ KnownModelName = Literal[
     'openai:o1-preview',
     'openai:o1-mini',
     'openai:gpt-3.5-turbo',
+    'groq:llama-3.3-70b-versatile',
     'groq:llama-3.1-70b-versatile',
     'groq:llama3-groq-70b-8192-tool-use-preview',
     'groq:llama3-groq-8b-8192-tool-use-preview',
@@ -47,6 +48,7 @@ KnownModelName = Literal[
     'groq:gemma-7b-it',
     'gemini-1.5-flash',
     'gemini-1.5-pro',
+    'gemini-2.0-flash-exp',
     'vertexai:gemini-1.5-flash',
     'vertexai:gemini-1.5-pro',
     'ollama:codellama',
@@ -66,6 +68,9 @@ KnownModelName = Literal[
     'ollama:qwen2',
     'ollama:qwen2.5',
     'ollama:starcoder2',
+    'claude-3-5-haiku-latest',
+    'claude-3-5-sonnet-latest',
+    'claude-3-opus-latest',
     'test',
 ]
 """Known model names that can be used with the `model` parameter of [`Agent`][pydantic_ai.Agent].
@@ -274,6 +279,10 @@ def infer_model(model: Model | KnownModelName) -> Model:
         from .ollama import OllamaModel
 
         return OllamaModel(model[7:])
+    elif model.startswith('claude'):
+        from .anthropic import AnthropicModel
+
+        return AnthropicModel(model)
     else:
         raise UserError(f'Unknown model: {model}')
 

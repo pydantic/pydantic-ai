@@ -27,7 +27,7 @@ Unless you're really sure you know better, you'll probably want to follow roughl
 The simplest and fastest way to exercise most of your application code is using [`TestModel`][pydantic_ai.models.test.TestModel], this will (by default) call all tools in the agent, then return either plain text or a structured response depending on the return type of the agent.
 
 !!! note "`TestModel` is not magic"
-    The "clever" (but not too clever) part of `TestModel` is that it will attempt to generate valid structured data for [function tools](agents.md#function-tools) and [result types](results.md#structured-result-validation) based on the schema of the registered tools.
+    The "clever" (but not too clever) part of `TestModel` is that it will attempt to generate valid structured data for [function tools](tools.md) and [result types](results.md#structured-result-validation) based on the schema of the registered tools.
 
     There's no ML or AI in `TestModel`, it's just plain old procedural Python code that tries to generate data that satisfies the JSON schema of a tool.
 
@@ -36,7 +36,7 @@ The simplest and fastest way to exercise most of your application code is using 
 
 Let's write unit tests for the following application code:
 
-```py title="weather_app.py"
+```python {title="weather_app.py"}
 import asyncio
 from datetime import date
 
@@ -89,7 +89,7 @@ Here we have a function that takes a list of `#!python (user_prompt, user_id)` t
 
 Here's how we would write tests using [`TestModel`][pydantic_ai.models.test.TestModel]:
 
-```py title="test_weather_app.py"
+```python {title="test_weather_app.py" call_name="test_forecast"}
 from datetime import timezone
 import pytest
 
@@ -144,7 +144,7 @@ async def test_forecast():
                             'forecast_date': '2024-01-01',  # (8)!
                         }
                     ),
-                    tool_id=None,
+                    tool_call_id=None,
                 )
             ],
             timestamp=IsNow(tz=timezone.utc),
@@ -153,7 +153,7 @@ async def test_forecast():
         ToolReturn(
             tool_name='weather_forecast',
             content='Sunny with a chance of rain',
-            tool_id=None,
+            tool_call_id=None,
             timestamp=IsNow(tz=timezone.utc),
             role='tool-return',
         ),
@@ -182,7 +182,7 @@ To fully exercise `weather_forecast`, we need to use [`FunctionModel`][pydantic_
 
 Here's an example of using `FunctionModel` to test the `weather_forecast` tool with custom inputs
 
-```py title="test_weather_app2.py"
+```python {title="test_weather_app2.py" call_name="test_forecast_future"}
 import re
 
 import pytest
@@ -244,7 +244,7 @@ If you're writing lots of tests that all require model to be overridden, you can
 
 Here's an example of a fixture that overrides the model with `TestModel`:
 
-```py title="tests.py"
+```python {title="tests.py"}
 import pytest
 from weather_app import weather_agent
 
@@ -294,7 +294,7 @@ The system prompt is the developer's primary tool in controlling an agent's beha
 
 Let's assume we have the following app for running SQL generated from a user prompt (this examples omits a lot of details for brevity, see the [SQL gen](examples/sql-gen.md) example for a more complete code):
 
-```py title="sql_app.py"
+```python {title="sql_app.py"}
 import json
 from pathlib import Path
 from typing import Union
@@ -370,7 +370,7 @@ async def user_search(user_prompt: str) -> list[dict[str, str]]:
     request: show me error records with the tag "foobar"
     response: SELECT * FROM records WHERE level = 'error' and 'foobar' = ANY(tags)
 
-```json title="examples.json"
+```json {title="examples.json"}
 {
   "examples": [
     {
@@ -401,7 +401,7 @@ To get a quantitative measure of performance, we assign points to each run as fo
 
 We use 5-fold cross-validation to judge the performance of the agent using our existing set of examples.
 
-```py title="sql_app_evals.py"
+```python {title="sql_app_evals.py"}
 import json
 import statistics
 from pathlib import Path

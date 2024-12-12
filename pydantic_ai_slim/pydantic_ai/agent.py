@@ -53,7 +53,7 @@ class Agent(Generic[AgentDeps, ResultData]):
 
     Minimal usage example:
 
-    ```py
+    ```python
     from pydantic_ai import Agent
 
     agent = Agent('openai:gpt-4o')
@@ -63,14 +63,22 @@ class Agent(Generic[AgentDeps, ResultData]):
     ```
     """
 
-    # dataclass fields mostly for my sanity — knowing what attributes are available
+    # we use dataclass fields in order to conveniently know what attributes are available
     model: models.Model | models.KnownModelName | None
     """The default model configured for this agent."""
+
     name: str | None
     """The name of the agent, used for logging.
 
     If `None`, we try to infer the agent name from the call frame when the agent is first run.
     """
+
+    last_run_messages: list[_messages.Message] | None = None
+    """The messages from the last run, useful when a run raised an exception.
+
+    Note: these are not used by the agent, e.g. in future runs, they are just stored for developers' convenience.
+    """
+
     _result_schema: _result.ResultSchema[ResultData] | None = field(repr=False)
     _result_validators: list[_result.ResultValidator[AgentDeps, ResultData]] = field(repr=False)
     _allow_text_result: bool = field(repr=False)
@@ -83,11 +91,6 @@ class Agent(Generic[AgentDeps, ResultData]):
     _current_result_retry: int = field(repr=False)
     _override_deps: _utils.Option[AgentDeps] = field(default=None, repr=False)
     _override_model: _utils.Option[models.Model] = field(default=None, repr=False)
-    last_run_messages: list[_messages.Message] | None = None
-    """The messages from the last run, useful when a run raised an exception.
-
-    Note: these are not used by the agent, e.g. in future runs, they are just stored for developers' convenience.
-    """
 
     def __init__(
         self,
@@ -168,6 +171,17 @@ class Agent(Generic[AgentDeps, ResultData]):
         cost_limit: int | None = None,
     ) -> result.RunResult[ResultData]:
         """Run the agent with a user prompt in async mode.
+
+        Example:
+        ```python
+        from pydantic_ai import Agent
+
+        agent = Agent('openai:gpt-4o')
+
+        result_sync = agent.run_sync('What is the capital of Italy?')
+        print(result_sync.data)
+        #> Rome
+        ```
 
         Args:
             user_prompt: User input to start/continue the conversation.
@@ -262,6 +276,18 @@ class Agent(Generic[AgentDeps, ResultData]):
 
         This is a convenience method that wraps `self.run` with `loop.run_until_complete()`.
 
+        Example:
+        ```python
+        from pydantic_ai import Agent
+
+        agent = Agent('openai:gpt-4o')
+
+        async def main():
+            result = await agent.run('What is the capital of France?')
+            print(result.data)
+            #> Paris
+        ```
+
         Args:
             user_prompt: User input to start/continue the conversation.
             message_history: History of the conversation so far.
@@ -302,6 +328,18 @@ class Agent(Generic[AgentDeps, ResultData]):
         cost_limit: int | None = None,
     ) -> AsyncIterator[result.StreamedRunResult[AgentDeps, ResultData]]:
         """Run the agent with a user prompt in async mode, returning a streamed response.
+
+        Example:
+        ```python
+        from pydantic_ai import Agent
+
+        agent = Agent('openai:gpt-4o')
+
+        async def main():
+            async with agent.run_stream('What is the capital of the UK?') as response:
+                print(await response.get_data())
+                #> London
+        ```
 
         Args:
             user_prompt: User input to start/continue the conversation.
@@ -405,6 +443,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         """Context manager to temporarily override agent dependencies and model.
 
         This is particularly useful when testing.
+        You can find an example of this [here](../testing-evals.md#overriding-model-via-pytest-fixtures).
 
         Args:
             deps: The dependencies to use instead of the dependencies passed to the agent run.
@@ -453,14 +492,14 @@ class Agent(Generic[AgentDeps, ResultData]):
     ) -> _system_prompt.SystemPromptFunc[AgentDeps]:
         """Decorator to register a system prompt function.
 
-        Optionally takes [`RunContext`][pydantic_ai.tools.RunContext] as it's only argument.
+        Optionally takes [`RunContext`][pydantic_ai.tools.RunContext] as its only argument.
         Can decorate a sync or async functions.
 
         Overloads for every possible signature of `system_prompt` are included so the decorator doesn't obscure
         the type of the function, see `tests/typed_agent.py` for tests.
 
         Example:
-        ```py
+        ```python
         from pydantic_ai import Agent, RunContext
 
         agent = Agent('test', deps_type=str)
@@ -504,14 +543,14 @@ class Agent(Generic[AgentDeps, ResultData]):
     ) -> _result.ResultValidatorFunc[AgentDeps, ResultData]:
         """Decorator to register a result validator function.
 
-        Optionally takes [`RunContext`][pydantic_ai.tools.RunContext] as it's first argument.
+        Optionally takes [`RunContext`][pydantic_ai.tools.RunContext] as its first argument.
         Can decorate a sync or async functions.
 
         Overloads for every possible signature of `result_validator` are included so the decorator doesn't obscure
         the type of the function, see `tests/typed_agent.py` for tests.
 
         Example:
-        ```py
+        ```python
         from pydantic_ai import Agent, ModelRetry, RunContext
 
         agent = Agent('test', deps_type=str)
@@ -561,13 +600,13 @@ class Agent(Generic[AgentDeps, ResultData]):
         Can decorate a sync or async functions.
 
         The docstring is inspected to extract both the tool description and description of each parameter,
-        [learn more](../agents.md#function-tools-and-schema).
+        [learn more](../tools.md#function-tools-and-schema).
 
         We can't add overloads for every possible signature of tool, since the return type is a recursive union
         so the signature of functions decorated with `@agent.tool` is obscured.
 
         Example:
-        ```py
+        ```python
         from pydantic_ai import Agent, RunContext
 
         agent = Agent('test', deps_type=int)
@@ -633,13 +672,13 @@ class Agent(Generic[AgentDeps, ResultData]):
         Can decorate a sync or async functions.
 
         The docstring is inspected to extract both the tool description and description of each parameter,
-        [learn more](../agents.md#function-tools-and-schema).
+        [learn more](../tools.md#function-tools-and-schema).
 
         We can't add overloads for every possible signature of tool, since the return type is a recursive union
         so the signature of functions decorated with `@agent.tool` is obscured.
 
         Example:
-        ```py
+        ```python
         from pydantic_ai import Agent, RunContext
 
         agent = Agent('test')
@@ -809,7 +848,7 @@ class Agent(Generic[AgentDeps, ResultData]):
                         tool_return = _messages.ToolReturn(
                             tool_name=call.tool_name,
                             content='Final result processed.',
-                            tool_id=call.tool_id,
+                            tool_call_id=call.tool_call_id,
                         )
                         return _MarkFinalResult(result_data), [tool_return]
 
@@ -872,7 +911,7 @@ class Agent(Generic[AgentDeps, ResultData]):
                     tool_return = _messages.ToolReturn(
                         tool_name=call.tool_name,
                         content='Final result processed.',
-                        tool_id=call.tool_id,
+                        tool_call_id=call.tool_call_id,
                     )
                     return _MarkFinalResult(model_response), [tool_return]
 

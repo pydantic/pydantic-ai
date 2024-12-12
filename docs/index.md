@@ -11,7 +11,7 @@ PydanticAI is a Python Agent Framework designed to make it less painful to build
 ## Why use PydanticAI
 
 * Built by the team behind Pydantic (the validation layer of the OpenAI SDK, the Anthropic SDK, LangChain, LlamaIndex, AutoGPT, Transformers, CrewAI, Instructor and many more)
-* Model-agnostic — currently OpenAI, Gemini, and Groq are supported, Anthropic [is coming soon](https://github.com/pydantic/pydantic-ai/issues/63). And there is a simple interface to implement support for other models.
+* Model-agnostic — currently OpenAI, Gemini, Anthropic, and Groq are supported, and there is a simple interface to implement support for other models.
 * [Type-safe](agents.md#static-type-checking)
 * Control flow and agent composition is done with vanilla Python, allowing you to make use of the same Python development best practices you'd use in any other (non-AI) project
 * [Structured response](results.md#structured-result-validation) validation with Pydantic
@@ -27,7 +27,7 @@ PydanticAI is a Python Agent Framework designed to make it less painful to build
 
 Here's a minimal example of PydanticAI:
 
-```py title="hello_world.py"
+```python {title="hello_world.py"}
 from pydantic_ai import Agent
 
 agent = Agent(  # (1)!
@@ -54,7 +54,7 @@ Not very interesting yet, but we can easily add "tools", dynamic system prompts,
 
 Here is a concise example using PydanticAI to build a support agent for a bank:
 
-```py title="bank_support.py"
+```python {title="bank_support.py"}
 from dataclasses import dataclass
 
 from pydantic import BaseModel, Field
@@ -123,11 +123,11 @@ async def main():
 
 1. This [agent](agents.md) will act as first-tier support in a bank. Agents are generic in the type of dependencies they accept and the type of result they return. In this case, the support agent has type `#!python Agent[SupportDependencies, SupportResult]`.
 2. Here we configure the agent to use [OpenAI's GPT-4o model](api/models/openai.md), you can also set the model when running the agent.
-3. The `SupportDependencies` dataclass is used to pass data, connections, and logic into the model that will be needed when running [system prompt](agents.md#system-prompts) and [tool](agents.md#function-tools) functions. PydanticAI's system of dependency injection provides a [type-safe](agents.md#static-type-checking) way to customise the behavior of your agents, and can be especially useful when running [unit tests](testing-evals.md) and evals.
+3. The `SupportDependencies` dataclass is used to pass data, connections, and logic into the model that will be needed when running [system prompt](agents.md#system-prompts) and [tool](tools.md) functions. PydanticAI's system of dependency injection provides a [type-safe](agents.md#static-type-checking) way to customise the behavior of your agents, and can be especially useful when running [unit tests](testing-evals.md) and evals.
 4. Static [system prompts](agents.md#system-prompts) can be registered with the [`system_prompt` keyword argument][pydantic_ai.Agent.__init__] to the agent.
 5. Dynamic [system prompts](agents.md#system-prompts) can be registered with the [`@agent.system_prompt`][pydantic_ai.Agent.system_prompt] decorator, and can make use of dependency injection. Dependencies are carried via the [`RunContext`][pydantic_ai.tools.RunContext] argument, which is parameterized with the `deps_type` from above. If the type annotation here is wrong, static type checkers will catch it.
-6. [`tool`](agents.md#function-tools) let you register functions which the LLM may call while responding to a user. Again, dependencies are carried via [`RunContext`][pydantic_ai.tools.RunContext], any other arguments become the tool schema passed to the LLM. Pydantic is used to validate these arguments, and errors are passed back to the LLM so it can retry.
-7. The docstring of a tool is also passed to the LLM as the description of the tool. Parameter descriptions are [extracted](agents.md#function-tools-and-schema) from the docstring and added to the parameter schema sent to the LLM.
+6. [`tool`](tools.md) let you register functions which the LLM may call while responding to a user. Again, dependencies are carried via [`RunContext`][pydantic_ai.tools.RunContext], any other arguments become the tool schema passed to the LLM. Pydantic is used to validate these arguments, and errors are passed back to the LLM so it can retry.
+7. The docstring of a tool is also passed to the LLM as the description of the tool. Parameter descriptions are [extracted](tools.md#function-tools-and-schema) from the docstring and added to the parameter schema sent to the LLM.
 8. [Run the agent](agents.md#running-agents) asynchronously, conducting a conversation with the LLM until a final response is reached. Even in this fairly simple case, the agent will exchange multiple messages with the LLM as tools are called to retrieve a result.
 9. The response from the agent will, be guaranteed to be a `SupportResult`, if validation fails [reflection](agents.md#reflection-and-self-correction) will mean the agent is prompted to try again.
 10. The result will be validated with Pydantic to guarantee it is a `SupportResult`, since the agent is generic, it'll also be typed as a `SupportResult` to aid with static type checking.
@@ -144,7 +144,7 @@ To understand the flow of the above runs, we can watch the agent in action using
 
 To do this, we need to set up logfire, and add the following to our code:
 
-```py title="bank_support_with_logfire.py"  hl_lines="4-6"
+```python {title="bank_support_with_logfire.py" hl_lines="4-6" test="skip" lint="skip"}
 ...
 from bank_database import DatabaseConn
 

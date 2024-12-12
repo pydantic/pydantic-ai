@@ -97,11 +97,11 @@ Usage `ToolFuncEither[AgentDeps, ToolParams]`.
 ToolPrepareFunc: TypeAlias = 'Callable[[RunContext[AgentDeps], ToolDefinition], Awaitable[ToolDefinition | None]]'
 """Definition of a function that can prepare a tool definition at call time.
 
-See [tool docs](../agents.md#tool-prepare) for more information.
+See [tool docs](../tools.md#tool-prepare) for more information.
 
 Example — here `only_if_42` is valid as a `ToolPrepareFunc`:
 
-```py
+```python {lint="not-imports"}
 from typing import Union
 
 from pydantic_ai import RunContext, Tool
@@ -157,7 +157,7 @@ class Tool(Generic[AgentDeps]):
 
         Example usage:
 
-        ```py
+        ```python {lint="not-imports"}
         from pydantic_ai import Agent, RunContext, Tool
 
         async def my_tool(ctx: RunContext[int], x: int, y: int) -> str:
@@ -168,7 +168,7 @@ class Tool(Generic[AgentDeps]):
 
         or with a custom prepare method:
 
-        ```py
+        ```python {lint="not-imports"}
         from typing import Union
 
         from pydantic_ai import Agent, RunContext, Tool
@@ -260,7 +260,7 @@ class Tool(Generic[AgentDeps]):
         return messages.ToolReturn(
             tool_name=message.tool_name,
             content=response_content,
-            tool_id=message.tool_id,
+            tool_call_id=message.tool_call_id,
         )
 
     def _call_args(
@@ -289,7 +289,7 @@ class Tool(Generic[AgentDeps]):
             return messages.RetryPrompt(
                 tool_name=call_message.tool_name,
                 content=content,
-                tool_id=call_message.tool_id,
+                tool_call_id=call_message.tool_call_id,
             )
 
 

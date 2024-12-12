@@ -2,7 +2,7 @@ Example of PydanticAI with multiple tools which the LLM needs to call in turn to
 
 Demonstrates:
 
-* [tools](../agents.md#function-tools)
+* [tools](../tools.md)
 * [agent dependencies](../dependencies.md)
 * [streaming text responses](../results.md#streaming-text)
 
@@ -25,6 +25,6 @@ python/uv-run -m pydantic_ai_examples.weather_agent
 
 ## Example Code
 
-```py title="pydantic_ai_examples/weather_agent.py"
+```python {title="pydantic_ai_examples/weather_agent.py"}
 #! pydantic_ai_examples/weather_agent.py
 ```

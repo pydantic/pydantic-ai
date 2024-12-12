@@ -138,14 +138,14 @@ def function_schema(function: Callable[..., Any], takes_ctx: bool) -> FunctionSc
     json_schema = GenerateJsonSchema().generate(schema)
 
     # workaround for https://github.com/pydantic/pydantic/issues/10785
-    # if we build a custom TypeDict schema (matches when `single_arg_name` is None), we manually set
+    # if we build a custom TypeDict schema (matches when `single_arg_name is None`), we manually set
     # `additionalProperties` in the JSON Schema
     if single_arg_name is None:
         json_schema['additionalProperties'] = bool(var_kwargs_schema)
-
-    # instead of passing `description` through in core_schema, we just add it here
-    if description:
-        json_schema = {'description': description} | json_schema
+    elif not description:
+        # if the tool description is not set, and we have a single parameter, take the description from that
+        # and set it on the tool
+        description = json_schema.pop('description', None)
 
     return FunctionSchema(
         description=description,

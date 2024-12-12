@@ -4,7 +4,7 @@ RAG search example. This demo allows you to ask question of the [logfire](https:
 
 Demonstrates:
 
-* [tools](../agents.md#function-tools)
+* [tools](../tools.md)
 * [agent dependencies](../dependencies.md)
 * RAG search
 
@@ -44,6 +44,6 @@ python/uv-run -m pydantic_ai_examples.rag search "How do I configure logfire to 
 
 ## Example Code
 
-```py title="rag.py"
+```python {title="rag.py"}
 #! pydantic_ai_examples/rag.py
 ```

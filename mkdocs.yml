@@ -13,9 +13,11 @@ nav:
   - Introduction: index.md
   - install.md
   - help.md
+  - contributing.md
   - Documentation:
     - agents.md
     - dependencies.md
+    - tools.md
     - results.md
     - message-history.md
     - testing-evals.md
@@ -36,6 +38,7 @@ nav:
     - api/result.md
     - api/messages.md
     - api/exceptions.md
+    - api/models/anthropic.md
     - api/models/base.md
     - api/models/openai.md
     - api/models/ollama.md

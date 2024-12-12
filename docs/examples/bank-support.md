@@ -4,7 +4,7 @@ Demonstrates:
 
 * [dynamic system prompt](../agents.md#system-prompts)
 * [structured `result_type`](../results.md#structured-result-validation)
-* [tools](../agents.md#function-tools)
+* [tools](../tools.md)
 
 ## Running the Example
 
@@ -18,6 +18,6 @@ python/uv-run -m pydantic_ai_examples.bank_support
 
 ## Example Code
 
-```py title="bank_support.py"
+```python {title="bank_support.py"}
 #! pydantic_ai_examples/bank_support.py
 ```

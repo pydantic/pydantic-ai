@@ -1,6 +1,6 @@
 # Dependencies
 
-PydanticAI uses a dependency injection system to provide data and services to your agent's [system prompts](agents.md#system-prompts), [tools](agents.md#function-tools) and [result validators](results.md#result-validators-functions).
+PydanticAI uses a dependency injection system to provide data and services to your agent's [system prompts](agents.md#system-prompts), [tools](tools.md) and [result validators](results.md#result-validators-functions).
 
 Matching PydanticAI's design philosophy, our dependency system tries to use existing best practice in Python development rather than inventing esoteric "magic", this should make dependencies type-safe, understandable easier to test and ultimately easier to deploy in production.
 
@@ -12,7 +12,7 @@ Here's an example of defining an agent that requires dependencies.
 
 (**Note:** dependencies aren't actually used in this example, see [Accessing Dependencies](#accessing-dependencies) below)
 
-```py title="unused_dependencies.py"
+```python {title="unused_dependencies.py"}
 from dataclasses import dataclass
 
 import httpx
@@ -54,7 +54,7 @@ _(This example is complete, it can be run "as is")_
 Dependencies are accessed through the [`RunContext`][pydantic_ai.tools.RunContext] type, this should be the first parameter of system prompt functions etc.
 
 
-```py title="system_prompt_dependencies.py" hl_lines="20-27"
+```python {title="system_prompt_dependencies.py" hl_lines="20-27"}
 from dataclasses import dataclass
 
 import httpx
@@ -101,7 +101,7 @@ _(This example is complete, it can be run "as is")_
 
 ### Asynchronous vs. Synchronous dependencies
 
-[System prompt functions](agents.md#system-prompts), [function tools](agents.md#function-tools) and [result validators](results.md#result-validators-functions) are all run in the async context of an agent run.
+[System prompt functions](agents.md#system-prompts), [function tools](tools.md) and [result validators](results.md#result-validators-functions) are all run in the async context of an agent run.
 
 If these functions are not coroutines (e.g. `async def`) they are called with
 [`run_in_executor`][asyncio.loop.run_in_executor] in a thread pool, it's therefore marginally preferable
@@ -112,7 +112,7 @@ to use `async` methods where dependencies perform IO, although synchronous depen
 
 Here's the same example as above, but with a synchronous dependency:
 
-```py title="sync_dependencies.py"
+```python {title="sync_dependencies.py"}
 from dataclasses import dataclass
 
 import httpx
@@ -158,9 +158,9 @@ _(This example is complete, it can be run "as is")_
 
 ## Full Example
 
-As well as system prompts, dependencies can be used in [tools](agents.md#function-tools) and [result validators](results.md#result-validators-functions).
+As well as system prompts, dependencies can be used in [tools](tools.md) and [result validators](results.md#result-validators-functions).
 
-```py title="full_example.py" hl_lines="27-35 38-48"
+```python {title="full_example.py" hl_lines="27-35 38-48"}
 from dataclasses import dataclass
 
 import httpx
@@ -233,7 +233,7 @@ while calling application code which in turn calls the agent.
 
 This is done via the [`override`][pydantic_ai.Agent.override] method on the agent.
 
-```py title="joke_app.py"
+```python {title="joke_app.py"}
 from dataclasses import dataclass
 
 import httpx
@@ -275,7 +275,7 @@ async def application_code(prompt: str) -> str:  # (3)!
 3. Application code that calls the agent, in a real application this might be an API endpoint.
 4. Call the agent from within the application code, in a real application this call might be deep within a call stack. Note `app_deps` here will NOT be used when deps are overridden.
 
-```py title="test_joke_app.py" hl_lines="10-12"
+```python {title="test_joke_app.py" hl_lines="10-12" call_name="test_application_code"}
 from joke_app import MyDeps, application_code, joke_agent
 
 
@@ -300,7 +300,7 @@ async def test_application_code():
 
 Since dependencies can be any python type, and agents are just python objects, agents can be dependencies of other agents.
 
-```py title="agents_as_dependencies.py"
+```python {title="agents_as_dependencies.py"}
 from dataclasses import dataclass
 
 from pydantic_ai import Agent, RunContext
