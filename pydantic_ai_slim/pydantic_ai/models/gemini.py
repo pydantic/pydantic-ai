@@ -10,7 +10,7 @@ from datetime import datetime
 from typing import Annotated, Any, Literal, Protocol, Union
 
 import pydantic_core
-from httpx import AsyncClient as AsyncHTTPClient, Response as HTTPResponse
+from httpx import USE_CLIENT_DEFAULT, AsyncClient as AsyncHTTPClient, Response as HTTPResponse
 from pydantic import Discriminator, Field, Tag
 from typing_extensions import NotRequired, TypedDict, TypeGuard, assert_never
 
@@ -200,7 +200,16 @@ class GeminiAgentModel(AgentModel):
         if self.tool_config is not None:
             request_data['tool_config'] = self.tool_config
 
-        # TODO: add model_settings to request_data here?
+        generation_config: _GeminiGenerationConfig = {}
+        if model_settings:
+            if (max_tokens := model_settings.get('max_tokens')) is not None:
+                generation_config['max_output_tokens'] = max_tokens
+            if (temperature := model_settings.get('temperature')) is not None:
+                generation_config['temperature'] = temperature
+            if (top_p := model_settings.get('top_p')) is not None:
+                generation_config['top_p'] = top_p
+        if generation_config:
+            request_data['generation_config'] = generation_config
 
         url = self.url + ('streamGenerateContent' if streamed else 'generateContent')
 
@@ -212,7 +221,13 @@ class GeminiAgentModel(AgentModel):
 
         request_json = _gemini_request_ta.dump_json(request_data, by_alias=True)
 
-        async with self.http_client.stream('POST', url, content=request_json, headers=headers) as r:
+        async with self.http_client.stream(
+            'POST',
+            url,
+            content=request_json,
+            headers=headers,
+            timeout=(model_settings or {}).get('timeout', USE_CLIENT_DEFAULT),
+        ) as r:
             if r.status_code != 200:
                 await r.aread()
                 raise exceptions.UnexpectedModelBehavior(f'Unexpected response from gemini {r.status_code}', r.text)
@@ -391,6 +406,20 @@ class _GeminiRequest(TypedDict):
     Developer generated system instructions, see
     <https://ai.google.dev/gemini-api/docs/system-instructions?lang=rest>
     """
+    generation_config: NotRequired[_GeminiGenerationConfig]
+
+
+class _GeminiGenerationConfig(TypedDict, total=False):
+    """Schema for an API request to the Gemini API.
+
+    Note there are many additional fields available that have not been added yet.
+
+    See <https://ai.google.dev/api/generate-content#generationconfig> for API docs.
+    """
+
+    max_output_tokens: int
+    temperature: float
+    top_p: float
 
 
 class _GeminiContent(TypedDict):
