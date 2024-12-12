@@ -385,7 +385,7 @@ To use [Ollama](https://ollama.com/), you must first download the Ollama client,
 from pydantic_ai import Agent
 from pydantic_ai.models.ollama import OllamaModel
 
-model =model = OllamaModel(model_name="llama3.1", base_url = "http://localhost:11434/v1")
+model = OllamaModel(model_name="llama3.1", base_url = "http://localhost:11434/v1")
 agent = Agent(model)
 ...
 ```
