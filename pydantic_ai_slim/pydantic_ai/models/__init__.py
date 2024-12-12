@@ -17,7 +17,7 @@ import httpx
 
 from ..exceptions import UserError
 from ..messages import Message, ModelAnyResponse, ModelStructuredResponse
-from ..settings import ModelRequestSettings
+from ..settings import ModelSettings
 
 if TYPE_CHECKING:
     from ..result import Cost
@@ -114,14 +114,14 @@ class AgentModel(ABC):
 
     @abstractmethod
     async def request(
-        self, messages: list[Message], model_request_settings: ModelRequestSettings | None
+        self, messages: list[Message], model_settings: ModelSettings | None
     ) -> tuple[ModelAnyResponse, Cost]:
         """Make a request to the model."""
         raise NotImplementedError()
 
     @asynccontextmanager
     async def request_stream(
-        self, messages: list[Message], model_request_settings: ModelRequestSettings | None
+        self, messages: list[Message], model_settings: ModelSettings | None
     ) -> AsyncIterator[EitherStreamedResponse]:
         """Make a request to the model and return a streaming response."""
         raise NotImplementedError(f'Streamed requests not supported by this {self.__class__.__name__}')

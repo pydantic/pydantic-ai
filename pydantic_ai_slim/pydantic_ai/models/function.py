@@ -14,7 +14,7 @@ from typing_extensions import TypeAlias, assert_never, overload
 
 from .. import _utils, result
 from ..messages import ArgsJson, Message, ModelAnyResponse, ModelStructuredResponse, ToolCall
-from ..settings import ModelRequestSettings
+from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from . import AgentModel, EitherStreamedResponse, Model, StreamStructuredResponse, StreamTextResponse
 
@@ -129,7 +129,7 @@ class FunctionAgentModel(AgentModel):
     agent_info: AgentInfo
 
     async def request(
-        self, messages: list[Message], model_request_settings: ModelRequestSettings | None = None
+        self, messages: list[Message], model_settings: ModelSettings | None = None
     ) -> tuple[ModelAnyResponse, result.Cost]:
         assert self.function is not None, 'FunctionModel must receive a `function` to support non-streamed requests'
         if inspect.iscoroutinefunction(self.function):
@@ -142,7 +142,7 @@ class FunctionAgentModel(AgentModel):
 
     @asynccontextmanager
     async def request_stream(
-        self, messages: list[Message], model_request_settings: ModelRequestSettings | None = None
+        self, messages: list[Message], model_settings: ModelSettings | None = None
     ) -> AsyncIterator[EitherStreamedResponse]:
         assert (
             self.stream_function is not None

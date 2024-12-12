@@ -25,7 +25,7 @@ from ..messages import (
     ToolCall,
     ToolReturn,
 )
-from ..settings import ModelRequestSettings
+from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from . import (
     AgentModel,
@@ -166,22 +166,22 @@ class GeminiAgentModel(AgentModel):
         self.url = url
 
     async def request(
-        self, messages: list[Message], model_request_settings: ModelRequestSettings | None = None
+        self, messages: list[Message], model_settings: ModelSettings | None = None
     ) -> tuple[ModelAnyResponse, result.Cost]:
-        async with self._make_request(messages, False, model_request_settings) as http_response:
+        async with self._make_request(messages, False, model_settings) as http_response:
             response = _gemini_response_ta.validate_json(await http_response.aread())
         return self._process_response(response), _metadata_as_cost(response)
 
     @asynccontextmanager
     async def request_stream(
-        self, messages: list[Message], model_request_settings: ModelRequestSettings | None = None
+        self, messages: list[Message], model_settings: ModelSettings | None = None
     ) -> AsyncIterator[EitherStreamedResponse]:
-        async with self._make_request(messages, True, model_request_settings) as http_response:
+        async with self._make_request(messages, True, model_settings) as http_response:
             yield await self._process_streamed_response(http_response)
 
     @asynccontextmanager
     async def _make_request(
-        self, messages: list[Message], streamed: bool, model_request_settings: ModelRequestSettings | None = None
+        self, messages: list[Message], streamed: bool, model_settings: ModelSettings | None = None
     ) -> AsyncIterator[HTTPResponse]:
         contents: list[_GeminiContent] = []
         sys_prompt_parts: list[_GeminiTextPart] = []
@@ -200,7 +200,7 @@ class GeminiAgentModel(AgentModel):
         if self.tool_config is not None:
             request_data['tool_config'] = self.tool_config
 
-        # TODO: add model_request_settings to request_data here?
+        # TODO: add model_settings to request_data here?
 
         url = self.url + ('streamGenerateContent' if streamed else 'generateContent')
 

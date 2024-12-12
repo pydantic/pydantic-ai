@@ -4,7 +4,7 @@ from httpx import Timeout
 from typing_extensions import TypedDict
 
 
-class ModelRequestSettings(TypedDict, total=False):
+class ModelSettings(TypedDict, total=False):
     """The runtime settings for a model's request / message creation."""
 
     max_tokens: int
