@@ -439,4 +439,11 @@ async def test_request_result_type_with_arguments_str_response(allow_model_reque
 #####################
 ## Completion Function call
 #####################
-####################### Completion Model Structured Stream (Json Mode)###################### TODO####################### Completion Model Structured Stream (Json Mode)###################### TODO
+
+# TODO
+
+#####################
+## Completion Model Structured Stream (Json Mode)
+#####################
+
+# TODO
