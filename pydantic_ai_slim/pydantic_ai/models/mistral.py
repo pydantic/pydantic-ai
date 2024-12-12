@@ -55,7 +55,7 @@ try:
 except ImportError as e:
     raise ImportError(
         'Please install `mistral` to use the Mistral model, '
-        "you can use the `mistral` optional group — `pip install 'pydantic-ai[mistral]'`"
+        "you can use the `mistral` optional group — `pip install 'pydantic-ai-slim[mistral]'`"
     ) from e
 
 MistralModelName = Literal[
