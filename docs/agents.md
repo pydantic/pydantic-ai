@@ -100,6 +100,28 @@ You can also pass messages from previous runs to continue a conversation or prov
     nest_asyncio.apply()
     ```
 
+### Additional Configuration
+
+PydanticAI offers a [`settings.ModelSettings`][pydantic_ai.settings.ModelSettings] structure to help you fine tune your requests.
+You can configure common things like `temperature`, `max_tokens`, and `timeout` with ths structure.
+
+This can either be passed via the `model_settings` argument to any of the `run{_sync,_stream}` calls,
+or added to an [`Agent`][pydantic_ai.agent.Agent] during initialization. `model_settings` specified on a
+`run{_sync,_stream}` call take precedence over those specified on an agent.
+
+For example, if you'd like to set the `temperature` setting to `0.0` to ensure less random behavior,
+you can do the following:
+
+```py
+from pydantic_ai import Agent
+
+agent = Agent('openai:gpt-4o')
+
+result_sync = agent.run_sync('What is the capital of Italy?', model_settings={'temperature': 0.0})
+print(result_sync.data)
+#> Rome
+```
+
 ## Runs vs. Conversations
 
 An agent **run** might represent an entire conversation — there's no limit to how many messages can be exchanged in a single run. However, a **conversation** might also be composed of multiple runs, especially if you need to maintain state between separate interactions or API calls.
