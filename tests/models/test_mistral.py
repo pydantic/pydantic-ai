@@ -43,6 +43,7 @@ with try_import() as imports_successful:
         UserPrompt,
     )
     from pydantic_ai.models.mistral import MistralModel
+
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='mistral not installed'),
     pytest.mark.anyio,
@@ -161,8 +162,8 @@ async def test_multiple_completions(allow_model_requests: None):
         completion_message(MistralAssistantMessage(content='hello again')),
     ]
     mock_client = MockMistralAI.create_mock(completions)
-    m = MistralModel('mistral-large-latest', client=mock_client)
-    agent = Agent(m)
+    model = MistralModel('mistral-large-latest', client=mock_client)
+    agent = Agent(model=model)
 
     # When
     result = await agent.run('hello')
@@ -192,8 +193,8 @@ async def test_three_completions(allow_model_requests: None):
         completion_message(MistralAssistantMessage(content='final message')),
     ]
     mock_client = MockMistralAI.create_mock(completions)
-    m = MistralModel('mistral-large-latest', client=mock_client)
-    agent = Agent(m)
+    model = MistralModel('mistral-large-latest', client=mock_client)
+    agent = Agent(model=model)
 
     # When
     result = await agent.run('hello')
@@ -230,8 +231,8 @@ async def test_stream_text(allow_model_requests: None):
     # Given
     stream = [text_chunk('hello '), text_chunk('world '), text_chunk('welcome '), text_chunk('mistral'), chunk([])]
     mock_client = MockMistralAI.create_stream_mock(stream)
-    m = MistralModel('mistral-large-latest', client=mock_client)
-    agent = Agent(model=m)
+    model = MistralModel('mistral-large-latest', client=mock_client)
+    agent = Agent(model=model)
 
     # When
     async with agent.run_stream('') as result:
@@ -249,8 +250,8 @@ async def test_stream_text_finish_reason(allow_model_requests: None):
     # Given
     stream = [text_chunk('hello '), text_chunk('world'), text_chunk('.', finish_reason='stop')]
     mock_client = MockMistralAI.create_stream_mock(stream)
-    m = MistralModel('mistral-large-latest', client=mock_client)
-    agent = Agent(model=m)
+    model = MistralModel('mistral-large-latest', client=mock_client)
+    agent = Agent(model=model)
 
     # When
     async with agent.run_stream('') as result:
@@ -265,8 +266,8 @@ async def test_no_delta(allow_model_requests: None):
     # Given
     stream = [chunk([]), text_chunk('hello '), text_chunk('world')]
     mock_client = MockMistralAI.create_stream_mock(stream)
-    m = MistralModel('mistral-large-latest', client=mock_client)
-    agent = Agent(m)
+    model = MistralModel('mistral-large-latest', client=mock_client)
+    agent = Agent(model=model)
 
     # When
     async with agent.run_stream('') as result:
@@ -303,8 +304,8 @@ async def test_request_model_structured_with_arguments_dict_response(allow_model
         )
     )
     mock_client = MockMistralAI.create_mock(completion)
-    m = MistralModel('mistral-large-latest', client=mock_client)
-    agent = Agent(model=m, result_type=CityLocation)
+    model = MistralModel('mistral-large-latest', client=mock_client)
+    agent = Agent(model=model, result_type=CityLocation)
 
     # When
     result = await agent.run('User prompt value')
@@ -356,8 +357,8 @@ async def test_request_model_structured_with_arguments_str_response(allow_model_
         )
     )
     mock_client = MockMistralAI.create_mock(completion)
-    m = MistralModel('mistral-large-latest', client=mock_client)
-    agent = Agent(model=m, result_type=CityLocation)
+    model = MistralModel('mistral-large-latest', client=mock_client)
+    agent = Agent(model=model, result_type=CityLocation)
 
     # When
     result = await agent.run('User prompt value')
@@ -403,8 +404,8 @@ async def test_request_result_type_with_arguments_str_response(allow_model_reque
         )
     )
     mock_client = MockMistralAI.create_mock(completion)
-    m = MistralModel('mistral-large-latest', client=mock_client)
-    agent = Agent(model=m, result_type=int, system_prompt='System prompt value')
+    model = MistralModel('mistral-large-latest', client=mock_client)
+    agent = Agent(model=model, result_type=int, system_prompt='System prompt value')
 
     # When
     result = await agent.run('User prompt value')
@@ -433,3 +434,8 @@ async def test_request_result_type_with_arguments_str_response(allow_model_reque
             ),
         ]
     )
+
+
+#####################
+## Completion Structured Stream
+#####################
