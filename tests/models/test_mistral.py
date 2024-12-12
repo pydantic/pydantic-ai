@@ -12,6 +12,8 @@ from inline_snapshot import snapshot
 from ..conftest import IsNow, try_import
 
 with try_import() as imports_successful:
+    import json
+
     from mistralai import (
         AssistantMessage as MistralAssistantMessage,
         ChatCompletionChoice as MistralChatCompletionChoice,
@@ -176,7 +178,7 @@ async def test_multiple_completions(allow_model_requests: None):
     completions = [
         completion_message(
             MistralAssistantMessage(content='world'),
-            usage=MistralUsageInfo(prompt_tokens=1, completion_tokens=2, total_tokens=3),
+            usage=MistralUsageInfo(prompt_tokens=1, completion_tokens=1, total_tokens=1),
         ),
         completion_message(MistralAssistantMessage(content='hello again')),
     ]
@@ -190,12 +192,14 @@ async def test_multiple_completions(allow_model_requests: None):
     # Then
     assert result.data == 'world'
     assert result.cost().request_tokens == 1
-    assert result.cost().response_tokens == 2
-    assert result.cost().total_tokens == 3
+    assert result.cost().response_tokens == 1
+    assert result.cost().total_tokens == 1
 
     result = await agent.run('hello again', message_history=result.new_messages())
     assert result.data == 'hello again'
-    assert result.cost().request_tokens == 0
+    assert result.cost().request_tokens == 1
+    assert result.cost().response_tokens == 1
+    assert result.cost().total_tokens == 1
     assert result.all_messages() == snapshot(
         [
             UserPrompt(content='hello', timestamp=IsNow(tz=timezone.utc)),
@@ -211,7 +215,7 @@ async def test_three_completions(allow_model_requests: None):
     completions = [
         completion_message(
             MistralAssistantMessage(content='world'),
-            usage=MistralUsageInfo(prompt_tokens=1, completion_tokens=2, total_tokens=3),
+            usage=MistralUsageInfo(prompt_tokens=1, completion_tokens=1, total_tokens=1),
         ),
         completion_message(MistralAssistantMessage(content='hello again')),
         completion_message(MistralAssistantMessage(content='final message')),
@@ -226,16 +230,20 @@ async def test_three_completions(allow_model_requests: None):
     # Them
     assert result.data == 'world'
     assert result.cost().request_tokens == 1
-    assert result.cost().response_tokens == 2
-    assert result.cost().total_tokens == 3
+    assert result.cost().response_tokens == 1
+    assert result.cost().total_tokens == 1
 
     result = await agent.run('hello again', message_history=result.all_messages())
     assert result.data == 'hello again'
-    assert result.cost().request_tokens == 0
+    assert result.cost().request_tokens == 1
+    assert result.cost().response_tokens == 1
+    assert result.cost().total_tokens == 1
 
     result = await agent.run('final message', message_history=result.all_messages())
     assert result.data == 'final message'
-    assert result.cost().request_tokens == 0
+    assert result.cost().request_tokens == 1
+    assert result.cost().response_tokens == 1
+    assert result.cost().total_tokens == 1
     assert result.all_messages() == snapshot(
         [
             UserPrompt(content='hello', timestamp=IsNow(tz=timezone.utc)),
@@ -269,9 +277,9 @@ async def test_stream_text(allow_model_requests: None):
             ['hello ', 'hello world ', 'hello world welcome ', 'hello world welcome mistral']
         )
         assert result.is_complete
-        assert result.cost().request_tokens == 1
-        assert result.cost().response_tokens == 2
-        assert result.cost().total_tokens == 3
+        assert result.cost().request_tokens == 5
+        assert result.cost().response_tokens == 5
+        assert result.cost().total_tokens == 5
 
 
 async def test_stream_text_finish_reason(allow_model_requests: None):
@@ -304,8 +312,8 @@ async def test_no_delta(allow_model_requests: None):
         assert not result.is_complete
         assert [c async for c in result.stream(debounce_by=None)] == snapshot(['hello ', 'hello world'])
         assert result.is_complete
-        assert result.cost().request_tokens == 1
-        assert result.cost().response_tokens == 2
+        assert result.cost().request_tokens == 3
+        assert result.cost().response_tokens == 3
         assert result.cost().total_tokens == 3
 
 
@@ -786,9 +794,9 @@ async def test_request_tool_call(allow_model_requests: None):
             ModelTextResponse(content='final response', timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc)),
         ]
     )
-    assert result.cost().request_tokens == 5
-    assert result.cost().response_tokens == 3
-    assert result.cost().total_tokens == 9
+    assert result.cost().request_tokens == 6
+    assert result.cost().response_tokens == 4
+    assert result.cost().total_tokens == 10
 
 
 #####################
