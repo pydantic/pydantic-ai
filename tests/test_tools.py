@@ -2,6 +2,7 @@ import json
 from dataclasses import dataclass
 from typing import Annotated, Any, Callable, Union
 
+import pydantic_core
 import pytest
 from inline_snapshot import snapshot
 from pydantic import BaseModel, Field
@@ -73,7 +74,7 @@ async def google_style_docstring(foo: int, bar: str) -> str:  # pragma: no cover
 async def get_json_schema(_messages: list[Message], info: AgentInfo) -> ModelAnyResponse:
     assert len(info.function_tools) == 1
     r = info.function_tools[0]
-    return ModelTextResponse(json.dumps(r.parameters_json_schema))
+    return ModelTextResponse(pydantic_core.to_json(r).decode())
 
 
 def test_docstring_google(set_event_loop: None):
@@ -84,18 +85,25 @@ def test_docstring_google(set_event_loop: None):
     json_schema = json.loads(result.data)
     assert json_schema == snapshot(
         {
+            'name': 'google_style_docstring',
             'description': 'Do foobar stuff, a lot.',
-            'additionalProperties': False,
-            'properties': {
-                'foo': {'description': 'The foo thing.', 'title': 'Foo', 'type': 'integer'},
-                'bar': {'description': 'The bar thing.', 'title': 'Bar', 'type': 'string'},
+            'parameters_json_schema': {
+                'properties': {
+                    'foo': {'description': 'The foo thing.', 'title': 'Foo', 'type': 'integer'},
+                    'bar': {'description': 'The bar thing.', 'title': 'Bar', 'type': 'string'},
+                },
+                'required': ['foo', 'bar'],
+                'type': 'object',
+                'additionalProperties': False,
             },
-            'required': ['foo', 'bar'],
-            'type': 'object',
+            'outer_typed_dict_key': None,
         }
     )
-    # description should be the first key
-    assert next(iter(json_schema)) == 'description'
+    keys = list(json_schema.keys())
+    # name should be the first key
+    assert keys[0] == 'name'
+    # description should be the second key
+    assert keys[1] == 'description'
 
 
 def sphinx_style_docstring(foo: int, /) -> str:  # pragma: no cover
@@ -115,13 +123,15 @@ def test_docstring_sphinx(set_event_loop: None):
     json_schema = json.loads(result.data)
     assert json_schema == snapshot(
         {
+            'name': 'sphinx_style_docstring',
             'description': 'Sphinx style docstring.',
-            'additionalProperties': False,
-            'properties': {
-                'foo': {'description': 'The foo thing.', 'title': 'Foo', 'type': 'integer'},
+            'parameters_json_schema': {
+                'properties': {'foo': {'description': 'The foo thing.', 'title': 'Foo', 'type': 'integer'}},
+                'required': ['foo'],
+                'type': 'object',
+                'additionalProperties': False,
             },
-            'required': ['foo'],
-            'type': 'object',
+            'outer_typed_dict_key': None,
         }
     )
 
@@ -147,14 +157,18 @@ def test_docstring_numpy(set_event_loop: None):
     json_schema = json.loads(result.data)
     assert json_schema == snapshot(
         {
+            'name': 'numpy_style_docstring',
             'description': 'Numpy style docstring.',
-            'additionalProperties': False,
-            'properties': {
-                'foo': {'description': 'The foo thing.', 'title': 'Foo', 'type': 'integer'},
-                'bar': {'description': 'The bar thing.', 'title': 'Bar', 'type': 'string'},
+            'parameters_json_schema': {
+                'properties': {
+                    'foo': {'description': 'The foo thing.', 'title': 'Foo', 'type': 'integer'},
+                    'bar': {'description': 'The bar thing.', 'title': 'Bar', 'type': 'string'},
+                },
+                'required': ['foo', 'bar'],
+                'type': 'object',
+                'additionalProperties': False,
             },
-            'required': ['foo', 'bar'],
-            'type': 'object',
+            'outer_typed_dict_key': None,
         }
     )
 
@@ -172,10 +186,10 @@ def test_docstring_unknown(set_event_loop: None):
     json_schema = json.loads(result.data)
     assert json_schema == snapshot(
         {
+            'name': 'unknown_docstring',
             'description': 'Unknown style docstring.',
-            'additionalProperties': True,
-            'properties': {},
-            'type': 'object',
+            'parameters_json_schema': {'properties': {}, 'type': 'object', 'additionalProperties': True},
+            'outer_typed_dict_key': None,
         }
     )
 
@@ -201,13 +215,16 @@ def test_docstring_google_no_body(set_event_loop: None):
     json_schema = json.loads(result.data)
     assert json_schema == snapshot(
         {
-            'additionalProperties': False,
+            'name': 'google_style_docstring_no_body', 'description': '', 'parameters_json_schema': {
             'properties': {
-                'foo': {'description': 'The foo thing.', 'title': 'Foo', 'type': 'integer'},
-                'bar': {'description': 'from fields', 'title': 'Bar', 'type': 'string'},
+                    'foo': {'description': 'The foo thing.', 'title': 'Foo', 'type': 'integer'},
+                    'bar': {'description': 'from fields', 'title': 'Bar', 'type': 'string'},
+                },
+                'required': ['foo', 'bar'],
+                'type': 'object',
+                'additionalProperties': False,
             },
-            'required': ['foo', 'bar'],
-            'type': 'object',
+            'outer_typed_dict_key': None
         }
     )
 
@@ -228,10 +245,18 @@ def test_takes_just_model(set_event_loop: None):
     json_schema = json.loads(result.data)
     assert json_schema == snapshot(
         {
-            'title': 'Foo',
-            'properties': {'x': {'title': 'X', 'type': 'integer'}, 'y': {'title': 'Y', 'type': 'string'}},
-            'required': ['x', 'y'],
-            'type': 'object',
+            'name': 'takes_just_model',
+            'description': None,
+            'parameters_json_schema': {
+            'properties': {
+                    'x': {'title': 'X', 'type': 'integer'},
+                    'y': {'title': 'Y', 'type': 'string'},
+                },
+                'required': ['x', 'y'],
+                'title': 'Foo',
+                'type': 'object',
+            },
+            'outer_typed_dict_key': None
         }
     )
 
@@ -250,24 +275,29 @@ def test_takes_model_and_int(set_event_loop: None):
     json_schema = json.loads(result.data)
     assert json_schema == snapshot(
         {
-            '$defs': {
-                'Foo': {
-                    'properties': {
-                        'x': {'title': 'X', 'type': 'integer'},
-                        'y': {'title': 'Y', 'type': 'string'},
-                    },
-                    'required': ['x', 'y'],
-                    'title': 'Foo',
-                    'type': 'object',
-                }
+            'name': 'takes_just_model',
+            'description': '',
+            'parameters_json_schema': {
+                '$defs': {
+                    'Foo': {
+                        'properties': {
+                            'x': {'title': 'X', 'type': 'integer'},
+                            'y': {'title': 'Y', 'type': 'string'},
+                        },
+                        'required': ['x', 'y'],
+                        'title': 'Foo',
+                        'type': 'object',
+                    }
+                },
+                'properties': {
+                    'model': {'$ref': '#/$defs/Foo'},
+                    'z': {'title': 'Z', 'type': 'integer'},
+                },
+                'required': ['model', 'z'],
+                'type': 'object',
+                'additionalProperties': False,
             },
-            'additionalProperties': False,
-            'properties': {
-                'model': {'$ref': '#/$defs/Foo'},
-                'z': {'title': 'Z', 'type': 'integer'},
-            },
-            'required': ['model', 'z'],
-            'type': 'object',
+            'outer_typed_dict_key': None
         }
     )
 

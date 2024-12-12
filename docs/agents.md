@@ -479,7 +479,6 @@ def print_schema(messages: list[Message], info: AgentInfo) -> ModelAnyResponse:
     print(tool.parameters_json_schema)
     """
     {
-        'description': 'Get me foobar.',
         'properties': {
             'a': {'description': 'apple pie', 'title': 'A', 'type': 'integer'},
             'b': {'description': 'banana cake', 'title': 'B', 'type': 'string'},
@@ -540,9 +539,8 @@ print(test_model.agent_model_function_tools)
 [
     ToolDefinition(
         name='foobar',
-        description='',
+        description='This is a Foobar',
         parameters_json_schema={
-            'description': 'This is a Foobar',
             'properties': {
                 'x': {'title': 'X', 'type': 'integer'},
                 'y': {'title': 'Y', 'type': 'string'},
