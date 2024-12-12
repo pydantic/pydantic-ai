@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from typing import Any, Callable, Literal
 
 from httpx import AsyncClient as AsyncHTTPClient
+from mistralai import Content, OptionalNullable
 from typing_extensions import assert_never
 
 from .. import UnexpectedModelBehavior
@@ -317,7 +318,7 @@ class MistralAgentModel(AgentModel):
         """Process a streamed response, and prepare a streaming response to return."""
         start_cost = Cost()
 
-        # the first chunk may contain enough information so we iterate until we get either `tool_calls` or `content`
+        # Iterate until we get either `tool_calls` or `content` from the first chunk.
         while True:
             try:
                 event = await response.__anext__()
@@ -335,19 +336,7 @@ class MistralAgentModel(AgentModel):
 
             if chunk.choices:
                 delta = chunk.choices[0].delta
-                content: str | None = None
-
-                if isinstance(delta.content, list) and isinstance(delta.content[0], MistralTextChunk):
-                    content = delta.content[0].text
-                elif isinstance(delta.content, str):
-                    content = delta.content
-                elif isinstance(delta.content, MistralUnset):
-                    pass
-                else:
-                    assert False, f'Other type of instance, Will manage in the futur (Image, Reference), object:{delta}'
-
-                if content and content == '':
-                    content = None
+                content = _map_delta_content(delta.content)
 
                 tool_calls: list[MistralToolCall] | None = None
                 if isinstance(delta.tool_calls, list):
@@ -363,11 +352,12 @@ class MistralAgentModel(AgentModel):
                         timestamp,
                         start_cost,
                     )
+
                 elif content:
                     return MistralStreamTextResponse(content, response, timestamp, start_cost)
+
                 elif tool_calls and not result_tools:
                     tool_calls_param = {c.id if c.id else 'null': c for c in tool_calls}
-
                     return MistralStreamStructuredResponse(
                         is_function_tools,
                         result_tools,
@@ -481,19 +471,11 @@ class MistralStreamStructuredResponse(StreamStructuredResponse):
         if choice.finish_reason is not None:
             raise StopAsyncIteration()
 
-        delta_content = choice.delta.content
-        content: str | None = None
-        if isinstance(delta_content, list) and isinstance(delta_content[0], MistralTextChunk):
-            content = delta_content[0].text
-        elif isinstance(delta_content, str):
-            content = delta_content
-        elif isinstance(delta_content, MistralUnset):
-            content = None
-        else:
-            assert False, f'Other type of instance, Will manage in the futur (Image, Reference), object:{delta_content}'
+        delta = choice.delta
+        content = _map_delta_content(delta.content)
 
         if self._delta_tool_calls and self._result_tools or self._delta_tool_calls:
-            for new in choice.delta.tool_calls or []:
+            for new in delta.tool_calls or []:
                 if current := self._delta_tool_calls.get(new.id or 'null'):
                     current.function = new.function
                 else:
@@ -507,10 +489,9 @@ class MistralStreamStructuredResponse(StreamStructuredResponse):
     def get(self, *, final: bool = False) -> ModelStructuredResponse:
         calls: list[ToolCall] = []
         if self._delta_tool_calls and self._result_tools or self._delta_tool_calls:
-            for c in self._delta_tool_calls.values():
-                if f := c.function:
-                    tool = _map_mistral_to_pydantic_tool_call(f)
-                    calls.append(tool)
+            for tool_call in self._delta_tool_calls.values():
+                tool = _map_mistral_to_pydantic_tool_call(tool_call)
+                calls.append(tool)
         elif self._delta_content:
             # NOTE: Params set for the most efficient and fastest way.
             decoded_object = repair_json(self._delta_content, return_objects=True, skip_json_loads=True)
@@ -580,11 +561,9 @@ def _generate_jsom_simple_schemas(schemas: list[dict[str, Any]]) -> list[dict[st
     return examples
 
 
-def _map_mistral_to_pydantic_tool_call(func_call: MistralFunctionCall | MistralToolCall) -> ToolCall:
-    tool_call_id: str | None = None
-    if isinstance(func_call, MistralToolCall):
-        tool_call_id = func_call.id or None
-        func_call = func_call.function
+def _map_mistral_to_pydantic_tool_call(tool_call: MistralToolCall) -> ToolCall:
+    tool_call_id = tool_call.id or None
+    func_call = tool_call.function
 
     if isinstance(func_call.arguments, str):
         return ToolCall.from_json(
@@ -621,3 +600,22 @@ def _map_cost(response: MistralChatCompletionResponse | MistralCompletionChunk) 
         )
     else:
         return Cost()
+
+
+def _map_delta_content(delta_content: OptionalNullable[Content]) -> str | None:
+    content: str | None = None
+
+    if isinstance(delta_content, list) and isinstance(delta_content[0], MistralTextChunk):
+        content = delta_content[0].text
+    elif isinstance(delta_content, str):
+        content = delta_content
+    elif isinstance(delta_content, MistralUnset):
+        content = None
+    else:
+        assert (
+            False
+        ), f'Other type of instance, Will manage in the futur (Image, Reference), delta content:{delta_content}'
+
+    if content and content == '':
+        content = None
+    return content
