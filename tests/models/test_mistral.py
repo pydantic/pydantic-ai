@@ -1,11 +1,10 @@
 from __future__ import annotations as _annotations
 
-import json
 from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from functools import cached_property
-from typing import Any, cast
+from typing import Any, TypedDict, cast
 
 import pytest
 from inline_snapshot import snapshot
@@ -72,20 +71,17 @@ class MockMistralAI:
     completions: MistralChatCompletionResponse | list[MistralChatCompletionResponse] | None = None
     stream: list[MistralCompletionEvent] | None = None
     index = 0
-    sync: bool = False
 
     @cached_property
     def chat(self) -> Any:
-        if self.sync:
-            return type('Chat', (), {'complete': self.chat_completions_create})
-        elif self.stream:
-            return type('Chat', (), {'stream_async': self.chat_completions_create})
+        if self.stream:
+            return type(
+                'Chat',
+                (),
+                {'stream_async': self.chat_completions_create, 'complete_async': self.chat_completions_create},
+            )
         else:
             return type('Chat', (), {'complete_async': self.chat_completions_create})
-
-    @classmethod
-    def create_sync_mock(cls, completions: MistralChatCompletionResponse) -> Mistral:
-        return cast(Mistral, cls(completions=completions, sync=True))
 
     @classmethod
     def create_mock(cls, completions: MistralChatCompletionResponse | list[MistralChatCompletionResponse]) -> Mistral:
@@ -125,7 +121,7 @@ def completion_message(
         created=1704067200,  # 2024-01-01
         model='mistral-large-latest',
         object='chat.completion',
-        usage=usage or MistralUsageInfo(prompt_tokens=0, completion_tokens=0, total_tokens=0),
+        usage=usage or MistralUsageInfo(prompt_tokens=1, completion_tokens=1, total_tokens=1),
     )
 
 
@@ -142,7 +138,7 @@ def chunk(
             created=1704067200,  # 2024-01-01
             model='gpt-4',
             object='chat.completion.chunk',
-            usage=MistralUsageInfo(prompt_tokens=1, completion_tokens=2, total_tokens=3),
+            usage=MistralUsageInfo(prompt_tokens=1, completion_tokens=1, total_tokens=1),
         )
     )
 
@@ -151,6 +147,23 @@ def text_chunk(
     text: str, finish_reason: MistralCompletionResponseStreamChoiceFinishReason | None = None
 ) -> MistralCompletionEvent:
     return chunk([MistralDeltaMessage(content=text, role='assistant')], finish_reason=finish_reason)
+
+
+def struc_chunk(
+    tool_name: str,
+    tool_arguments: str,
+    finish_reason: MistralCompletionResponseStreamChoiceFinishReason | None = None,
+) -> MistralCompletionEvent:
+    return chunk(
+        [
+            MistralDeltaMessage(
+                tool_calls=[
+                    MistralToolCall(id='0', function=MistralFunctionCall(name=tool_name, arguments=tool_arguments))
+                ]
+            ),
+        ],
+        finish_reason=finish_reason,
+    )
 
 
 #####################
@@ -461,12 +474,224 @@ async def test_request_result_type_with_arguments_str_response(allow_model_reque
 ## Completion Model Structured Stream (Json Mode)
 #####################
 
-# TODO
+
+async def test_stream_structured(allow_model_requests: None):
+    class MyTypedDict(TypedDict, total=False):
+        first: str
+        second: str
+
+    # Given
+    stream = [text_chunk('{"first": "One'), text_chunk('", "second": "Two"'), text_chunk('}'), chunk([])]
+
+    mock_client = MockMistralAI.create_stream_mock(stream)
+    model = MistralModel('mistral-large-latest', client=mock_client)
+    agent = Agent(model, result_type=MyTypedDict)
+
+    # When
+    async with agent.run_stream('User prompt value') as result:
+        # Then
+        assert result.is_structured
+        assert not result.is_complete
+        assert [dict(c) async for c in result.stream(debounce_by=None)] == snapshot(
+            [
+                {'first': 'One'},
+                {'first': 'One', 'second': 'Two'},
+                {'first': 'One', 'second': 'Two'},
+                {'first': 'One', 'second': 'Two'},
+            ]
+        )
+        assert result.is_complete
+        assert result.cost().request_tokens == 4
+        assert result.cost().response_tokens == 4
+        assert result.cost().total_tokens == 4
+
+        # double check cost matches stream count
+        assert result.cost().response_tokens == len(stream)
+
+
+async def test_stream_dict_parser_structured(allow_model_requests: None):
+    class MyTypedDict(TypedDict, total=False):
+        first: str
+        second: str
+
+    # Given
+    stream = [
+        text_chunk('{'),
+        text_chunk('"'),
+        text_chunk('f'),
+        text_chunk('i'),
+        text_chunk('r'),
+        text_chunk('s'),
+        text_chunk('t'),
+        text_chunk('"'),
+        text_chunk(':'),
+        text_chunk(' '),
+        text_chunk('"'),
+        text_chunk('O'),
+        text_chunk('n'),
+        text_chunk('e'),
+        text_chunk('"'),
+        text_chunk(','),
+        text_chunk(' '),
+        text_chunk('"'),
+        text_chunk('s'),
+        text_chunk('e'),
+        text_chunk('c'),
+        text_chunk('o'),
+        text_chunk('n'),
+        text_chunk('d'),
+        text_chunk('"'),
+        text_chunk(':'),
+        text_chunk(' '),
+        text_chunk('"'),
+        text_chunk('T'),
+        text_chunk('w'),
+        text_chunk('o'),
+        text_chunk('"'),
+        text_chunk('}'),
+        chunk([]),
+    ]
+
+    mock_client = MockMistralAI.create_stream_mock(stream)
+    model = MistralModel('mistral-large-latest', client=mock_client)
+    agent = Agent(model, result_type=MyTypedDict)
+
+    # When
+    async with agent.run_stream('User prompt value') as result:
+        # Then
+        assert result.is_structured
+        assert not result.is_complete
+        v = [c async for c in result.stream(debounce_by=None)]
+        assert v == snapshot(
+            [
+                {'first': 'O'},
+                {'first': 'On'},
+                {'first': 'One'},
+                {'first': 'One'},
+                {'first': 'One'},
+                {'first': 'One'},
+                {'first': 'One'},
+                {'first': 'One'},
+                {'first': 'One'},
+                {'first': 'One'},
+                {'first': 'One'},
+                {'first': 'One'},
+                {'first': 'One'},
+                {'first': 'One'},
+                {'first': 'One', 'second': ''},
+                {'first': 'One', 'second': ''},
+                {'first': 'One', 'second': ''},
+                {'first': 'One', 'second': 'T'},
+                {'first': 'One', 'second': 'Tw'},
+                {'first': 'One', 'second': 'Two'},
+                {'first': 'One', 'second': 'Two'},
+                {'first': 'One', 'second': 'Two'},
+                {'first': 'One', 'second': 'Two'},
+            ]
+        )
+        assert result.is_complete
+        assert result.cost().request_tokens == 34
+        assert result.cost().response_tokens == 34
+        assert result.cost().total_tokens == 34
+
+        # double check cost matches stream count
+        assert result.cost().response_tokens == len(stream)
+
+
+async def test_stream_basemodel_parser_structured(allow_model_requests: None):
+    class MyTypedBaseModel(BaseModel):
+        first: str = ''  # Note: Don't forget to set default values
+        second: str = ''
+
+    # Given
+    stream = [
+        text_chunk('{'),
+        text_chunk('"'),
+        text_chunk('f'),
+        text_chunk('i'),
+        text_chunk('r'),
+        text_chunk('s'),
+        text_chunk('t'),
+        text_chunk('"'),
+        text_chunk(':'),
+        text_chunk(' '),
+        text_chunk('"'),
+        text_chunk('O'),
+        text_chunk('n'),
+        text_chunk('e'),
+        text_chunk('"'),
+        text_chunk(','),
+        text_chunk(' '),
+        text_chunk('"'),
+        text_chunk('s'),
+        text_chunk('e'),
+        text_chunk('c'),
+        text_chunk('o'),
+        text_chunk('n'),
+        text_chunk('d'),
+        text_chunk('"'),
+        text_chunk(':'),
+        text_chunk(' '),
+        text_chunk('"'),
+        text_chunk('T'),
+        text_chunk('w'),
+        text_chunk('o'),
+        text_chunk('"'),
+        text_chunk('}'),
+        chunk([]),
+    ]
+
+    mock_client = MockMistralAI.create_stream_mock(stream)
+    model = MistralModel('mistral-large-latest', client=mock_client)
+    agent = Agent(model, result_type=MyTypedBaseModel)
+
+    # When
+    async with agent.run_stream('User prompt value') as result:
+        # Then
+        assert result.is_structured
+        assert not result.is_complete
+        v = [c async for c in result.stream(debounce_by=None)]
+        assert v == snapshot(
+            [
+                MyTypedBaseModel(first='O', second=''),
+                MyTypedBaseModel(first='On', second=''),
+                MyTypedBaseModel(first='One', second=''),
+                MyTypedBaseModel(first='One', second=''),
+                MyTypedBaseModel(first='One', second=''),
+                MyTypedBaseModel(first='One', second=''),
+                MyTypedBaseModel(first='One', second=''),
+                MyTypedBaseModel(first='One', second=''),
+                MyTypedBaseModel(first='One', second=''),
+                MyTypedBaseModel(first='One', second=''),
+                MyTypedBaseModel(first='One', second=''),
+                MyTypedBaseModel(first='One', second=''),
+                MyTypedBaseModel(first='One', second=''),
+                MyTypedBaseModel(first='One', second=''),
+                MyTypedBaseModel(first='One', second=''),
+                MyTypedBaseModel(first='One', second=''),
+                MyTypedBaseModel(first='One', second=''),
+                MyTypedBaseModel(first='One', second='T'),
+                MyTypedBaseModel(first='One', second='Tw'),
+                MyTypedBaseModel(first='One', second='Two'),
+                MyTypedBaseModel(first='One', second='Two'),
+                MyTypedBaseModel(first='One', second='Two'),
+                MyTypedBaseModel(first='One', second='Two'),
+            ]
+        )
+        assert result.is_complete
+        assert result.cost().request_tokens == 34
+        assert result.cost().response_tokens == 34
+        assert result.cost().total_tokens == 34
+
+        # double check cost matches stream count
+        assert result.cost().response_tokens == len(stream)
 
 
 #####################
 ## Completion Function call
 #####################
+
+# TODO: Add tool_calls and with result_tools:
 
 
 async def test_request_tool_call(allow_model_requests: None):
