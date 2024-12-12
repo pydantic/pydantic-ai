@@ -217,7 +217,7 @@ class MistralAgentModel(AgentModel):
             response = await self.client.chat.stream_async(
                 model=str(self.model_name), messages=mistral_messages, stream=True, n=1
             )
-        assert response
+        assert response, 'A unexpected empty response from Mistral.'
         return response
 
     def _map_function_and_result_tools_definition(self) -> list[MistralTool] | None:
