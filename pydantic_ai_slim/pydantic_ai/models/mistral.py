@@ -481,8 +481,8 @@ def _generate_json_simple_schema(schema: dict[str, Any]) -> Any:
         return example
 
     if schema.get('type') == 'array':
-        if 'items' in schema:
-            return [_generate_json_simple_schema(schema['items'])]
+        if items := schema.get('items')
+            return [_generate_json_simple_schema(items)]
 
     if schema.get('type') == 'string':
         return 'String value'
