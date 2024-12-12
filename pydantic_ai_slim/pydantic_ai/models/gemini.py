@@ -7,12 +7,12 @@ from contextlib import asynccontextmanager
 from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Annotated, Any, Literal, Protocol, TypeGuard, Union
+from typing import Annotated, Any, Literal, Protocol, Union
 
 import pydantic_core
 from httpx import AsyncClient as AsyncHTTPClient, Response as HTTPResponse
 from pydantic import Discriminator, Field, Tag
-from typing_extensions import NotRequired, TypedDict, assert_never
+from typing_extensions import NotRequired, TypedDict, TypeGuard, assert_never
 
 from .. import UnexpectedModelBehavior, _pydantic, _utils, exceptions, result
 from ..messages import (
