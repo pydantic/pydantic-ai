@@ -26,6 +26,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.result import Cost, RunResult
 from pydantic_ai.tools import ToolDefinition
+from collections.abc import AsyncIterator
 
 from .conftest import IsNow, TestEnv
 
