@@ -818,7 +818,6 @@ async def test_message_limit_run_stream():
         async with agent.run_stream('Hello', message_limit=5) as result:
             pass
 
-
 async def test_cost_limit_run_stream():
     def return_model(messages: list[Message], info: AgentInfo) -> ModelAnyResponse:
         assert info.result_tools is not None
