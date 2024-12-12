@@ -216,12 +216,15 @@ class MistralAgentModel(AgentModel):
                 model=str(self.model_name),
                 messages=mistral_messages,
                 response_format={'type': 'json_object'},
+                stream=True,
             )
 
         else:
             # Stream Mode
             response = await self.client.chat.stream_async(
-                model=str(self.model_name), messages=mistral_messages, stream=True, n=1
+                model=str(self.model_name),
+                messages=mistral_messages,
+                stream=True,
             )
         assert response, 'A unexpected empty response from Mistral.'
         return response
@@ -376,7 +379,7 @@ class MistralStreamTextResponse(StreamTextResponse):
             return None
 
         chunk = await self._response.__anext__()
-        self._cost = _map_cost(chunk.data)
+        self._cost += _map_cost(chunk.data)
 
         try:
             choice = chunk.data.choices[0]
@@ -415,7 +418,7 @@ class MistralStreamStructuredResponse(StreamStructuredResponse):
 
     async def __anext__(self) -> None:
         chunk = await self._response.__anext__()
-        self._cost = _map_cost(chunk.data)
+        self._cost += _map_cost(chunk.data)
 
         try:
             choice = chunk.data.choices[0]
@@ -448,6 +451,7 @@ class MistralStreamStructuredResponse(StreamStructuredResponse):
                 tool = _map_mistral_to_pydantic_tool_call(tool_call)
                 calls.append(tool)
         elif self._delta_content:
+            # TODO: add test on tool_name !=
             # NOTE: Params set for the most efficient and fastest way.
             decoded_object = repair_json(self._delta_content, return_objects=True, skip_json_loads=True)
             assert isinstance(decoded_object, dict)
