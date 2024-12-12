@@ -562,7 +562,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         Can decorate a sync or async functions.
 
         The docstring is inspected to extract both the tool description and description of each parameter,
-        [learn more](../agents.md#function-tools-and-schema).
+        [learn more](../tools.md#function-tools-and-schema).
 
         We can't add overloads for every possible signature of tool, since the return type is a recursive union
         so the signature of functions decorated with `@agent.tool` is obscured.
@@ -634,7 +634,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         Can decorate a sync or async functions.
 
         The docstring is inspected to extract both the tool description and description of each parameter,
-        [learn more](../agents.md#function-tools-and-schema).
+        [learn more](../tools.md#function-tools-and-schema).
 
         We can't add overloads for every possible signature of tool, since the return type is a recursive union
         so the signature of functions decorated with `@agent.tool` is obscured.
@@ -807,7 +807,6 @@ class Agent(Generic[AgentDeps, ResultData]):
             if self._result_schema is not None:
                 # if there's a result schema, and any of the calls match one of its tools, return the result
                 # NOTE: this means we ignore any other tools called here
-                # TODO: Pass `calls` here rather than model_response
                 if match := self._result_schema.find_tool(model_response):
                     call, result_tool = match
                     try:
