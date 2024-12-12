@@ -48,6 +48,7 @@ try:
     )
     from mistralai.models.assistantmessage import AssistantMessage as MistralAssistantMessage
     from mistralai.models.function import Function as MistralFunction
+    from mistralai.models.systemmessage import SystemMessage as MistralSystemMessage
     from mistralai.models.toolmessage import ToolMessage as MistralToolMessage
     from mistralai.models.usermessage import UserMessage as MistralUserMessage
     from mistralai.types.basemodel import Unset as MistralUnset
@@ -330,7 +331,7 @@ class MistralAgentModel(AgentModel):
         """Just maps a `pydantic_ai.Message` to a `Mistral Message`."""
         if message.role == 'system':
             # SystemPrompt ->
-            return MistralAssistantMessage(content=message.content)
+            return MistralSystemMessage(content=message.content)
         elif message.role == 'user':
             # UserPrompt ->
             return MistralUserMessage(content=message.content)
@@ -408,7 +409,7 @@ class MistralStreamStructuredResponse(StreamStructuredResponse):
     """Implementation of `StreamStructuredResponse` for Mistral models."""
 
     _is_function_tools: bool
-    _delta_tool_calls: dict[str, MistralToolCall]
+    _function_tools: dict[str, MistralToolCall]
     _result_tools: dict[str, ToolDefinition]
     _response: MistralEventStreamAsync[MistralCompletionEvent]
     _delta_content: str | None
@@ -431,12 +432,12 @@ class MistralStreamStructuredResponse(StreamStructuredResponse):
         delta = choice.delta
         content = _map_delta_content(delta.content)
 
-        if self._delta_tool_calls and self._result_tools or self._delta_tool_calls:
+        if self._function_tools and self._result_tools or self._function_tools:
             for new in delta.tool_calls or []:
-                if current := self._delta_tool_calls.get(new.id or 'null'):
+                if current := self._function_tools.get(new.id or 'null'):
                     current.function = new.function
                 else:
-                    self._delta_tool_calls[new.id or 'null'] = new
+                    self._function_tools[new.id or 'null'] = new
         elif self._result_tools and content:
             if not self._delta_content:
                 self._delta_content = content
@@ -445,25 +446,27 @@ class MistralStreamStructuredResponse(StreamStructuredResponse):
 
     def get(self, *, final: bool = False) -> ModelStructuredResponse:
         calls: list[ToolCall] = []
-        if self._delta_tool_calls and self._result_tools:  # TODO: see  or self._delta_tool_calls
-            for tool_call in self._delta_tool_calls.values():
+
+        if self._function_tools and self._result_tools or self._function_tools:
+            for tool_call in self._function_tools.values():
                 tool = _map_mistral_to_pydantic_tool_call(tool_call)
                 calls.append(tool)
         elif self._delta_content and self._result_tools:
             # TODO: add test on tool_name !=
             # TODO add test when result_name not the ssame
             # NOTE: Params set for the most efficient and fastest way.
-
             output_json = repair_json(self._delta_content, return_objects=True, skip_json_loads=True)
             assert isinstance(
                 output_json, dict
             ), f'Expected repair_json as type dict, invalid type: {type(output_json)}'
             if output_json:
                 for result_tool in self._result_tools.values():
-                    # NOTE: Additional verification to prevent JSON validation crashes in `result.py`
+                    # NOTE: Additional verification to prevent JSON validation to crash in `result.py`
                     # Ensures required parameters in the JSON schema are respected, especially for stream-based return types.
-                    # For example, `return_type=list[str]` expects a 'response' key with an object value.
-                    # If `repair_json` sets `{"response": ""}`, this ensures it's corrected to `{"response": {}}`.
+                    # For example, `return_type=list[str]` expects a 'response' key with value type array of str.
+                    # when `{"response":` then `repair_json` sets `{"response": ""}` (type not found default str)
+                    # when `{"response": {` then `repair_json` sets `{"response": {}}` (type found)
+                    # This ensures it's corrected to `{"response": {}}` and other required parameters and type.
                     if not _validate_required_json_shema(output_json, result_tool.parameters_json_schema):
                         continue
 

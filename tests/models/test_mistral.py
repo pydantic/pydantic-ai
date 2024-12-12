@@ -4,10 +4,11 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from functools import cached_property
-from typing import Any, TypedDict, cast
+from typing import Any, cast
 
 import pytest
 from inline_snapshot import snapshot
+from typing_extensions import TypedDict
 
 from ..conftest import IsNow, try_import
 

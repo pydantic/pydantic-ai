@@ -282,7 +282,7 @@ def infer_model(model: Model | KnownModelName) -> Model:
     elif model.startswith('mistral:'):
         from .mistral import MistralModel
 
-        return MistralModel(model[8:])  # pyright: ignore[reportArgumentType]
+        return MistralModel(model[8:])
     elif model.startswith('ollama:'):
         from .ollama import OllamaModel
 
