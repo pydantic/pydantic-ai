@@ -48,6 +48,12 @@ def groq(http_client: httpx.AsyncClient, _tmp_path: Path) -> Model:
     return GroqModel('llama-3.1-70b-versatile', http_client=http_client)
 
 
+def anthropic(http_client: httpx.AsyncClient, _tmp_path: Path) -> Model:
+    from pydantic_ai.models.anthropic import AnthropicModel
+
+    return AnthropicModel('claude-3-5-sonnet-latest', http_client=http_client)
+
+
 def ollama(http_client: httpx.AsyncClient, _tmp_path: Path) -> Model:
     from pydantic_ai.models.ollama import OllamaModel
 
@@ -59,7 +65,9 @@ params = [
     pytest.param(gemini, id='gemini'),
     pytest.param(vertexai, id='vertexai'),
     pytest.param(groq, id='groq'),
-    pytest.param(ollama, id='ollama'),
+    pytest.param(anthropic, id='anthropic'),
+    # excluding from live testing for now due to flaky responses
+    # pytest.param(ollama, id='ollama'),
 ]
 GetModel = Callable[[httpx.AsyncClient, Path], Model]
 
@@ -81,7 +89,10 @@ async def test_text(http_client: httpx.AsyncClient, tmp_path: Path, get_model: G
     assert cost.total_tokens is not None and cost.total_tokens > 0
 
 
-@pytest.mark.parametrize('get_model', params)
+stream_params = [p for p in params if p.id != 'anthropic']
+
+
+@pytest.mark.parametrize('get_model', stream_params)
 async def test_stream(http_client: httpx.AsyncClient, tmp_path: Path, get_model: GetModel):
     agent = Agent(get_model(http_client, tmp_path))
     async with agent.run_stream('What is the capital of France?') as result:
