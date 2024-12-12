@@ -8,9 +8,7 @@
         - UserPrompt
         - ToolReturn
         - RetryPrompt
-        - ModelAnyResponse
-        - ModelTextResponse
-        - ModelStructuredResponse
+        - ModelResponse
         - ToolCall
         - ArgsJson
         - ArgsObject

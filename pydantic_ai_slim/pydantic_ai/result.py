@@ -81,7 +81,7 @@ class _BaseRunResult(ABC, Generic[ResultData]):
         return self._all_messages
 
     def all_messages_json(self) -> bytes:
-        """Return all messages from [`all_messages`][..all_messages] as JSON bytes."""
+        """Return all messages from [`all_messages`][pydantic_ai.result._BaseRunResult.all_messages] as JSON bytes."""
         return messages.MessagesTypeAdapter.dump_json(self.all_messages())
 
     def new_messages(self) -> list[messages.Message]:
@@ -92,7 +92,7 @@ class _BaseRunResult(ABC, Generic[ResultData]):
         return self.all_messages()[self._new_message_index :]
 
     def new_messages_json(self) -> bytes:
-        """Return new messages from [`new_messages`][..new_messages] as JSON bytes."""
+        """Return new messages from [`new_messages`][pydantic_ai.result._BaseRunResult.new_messages] as JSON bytes."""
         return messages.MessagesTypeAdapter.dump_json(self.new_messages())
 
     @abstractmethod
