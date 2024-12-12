@@ -183,6 +183,7 @@ class MistralAgentModel(AgentModel):
         mistral_messages = [self._map_message(m) for m in messages]
 
         if self.result_tools and self.function_tools or self.function_tools:
+            # Function Calling Mode
             response = await self.client.chat.stream_async(
                 model=str(self.model_name),
                 messages=mistral_messages,
@@ -192,7 +193,7 @@ class MistralAgentModel(AgentModel):
             )
 
         elif self.result_tools:
-            # JSON Mode
+            # Json Mode
             schema: str | list[dict[str, Any]]
             if len(self.result_tools) == 1:
                 schema = _generate_json_simple_schema(self.result_tools[0].parameters_json_schema)
@@ -251,6 +252,7 @@ class MistralAgentModel(AgentModel):
 
         assert response.choices, 'A unexpected empty response choice.'
         choice = response.choices[0]
+
         tools_calls = choice.message.tool_calls
         if tools_calls is not None and isinstance(tools_calls, list):
             return ModelStructuredResponse(

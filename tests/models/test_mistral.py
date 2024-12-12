@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+import json
 from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -8,8 +9,6 @@ from typing import Any, cast
 
 import pytest
 from inline_snapshot import snapshot
-
-from pydantic_ai.messages import ArgsJson, SystemPrompt
 
 from ..conftest import IsNow, try_import
 
@@ -34,10 +33,14 @@ with try_import() as imports_successful:
 
     from pydantic_ai import _utils
     from pydantic_ai.agent import Agent
+    from pydantic_ai.exceptions import ModelRetry
     from pydantic_ai.messages import (
         ArgsDict,
+        ArgsJson,
         ModelStructuredResponse,
         ModelTextResponse,
+        RetryPrompt,
+        SystemPrompt,
         ToolCall,
         ToolReturn,
         UserPrompt,
@@ -122,7 +125,7 @@ def completion_message(
         created=1704067200,  # 2024-01-01
         model='mistral-large-latest',
         object='chat.completion',
-        usage=MistralUsageInfo(prompt_tokens=0, completion_tokens=0, total_tokens=0),
+        usage=usage or MistralUsageInfo(prompt_tokens=0, completion_tokens=0, total_tokens=0),
     )
 
 
@@ -158,7 +161,10 @@ def text_chunk(
 async def test_multiple_completions(allow_model_requests: None):
     # Given
     completions = [
-        completion_message(MistralAssistantMessage(content='world')),
+        completion_message(
+            MistralAssistantMessage(content='world'),
+            usage=MistralUsageInfo(prompt_tokens=1, completion_tokens=2, total_tokens=3),
+        ),
         completion_message(MistralAssistantMessage(content='hello again')),
     ]
     mock_client = MockMistralAI.create_mock(completions)
@@ -170,7 +176,9 @@ async def test_multiple_completions(allow_model_requests: None):
 
     # Then
     assert result.data == 'world'
-    assert result.cost().request_tokens == 0
+    assert result.cost().request_tokens == 1
+    assert result.cost().response_tokens == 2
+    assert result.cost().total_tokens == 3
 
     result = await agent.run('hello again', message_history=result.new_messages())
     assert result.data == 'hello again'
@@ -188,7 +196,10 @@ async def test_multiple_completions(allow_model_requests: None):
 async def test_three_completions(allow_model_requests: None):
     # Given
     completions = [
-        completion_message(MistralAssistantMessage(content='world')),
+        completion_message(
+            MistralAssistantMessage(content='world'),
+            usage=MistralUsageInfo(prompt_tokens=1, completion_tokens=2, total_tokens=3),
+        ),
         completion_message(MistralAssistantMessage(content='hello again')),
         completion_message(MistralAssistantMessage(content='final message')),
     ]
@@ -201,7 +212,9 @@ async def test_three_completions(allow_model_requests: None):
 
     # Them
     assert result.data == 'world'
-    assert result.cost().request_tokens == 0
+    assert result.cost().request_tokens == 1
+    assert result.cost().response_tokens == 2
+    assert result.cost().total_tokens == 3
 
     result = await agent.run('hello again', message_history=result.all_messages())
     assert result.data == 'hello again'
@@ -244,6 +257,8 @@ async def test_stream_text(allow_model_requests: None):
         )
         assert result.is_complete
         assert result.cost().request_tokens == 1
+        assert result.cost().response_tokens == 2
+        assert result.cost().total_tokens == 3
 
 
 async def test_stream_text_finish_reason(allow_model_requests: None):
@@ -277,6 +292,8 @@ async def test_no_delta(allow_model_requests: None):
         assert [c async for c in result.stream(debounce_by=None)] == snapshot(['hello ', 'hello world'])
         assert result.is_complete
         assert result.cost().request_tokens == 1
+        assert result.cost().response_tokens == 2
+        assert result.cost().total_tokens == 3
 
 
 #####################
@@ -301,7 +318,8 @@ async def test_request_model_structured_with_arguments_dict_response(allow_model
                     type='function',
                 )
             ],
-        )
+        ),
+        usage=MistralUsageInfo(prompt_tokens=1, completion_tokens=2, total_tokens=3),
     )
     mock_client = MockMistralAI.create_mock(completion)
     model = MistralModel('mistral-large-latest', client=mock_client)
@@ -333,6 +351,9 @@ async def test_request_model_structured_with_arguments_dict_response(allow_model
             ),
         ]
     )
+    assert result.cost().request_tokens == 1
+    assert result.cost().response_tokens == 2
+    assert result.cost().total_tokens == 3
 
 
 async def test_request_model_structured_with_arguments_str_response(allow_model_requests: None):
@@ -437,13 +458,116 @@ async def test_request_result_type_with_arguments_str_response(allow_model_reque
 
 
 #####################
-## Completion Function call
+## Completion Model Structured Stream (Json Mode)
 #####################
 
 # TODO
 
+
 #####################
-## Completion Model Structured Stream (Json Mode)
+## Completion Function call
+#####################
+
+
+async def test_request_tool_call(allow_model_requests: None):
+    completion = [
+        completion_message(
+            MistralAssistantMessage(
+                content=None,
+                role='assistant',
+                tool_calls=[
+                    MistralToolCall(
+                        id='1',
+                        function=MistralFunctionCall(arguments='{"loc_name": "San Fransisco"}', name='get_location'),
+                        type='function',
+                    )
+                ],
+            ),
+            usage=MistralUsageInfo(
+                completion_tokens=1,
+                prompt_tokens=2,
+                total_tokens=3,
+            ),
+        ),
+        completion_message(
+            MistralAssistantMessage(
+                content=None,
+                role='assistant',
+                tool_calls=[
+                    MistralToolCall(
+                        id='2',
+                        function=MistralFunctionCall(arguments='{"loc_name": "London"}', name='get_location'),
+                        type='function',
+                    )
+                ],
+            ),
+            usage=MistralUsageInfo(
+                completion_tokens=2,
+                prompt_tokens=3,
+                total_tokens=6,
+            ),
+        ),
+        completion_message(MistralAssistantMessage(content='final response', role='assistant')),
+    ]
+    mock_client = MockMistralAI.create_mock(completion)
+    model = MistralModel('mistral-large-latest', client=mock_client)
+    agent = Agent(model, system_prompt='this is the system prompt')
+
+    @agent.tool_plain
+    async def get_location(loc_name: str) -> str:
+        if loc_name == 'London':
+            return json.dumps({'lat': 51, 'lng': 0})
+        else:
+            raise ModelRetry('Wrong location, please try again')
+
+    result = await agent.run('Hello')
+    assert result.data == 'final response'
+    assert result.all_messages() == snapshot(
+        [
+            SystemPrompt(content='this is the system prompt'),
+            UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
+            ModelStructuredResponse(
+                calls=[
+                    ToolCall(
+                        tool_name='get_location',
+                        args=ArgsJson(args_json='{"loc_name": "San Fransisco"}'),
+                        tool_call_id='1',
+                    )
+                ],
+                timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc),
+            ),
+            RetryPrompt(
+                tool_name='get_location',
+                content='Wrong location, please try again',
+                tool_call_id='1',
+                timestamp=IsNow(tz=timezone.utc),
+            ),
+            ModelStructuredResponse(
+                calls=[
+                    ToolCall(
+                        tool_name='get_location',
+                        args=ArgsJson(args_json='{"loc_name": "London"}'),
+                        tool_call_id='2',
+                    )
+                ],
+                timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc),
+            ),
+            ToolReturn(
+                tool_name='get_location',
+                content='{"lat": 51, "lng": 0}',
+                tool_call_id='2',
+                timestamp=IsNow(tz=timezone.utc),
+            ),
+            ModelTextResponse(content='final response', timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc)),
+        ]
+    )
+    assert result.cost().request_tokens == 5
+    assert result.cost().response_tokens == 3
+    assert result.cost().total_tokens == 9
+
+
+#####################
+## Completion Function call Stream
 #####################
 
 # TODO
