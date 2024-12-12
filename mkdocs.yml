@@ -17,6 +17,7 @@ nav:
   - Documentation:
     - agents.md
     - dependencies.md
+    - tools.md
     - results.md
     - message-history.md
     - testing-evals.md

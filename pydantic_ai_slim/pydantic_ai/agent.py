@@ -562,7 +562,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         Can decorate a sync or async functions.
 
         The docstring is inspected to extract both the tool description and description of each parameter,
-        [learn more](../agents.md#function-tools-and-schema).
+        [learn more](../tools.md#function-tools-and-schema).
 
         We can't add overloads for every possible signature of tool, since the return type is a recursive union
         so the signature of functions decorated with `@agent.tool` is obscured.
@@ -634,7 +634,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         Can decorate a sync or async functions.
 
         The docstring is inspected to extract both the tool description and description of each parameter,
-        [learn more](../agents.md#function-tools-and-schema).
+        [learn more](../tools.md#function-tools-and-schema).
 
         We can't add overloads for every possible signature of tool, since the return type is a recursive union
         so the signature of functions decorated with `@agent.tool` is obscured.
