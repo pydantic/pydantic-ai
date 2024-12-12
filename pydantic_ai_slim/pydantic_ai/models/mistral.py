@@ -112,15 +112,8 @@ class MistralModel(Model):
         allow_text_result: bool,
         result_tools: list[ToolDefinition],
     ) -> AgentModel:
-        """Create an agent model, this is called for each step of an agent run.
-
-        Args:
-            function_tools: The tools available to the agent.
-            allow_text_result: Whether a plain text final response/result is permitted.
-            result_tools: Tool definitions for the final result tool(s), if any.
-
-        Returns:
-            An agent model.
+        """
+        Create an agent model, this is called for each step of an agent run from Pydantic AI call.
         """
         return MistralAgentModel(
             self.client,
@@ -145,26 +138,16 @@ class MistralAgentModel(AgentModel):
     result_tools: list[ToolDefinition] | None
 
     async def request(self, messages: list[Message]) -> tuple[ModelAnyResponse, Cost]:
-        """Make a non-streaming request to the model.
-
-        Args:
-            messages: The list of messages to send to the model.
-
-        Returns:
-            A tuple of the model's response, and the estimated cost of the request.
+        """
+        Make a non-streaming request to the model from Pydantic AI call.
         """
         response = await self._completions_create(messages)
         return self._process_response(response), _map_cost(response)
 
     @asynccontextmanager
     async def request_stream(self, messages: list[Message]) -> AsyncIterator[EitherStreamedResponse]:
-        """Make a streaming request to the model.
-
-        Args:
-            messages: The list of messages to send to the model.
-
-        Yields:
-            A streaming response from the model.
+        """
+        Make a streaming request to the model from Pydantic AI call.
         """
         response = await self._stream_completions_create(messages)
         async with response:
@@ -174,13 +157,8 @@ class MistralAgentModel(AgentModel):
         self,
         messages: list[Message],
     ) -> MistralChatCompletionResponse:
-        """Make a non-streaming request to the model.
-
-        Args:
-            messages: The list of messages to send to the model.
-
-        Returns:
-            A non-streaming response from the model.
+        """
+        Make a non-streaming request to the model.
         """
         mistral_messages = [self._map_message(m) for m in messages]
         # Note: Function calling Mode
@@ -208,20 +186,8 @@ class MistralAgentModel(AgentModel):
         self,
         messages: list[Message],
     ) -> MistralEventStreamAsync[MistralCompletionEvent]:
-        """Create a streaming completion request to the Mistral model.
-
-        This method handles different modes of operation based on the presence of
-        `function_tools` and `result_tools`. It determines the tool choice strategy
-        and constructs the appropriate request to stream responses from the model.
-
-        Args:
-            messages: The list of messages to be processed by the model.
-
-        Returns:
-            An asynchronous event stream of `MistralCompletionEvent` from the model.
-
-        Raises:
-            AssertionError: If the response is unexpectedly empty.
+        """
+        Create a streaming completion request to the Mistral model.
         """
         response: MistralEventStreamAsync[MistralCompletionEvent] | None = None
         mistral_messages = [self._map_message(m) for m in messages]
@@ -264,7 +230,8 @@ class MistralAgentModel(AgentModel):
         return response
 
     def _map_function_and_result_tools_definition(self) -> list[MistralTool] | None:
-        """Map function and result tools to MistralTool format.
+        """
+        Map function and result tools to MistralTool format.
 
         Returns None if both function_tools and result_tools are empty.
         """
@@ -514,10 +481,8 @@ class MistralStreamStructuredResponse(StreamStructuredResponse):
 
 
 def _generate_json_simple_schema(schema: dict[str, Any]) -> Any:
-    """Generates a JSON example from a JSON schema.
-
-    :param schema: The JSON schema.
-    :return: A JSON example based on the schema.
+    """
+    Generates a JSON example from a JSON schema.
     """
     if schema.get('type') == 'object':
         example: dict[str, Any] = {}
@@ -549,10 +514,8 @@ def _generate_json_simple_schema(schema: dict[str, Any]) -> Any:
 
 
 def _generate_jsom_simple_schemas(schemas: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Generates JSON examples from a list of JSON schemas.
-
-    :param schemas: The list of JSON schemas.
-    :return: A list of JSON examples based on the schemas.
+    """
+    Generates JSON examples from a list of JSON schemas.
     """
     examples: list[dict[str, Any]] = []
     for schema in schemas:
@@ -562,6 +525,9 @@ def _generate_jsom_simple_schemas(schemas: list[dict[str, Any]]) -> list[dict[st
 
 
 def _map_mistral_to_pydantic_tool_call(tool_call: MistralToolCall) -> ToolCall:
+    """
+    Maps a MistralToolCall to a ToolCall.
+    """
     tool_call_id = tool_call.id or None
     func_call = tool_call.function
 
@@ -576,6 +542,9 @@ def _map_mistral_to_pydantic_tool_call(tool_call: MistralToolCall) -> ToolCall:
 
 
 def _map_pydantic_to_mistral_tool_call(t: ToolCall) -> MistralToolCall:
+    """
+    Maps a Pydantic ToolCall to a MistralToolCall.
+    """
     if isinstance(t.args, ArgsJson):
         return MistralToolCall(
             id=t.tool_call_id,
@@ -591,6 +560,9 @@ def _map_pydantic_to_mistral_tool_call(t: ToolCall) -> MistralToolCall:
 
 
 def _map_cost(response: MistralChatCompletionResponse | MistralCompletionChunk) -> Cost:
+    """
+    Maps a Mistral Completion Chunk or Chat Completion Response to a Cost.
+    """
     if response.usage:
         return Cost(
             request_tokens=response.usage.prompt_tokens,
@@ -603,6 +575,9 @@ def _map_cost(response: MistralChatCompletionResponse | MistralCompletionChunk) 
 
 
 def _map_delta_content(delta_content: OptionalNullable[Content]) -> str | None:
+    """
+    Maps the delta content from a Mistral Completion Chunk to a string or None.
+    """
     content: str | None = None
 
     if isinstance(delta_content, list) and isinstance(delta_content[0], MistralTextChunk):

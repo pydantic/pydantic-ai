@@ -280,7 +280,7 @@ async def test_no_delta(allow_model_requests: None):
 
 
 #####################
-## Completion Structured
+## Completion Model Structured
 #####################
 
 
@@ -437,5 +437,6 @@ async def test_request_result_type_with_arguments_str_response(allow_model_reque
 
 
 #####################
-## Completion Structured Stream
+## Completion Function call
 #####################
+####################### Completion Model Structured Stream (Json Mode)###################### TODO####################### Completion Model Structured Stream (Json Mode)###################### TODO
