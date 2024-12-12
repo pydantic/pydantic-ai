@@ -97,7 +97,7 @@ Usage `ToolFuncEither[AgentDeps, ToolParams]`.
 ToolPrepareFunc: TypeAlias = 'Callable[[RunContext[AgentDeps], ToolDefinition], Awaitable[ToolDefinition | None]]'
 """Definition of a function that can prepare a tool definition at call time.
 
-See [tool docs](../agents.md#tool-prepare) for more information.
+See [tool docs](../tools.md#tool-prepare) for more information.
 
 Example — here `only_if_42` is valid as a `ToolPrepareFunc`:
 
