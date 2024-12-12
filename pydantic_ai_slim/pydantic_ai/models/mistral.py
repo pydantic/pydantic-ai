@@ -122,8 +122,8 @@ class MistralModel(Model):
             self.client,
             self.model_name,
             allow_text_result,
-            function_tools if function_tools else None,
-            result_tools if result_tools else None,
+            function_tools,
+            result_tools,
         )
 
     def name(self) -> str:
@@ -137,8 +137,8 @@ class MistralAgentModel(AgentModel):
     client: Mistral
     model_name: str
     allow_text_result: bool
-    function_tools: list[ToolDefinition] | None
-    result_tools: list[ToolDefinition] | None
+    function_tools: list[ToolDefinition]
+    result_tools: list[ToolDefinition]
 
     async def request(self, messages: list[Message]) -> tuple[ModelAnyResponse, Cost]:
         """Make a non-streaming request to the model from Pydantic AI call."""
@@ -149,8 +149,9 @@ class MistralAgentModel(AgentModel):
     async def request_stream(self, messages: list[Message]) -> AsyncIterator[EitherStreamedResponse]:
         """Make a streaming request to the model from Pydantic AI call."""
         response = await self._stream_completions_create(messages)
+        is_function_tool = True if self.function_tools else False  # TODO: see how improve
         async with response:
-            yield await self._process_streamed_response(self.function_tools is not None, self.result_tools, response)
+            yield await self._process_streamed_response(is_function_tool, self.result_tools, response)
 
     async def _completions_create(
         self,
@@ -230,14 +231,7 @@ class MistralAgentModel(AgentModel):
 
         Returns None if both function_tools and result_tools are empty.
         """
-        tools = []
-
-        all_tools: list[ToolDefinition] = []
-        if self.function_tools:
-            all_tools.extend(self.function_tools)
-        if self.result_tools:
-            all_tools.extend(self.result_tools)
-
+        all_tools: list[ToolDefinition] = self.function_tools + self.result_tools
         tools = [
             MistralTool(
                 function=MistralFunction(name=r.name, parameters=r.parameters_json_schema, description=r.description)
@@ -249,7 +243,6 @@ class MistralAgentModel(AgentModel):
     @staticmethod
     def _process_response(response: MistralChatCompletionResponse) -> ModelAnyResponse:
         """Process a non-streamed response, and prepare a message to return."""
-        timestamp: datetime
         if response.created:
             timestamp = datetime.fromtimestamp(response.created, tz=timezone.utc)
         else:
@@ -275,7 +268,7 @@ class MistralAgentModel(AgentModel):
     @staticmethod
     async def _process_streamed_response(
         is_function_tools: bool,
-        result_tools: list[ToolDefinition] | None,
+        result_tools: list[ToolDefinition],
         response: MistralEventStreamAsync[MistralCompletionEvent],
     ) -> EitherStreamedResponse:
         """Process a streamed response, and prepare a streaming response to return."""
@@ -291,7 +284,6 @@ class MistralAgentModel(AgentModel):
 
             start_cost += _map_cost(chunk)
 
-            timestamp: datetime
             if chunk.created:
                 timestamp = datetime.fromtimestamp(chunk.created, tz=timezone.utc)
             else:
