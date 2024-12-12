@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from typing import Any, Callable, Literal
 
 from httpx import AsyncClient as AsyncHTTPClient
-from mistralai import Content, OptionalNullable
+from mistralai import Content, OptionalNullable, Union
 from typing_extensions import assert_never
 
 from .. import UnexpectedModelBehavior
@@ -58,12 +58,18 @@ except ImportError as e:
         "you can use the `mistral` optional group — `pip install 'pydantic-ai-slim[mistral]'`"
     ) from e
 
-MistralModelName = Literal[
-    'mistral-small-latest',
-    'small-mistral',
-    'mistral-large-latest',
-    'codestral-latest',
+LatestMistralModelName = Literal[
+    'mistral-large-latest', 'mistral-small-latest', 'codestral-latest', 'mistral-moderation-latest'
 ]
+"""Latest named Mistral models."""
+
+MistralModelName = Union[str, LatestMistralModelName]
+"""Possible Mistral model names.
+
+Since Mistral supports a variety of date-stamped models, we explicitly list the latest models but
+allow any name in the type hints.
+Since [the Mistral docs](https://docs.mistral.ai/getting-started/models/models_overview/) for a full list.
+"""
 
 
 @dataclass(init=False)
@@ -73,10 +79,9 @@ class MistralModel(Model):
     Internally, this uses the [Mistral Python client](https://github.com/mistralai/client-python) to interact with the API.
 
     [API Documentation](https://docs.mistral.ai/)
-
     """
 
-    model_name: MistralModelName | str
+    model_name: MistralModelName
     client: Mistral = field(repr=False)
 
     def __init__(
@@ -481,7 +486,7 @@ def _generate_json_simple_schema(schema: dict[str, Any]) -> Any:
         return example
 
     if schema.get('type') == 'array':
-        if items := schema.get('items')
+        if items := schema.get('items'):
             return [_generate_json_simple_schema(items)]
 
     if schema.get('type') == 'string':
@@ -566,9 +571,7 @@ def _map_delta_content(delta_content: OptionalNullable[Content]) -> str | None:
     elif isinstance(delta_content, MistralUnset) or delta_content is None:
         content = None
     else:
-        assert (
-            False
-        ), f'Other data types like (Image, Reference) are not yet supported,  got {type(delta_content)}'
+        assert False, f'Other data types like (Image, Reference) are not yet supported,  got {type(delta_content)}'
 
     if content and content == '':
         content = None
