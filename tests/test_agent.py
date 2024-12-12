@@ -1,6 +1,7 @@
 import sys
 from datetime import timezone
 from typing import Any, Callable, Union
+from unittest.mock import patch
 
 import httpx
 import pytest
@@ -769,3 +770,17 @@ def foo():
     assert mod.my_agent.name is None
     assert mod.foo() == snapshot('success (no tool calls)')
     assert mod.my_agent.name == 'my_agent'
+
+
+async def test_model_settings_override() -> None:
+    my_agent = Agent('test', model_settings={'temperature': 0.5})
+
+    # match the model request function
+    with patch('pydantic_ai.models.test.TestAgentModel.request') as request:
+        request.return_value = (ModelTextResponse(content='hello'), Cost())
+
+        await my_agent.run('hello')
+        assert request.call_args.args[1]['temperature'] == 0.5
+
+        await my_agent.run('hello', model_settings={'temperature': 0.7})
+        assert request.call_args.args[1]['temperature'] == 0.7
