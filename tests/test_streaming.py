@@ -7,7 +7,7 @@ from datetime import timezone
 import pytest
 from inline_snapshot import snapshot
 
-from pydantic_ai import Agent, UnexpectedModelBehavior, UserError
+from pydantic_ai import Agent, RunContext, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
     ArgsDict,
     ArgsJson,
@@ -276,3 +276,109 @@ async def test_call_tool_wrong_name():
             ),
         ]
     )
+
+
+async def test_call_tool_stop_run():
+    async def stream_structured_function(
+        messages: list[Message], agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        if len(messages) == 1:
+            name = agent_info.function_tools[0].name
+            first = messages[0]
+            assert isinstance(first, UserPrompt)
+            json_string = json.dumps({'x': first.content})
+            yield {0: DeltaToolCall(name=name)}
+            yield {0: DeltaToolCall(json_args=json_string[:3])}
+            yield {0: DeltaToolCall(json_args=json_string[3:])}
+        else:
+            last = messages[-1]
+            assert isinstance(last, ToolReturn)
+            assert agent_info.result_tools is not None
+            assert len(agent_info.result_tools) == 1
+            name = agent_info.result_tools[0].name
+            json_data = json.dumps({'response': [last.content, 2]})
+            yield {0: DeltaToolCall(name=name)}
+            yield {0: DeltaToolCall(json_args=json_data[:5])}
+            yield {0: DeltaToolCall(json_args=json_data[5:])}
+
+    agent = Agent(FunctionModel(stream_function=stream_structured_function), result_type=tuple[str, int])
+
+    @agent.tool
+    async def maybe_stop_run_tool(ctx: RunContext[int, tuple[str, int]], x: str) -> str:
+        if ctx.deps == 1:
+            ctx.stop_run(('abcdef', 777))
+        return f'deps={ctx.deps} x={x}'
+
+    # async with agent.run_stream('hello', deps=0) as result:
+    #     assert result.all_messages() == snapshot(
+    #         [
+    #             UserPrompt(content='hello', timestamp=IsNow(tz=timezone.utc)),
+    #             ModelStructuredResponse(
+    #                 calls=[ToolCall(tool_name='maybe_stop_run_tool', args=ArgsJson(args_json='{"x": "hello"}'))],
+    #                 timestamp=IsNow(tz=timezone.utc),
+    #             ),
+    #             ToolReturn(tool_name='maybe_stop_run_tool', content='deps=0 x=hello', timestamp=IsNow(tz=timezone.utc)),
+    #             ToolReturn(
+    #                 tool_name='final_result',
+    #                 content='Final result processed.',
+    #                 timestamp=IsNow(tz=timezone.utc),
+    #             ),
+    #         ]
+    #     )
+    #     assert await result.get_data() == snapshot(('deps=0 x=hello', 2))
+    #     assert result.all_messages() == snapshot(
+    #         [
+    #             UserPrompt(content='hello', timestamp=IsNow(tz=timezone.utc)),
+    #             ModelStructuredResponse(
+    #                 calls=[ToolCall(tool_name='maybe_stop_run_tool', args=ArgsJson(args_json='{"x": "hello"}'))],
+    #                 timestamp=IsNow(tz=timezone.utc),
+    #             ),
+    #             ToolReturn(tool_name='maybe_stop_run_tool', content='deps=0 x=hello', timestamp=IsNow(tz=timezone.utc)),
+    #             ToolReturn(
+    #                 tool_name='final_result',
+    #                 content='Final result processed.',
+    #                 timestamp=IsNow(tz=timezone.utc),
+    #             ),
+    #             ModelStructuredResponse(
+    #                 calls=[
+    #                     ToolCall(
+    #                         tool_name='final_result',
+    #                         args=ArgsJson(args_json='{"response": ["deps=0 x=hello", 2]}'),
+    #                     )
+    #                 ],
+    #                 timestamp=IsNow(tz=timezone.utc),
+    #             ),
+    #         ]
+    #     )
+
+    async with agent.run_stream('hello', deps=1) as result:
+        assert result.all_messages() == snapshot(
+            [
+                UserPrompt(content='hello', timestamp=IsNow(tz=timezone.utc)),
+                ModelStructuredResponse(
+                    calls=[ToolCall(tool_name='maybe_stop_run_tool', args=ArgsJson(args_json='{"x": "hello"}'))],
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
+                ToolReturn(tool_name='final_result', content=('abcdef', 777), timestamp=IsNow(tz=timezone.utc)),
+            ]
+        )
+        assert await result.get_data() == snapshot(('abcdef', 777))
+        # assert result.all_messages() == snapshot(
+        #     [
+        #         UserPrompt(content='hello', timestamp=IsNow(tz=timezone.utc)),
+        #         ModelStructuredResponse(
+        #             calls=[ToolCall(tool_name='maybe_stop_run_tool', args=ArgsJson(args_json='{"x": "hello"}'))],
+        #             timestamp=IsNow(tz=timezone.utc),
+        #         ),
+        #         ToolReturn(tool_name='final_result', content=('abcdef', 777), timestamp=IsNow(tz=timezone.utc)),
+        #         ModelStructuredResponse(
+        #             calls=[
+        #                 ToolCall(
+        #                     tool_name='final_result',
+        #                     args=ArgsJson(args_json='{"response": ["abcdef", 777]}'),
+        #                 )
+        #             ],
+        #             timestamp=IsNow(tz=timezone.utc),
+        #         ),
+        #     ]
+        # )

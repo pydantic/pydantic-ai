@@ -466,3 +466,19 @@ agent = Agent('test', tools=[ctx_tool], deps_type=int)
     """)
     result = mod.agent.run_sync('foobar', deps=5)
     assert result.data == snapshot('{"ctx_tool":5}')
+
+
+def test_ctx_stop_run(set_event_loop: None):
+    """Ensure the ctx_stop_run_tool is used to complete the agent run."""
+    def ctx_stop_run_tool(ctx: RunContext[int]) -> int:
+        if ctx.deps == 2:
+            ctx.stop_run('abc')
+        return 123
+
+    agent = Agent('test', tools=[Tool(ctx_stop_run_tool, takes_ctx=True)], deps_type=int)
+
+    result = agent.run_sync('foobar', deps=1)
+    assert result.data == snapshot('{"ctx_stop_run_tool":123}')
+
+    result = agent.run_sync('foobar', deps=2)
+    assert result.data == snapshot('abc')

@@ -281,7 +281,9 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
         match = self._result_schema.find_tool(message)
         if match is None:
             raise exceptions.UnexpectedModelBehavior(
-                f'Invalid message, unable to find tool: {self._result_schema.tool_names()}'
+                f'Invalid message, unable to find tool.'
+                f' Called tool names: {list({call.tool_name for call in message.calls})}.'
+                f' Expected tool names: {self._result_schema.tool_names()}'
             )
 
         call, result_tool = match

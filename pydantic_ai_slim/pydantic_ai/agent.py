@@ -13,6 +13,7 @@ import logfire_api
 from typing_extensions import assert_never
 
 from . import (
+    _exceptions,
     _result,
     _system_prompt,
     _utils,
@@ -826,10 +827,9 @@ class Agent(Generic[AgentDeps, ResultData]):
                 else:
                     messages.append(self._unknown_tool(call.tool_name))
 
-            with _logfire.span('running {tools=}', tools=[t.get_name() for t in tasks]):
-                task_results: Sequence[_messages.Message] = await asyncio.gather(*tasks)
-                messages.extend(task_results)
-            return None, messages
+            tool_messages, stop_run = await self._run_tools(tasks)
+            messages.extend(tool_messages)
+            return _MarkFinalResult(data=stop_run.content) if stop_run else None, messages
         else:
             assert_never(model_response)
 
@@ -893,10 +893,48 @@ class Agent(Generic[AgentDeps, ResultData]):
                 else:
                     messages.append(self._unknown_tool(call.tool_name))
 
-            with _logfire.span('running {tools=}', tools=[t.get_name() for t in tasks]):
-                task_results: Sequence[_messages.Message] = await asyncio.gather(*tasks)
-                messages.extend(task_results)
-            return None, messages
+            tool_messages, stop_run = await self._run_tools(tasks)
+            messages.extend(tool_messages)
+            return _MarkFinalResult(model_response) if stop_run else None, messages
+
+    async def _run_tools(
+        self,
+        tasks: list[asyncio.Task[_messages.Message]],
+    ) -> tuple[list[_messages.Message], _messages.ToolReturn | None]:
+        with _logfire.span('running {tools=}', tools=[t.get_name() for t in tasks]) as span:
+            try:
+                task_results: Sequence[_messages.Message | BaseException] = await asyncio.gather(
+                    *tasks,
+                    return_exceptions=True,  # TODO: Set return_exceptions based on 'eager' vs 'correct'
+                )
+                failures = [
+                    r
+                    for r in task_results
+                    if isinstance(r, BaseException) and not isinstance(r, _exceptions.StopAgentRun)
+                ]
+                if failures:
+                    raise failures[0]  # TODO: raise an exceptiongroup if there is more than 1?
+
+                messages = [r for r in task_results if not isinstance(r, BaseException)]
+                stop_runs = [r for r in task_results if isinstance(r, _exceptions.StopAgentRun)]
+            except _exceptions.StopAgentRun as e:
+                messages = []
+                stop_runs = [e]
+
+            first_tool_return: _messages.ToolReturn | None = None
+            for stop_run in stop_runs:
+                tool_return = _messages.ToolReturn(
+                    # TODO: need to unwind the result tool stuff; is it possible to ensure we use the right name?
+                    tool_name=self._result_schema.tool_names()[0],
+                    content=stop_run.result,
+                    tool_call_id=stop_run.tool_call_id,
+                )
+                first_tool_return = first_tool_return or tool_return
+                messages.append(tool_return)
+
+            if stop_runs:
+                span.set_attribute('stop_run_tools', [(e.tool_name, e.tool_call_id) for e in stop_runs])
+        return messages, first_tool_return
 
     async def _validate_result(
         self, result_data: ResultData, deps: AgentDeps, tool_call: _messages.ToolCall | None
