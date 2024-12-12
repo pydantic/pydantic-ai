@@ -261,7 +261,7 @@ class MistralAgentModel(AgentModel):
             )
         else:
             content = choice.message.content
-            assert content, f'Unexpected null content is assitant msg: {choice.message}'
+            assert content, f'Unexpected null content in assistant msg: {choice.message}'
             assert not isinstance(
                 content, list
             ), f'Unexpected ContentChunk from stream, need to be response not stream: {content}'
