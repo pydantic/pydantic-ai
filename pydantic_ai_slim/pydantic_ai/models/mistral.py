@@ -171,7 +171,7 @@ class MistralAgentModel(AgentModel):
             tool_choice=tool_choice,
             stream=False,
         )
-        assert response, 'A unexpected empty response.'
+        assert response, 'A unexpected empty response from Mistral.'
         return response
 
     async def _stream_completions_create(
