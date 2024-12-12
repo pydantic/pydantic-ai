@@ -168,4 +168,5 @@ exclude_lines = [
 ignore_no_config = true
 
 [tool.inline-snapshot.shortcuts]
-fix=["create", "fix"]
+snap-fix=["create", "fix"]
+snap=["create"]

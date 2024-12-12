@@ -853,7 +853,7 @@ class Agent(Generic[AgentDeps, ResultData]):
             if not match:
                 continue
 
-            call_, result_tool = match
+            _, result_tool = match
 
             if final_result is None:
                 # This is the first result tool - try to use it
@@ -878,7 +878,7 @@ class Agent(Generic[AgentDeps, ResultData]):
                     _messages.ToolReturn(
                         tool_name=call.tool_name,
                         content='Result tool not used - a final result was already processed.',
-                        tool_id=call.tool_id,
+                        tool_call_id=call.tool_call_id,
                     )
                 )
 
@@ -892,7 +892,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         """Process regular (non-final) tool calls in parallel."""
         messages: list[_messages.Message] = []
         tasks: list[asyncio.Task[_messages.Message]] = []
-        result_tools = set(self._result_schema.tool_names()) if self._result_schema else set()
+        result_tools: set[str] = set(self._result_schema.tool_names()) if self._result_schema else set()
 
         for call in model_response.calls:
             if tool := self._function_tools.get(call.tool_name):
@@ -914,7 +914,7 @@ class Agent(Generic[AgentDeps, ResultData]):
     ) -> list[_messages.Message]:
         """Mark regular tools as skipped when a final result was found with early end strategy."""
         messages: list[_messages.Message] = []
-        result_tools = set(self._result_schema.tool_names()) if self._result_schema else set()
+        result_tools: set[str] = set(self._result_schema.tool_names()) if self._result_schema else set()
 
         for call in model_response.calls:
             if call.tool_name not in result_tools and call.tool_name in self._function_tools:
@@ -922,7 +922,7 @@ class Agent(Generic[AgentDeps, ResultData]):
                     _messages.ToolReturn(
                         tool_name=call.tool_name,
                         content='Tool not executed - a final result was already processed.',
-                        tool_id=call.tool_id,
+                        tool_call_id=call.tool_call_id,
                     )
                 )
 

@@ -805,11 +805,19 @@ class TestMultipleToolCalls:
 
         # Verify we got tool returns for both calls
         tool_returns = [m for m in messages if isinstance(m, ToolReturn)]
-        assert len(tool_returns) == 2
 
-        # Verify one was processed and one was marked unused
-        assert any(m.content == 'Final result processed.' for m in tool_returns)
-        assert any(m.content == 'Result tool not used - a final result was already processed.' for m in tool_returns)
+        assert tool_returns == snapshot(
+            [
+                ToolReturn(
+                    tool_name='final_result', content='Final result processed.', timestamp=IsNow(tz=timezone.utc)
+                ),
+                ToolReturn(
+                    tool_name='final_result',
+                    content='Result tool not used - a final result was already processed.',
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
+            ]
+        )
 
     def test_regular_and_final_tools(self):
         """Test that when both regular and final tools are called:
@@ -842,11 +850,19 @@ class TestMultipleToolCalls:
 
         # Verify we got tool returns for both calls
         tool_returns = [m for m in messages if isinstance(m, ToolReturn)]
-        assert len(tool_returns) == 2
 
-        # Verify both tools were processed
-        assert any(m.content == 'Final result processed.' for m in tool_returns)
-        assert any(m.content == 42 for m in tool_returns)
+        assert tool_returns == snapshot(
+            [
+                ToolReturn(
+                    tool_name='final_result', content='Final result processed.', timestamp=IsNow(tz=timezone.utc)
+                ),
+                ToolReturn(
+                    tool_name='regular_tool',
+                    content='Tool not executed - a final result was already processed.',
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
+            ]
+        )
 
     def test_end_strategy_early(self):
         """Test that when end_strategy is 'early', tool calls after a final result are not executed."""
@@ -887,13 +903,32 @@ class TestMultipleToolCalls:
 
         # Verify we got tool returns for all calls
         tool_returns = [m for m in messages if isinstance(m, ToolReturn)]
-        assert len(tool_returns) == 3
-
-        # Verify final tool was processed but regular tools were skipped
-        assert any(m.content == 'Final result processed.' for m in tool_returns)
-        assert (
-            len([m for m in tool_returns if m.content == 'Tool not executed - a final result was already processed.'])
-            == 2
+        assert tool_returns == snapshot(
+            [
+                ToolReturn(
+                    tool_name='final_result', content='Final result processed.', timestamp=IsNow(tz=timezone.utc)
+                ),
+                ToolReturn(
+                    tool_name='regular_tool',
+                    content='Result tool not used - a final result was already processed.',
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
+                ToolReturn(
+                    tool_name='another_tool',
+                    content='Result tool not used - a final result was already processed.',
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
+                ToolReturn(
+                    tool_name='regular_tool',
+                    content='Tool not executed - a final result was already processed.',
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
+                ToolReturn(
+                    tool_name='another_tool',
+                    content='Tool not executed - a final result was already processed.',
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
+            ]
         )
 
     def test_end_strategy_complete(self):
@@ -935,12 +970,25 @@ class TestMultipleToolCalls:
 
         # Verify we got tool returns for all calls
         tool_returns = [m for m in messages if isinstance(m, ToolReturn)]
-        assert len(tool_returns) == 3
-
-        # Verify all tools were processed
-        assert any(m.content == 'Final result processed.' for m in tool_returns)
-        assert any(m.content == 1 for m in tool_returns)  # regular_tool return
-        assert any(m.content == 2 for m in tool_returns)  # another_tool return
+        assert tool_returns == snapshot(
+            [
+                ToolReturn(
+                    tool_name='final_result', content='Final result processed.', timestamp=IsNow(tz=timezone.utc)
+                ),
+                ToolReturn(
+                    tool_name='regular_tool',
+                    content='Result tool not used - a final result was already processed.',
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
+                ToolReturn(
+                    tool_name='another_tool',
+                    content='Result tool not used - a final result was already processed.',
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
+                ToolReturn(tool_name='regular_tool', content=1, timestamp=IsNow(tz=timezone.utc)),
+                ToolReturn(tool_name='another_tool', content=2, timestamp=IsNow(tz=timezone.utc)),
+            ]
+        )
 
     def test_end_strategy_early_no_final_tool(self):
         """Test that when end_strategy is 'early' but there is no final tool, all tools are executed."""
@@ -968,11 +1016,15 @@ class TestMultipleToolCalls:
 
         # Verify we got tool returns for all calls including the final result
         tool_returns = [m for m in messages if isinstance(m, ToolReturn)]
-        assert len(tool_returns) == 3
-
-        # Verify both tools were processed
-        assert any(m.content == 0 for m in tool_returns)  # regular_tool return
-        assert any(m.content == 0 for m in tool_returns)  # another_tool return
+        assert tool_returns == snapshot(
+            [
+                ToolReturn(tool_name='regular_tool', content=0, timestamp=IsNow(tz=timezone.utc)),
+                ToolReturn(tool_name='another_tool', content=0, timestamp=IsNow(tz=timezone.utc)),
+                ToolReturn(
+                    tool_name='final_result', content='Final result processed.', timestamp=IsNow(tz=timezone.utc)
+                ),
+            ]
+        )
 
     def test_end_strategy_early_final_tool_middle(self):
         """Test that when end_strategy is 'early', tools are not executed,
@@ -1011,12 +1063,25 @@ class TestMultipleToolCalls:
 
         # Verify we got tool returns for all calls including the final result
         tool_returns = [m for m in messages if isinstance(m, ToolReturn)]
-        assert len(tool_returns) == 3
-
-        # Verify final result was processed
-        assert any(m.content == 'Final result processed.' for m in tool_returns)
-        # Verify two tools were skipped
-        assert (
-            len([m for m in tool_returns if m.content == 'Tool not executed - a final result was already processed.'])
-            == 2
+        assert tool_returns == snapshot(
+            [
+                ToolReturn(
+                    tool_name='final_result', content='Final result processed.', timestamp=IsNow(tz=timezone.utc)
+                ),
+                ToolReturn(
+                    tool_name='another_tool',
+                    content='Result tool not used - a final result was already processed.',
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
+                ToolReturn(
+                    tool_name='regular_tool',
+                    content='Tool not executed - a final result was already processed.',
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
+                ToolReturn(
+                    tool_name='another_tool',
+                    content='Tool not executed - a final result was already processed.',
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
+            ]
         )
