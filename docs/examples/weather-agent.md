@@ -2,7 +2,7 @@ Example of PydanticAI with multiple tools which the LLM needs to call in turn to
 
 Demonstrates:
 
-* [tools](../tools.md#function-tools)
+* [tools](../tools.md)
 * [agent dependencies](../dependencies.md)
 * [streaming text responses](../results.md#streaming-text)
 
