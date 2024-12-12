@@ -48,6 +48,7 @@ KnownModelName = Literal[
     'groq:gemma-7b-it',
     'gemini-1.5-flash',
     'gemini-1.5-pro',
+    'gemini-2.0-flash-exp',
     'vertexai:gemini-1.5-flash',
     'vertexai:gemini-1.5-pro',
     'ollama:codellama',
