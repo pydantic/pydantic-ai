@@ -275,7 +275,7 @@ async def application_code(prompt: str) -> str:  # (3)!
 3. Application code that calls the agent, in a real application this might be an API endpoint.
 4. Call the agent from within the application code, in a real application this call might be deep within a call stack. Note `app_deps` here will NOT be used when deps are overridden.
 
-```python {title="test_joke_app.py" hl_lines="10-12"}
+```python {title="test_joke_app.py" hl_lines="10-12" call_name="test_application_code"}
 from joke_app import MyDeps, application_code, joke_agent
 
 

@@ -97,6 +97,7 @@ You can also pass messages from previous runs to continue a conversation or prov
     Before you execute any agent runs, do the following:
     ```python {test="skip" lint="skip"}
     import nest_asyncio
+
     nest_asyncio.apply()
     ```
 
@@ -249,10 +250,11 @@ You can also raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] from within
 Here's an example:
 
 ```python {title="tool_retry.py"}
-from fake_database import DatabaseConn
 from pydantic import BaseModel
 
 from pydantic_ai import Agent, RunContext, ModelRetry
+
+from fake_database import DatabaseConn
 
 
 class ChatResult(BaseModel):
