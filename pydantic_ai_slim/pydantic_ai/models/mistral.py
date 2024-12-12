@@ -568,7 +568,7 @@ def _map_delta_content(delta_content: OptionalNullable[Content]) -> str | None:
     else:
         assert (
             False
-        ), f'Other type of instance, Will manage in the futur (Image, Reference), delta content:{delta_content}'
+        ), f'Other data types like (Image, Reference) are not yet supported,  got {type(delta_content)}'
 
     if content and content == '':
         content = None
