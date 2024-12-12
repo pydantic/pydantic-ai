@@ -303,9 +303,9 @@ class MistralAgentModel(AgentModel):
                 if content and result_tools:
                     return MistralStreamStructuredResponse(
                         is_function_tools,
-                        result_tools,
+                        {},
+                        {c.name: c for c in result_tools},
                         response,
-                        None,
                         content,
                         timestamp,
                         start_cost,
@@ -315,12 +315,11 @@ class MistralAgentModel(AgentModel):
                     return MistralStreamTextResponse(content, response, timestamp, start_cost)
 
                 elif tool_calls and not result_tools:
-                    tool_calls_param = {c.id if c.id else 'null': c for c in tool_calls}
                     return MistralStreamStructuredResponse(
                         is_function_tools,
-                        result_tools,
+                        {c.id if c.id else 'null': c for c in tool_calls},
+                        {c.name: c for c in result_tools},
                         response,
-                        tool_calls_param,
                         content,
                         timestamp,
                         start_cost,
@@ -409,10 +408,10 @@ class MistralStreamStructuredResponse(StreamStructuredResponse):
     """Implementation of `StreamStructuredResponse` for Mistral models."""
 
     _is_function_tools: bool
-    _result_tools: list[ToolDefinition] | None
+    _delta_tool_calls: dict[str, MistralToolCall]
+    _result_tools: dict[str, ToolDefinition]
     _response: MistralEventStreamAsync[MistralCompletionEvent]
-    _delta_tool_calls: dict[str, MistralToolCall] | None
-    _delta_content: str | None
+    _delta_content: str
     _timestamp: datetime
     _cost: Cost
 
@@ -446,22 +445,33 @@ class MistralStreamStructuredResponse(StreamStructuredResponse):
 
     def get(self, *, final: bool = False) -> ModelStructuredResponse:
         calls: list[ToolCall] = []
-        if self._delta_tool_calls and self._result_tools or self._delta_tool_calls:
+        if self._delta_tool_calls and self._result_tools:  # TODO: see  or self._delta_tool_calls
             for tool_call in self._delta_tool_calls.values():
                 tool = _map_mistral_to_pydantic_tool_call(tool_call)
                 calls.append(tool)
-        elif self._delta_content:
+        elif self._delta_content and self._result_tools:
             # TODO: add test on tool_name !=
+            # TODO add test when result_name not the ssame
             # NOTE: Params set for the most efficient and fastest way.
-            decoded_object = repair_json(self._delta_content, return_objects=True, skip_json_loads=True)
-            assert isinstance(decoded_object, dict)
 
-            if decoded_object:
-                tool = ToolCall.from_dict(
-                    tool_name='final_result',  # TODO: Get tool_name
-                    args_dict=decoded_object,
-                )
-                calls.append(tool)
+            output_json = repair_json(self._delta_content, return_objects=True, skip_json_loads=True)
+            assert isinstance(
+                output_json, dict
+            ), f'Expected repair_json as type dict, invalid type: {type(output_json)}'
+            if output_json:
+                for result_tool in self._result_tools.values():
+                    # NOTE: Additional verification to prevent JSON validation crashes in `result.py`
+                    # Ensures required parameters in the JSON schema are respected, especially for stream-based return types.
+                    # For example, `return_type=list[str]` expects a 'response' key with an object value.
+                    # If `repair_json` sets `{"response": ""}`, this ensures it's corrected to `{"response": {}}`.
+                    if not _validate_required_json_shema(output_json, result_tool.parameters_json_schema):
+                        continue
+
+                    tool = ToolCall.from_dict(
+                        tool_name=result_tool.name,
+                        args_dict=output_json,
+                    )
+                    calls.append(tool)
 
         return ModelStructuredResponse(calls, timestamp=self._timestamp)
 
@@ -470,6 +480,47 @@ class MistralStreamStructuredResponse(StreamStructuredResponse):
 
     def timestamp(self) -> datetime:
         return self._timestamp
+
+
+TYPE_MAPPING = {
+    'string': str,
+    'integer': int,
+    'number': float,
+    'boolean': bool,
+    'array': list,
+    'object': dict,
+    'null': type(None),
+}
+
+
+def _validate_required_json_shema(json_dict: dict[str, Any], json_schema: dict[str, Any]) -> bool:
+    """Validate that all required parameters in the JSON schema are present in the JSON dictionary."""
+    required_params = json_schema.get('required', [])
+    properties = json_schema.get('properties', {})
+
+    for param in required_params:
+        if param not in json_dict:
+            return False
+
+        param_schema = properties.get(param, {})
+        param_type = param_schema.get('type')
+        param_items_type = param_schema.get('items', {}).get('type')
+
+        if param_type == 'array' and param_items_type:
+            if not isinstance(json_dict[param], list):
+                return False
+            for item in json_dict[param]:
+                if not isinstance(item, TYPE_MAPPING[param_items_type]):
+                    return False
+        elif param_type and not isinstance(json_dict[param], TYPE_MAPPING[param_type]):
+            return False
+
+        if isinstance(json_dict[param], dict) and 'properties' in param_schema:
+            nested_schema = param_schema
+            if not _validate_required_json_shema(json_dict[param], nested_schema):
+                return False
+
+    return True
 
 
 def _generate_json_simple_schema(schema: dict[str, Any]) -> Any:
