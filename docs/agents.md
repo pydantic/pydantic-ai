@@ -103,7 +103,7 @@ You can also pass messages from previous runs to continue a conversation or prov
 ### Additional Configuration
 
 PydanticAI offers a [`settings.ModelSettings`][pydantic_ai.settings.ModelSettings] structure to help you fine tune your requests.
-You can configure common things like `temperature`, `max_tokens`, and `timeout` with ths structure.
+You can configure common things like `temperature`, `max_tokens`, and `timeout` with this structure.
 
 This can either be passed via the `model_settings` argument to any of the `run{_sync,_stream}` calls,
 or added to an [`Agent`][pydantic_ai.agent.Agent] during initialization. `model_settings` specified on a
