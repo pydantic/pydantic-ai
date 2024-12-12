@@ -1,29 +1,29 @@
 .DEFAULT_GOAL := all
 
-.PHONY: .uv  # Check that uv is installed
-.uv:
+.PHONY: .uv
+.uv: ## Check that uv is installed
 	@uv --version || echo 'Please install uv: https://docs.astral.sh/uv/getting-started/installation/'
 
-.PHONY: .pre-commit  # Check that pre-commit is installed
-.pre-commit:
+.PHONY: .pre-commit
+.pre-commit: ## Check that pre-commit is installed
 	@pre-commit -V || echo 'Please install pre-commit: https://pre-commit.com/'
 
-.PHONY: install  # Install the package, dependencies, and pre-commit for local development
-install: .uv .pre-commit
+.PHONY: install
+install: .uv .pre-commit ## Install the package, dependencies, and pre-commit for local development
 	uv sync --frozen --all-extras --all-packages --group lint --group docs
 	pre-commit install --install-hooks
 
-.PHONY: sync  # Update local packages and uv.lock
-sync: .uv
+.PHONY: sync
+sync: .uv ## Update local packages and uv.lock
 	uv sync --all-extras --all-packages --group lint --group docs
 
-.PHONY: format  # Format the code
-format:
+.PHONY: format
+format: ## Format the code
 	uv run ruff format
 	uv run ruff check --fix --fix-only
 
-.PHONY: lint  # Lint the code
-lint:
+.PHONY: lint
+lint: ## Lint the code
 	uv run ruff format --check
 	uv run ruff check
 
@@ -36,19 +36,19 @@ typecheck-pyright:
 typecheck-mypy:
 	uv run mypy --strict tests/typed_agent.py
 
-.PHONY: typecheck  # Run static type checking
-typecheck: typecheck-pyright
+.PHONY: typecheck
+typecheck: typecheck-pyright ## Run static type checking
 
-.PHONY: typecheck-both  # Run static type checking with both Pyright and Mypy
+.PHONY: typecheck-both  ## Run static type checking with both Pyright and Mypy
 typecheck-both: typecheck-pyright typecheck-mypy
 
-.PHONY: test  # Run tests and collect coverage data
-test:
+.PHONY: test
+test: ## Run tests and collect coverage data
 	uv run coverage run -m pytest
 	@uv run coverage report
 
-.PHONY: test-all-python  # Run tests on Python 3.9 to 3.13
-test-all-python:
+.PHONY: test-all-python
+test-all-python: ## Run tests on Python 3.9 to 3.13
 	UV_PROJECT_ENVIRONMENT=.venv39 uv run --python 3.9 --all-extras coverage run -p -m pytest
 	UV_PROJECT_ENVIRONMENT=.venv310 uv run --python 3.10 --all-extras coverage run -p -m pytest
 	UV_PROJECT_ENVIRONMENT=.venv311 uv run --python 3.11 --all-extras coverage run -p -m pytest
@@ -57,27 +57,27 @@ test-all-python:
 	@uv run coverage combine
 	@uv run coverage report
 
-.PHONY: testcov  # Run tests and generate a coverage report
-testcov: test
+.PHONY: testcov
+testcov: test ## Run tests and generate a coverage report
 	@echo "building coverage html"
 	@uv run coverage html
 
-.PHONY: update-examples  # update documentation examples
-update-examples:
+.PHONY: update-examples
+update-examples: ## Update documentation examples
 	uv run -m pytest --update-examples
 
 # `--no-strict` so you can build the docs without insiders packages
-.PHONY: docs  # Build the documentation
-docs:
+.PHONY: docs
+docs: ## Build the documentation
 	uv run mkdocs build --no-strict
 
 # `--no-strict` so you can build the docs without insiders packages
-.PHONY: docs-serve  # Build and serve the documentation
-docs-serve:
+.PHONY: docs-serve
+docs-serve: ## Build and serve the documentation
 	uv run mkdocs serve --no-strict
 
-.PHONY: .docs-insiders-install # install insiders packages for docs if necessary
-.docs-insiders-install:
+.PHONY: .docs-insiders-install
+.docs-insiders-install: ## Install insiders packages for docs if necessary
 ifeq ($(shell uv pip show mkdocs-material | grep -q insiders && echo 'installed'), installed)
 	@echo 'insiders packages already installed'
 else ifeq ($(PPPR_TOKEN),)
@@ -90,16 +90,16 @@ else
 		mkdocs-material mkdocstrings-python
 endif
 
-.PHONY: docs-insiders  # Build the documentation using insiders packages
-docs-insiders: .docs-insiders-install
+.PHONY: docs-insiders
+docs-insiders: .docs-insiders-install ## Build the documentation using insiders packages
 	uv run --no-sync mkdocs build -f mkdocs.insiders.yml
 
-.PHONY: docs-serve-insiders  # Build and serve the documentation using insiders packages
-docs-serve-insiders: .docs-insiders-install
+.PHONY: docs-serve-insiders
+docs-serve-insiders: .docs-insiders-install ## Build and serve the documentation using insiders packages
 	uv run --no-sync mkdocs serve -f mkdocs.insiders.yml
 
-.PHONY: cf-pages-build  # Install uv, install dependencies and build the docs, used on CloudFlare Pages
-cf-pages-build:
+.PHONY: cf-pages-build
+cf-pages-build: ## Install uv, install dependencies and build the docs, used on CloudFlare Pages
 	curl -LsSf https://astral.sh/uv/install.sh | sh
 	uv python install 3.12
 	uv sync --python 3.12 --frozen --group docs
@@ -110,4 +110,17 @@ cf-pages-build:
 	uv run --no-sync mkdocs build -f mkdocs.insiders.yml
 
 .PHONY: all
-all: format lint typecheck testcov
+all: format lint typecheck testcov ## Run code formatting, linting, static type checks, and tests with coverage report generation
+
+.PHONY: help
+help: ## Show this help (usage: make help)
+	@echo "Usage: make [target]"
+	@echo "Targets:"
+	@awk '/^[a-zA-Z0-9_-]+:.*?##/ { \
+		helpMessage = match($$0, /## (.*)/); \
+		if (helpMessage) { \
+			target = $$1; \
+			sub(/:/, "", target); \
+			printf "  \033[36m%-20s\033[0m %s\n", target, substr($$0, RSTART + 3, RLENGTH); \
+		} \
+	}' $(MAKEFILE_LIST)
