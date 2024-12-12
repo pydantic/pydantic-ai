@@ -479,7 +479,7 @@ async def test_request_result_type_with_arguments_str_response(allow_model_reque
 
 
 #####################
-## Completion Model Structured Stream (Json Mode)
+## Completion Model Structured Stream (JSON Mode)
 #####################
 
 
@@ -517,7 +517,9 @@ async def test_stream_structured(allow_model_requests: None):
         assert result.cost().response_tokens == len(stream)
 
 
-async def test_stream_dict_parser_structured(allow_model_requests: None):
+async def test_stream_result_type_primitif_dict(allow_model_requests: None):
+    """This test tests the primitif result with the pydantic ai format model response"""
+
     class MyTypedDict(TypedDict, total=False):
         first: str
         second: str
@@ -562,7 +564,7 @@ async def test_stream_dict_parser_structured(allow_model_requests: None):
 
     mock_client = MockMistralAI.create_stream_mock(stream)
     model = MistralModel('mistral-large-latest', client=mock_client)
-    agent = Agent(model, result_type=MyTypedDict)
+    agent = Agent(model=model, result_type=MyTypedDict)
 
     # When
     async with agent.run_stream('User prompt value') as result:
@@ -606,7 +608,135 @@ async def test_stream_dict_parser_structured(allow_model_requests: None):
         assert result.cost().response_tokens == len(stream)
 
 
-async def test_stream_basemodel_parser_structured(allow_model_requests: None):
+async def test_stream_result_type_primitif_int(allow_model_requests: None):
+    """This test tests the primitif result with the pydantic ai format model response"""
+    # Given
+    stream = [
+        # {'response':
+        text_chunk('{'),
+        text_chunk('"resp'),
+        text_chunk('onse":'),
+        text_chunk('1'),
+        text_chunk('}'),
+        chunk([]),
+    ]
+
+    mock_client = MockMistralAI.create_stream_mock(stream)
+    model = MistralModel('mistral-large-latest', client=mock_client)
+    agent = Agent(model=model, result_type=int)
+
+    # When
+    async with agent.run_stream('User prompt value') as result:
+        # Then
+        assert result.is_structured
+        assert not result.is_complete
+        v = [c async for c in result.stream(debounce_by=None)]
+        assert v == snapshot([1, 1, 1])
+        assert result.is_complete
+        assert result.cost().request_tokens == 6
+        assert result.cost().response_tokens == 6
+        assert result.cost().total_tokens == 6
+
+        # double check cost matches stream count
+        assert result.cost().response_tokens == len(stream)
+
+
+async def test_stream_result_type_primitif_array(allow_model_requests: None):
+    """This test tests the primitif result with the pydantic ai format model response"""
+    # Given
+    stream = [
+        # {'response':
+        text_chunk('{'),
+        text_chunk('"resp'),
+        text_chunk('onse":'),
+        text_chunk('['),
+        text_chunk('"'),
+        text_chunk('f'),
+        text_chunk('i'),
+        text_chunk('r'),
+        text_chunk('s'),
+        text_chunk('t'),
+        text_chunk('"'),
+        text_chunk(','),
+        text_chunk('"'),
+        text_chunk('O'),
+        text_chunk('n'),
+        text_chunk('e'),
+        text_chunk('"'),
+        text_chunk(','),
+        text_chunk('"'),
+        text_chunk('s'),
+        text_chunk('e'),
+        text_chunk('c'),
+        text_chunk('o'),
+        text_chunk('n'),
+        text_chunk('d'),
+        text_chunk('"'),
+        text_chunk(','),
+        text_chunk('"'),
+        text_chunk('T'),
+        text_chunk('w'),
+        text_chunk('o'),
+        text_chunk('"'),
+        text_chunk(']'),
+        text_chunk('}'),
+        chunk([]),
+    ]
+
+    mock_client = MockMistralAI.create_stream_mock(stream)
+    model = MistralModel('mistral-large-latest', client=mock_client)
+    agent = Agent(model, result_type=list[str])
+
+    # When
+    async with agent.run_stream('User prompt value') as result:
+        # Then
+        assert result.is_structured
+        assert not result.is_complete
+        v = [c async for c in result.stream(debounce_by=None)]
+        assert v == snapshot(
+            [
+                ['f'],
+                ['fi'],
+                ['fir'],
+                ['firs'],
+                ['first'],
+                ['first'],
+                ['first'],
+                ['first'],
+                ['first', 'O'],
+                ['first', 'On'],
+                ['first', 'One'],
+                ['first', 'One'],
+                ['first', 'One'],
+                ['first', 'One'],
+                ['first', 'One', 's'],
+                ['first', 'One', 'se'],
+                ['first', 'One', 'sec'],
+                ['first', 'One', 'seco'],
+                ['first', 'One', 'secon'],
+                ['first', 'One', 'second'],
+                ['first', 'One', 'second'],
+                ['first', 'One', 'second'],
+                ['first', 'One', 'second'],
+                ['first', 'One', 'second', 'T'],
+                ['first', 'One', 'second', 'Tw'],
+                ['first', 'One', 'second', 'Two'],
+                ['first', 'One', 'second', 'Two'],
+                ['first', 'One', 'second', 'Two'],
+                ['first', 'One', 'second', 'Two'],
+                ['first', 'One', 'second', 'Two'],
+            ]
+        )
+        assert result.is_complete
+        assert result.cost().request_tokens == 35
+        assert result.cost().response_tokens == 35
+        assert result.cost().total_tokens == 35
+
+        # double check cost matches stream count
+        assert result.cost().response_tokens == len(stream)
+
+
+async def test_stream_result_type_basemodel(allow_model_requests: None):
     class MyTypedBaseModel(BaseModel):
         first: str = ''  # Note: Don't forget to set default values
         second: str = ''
@@ -651,7 +781,7 @@ async def test_stream_basemodel_parser_structured(allow_model_requests: None):
 
     mock_client = MockMistralAI.create_stream_mock(stream)
     model = MistralModel('mistral-large-latest', client=mock_client)
-    agent = Agent(model, result_type=MyTypedBaseModel)
+    agent = Agent(model=model, result_type=MyTypedBaseModel)
 
     # When
     async with agent.run_stream('User prompt value') as result:
