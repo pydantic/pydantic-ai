@@ -8,14 +8,14 @@ For details on how to set up authentication with this model, see [model configur
 
 With `ollama` installed, you can run the server with the model you want to use:
 
-```bash title="terminal-run-ollama"
+```bash {title="terminal-run-ollama"}
 ollama run llama3.2
 ```
 (this will pull the `llama3.2` model if you don't already have it downloaded)
 
 Then run your code, here's a minimal example:
 
-```py title="ollama_example.py"
+```python {title="ollama_example.py"}
 from pydantic import BaseModel
 
 from pydantic_ai import Agent
@@ -28,16 +28,16 @@ class CityLocation(BaseModel):
 
 agent = Agent('ollama:llama3.2', result_type=CityLocation)
 
-result = agent.run_sync('Where the olympics held in 2012?')
+result = agent.run_sync('Where were the olympics held in 2012?')
 print(result.data)
 #> city='London' country='United Kingdom'
 print(result.cost())
-#> Cost(request_tokens=56, response_tokens=8, total_tokens=64, details=None)
+#> Cost(request_tokens=57, response_tokens=8, total_tokens=65, details=None)
 ```
 
-## Example using a remove server
+## Example using a remote server
 
-```py title="ollama_example_with_remote_server.py"
+```python {title="ollama_example_with_remote_server.py"}
 from pydantic import BaseModel
 
 from pydantic_ai import Agent
@@ -56,11 +56,11 @@ class CityLocation(BaseModel):
 
 agent = Agent(model=ollama_model, result_type=CityLocation)
 
-result = agent.run_sync('Where the olympics held in 2012?')
+result = agent.run_sync('Where were the olympics held in 2012?')
 print(result.data)
 #> city='London' country='United Kingdom'
 print(result.cost())
-#> Cost(request_tokens=56, response_tokens=8, total_tokens=64, details=None)
+#> Cost(request_tokens=57, response_tokens=8, total_tokens=65, details=None)
 ```
 
 1. The name of the model running on the remote server
