@@ -945,7 +945,7 @@ class TestMultipleToolCalls:
                 ]
             )
 
-        agent = Agent(FunctionModel(return_model), result_type=self.ResultType, end_strategy='complete')
+        agent = Agent(FunctionModel(return_model), result_type=self.ResultType, end_strategy='exhaustive')
 
         @agent.tool_plain
         def regular_tool(x: int) -> int:

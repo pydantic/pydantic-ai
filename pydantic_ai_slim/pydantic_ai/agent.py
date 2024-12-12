@@ -39,11 +39,11 @@ __all__ = ('Agent',)
 _logfire = logfire_api.Logfire(otel_scope='pydantic-ai')
 
 NoneType = type(None)
-EndStrategy = Literal['early', 'complete']
+EndStrategy = Literal['early', 'exhaustive']
 """The strategy for handling multiple tool calls when a final result is found.
 
-- "early": Stop processing other tool calls once a final result is found
-- "complete": Process all tool calls even after finding a final result
+- `'early'`: Stop processing other tool calls once a final result is found
+- `'exhaustive'`: Process all tool calls even after finding a final result
 """
 
 
@@ -79,6 +79,7 @@ class Agent(Generic[AgentDeps, ResultData]):
     If `None`, we try to infer the agent name from the call frame when the agent is first run.
     """
     end_strategy: EndStrategy
+    """Strategy for handling tool calls when a final result is found."""
 
     last_run_messages: list[_messages.Message] | None = None
     """The messages from the last run, useful when a run raised an exception.
@@ -140,10 +141,8 @@ class Agent(Generic[AgentDeps, ResultData]):
                 which checks for the necessary environment variables. Set this to `false`
                 to defer the evaluation until the first run. Useful if you want to
                 [override the model][pydantic_ai.Agent.override] for testing.
-            end_strategy: The strategy for handling tool calls that are requested alongside a final result.
-                "early" means stop processing other tool calls if a final result is found.
-                "complete" means process all tool calls even after finding a final result.
-                Defaults to "early".
+            end_strategy: Strategy for handling tool calls that are requested alongside a final result.
+                See [`EndStrategy`][pydantic_ai.agent.EndStrategy] for more information.
         """
         if model is None or defer_model_check:
             self.model = model
