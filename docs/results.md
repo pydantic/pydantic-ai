@@ -166,7 +166,7 @@ There two main challenges with streamed results:
 
 Example of streamed text result:
 
-```python {title="streamed_hello_world.py"}
+```python {title="streamed_hello_world.py" line_length="120"}
 from pydantic_ai import Agent
 
 agent = Agent('gemini-1.5-flash')  # (1)!
@@ -224,7 +224,7 @@ Not all types are supported with partial validation in Pydantic, see [pydantic/p
 
 Here's an example of streaming a use profile as it's built:
 
-```python {title="streamed_user_profile.py"}
+```python {title="streamed_user_profile.py" line_length="120"}
 from datetime import date
 
 from typing_extensions import TypedDict
@@ -263,7 +263,7 @@ _(This example is complete, it can be run "as is")_
 
 If you want fine-grained control of validation, particularly catching validation errors, you can use the following pattern:
 
-```python {title="streamed_user_profile.py"}
+```python {title="streamed_user_profile.py" line_length="120"}
 from datetime import date
 
 from pydantic import ValidationError
