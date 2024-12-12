@@ -367,9 +367,6 @@ class Agent(Generic[AgentDeps, ResultData]):
                                 model_response, deps
                             )
 
-                            # Add all messages to the conversation
-                            messages.extend(response_messages)
-
                             # Check if we got a final result
                             if final_result is not None:
                                 result_stream = final_result.data
@@ -384,11 +381,14 @@ class Agent(Generic[AgentDeps, ResultData]):
                                     self._result_schema,
                                     deps,
                                     self._result_validators,
-                                    lambda m: run_span.set_attribute('all_messages', messages),
+                                    lambda m: run_span.set_attribute(
+                                        'all_messages', messages.extend(response_messages)
+                                    ),
                                 )
                                 return
                             else:
                                 # continue the conversation
+                                messages.extend(response_messages)
                                 handle_span.set_attribute('tool_responses', response_messages)
                                 response_msgs = ' '.join(r.role for r in response_messages)
                                 handle_span.message = f'handle model response -> {response_msgs}'

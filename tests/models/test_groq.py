@@ -399,17 +399,17 @@ async def test_stream_structured(allow_model_requests: None):
     assert result.all_messages() == snapshot(
         [
             UserPrompt(content='', timestamp=IsNow(tz=timezone.utc)),
-            ToolReturn(
-                tool_name='final_result',
-                content='Final result processed.',
-                tool_call_id=None,
-                timestamp=IsNow(tz=timezone.utc),
-            ),
             ModelStructuredResponse(
                 calls=[
                     ToolCall(tool_name='final_result', args=ArgsJson(args_json='{"first": "One", "second": "Two"}'))
                 ],
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+            ),
+            ToolReturn(
+                tool_name='final_result',
+                content='Final result processed.',
+                tool_call_id=None,
+                timestamp=IsNow(tz=timezone.utc),
             ),
         ]
     )

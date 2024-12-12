@@ -653,11 +653,6 @@ async def test_stream_structured_tool_calls(get_gemini_client: GetGeminiClient):
             ),
             ToolReturn(tool_name='foo', content='a', timestamp=IsNow(tz=timezone.utc)),
             ToolReturn(tool_name='bar', content='b', timestamp=IsNow(tz=timezone.utc)),
-            ToolReturn(
-                tool_name='final_result',
-                content='Final result processed.',
-                timestamp=IsNow(tz=timezone.utc),
-            ),
             ModelStructuredResponse(
                 calls=[
                     ToolCall(
@@ -665,6 +660,11 @@ async def test_stream_structured_tool_calls(get_gemini_client: GetGeminiClient):
                         args=ArgsDict(args_dict={'response': [1, 2]}),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
+            ),
+            ToolReturn(
+                tool_name='final_result',
+                content='Final result processed.',
                 timestamp=IsNow(tz=timezone.utc),
             ),
         ]

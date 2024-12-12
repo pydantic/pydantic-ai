@@ -82,6 +82,29 @@ async def test_streamed_structured_response():
         response = await result.get_data()
         assert response == snapshot(('a', 'a'))
         assert result.is_complete
+        assert result.all_messages() == snapshot(
+            [
+                UserPrompt(content='', timestamp=IsNow(tz=timezone.utc), role='user'),
+                ModelStructuredResponse(
+                    calls=[
+                        ToolCall(
+                            tool_name='final_result',
+                            args=ArgsDict(args_dict={'response': ['a', 'a']}),
+                            tool_call_id=None,
+                        )
+                    ],
+                    timestamp=IsNow(tz=timezone.utc),
+                    role='model-structured-response',
+                ),
+                ToolReturn(
+                    tool_name='final_result',
+                    content='Final result processed.',
+                    tool_call_id=None,
+                    timestamp=IsNow(tz=timezone.utc),
+                    role='tool-return',
+                ),
+            ]
+        )
 
 
 async def test_structured_response_iter():
@@ -206,11 +229,6 @@ async def test_call_tool():
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 ToolReturn(tool_name='ret_a', content='hello world', timestamp=IsNow(tz=timezone.utc)),
-                ToolReturn(
-                    tool_name='final_result',
-                    content='Final result processed.',
-                    timestamp=IsNow(tz=timezone.utc),
-                ),
             ]
         )
         assert await result.get_data() == snapshot(('hello world', 2))
@@ -222,11 +240,6 @@ async def test_call_tool():
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 ToolReturn(tool_name='ret_a', content='hello world', timestamp=IsNow(tz=timezone.utc)),
-                ToolReturn(
-                    tool_name='final_result',
-                    content='Final result processed.',
-                    timestamp=IsNow(tz=timezone.utc),
-                ),
                 ModelStructuredResponse(
                     calls=[
                         ToolCall(
@@ -235,6 +248,13 @@ async def test_call_tool():
                         )
                     ],
                     timestamp=IsNow(tz=timezone.utc),
+                ),
+                ToolReturn(
+                    tool_name='final_result',
+                    content='Final result processed.',
+                    tool_call_id=None,
+                    timestamp=IsNow(tz=timezone.utc),
+                    role='tool-return',
                 ),
             ]
         )
