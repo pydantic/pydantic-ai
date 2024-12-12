@@ -203,8 +203,9 @@ async def google_style_docstring_no_body(
         foo: The foo thing.
         bar: The bar thing.
     """
-    # fmt: on
+
     return f'{foo} {bar}'
+# fmt: on
 
 
 def test_docstring_google_no_body(set_event_loop: None):
@@ -215,8 +216,10 @@ def test_docstring_google_no_body(set_event_loop: None):
     json_schema = json.loads(result.data)
     assert json_schema == snapshot(
         {
-            'name': 'google_style_docstring_no_body', 'description': '', 'parameters_json_schema': {
-            'properties': {
+            'name': 'google_style_docstring_no_body',
+            'description': '',
+            'parameters_json_schema': {
+                'properties': {
                     'foo': {'description': 'The foo thing.', 'title': 'Foo', 'type': 'integer'},
                     'bar': {'description': 'from fields', 'title': 'Bar', 'type': 'string'},
                 },
@@ -224,7 +227,7 @@ def test_docstring_google_no_body(set_event_loop: None):
                 'type': 'object',
                 'additionalProperties': False,
             },
-            'outer_typed_dict_key': None
+            'outer_typed_dict_key': None,
         }
     )
 
@@ -248,7 +251,7 @@ def test_takes_just_model(set_event_loop: None):
             'name': 'takes_just_model',
             'description': None,
             'parameters_json_schema': {
-            'properties': {
+                'properties': {
                     'x': {'title': 'X', 'type': 'integer'},
                     'y': {'title': 'Y', 'type': 'string'},
                 },
@@ -256,7 +259,7 @@ def test_takes_just_model(set_event_loop: None):
                 'title': 'Foo',
                 'type': 'object',
             },
-            'outer_typed_dict_key': None
+            'outer_typed_dict_key': None,
         }
     )
 
@@ -297,7 +300,7 @@ def test_takes_model_and_int(set_event_loop: None):
                 'type': 'object',
                 'additionalProperties': False,
             },
-            'outer_typed_dict_key': None
+            'outer_typed_dict_key': None,
         }
     )
 
