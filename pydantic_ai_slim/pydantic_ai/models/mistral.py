@@ -320,7 +320,7 @@ class MistralAgentModel(AgentModel):
                         {c.id if c.id else 'null': c for c in tool_calls},
                         {c.name: c for c in result_tools},
                         response,
-                        content,
+                        None,
                         timestamp,
                         start_cost,
                     )
@@ -411,7 +411,7 @@ class MistralStreamStructuredResponse(StreamStructuredResponse):
     _delta_tool_calls: dict[str, MistralToolCall]
     _result_tools: dict[str, ToolDefinition]
     _response: MistralEventStreamAsync[MistralCompletionEvent]
-    _delta_content: str
+    _delta_content: str | None
     _timestamp: datetime
     _cost: Cost
 
