@@ -103,11 +103,12 @@ You can also pass messages from previous runs to continue a conversation or prov
 ### Additional Configuration
 
 PydanticAI offers a [`settings.ModelSettings`][pydantic_ai.settings.ModelSettings] structure to help you fine tune your requests.
-You can configure common things like `temperature`, `max_tokens`, and `timeout` with ths structure.
+This structure allows you to configure common parameters that influence the model's behavior, such as `temperature`, `max_tokens`,
+`timeout`, and more.
 
-This can either be passed via the `model_settings` argument to any of the `run{_sync,_stream}` calls,
-or added to an [`Agent`][pydantic_ai.agent.Agent] during initialization. `model_settings` specified on a
-`run{_sync,_stream}` call take precedence over those specified on an agent.
+There are two ways to apply these settings:
+1. Passing to `run{_sync,_stream}` functions via the `model_settings` argument. This allows for fine-tuning on a per-request basis.
+2. Setting during [`Agent`][pydantic_ai.agent.Agent] initialization via the `model_settings` argument. These settings will be applied by default to all subsequent run calls using said agent. However, `model_settings` provided during a specific run call will override the agent's default settings.
 
 For example, if you'd like to set the `temperature` setting to `0.0` to ensure less random behavior,
 you can do the following:
@@ -117,7 +118,9 @@ from pydantic_ai import Agent
 
 agent = Agent('openai:gpt-4o')
 
-result_sync = agent.run_sync('What is the capital of Italy?', model_settings={'temperature': 0.0})
+result_sync = agent.run_sync(
+    'What is the capital of Italy?', model_settings={'temperature': 0.0}
+)
 print(result_sync.data)
 #> Rome
 ```
