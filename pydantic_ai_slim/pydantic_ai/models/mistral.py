@@ -17,7 +17,7 @@ from ..messages import (
     ModelAnyResponse,
     ModelStructuredResponse,
     ModelTextResponse,
-    ToolCall as PydanticToolCall,
+    ToolCall,
 )
 from ..result import Cost
 from ..tools import ToolDefinition
@@ -296,24 +296,8 @@ class MistralAgentModel(AgentModel):
         choice = response.choices[0]
         tools_calls = choice.message.tool_calls
         if tools_calls is not None and isinstance(tools_calls, list):
-            tools = [
-                (
-                    PydanticToolCall.from_json(
-                        tool_name=c.function.name,
-                        args_json=c.function.arguments,
-                        tool_call_id=c.id,
-                    )
-                    if isinstance(c.function.arguments, str)
-                    else PydanticToolCall.from_dict(
-                        tool_name=c.function.name,
-                        args_dict=c.function.arguments,
-                        tool_id=c.id,
-                    )
-                )
-                for c in tools_calls
-            ]
             return ModelStructuredResponse(
-                tools,
+                [_map_mistral_to_pydantic_tool_call(tool_call) for tool_call in tools_calls],
                 timestamp=timestamp,
             )
         else:
@@ -424,7 +408,7 @@ class MistralAgentModel(AgentModel):
         elif message.role == 'model-structured-response':
             # ModelStructuredResponse ->
             return MistralAssistantMessage(
-                tool_calls=[_map_tool_call(t) for t in message.calls],
+                tool_calls=[_map_pydantic_to_mistral_tool_call(t) for t in message.calls],
             )
         else:
             assert_never(message)
@@ -521,19 +505,11 @@ class MistralStreamStructuredResponse(StreamStructuredResponse):
                 self._delta_content += content
 
     def get(self, *, final: bool = False) -> ModelStructuredResponse:
-        calls: list[PydanticToolCall] = []
+        calls: list[ToolCall] = []
         if self._delta_tool_calls and self._result_tools or self._delta_tool_calls:
             for c in self._delta_tool_calls.values():
                 if f := c.function:
-                    tool = (
-                        PydanticToolCall.from_json(
-                            tool_name=f.name,
-                            args_json=f.arguments,
-                            tool_call_id=c.id,
-                        )
-                        if isinstance(f.arguments, str)
-                        else PydanticToolCall.from_dict(tool_name=f.name, args_dict=f.arguments, tool_id=c.id)
-                    )
+                    tool = _map_mistral_to_pydantic_tool_call(f)
                     calls.append(tool)
         elif self._delta_content:
             # NOTE: Params set for the most efficient and fastest way.
@@ -541,7 +517,7 @@ class MistralStreamStructuredResponse(StreamStructuredResponse):
             assert isinstance(decoded_object, dict)
 
             if decoded_object:
-                tool = PydanticToolCall.from_dict(
+                tool = ToolCall.from_dict(
                     tool_name='final_result',  # TODO: Get tool_name
                     args_dict=decoded_object,
                 )
@@ -604,7 +580,23 @@ def _generate_jsom_simple_schemas(schemas: list[dict[str, Any]]) -> list[dict[st
     return examples
 
 
-def _map_tool_call(t: PydanticToolCall) -> MistralToolCall:
+def _map_mistral_to_pydantic_tool_call(func_call: MistralFunctionCall | MistralToolCall) -> ToolCall:
+    tool_call_id: str | None = None
+    if isinstance(func_call, MistralToolCall):
+        tool_call_id = func_call.id or None
+        func_call = func_call.function
+
+    if isinstance(func_call.arguments, str):
+        return ToolCall.from_json(
+            tool_name=func_call.name,
+            args_json=func_call.arguments,
+            tool_call_id=tool_call_id,
+        )
+    else:
+        return ToolCall.from_dict(tool_name=func_call.name, args_dict=func_call.arguments, tool_call_id=tool_call_id)
+
+
+def _map_pydantic_to_mistral_tool_call(t: ToolCall) -> MistralToolCall:
     if isinstance(t.args, ArgsJson):
         return MistralToolCall(
             id=t.tool_call_id,
