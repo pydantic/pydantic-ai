@@ -801,22 +801,21 @@ class Agent(Generic[AgentDeps, ResultData]):
         self, model_response: _messages.ModelTextResponse, deps: AgentDeps
     ) -> tuple[_MarkFinalResult[ResultData] | None, list[_messages.Message]]:
         """Handle a plain text response from the model for non-streaming responses."""
-            if self._allow_text_result:
-                result_data_input = cast(ResultData, model_response.content)
-                try:
-                    result_data = await self._validate_result(result_data_input, deps, None)
-                except _result.ToolRetryError as e:
-                    self._incr_result_retry()
-                    return None, [e.tool_retry]
-                else:
-                    return _MarkFinalResult(result_data), []
-            else:
+        if self._allow_text_result:
+            result_data_input = cast(ResultData, model_response.content)
+            try:
+                result_data = await self._validate_result(result_data_input, deps, None)
+            except _result.ToolRetryError as e:
                 self._incr_result_retry()
-                response = _messages.RetryPrompt(
-                    content='Plain text responses are not permitted, please call one of the functions instead.',
-                )
-                return None, [response]
-        
+                return None, [e.tool_retry]
+            else:
+                return _MarkFinalResult(result_data), []
+        else:
+            self._incr_result_retry()
+            response = _messages.RetryPrompt(
+                content='Plain text responses are not permitted, please call one of the functions instead.',
+            )
+            return None, [response]
 
     async def _handle_structured_response(
         self, model_response: _messages.ModelStructuredResponse, deps: AgentDeps
@@ -830,7 +829,7 @@ class Agent(Generic[AgentDeps, ResultData]):
 
         # Then process regular tools based on end strategy
         if not (final_result and self.end_strategy == 'early'):
-            tool_messages = await self._process_regular_tool_calls(model_response, deps)
+            tool_messages = await self._process_regular_tools(model_response, deps)
         else:
             tool_messages = self._mark_skipped_regular_tools(model_response)
 
@@ -885,7 +884,7 @@ class Agent(Generic[AgentDeps, ResultData]):
 
         return final_result, messages
 
-    async def _process_regular_tool_calls(
+    async def _process_regular_tools(
         self,
         model_response: _messages.ModelStructuredResponse,
         deps: AgentDeps,
@@ -893,15 +892,12 @@ class Agent(Generic[AgentDeps, ResultData]):
         """Process regular (non-final) tool calls in parallel."""
         messages: list[_messages.Message] = []
         tasks: list[asyncio.Task[_messages.Message]] = []
+        result_tools = set(self._result_schema.tool_names()) if self._result_schema else set()
 
         for call in model_response.calls:
-            # Skip final result tools
-            if self._result_schema and call.tool_name in self._result_schema.tool_names():
-                continue
-
             if tool := self._function_tools.get(call.tool_name):
                 tasks.append(asyncio.create_task(tool.run(deps, call), name=call.tool_name))
-            else:
+            elif call.tool_name not in result_tools:
                 messages.append(self._unknown_tool(call.tool_name))
 
         # Run all tool tasks in parallel
@@ -918,13 +914,10 @@ class Agent(Generic[AgentDeps, ResultData]):
     ) -> list[_messages.Message]:
         """Mark regular tools as skipped when a final result was found with early end strategy."""
         messages: list[_messages.Message] = []
+        result_tools = set(self._result_schema.tool_names()) if self._result_schema else set()
 
         for call in model_response.calls:
-            # Skip final result tools
-            if self._result_schema and call.tool_name in self._result_schema.tool_names():
-                continue
-
-            if call.tool_name in self._function_tools:
+            if call.tool_name not in result_tools and call.tool_name in self._function_tools:
                 messages.append(
                     _messages.ToolReturn(
                         tool_name=call.tool_name,
