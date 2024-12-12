@@ -205,10 +205,10 @@ class AnthropicAgentModel(AgentModel):
             system=system_prompt or NOT_GIVEN,
             messages=anthropic_messages,
             model=self.model_name,
-            temperature=model_settings.get('temperature', 0.0),
             tools=self.tools or NOT_GIVEN,
             tool_choice=tool_choice or NOT_GIVEN,
             stream=stream,
+            temperature=model_settings.get('temperature', NOT_GIVEN),
             top_p=model_settings.get('top_p', NOT_GIVEN),
             timeout=model_settings.get('timeout', NOT_GIVEN),
         )

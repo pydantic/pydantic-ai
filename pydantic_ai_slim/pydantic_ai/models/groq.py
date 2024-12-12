@@ -194,13 +194,13 @@ class GroqAgentModel(AgentModel):
         return await self.client.chat.completions.create(
             model=str(self.model_name),
             messages=groq_messages,
-            temperature=model_settings.get('temperature', 0.0),
             n=1,
             parallel_tool_calls=True if self.tools else NOT_GIVEN,
             tools=self.tools or NOT_GIVEN,
             tool_choice=tool_choice or NOT_GIVEN,
             stream=stream,
             max_tokens=model_settings.get('max_tokens', NOT_GIVEN),
+            temperature=model_settings.get('temperature', NOT_GIVEN),
             top_p=model_settings.get('top_p', NOT_GIVEN),
             timeout=model_settings.get('timeout', NOT_GIVEN),
         )
