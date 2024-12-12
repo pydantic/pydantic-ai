@@ -22,6 +22,7 @@ from . import (
     result,
 )
 from .result import ResultData
+from .settings import ModelRequestSettings
 from .tools import (
     AgentDeps,
     RunContext,
@@ -73,6 +74,13 @@ class Agent(Generic[AgentDeps, ResultData]):
     If `None`, we try to infer the agent name from the call frame when the agent is first run.
     """
 
+    model_request_settings: ModelRequestSettings | None = None
+    """Optional model request settings to use for this agents's runs, by default.
+
+    Note, if model_request_settings is provided during a `run{_sync, _stream}` call, any settings
+    provided at runtime via said call will override these settings.
+    """
+
     last_run_messages: list[_messages.Message] | None = None
     """The messages from the last run, useful when a run raised an exception.
 
@@ -100,6 +108,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         system_prompt: str | Sequence[str] = (),
         deps_type: type[AgentDeps] = NoneType,
         name: str | None = None,
+        model_request_settings: ModelRequestSettings | None = None,
         retries: int = 1,
         result_tool_name: str = 'final_result',
         result_tool_description: str | None = None,
@@ -121,6 +130,7 @@ class Agent(Generic[AgentDeps, ResultData]):
                 or add a type hint `: Agent[None, <return type>]`.
             name: The name of the agent, used for logging. If `None`, we try to infer the agent name from the call frame
                 when the agent is first run.
+            model_request_settings: Optional model request settings to use for this agent's runs, by default.
             retries: The default number of retries to allow before raising an error.
             result_tool_name: The name of the tool to use for the final result.
             result_tool_description: The description of the final result tool.
@@ -139,6 +149,7 @@ class Agent(Generic[AgentDeps, ResultData]):
             self.model = models.infer_model(model)
 
         self.name = name
+        self.model_request_settings = model_request_settings
         self._result_schema = _result.ResultSchema[result_type].build(
             result_type, result_tool_name, result_tool_description
         )
@@ -167,6 +178,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         model: models.Model | models.KnownModelName | None = None,
         deps: AgentDeps = None,
         infer_name: bool = True,
+        model_request_settings: ModelRequestSettings | None = None,
     ) -> result.RunResult[ResultData]:
         """Run the agent with a user prompt in async mode.
 
@@ -187,6 +199,7 @@ class Agent(Generic[AgentDeps, ResultData]):
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
             deps: Optional dependencies to use for this run.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
+            model_request_settings: Optional settings to use for this model's request.
 
         Returns:
             The result of the run.
@@ -219,8 +232,10 @@ class Agent(Generic[AgentDeps, ResultData]):
                 with _logfire.span('preparing model and tools {run_step=}', run_step=run_step):
                     agent_model = await self._prepare_model(model_used, deps)
 
+                model_request_settings = {**(self.model_request_settings or {}), **(model_request_settings or {})}
+
                 with _logfire.span('model request', run_step=run_step) as model_req_span:
-                    model_response, request_cost = await agent_model.request(messages)
+                    model_response, request_cost = await agent_model.request(messages, model_request_settings)
                     model_req_span.set_attribute('response', model_response)
                     model_req_span.set_attribute('cost', request_cost)
                     model_req_span.message = f'model request -> {model_response.role}'
@@ -256,6 +271,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         model: models.Model | models.KnownModelName | None = None,
         deps: AgentDeps = None,
         infer_name: bool = True,
+        model_request_settings: ModelRequestSettings | None = None,
     ) -> result.RunResult[ResultData]:
         """Run the agent with a user prompt synchronously.
 
@@ -279,6 +295,7 @@ class Agent(Generic[AgentDeps, ResultData]):
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
             deps: Optional dependencies to use for this run.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
+            model_request_settings: Optional settings to use for this model's request.
 
         Returns:
             The result of the run.
@@ -287,7 +304,14 @@ class Agent(Generic[AgentDeps, ResultData]):
             self._infer_name(inspect.currentframe())
         loop = asyncio.get_event_loop()
         return loop.run_until_complete(
-            self.run(user_prompt, message_history=message_history, model=model, deps=deps, infer_name=False)
+            self.run(
+                user_prompt,
+                message_history=message_history,
+                model=model,
+                deps=deps,
+                infer_name=False,
+                model_request_settings=model_request_settings,
+            )
         )
 
     @asynccontextmanager
@@ -299,6 +323,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         model: models.Model | models.KnownModelName | None = None,
         deps: AgentDeps = None,
         infer_name: bool = True,
+        model_request_settings: ModelRequestSettings | None = None,
     ) -> AsyncIterator[result.StreamedRunResult[AgentDeps, ResultData]]:
         """Run the agent with a user prompt in async mode, returning a streamed response.
 
@@ -320,6 +345,7 @@ class Agent(Generic[AgentDeps, ResultData]):
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
             deps: Optional dependencies to use for this run.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
+            model_request_settings: Optional settings to use for this model's request.
 
         Returns:
             The result of the run.
@@ -355,8 +381,10 @@ class Agent(Generic[AgentDeps, ResultData]):
                 with _logfire.span('preparing model and tools {run_step=}', run_step=run_step):
                     agent_model = await self._prepare_model(model_used, deps)
 
+                model_request_settings = {**(self.model_request_settings or {}), **(model_request_settings or {})}
+
                 with _logfire.span('model request {run_step=}', run_step=run_step) as model_req_span:
-                    async with agent_model.request_stream(messages) as model_response:
+                    async with agent_model.request_stream(messages, model_request_settings) as model_response:
                         model_req_span.set_attribute('response_type', model_response.__class__.__name__)
                         # We want to end the "model request" span here, but we can't exit the context manager
                         # in the traditional way
