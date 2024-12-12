@@ -117,17 +117,12 @@ class RetryPrompt:
 
 
 @dataclass
-class ModelTextResponse:
+class TextItem:
     """A plain text response from a model."""
 
     content: str
     """The text content of the response."""
-    timestamp: datetime = field(default_factory=_now_utc)
-    """The timestamp of the response.
-
-    If the model provides a timestamp in the response (as OpenAI does) that will be used.
-    """
-    role: Literal['model-text-response'] = 'model-text-response'
+    kind: Literal['text-item'] = 'text-item'
     """Message type identifier, this type is available on all message as a discriminator."""
 
 
@@ -161,6 +156,9 @@ class ToolCall:
     tool_call_id: str | None = None
     """Optional tool call identifier, this is used by some models including OpenAI."""
 
+    kind: Literal['tool-call'] = 'tool-call'
+    """Message type identifier, this type is available on all message as a discriminator."""
+
     @classmethod
     def from_json(cls, tool_name: str, args_json: str, tool_call_id: str | None = None) -> ToolCall:
         return cls(tool_name, ArgsJson(args_json), tool_call_id)
@@ -176,28 +174,30 @@ class ToolCall:
             return bool(self.args.args_json)
 
 
+ModelResponseContentItem = Union[TextItem, ToolCall]
+
+
 @dataclass
-class ModelStructuredResponse:
-    """A structured response from a model.
+class ModelResponse:
+    """A response from a model."""
 
-    This is used either to call a tool or to return a structured response from an agent run.
-    """
+    items: list[ModelResponseContentItem]
+    """The content of the response."""
 
-    calls: list[ToolCall]
-    """The tool calls being made."""
+    role: Literal['model-response'] = 'model-response'
+    """Message type identifier, this type is available on all message as a discriminator."""
     timestamp: datetime = field(default_factory=_now_utc)
     """The timestamp of the response.
 
     If the model provides a timestamp in the response (as OpenAI does) that will be used.
     """
-    role: Literal['model-structured-response'] = 'model-structured-response'
-    """Message type identifier, this type is available on all message as a discriminator."""
+
+    @staticmethod
+    def from_text(content: str, timestamp: datetime | None = None) -> ModelResponse:
+        return ModelResponse([TextItem(content)], timestamp=timestamp or _now_utc())
 
 
-ModelAnyResponse = Union[ModelTextResponse, ModelStructuredResponse]
-"""Any response from a model."""
-
-Message = Union[SystemPrompt, UserPrompt, ToolReturn, RetryPrompt, ModelTextResponse, ModelStructuredResponse]
+Message = Union[SystemPrompt, UserPrompt, ToolReturn, RetryPrompt, ModelResponse]
 """Any message send to or returned by a model."""
 
 MessagesTypeAdapter = _pydantic.LazyTypeAdapter(list[Annotated[Message, pydantic.Field(discriminator='role')]])

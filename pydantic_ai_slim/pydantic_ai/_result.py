@@ -12,7 +12,7 @@ from typing_extensions import Self, TypeAliasType, TypedDict
 
 from . import _utils, messages
 from .exceptions import ModelRetry
-from .messages import ModelStructuredResponse, ToolCall
+from .messages import ModelResponse, ToolCall
 from .result import ResultData
 from .tools import AgentDeps, ResultValidatorFunc, RunContext, ToolDefinition
 
@@ -108,11 +108,12 @@ class ResultSchema(Generic[ResultData]):
 
         return cls(tools=tools, allow_text_result=allow_text_result)
 
-    def find_tool(self, message: ModelStructuredResponse) -> tuple[ToolCall, ResultTool[ResultData]] | None:
+    def find_tool(self, message: ModelResponse) -> tuple[ToolCall, ResultTool[ResultData]] | None:
         """Find a tool that matches one of the calls."""
-        for call in message.calls:
-            if result := self.tools.get(call.tool_name):
-                return call, result
+        for item in message.items:
+            if isinstance(item, ToolCall):
+                if result := self.tools.get(item.tool_name):
+                    return item, result
 
     def tool_names(self) -> list[str]:
         """Return the names of the tools."""

@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 from pydantic_core import PydanticSerializationError
 
 from pydantic_ai import Agent, RunContext, Tool, UserError
-from pydantic_ai.messages import Message, ModelAnyResponse, ModelTextResponse
+from pydantic_ai.messages import Message, ModelResponse
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
@@ -71,10 +71,10 @@ async def google_style_docstring(foo: int, bar: str) -> str:  # pragma: no cover
     return f'{foo} {bar}'
 
 
-async def get_json_schema(_messages: list[Message], info: AgentInfo) -> ModelAnyResponse:
+async def get_json_schema(_messages: list[Message], info: AgentInfo) -> ModelResponse:
     assert len(info.function_tools) == 1
     r = info.function_tools[0]
-    return ModelTextResponse(pydantic_core.to_json(r).decode())
+    return ModelResponse.from_text(pydantic_core.to_json(r).decode())
 
 
 def test_docstring_google(set_event_loop: None):

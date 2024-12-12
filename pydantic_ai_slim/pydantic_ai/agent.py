@@ -10,7 +10,6 @@ from types import FrameType
 from typing import Any, Callable, Generic, cast, final, overload
 
 import logfire_api
-from typing_extensions import assert_never
 
 from . import (
     _result,
@@ -21,6 +20,7 @@ from . import (
     models,
     result,
 )
+from .messages import TextItem, ToolCall
 from .result import ResultData
 from .tools import (
     AgentDeps,
@@ -769,17 +769,27 @@ class Agent(Generic[AgentDeps, ResultData]):
         return new_message_index, messages
 
     async def _handle_model_response(
-        self, model_response: _messages.ModelAnyResponse, deps: AgentDeps
+        self, model_response: _messages.ModelResponse, deps: AgentDeps
     ) -> tuple[_MarkFinalResult[ResultData] | None, list[_messages.Message]]:
         """Process a non-streamed response from the model.
 
         Returns:
             A tuple of `(final_result, messages)`. If `final_result` is not `None`, the conversation should end.
         """
-        if model_response.role == 'model-text-response':
+        calls: list[ToolCall] = []
+        texts: list[str] = []
+        for item in model_response.items:
+            if isinstance(item, TextItem):
+                texts.append(item.content)
+            else:
+                calls.append(item)
+
+        if texts:
+            text_response = '\n\n'.join(texts)
+
             # plain string response
             if self._allow_text_result:
-                result_data_input = cast(ResultData, model_response.content)
+                result_data_input = cast(ResultData, text_response)
                 try:
                     result_data = await self._validate_result(result_data_input, deps, None)
                 except _result.ToolRetryError as e:
@@ -793,10 +803,11 @@ class Agent(Generic[AgentDeps, ResultData]):
                     content='Plain text responses are not permitted, please call one of the functions instead.',
                 )
                 return None, [response]
-        elif model_response.role == 'model-structured-response':
+        elif calls:
             if self._result_schema is not None:
                 # if there's a result schema, and any of the calls match one of its tools, return the result
                 # NOTE: this means we ignore any other tools called here
+                # TODO: Pass `calls` here rather than model_response
                 if match := self._result_schema.find_tool(model_response):
                     call, result_tool = match
                     try:
@@ -814,13 +825,10 @@ class Agent(Generic[AgentDeps, ResultData]):
                         )
                         return _MarkFinalResult(result_data), [tool_return]
 
-            if not model_response.calls:
-                raise exceptions.UnexpectedModelBehavior('Received empty tool call message')
-
             # otherwise we run all tool functions in parallel
             messages: list[_messages.Message] = []
             tasks: list[asyncio.Task[_messages.Message]] = []
-            for call in model_response.calls:
+            for call in calls:
                 if tool := self._function_tools.get(call.tool_name):
                     tasks.append(asyncio.create_task(tool.run(deps, call), name=call.tool_name))
                 else:
@@ -831,7 +839,7 @@ class Agent(Generic[AgentDeps, ResultData]):
                 messages.extend(task_results)
             return None, messages
         else:
-            assert_never(model_response)
+            raise exceptions.UnexpectedModelBehavior('Received empty model response')
 
     async def _handle_streamed_model_response(
         self, model_response: models.EitherStreamedResponse, deps: AgentDeps
@@ -861,7 +869,7 @@ class Agent(Generic[AgentDeps, ResultData]):
                 # if there's a result schema, iterate over the stream until we find at least one tool
                 # NOTE: this means we ignore any other tools called here
                 structured_msg = model_response.get()
-                while not structured_msg.calls:
+                while not structured_msg.items:
                     try:
                         await model_response.__anext__()
                     except StopAsyncIteration:
@@ -881,17 +889,19 @@ class Agent(Generic[AgentDeps, ResultData]):
             async for _ in model_response:
                 pass
             structured_msg = model_response.get()
-            if not structured_msg.calls:
+            if not structured_msg.items:
                 raise exceptions.UnexpectedModelBehavior('Received empty tool call message')
             messages: list[_messages.Message] = [structured_msg]
 
             # we now run all tool functions in parallel
             tasks: list[asyncio.Task[_messages.Message]] = []
-            for call in structured_msg.calls:
-                if tool := self._function_tools.get(call.tool_name):
-                    tasks.append(asyncio.create_task(tool.run(deps, call), name=call.tool_name))
-                else:
-                    messages.append(self._unknown_tool(call.tool_name))
+            for item in structured_msg.items:
+                if isinstance(item, ToolCall):
+                    call = item
+                    if tool := self._function_tools.get(call.tool_name):
+                        tasks.append(asyncio.create_task(tool.run(deps, call), name=call.tool_name))
+                    else:
+                        messages.append(self._unknown_tool(call.tool_name))
 
             with _logfire.span('running {tools=}', tools=[t.get_name() for t in tasks]):
                 task_results: Sequence[_messages.Message] = await asyncio.gather(*tasks)

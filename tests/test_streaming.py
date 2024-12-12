@@ -12,8 +12,7 @@ from pydantic_ai.messages import (
     ArgsDict,
     ArgsJson,
     Message,
-    ModelStructuredResponse,
-    ModelTextResponse,
+    ModelResponse,
     RetryPrompt,
     ToolCall,
     ToolReturn,
@@ -45,8 +44,8 @@ async def test_streamed_text_response():
         assert result.all_messages() == snapshot(
             [
                 UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
-                ModelStructuredResponse(
-                    calls=[ToolCall(tool_name='ret_a', args=ArgsDict(args_dict={'x': 'a'}))],
+                ModelResponse(
+                    items=[ToolCall(tool_name='ret_a', args=ArgsDict(args_dict={'x': 'a'}))],
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 ToolReturn(tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc)),
@@ -60,12 +59,12 @@ async def test_streamed_text_response():
         assert result.all_messages() == snapshot(
             [
                 UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
-                ModelStructuredResponse(
-                    calls=[ToolCall(tool_name='ret_a', args=ArgsDict(args_dict={'x': 'a'}))],
+                ModelResponse(
+                    items=[ToolCall(tool_name='ret_a', args=ArgsDict(args_dict={'x': 'a'}))],
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 ToolReturn(tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc)),
-                ModelTextResponse(content='{"ret_a":"a-apple"}', timestamp=IsNow(tz=timezone.utc)),
+                ModelResponse.from_text(content='{"ret_a":"a-apple"}', timestamp=IsNow(tz=timezone.utc)),
             ]
         )
 
@@ -201,8 +200,8 @@ async def test_call_tool():
         assert result.all_messages() == snapshot(
             [
                 UserPrompt(content='hello', timestamp=IsNow(tz=timezone.utc)),
-                ModelStructuredResponse(
-                    calls=[ToolCall(tool_name='ret_a', args=ArgsJson(args_json='{"x": "hello"}'))],
+                ModelResponse(
+                    items=[ToolCall(tool_name='ret_a', args=ArgsJson(args_json='{"x": "hello"}'))],
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 ToolReturn(tool_name='ret_a', content='hello world', timestamp=IsNow(tz=timezone.utc)),
@@ -217,8 +216,8 @@ async def test_call_tool():
         assert result.all_messages() == snapshot(
             [
                 UserPrompt(content='hello', timestamp=IsNow(tz=timezone.utc)),
-                ModelStructuredResponse(
-                    calls=[ToolCall(tool_name='ret_a', args=ArgsJson(args_json='{"x": "hello"}'))],
+                ModelResponse(
+                    items=[ToolCall(tool_name='ret_a', args=ArgsJson(args_json='{"x": "hello"}'))],
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 ToolReturn(tool_name='ret_a', content='hello world', timestamp=IsNow(tz=timezone.utc)),
@@ -227,8 +226,8 @@ async def test_call_tool():
                     content='Final result processed.',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
-                ModelStructuredResponse(
-                    calls=[
+                ModelResponse(
+                    items=[
                         ToolCall(
                             tool_name='final_result',
                             args=ArgsJson(args_json='{"response": ["hello world", 2]}'),
@@ -267,8 +266,8 @@ async def test_call_tool_wrong_name():
     assert agent.last_run_messages == snapshot(
         [
             UserPrompt(content='hello', timestamp=IsNow(tz=timezone.utc)),
-            ModelStructuredResponse(
-                calls=[ToolCall(tool_name='foobar', args=ArgsJson(args_json='{}'))], timestamp=IsNow(tz=timezone.utc)
+            ModelResponse(
+                items=[ToolCall(tool_name='foobar', args=ArgsJson(args_json='{}'))], timestamp=IsNow(tz=timezone.utc)
             ),
             RetryPrompt(
                 content="Unknown tool name: 'foobar'. Available tools: ret_a, final_result",

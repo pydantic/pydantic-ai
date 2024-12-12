@@ -21,9 +21,7 @@ from pydantic_ai._utils import group_by_temporal
 from pydantic_ai.messages import (
     ArgsDict,
     Message,
-    ModelAnyResponse,
-    ModelStructuredResponse,
-    ModelTextResponse,
+    ModelResponse,
     ToolCall,
 )
 from pydantic_ai.models import KnownModelName, Model
@@ -223,44 +221,42 @@ text_responses: dict[str, str | ToolCall] = {
 }
 
 
-async def model_logic(messages: list[Message], info: AgentInfo) -> ModelAnyResponse:  # pragma: no cover
+async def model_logic(messages: list[Message], info: AgentInfo) -> ModelResponse:  # pragma: no cover
     m = messages[-1]
     if m.role == 'user':
         if response := text_responses.get(m.content):
             if isinstance(response, str):
-                return ModelTextResponse(content=response)
+                return ModelResponse.from_text(content=response)
             else:
-                return ModelStructuredResponse(calls=[response])
+                return ModelResponse(items=[response])
 
         if re.fullmatch(r'sql prompt \d+', m.content):
-            return ModelTextResponse(content='SELECT 1')
+            return ModelResponse.from_text(content='SELECT 1')
 
     elif m.role == 'tool-return' and m.tool_name == 'roulette_wheel':
         win = m.content == 'winner'
-        return ModelStructuredResponse(calls=[ToolCall(tool_name='final_result', args=ArgsDict({'response': win}))])
+        return ModelResponse(items=[ToolCall(tool_name='final_result', args=ArgsDict({'response': win}))])
     elif m.role == 'tool-return' and m.tool_name == 'roll_die':
-        return ModelStructuredResponse(calls=[ToolCall(tool_name='get_player_name', args=ArgsDict({}))])
+        return ModelResponse(items=[ToolCall(tool_name='get_player_name', args=ArgsDict({}))])
     elif m.role == 'tool-return' and m.tool_name == 'get_player_name':
-        return ModelTextResponse(content="Congratulations Anne, you guessed correctly! You're a winner!")
+        return ModelResponse.from_text(content="Congratulations Anne, you guessed correctly! You're a winner!")
     if m.role == 'retry-prompt' and isinstance(m.content, str) and m.content.startswith("No user found with name 'Joh"):
-        return ModelStructuredResponse(
-            calls=[ToolCall(tool_name='get_user_by_name', args=ArgsDict({'name': 'John Doe'}))]
-        )
+        return ModelResponse(items=[ToolCall(tool_name='get_user_by_name', args=ArgsDict({'name': 'John Doe'}))])
     elif m.role == 'tool-return' and m.tool_name == 'get_user_by_name':
         args = {
             'message': 'Hello John, would you be free for coffee sometime next week? Let me know what works for you!',
             'user_id': 123,
         }
-        return ModelStructuredResponse(calls=[ToolCall(tool_name='final_result', args=ArgsDict(args))])
+        return ModelResponse(items=[ToolCall(tool_name='final_result', args=ArgsDict(args))])
     elif m.role == 'retry-prompt' and m.tool_name == 'calc_volume':
-        return ModelStructuredResponse(calls=[ToolCall(tool_name='calc_volume', args=ArgsDict({'size': 6}))])
+        return ModelResponse(items=[ToolCall(tool_name='calc_volume', args=ArgsDict({'size': 6}))])
     elif m.role == 'tool-return' and m.tool_name == 'customer_balance':
         args = {
             'support_advice': 'Hello John, your current account balance, including pending transactions, is $123.45.',
             'block_card': False,
             'risk': 1,
         }
-        return ModelStructuredResponse(calls=[ToolCall(tool_name='final_result', args=ArgsDict(args))])
+        return ModelResponse(items=[ToolCall(tool_name='final_result', args=ArgsDict(args))])
     else:
         sys.stdout.write(str(debug.format(messages, info)))
         raise RuntimeError(f'Unexpected message: {m}')

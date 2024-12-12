@@ -13,9 +13,7 @@ from pydantic import BaseModel
 from pydantic_ai import Agent, ModelRetry, RunContext
 from pydantic_ai.messages import (
     Message,
-    ModelAnyResponse,
-    ModelStructuredResponse,
-    ModelTextResponse,
+    ModelResponse,
     SystemPrompt,
     ToolCall,
     ToolReturn,
@@ -30,12 +28,12 @@ from ..conftest import IsNow
 pytestmark = pytest.mark.anyio
 
 
-async def return_last(messages: list[Message], _: AgentInfo) -> ModelAnyResponse:
+async def return_last(messages: list[Message], _: AgentInfo) -> ModelResponse:
     last = messages[-1]
     response = asdict(last)
     response.pop('timestamp', None)
     response['message_count'] = len(messages)
-    return ModelTextResponse(' '.join(f'{k}={v!r}' for k, v in response.items()))
+    return ModelResponse.from_text(' '.join(f'{k}={v!r}' for k, v in response.items()))
 
 
 def test_simple(set_event_loop: None):
@@ -49,10 +47,9 @@ def test_simple(set_event_loop: None):
                 timestamp=IsNow(tz=timezone.utc),
                 role='user',
             ),
-            ModelTextResponse(
+            ModelResponse.from_text(
                 content="content='Hello' role='user' message_count=1",
                 timestamp=IsNow(tz=timezone.utc),
-                role='model-text-response',
             ),
         ]
     )
@@ -66,32 +63,30 @@ def test_simple(set_event_loop: None):
                 timestamp=IsNow(tz=timezone.utc),
                 role='user',
             ),
-            ModelTextResponse(
+            ModelResponse.from_text(
                 content="content='Hello' role='user' message_count=1",
                 timestamp=IsNow(tz=timezone.utc),
-                role='model-text-response',
             ),
             UserPrompt(
                 content='World',
                 timestamp=IsNow(tz=timezone.utc),
                 role='user',
             ),
-            ModelTextResponse(
+            ModelResponse.from_text(
                 content="content='World' role='user' message_count=3",
                 timestamp=IsNow(tz=timezone.utc),
-                role='model-text-response',
             ),
         ]
     )
 
 
-async def weather_model(messages: list[Message], info: AgentInfo) -> ModelAnyResponse:  # pragma: no cover
+async def weather_model(messages: list[Message], info: AgentInfo) -> ModelResponse:  # pragma: no cover
     assert info.allow_text_result
     assert {t.name for t in info.function_tools} == {'get_location', 'get_weather'}
     last = messages[-1]
     if last.role == 'user':
-        return ModelStructuredResponse(
-            calls=[
+        return ModelResponse(
+            items=[
                 ToolCall.from_json(
                     'get_location',
                     json.dumps({'location_description': last.content}),
@@ -100,10 +95,10 @@ async def weather_model(messages: list[Message], info: AgentInfo) -> ModelAnyRes
         )
     elif last.role == 'tool-return':
         if last.tool_name == 'get_location':
-            return ModelStructuredResponse(calls=[ToolCall.from_json('get_weather', last.model_response_str())])
+            return ModelResponse(items=[ToolCall.from_json('get_weather', last.model_response_str())])
         elif last.tool_name == 'get_weather':
             location_name = next(m.content for m in messages if m.role == 'user')
-            return ModelTextResponse(f'{last.content} in {location_name}')
+            return ModelResponse.from_text(f'{last.content} in {location_name}')
 
     raise ValueError(f'Unexpected message: {last}')
 
@@ -139,10 +134,10 @@ def test_weather(set_event_loop: None):
                 timestamp=IsNow(tz=timezone.utc),
                 role='user',
             ),
-            ModelStructuredResponse(
-                calls=[ToolCall.from_json('get_location', '{"location_description": "London"}')],
+            ModelResponse(
+                items=[ToolCall.from_json('get_location', '{"location_description": "London"}')],
                 timestamp=IsNow(tz=timezone.utc),
-                role='model-structured-response',
+                role='model-response',
             ),
             ToolReturn(
                 tool_name='get_location',
@@ -150,15 +145,15 @@ def test_weather(set_event_loop: None):
                 timestamp=IsNow(tz=timezone.utc),
                 role='tool-return',
             ),
-            ModelStructuredResponse(
-                calls=[
+            ModelResponse(
+                items=[
                     ToolCall.from_json(
                         'get_weather',
                         '{"lat": 51, "lng": 0}',
                     )
                 ],
                 timestamp=IsNow(tz=timezone.utc),
-                role='model-structured-response',
+                role='model-response',
             ),
             ToolReturn(
                 tool_name='get_weather',
@@ -166,10 +161,9 @@ def test_weather(set_event_loop: None):
                 timestamp=IsNow(tz=timezone.utc),
                 role='tool-return',
             ),
-            ModelTextResponse(
+            ModelResponse.from_text(
                 content='Raining in London',
                 timestamp=IsNow(tz=timezone.utc),
-                role='model-text-response',
             ),
         ]
     )
@@ -178,13 +172,13 @@ def test_weather(set_event_loop: None):
     assert result.data == 'Sunny in Ipswich'
 
 
-async def call_function_model(messages: list[Message], _: AgentInfo) -> ModelAnyResponse:  # pragma: no cover
+async def call_function_model(messages: list[Message], _: AgentInfo) -> ModelResponse:  # pragma: no cover
     last = messages[-1]
     if last.role == 'user':
         if last.content.startswith('{'):
             details = json.loads(last.content)
-            return ModelStructuredResponse(
-                calls=[
+            return ModelResponse(
+                items=[
                     ToolCall.from_json(
                         details['function'],
                         json.dumps(details['arguments']),
@@ -192,7 +186,7 @@ async def call_function_model(messages: list[Message], _: AgentInfo) -> ModelAny
                 ]
             )
     elif last.role == 'tool-return':
-        return ModelTextResponse(pydantic_core.to_json(last).decode())
+        return ModelResponse.from_text(pydantic_core.to_json(last).decode())
 
     raise ValueError(f'Unexpected message: {last}')
 
@@ -222,13 +216,13 @@ def test_var_args(set_event_loop: None):
     )
 
 
-async def call_tool(messages: list[Message], info: AgentInfo) -> ModelAnyResponse:
+async def call_tool(messages: list[Message], info: AgentInfo) -> ModelResponse:
     if len(messages) == 1:
         assert len(info.function_tools) == 1
         tool_name = info.function_tools[0].name
-        return ModelStructuredResponse(calls=[ToolCall.from_json(tool_name, '{}')])
+        return ModelResponse(items=[ToolCall.from_json(tool_name, '{}')])
     else:
-        return ModelTextResponse('final response')
+        return ModelResponse.from_text('final response')
 
 
 def test_deps_none(set_event_loop: None):
@@ -309,8 +303,8 @@ def spam() -> str:
 
 
 def test_register_all(set_event_loop: None):
-    async def f(messages: list[Message], info: AgentInfo) -> ModelAnyResponse:
-        return ModelTextResponse(
+    async def f(messages: list[Message], info: AgentInfo) -> ModelResponse:
+        return ModelResponse.from_text(
             f'messages={len(messages)} allow_text_result={info.allow_text_result} tools={len(info.function_tools)}'
         )
 
@@ -325,8 +319,8 @@ def test_call_all(set_event_loop: None):
         [
             SystemPrompt(content='foobar'),
             UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
-            ModelStructuredResponse(
-                calls=[
+            ModelResponse(
+                items=[
                     ToolCall.from_dict('foo', {'x': 0}),
                     ToolCall.from_dict('bar', {'x': 0}),
                     ToolCall.from_dict('baz', {'x': 0}),
@@ -340,7 +334,7 @@ def test_call_all(set_event_loop: None):
             ToolReturn(tool_name='baz', content='3', timestamp=IsNow(tz=timezone.utc)),
             ToolReturn(tool_name='qux', content='4', timestamp=IsNow(tz=timezone.utc)),
             ToolReturn(tool_name='quz', content='a', timestamp=IsNow(tz=timezone.utc)),
-            ModelTextResponse(
+            ModelResponse.from_text(
                 content='{"foo":"1","bar":"2","baz":"3","qux":"4","quz":"a"}', timestamp=IsNow(tz=timezone.utc)
             ),
         ]
@@ -350,11 +344,11 @@ def test_call_all(set_event_loop: None):
 def test_retry_str(set_event_loop: None):
     call_count = 0
 
-    async def try_again(msgs_: list[Message], _agent_info: AgentInfo) -> ModelAnyResponse:
+    async def try_again(msgs_: list[Message], _agent_info: AgentInfo) -> ModelResponse:
         nonlocal call_count
         call_count += 1
 
-        return ModelTextResponse(str(call_count))
+        return ModelResponse.from_text(str(call_count))
 
     agent = Agent(FunctionModel(try_again))
 
@@ -372,11 +366,11 @@ def test_retry_str(set_event_loop: None):
 def test_retry_result_type(set_event_loop: None):
     call_count = 0
 
-    async def try_again(messages: list[Message], _: AgentInfo) -> ModelAnyResponse:
+    async def try_again(messages: list[Message], _: AgentInfo) -> ModelResponse:
         nonlocal call_count
         call_count += 1
 
-        return ModelStructuredResponse(calls=[ToolCall.from_dict('final_result', {'x': call_count})])
+        return ModelResponse(items=[ToolCall.from_dict('final_result', {'x': call_count})])
 
     class Foo(BaseModel):
         x: int
@@ -406,7 +400,7 @@ async def test_stream_text():
         assert result.all_messages() == snapshot(
             [
                 UserPrompt(content='', timestamp=IsNow(tz=timezone.utc)),
-                ModelTextResponse(content='hello world', timestamp=IsNow(tz=timezone.utc)),
+                ModelResponse.from_text(content='hello world', timestamp=IsNow(tz=timezone.utc)),
             ]
         )
         assert result.cost() == snapshot(Cost())

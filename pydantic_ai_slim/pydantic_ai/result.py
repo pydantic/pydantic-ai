@@ -9,6 +9,7 @@ from typing import Generic, TypeVar, cast
 import logfire_api
 
 from . import _result, _utils, exceptions, messages, models
+from .messages import ModelResponse, ToolCall
 from .tools import AgentDeps
 
 __all__ = (
@@ -205,11 +206,11 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
                     combined = await self._validate_text_result(''.join(chunks))
                     yield combined
                 lf_span.set_attribute('combined_text', combined)
-                self._marked_completed(text=combined)
+                self._marked_completed(ModelResponse.from_text(combined))
 
     async def stream_structured(
         self, *, debounce_by: float | None = 0.1
-    ) -> AsyncIterator[tuple[messages.ModelStructuredResponse, bool]]:
+    ) -> AsyncIterator[tuple[messages.ModelResponse, bool]]:
         """Stream the response as an async iterable of Structured LLM Messages.
 
         !!! note
@@ -230,17 +231,21 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
             else:
                 # we should already have a message at this point, yield that first if it has any content
                 msg = self._stream_response.get()
-                if any(call.has_content() for call in msg.calls):
-                    yield msg, False
+                for item in msg.items:
+                    if isinstance(item, ToolCall) and item.has_content():
+                        yield msg, False
+                        break
                 async with _utils.group_by_temporal(self._stream_response, debounce_by) as group_iter:
                     async for _ in group_iter:
                         msg = self._stream_response.get()
-                        if any(call.has_content() for call in msg.calls):
-                            yield msg, False
+                        for item in msg.items:
+                            if isinstance(item, ToolCall) and item.has_content():
+                                yield msg, False
+                                break
                 msg = self._stream_response.get(final=True)
                 yield msg, True
                 lf_span.set_attribute('structured_response', msg)
-                self._marked_completed(structured_message=msg)
+                self._marked_completed(msg)
 
     async def get_data(self) -> ResultData:
         """Stream the whole response, validate and return it."""
@@ -249,12 +254,12 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
         if isinstance(self._stream_response, models.StreamTextResponse):
             text = ''.join(self._stream_response.get(final=True))
             text = await self._validate_text_result(text)
-            self._marked_completed(text=text)
+            self._marked_completed(ModelResponse.from_text(text))
             return cast(ResultData, text)
         else:
-            structured_message = self._stream_response.get(final=True)
-            self._marked_completed(structured_message=structured_message)
-            return await self.validate_structured_result(structured_message)
+            message = self._stream_response.get(final=True)
+            self._marked_completed(message)
+            return await self.validate_structured_result(message)
 
     @property
     def is_structured(self) -> bool:
@@ -274,7 +279,7 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
         return self._stream_response.timestamp()
 
     async def validate_structured_result(
-        self, message: messages.ModelStructuredResponse, *, allow_partial: bool = False
+        self, message: messages.ModelResponse, *, allow_partial: bool = False
     ) -> ResultData:
         """Validate a structured result message."""
         assert self._result_schema is not None, 'Expected _result_schema to not be None'
@@ -301,16 +306,7 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
             )
         return text
 
-    def _marked_completed(
-        self, *, text: str | None = None, structured_message: messages.ModelStructuredResponse | None = None
-    ) -> None:
+    def _marked_completed(self, message: messages.ModelResponse) -> None:
         self.is_complete = True
-        if text is not None:
-            assert structured_message is None, 'Either text or structured_message should provided, not both'
-            self._all_messages.append(
-                messages.ModelTextResponse(content=text, timestamp=self._stream_response.timestamp())
-            )
-        else:
-            assert structured_message is not None, 'Either text or structured_message should provided, not both'
-            self._all_messages.append(structured_message)
+        self._all_messages.append(message)
         self._on_complete(self._all_messages)

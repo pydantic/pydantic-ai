@@ -13,7 +13,18 @@ import pydantic_core
 from typing_extensions import TypeAlias, assert_never, overload
 
 from .. import _utils, result
-from ..messages import ArgsJson, Message, ModelAnyResponse, ModelStructuredResponse, ToolCall
+from ..messages import (
+    ArgsJson,
+    Message,
+    ModelResponse,
+    ModelResponseContentItem,
+    RetryPrompt,
+    SystemPrompt,
+    TextItem,
+    ToolCall,
+    ToolReturn,
+    UserPrompt,
+)
 from ..tools import ToolDefinition
 from . import AgentModel, EitherStreamedResponse, Model, StreamStructuredResponse, StreamTextResponse
 
@@ -106,7 +117,7 @@ class DeltaToolCall:
 DeltaToolCalls: TypeAlias = dict[int, DeltaToolCall]
 """A mapping of tool call IDs to incremental changes."""
 
-FunctionDef: TypeAlias = Callable[[list[Message], AgentInfo], Union[ModelAnyResponse, Awaitable[ModelAnyResponse]]]
+FunctionDef: TypeAlias = Callable[[list[Message], AgentInfo], Union[ModelResponse, Awaitable[ModelResponse]]]
 """A function used to generate a non-streamed response."""
 
 StreamFunctionDef: TypeAlias = Callable[[list[Message], AgentInfo], AsyncIterator[Union[str, DeltaToolCalls]]]
@@ -127,13 +138,14 @@ class FunctionAgentModel(AgentModel):
     stream_function: StreamFunctionDef | None
     agent_info: AgentInfo
 
-    async def request(self, messages: list[Message]) -> tuple[ModelAnyResponse, result.Cost]:
+    async def request(self, messages: list[Message]) -> tuple[ModelResponse, result.Cost]:
         assert self.function is not None, 'FunctionModel must receive a `function` to support non-streamed requests'
         if inspect.iscoroutinefunction(self.function):
             response = await self.function(messages, self.agent_info)
         else:
             response_ = await _utils.run_in_executor(self.function, messages, self.agent_info)
-            response = cast(ModelAnyResponse, response_)
+            assert isinstance(response_, ModelResponse), response_
+            response = response_
         # TODO is `messages` right here? Should it just be new messages?
         return response, _estimate_cost(chain(messages, [response]))
 
@@ -206,13 +218,13 @@ class FunctionStreamStructuredResponse(StreamStructuredResponse):
             else:
                 self._delta_tool_calls[key] = new
 
-    def get(self, *, final: bool = False) -> ModelStructuredResponse:
-        calls: list[ToolCall] = []
+    def get(self, *, final: bool = False) -> ModelResponse:
+        calls: list[ModelResponseContentItem] = []
         for c in self._delta_tool_calls.values():
             if c.name is not None and c.json_args is not None:
                 calls.append(ToolCall.from_json(c.name, c.json_args))
 
-        return ModelStructuredResponse(calls, timestamp=self._timestamp)
+        return ModelResponse(calls, timestamp=self._timestamp)
 
     def cost(self) -> result.Cost:
         return result.Cost()
@@ -231,22 +243,25 @@ def _estimate_cost(messages: Iterable[Message]) -> result.Cost:
     request_tokens = 50
     response_tokens = 0
     for message in messages:
-        if message.role == 'system' or message.role == 'user':
+        if isinstance(message, (SystemPrompt, UserPrompt)):
             request_tokens += _string_cost(message.content)
-        elif message.role == 'tool-return':
+        elif isinstance(message, ToolReturn):
             request_tokens += _string_cost(message.model_response_str())
-        elif message.role == 'retry-prompt':
+        elif isinstance(message, RetryPrompt):
             request_tokens += _string_cost(message.model_response())
-        elif message.role == 'model-text-response':
-            response_tokens += _string_cost(message.content)
-        elif message.role == 'model-structured-response':
-            for call in message.calls:
-                if isinstance(call.args, ArgsJson):
-                    args_str = call.args.args_json
+        elif isinstance(message, ModelResponse):  # type: ignore[reportUnnecessaryIsInstance]
+            for item in message.items:
+                if isinstance(item, TextItem):
+                    response_tokens += _string_cost(item.content)
+                elif isinstance(item, ToolCall):  # type: ignore[reportUnnecessaryIsInstance]
+                    call = item
+                    if isinstance(call.args, ArgsJson):
+                        args_str = call.args.args_json
+                    else:
+                        args_str = pydantic_core.to_json(call.args.args_dict).decode()
+                    response_tokens += 1 + _string_cost(args_str)
                 else:
-                    args_str = pydantic_core.to_json(call.args.args_dict).decode()
-
-                response_tokens += 1 + _string_cost(args_str)
+                    assert_never(item)
         else:
             assert_never(message)
     return result.Cost(

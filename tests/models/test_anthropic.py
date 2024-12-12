@@ -12,8 +12,7 @@ from inline_snapshot import snapshot
 from pydantic_ai import Agent, ModelRetry
 from pydantic_ai.messages import (
     ArgsDict,
-    ModelStructuredResponse,
-    ModelTextResponse,
+    ModelResponse,
     RetryPrompt,
     SystemPrompt,
     ToolCall,
@@ -102,9 +101,9 @@ async def test_sync_request_text_response(allow_model_requests: None):
     assert result.all_messages() == snapshot(
         [
             UserPrompt(content='hello', timestamp=IsNow(tz=timezone.utc)),
-            ModelTextResponse(content='world', timestamp=IsNow(tz=timezone.utc)),
+            ModelResponse.from_text(content='world', timestamp=IsNow(tz=timezone.utc)),
             UserPrompt(content='hello', timestamp=IsNow(tz=timezone.utc)),
-            ModelTextResponse(content='world', timestamp=IsNow(tz=timezone.utc)),
+            ModelResponse.from_text(content='world', timestamp=IsNow(tz=timezone.utc)),
         ]
     )
 
@@ -137,8 +136,8 @@ async def test_request_structured_response(allow_model_requests: None):
     assert result.all_messages() == snapshot(
         [
             UserPrompt(content='hello', timestamp=IsNow(tz=timezone.utc)),
-            ModelStructuredResponse(
-                calls=[
+            ModelResponse(
+                items=[
                     ToolCall(
                         tool_name='final_result',
                         args=ArgsDict(args_dict={'response': [1, 2, 3]}),
@@ -190,8 +189,8 @@ async def test_request_tool_call(allow_model_requests: None):
         [
             SystemPrompt(content='this is the system prompt'),
             UserPrompt(content='hello', timestamp=IsNow(tz=timezone.utc)),
-            ModelStructuredResponse(
-                calls=[
+            ModelResponse(
+                items=[
                     ToolCall(
                         tool_name='get_location',
                         args=ArgsDict(args_dict={'loc_name': 'San Francisco'}),
@@ -206,8 +205,8 @@ async def test_request_tool_call(allow_model_requests: None):
                 tool_call_id='1',
                 timestamp=IsNow(tz=timezone.utc),
             ),
-            ModelStructuredResponse(
-                calls=[
+            ModelResponse(
+                items=[
                     ToolCall(
                         tool_name='get_location',
                         args=ArgsDict(args_dict={'loc_name': 'London'}),
@@ -222,6 +221,6 @@ async def test_request_tool_call(allow_model_requests: None):
                 tool_call_id='2',
                 timestamp=IsNow(tz=timezone.utc),
             ),
-            ModelTextResponse(content='final response', timestamp=IsNow(tz=timezone.utc)),
+            ModelResponse.from_text(content='final response', timestamp=IsNow(tz=timezone.utc)),
         ]
     )
