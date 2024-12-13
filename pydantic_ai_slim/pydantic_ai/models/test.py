@@ -9,15 +9,15 @@ from datetime import date, datetime, timedelta
 from typing import Any, Literal
 
 import pydantic_core
+from typing_extensions import assert_never
 
 from .. import _utils
 from ..messages import (
     Message,
-    ModelAnyResponse,
-    ModelStructuredResponse,
-    ModelTextResponse,
+    ModelResponse,
     RetryPrompt,
-    ToolCall,
+    TextPart,
+    ToolCallPart,
     ToolReturn,
 )
 from ..result import Cost
@@ -130,7 +130,7 @@ class TestAgentModel(AgentModel):
 
     async def request(
         self, messages: list[Message], model_settings: ModelSettings | None
-    ) -> tuple[ModelAnyResponse, Cost]:
+    ) -> tuple[ModelResponse, Cost]:
         return self._request(messages, model_settings), Cost()
 
     @asynccontextmanager
@@ -139,19 +139,32 @@ class TestAgentModel(AgentModel):
     ) -> AsyncIterator[EitherStreamedResponse]:
         msg = self._request(messages, model_settings)
         cost = Cost()
-        if isinstance(msg, ModelTextResponse):
-            yield TestStreamTextResponse(msg.content, cost)
+
+        # TODO: Rework this once we make StreamTextResponse more general
+        texts: list[str] = []
+        tool_calls: list[ToolCallPart] = []
+        for item in msg.parts:
+            if isinstance(item, TextPart):
+                texts.append(item.content)
+            elif isinstance(item, ToolCallPart):  # pyright: ignore[reportUnnecessaryIsInstance]
+                tool_calls.append(item)
+            else:
+                assert_never(item)
+
+        if texts:
+            yield TestStreamTextResponse('\n\n'.join(texts), cost)
         else:
             yield TestStreamStructuredResponse(msg, cost)
 
     def gen_tool_args(self, tool_def: ToolDefinition) -> Any:
         return _JsonSchemaTestData(tool_def.parameters_json_schema, self.seed).generate()
 
-    def _request(self, messages: list[Message], model_settings: ModelSettings | None) -> ModelAnyResponse:
+    def _request(self, messages: list[Message], model_settings: ModelSettings | None) -> ModelResponse:
         # if there are tools, the first thing we want to do is call all of them
-        if self.tool_calls and not any(m.role == 'model-structured-response' for m in messages):
-            calls = [ToolCall.from_dict(name, self.gen_tool_args(args)) for name, args in self.tool_calls]
-            return ModelStructuredResponse(calls=calls)
+        if self.tool_calls and not any(isinstance(m, ModelResponse) for m in messages):
+            return ModelResponse(
+                parts=[ToolCallPart.from_dict(name, self.gen_tool_args(args)) for name, args in self.tool_calls]
+            )
 
         # get messages since the last model response
         new_messages = _get_new_messages(messages)
@@ -159,12 +172,13 @@ class TestAgentModel(AgentModel):
         # check if there are any retry prompts, if so retry them
         new_retry_names = {m.tool_name for m in new_messages if isinstance(m, RetryPrompt)}
         if new_retry_names:
-            calls = [
-                ToolCall.from_dict(name, self.gen_tool_args(args))
-                for name, args in self.tool_calls
-                if name in new_retry_names
-            ]
-            return ModelStructuredResponse(calls=calls)
+            return ModelResponse(
+                parts=[
+                    ToolCallPart.from_dict(name, self.gen_tool_args(args))
+                    for name, args in self.tool_calls
+                    if name in new_retry_names
+                ]
+            )
 
         if response_text := self.result.left:
             if response_text.value is None:
@@ -174,26 +188,26 @@ class TestAgentModel(AgentModel):
                     if isinstance(message, ToolReturn):
                         output[message.tool_name] = message.content
                 if output:
-                    return ModelTextResponse(content=pydantic_core.to_json(output).decode())
+                    return ModelResponse.from_text(pydantic_core.to_json(output).decode())
                 else:
-                    return ModelTextResponse(content='success (no tool calls)')
+                    return ModelResponse.from_text('success (no tool calls)')
             else:
-                return ModelTextResponse(content=response_text.value)
+                return ModelResponse.from_text(response_text.value)
         else:
             assert self.result_tools, 'No result tools provided'
             custom_result_args = self.result.right
             result_tool = self.result_tools[self.seed % len(self.result_tools)]
             if custom_result_args is not None:
-                return ModelStructuredResponse(calls=[ToolCall.from_dict(result_tool.name, custom_result_args)])
+                return ModelResponse(parts=[ToolCallPart.from_dict(result_tool.name, custom_result_args)])
             else:
                 response_args = self.gen_tool_args(result_tool)
-                return ModelStructuredResponse(calls=[ToolCall.from_dict(result_tool.name, response_args)])
+                return ModelResponse(parts=[ToolCallPart.from_dict(result_tool.name, response_args)])
 
 
 def _get_new_messages(messages: list[Message]) -> list[Message]:
     last_model_index = None
     for i, m in enumerate(messages):
-        if m.role in ('model-structured-response', 'model-text-response'):
+        if isinstance(m, ModelResponse):
             last_model_index = i
 
     if last_model_index is not None:
@@ -239,7 +253,7 @@ class TestStreamTextResponse(StreamTextResponse):
 class TestStreamStructuredResponse(StreamStructuredResponse):
     """A structured response that streams test data."""
 
-    _structured_response: ModelStructuredResponse
+    _structured_response: ModelResponse
     _cost: Cost
     _iter: Iterator[None] = field(default_factory=lambda: iter([None]))
     _timestamp: datetime = field(default_factory=_utils.now_utc, init=False)
@@ -247,7 +261,7 @@ class TestStreamStructuredResponse(StreamStructuredResponse):
     async def __anext__(self) -> None:
         return _utils.sync_anext(self._iter)
 
-    def get(self, *, final: bool = False) -> ModelStructuredResponse:
+    def get(self, *, final: bool = False) -> ModelResponse:
         return self._structured_response
 
     def cost(self) -> Cost:

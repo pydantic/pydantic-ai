@@ -10,7 +10,6 @@ from types import FrameType
 from typing import Any, Callable, Generic, Literal, cast, final, overload
 
 import logfire_api
-from typing_extensions import assert_never
 
 from . import (
     _result,
@@ -21,6 +20,7 @@ from . import (
     models,
     result,
 )
+from .messages import TextPart, ToolCallPart
 from .result import ResultData
 from .settings import ModelSettings, merge_model_settings
 from .tools import (
@@ -808,27 +808,35 @@ class Agent(Generic[AgentDeps, ResultData]):
         return new_message_index, messages
 
     async def _handle_model_response(
-        self, model_response: _messages.ModelAnyResponse, deps: AgentDeps
+        self, model_response: _messages.ModelResponse, deps: AgentDeps
     ) -> tuple[_MarkFinalResult[ResultData] | None, list[_messages.Message]]:
         """Process a non-streamed response from the model.
 
         Returns:
             A tuple of `(final_result, messages)`. If `final_result` is not `None`, the conversation should end.
         """
-        # Route to appropriate handler based on response type
-        if model_response.role == 'model-text-response':
-            return await self._handle_text_response(model_response, deps)
-        elif model_response.role == 'model-structured-response':
-            return await self._handle_structured_response(model_response, deps)
+        texts: list[str] = []
+        tool_calls: list[ToolCallPart] = []
+        for item in model_response.parts:
+            if isinstance(item, TextPart):
+                texts.append(item.content)
+            else:
+                tool_calls.append(item)
+
+        if texts:
+            text = '\n\n'.join(texts)
+            return await self._handle_text_response(text, deps)
+        elif tool_calls:
+            return await self._handle_structured_response(tool_calls, deps)
         else:
-            assert_never(model_response)
+            raise exceptions.UnexpectedModelBehavior('Received empty model response')
 
     async def _handle_text_response(
-        self, model_response: _messages.ModelTextResponse, deps: AgentDeps
+        self, text: str, deps: AgentDeps
     ) -> tuple[_MarkFinalResult[ResultData] | None, list[_messages.Message]]:
         """Handle a plain text response from the model for non-streaming responses."""
         if self._allow_text_result:
-            result_data_input = cast(ResultData, model_response.content)
+            result_data_input = cast(ResultData, text)
             try:
                 result_data = await self._validate_result(result_data_input, deps, None)
             except _result.ToolRetryError as e:
@@ -844,26 +852,25 @@ class Agent(Generic[AgentDeps, ResultData]):
             return None, [response]
 
     async def _handle_structured_response(
-        self, model_response: _messages.ModelStructuredResponse, deps: AgentDeps
+        self, tool_calls: list[ToolCallPart], deps: AgentDeps
     ) -> tuple[_MarkFinalResult[ResultData] | None, list[_messages.Message]]:
         """Handle a structured response containing tool calls from the model for non-streaming responses."""
-        if not model_response.calls:
-            raise exceptions.UnexpectedModelBehavior('Received empty tool call message')
+        assert tool_calls, 'Expected at least one tool call'
 
         # First process any final result tool calls
-        final_result, final_messages = await self._process_final_tool_calls(model_response, deps)
+        final_result, final_messages = await self._process_final_tool_calls(tool_calls, deps)
 
         # Then process regular tools based on end strategy
         if self.end_strategy == 'early' and final_result:
-            tool_messages = self._mark_skipped_function_tools(model_response)
+            tool_messages = self._mark_skipped_function_tools(tool_calls)
         else:
-            tool_messages = await self._process_function_tools(model_response, deps)
+            tool_messages = await self._process_function_tools(tool_calls, deps)
 
         return final_result, [*final_messages, *tool_messages]
 
     async def _process_final_tool_calls(
         self,
-        model_response: _messages.ModelStructuredResponse,
+        tool_calls: list[ToolCallPart],
         deps: AgentDeps,
     ) -> tuple[_MarkFinalResult[ResultData] | None, list[_messages.Message]]:
         """Process any final result tool calls and return the first valid result."""
@@ -873,7 +880,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         messages: list[_messages.Message] = []
         final_result = None
 
-        for call in model_response.calls:
+        for call in tool_calls:
             result_tool = self._result_schema.tools.get(call.tool_name)
             if not result_tool:
                 continue
@@ -909,14 +916,14 @@ class Agent(Generic[AgentDeps, ResultData]):
 
     async def _process_function_tools(
         self,
-        model_response: _messages.ModelStructuredResponse,
+        tool_calls: list[ToolCallPart],
         deps: AgentDeps,
     ) -> list[_messages.Message]:
         """Process function (non-final) tool calls in parallel."""
         messages: list[_messages.Message] = []
         tasks: list[asyncio.Task[_messages.Message]] = []
 
-        for call in model_response.calls:
+        for call in tool_calls:
             if tool := self._function_tools.get(call.tool_name):
                 tasks.append(asyncio.create_task(tool.run(deps, call), name=call.tool_name))
             elif self._result_schema is None or call.tool_name not in self._result_schema.tools:
@@ -932,12 +939,12 @@ class Agent(Generic[AgentDeps, ResultData]):
 
     def _mark_skipped_function_tools(
         self,
-        model_response: _messages.ModelStructuredResponse,
+        tool_calls: list[_messages.ToolCallPart],
     ) -> list[_messages.Message]:
         """Mark function tools as skipped when a final result was found with 'early' end strategy."""
         messages: list[_messages.Message] = []
 
-        for call in model_response.calls:
+        for call in tool_calls:
             if call.tool_name in self._function_tools:
                 messages.append(
                     _messages.ToolReturn(
@@ -979,7 +986,7 @@ class Agent(Generic[AgentDeps, ResultData]):
                 # if there's a result schema, iterate over the stream until we find at least one tool
                 # NOTE: this means we ignore any other tools called here
                 structured_msg = model_response.get()
-                while not structured_msg.calls:
+                while not structured_msg.parts:
                     try:
                         await model_response.__anext__()
                     except StopAsyncIteration:
@@ -999,17 +1006,19 @@ class Agent(Generic[AgentDeps, ResultData]):
             async for _ in model_response:
                 pass
             structured_msg = model_response.get()
-            if not structured_msg.calls:
+            if not structured_msg.parts:
                 raise exceptions.UnexpectedModelBehavior('Received empty tool call message')
             messages: list[_messages.Message] = [structured_msg]
 
             # we now run all tool functions in parallel
             tasks: list[asyncio.Task[_messages.Message]] = []
-            for call in structured_msg.calls:
-                if tool := self._function_tools.get(call.tool_name):
-                    tasks.append(asyncio.create_task(tool.run(deps, call), name=call.tool_name))
-                else:
-                    messages.append(self._unknown_tool(call.tool_name))
+            for item in structured_msg.parts:
+                if isinstance(item, ToolCallPart):
+                    call = item
+                    if tool := self._function_tools.get(call.tool_name):
+                        tasks.append(asyncio.create_task(tool.run(deps, call), name=call.tool_name))
+                    else:
+                        messages.append(self._unknown_tool(call.tool_name))
 
             with _logfire.span('running {tools=}', tools=[t.get_name() for t in tasks]):
                 task_results: Sequence[_messages.Message] = await asyncio.gather(*tasks)
@@ -1017,7 +1026,7 @@ class Agent(Generic[AgentDeps, ResultData]):
             return None, messages
 
     async def _validate_result(
-        self, result_data: ResultData, deps: AgentDeps, tool_call: _messages.ToolCall | None
+        self, result_data: ResultData, deps: AgentDeps, tool_call: _messages.ToolCallPart | None
     ) -> ResultData:
         for validator in self._result_validators:
             result_data = await validator.validate(result_data, deps, self._current_result_retry, tool_call)

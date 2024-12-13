@@ -46,10 +46,15 @@ print(result.all_messages())
         timestamp=datetime.datetime(...),
         role='user',
     ),
-    ModelTextResponse(
-        content='Did you hear about the toothpaste scandal? They called it Colgate.',
+    ModelResponse(
+        parts=[
+            TextPart(
+                content='Did you hear about the toothpaste scandal? They called it Colgate.',
+                kind='text',
+            )
+        ],
+        role='model-response',
         timestamp=datetime.datetime(...),
-        role='model-text-response',
     ),
 ]
 """
@@ -63,10 +68,15 @@ print(result.new_messages())
         timestamp=datetime.datetime(...),
         role='user',
     ),
-    ModelTextResponse(
-        content='Did you hear about the toothpaste scandal? They called it Colgate.',
+    ModelResponse(
+        parts=[
+            TextPart(
+                content='Did you hear about the toothpaste scandal? They called it Colgate.',
+                kind='text',
+            )
+        ],
+        role='model-response',
         timestamp=datetime.datetime(...),
-        role='model-text-response',
     ),
 ]
 """
@@ -113,10 +123,15 @@ async def main():
                 timestamp=datetime.datetime(...),
                 role='user',
             ),
-            ModelTextResponse(
-                content='Did you hear about the toothpaste scandal? They called it Colgate.',
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content='Did you hear about the toothpaste scandal? They called it Colgate.',
+                        kind='text',
+                    )
+                ],
+                role='model-response',
                 timestamp=datetime.datetime(...),
-                role='model-text-response',
             ),
         ]
         """
@@ -164,20 +179,30 @@ print(result2.all_messages())
         timestamp=datetime.datetime(...),
         role='user',
     ),
-    ModelTextResponse(
-        content='Did you hear about the toothpaste scandal? They called it Colgate.',
+    ModelResponse(
+        parts=[
+            TextPart(
+                content='Did you hear about the toothpaste scandal? They called it Colgate.',
+                kind='text',
+            )
+        ],
+        role='model-response',
         timestamp=datetime.datetime(...),
-        role='model-text-response',
     ),
     UserPrompt(
         content='Explain?',
         timestamp=datetime.datetime(...),
         role='user',
     ),
-    ModelTextResponse(
-        content='This is an excellent joke invent by Samuel Colvin, it needs no explanation.',
+    ModelResponse(
+        parts=[
+            TextPart(
+                content='This is an excellent joke invent by Samuel Colvin, it needs no explanation.',
+                kind='text',
+            )
+        ],
+        role='model-response',
         timestamp=datetime.datetime(...),
-        role='model-text-response',
     ),
 ]
 """
@@ -214,20 +239,30 @@ print(result2.all_messages())
         timestamp=datetime.datetime(...),
         role='user',
     ),
-    ModelTextResponse(
-        content='Did you hear about the toothpaste scandal? They called it Colgate.',
+    ModelResponse(
+        parts=[
+            TextPart(
+                content='Did you hear about the toothpaste scandal? They called it Colgate.',
+                kind='text',
+            )
+        ],
+        role='model-response',
         timestamp=datetime.datetime(...),
-        role='model-text-response',
     ),
     UserPrompt(
         content='Explain?',
         timestamp=datetime.datetime(...),
         role='user',
     ),
-    ModelTextResponse(
-        content='This is an excellent joke invent by Samuel Colvin, it needs no explanation.',
+    ModelResponse(
+        parts=[
+            TextPart(
+                content='This is an excellent joke invent by Samuel Colvin, it needs no explanation.',
+                kind='text',
+            )
+        ],
+        role='model-response',
         timestamp=datetime.datetime(...),
-        role='model-text-response',
     ),
 ]
 """

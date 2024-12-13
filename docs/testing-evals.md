@@ -98,13 +98,13 @@ from dirty_equals import IsNow
 from pydantic_ai import models
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.messages import (
-    SystemPrompt,
-    UserPrompt,
-    ModelStructuredResponse,
-    ToolCall,
     ArgsDict,
+    ModelResponse,
+    SystemPrompt,
+    TextPart,
+    ToolCallPart,
     ToolReturn,
-    ModelTextResponse,
+    UserPrompt,
 )
 
 from fake_database import DatabaseConn
@@ -134,9 +134,9 @@ async def test_forecast():
             timestamp=IsNow(tz=timezone.utc),  # (7)!
             role='user',
         ),
-        ModelStructuredResponse(
-            calls=[
-                ToolCall(
+        ModelResponse(
+            parts=[
+                ToolCallPart(
                     tool_name='weather_forecast',
                     args=ArgsDict(
                         args_dict={
@@ -148,7 +148,7 @@ async def test_forecast():
                 )
             ],
             timestamp=IsNow(tz=timezone.utc),
-            role='model-structured-response',
+            role='model-response',
         ),
         ToolReturn(
             tool_name='weather_forecast',
@@ -157,10 +157,14 @@ async def test_forecast():
             timestamp=IsNow(tz=timezone.utc),
             role='tool-return',
         ),
-        ModelTextResponse(
-            content='{"weather_forecast":"Sunny with a chance of rain"}',
+        ModelResponse(
+            parts=[
+                TextPart(
+                    content='{"weather_forecast":"Sunny with a chance of rain"}',
+                )
+            ],
             timestamp=IsNow(tz=timezone.utc),
-            role='model-text-response',
+            role='model-response',
         ),
     ]
 ```
@@ -190,10 +194,8 @@ import pytest
 from pydantic_ai import models
 from pydantic_ai.messages import (
     Message,
-    ModelAnyResponse,
-    ModelStructuredResponse,
-    ModelTextResponse,
-    ToolCall,
+    ModelResponse,
+    ToolCallPart,
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
@@ -206,21 +208,19 @@ models.ALLOW_MODEL_REQUESTS = False
 
 def call_weather_forecast(  # (1)!
     messages: list[Message], info: AgentInfo
-) -> ModelAnyResponse:
+) -> ModelResponse:
     if len(messages) == 2:
         # first call, call the weather forecast tool
         user_prompt = messages[1]
         m = re.search(r'\d{4}-\d{2}-\d{2}', user_prompt.content)
         assert m is not None
         args = {'location': 'London', 'forecast_date': m.group()}  # (2)!
-        return ModelStructuredResponse(
-            calls=[ToolCall.from_dict('weather_forecast', args)]
-        )
+        return ModelResponse(parts=[ToolCallPart.from_dict('weather_forecast', args)])
     else:
         # second call, return the forecast
         msg = messages[-1]
         assert msg.role == 'tool-return'
-        return ModelTextResponse(f'The forecast is: {msg.content}')
+        return ModelResponse.from_text(f'The forecast is: {msg.content}')
 
 
 async def test_forecast_future():

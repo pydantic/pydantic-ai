@@ -14,10 +14,14 @@ from .._utils import guard_tool_call_id as _guard_tool_call_id
 from ..messages import (
     ArgsJson,
     Message,
-    ModelAnyResponse,
-    ModelStructuredResponse,
-    ModelTextResponse,
-    ToolCall,
+    ModelResponse,
+    ModelResponsePart,
+    RetryPrompt,
+    SystemPrompt,
+    TextPart,
+    ToolCallPart,
+    ToolReturn,
+    UserPrompt,
 )
 from ..result import Cost
 from ..settings import ModelSettings
@@ -152,7 +156,7 @@ class GroqAgentModel(AgentModel):
 
     async def request(
         self, messages: list[Message], model_settings: ModelSettings | None
-    ) -> tuple[ModelAnyResponse, result.Cost]:
+    ) -> tuple[ModelResponse, result.Cost]:
         response = await self._completions_create(messages, False, model_settings)
         return self._process_response(response), _map_cost(response)
 
@@ -206,18 +210,17 @@ class GroqAgentModel(AgentModel):
         )
 
     @staticmethod
-    def _process_response(response: chat.ChatCompletion) -> ModelAnyResponse:
+    def _process_response(response: chat.ChatCompletion) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
         timestamp = datetime.fromtimestamp(response.created, tz=timezone.utc)
         choice = response.choices[0]
+        items: list[ModelResponsePart] = []
+        if choice.message.content is not None:
+            items.append(TextPart(choice.message.content))
         if choice.message.tool_calls is not None:
-            return ModelStructuredResponse(
-                [ToolCall.from_json(c.function.name, c.function.arguments, c.id) for c in choice.message.tool_calls],
-                timestamp=timestamp,
-            )
-        else:
-            assert choice.message.content is not None, choice
-            return ModelTextResponse(choice.message.content, timestamp=timestamp)
+            for c in choice.message.tool_calls:
+                items.append(ToolCallPart.from_json(c.function.name, c.function.arguments, c.id))
+        return ModelResponse(items, timestamp=timestamp)
 
     @staticmethod
     async def _process_streamed_response(response: AsyncStream[ChatCompletionChunk]) -> EitherStreamedResponse:
@@ -249,21 +252,17 @@ class GroqAgentModel(AgentModel):
     @staticmethod
     def _map_message(message: Message) -> chat.ChatCompletionMessageParam:
         """Just maps a `pydantic_ai.Message` to a `groq.types.ChatCompletionMessageParam`."""
-        if message.role == 'system':
-            # SystemPrompt ->
+        if isinstance(message, SystemPrompt):
             return chat.ChatCompletionSystemMessageParam(role='system', content=message.content)
-        elif message.role == 'user':
-            # UserPrompt ->
+        elif isinstance(message, UserPrompt):
             return chat.ChatCompletionUserMessageParam(role='user', content=message.content)
-        elif message.role == 'tool-return':
-            # ToolReturn ->
+        elif isinstance(message, ToolReturn):
             return chat.ChatCompletionToolMessageParam(
                 role='tool',
                 tool_call_id=_guard_tool_call_id(t=message, model_source='Groq'),
                 content=message.model_response_str(),
             )
-        elif message.role == 'retry-prompt':
-            # RetryPrompt ->
+        elif isinstance(message, RetryPrompt):
             if message.tool_name is None:
                 return chat.ChatCompletionUserMessageParam(role='user', content=message.model_response())
             else:
@@ -272,15 +271,24 @@ class GroqAgentModel(AgentModel):
                     tool_call_id=_guard_tool_call_id(t=message, model_source='Groq'),
                     content=message.model_response(),
                 )
-        elif message.role == 'model-text-response':
-            # ModelTextResponse ->
-            return chat.ChatCompletionAssistantMessageParam(role='assistant', content=message.content)
-        elif message.role == 'model-structured-response':
-            # ModelStructuredResponse ->
-            return chat.ChatCompletionAssistantMessageParam(
-                role='assistant',
-                tool_calls=[_map_tool_call(t) for t in message.calls],
-            )
+        elif isinstance(message, ModelResponse):  # pyright: ignore[reportUnnecessaryIsInstance]
+            texts: list[str] = []
+            tool_calls: list[chat.ChatCompletionMessageToolCallParam] = []
+            for item in message.parts:
+                if isinstance(item, TextPart):
+                    texts.append(item.content)
+                elif isinstance(item, ToolCallPart):  # pyright: ignore[reportUnnecessaryIsInstance]
+                    tool_calls.append(_map_tool_call(item))
+                else:
+                    assert_never(item)
+            message_param = chat.ChatCompletionAssistantMessageParam(role='assistant')
+            if texts:
+                # Note: model responses from this model should only have one text item, so the following
+                # shouldn't merge multiple texts into one unless you switch models between runs:
+                message_param['content'] = '\n\n'.join(texts)
+            if tool_calls:
+                message_param['tool_calls'] = tool_calls
+            return message_param
         else:
             assert_never(message)
 
@@ -359,14 +367,14 @@ class GroqStreamStructuredResponse(StreamStructuredResponse):
             else:
                 self._delta_tool_calls[new.index] = new
 
-    def get(self, *, final: bool = False) -> ModelStructuredResponse:
-        calls: list[ToolCall] = []
+    def get(self, *, final: bool = False) -> ModelResponse:
+        items: list[ModelResponsePart] = []
         for c in self._delta_tool_calls.values():
             if f := c.function:
                 if f.name is not None and f.arguments is not None:
-                    calls.append(ToolCall.from_json(f.name, f.arguments, c.id))
+                    items.append(ToolCallPart.from_json(f.name, f.arguments, c.id))
 
-        return ModelStructuredResponse(calls, timestamp=self._timestamp)
+        return ModelResponse(items, timestamp=self._timestamp)
 
     def cost(self) -> Cost:
         return self._cost
@@ -375,7 +383,7 @@ class GroqStreamStructuredResponse(StreamStructuredResponse):
         return self._timestamp
 
 
-def _map_tool_call(t: ToolCall) -> chat.ChatCompletionMessageToolCallParam:
+def _map_tool_call(t: ToolCallPart) -> chat.ChatCompletionMessageToolCallParam:
     assert isinstance(t.args, ArgsJson), f'Expected ArgsJson, got {t.args}'
     return chat.ChatCompletionMessageToolCallParam(
         id=_guard_tool_call_id(t=t, model_source='Groq'),

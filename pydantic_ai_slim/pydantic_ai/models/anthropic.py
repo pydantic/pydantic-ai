@@ -6,7 +6,6 @@ from dataclasses import dataclass, field
 from typing import Any, Literal, Union, cast, overload
 
 from httpx import AsyncClient as AsyncHTTPClient
-from typing_extensions import TypeGuard, assert_never
 
 from .. import result
 from .._utils import guard_tool_call_id as _guard_tool_call_id
@@ -14,10 +13,14 @@ from ..exceptions import UnexpectedModelBehavior
 from ..messages import (
     ArgsDict,
     Message,
-    ModelAnyResponse,
-    ModelStructuredResponse,
-    ModelTextResponse,
-    ToolCall,
+    ModelResponse,
+    ModelResponsePart,
+    RetryPrompt,
+    SystemPrompt,
+    TextPart,
+    ToolCallPart,
+    ToolReturn,
+    UserPrompt,
 )
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
@@ -32,13 +35,13 @@ from . import (
 try:
     from anthropic import NOT_GIVEN, AsyncAnthropic, AsyncStream
     from anthropic.types import (
-        ContentBlock,
         Message as AnthropicMessage,
         MessageParam,
         RawMessageDeltaEvent,
         RawMessageStartEvent,
         RawMessageStreamEvent,
         TextBlock,
+        TextBlockParam,
         ToolChoiceParam,
         ToolParam,
         ToolResultBlockParam,
@@ -154,7 +157,7 @@ class AnthropicAgentModel(AgentModel):
 
     async def request(
         self, messages: list[Message], model_settings: ModelSettings | None
-    ) -> tuple[ModelAnyResponse, result.Cost]:
+    ) -> tuple[ModelResponse, result.Cost]:
         response = await self._messages_create(messages, False, model_settings)
         return self._process_response(response), _map_cost(response)
 
@@ -214,28 +217,23 @@ class AnthropicAgentModel(AgentModel):
         )
 
     @staticmethod
-    def _process_response(response: AnthropicMessage) -> ModelAnyResponse:
+    def _process_response(response: AnthropicMessage) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
-        content = response.content
-        if _all_text_parts(content):
-            return ModelTextResponse(content=''.join(b.text for b in content))
-        elif _all_tool_use_parts(content):
-            return ModelStructuredResponse(
-                [
-                    ToolCall.from_dict(
-                        c.name,
-                        cast(dict[str, Any], c.input),
-                        c.id,
+        items: list[ModelResponsePart] = []
+        for item in response.content:
+            if isinstance(item, TextBlock):
+                items.append(TextPart(item.text))
+            else:
+                assert isinstance(item, ToolUseBlock), 'unexpected item type'
+                items.append(
+                    ToolCallPart.from_dict(
+                        item.name,
+                        cast(dict[str, Any], item.input),
+                        item.id,
                     )
-                    for c in content
-                ],
-            )
-        else:
-            # TODO: we plan to support non-homogenous behavior in the future :)
-            raise UnexpectedModelBehavior(
-                f'Not yet supported response from Anthropic, expected all parts to be tool calls or text, got heterogenous: {content!r}.'
-                'We anticipate supporting this in a future release.'
-            )
+                )
+
+        return ModelResponse(items)
 
     @staticmethod
     async def _process_streamed_response(response: AsyncStream[RawMessageStreamEvent]) -> EitherStreamedResponse:
@@ -259,9 +257,9 @@ class AnthropicAgentModel(AgentModel):
     @staticmethod
     def _map_message(message: Message) -> MessageParam:
         """Just maps a `pydantic_ai.Message` to a `anthropic.types.MessageParam`."""
-        if message.role == 'user':
+        if isinstance(message, UserPrompt):
             return MessageParam(role='user', content=message.content)
-        elif message.role == 'tool-return':
+        elif isinstance(message, ToolReturn):
             return MessageParam(
                 role='user',
                 content=[
@@ -273,7 +271,7 @@ class AnthropicAgentModel(AgentModel):
                     )
                 ],
             )
-        elif message.role == 'retry-prompt':
+        elif isinstance(message, RetryPrompt):
             if message.tool_name is None:
                 return MessageParam(role='user', content=message.model_response())
             else:
@@ -288,27 +286,23 @@ class AnthropicAgentModel(AgentModel):
                         ),
                     ],
                 )
-        elif message.role == 'model-text-response':
-            return MessageParam(role='assistant', content=message.content)
-        elif message.role == 'model-structured-response':
-            return MessageParam(role='assistant', content=[_map_tool_call(t) for t in message.calls])
-        elif message.role == 'system':
+        elif isinstance(message, ModelResponse):
+            content: list[TextBlockParam | ToolUseBlockParam] = []
+            for item in message.parts:
+                if isinstance(item, TextPart):
+                    content.append(TextBlockParam(text=item.content, type='text'))
+                else:
+                    assert isinstance(item, ToolCallPart)
+                    content.append(_map_tool_call(item))
+            return MessageParam(role='assistant', content=content)
+        else:
+            assert isinstance(message, SystemPrompt)
             raise UnexpectedModelBehavior(
                 'System messages are handled separately for Anthropic, this is a bug, please report it.'
             )
-        else:
-            assert_never(message)
 
 
-def _all_text_parts(parts: list[ContentBlock]) -> TypeGuard[list[TextBlock]]:
-    return all(isinstance(part, TextBlock) for part in parts)
-
-
-def _all_tool_use_parts(parts: list[ContentBlock]) -> TypeGuard[list[ToolUseBlock]]:
-    return all(isinstance(part, ToolUseBlock) for part in parts)
-
-
-def _map_tool_call(t: ToolCall) -> ToolUseBlockParam:
+def _map_tool_call(t: ToolCallPart) -> ToolUseBlockParam:
     assert isinstance(t.args, ArgsDict), f'Expected ArgsDict, got {t.args}'
     return ToolUseBlockParam(
         id=_guard_tool_call_id(t=t, model_source='Anthropic'),

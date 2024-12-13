@@ -76,14 +76,14 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary], set_event_lo
                 'message': 'my_agent run prompt=Hello',
                 'children': [
                     {'id': 1, 'message': 'preparing model and tools run_step=1'},
-                    {'id': 2, 'message': 'model request -> model-structured-response'},
+                    {'id': 2, 'message': 'model request -> model-response'},
                     {
                         'id': 3,
                         'message': 'handle model response -> tool-return',
                         'children': [{'id': 4, 'message': "running tools=['my_ret']"}],
                     },
                     {'id': 5, 'message': 'preparing model and tools run_step=2'},
-                    {'id': 6, 'message': 'model request -> model-text-response'},
+                    {'id': 6, 'message': 'model request -> model-response'},
                     {'id': 7, 'message': 'handle model response -> final result'},
                 ],
             }
@@ -122,9 +122,16 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary], set_event_lo
                 [
                     {'content': 'Hello', 'timestamp': IsStr(regex=r'\d{4}-\d{2}-.+'), 'role': 'user'},
                     {
-                        'calls': [{'tool_name': 'my_ret', 'args': {'args_dict': {'x': 0}}, 'tool_call_id': None}],
+                        'parts': [
+                            {
+                                'tool_name': 'my_ret',
+                                'args': {'args_dict': {'x': 0}},
+                                'tool_call_id': None,
+                                'kind': 'tool-call',
+                            }
+                        ],
+                        'role': 'model-response',
                         'timestamp': IsStr(regex=r'\d{4}-\d{2}-.+'),
-                        'role': 'model-structured-response',
                     },
                     {
                         'tool_name': 'my_ret',
@@ -134,9 +141,9 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary], set_event_lo
                         'role': 'tool-return',
                     },
                     {
-                        'content': '{"my_ret":"1"}',
+                        'parts': [{'content': '{"my_ret":"1"}', 'kind': 'text'}],
+                        'role': 'model-response',
                         'timestamp': IsStr(regex=r'\d{4}-\d{2}-.+'),
-                        'role': 'model-text-response',
                     },
                 ]
             ),
@@ -168,14 +175,14 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary], set_event_lo
                                 },
                                 {
                                     'type': 'object',
-                                    'title': 'ModelStructuredResponse',
+                                    'title': 'ModelResponse',
                                     'x-python-datatype': 'dataclass',
                                     'properties': {
-                                        'calls': {
+                                        'parts': {
                                             'type': 'array',
                                             'items': {
                                                 'type': 'object',
-                                                'title': 'ToolCall',
+                                                'title': 'ToolCallPart',
                                                 'x-python-datatype': 'dataclass',
                                                 'properties': {
                                                     'args': {
@@ -197,9 +204,19 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary], set_event_lo
                                 },
                                 {
                                     'type': 'object',
-                                    'title': 'ModelTextResponse',
+                                    'title': 'ModelResponse',
                                     'x-python-datatype': 'dataclass',
-                                    'properties': {'timestamp': {'type': 'string', 'format': 'date-time'}},
+                                    'properties': {
+                                        'parts': {
+                                            'type': 'array',
+                                            'items': {
+                                                'type': 'object',
+                                                'title': 'TextPart',
+                                                'x-python-datatype': 'dataclass',
+                                            },
+                                        },
+                                        'timestamp': {'type': 'string', 'format': 'date-time'},
+                                    },
                                 },
                             ],
                         },

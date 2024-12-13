@@ -353,16 +353,17 @@ except UnexpectedModelBehavior as e:
             timestamp=datetime.datetime(...),
             role='user',
         ),
-        ModelStructuredResponse(
-            calls=[
-                ToolCall(
+        ModelResponse(
+            parts=[
+                ToolCallPart(
                     tool_name='calc_volume',
                     args=ArgsDict(args_dict={'size': 6}),
                     tool_call_id=None,
+                    kind='tool-call',
                 )
             ],
+            role='model-response',
             timestamp=datetime.datetime(...),
-            role='model-structured-response',
         ),
         RetryPrompt(
             content='Please try again.',
@@ -371,16 +372,17 @@ except UnexpectedModelBehavior as e:
             timestamp=datetime.datetime(...),
             role='retry-prompt',
         ),
-        ModelStructuredResponse(
-            calls=[
-                ToolCall(
+        ModelResponse(
+            parts=[
+                ToolCallPart(
                     tool_name='calc_volume',
                     args=ArgsDict(args_dict={'size': 6}),
                     tool_call_id=None,
+                    kind='tool-call',
                 )
             ],
+            role='model-response',
             timestamp=datetime.datetime(...),
-            role='model-structured-response',
         ),
     ]
     """
