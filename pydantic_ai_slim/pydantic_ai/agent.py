@@ -77,8 +77,8 @@ class Agent(Generic[AgentDeps, ResultData]):
     model_settings: ModelSettings | None = None
     """Optional model request settings to use for this agents's runs, by default.
 
-    Note, if model_settings is provided during a `run{_sync, _stream}` call, any settings
-    provided at runtime via said call will override these settings.
+    Note, if `model_settings` is provided by `run`, `run_sync`, or `run_stream`, those settings will
+    be merged with this value, with the runtime argument taking priority.
     """
 
     last_run_messages: list[_messages.Message] | None = None

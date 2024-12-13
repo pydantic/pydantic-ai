@@ -5,7 +5,10 @@ from typing_extensions import TypedDict
 
 
 class ModelSettings(TypedDict, total=False):
-    """The runtime settings for a model's request / message creation."""
+    """Settings to configure an LLM.
+
+    Here we include only settings which apply to multiple models / model providers.
+    """
 
     max_tokens: int
     """The maximum number of tokens to generate before stopping."""
