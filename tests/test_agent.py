@@ -870,7 +870,7 @@ class TestMultipleToolCalls:
 
     def test_exhaustive_strategy_executes_all_tools(self):
         """Test that 'exhaustive' strategy executes all tools while using first final result."""
-        tool_called = []
+        tool_called: list[str] = []
 
         def return_model(_: list[Message], info: AgentInfo) -> ModelAnyResponse:
             assert info.result_tools is not None
