@@ -99,14 +99,9 @@ def test_result_pydantic_model_retry(set_event_loop: None):
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelStructuredResponse(
-                calls=[ToolCall.from_json('final_result', '{"a": 42, "b": "foo"}')],
-                timestamp=IsNow(tz=timezone.utc),
+                calls=[ToolCall.from_json('final_result', '{"a": 42, "b": "foo"}')], timestamp=IsNow(tz=timezone.utc)
             ),
-            ToolReturn(
-                tool_name='final_result',
-                content='Final result processed.',
-                timestamp=IsNow(tz=timezone.utc),
-            ),
+            ToolReturn(tool_name='final_result', content='Final result processed.', timestamp=IsNow(tz=timezone.utc)),
         ]
     )
     assert result.all_messages_json().startswith(b'[{"content":"Hello"')
@@ -190,11 +185,7 @@ def test_result_validator(set_event_loop: None):
             ModelStructuredResponse(
                 calls=[ToolCall.from_json('final_result', '{"a": 42, "b": "foo"}')], timestamp=IsNow(tz=timezone.utc)
             ),
-            ToolReturn(
-                tool_name='final_result',
-                content='Final result processed.',
-                timestamp=IsNow(tz=timezone.utc),
-            ),
+            ToolReturn(tool_name='final_result', content='Final result processed.', timestamp=IsNow(tz=timezone.utc)),
         ]
     )
 
@@ -230,11 +221,7 @@ def test_plain_response(set_event_loop: None):
                 calls=[ToolCall(tool_name='final_result', args=ArgsJson(args_json='{"response": ["foo", "bar"]}'))],
                 timestamp=IsNow(tz=timezone.utc),
             ),
-            ToolReturn(
-                tool_name='final_result',
-                content='Final result processed.',
-                timestamp=IsNow(tz=timezone.utc),
-            ),
+            ToolReturn(tool_name='final_result', content='Final result processed.', timestamp=IsNow(tz=timezone.utc)),
         ]
     )
 
@@ -287,7 +274,7 @@ def test_response_union_allow_str(set_event_loop: None, input_union_callable: Ca
     try:
         union = input_union_callable()
     except TypeError:
-        raise pytest.skip('Python version does not support `|` syntax for unions')
+        pytest.skip('Python version does not support `|` syntax for unions')
 
     m = TestModel()
     agent: Agent[None, Union[str, Foo]] = Agent(m, result_type=union)
@@ -448,10 +435,7 @@ def test_run_with_history_new(set_event_loop: None):
         RunResult(
             _all_messages=[
                 SystemPrompt(content='Foobar'),
-                UserPrompt(
-                    content='Hello',
-                    timestamp=IsNow(tz=timezone.utc),
-                ),
+                UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
                 ModelStructuredResponse(
                     calls=[ToolCall(tool_name='ret_a', args=ArgsDict(args_dict={'x': 'a'}))],
                     timestamp=IsNow(tz=timezone.utc),
@@ -769,3 +753,261 @@ def foo():
     assert mod.my_agent.name is None
     assert mod.foo() == snapshot('success (no tool calls)')
     assert mod.my_agent.name == 'my_agent'
+
+
+class TestMultipleToolCalls:
+    """Tests for scenarios where multiple tool calls are made in a single response."""
+
+    pytestmark = pytest.mark.usefixtures('set_event_loop')
+
+    class ResultType(BaseModel):
+        """Result type used by all tests."""
+
+        value: str
+
+    def test_early_strategy_stops_after_first_final_result(self):
+        """Test that 'early' strategy stops processing regular tools after first final result."""
+        tool_called = []
+
+        def return_model(_: list[Message], info: AgentInfo) -> ModelAnyResponse:
+            assert info.result_tools is not None
+            return ModelStructuredResponse(
+                calls=[
+                    ToolCall.from_dict('final_result', {'value': 'final'}),
+                    ToolCall.from_dict('regular_tool', {'x': 1}),
+                    ToolCall.from_dict('another_tool', {'y': 2}),
+                ]
+            )
+
+        agent = Agent(FunctionModel(return_model), result_type=self.ResultType, end_strategy='early')
+
+        @agent.tool_plain
+        def regular_tool(x: int) -> int:  # pragma: no cover
+            """A regular tool that should not be called."""
+            tool_called.append('regular_tool')
+            return x
+
+        @agent.tool_plain
+        def another_tool(y: int) -> int:  # pragma: no cover
+            """Another tool that should not be called."""
+            tool_called.append('another_tool')
+            return y
+
+        result = agent.run_sync('test early strategy')
+        messages = result.all_messages()
+
+        # Verify no tools were called after final result
+        assert tool_called == []
+
+        # Verify we got tool returns for all calls
+        tool_returns = [m for m in messages if isinstance(m, ToolReturn)]
+        assert tool_returns == snapshot(
+            [
+                ToolReturn(
+                    tool_name='final_result', content='Final result processed.', timestamp=IsNow(tz=timezone.utc)
+                ),
+                ToolReturn(
+                    tool_name='regular_tool',
+                    content='Tool not executed - a final result was already processed.',
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
+                ToolReturn(
+                    tool_name='another_tool',
+                    content='Tool not executed - a final result was already processed.',
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
+            ]
+        )
+
+    def test_early_strategy_uses_first_final_result(self):
+        """Test that 'early' strategy uses the first final result and ignores subsequent ones."""
+
+        def return_model(_: list[Message], info: AgentInfo) -> ModelAnyResponse:
+            assert info.result_tools is not None
+            return ModelStructuredResponse(
+                calls=[
+                    ToolCall.from_dict('final_result', {'value': 'first'}),
+                    ToolCall.from_dict('final_result', {'value': 'second'}),
+                ]
+            )
+
+        agent = Agent(FunctionModel(return_model), result_type=self.ResultType, end_strategy='early')
+        result = agent.run_sync('test multiple final results')
+
+        # Verify the result came from the first final tool
+        assert result.data.value == 'first'
+
+        # Verify we got appropriate tool returns
+        tool_returns = [m for m in result.all_messages() if isinstance(m, ToolReturn)]
+        assert tool_returns == snapshot(
+            [
+                ToolReturn(
+                    tool_name='final_result', content='Final result processed.', timestamp=IsNow(tz=timezone.utc)
+                ),
+                ToolReturn(
+                    tool_name='final_result',
+                    content='Result tool not used - a final result was already processed.',
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
+            ]
+        )
+
+    def test_exhaustive_strategy_executes_all_tools(self):
+        """Test that 'exhaustive' strategy executes all tools while using first final result."""
+        tool_called: list[str] = []
+
+        def return_model(_: list[Message], info: AgentInfo) -> ModelAnyResponse:
+            assert info.result_tools is not None
+            return ModelStructuredResponse(
+                calls=[
+                    ToolCall.from_dict('regular_tool', {'x': 42}),
+                    ToolCall.from_dict('final_result', {'value': 'first'}),
+                    ToolCall.from_dict('another_tool', {'y': 2}),
+                    ToolCall.from_dict('final_result', {'value': 'second'}),
+                    ToolCall.from_dict('unknown_tool', {'value': '???'}),
+                ]
+            )
+
+        agent = Agent(FunctionModel(return_model), result_type=self.ResultType, end_strategy='exhaustive')
+
+        @agent.tool_plain
+        def regular_tool(x: int) -> int:
+            """A regular tool that should be called."""
+            tool_called.append('regular_tool')
+            return x
+
+        @agent.tool_plain
+        def another_tool(y: int) -> int:
+            """Another tool that should be called."""
+            tool_called.append('another_tool')
+            return y
+
+        result = agent.run_sync('test exhaustive strategy')
+
+        # Verify the result came from the first final tool
+        assert result.data.value == 'first'
+
+        # Verify all regular tools were called
+        assert sorted(tool_called) == sorted(['regular_tool', 'another_tool'])
+
+        # Verify we got tool returns in the correct order
+        assert result.all_messages() == snapshot(
+            [
+                UserPrompt(content='test exhaustive strategy', timestamp=IsNow(tz=timezone.utc)),
+                ModelStructuredResponse(
+                    calls=[
+                        ToolCall(tool_name='regular_tool', args=ArgsDict(args_dict={'x': 42})),
+                        ToolCall(tool_name='final_result', args=ArgsDict(args_dict={'value': 'first'})),
+                        ToolCall(tool_name='another_tool', args=ArgsDict(args_dict={'y': 2})),
+                        ToolCall(tool_name='final_result', args=ArgsDict(args_dict={'value': 'second'})),
+                        ToolCall(tool_name='unknown_tool', args=ArgsDict(args_dict={'value': '???'})),
+                    ],
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
+                ToolReturn(
+                    tool_name='final_result', content='Final result processed.', timestamp=IsNow(tz=timezone.utc)
+                ),
+                ToolReturn(
+                    tool_name='final_result',
+                    content='Result tool not used - a final result was already processed.',
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
+                RetryPrompt(
+                    content="Unknown tool name: 'unknown_tool'. Available tools: regular_tool, another_tool, final_result",
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
+                ToolReturn(tool_name='regular_tool', content=42, timestamp=IsNow(tz=timezone.utc)),
+                ToolReturn(tool_name='another_tool', content=2, timestamp=IsNow(tz=timezone.utc)),
+            ]
+        )
+
+    def test_early_strategy_with_final_result_in_middle(self):
+        """Test that 'early' strategy stops at first final result, regardless of position."""
+        tool_called = []
+
+        def return_model(_: list[Message], info: AgentInfo) -> ModelAnyResponse:
+            assert info.result_tools is not None
+            return ModelStructuredResponse(
+                calls=[
+                    ToolCall.from_dict('regular_tool', {'x': 1}),
+                    ToolCall.from_dict('final_result', {'value': 'final'}),
+                    ToolCall.from_dict('another_tool', {'y': 2}),
+                    ToolCall.from_dict('unknown_tool', {'value': '???'}),
+                ]
+            )
+
+        agent = Agent(FunctionModel(return_model), result_type=self.ResultType, end_strategy='early')
+
+        @agent.tool_plain
+        def regular_tool(x: int) -> int:  # pragma: no cover
+            """A regular tool that should not be called."""
+            tool_called.append('regular_tool')
+            return x
+
+        @agent.tool_plain
+        def another_tool(y: int) -> int:  # pragma: no cover
+            """A tool that should not be called."""
+            tool_called.append('another_tool')
+            return y
+
+        result = agent.run_sync('test early strategy with final result in middle')
+
+        # Verify no tools were called
+        assert tool_called == []
+
+        # Verify we got appropriate tool returns
+        assert result.all_messages() == snapshot(
+            [
+                UserPrompt(content='test early strategy with final result in middle', timestamp=IsNow(tz=timezone.utc)),
+                ModelStructuredResponse(
+                    calls=[
+                        ToolCall(tool_name='regular_tool', args=ArgsDict(args_dict={'x': 1})),
+                        ToolCall(tool_name='final_result', args=ArgsDict(args_dict={'value': 'final'})),
+                        ToolCall(tool_name='another_tool', args=ArgsDict(args_dict={'y': 2})),
+                        ToolCall(tool_name='unknown_tool', args=ArgsDict(args_dict={'value': '???'})),
+                    ],
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
+                ToolReturn(
+                    tool_name='final_result', content='Final result processed.', timestamp=IsNow(tz=timezone.utc)
+                ),
+                ToolReturn(
+                    tool_name='regular_tool',
+                    content='Tool not executed - a final result was already processed.',
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
+                ToolReturn(
+                    tool_name='another_tool',
+                    content='Tool not executed - a final result was already processed.',
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
+                RetryPrompt(
+                    content="Unknown tool name: 'unknown_tool'. Available tools: regular_tool, another_tool, final_result",
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
+            ]
+        )
+
+    def test_early_strategy_does_not_apply_to_tool_calls_without_final_tool(self):
+        """Test that 'early' strategy does not apply to tool calls without final tool."""
+        tool_called = []
+        agent = Agent(TestModel(), result_type=self.ResultType, end_strategy='early')
+
+        @agent.tool_plain
+        def regular_tool(x: int) -> int:
+            """A regular tool that should be called."""
+            tool_called.append('regular_tool')
+            return x
+
+        result = agent.run_sync('test early strategy with regular tool calls')
+        assert tool_called == ['regular_tool']
+
+        tool_returns = [m for m in result.all_messages() if isinstance(m, ToolReturn)]
+        assert tool_returns == snapshot(
+            [
+                ToolReturn(tool_name='regular_tool', content=0, timestamp=IsNow(tz=timezone.utc)),
+                ToolReturn(
+                    tool_name='final_result', content='Final result processed.', timestamp=IsNow(tz=timezone.utc)
+                ),
+            ]
+        )
