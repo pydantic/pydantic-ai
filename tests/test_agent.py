@@ -1,12 +1,13 @@
 import sys
 from datetime import timezone
 from typing import Any, Callable, Union
-from unittest.mock import patch
 
 import httpx
 import pytest
+from dirty_equals import IsJson
 from inline_snapshot import snapshot
 from pydantic import BaseModel, field_validator
+from pydantic_core import to_json
 
 from pydantic_ai import Agent, ModelRetry, RunContext, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
@@ -773,14 +774,13 @@ def foo():
 
 
 async def test_model_settings_override() -> None:
-    my_agent = Agent('test', model_settings={'temperature': 0.5})
+    def return_settings(_: list[Message], info: AgentInfo) -> ModelAnyResponse:
+        return ModelTextResponse(to_json(info.model_settings).decode())
 
-    # match the model request function
-    with patch('pydantic_ai.models.test.TestAgentModel.request') as request:
-        request.return_value = (ModelTextResponse(content='hello'), Cost())
+    my_agent = Agent(FunctionModel(return_settings))
+    assert (await my_agent.run('Hello')).data == IsJson(None)
+    assert (await my_agent.run('Hello', model_settings={'temperature': 0.5})).data == IsJson({'temperature': 0.5})
 
-        await my_agent.run('hello')
-        assert request.call_args.args[1]['temperature'] == 0.5
-
-        await my_agent.run('hello', model_settings={'temperature': 0.7})
-        assert request.call_args.args[1]['temperature'] == 0.7
+    my_agent = Agent(FunctionModel(return_settings), model_settings={'temperature': 0.1})
+    assert (await my_agent.run('Hello')).data == IsJson({'temperature': 0.1})
+    assert (await my_agent.run('Hello', model_settings={'temperature': 0.5})).data == IsJson({'temperature': 0.5})
