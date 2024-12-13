@@ -15,7 +15,7 @@ from pydantic_ai.messages import (
     ModelResponse,
     RetryPrompt,
     SystemPrompt,
-    ToolCall,
+    ToolCallPart,
     ToolReturn,
     UserPrompt,
 )
@@ -34,7 +34,7 @@ def test_result_tuple(set_event_loop: None):
     def return_tuple(_: list[Message], info: AgentInfo) -> ModelResponse:
         assert info.result_tools is not None
         args_json = '{"response": ["foo", "bar"]}'
-        return ModelResponse(items=[ToolCall.from_json(info.result_tools[0].name, args_json)])
+        return ModelResponse(parts=[ToolCallPart.from_json(info.result_tools[0].name, args_json)])
 
     agent = Agent(FunctionModel(return_tuple), result_type=tuple[str, str])
 
@@ -51,7 +51,7 @@ def test_result_pydantic_model(set_event_loop: None):
     def return_model(_: list[Message], info: AgentInfo) -> ModelResponse:
         assert info.result_tools is not None
         args_json = '{"a": 1, "b": "foo"}'
-        return ModelResponse(items=[ToolCall.from_json(info.result_tools[0].name, args_json)])
+        return ModelResponse(parts=[ToolCallPart.from_json(info.result_tools[0].name, args_json)])
 
     agent = Agent(FunctionModel(return_model), result_type=Foo)
 
@@ -67,7 +67,7 @@ def test_result_pydantic_model_retry(set_event_loop: None):
             args_json = '{"a": "wrong", "b": "foo"}'
         else:
             args_json = '{"a": 42, "b": "foo"}'
-        return ModelResponse(items=[ToolCall.from_json(info.result_tools[0].name, args_json)])
+        return ModelResponse(parts=[ToolCallPart.from_json(info.result_tools[0].name, args_json)])
 
     agent = Agent(FunctionModel(return_model), result_type=Foo)
 
@@ -81,7 +81,7 @@ def test_result_pydantic_model_retry(set_event_loop: None):
         [
             UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
             ModelResponse(
-                items=[ToolCall.from_json('final_result', '{"a": "wrong", "b": "foo"}')],
+                parts=[ToolCallPart.from_json('final_result', '{"a": "wrong", "b": "foo"}')],
                 timestamp=IsNow(tz=timezone.utc),
             ),
             RetryPrompt(
@@ -97,7 +97,7 @@ def test_result_pydantic_model_retry(set_event_loop: None):
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelResponse(
-                items=[ToolCall.from_json('final_result', '{"a": 42, "b": "foo"}')],
+                parts=[ToolCallPart.from_json('final_result', '{"a": 42, "b": "foo"}')],
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ToolReturn(
@@ -117,7 +117,7 @@ def test_result_pydantic_model_validation_error(set_event_loop: None):
             args_json = '{"a": 1, "b": "foo"}'
         else:
             args_json = '{"a": 1, "b": "bar"}'
-        return ModelResponse(items=[ToolCall.from_json(info.result_tools[0].name, args_json)])
+        return ModelResponse(parts=[ToolCallPart.from_json(info.result_tools[0].name, args_json)])
 
     class Bar(BaseModel):
         a: int
@@ -161,7 +161,7 @@ def test_result_validator(set_event_loop: None):
             args_json = '{"a": 41, "b": "foo"}'
         else:
             args_json = '{"a": 42, "b": "foo"}'
-        return ModelResponse(items=[ToolCall.from_json(info.result_tools[0].name, args_json)])
+        return ModelResponse(parts=[ToolCallPart.from_json(info.result_tools[0].name, args_json)])
 
     agent = Agent(FunctionModel(return_model), result_type=Foo)
 
@@ -180,11 +180,13 @@ def test_result_validator(set_event_loop: None):
         [
             UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
             ModelResponse(
-                items=[ToolCall.from_json('final_result', '{"a": 41, "b": "foo"}')], timestamp=IsNow(tz=timezone.utc)
+                parts=[ToolCallPart.from_json('final_result', '{"a": 41, "b": "foo"}')],
+                timestamp=IsNow(tz=timezone.utc),
             ),
             RetryPrompt(tool_name='final_result', content='"a" should be 42', timestamp=IsNow(tz=timezone.utc)),
             ModelResponse(
-                items=[ToolCall.from_json('final_result', '{"a": 42, "b": "foo"}')], timestamp=IsNow(tz=timezone.utc)
+                parts=[ToolCallPart.from_json('final_result', '{"a": 42, "b": "foo"}')],
+                timestamp=IsNow(tz=timezone.utc),
             ),
             ToolReturn(
                 tool_name='final_result',
@@ -207,7 +209,7 @@ def test_plain_response(set_event_loop: None):
             return ModelResponse.from_text('hello')
         else:
             args_json = '{"response": ["foo", "bar"]}'
-            return ModelResponse(items=[ToolCall.from_json(info.result_tools[0].name, args_json)])
+            return ModelResponse(parts=[ToolCallPart.from_json(info.result_tools[0].name, args_json)])
 
     agent = Agent(FunctionModel(return_tuple), result_type=tuple[str, str])
 
@@ -223,7 +225,7 @@ def test_plain_response(set_event_loop: None):
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelResponse(
-                items=[ToolCall(tool_name='final_result', args=ArgsJson(args_json='{"response": ["foo", "bar"]}'))],
+                parts=[ToolCallPart(tool_name='final_result', args=ArgsJson(args_json='{"response": ["foo", "bar"]}'))],
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ToolReturn(
@@ -430,7 +432,7 @@ def test_run_with_history_new(set_event_loop: None):
         [
             UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
             ModelResponse(
-                items=[ToolCall(tool_name='ret_a', args=ArgsDict(args_dict={'x': 'a'}))],
+                parts=[ToolCallPart(tool_name='ret_a', args=ArgsDict(args_dict={'x': 'a'}))],
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ToolReturn(tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc)),
@@ -449,7 +451,7 @@ def test_run_with_history_new(set_event_loop: None):
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 ModelResponse(
-                    items=[ToolCall(tool_name='ret_a', args=ArgsDict(args_dict={'x': 'a'}))],
+                    parts=[ToolCallPart(tool_name='ret_a', args=ArgsDict(args_dict={'x': 'a'}))],
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 ToolReturn(
@@ -490,7 +492,7 @@ def test_run_with_history_new(set_event_loop: None):
                 SystemPrompt(content='Foobar'),
                 UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
                 ModelResponse(
-                    items=[ToolCall(tool_name='ret_a', args=ArgsDict(args_dict={'x': 'a'}))],
+                    parts=[ToolCallPart(tool_name='ret_a', args=ArgsDict(args_dict={'x': 'a'}))],
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 ToolReturn(tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc)),
@@ -522,12 +524,12 @@ def test_run_with_history_new_structured(set_event_loop: None):
         [
             UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
             ModelResponse(
-                items=[ToolCall(tool_name='ret_a', args=ArgsDict(args_dict={'x': 'a'}))],
+                parts=[ToolCallPart(tool_name='ret_a', args=ArgsDict(args_dict={'x': 'a'}))],
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ToolReturn(tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc)),
             ModelResponse(
-                items=[ToolCall(tool_name='final_result', args=ArgsDict(args_dict={'a': 0}), tool_call_id=None)],
+                parts=[ToolCallPart(tool_name='final_result', args=ArgsDict(args_dict={'a': 0}), tool_call_id=None)],
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ToolReturn(
@@ -548,12 +550,12 @@ def test_run_with_history_new_structured(set_event_loop: None):
                 SystemPrompt(content='Foobar'),
                 UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
                 ModelResponse(
-                    items=[ToolCall(tool_name='ret_a', args=ArgsDict(args_dict={'x': 'a'}))],
+                    parts=[ToolCallPart(tool_name='ret_a', args=ArgsDict(args_dict={'x': 'a'}))],
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 ToolReturn(tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc)),
                 ModelResponse(
-                    items=[ToolCall(tool_name='final_result', args=ArgsDict(args_dict={'a': 0}))],
+                    parts=[ToolCallPart(tool_name='final_result', args=ArgsDict(args_dict={'a': 0}))],
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 ToolReturn(
@@ -562,7 +564,7 @@ def test_run_with_history_new_structured(set_event_loop: None):
                 # second call, notice no repeated system prompt
                 UserPrompt(content='Hello again', timestamp=IsNow(tz=timezone.utc)),
                 ModelResponse(
-                    items=[ToolCall(tool_name='final_result', args=ArgsDict(args_dict={'a': 0}))],
+                    parts=[ToolCallPart(tool_name='final_result', args=ArgsDict(args_dict={'a': 0}))],
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 ToolReturn(
@@ -588,12 +590,12 @@ def test_run_with_history_new_structured(set_event_loop: None):
                 SystemPrompt(content='Foobar'),
                 UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
                 ModelResponse(
-                    items=[ToolCall(tool_name='ret_a', args=ArgsDict(args_dict={'x': 'a'}))],
+                    parts=[ToolCallPart(tool_name='ret_a', args=ArgsDict(args_dict={'x': 'a'}))],
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 ToolReturn(tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc)),
                 ModelResponse(
-                    items=[ToolCall(tool_name='final_result', args=ArgsDict(args_dict={'a': 0}))],
+                    parts=[ToolCallPart(tool_name='final_result', args=ArgsDict(args_dict={'a': 0}))],
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 ToolReturn(
@@ -602,7 +604,7 @@ def test_run_with_history_new_structured(set_event_loop: None):
                 # second call, notice no repeated system prompt
                 UserPrompt(content='Hello again', timestamp=IsNow(tz=timezone.utc)),
                 ModelResponse(
-                    items=[ToolCall(tool_name='final_result', args=ArgsDict(args_dict={'a': 0}))],
+                    parts=[ToolCallPart(tool_name='final_result', args=ArgsDict(args_dict={'a': 0}))],
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 ToolReturn(
@@ -617,7 +619,7 @@ def test_run_with_history_new_structured(set_event_loop: None):
 
 def test_empty_tool_calls(set_event_loop: None):
     def empty(_: list[Message], _info: AgentInfo) -> ModelResponse:
-        return ModelResponse(items=[])
+        return ModelResponse(parts=[])
 
     agent = Agent(FunctionModel(empty))
 
@@ -627,7 +629,7 @@ def test_empty_tool_calls(set_event_loop: None):
 
 def test_unknown_tool(set_event_loop: None):
     def empty(_: list[Message], _info: AgentInfo) -> ModelResponse:
-        return ModelResponse(items=[ToolCall.from_json('foobar', '{}')])
+        return ModelResponse(parts=[ToolCallPart.from_json('foobar', '{}')])
 
     agent = Agent(FunctionModel(empty))
 
@@ -637,11 +639,13 @@ def test_unknown_tool(set_event_loop: None):
         [
             UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
             ModelResponse(
-                items=[ToolCall(tool_name='foobar', args=ArgsJson(args_json='{}'))], timestamp=IsNow(tz=timezone.utc)
+                parts=[ToolCallPart(tool_name='foobar', args=ArgsJson(args_json='{}'))],
+                timestamp=IsNow(tz=timezone.utc),
             ),
             RetryPrompt(content="Unknown tool name: 'foobar'. No tools available.", timestamp=IsNow(tz=timezone.utc)),
             ModelResponse(
-                items=[ToolCall(tool_name='foobar', args=ArgsJson(args_json='{}'))], timestamp=IsNow(tz=timezone.utc)
+                parts=[ToolCallPart(tool_name='foobar', args=ArgsJson(args_json='{}'))],
+                timestamp=IsNow(tz=timezone.utc),
             ),
         ]
     )
@@ -652,7 +656,7 @@ def test_unknown_tool_fix(set_event_loop: None):
         if len(m) > 1:
             return ModelResponse.from_text(content='success')
         else:
-            return ModelResponse(items=[ToolCall.from_json('foobar', '{}')])
+            return ModelResponse(parts=[ToolCallPart.from_json('foobar', '{}')])
 
     agent = Agent(FunctionModel(empty))
 
@@ -662,7 +666,8 @@ def test_unknown_tool_fix(set_event_loop: None):
         [
             UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
             ModelResponse(
-                items=[ToolCall(tool_name='foobar', args=ArgsJson(args_json='{}'))], timestamp=IsNow(tz=timezone.utc)
+                parts=[ToolCallPart(tool_name='foobar', args=ArgsJson(args_json='{}'))],
+                timestamp=IsNow(tz=timezone.utc),
             ),
             RetryPrompt(content="Unknown tool name: 'foobar'. No tools available.", timestamp=IsNow(tz=timezone.utc)),
             ModelResponse.from_text(content='success', timestamp=IsNow(tz=timezone.utc)),

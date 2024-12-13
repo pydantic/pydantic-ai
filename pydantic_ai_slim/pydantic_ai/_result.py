@@ -12,7 +12,7 @@ from typing_extensions import Self, TypeAliasType, TypedDict
 
 from . import _utils, messages
 from .exceptions import ModelRetry
-from .messages import ModelResponse, ToolCall
+from .messages import ModelResponse, ToolCallPart
 from .result import ResultData
 from .tools import AgentDeps, ResultValidatorFunc, RunContext, ToolDefinition
 
@@ -28,7 +28,7 @@ class ResultValidator(Generic[AgentDeps, ResultData]):
         self._is_async = inspect.iscoroutinefunction(self.function)
 
     async def validate(
-        self, result: ResultData, deps: AgentDeps, retry: int, tool_call: messages.ToolCall | None
+        self, result: ResultData, deps: AgentDeps, retry: int, tool_call: messages.ToolCallPart | None
     ) -> ResultData:
         """Validate a result but calling the function.
 
@@ -108,10 +108,10 @@ class ResultSchema(Generic[ResultData]):
 
         return cls(tools=tools, allow_text_result=allow_text_result)
 
-    def find_tool(self, message: ModelResponse) -> tuple[ToolCall, ResultTool[ResultData]] | None:
+    def find_tool(self, message: ModelResponse) -> tuple[ToolCallPart, ResultTool[ResultData]] | None:
         """Find a tool that matches one of the calls."""
-        for item in message.items:
-            if isinstance(item, ToolCall):
+        for item in message.parts:
+            if isinstance(item, ToolCallPart):
                 if result := self.tools.get(item.tool_name):
                     return item, result
 
@@ -168,7 +168,7 @@ class ResultTool(Generic[ResultData]):
         )
 
     def validate(
-        self, tool_call: messages.ToolCall, allow_partial: bool = False, wrap_validation_errors: bool = True
+        self, tool_call: messages.ToolCallPart, allow_partial: bool = False, wrap_validation_errors: bool = True
     ) -> ResultData:
         """Validate a result message.
 

@@ -6,7 +6,6 @@ from typing import Annotated, Any, Literal, Union
 
 import pydantic
 import pydantic_core
-from pydantic import TypeAdapter
 
 from . import _pydantic
 from ._utils import now_utc as _now_utc
@@ -41,7 +40,7 @@ class UserPrompt:
     """Message type identifier, this type is available on all message as a discriminator."""
 
 
-tool_return_ta: TypeAdapter[Any] = TypeAdapter(Any)
+tool_return_ta: pydantic.TypeAdapter[Any] = _pydantic.LazyTypeAdapter(Any)
 
 
 @dataclass
@@ -117,7 +116,7 @@ class RetryPrompt:
 
 
 @dataclass
-class TextItem:
+class TextPart:
     """A plain text response from a model."""
 
     content: str
@@ -143,7 +142,7 @@ class ArgsDict:
 
 
 @dataclass
-class ToolCall:
+class ToolCallPart:
     """A tool call from the agent."""
 
     tool_name: str
@@ -160,11 +159,11 @@ class ToolCall:
     """Message type identifier, this type is available on all message as a discriminator."""
 
     @classmethod
-    def from_json(cls, tool_name: str, args_json: str, tool_call_id: str | None = None) -> ToolCall:
+    def from_json(cls, tool_name: str, args_json: str, tool_call_id: str | None = None) -> ToolCallPart:
         return cls(tool_name, ArgsJson(args_json), tool_call_id)
 
     @classmethod
-    def from_dict(cls, tool_name: str, args_dict: dict[str, Any], tool_call_id: str | None = None) -> ToolCall:
+    def from_dict(cls, tool_name: str, args_dict: dict[str, Any], tool_call_id: str | None = None) -> ToolCallPart:
         return cls(tool_name, ArgsDict(args_dict), tool_call_id)
 
     def has_content(self) -> bool:
@@ -174,15 +173,15 @@ class ToolCall:
             return bool(self.args.args_json)
 
 
-ModelResponseContentItem = Union[TextItem, ToolCall]
+ModelResponsePart = Annotated[Union[TextPart, ToolCallPart], pydantic.Discriminator('kind')]
 
 
 @dataclass
 class ModelResponse:
     """A response from a model."""
 
-    items: list[ModelResponseContentItem]
-    """The content of the response."""
+    parts: list[ModelResponsePart]
+    """The parts of the response."""
 
     role: Literal['model-response'] = 'model-response'
     """Message type identifier, this type is available on all message as a discriminator."""
@@ -194,11 +193,11 @@ class ModelResponse:
 
     @staticmethod
     def from_text(content: str, timestamp: datetime | None = None) -> ModelResponse:
-        return ModelResponse([TextItem(content)], timestamp=timestamp or _now_utc())
+        return ModelResponse([TextPart(content)], timestamp=timestamp or _now_utc())
 
 
 Message = Union[SystemPrompt, UserPrompt, ToolReturn, RetryPrompt, ModelResponse]
 """Any message send to or returned by a model."""
 
-MessagesTypeAdapter = _pydantic.LazyTypeAdapter(list[Annotated[Message, pydantic.Field(discriminator='role')]])
+MessagesTypeAdapter = _pydantic.LazyTypeAdapter(list[Annotated[Message, pydantic.Discriminator('role')]])
 """Pydantic [`TypeAdapter`][pydantic.type_adapter.TypeAdapter] for (de)serializing messages."""

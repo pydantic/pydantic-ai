@@ -14,11 +14,11 @@ from ..messages import (
     ArgsDict,
     Message,
     ModelResponse,
-    ModelResponseContentItem,
+    ModelResponsePart,
     RetryPrompt,
     SystemPrompt,
-    TextItem,
-    ToolCall,
+    TextPart,
+    ToolCallPart,
     ToolReturn,
     UserPrompt,
 )
@@ -208,14 +208,14 @@ class AnthropicAgentModel(AgentModel):
     @staticmethod
     def _process_response(response: AnthropicMessage) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
-        items: list[ModelResponseContentItem] = []
+        items: list[ModelResponsePart] = []
         for item in response.content:
             if isinstance(item, TextBlock):
-                items.append(TextItem(item.text))
+                items.append(TextPart(item.text))
             else:
                 assert isinstance(item, ToolUseBlock), 'unexpected item type'
                 items.append(
-                    ToolCall.from_dict(
+                    ToolCallPart.from_dict(
                         item.name,
                         cast(dict[str, Any], item.input),
                         item.id,
@@ -277,11 +277,11 @@ class AnthropicAgentModel(AgentModel):
                 )
         elif isinstance(message, ModelResponse):
             content: list[TextBlockParam | ToolUseBlockParam] = []
-            for item in message.items:
-                if isinstance(item, TextItem):
+            for item in message.parts:
+                if isinstance(item, TextPart):
                     content.append(TextBlockParam(text=item.content, type='text'))
                 else:
-                    assert isinstance(item, ToolCall)
+                    assert isinstance(item, ToolCallPart)
                     content.append(_map_tool_call(item))
             return MessageParam(role='assistant', content=content)
         else:
@@ -291,7 +291,7 @@ class AnthropicAgentModel(AgentModel):
             )
 
 
-def _map_tool_call(t: ToolCall) -> ToolUseBlockParam:
+def _map_tool_call(t: ToolCallPart) -> ToolUseBlockParam:
     assert isinstance(t.args, ArgsDict), f'Expected ArgsDict, got {t.args}'
     return ToolUseBlockParam(
         id=_guard_tool_call_id(t=t, model_source='Anthropic'),

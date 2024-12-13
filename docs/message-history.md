@@ -47,8 +47,8 @@ print(result.all_messages())
         role='user',
     ),
     ModelResponse(
-        items=[
-            TextItem(
+        parts=[
+            TextPart(
                 content='Did you hear about the toothpaste scandal? They called it Colgate.',
                 kind='text-item',
             )
@@ -69,8 +69,8 @@ print(result.new_messages())
         role='user',
     ),
     ModelResponse(
-        items=[
-            TextItem(
+        parts=[
+            TextPart(
                 content='Did you hear about the toothpaste scandal? They called it Colgate.',
                 kind='text-item',
             )
@@ -124,8 +124,8 @@ async def main():
                 role='user',
             ),
             ModelResponse(
-                items=[
-                    TextItem(
+                parts=[
+                    TextPart(
                         content='Did you hear about the toothpaste scandal? They called it Colgate.',
                         kind='text-item',
                     )
@@ -180,8 +180,8 @@ print(result2.all_messages())
         role='user',
     ),
     ModelResponse(
-        items=[
-            TextItem(
+        parts=[
+            TextPart(
                 content='Did you hear about the toothpaste scandal? They called it Colgate.',
                 kind='text-item',
             )
@@ -195,8 +195,8 @@ print(result2.all_messages())
         role='user',
     ),
     ModelResponse(
-        items=[
-            TextItem(
+        parts=[
+            TextPart(
                 content='This is an excellent joke invent by Samuel Colvin, it needs no explanation.',
                 kind='text-item',
             )
@@ -240,8 +240,8 @@ print(result2.all_messages())
         role='user',
     ),
     ModelResponse(
-        items=[
-            TextItem(
+        parts=[
+            TextPart(
                 content='Did you hear about the toothpaste scandal? They called it Colgate.',
                 kind='text-item',
             )
@@ -255,8 +255,8 @@ print(result2.all_messages())
         role='user',
     ),
     ModelResponse(
-        items=[
-            TextItem(
+        parts=[
+            TextPart(
                 content='This is an excellent joke invent by Samuel Colvin, it needs no explanation.',
                 kind='text-item',
             )

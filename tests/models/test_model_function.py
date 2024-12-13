@@ -15,7 +15,7 @@ from pydantic_ai.messages import (
     Message,
     ModelResponse,
     SystemPrompt,
-    ToolCall,
+    ToolCallPart,
     ToolReturn,
     UserPrompt,
 )
@@ -86,8 +86,8 @@ async def weather_model(messages: list[Message], info: AgentInfo) -> ModelRespon
     last = messages[-1]
     if last.role == 'user':
         return ModelResponse(
-            items=[
-                ToolCall.from_json(
+            parts=[
+                ToolCallPart.from_json(
                     'get_location',
                     json.dumps({'location_description': last.content}),
                 )
@@ -95,7 +95,7 @@ async def weather_model(messages: list[Message], info: AgentInfo) -> ModelRespon
         )
     elif last.role == 'tool-return':
         if last.tool_name == 'get_location':
-            return ModelResponse(items=[ToolCall.from_json('get_weather', last.model_response_str())])
+            return ModelResponse(parts=[ToolCallPart.from_json('get_weather', last.model_response_str())])
         elif last.tool_name == 'get_weather':
             location_name = next(m.content for m in messages if m.role == 'user')
             return ModelResponse.from_text(f'{last.content} in {location_name}')
@@ -135,7 +135,7 @@ def test_weather(set_event_loop: None):
                 role='user',
             ),
             ModelResponse(
-                items=[ToolCall.from_json('get_location', '{"location_description": "London"}')],
+                parts=[ToolCallPart.from_json('get_location', '{"location_description": "London"}')],
                 timestamp=IsNow(tz=timezone.utc),
                 role='model-response',
             ),
@@ -146,8 +146,8 @@ def test_weather(set_event_loop: None):
                 role='tool-return',
             ),
             ModelResponse(
-                items=[
-                    ToolCall.from_json(
+                parts=[
+                    ToolCallPart.from_json(
                         'get_weather',
                         '{"lat": 51, "lng": 0}',
                     )
@@ -178,8 +178,8 @@ async def call_function_model(messages: list[Message], _: AgentInfo) -> ModelRes
         if last.content.startswith('{'):
             details = json.loads(last.content)
             return ModelResponse(
-                items=[
-                    ToolCall.from_json(
+                parts=[
+                    ToolCallPart.from_json(
                         details['function'],
                         json.dumps(details['arguments']),
                     )
@@ -220,7 +220,7 @@ async def call_tool(messages: list[Message], info: AgentInfo) -> ModelResponse:
     if len(messages) == 1:
         assert len(info.function_tools) == 1
         tool_name = info.function_tools[0].name
-        return ModelResponse(items=[ToolCall.from_json(tool_name, '{}')])
+        return ModelResponse(parts=[ToolCallPart.from_json(tool_name, '{}')])
     else:
         return ModelResponse.from_text('final response')
 
@@ -320,12 +320,12 @@ def test_call_all(set_event_loop: None):
             SystemPrompt(content='foobar'),
             UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
             ModelResponse(
-                items=[
-                    ToolCall.from_dict('foo', {'x': 0}),
-                    ToolCall.from_dict('bar', {'x': 0}),
-                    ToolCall.from_dict('baz', {'x': 0}),
-                    ToolCall.from_dict('qux', {'x': 0}),
-                    ToolCall.from_dict('quz', {'x': 'a'}),
+                parts=[
+                    ToolCallPart.from_dict('foo', {'x': 0}),
+                    ToolCallPart.from_dict('bar', {'x': 0}),
+                    ToolCallPart.from_dict('baz', {'x': 0}),
+                    ToolCallPart.from_dict('qux', {'x': 0}),
+                    ToolCallPart.from_dict('quz', {'x': 'a'}),
                 ],
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -370,7 +370,7 @@ def test_retry_result_type(set_event_loop: None):
         nonlocal call_count
         call_count += 1
 
-        return ModelResponse(items=[ToolCall.from_dict('final_result', {'x': call_count})])
+        return ModelResponse(parts=[ToolCallPart.from_dict('final_result', {'x': call_count})])
 
     class Foo(BaseModel):
         x: int

@@ -101,8 +101,8 @@ from pydantic_ai.messages import (
     ArgsDict,
     ModelResponse,
     SystemPrompt,
-    TextItem,
-    ToolCall,
+    TextPart,
+    ToolCallPart,
     ToolReturn,
     UserPrompt,
 )
@@ -135,8 +135,8 @@ async def test_forecast():
             role='user',
         ),
         ModelResponse(
-            items=[
-                ToolCall(
+            parts=[
+                ToolCallPart(
                     tool_name='weather_forecast',
                     args=ArgsDict(
                         args_dict={
@@ -158,8 +158,8 @@ async def test_forecast():
             role='tool-return',
         ),
         ModelResponse(
-            items=[
-                TextItem(
+            parts=[
+                TextPart(
                     content='{"weather_forecast":"Sunny with a chance of rain"}',
                 )
             ],
@@ -195,7 +195,7 @@ from pydantic_ai import models
 from pydantic_ai.messages import (
     Message,
     ModelResponse,
-    ToolCall,
+    ToolCallPart,
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
@@ -215,7 +215,7 @@ def call_weather_forecast(  # (1)!
         m = re.search(r'\d{4}-\d{2}-\d{2}', user_prompt.content)
         assert m is not None
         args = {'location': 'London', 'forecast_date': m.group()}  # (2)!
-        return ModelResponse(items=[ToolCall.from_dict('weather_forecast', args)])
+        return ModelResponse(parts=[ToolCallPart.from_dict('weather_forecast', args)])
     else:
         # second call, return the forecast
         msg = messages[-1]

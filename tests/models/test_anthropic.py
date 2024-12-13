@@ -15,7 +15,7 @@ from pydantic_ai.messages import (
     ModelResponse,
     RetryPrompt,
     SystemPrompt,
-    ToolCall,
+    ToolCallPart,
     ToolReturn,
     UserPrompt,
 )
@@ -137,8 +137,8 @@ async def test_request_structured_response(allow_model_requests: None):
         [
             UserPrompt(content='hello', timestamp=IsNow(tz=timezone.utc)),
             ModelResponse(
-                items=[
-                    ToolCall(
+                parts=[
+                    ToolCallPart(
                         tool_name='final_result',
                         args=ArgsDict(args_dict={'response': [1, 2, 3]}),
                         tool_call_id='123',
@@ -190,8 +190,8 @@ async def test_request_tool_call(allow_model_requests: None):
             SystemPrompt(content='this is the system prompt'),
             UserPrompt(content='hello', timestamp=IsNow(tz=timezone.utc)),
             ModelResponse(
-                items=[
-                    ToolCall(
+                parts=[
+                    ToolCallPart(
                         tool_name='get_location',
                         args=ArgsDict(args_dict={'loc_name': 'San Francisco'}),
                         tool_call_id='1',
@@ -206,8 +206,8 @@ async def test_request_tool_call(allow_model_requests: None):
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelResponse(
-                items=[
-                    ToolCall(
+                parts=[
+                    ToolCallPart(
                         tool_name='get_location',
                         args=ArgsDict(args_dict={'loc_name': 'London'}),
                         tool_call_id='2',

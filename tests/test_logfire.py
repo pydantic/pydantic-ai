@@ -120,7 +120,7 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary], set_event_lo
                 [
                     {'content': 'Hello', 'timestamp': IsStr(regex=r'\d{4}-\d{2}-.+'), 'role': 'user'},
                     {
-                        'items': [
+                        'parts': [
                             {
                                 'tool_name': 'my_ret',
                                 'args': {'args_dict': {'x': 0}},
@@ -139,7 +139,7 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary], set_event_lo
                         'role': 'tool-return',
                     },
                     {
-                        'items': [{'content': '{"my_ret":"1"}', 'kind': 'text-item'}],
+                        'parts': [{'content': '{"my_ret":"1"}', 'kind': 'text-item'}],
                         'role': 'model-response',
                         'timestamp': IsStr(regex=r'\d{4}-\d{2}-.+'),
                     },
@@ -176,11 +176,11 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary], set_event_lo
                                     'title': 'ModelResponse',
                                     'x-python-datatype': 'dataclass',
                                     'properties': {
-                                        'items': {
+                                        'parts': {
                                             'type': 'array',
                                             'items': {
                                                 'type': 'object',
-                                                'title': 'ToolCall',
+                                                'title': 'ToolCallPart',
                                                 'x-python-datatype': 'dataclass',
                                                 'properties': {
                                                     'args': {
@@ -205,11 +205,11 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary], set_event_lo
                                     'title': 'ModelResponse',
                                     'x-python-datatype': 'dataclass',
                                     'properties': {
-                                        'items': {
+                                        'parts': {
                                             'type': 'array',
                                             'items': {
                                                 'type': 'object',
-                                                'title': 'TextItem',
+                                                'title': 'TextPart',
                                                 'x-python-datatype': 'dataclass',
                                             },
                                         },

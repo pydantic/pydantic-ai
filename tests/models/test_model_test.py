@@ -14,7 +14,7 @@ from pydantic_ai import Agent, ModelRetry
 from pydantic_ai.messages import (
     ModelResponse,
     RetryPrompt,
-    ToolCall,
+    ToolCallPart,
     ToolReturn,
     UserPrompt,
 )
@@ -93,11 +93,11 @@ def test_tool_retry(set_event_loop: None):
         [
             UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
             ModelResponse(
-                items=[ToolCall.from_dict('my_ret', {'x': 0})],
+                parts=[ToolCallPart.from_dict('my_ret', {'x': 0})],
                 timestamp=IsNow(tz=timezone.utc),
             ),
             RetryPrompt(tool_name='my_ret', content='First call failed', timestamp=IsNow(tz=timezone.utc)),
-            ModelResponse(items=[ToolCall.from_dict('my_ret', {'x': 0})], timestamp=IsNow(tz=timezone.utc)),
+            ModelResponse(parts=[ToolCallPart.from_dict('my_ret', {'x': 0})], timestamp=IsNow(tz=timezone.utc)),
             ToolReturn(tool_name='my_ret', content='1', timestamp=IsNow(tz=timezone.utc)),
             ModelResponse.from_text(content='{"my_ret":"1"}', timestamp=IsNow(tz=timezone.utc)),
         ]

@@ -19,11 +19,11 @@ from ..messages import (
     ArgsDict,
     Message,
     ModelResponse,
-    ModelResponseContentItem,
+    ModelResponsePart,
     RetryPrompt,
     SystemPrompt,
-    TextItem,
-    ToolCall,
+    TextPart,
+    ToolCallPart,
     ToolReturn,
     UserPrompt,
 )
@@ -265,7 +265,7 @@ class GeminiAgentModel(AgentModel):
             return _content_tool_return(m)
         elif isinstance(m, RetryPrompt):
             return _content_retry_prompt(m)
-        elif isinstance(m, ModelResponse):  # type: ignore[reportUnnecessaryIsInstance]
+        elif isinstance(m, ModelResponse):  # pyright: ignore[reportUnnecessaryIsInstance]
             return _content_model_response(m)
         else:
             assert_never(m)
@@ -404,10 +404,10 @@ def _content_retry_prompt(m: RetryPrompt) -> _GeminiContent:
 
 def _content_model_response(m: ModelResponse) -> _GeminiContent:
     parts: list[_GeminiPartUnion] = []
-    for item in m.items:
-        if isinstance(item, ToolCall):
+    for item in m.parts:
+        if isinstance(item, ToolCallPart):
             parts.append(_function_call_part_from_call(item))
-        elif isinstance(item, TextItem):  # type: ignore[reportUnnecessaryIsInstance]
+        elif isinstance(item, TextPart):  # pyright: ignore[reportUnnecessaryIsInstance]
             parts.append(_GeminiTextPart(text=item.content))
         else:
             assert_never(item)
@@ -422,18 +422,18 @@ class _GeminiFunctionCallPart(TypedDict):
     function_call: Annotated[_GeminiFunctionCall, Field(alias='functionCall')]
 
 
-def _function_call_part_from_call(tool: ToolCall) -> _GeminiFunctionCallPart:
+def _function_call_part_from_call(tool: ToolCallPart) -> _GeminiFunctionCallPart:
     assert isinstance(tool.args, ArgsDict), f'Expected ArgsObject, got {tool.args}'
     return _GeminiFunctionCallPart(function_call=_GeminiFunctionCall(name=tool.tool_name, args=tool.args.args_dict))
 
 
 def _process_response_from_parts(parts: Sequence[_GeminiPartUnion], timestamp: datetime | None = None) -> ModelResponse:
-    items: list[ModelResponseContentItem] = []
+    items: list[ModelResponsePart] = []
     for part in parts:
         if 'text' in part:
-            items.append(TextItem(part['text']))
+            items.append(TextPart(part['text']))
         elif 'function_call' in part:
-            items.append(ToolCall.from_dict(part['function_call']['name'], part['function_call']['args']))
+            items.append(ToolCallPart.from_dict(part['function_call']['name'], part['function_call']['args']))
         elif 'function_response' in part:
             raise exceptions.UnexpectedModelBehavior(
                 f'Unsupported response from Gemini, expected all parts to be function calls or text, got: {part!r}'

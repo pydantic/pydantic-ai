@@ -14,7 +14,7 @@ from pydantic_ai.messages import (
     Message,
     ModelResponse,
     RetryPrompt,
-    ToolCall,
+    ToolCallPart,
     ToolReturn,
     UserPrompt,
 )
@@ -45,7 +45,7 @@ async def test_streamed_text_response():
             [
                 UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
                 ModelResponse(
-                    items=[ToolCall(tool_name='ret_a', args=ArgsDict(args_dict={'x': 'a'}))],
+                    parts=[ToolCallPart(tool_name='ret_a', args=ArgsDict(args_dict={'x': 'a'}))],
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 ToolReturn(tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc)),
@@ -60,7 +60,7 @@ async def test_streamed_text_response():
             [
                 UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
                 ModelResponse(
-                    items=[ToolCall(tool_name='ret_a', args=ArgsDict(args_dict={'x': 'a'}))],
+                    parts=[ToolCallPart(tool_name='ret_a', args=ArgsDict(args_dict={'x': 'a'}))],
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 ToolReturn(tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc)),
@@ -201,7 +201,7 @@ async def test_call_tool():
             [
                 UserPrompt(content='hello', timestamp=IsNow(tz=timezone.utc)),
                 ModelResponse(
-                    items=[ToolCall(tool_name='ret_a', args=ArgsJson(args_json='{"x": "hello"}'))],
+                    parts=[ToolCallPart(tool_name='ret_a', args=ArgsJson(args_json='{"x": "hello"}'))],
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 ToolReturn(tool_name='ret_a', content='hello world', timestamp=IsNow(tz=timezone.utc)),
@@ -217,7 +217,7 @@ async def test_call_tool():
             [
                 UserPrompt(content='hello', timestamp=IsNow(tz=timezone.utc)),
                 ModelResponse(
-                    items=[ToolCall(tool_name='ret_a', args=ArgsJson(args_json='{"x": "hello"}'))],
+                    parts=[ToolCallPart(tool_name='ret_a', args=ArgsJson(args_json='{"x": "hello"}'))],
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 ToolReturn(tool_name='ret_a', content='hello world', timestamp=IsNow(tz=timezone.utc)),
@@ -227,8 +227,8 @@ async def test_call_tool():
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 ModelResponse(
-                    items=[
-                        ToolCall(
+                    parts=[
+                        ToolCallPart(
                             tool_name='final_result',
                             args=ArgsJson(args_json='{"response": ["hello world", 2]}'),
                         )
@@ -267,7 +267,8 @@ async def test_call_tool_wrong_name():
         [
             UserPrompt(content='hello', timestamp=IsNow(tz=timezone.utc)),
             ModelResponse(
-                items=[ToolCall(tool_name='foobar', args=ArgsJson(args_json='{}'))], timestamp=IsNow(tz=timezone.utc)
+                parts=[ToolCallPart(tool_name='foobar', args=ArgsJson(args_json='{}'))],
+                timestamp=IsNow(tz=timezone.utc),
             ),
             RetryPrompt(
                 content="Unknown tool name: 'foobar'. Available tools: ret_a, final_result",

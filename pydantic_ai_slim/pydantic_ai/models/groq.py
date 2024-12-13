@@ -15,11 +15,11 @@ from ..messages import (
     ArgsJson,
     Message,
     ModelResponse,
-    ModelResponseContentItem,
+    ModelResponsePart,
     RetryPrompt,
     SystemPrompt,
-    TextItem,
-    ToolCall,
+    TextPart,
+    ToolCallPart,
     ToolReturn,
     UserPrompt,
 )
@@ -201,12 +201,12 @@ class GroqAgentModel(AgentModel):
         """Process a non-streamed response, and prepare a message to return."""
         timestamp = datetime.fromtimestamp(response.created, tz=timezone.utc)
         choice = response.choices[0]
-        items: list[ModelResponseContentItem] = []
+        items: list[ModelResponsePart] = []
         if choice.message.content is not None:
-            items.append(TextItem(choice.message.content))
+            items.append(TextPart(choice.message.content))
         if choice.message.tool_calls is not None:
             for c in choice.message.tool_calls:
-                items.append(ToolCall.from_json(c.function.name, c.function.arguments, c.id))
+                items.append(ToolCallPart.from_json(c.function.name, c.function.arguments, c.id))
         return ModelResponse(items, timestamp=timestamp)
 
     @staticmethod
@@ -258,13 +258,13 @@ class GroqAgentModel(AgentModel):
                     tool_call_id=_guard_tool_call_id(t=message, model_source='Groq'),
                     content=message.model_response(),
                 )
-        elif isinstance(message, ModelResponse):  # type: ignore[reportUnnecessaryIsInstance]
+        elif isinstance(message, ModelResponse):  # pyright: ignore[reportUnnecessaryIsInstance]
             texts: list[str] = []
             tool_calls: list[chat.ChatCompletionMessageToolCallParam] = []
-            for item in message.items:
-                if isinstance(item, TextItem):
+            for item in message.parts:
+                if isinstance(item, TextPart):
                     texts.append(item.content)
-                elif isinstance(item, ToolCall):  # type: ignore[reportUnnecessaryIsInstance]
+                elif isinstance(item, ToolCallPart):  # pyright: ignore[reportUnnecessaryIsInstance]
                     tool_calls.append(_map_tool_call(item))
                 else:
                     assert_never(item)
@@ -355,11 +355,11 @@ class GroqStreamStructuredResponse(StreamStructuredResponse):
                 self._delta_tool_calls[new.index] = new
 
     def get(self, *, final: bool = False) -> ModelResponse:
-        items: list[ModelResponseContentItem] = []
+        items: list[ModelResponsePart] = []
         for c in self._delta_tool_calls.values():
             if f := c.function:
                 if f.name is not None and f.arguments is not None:
-                    items.append(ToolCall.from_json(f.name, f.arguments, c.id))
+                    items.append(ToolCallPart.from_json(f.name, f.arguments, c.id))
 
         return ModelResponse(items, timestamp=self._timestamp)
 
@@ -370,7 +370,7 @@ class GroqStreamStructuredResponse(StreamStructuredResponse):
         return self._timestamp
 
 
-def _map_tool_call(t: ToolCall) -> chat.ChatCompletionMessageToolCallParam:
+def _map_tool_call(t: ToolCallPart) -> chat.ChatCompletionMessageToolCallParam:
     assert isinstance(t.args, ArgsJson), f'Expected ArgsJson, got {t.args}'
     return chat.ChatCompletionMessageToolCallParam(
         id=_guard_tool_call_id(t=t, model_source='Groq'),

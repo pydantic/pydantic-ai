@@ -9,7 +9,7 @@ from typing import Generic, TypeVar, cast
 import logfire_api
 
 from . import _result, _utils, exceptions, messages, models
-from .messages import ModelResponse, ToolCall
+from .messages import ModelResponse, ToolCallPart
 from .tools import AgentDeps
 
 __all__ = (
@@ -231,15 +231,15 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
             else:
                 # we should already have a message at this point, yield that first if it has any content
                 msg = self._stream_response.get()
-                for item in msg.items:
-                    if isinstance(item, ToolCall) and item.has_content():
+                for item in msg.parts:
+                    if isinstance(item, ToolCallPart) and item.has_content():
                         yield msg, False
                         break
                 async with _utils.group_by_temporal(self._stream_response, debounce_by) as group_iter:
                     async for _ in group_iter:
                         msg = self._stream_response.get()
-                        for item in msg.items:
-                            if isinstance(item, ToolCall) and item.has_content():
+                        for item in msg.parts:
+                            if isinstance(item, ToolCallPart) and item.has_content():
                                 yield msg, False
                                 break
                 msg = self._stream_response.get(final=True)

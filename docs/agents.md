@@ -329,8 +329,8 @@ except UnexpectedModelBehavior as e:
             role='user',
         ),
         ModelResponse(
-            items=[
-                ToolCall(
+            parts=[
+                ToolCallPart(
                     tool_name='calc_volume',
                     args=ArgsDict(args_dict={'size': 6}),
                     tool_call_id=None,
@@ -348,8 +348,8 @@ except UnexpectedModelBehavior as e:
             role='retry-prompt',
         ),
         ModelResponse(
-            items=[
-                ToolCall(
+            parts=[
+                ToolCallPart(
                     tool_name='calc_volume',
                     args=ArgsDict(args_dict={'size': 6}),
                     tool_call_id=None,

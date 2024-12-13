@@ -16,8 +16,8 @@ from ..messages import (
     Message,
     ModelResponse,
     RetryPrompt,
-    TextItem,
-    ToolCall,
+    TextPart,
+    ToolCallPart,
     ToolReturn,
 )
 from ..result import Cost
@@ -137,11 +137,11 @@ class TestAgentModel(AgentModel):
 
         # TODO: Rework this once we make StreamTextResponse more general
         texts: list[str] = []
-        tool_calls: list[ToolCall] = []
-        for item in msg.items:
-            if isinstance(item, TextItem):
+        tool_calls: list[ToolCallPart] = []
+        for item in msg.parts:
+            if isinstance(item, TextPart):
                 texts.append(item.content)
-            elif isinstance(item, ToolCall):  # type: ignore[reportUnnecessaryIsInstance]
+            elif isinstance(item, ToolCallPart):  # pyright: ignore[reportUnnecessaryIsInstance]
                 tool_calls.append(item)
             else:
                 assert_never(item)
@@ -158,7 +158,7 @@ class TestAgentModel(AgentModel):
         # if there are tools, the first thing we want to do is call all of them
         if self.tool_calls and not any(isinstance(m, ModelResponse) for m in messages):
             return ModelResponse(
-                items=[ToolCall.from_dict(name, self.gen_tool_args(args)) for name, args in self.tool_calls]
+                parts=[ToolCallPart.from_dict(name, self.gen_tool_args(args)) for name, args in self.tool_calls]
             )
 
         # get messages since the last model response
@@ -168,8 +168,8 @@ class TestAgentModel(AgentModel):
         new_retry_names = {m.tool_name for m in new_messages if isinstance(m, RetryPrompt)}
         if new_retry_names:
             return ModelResponse(
-                items=[
-                    ToolCall.from_dict(name, self.gen_tool_args(args))
+                parts=[
+                    ToolCallPart.from_dict(name, self.gen_tool_args(args))
                     for name, args in self.tool_calls
                     if name in new_retry_names
                 ]
@@ -193,10 +193,10 @@ class TestAgentModel(AgentModel):
             custom_result_args = self.result.right
             result_tool = self.result_tools[self.seed % len(self.result_tools)]
             if custom_result_args is not None:
-                return ModelResponse(items=[ToolCall.from_dict(result_tool.name, custom_result_args)])
+                return ModelResponse(parts=[ToolCallPart.from_dict(result_tool.name, custom_result_args)])
             else:
                 response_args = self.gen_tool_args(result_tool)
-                return ModelResponse(items=[ToolCall.from_dict(result_tool.name, response_args)])
+                return ModelResponse(parts=[ToolCallPart.from_dict(result_tool.name, response_args)])
 
 
 def _get_new_messages(messages: list[Message]) -> list[Message]:

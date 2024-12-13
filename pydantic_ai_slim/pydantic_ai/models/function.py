@@ -17,11 +17,11 @@ from ..messages import (
     ArgsJson,
     Message,
     ModelResponse,
-    ModelResponseContentItem,
+    ModelResponsePart,
     RetryPrompt,
     SystemPrompt,
-    TextItem,
-    ToolCall,
+    TextPart,
+    ToolCallPart,
     ToolReturn,
     UserPrompt,
 )
@@ -219,10 +219,10 @@ class FunctionStreamStructuredResponse(StreamStructuredResponse):
                 self._delta_tool_calls[key] = new
 
     def get(self, *, final: bool = False) -> ModelResponse:
-        calls: list[ModelResponseContentItem] = []
+        calls: list[ModelResponsePart] = []
         for c in self._delta_tool_calls.values():
             if c.name is not None and c.json_args is not None:
-                calls.append(ToolCall.from_json(c.name, c.json_args))
+                calls.append(ToolCallPart.from_json(c.name, c.json_args))
 
         return ModelResponse(calls, timestamp=self._timestamp)
 
@@ -249,11 +249,11 @@ def _estimate_cost(messages: Iterable[Message]) -> result.Cost:
             request_tokens += _string_cost(message.model_response_str())
         elif isinstance(message, RetryPrompt):
             request_tokens += _string_cost(message.model_response())
-        elif isinstance(message, ModelResponse):  # type: ignore[reportUnnecessaryIsInstance]
-            for item in message.items:
-                if isinstance(item, TextItem):
+        elif isinstance(message, ModelResponse):  # pyright: ignore[reportUnnecessaryIsInstance]
+            for item in message.parts:
+                if isinstance(item, TextPart):
                     response_tokens += _string_cost(item.content)
-                elif isinstance(item, ToolCall):  # type: ignore[reportUnnecessaryIsInstance]
+                elif isinstance(item, ToolCallPart):  # pyright: ignore[reportUnnecessaryIsInstance]
                     call = item
                     if isinstance(call.args, ArgsJson):
                         args_str = call.args.args_json

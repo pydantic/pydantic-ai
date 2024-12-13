@@ -22,7 +22,7 @@ from pydantic_ai.messages import (
     ArgsDict,
     Message,
     ModelResponse,
-    ToolCall,
+    ToolCallPart,
 )
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
@@ -143,7 +143,7 @@ async def async_http_request(url: str, **kwargs: Any) -> httpx.Response:
     return http_request(url, **kwargs)
 
 
-text_responses: dict[str, str | ToolCall] = {
+text_responses: dict[str, str | ToolCallPart] = {
     'What is the weather like in West London and in Wiltshire?': (
         'The weather in West London is raining, while in Wiltshire it is sunny.'
     ),
@@ -155,18 +155,18 @@ text_responses: dict[str, str | ToolCall] = {
     'Who was Albert Einstein?': 'Albert Einstein was a German-born theoretical physicist.',
     'What was his most famous equation?': "Albert Einstein's most famous equation is (E = mc^2).",
     'What is the date?': 'Hello Frank, the date today is 2032-01-02.',
-    'Put my money on square eighteen': ToolCall(tool_name='roulette_wheel', args=ArgsDict({'square': 18})),
-    'I bet five is the winner': ToolCall(tool_name='roulette_wheel', args=ArgsDict({'square': 5})),
-    'My guess is 4': ToolCall(tool_name='roll_die', args=ArgsDict({})),
-    'Send a message to John Doe asking for coffee next week': ToolCall(
+    'Put my money on square eighteen': ToolCallPart(tool_name='roulette_wheel', args=ArgsDict({'square': 18})),
+    'I bet five is the winner': ToolCallPart(tool_name='roulette_wheel', args=ArgsDict({'square': 5})),
+    'My guess is 4': ToolCallPart(tool_name='roll_die', args=ArgsDict({})),
+    'Send a message to John Doe asking for coffee next week': ToolCallPart(
         tool_name='get_user_by_name', args=ArgsDict({'name': 'John'})
     ),
-    'Please get me the volume of a box with size 6.': ToolCall(tool_name='calc_volume', args=ArgsDict({'size': 6})),
+    'Please get me the volume of a box with size 6.': ToolCallPart(tool_name='calc_volume', args=ArgsDict({'size': 6})),
     'Where does "hello world" come from?': (
         'The first known use of "hello, world" was in a 1974 textbook about the C programming language.'
     ),
-    'What is my balance?': ToolCall(tool_name='customer_balance', args=ArgsDict({'include_pending': True})),
-    'I just lost my card!': ToolCall(
+    'What is my balance?': ToolCallPart(tool_name='customer_balance', args=ArgsDict({'include_pending': True})),
+    'I just lost my card!': ToolCallPart(
         tool_name='final_result',
         args=ArgsDict(
             {
@@ -179,28 +179,28 @@ text_responses: dict[str, str | ToolCall] = {
             }
         ),
     ),
-    'Where were the olympics held in 2012?': ToolCall(
+    'Where were the olympics held in 2012?': ToolCallPart(
         tool_name='final_result',
         args=ArgsDict({'city': 'London', 'country': 'United Kingdom'}),
     ),
     'The box is 10x20x30': 'Please provide the units for the dimensions (e.g., cm, in, m).',
-    'The box is 10x20x30 cm': ToolCall(
+    'The box is 10x20x30 cm': ToolCallPart(
         tool_name='final_result',
         args=ArgsDict({'width': 10, 'height': 20, 'depth': 30, 'units': 'cm'}),
     ),
-    'red square, blue circle, green triangle': ToolCall(
+    'red square, blue circle, green triangle': ToolCallPart(
         tool_name='final_result_list',
         args=ArgsDict({'response': ['red', 'blue', 'green']}),
     ),
-    'square size 10, circle size 20, triangle size 30': ToolCall(
+    'square size 10, circle size 20, triangle size 30': ToolCallPart(
         tool_name='final_result_list_2',
         args=ArgsDict({'response': [10, 20, 30]}),
     ),
-    'get me uses who were last active yesterday.': ToolCall(
+    'get me uses who were last active yesterday.': ToolCallPart(
         tool_name='final_result_Success',
         args=ArgsDict({'sql_query': 'SELECT * FROM users WHERE last_active::date = today() - interval 1 day'}),
     ),
-    'My name is Ben, I was born on January 28th 1990, I like the chain the dog and the pyramid.': ToolCall(
+    'My name is Ben, I was born on January 28th 1990, I like the chain the dog and the pyramid.': ToolCallPart(
         tool_name='final_result',
         args=ArgsDict(
             {
@@ -220,35 +220,35 @@ async def model_logic(messages: list[Message], info: AgentInfo) -> ModelResponse
             if isinstance(response, str):
                 return ModelResponse.from_text(content=response)
             else:
-                return ModelResponse(items=[response])
+                return ModelResponse(parts=[response])
 
         if re.fullmatch(r'sql prompt \d+', m.content):
             return ModelResponse.from_text(content='SELECT 1')
 
     elif m.role == 'tool-return' and m.tool_name == 'roulette_wheel':
         win = m.content == 'winner'
-        return ModelResponse(items=[ToolCall(tool_name='final_result', args=ArgsDict({'response': win}))])
+        return ModelResponse(parts=[ToolCallPart(tool_name='final_result', args=ArgsDict({'response': win}))])
     elif m.role == 'tool-return' and m.tool_name == 'roll_die':
-        return ModelResponse(items=[ToolCall(tool_name='get_player_name', args=ArgsDict({}))])
+        return ModelResponse(parts=[ToolCallPart(tool_name='get_player_name', args=ArgsDict({}))])
     elif m.role == 'tool-return' and m.tool_name == 'get_player_name':
         return ModelResponse.from_text(content="Congratulations Anne, you guessed correctly! You're a winner!")
     if m.role == 'retry-prompt' and isinstance(m.content, str) and m.content.startswith("No user found with name 'Joh"):
-        return ModelResponse(items=[ToolCall(tool_name='get_user_by_name', args=ArgsDict({'name': 'John Doe'}))])
+        return ModelResponse(parts=[ToolCallPart(tool_name='get_user_by_name', args=ArgsDict({'name': 'John Doe'}))])
     elif m.role == 'tool-return' and m.tool_name == 'get_user_by_name':
         args = {
             'message': 'Hello John, would you be free for coffee sometime next week? Let me know what works for you!',
             'user_id': 123,
         }
-        return ModelResponse(items=[ToolCall(tool_name='final_result', args=ArgsDict(args))])
+        return ModelResponse(parts=[ToolCallPart(tool_name='final_result', args=ArgsDict(args))])
     elif m.role == 'retry-prompt' and m.tool_name == 'calc_volume':
-        return ModelResponse(items=[ToolCall(tool_name='calc_volume', args=ArgsDict({'size': 6}))])
+        return ModelResponse(parts=[ToolCallPart(tool_name='calc_volume', args=ArgsDict({'size': 6}))])
     elif m.role == 'tool-return' and m.tool_name == 'customer_balance':
         args = {
             'support_advice': 'Hello John, your current account balance, including pending transactions, is $123.45.',
             'block_card': False,
             'risk': 1,
         }
-        return ModelResponse(items=[ToolCall(tool_name='final_result', args=ArgsDict(args))])
+        return ModelResponse(parts=[ToolCallPart(tool_name='final_result', args=ArgsDict(args))])
     else:
         sys.stdout.write(str(debug.format(messages, info)))
         raise RuntimeError(f'Unexpected message: {m}')

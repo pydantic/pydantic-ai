@@ -20,7 +20,7 @@ from . import (
     models,
     result,
 )
-from .messages import TextItem, ToolCall
+from .messages import TextPart, ToolCallPart
 from .result import ResultData
 from .tools import (
     AgentDeps,
@@ -776,10 +776,10 @@ class Agent(Generic[AgentDeps, ResultData]):
         Returns:
             A tuple of `(final_result, messages)`. If `final_result` is not `None`, the conversation should end.
         """
-        calls: list[ToolCall] = []
+        calls: list[ToolCallPart] = []
         texts: list[str] = []
-        for item in model_response.items:
-            if isinstance(item, TextItem):
+        for item in model_response.parts:
+            if isinstance(item, TextPart):
                 texts.append(item.content)
             else:
                 calls.append(item)
@@ -868,7 +868,7 @@ class Agent(Generic[AgentDeps, ResultData]):
                 # if there's a result schema, iterate over the stream until we find at least one tool
                 # NOTE: this means we ignore any other tools called here
                 structured_msg = model_response.get()
-                while not structured_msg.items:
+                while not structured_msg.parts:
                     try:
                         await model_response.__anext__()
                     except StopAsyncIteration:
@@ -888,14 +888,14 @@ class Agent(Generic[AgentDeps, ResultData]):
             async for _ in model_response:
                 pass
             structured_msg = model_response.get()
-            if not structured_msg.items:
+            if not structured_msg.parts:
                 raise exceptions.UnexpectedModelBehavior('Received empty tool call message')
             messages: list[_messages.Message] = [structured_msg]
 
             # we now run all tool functions in parallel
             tasks: list[asyncio.Task[_messages.Message]] = []
-            for item in structured_msg.items:
-                if isinstance(item, ToolCall):
+            for item in structured_msg.parts:
+                if isinstance(item, ToolCallPart):
                     call = item
                     if tool := self._function_tools.get(call.tool_name):
                         tasks.append(asyncio.create_task(tool.run(deps, call), name=call.tool_name))
@@ -908,7 +908,7 @@ class Agent(Generic[AgentDeps, ResultData]):
             return None, messages
 
     async def _validate_result(
-        self, result_data: ResultData, deps: AgentDeps, tool_call: _messages.ToolCall | None
+        self, result_data: ResultData, deps: AgentDeps, tool_call: _messages.ToolCallPart | None
     ) -> ResultData:
         for validator in self._result_validators:
             result_data = await validator.validate(result_data, deps, self._current_result_retry, tool_call)

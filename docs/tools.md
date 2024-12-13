@@ -78,8 +78,8 @@ print(dice_result.all_messages())
         role='user',
     ),
     ModelResponse(
-        items=[
-            ToolCall(
+        parts=[
+            ToolCallPart(
                 tool_name='roll_die',
                 args=ArgsDict(args_dict={}),
                 tool_call_id=None,
@@ -97,8 +97,8 @@ print(dice_result.all_messages())
         role='tool-return',
     ),
     ModelResponse(
-        items=[
-            ToolCall(
+        parts=[
+            ToolCallPart(
                 tool_name='get_player_name',
                 args=ArgsDict(args_dict={}),
                 tool_call_id=None,
@@ -116,8 +116,8 @@ print(dice_result.all_messages())
         role='tool-return',
     ),
     ModelResponse(
-        items=[
-            TextItem(
+        parts=[
+            TextPart(
                 content="Congratulations Anne, you guessed correctly! You're a winner!",
                 kind='text-item',
             )
