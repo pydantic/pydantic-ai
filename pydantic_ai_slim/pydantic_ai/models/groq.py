@@ -20,6 +20,7 @@ from ..messages import (
     ToolCall,
 )
 from ..result import Cost
+from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from . import (
     AgentModel,
@@ -149,28 +150,34 @@ class GroqAgentModel(AgentModel):
     allow_text_result: bool
     tools: list[chat.ChatCompletionToolParam]
 
-    async def request(self, messages: list[Message]) -> tuple[ModelAnyResponse, result.Cost]:
-        response = await self._completions_create(messages, False)
+    async def request(
+        self, messages: list[Message], model_settings: ModelSettings | None
+    ) -> tuple[ModelAnyResponse, result.Cost]:
+        response = await self._completions_create(messages, False, model_settings)
         return self._process_response(response), _map_cost(response)
 
     @asynccontextmanager
-    async def request_stream(self, messages: list[Message]) -> AsyncIterator[EitherStreamedResponse]:
-        response = await self._completions_create(messages, True)
+    async def request_stream(
+        self, messages: list[Message], model_settings: ModelSettings | None
+    ) -> AsyncIterator[EitherStreamedResponse]:
+        response = await self._completions_create(messages, True, model_settings)
         async with response:
             yield await self._process_streamed_response(response)
 
     @overload
     async def _completions_create(
-        self, messages: list[Message], stream: Literal[True]
+        self, messages: list[Message], stream: Literal[True], model_settings: ModelSettings | None
     ) -> AsyncStream[ChatCompletionChunk]:
         pass
 
     @overload
-    async def _completions_create(self, messages: list[Message], stream: Literal[False]) -> chat.ChatCompletion:
+    async def _completions_create(
+        self, messages: list[Message], stream: Literal[False], model_settings: ModelSettings | None
+    ) -> chat.ChatCompletion:
         pass
 
     async def _completions_create(
-        self, messages: list[Message], stream: bool
+        self, messages: list[Message], stream: bool, model_settings: ModelSettings | None
     ) -> chat.ChatCompletion | AsyncStream[ChatCompletionChunk]:
         # standalone function to make it easier to override
         if not self.tools:
@@ -181,15 +188,21 @@ class GroqAgentModel(AgentModel):
             tool_choice = 'auto'
 
         groq_messages = [self._map_message(m) for m in messages]
+
+        model_settings = model_settings or {}
+
         return await self.client.chat.completions.create(
             model=str(self.model_name),
             messages=groq_messages,
-            temperature=0.0,
             n=1,
             parallel_tool_calls=True if self.tools else NOT_GIVEN,
             tools=self.tools or NOT_GIVEN,
             tool_choice=tool_choice or NOT_GIVEN,
             stream=stream,
+            max_tokens=model_settings.get('max_tokens', NOT_GIVEN),
+            temperature=model_settings.get('temperature', NOT_GIVEN),
+            top_p=model_settings.get('top_p', NOT_GIVEN),
+            timeout=model_settings.get('timeout', NOT_GIVEN),
         )
 
     @staticmethod
