@@ -4,7 +4,7 @@ import inspect
 import re
 from collections.abc import AsyncIterator, Awaitable, Iterable
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from itertools import chain
 from typing import Callable, Union, cast
@@ -25,6 +25,7 @@ from ..messages import (
     ToolReturn,
     UserPrompt,
 )
+from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from . import AgentModel, EitherStreamedResponse, Model, StreamStructuredResponse, StreamTextResponse
 
@@ -70,7 +71,7 @@ class FunctionModel(Model):
         result_tools: list[ToolDefinition],
     ) -> AgentModel:
         return FunctionAgentModel(
-            self.function, self.stream_function, AgentInfo(function_tools, allow_text_result, result_tools)
+            self.function, self.stream_function, AgentInfo(function_tools, allow_text_result, result_tools, None)
         )
 
     def name(self) -> str:
@@ -99,6 +100,8 @@ class AgentInfo:
     """Whether a plain text result is allowed."""
     result_tools: list[ToolDefinition]
     """The tools that can called as the final result of the run."""
+    model_settings: ModelSettings | None
+    """The model settings passed to the run call."""
 
 
 @dataclass
@@ -138,19 +141,25 @@ class FunctionAgentModel(AgentModel):
     stream_function: StreamFunctionDef | None
     agent_info: AgentInfo
 
-    async def request(self, messages: list[Message]) -> tuple[ModelResponse, result.Cost]:
+    async def request(
+        self, messages: list[Message], model_settings: ModelSettings | None
+    ) -> tuple[ModelResponse, result.Cost]:
+        agent_info = replace(self.agent_info, model_settings=model_settings)
+
         assert self.function is not None, 'FunctionModel must receive a `function` to support non-streamed requests'
         if inspect.iscoroutinefunction(self.function):
-            response = await self.function(messages, self.agent_info)
+            response = await self.function(messages, agent_info)
         else:
-            response_ = await _utils.run_in_executor(self.function, messages, self.agent_info)
+            response_ = await _utils.run_in_executor(self.function, messages, agent_info)
             assert isinstance(response_, ModelResponse), response_
             response = response_
         # TODO is `messages` right here? Should it just be new messages?
         return response, _estimate_cost(chain(messages, [response]))
 
     @asynccontextmanager
-    async def request_stream(self, messages: list[Message]) -> AsyncIterator[EitherStreamedResponse]:
+    async def request_stream(
+        self, messages: list[Message], model_settings: ModelSettings | None
+    ) -> AsyncIterator[EitherStreamedResponse]:
         assert (
             self.stream_function is not None
         ), 'FunctionModel must receive a `stream_function` to support streamed requests'

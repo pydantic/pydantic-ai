@@ -21,6 +21,7 @@ from ..messages import (
     ToolReturn,
 )
 from ..result import Cost
+from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from . import (
     AgentModel,
@@ -127,12 +128,16 @@ class TestAgentModel(AgentModel):
     result_tools: list[ToolDefinition]
     seed: int
 
-    async def request(self, messages: list[Message]) -> tuple[ModelResponse, Cost]:
-        return self._request(messages), Cost()
+    async def request(
+        self, messages: list[Message], model_settings: ModelSettings | None
+    ) -> tuple[ModelResponse, Cost]:
+        return self._request(messages, model_settings), Cost()
 
     @asynccontextmanager
-    async def request_stream(self, messages: list[Message]) -> AsyncIterator[EitherStreamedResponse]:
-        msg = self._request(messages)
+    async def request_stream(
+        self, messages: list[Message], model_settings: ModelSettings | None
+    ) -> AsyncIterator[EitherStreamedResponse]:
+        msg = self._request(messages, model_settings)
         cost = Cost()
 
         # TODO: Rework this once we make StreamTextResponse more general
@@ -154,7 +159,7 @@ class TestAgentModel(AgentModel):
     def gen_tool_args(self, tool_def: ToolDefinition) -> Any:
         return _JsonSchemaTestData(tool_def.parameters_json_schema, self.seed).generate()
 
-    def _request(self, messages: list[Message]) -> ModelResponse:
+    def _request(self, messages: list[Message], model_settings: ModelSettings | None) -> ModelResponse:
         # if there are tools, the first thing we want to do is call all of them
         if self.tool_calls and not any(isinstance(m, ModelResponse) for m in messages):
             return ModelResponse(

@@ -4,8 +4,10 @@ from typing import Any, Callable, Union
 
 import httpx
 import pytest
+from dirty_equals import IsJson
 from inline_snapshot import snapshot
 from pydantic import BaseModel, field_validator
+from pydantic_core import to_json
 
 from pydantic_ai import Agent, ModelRetry, RunContext, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
@@ -1016,3 +1018,16 @@ class TestMultipleToolCalls:
                 ),
             ]
         )
+
+
+async def test_model_settings_override() -> None:
+    def return_settings(_: list[Message], info: AgentInfo) -> ModelResponse:
+        return ModelResponse.from_text(to_json(info.model_settings).decode())
+
+    my_agent = Agent(FunctionModel(return_settings))
+    assert (await my_agent.run('Hello')).data == IsJson(None)
+    assert (await my_agent.run('Hello', model_settings={'temperature': 0.5})).data == IsJson({'temperature': 0.5})
+
+    my_agent = Agent(FunctionModel(return_settings), model_settings={'temperature': 0.1})
+    assert (await my_agent.run('Hello')).data == IsJson({'temperature': 0.1})
+    assert (await my_agent.run('Hello', model_settings={'temperature': 0.5})).data == IsJson({'temperature': 0.5})

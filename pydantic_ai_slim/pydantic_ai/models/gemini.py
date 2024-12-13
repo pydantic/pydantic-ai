@@ -10,7 +10,7 @@ from datetime import datetime
 from typing import Annotated, Any, Literal, Protocol, Union
 
 import pydantic_core
-from httpx import AsyncClient as AsyncHTTPClient, Response as HTTPResponse
+from httpx import USE_CLIENT_DEFAULT, AsyncClient as AsyncHTTPClient, Response as HTTPResponse
 from pydantic import Discriminator, Field, Tag
 from typing_extensions import NotRequired, TypedDict, TypeGuard, assert_never
 
@@ -27,6 +27,7 @@ from ..messages import (
     ToolReturn,
     UserPrompt,
 )
+from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from . import (
     AgentModel,
@@ -168,18 +169,24 @@ class GeminiAgentModel(AgentModel):
         self.tool_config = tool_config
         self.url = url
 
-    async def request(self, messages: list[Message]) -> tuple[ModelResponse, result.Cost]:
-        async with self._make_request(messages, False) as http_response:
+    async def request(
+        self, messages: list[Message], model_settings: ModelSettings | None
+    ) -> tuple[ModelResponse, result.Cost]:
+        async with self._make_request(messages, False, model_settings) as http_response:
             response = _gemini_response_ta.validate_json(await http_response.aread())
         return self._process_response(response), _metadata_as_cost(response)
 
     @asynccontextmanager
-    async def request_stream(self, messages: list[Message]) -> AsyncIterator[EitherStreamedResponse]:
-        async with self._make_request(messages, True) as http_response:
+    async def request_stream(
+        self, messages: list[Message], model_settings: ModelSettings | None
+    ) -> AsyncIterator[EitherStreamedResponse]:
+        async with self._make_request(messages, True, model_settings) as http_response:
             yield await self._process_streamed_response(http_response)
 
     @asynccontextmanager
-    async def _make_request(self, messages: list[Message], streamed: bool) -> AsyncIterator[HTTPResponse]:
+    async def _make_request(
+        self, messages: list[Message], streamed: bool, model_settings: ModelSettings | None
+    ) -> AsyncIterator[HTTPResponse]:
         sys_prompt_parts: list[_GeminiTextPart] = []
         contents: list[_GeminiContent] = []
         for m in messages:
@@ -196,6 +203,17 @@ class GeminiAgentModel(AgentModel):
         if self.tool_config is not None:
             request_data['tool_config'] = self.tool_config
 
+        generation_config: _GeminiGenerationConfig = {}
+        if model_settings:
+            if (max_tokens := model_settings.get('max_tokens')) is not None:
+                generation_config['max_output_tokens'] = max_tokens
+            if (temperature := model_settings.get('temperature')) is not None:
+                generation_config['temperature'] = temperature
+            if (top_p := model_settings.get('top_p')) is not None:
+                generation_config['top_p'] = top_p
+        if generation_config:
+            request_data['generation_config'] = generation_config
+
         url = self.url + ('streamGenerateContent' if streamed else 'generateContent')
 
         headers = {
@@ -206,7 +224,13 @@ class GeminiAgentModel(AgentModel):
 
         request_json = _gemini_request_ta.dump_json(request_data, by_alias=True)
 
-        async with self.http_client.stream('POST', url, content=request_json, headers=headers) as r:
+        async with self.http_client.stream(
+            'POST',
+            url,
+            content=request_json,
+            headers=headers,
+            timeout=(model_settings or {}).get('timeout', USE_CLIENT_DEFAULT),
+        ) as r:
             if r.status_code != 200:
                 await r.aread()
                 raise exceptions.UnexpectedModelBehavior(f'Unexpected response from gemini {r.status_code}', r.text)
@@ -377,6 +401,20 @@ class _GeminiRequest(TypedDict):
     Developer generated system instructions, see
     <https://ai.google.dev/gemini-api/docs/system-instructions?lang=rest>
     """
+    generation_config: NotRequired[_GeminiGenerationConfig]
+
+
+class _GeminiGenerationConfig(TypedDict, total=False):
+    """Schema for an API request to the Gemini API.
+
+    Note there are many additional fields available that have not been added yet.
+
+    See <https://ai.google.dev/api/generate-content#generationconfig> for API docs.
+    """
+
+    max_output_tokens: int
+    temperature: float
+    top_p: float
 
 
 class _GeminiContent(TypedDict):
@@ -580,7 +618,7 @@ class _GeminiCandidates(TypedDict):
     """See <https://ai.google.dev/api/generate-content#v1beta.Candidate>."""
 
     content: _GeminiContent
-    finish_reason: NotRequired[Annotated[Literal['STOP'], Field(alias='finishReason')]]
+    finish_reason: NotRequired[Annotated[Literal['STOP', 'MAX_TOKENS'], Field(alias='finishReason')]]
     """
     See <https://ai.google.dev/api/generate-content#FinishReason>, lots of other values are possible,
     but let's wait until we see them and know what they mean to add them here.

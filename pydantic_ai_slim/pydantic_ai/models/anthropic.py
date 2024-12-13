@@ -22,6 +22,7 @@ from ..messages import (
     ToolReturn,
     UserPrompt,
 )
+from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from . import (
     AgentModel,
@@ -154,28 +155,34 @@ class AnthropicAgentModel(AgentModel):
     allow_text_result: bool
     tools: list[ToolParam]
 
-    async def request(self, messages: list[Message]) -> tuple[ModelResponse, result.Cost]:
-        response = await self._messages_create(messages, False)
+    async def request(
+        self, messages: list[Message], model_settings: ModelSettings | None
+    ) -> tuple[ModelResponse, result.Cost]:
+        response = await self._messages_create(messages, False, model_settings)
         return self._process_response(response), _map_cost(response)
 
     @asynccontextmanager
-    async def request_stream(self, messages: list[Message]) -> AsyncIterator[EitherStreamedResponse]:
-        response = await self._messages_create(messages, True)
+    async def request_stream(
+        self, messages: list[Message], model_settings: ModelSettings | None
+    ) -> AsyncIterator[EitherStreamedResponse]:
+        response = await self._messages_create(messages, True, model_settings)
         async with response:
             yield await self._process_streamed_response(response)
 
     @overload
     async def _messages_create(
-        self, messages: list[Message], stream: Literal[True]
+        self, messages: list[Message], stream: Literal[True], model_settings: ModelSettings | None
     ) -> AsyncStream[RawMessageStreamEvent]:
         pass
 
     @overload
-    async def _messages_create(self, messages: list[Message], stream: Literal[False]) -> AnthropicMessage:
+    async def _messages_create(
+        self, messages: list[Message], stream: Literal[False], model_settings: ModelSettings | None
+    ) -> AnthropicMessage:
         pass
 
     async def _messages_create(
-        self, messages: list[Message], stream: bool
+        self, messages: list[Message], stream: bool, model_settings: ModelSettings | None
     ) -> AnthropicMessage | AsyncStream[RawMessageStreamEvent]:
         # standalone function to make it easier to override
         if not self.tools:
@@ -194,15 +201,19 @@ class AnthropicAgentModel(AgentModel):
             else:
                 anthropic_messages.append(self._map_message(m))
 
+        model_settings = model_settings or {}
+
         return await self.client.messages.create(
-            max_tokens=1024,
+            max_tokens=model_settings.get('max_tokens', 1024),
             system=system_prompt or NOT_GIVEN,
             messages=anthropic_messages,
             model=self.model_name,
-            temperature=0.0,
             tools=self.tools or NOT_GIVEN,
             tool_choice=tool_choice or NOT_GIVEN,
             stream=stream,
+            temperature=model_settings.get('temperature', NOT_GIVEN),
+            top_p=model_settings.get('top_p', NOT_GIVEN),
+            timeout=model_settings.get('timeout', NOT_GIVEN),
         )
 
     @staticmethod
