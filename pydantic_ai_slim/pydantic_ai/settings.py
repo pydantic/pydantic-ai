@@ -31,3 +31,15 @@ class ModelSettings(TypedDict, total=False):
 
     timeout: float | Timeout
     """Override the client-level default timeout for a request, in seconds"""
+
+
+def merge_model_settings(base: ModelSettings | None, overrides: ModelSettings | None) -> ModelSettings | None:
+    """Merge two sets of model settings, preferring the overrides.
+
+    A common use case is: merge_model_settings(<agent settings>, <run settings>)
+    """
+    # Note: we may want merge recursively if/when we add non-primitive values
+    if base and overrides:
+        return base | overrides
+    else:
+        return base or overrides

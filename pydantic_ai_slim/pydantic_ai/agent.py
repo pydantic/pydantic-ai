@@ -22,7 +22,7 @@ from . import (
     result,
 )
 from .result import ResultData
-from .settings import ModelSettings
+from .settings import ModelSettings, merge_model_settings
 from .tools import (
     AgentDeps,
     RunContext,
@@ -177,8 +177,8 @@ class Agent(Generic[AgentDeps, ResultData]):
         message_history: list[_messages.Message] | None = None,
         model: models.Model | models.KnownModelName | None = None,
         deps: AgentDeps = None,
-        infer_name: bool = True,
         model_settings: ModelSettings | None = None,
+        infer_name: bool = True,
     ) -> result.RunResult[ResultData]:
         """Run the agent with a user prompt in async mode.
 
@@ -226,13 +226,13 @@ class Agent(Generic[AgentDeps, ResultData]):
 
             cost = result.Cost()
 
+            model_settings = merge_model_settings(self.model_settings, model_settings)
+
             run_step = 0
             while True:
                 run_step += 1
                 with _logfire.span('preparing model and tools {run_step=}', run_step=run_step):
                     agent_model = await self._prepare_model(model_used, deps)
-
-                model_settings = {**(self.model_settings or {}), **(model_settings or {})}
 
                 with _logfire.span('model request', run_step=run_step) as model_req_span:
                     model_response, request_cost = await agent_model.request(messages, model_settings)
@@ -270,8 +270,8 @@ class Agent(Generic[AgentDeps, ResultData]):
         message_history: list[_messages.Message] | None = None,
         model: models.Model | models.KnownModelName | None = None,
         deps: AgentDeps = None,
-        infer_name: bool = True,
         model_settings: ModelSettings | None = None,
+        infer_name: bool = True,
     ) -> result.RunResult[ResultData]:
         """Run the agent with a user prompt synchronously.
 
@@ -322,8 +322,8 @@ class Agent(Generic[AgentDeps, ResultData]):
         message_history: list[_messages.Message] | None = None,
         model: models.Model | models.KnownModelName | None = None,
         deps: AgentDeps = None,
-        infer_name: bool = True,
         model_settings: ModelSettings | None = None,
+        infer_name: bool = True,
     ) -> AsyncIterator[result.StreamedRunResult[AgentDeps, ResultData]]:
         """Run the agent with a user prompt in async mode, returning a streamed response.
 
@@ -373,6 +373,7 @@ class Agent(Generic[AgentDeps, ResultData]):
                 tool.current_retry = 0
 
             cost = result.Cost()
+            model_settings = merge_model_settings(self.model_settings, model_settings)
 
             run_step = 0
             while True:
@@ -380,8 +381,6 @@ class Agent(Generic[AgentDeps, ResultData]):
 
                 with _logfire.span('preparing model and tools {run_step=}', run_step=run_step):
                     agent_model = await self._prepare_model(model_used, deps)
-
-                model_settings = {**(self.model_settings or {}), **(model_settings or {})}
 
                 with _logfire.span('model request {run_step=}', run_step=run_step) as model_req_span:
                     async with agent_model.request_stream(messages, model_settings) as model_response:
