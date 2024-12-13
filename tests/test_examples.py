@@ -97,24 +97,16 @@ def test_docs_examples(
     ruff_ignore: list[str] = ['D']
     # `from bank_database import DatabaseConn` wrongly sorted in imports
     # waiting for https://github.com/pydantic/pytest-examples/issues/43
-    if 'import DatabaseConn' in example.source:
-        ruff_ignore.append('I001')
-    elif 'async def my_tool(' in example.source or 'async def only_if_42(' in example.source:
-        # until https://github.com/pydantic/pytest-examples/issues/46 is fixed
+    # and https://github.com/pydantic/pytest-examples/issues/46
+    if opt_lint == 'not-imports' or 'import DatabaseConn' in example.source:
         ruff_ignore.append('I001')
 
-    line_length = 88
-    if opt_title in ('streamed_hello_world.py', 'streamed_user_profile.py'):
-        line_length = 120
+    line_length = int(prefix_settings.get('line_length', '88'))
 
     eval_example.set_config(ruff_ignore=ruff_ignore, target_version='py39', line_length=line_length)
     eval_example.print_callback = print_callback
 
-    call_name = 'main'
-    for name in ('test_application_code', 'test_forecast', 'test_forecast_future'):
-        if f'def {name}():' in example.source:
-            call_name = name
-            break
+    call_name = prefix_settings.get('call_name', 'main')
 
     if not opt_lint.startswith('skip'):
         if eval_example.update_examples:  # pragma: no cover

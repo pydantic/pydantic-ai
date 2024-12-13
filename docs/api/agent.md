@@ -15,3 +15,7 @@
         - tool
         - tool_plain
         - result_validator
+
+::: pydantic_ai.agent.EndStrategy
+    options:
+      show_root_heading: true
