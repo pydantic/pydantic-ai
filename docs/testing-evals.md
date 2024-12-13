@@ -27,7 +27,7 @@ Unless you're really sure you know better, you'll probably want to follow roughl
 The simplest and fastest way to exercise most of your application code is using [`TestModel`][pydantic_ai.models.test.TestModel], this will (by default) call all tools in the agent, then return either plain text or a structured response depending on the return type of the agent.
 
 !!! note "`TestModel` is not magic"
-    The "clever" (but not too clever) part of `TestModel` is that it will attempt to generate valid structured data for [function tools](agents.md#function-tools) and [result types](results.md#structured-result-validation) based on the schema of the registered tools.
+    The "clever" (but not too clever) part of `TestModel` is that it will attempt to generate valid structured data for [function tools](tools.md) and [result types](results.md#structured-result-validation) based on the schema of the registered tools.
 
     There's no ML or AI in `TestModel`, it's just plain old procedural Python code that tries to generate data that satisfies the JSON schema of a tool.
 
@@ -89,7 +89,7 @@ Here we have a function that takes a list of `#!python (user_prompt, user_id)` t
 
 Here's how we would write tests using [`TestModel`][pydantic_ai.models.test.TestModel]:
 
-```python {title="test_weather_app.py"}
+```python {title="test_weather_app.py" call_name="test_forecast"}
 from datetime import timezone
 import pytest
 
@@ -182,7 +182,7 @@ To fully exercise `weather_forecast`, we need to use [`FunctionModel`][pydantic_
 
 Here's an example of using `FunctionModel` to test the `weather_forecast` tool with custom inputs
 
-```python {title="test_weather_app2.py"}
+```python {title="test_weather_app2.py" call_name="test_forecast_future"}
 import re
 
 import pytest
