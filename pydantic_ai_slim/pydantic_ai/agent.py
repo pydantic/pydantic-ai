@@ -828,9 +828,9 @@ class Agent(Generic[AgentDeps, ResultData]):
 
         # Then process regular tools based on end strategy
         if self.end_strategy == 'early' and final_result:
-            tool_messages = self._mark_skipped_regular_tools(model_response)
+            tool_messages = self._mark_skipped_function_tools(model_response)
         else:
-            tool_messages = await self._process_regular_tools(model_response, deps)
+            tool_messages = await self._process_function_tools(model_response, deps)
 
         return final_result, [*final_messages, *tool_messages]
 
@@ -880,20 +880,19 @@ class Agent(Generic[AgentDeps, ResultData]):
 
         return final_result, messages
 
-    async def _process_regular_tools(
+    async def _process_function_tools(
         self,
         model_response: _messages.ModelStructuredResponse,
         deps: AgentDeps,
     ) -> list[_messages.Message]:
-        """Process regular (non-final) tool calls in parallel."""
+        """Process function (non-final) tool calls in parallel."""
         messages: list[_messages.Message] = []
         tasks: list[asyncio.Task[_messages.Message]] = []
-        result_tools: set[str] = set(self._result_schema.tool_names()) if self._result_schema else set()
 
         for call in model_response.calls:
             if tool := self._function_tools.get(call.tool_name):
                 tasks.append(asyncio.create_task(tool.run(deps, call), name=call.tool_name))
-            elif call.tool_name not in result_tools:
+            elif self._result_schema is None or call.tool_name not in self._result_schema.tools:
                 messages.append(self._unknown_tool(call.tool_name))
 
         # Run all tool tasks in parallel
@@ -904,11 +903,11 @@ class Agent(Generic[AgentDeps, ResultData]):
 
         return messages
 
-    def _mark_skipped_regular_tools(
+    def _mark_skipped_function_tools(
         self,
         model_response: _messages.ModelStructuredResponse,
     ) -> list[_messages.Message]:
-        """Mark regular tools as skipped when a final result was found with early end strategy."""
+        """Mark function tools as skipped when a final result was found with 'early' end strategy."""
         messages: list[_messages.Message] = []
 
         for call in model_response.calls:
@@ -920,6 +919,8 @@ class Agent(Generic[AgentDeps, ResultData]):
                         tool_call_id=call.tool_call_id,
                     )
                 )
+            elif self._result_schema is None or call.tool_name not in self._result_schema.tools:
+                messages.append(self._unknown_tool(call.tool_name))
 
         return messages
 
