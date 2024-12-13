@@ -11,7 +11,14 @@ class ModelSettings(TypedDict, total=False):
     """
 
     max_tokens: int
-    """The maximum number of tokens to generate before stopping."""
+    """The maximum number of tokens to generate before stopping.
+
+    Supported by:
+    * Gemini
+    * Anthropic
+    * OpenAI
+    * Groq
+    """
 
     temperature: float
     """Amount of randomness injected into the response.
@@ -20,6 +27,12 @@ class ModelSettings(TypedDict, total=False):
     maximum `temperature` for creative and generative tasks.
 
     Note that even with `temperature` of `0.0`, the results will not be fully deterministic.
+
+    Supported by:
+    * Gemini
+    * Anthropic
+    * OpenAI
+    * Groq
     """
 
     top_p: float
@@ -27,10 +40,24 @@ class ModelSettings(TypedDict, total=False):
 
     So 0.1 means only the tokens comprising the top 10% probability mass are considered.
 
-    You should either alter `temperature` or `top_p`, but not both."""
+    You should either alter `temperature` or `top_p`, but not both.
+
+    Supported by:
+    * Gemini
+    * Anthropic
+    * OpenAI
+    * Groq
+    """
 
     timeout: float | Timeout
-    """Override the client-level default timeout for a request, in seconds"""
+    """Override the client-level default timeout for a request, in seconds.
+
+    Supported by:
+    * Gemini
+    * Anthropic
+    * OpenAI
+    * Groq
+    """
 
 
 def merge_model_settings(base: ModelSettings | None, overrides: ModelSettings | None) -> ModelSettings | None:
