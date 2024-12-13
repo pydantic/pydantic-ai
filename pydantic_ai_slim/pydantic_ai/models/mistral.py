@@ -4,10 +4,9 @@ from collections.abc import AsyncIterator, Iterable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Callable, Literal
+from typing import Any, Callable, Literal, Union
 
 from httpx import AsyncClient as AsyncHTTPClient
-from mistralai import Content, OptionalNullable, Union
 from typing_extensions import assert_never
 
 from .. import UnexpectedModelBehavior
@@ -35,9 +34,12 @@ try:
     from json_repair import repair_json
     from mistralai import (
         CompletionChunk as MistralCompletionChunk,
+        Content as MistralContent,
         FunctionCall as MistralFunctionCall,
         Mistral,
+        OptionalNullable as MistralOptionalNullable,
         TextChunk as MistralTextChunk,
+        ToolChoiceEnum as MistralToolChoiceEnum,
     )
     from mistralai.models import (
         ChatCompletionResponse as MistralChatCompletionResponse,
@@ -160,15 +162,8 @@ class MistralAgentModel(AgentModel):
     ) -> MistralChatCompletionResponse:
         """Make a non-streaming request to the model."""
         mistral_messages = [self._map_message(m) for m in messages]
-        # Note: Function calling Mode
-        # "auto": default mode. Model decides if it uses the tool or not.
-        # "any": forces tool use. WARN: If use 'any' it will be infinity loop with Model.
-        # "none": prevents tool use.
-        tool_choice: Literal['none', 'any', 'auto'] | None = None
-        if not self.function_tools and not self.result_tools:
-            tool_choice = 'none'
-        else:
-            tool_choice = 'auto'
+
+        tool_choice = self._get_tool_choice()
 
         response = await self.client.chat.complete_async(
             model=str(self.model_name),
@@ -189,6 +184,8 @@ class MistralAgentModel(AgentModel):
         response: MistralEventStreamAsync[MistralCompletionEvent] | None = None
         mistral_messages = [self._map_message(m) for m in messages]
 
+        tool_choice = self._get_tool_choice()
+
         if self.result_tools and self.function_tools or self.function_tools:
             # Function Calling Mode
             response = await self.client.chat.stream_async(
@@ -196,7 +193,7 @@ class MistralAgentModel(AgentModel):
                 messages=mistral_messages,
                 n=1,
                 tools=self._map_function_and_result_tools_definition(),
-                tool_choice='auto',  # Note WARN: If use 'any' it will be infinity loop with Model.
+                tool_choice=tool_choice,
             )
 
         elif self.result_tools:
@@ -229,6 +226,21 @@ class MistralAgentModel(AgentModel):
             )
         assert response, 'A unexpected empty response from Mistral.'
         return response
+
+    def _get_tool_choice(self) -> MistralToolChoiceEnum | None:
+        """Get tool choice for the model.
+
+        - "auto": Default mode. Model decides if it uses the tool or not.
+        - "any": Select any tool.
+        - "none": Prevents tool use.
+        - "required": Forces tool use.
+        """
+        if not self.function_tools and not self.result_tools:
+            return None
+        elif not self.allow_text_result:
+            return 'required'
+        else:
+            return 'auto'
 
     def _map_function_and_result_tools_definition(self) -> list[MistralTool] | None:
         """Map function and result tools to MistralTool format.
@@ -610,7 +622,7 @@ def _map_cost(response: MistralChatCompletionResponse | MistralCompletionChunk) 
         return Cost()
 
 
-def _map_delta_content(delta_content: OptionalNullable[Content]) -> str | None:
+def _map_delta_content(delta_content: MistralOptionalNullable[MistralContent]) -> str | None:
     """Maps the delta content from a Mistral Completion Chunk to a string or None."""
     content: str | None = None
 

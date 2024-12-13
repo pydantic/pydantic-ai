@@ -834,6 +834,7 @@ async def test_stream_result_type_basemodel(allow_model_requests: None):
 
 
 async def test_request_tool_call(allow_model_requests: None):
+    # Given
     completion = [
         completion_message(
             MistralAssistantMessage(
@@ -884,7 +885,10 @@ async def test_request_tool_call(allow_model_requests: None):
         else:
             raise ModelRetry('Wrong location, please try again')
 
+    # When
     result = await agent.run('Hello')
+
+    # Then
     assert result.data == 'final response'
     assert result.all_messages() == snapshot(
         [
