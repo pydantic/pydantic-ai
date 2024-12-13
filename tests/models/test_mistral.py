@@ -934,6 +934,143 @@ async def test_request_tool_call(allow_model_requests: None):
     assert result.cost().total_tokens == 10
 
 
+async def test_request_tool_call_with_result_type(allow_model_requests: None):
+    class MyTypedDict(TypedDict, total=False):
+        lat: int
+        lng: int
+
+    # Given
+    completion = [
+        completion_message(
+            MistralAssistantMessage(
+                content=None,
+                role='assistant',
+                tool_calls=[
+                    MistralToolCall(
+                        id='1',
+                        function=MistralFunctionCall(arguments='{"loc_name": "San Fransisco"}', name='get_location'),
+                        type='function',
+                    )
+                ],
+            ),
+            usage=MistralUsageInfo(
+                completion_tokens=1,
+                prompt_tokens=2,
+                total_tokens=3,
+            ),
+        ),
+        completion_message(
+            MistralAssistantMessage(
+                content=None,
+                role='assistant',
+                tool_calls=[
+                    MistralToolCall(
+                        id='2',
+                        function=MistralFunctionCall(arguments='{"loc_name": "London"}', name='get_location'),
+                        type='function',
+                    )
+                ],
+            ),
+            usage=MistralUsageInfo(
+                completion_tokens=2,
+                prompt_tokens=3,
+                total_tokens=6,
+            ),
+        ),
+        completion_message(
+            MistralAssistantMessage(
+                content=None,
+                role='assistant',
+                tool_calls=[
+                    MistralToolCall(
+                        id='1',
+                        function=MistralFunctionCall(arguments='{"lat": 51, "lng": 0}', name='final_result'),
+                        type='function',
+                    )
+                ],
+            ),
+            usage=MistralUsageInfo(
+                completion_tokens=1,
+                prompt_tokens=2,
+                total_tokens=3,
+            ),
+        ),
+    ]
+    mock_client = MockMistralAI.create_mock(completion)
+    model = MistralModel('mistral-large-latest', client=mock_client)
+    agent = Agent(model, system_prompt='this is the system prompt', result_type=MyTypedDict)
+
+    @agent.tool_plain
+    async def get_location(loc_name: str) -> str:
+        if loc_name == 'London':
+            return json.dumps({'lat': 51, 'lng': 0})
+        else:
+            raise ModelRetry('Wrong location, please try again')
+
+    # When
+    result = await agent.run('Hello')
+
+    # Then
+    assert result.data == {'lat': 51, 'lng': 0}
+    assert result.all_messages() == snapshot(
+        [
+            SystemPrompt(content='this is the system prompt'),
+            UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
+            ModelStructuredResponse(
+                calls=[
+                    ToolCall(
+                        tool_name='get_location',
+                        args=ArgsJson(args_json='{"loc_name": "San Fransisco"}'),
+                        tool_call_id='1',
+                    )
+                ],
+                timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc),
+            ),
+            RetryPrompt(
+                tool_name='get_location',
+                content='Wrong location, please try again',
+                tool_call_id='1',
+                timestamp=IsNow(tz=timezone.utc),
+            ),
+            ModelStructuredResponse(
+                calls=[
+                    ToolCall(
+                        tool_name='get_location',
+                        args=ArgsJson(args_json='{"loc_name": "London"}'),
+                        tool_call_id='2',
+                    )
+                ],
+                timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc),
+            ),
+            ToolReturn(
+                tool_name='get_location',
+                content='{"lat": 51, "lng": 0}',
+                tool_call_id='2',
+                timestamp=IsNow(tz=timezone.utc),
+            ),
+            ModelStructuredResponse(
+                calls=[
+                    ToolCall(
+                        tool_name='final_result',
+                        args=ArgsJson(args_json='{"lat": 51, "lng": 0}'),
+                        tool_call_id='1',
+                    )
+                ],
+                timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc),
+            ),
+            ToolReturn(
+                tool_name='final_result',
+                content='Final result processed.',
+                tool_call_id='1',
+                timestamp=IsNow(tz=timezone.utc),
+            ),
+        ]
+    )
+    assert result.cost().request_tokens == 7
+    assert result.cost().response_tokens == 4
+    assert result.cost().total_tokens == 12
+
+
 #####################
 ## Completion Function call Stream
 #####################
