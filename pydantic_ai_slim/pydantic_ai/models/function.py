@@ -129,7 +129,7 @@ class FunctionAgentModel(AgentModel):
     agent_info: AgentInfo
 
     async def request(
-        self, messages: list[Message], model_settings: ModelSettings | None = None
+        self, messages: list[Message], model_settings: ModelSettings | None
     ) -> tuple[ModelAnyResponse, result.Cost]:
         assert self.function is not None, 'FunctionModel must receive a `function` to support non-streamed requests'
         if inspect.iscoroutinefunction(self.function):
@@ -142,7 +142,7 @@ class FunctionAgentModel(AgentModel):
 
     @asynccontextmanager
     async def request_stream(
-        self, messages: list[Message], model_settings: ModelSettings | None = None
+        self, messages: list[Message], model_settings: ModelSettings | None
     ) -> AsyncIterator[EitherStreamedResponse]:
         assert (
             self.stream_function is not None

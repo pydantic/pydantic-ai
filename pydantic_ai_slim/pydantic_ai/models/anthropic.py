@@ -153,14 +153,14 @@ class AnthropicAgentModel(AgentModel):
     tools: list[ToolParam]
 
     async def request(
-        self, messages: list[Message], model_settings: ModelSettings | None = None
+        self, messages: list[Message], model_settings: ModelSettings | None
     ) -> tuple[ModelAnyResponse, result.Cost]:
         response = await self._messages_create(messages, False, model_settings)
         return self._process_response(response), _map_cost(response)
 
     @asynccontextmanager
     async def request_stream(
-        self, messages: list[Message], model_settings: ModelSettings | None = None
+        self, messages: list[Message], model_settings: ModelSettings | None
     ) -> AsyncIterator[EitherStreamedResponse]:
         response = await self._messages_create(messages, True, model_settings)
         async with response:
@@ -179,7 +179,7 @@ class AnthropicAgentModel(AgentModel):
         pass
 
     async def _messages_create(
-        self, messages: list[Message], stream: bool, model_settings: ModelSettings | None = None
+        self, messages: list[Message], stream: bool, model_settings: ModelSettings | None
     ) -> AnthropicMessage | AsyncStream[RawMessageStreamEvent]:
         # standalone function to make it easier to override
         if not self.tools:

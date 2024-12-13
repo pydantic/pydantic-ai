@@ -151,14 +151,14 @@ class GroqAgentModel(AgentModel):
     tools: list[chat.ChatCompletionToolParam]
 
     async def request(
-        self, messages: list[Message], model_settings: ModelSettings | None = None
+        self, messages: list[Message], model_settings: ModelSettings | None
     ) -> tuple[ModelAnyResponse, result.Cost]:
         response = await self._completions_create(messages, False, model_settings)
         return self._process_response(response), _map_cost(response)
 
     @asynccontextmanager
     async def request_stream(
-        self, messages: list[Message], model_settings: ModelSettings | None = None
+        self, messages: list[Message], model_settings: ModelSettings | None
     ) -> AsyncIterator[EitherStreamedResponse]:
         response = await self._completions_create(messages, True, model_settings)
         async with response:
@@ -177,7 +177,7 @@ class GroqAgentModel(AgentModel):
         pass
 
     async def _completions_create(
-        self, messages: list[Message], stream: bool, model_settings: ModelSettings | None = None
+        self, messages: list[Message], stream: bool, model_settings: ModelSettings | None
     ) -> chat.ChatCompletion | AsyncStream[ChatCompletionChunk]:
         # standalone function to make it easier to override
         if not self.tools:

@@ -129,13 +129,13 @@ class TestAgentModel(AgentModel):
     seed: int
 
     async def request(
-        self, messages: list[Message], model_settings: ModelSettings | None = None
+        self, messages: list[Message], model_settings: ModelSettings | None
     ) -> tuple[ModelAnyResponse, Cost]:
         return self._request(messages, model_settings), Cost()
 
     @asynccontextmanager
     async def request_stream(
-        self, messages: list[Message], model_settings: ModelSettings | None = None
+        self, messages: list[Message], model_settings: ModelSettings | None
     ) -> AsyncIterator[EitherStreamedResponse]:
         msg = self._request(messages, model_settings)
         cost = Cost()
@@ -147,7 +147,7 @@ class TestAgentModel(AgentModel):
     def gen_tool_args(self, tool_def: ToolDefinition) -> Any:
         return _JsonSchemaTestData(tool_def.parameters_json_schema, self.seed).generate()
 
-    def _request(self, messages: list[Message], model_settings: ModelSettings | None = None) -> ModelAnyResponse:
+    def _request(self, messages: list[Message], model_settings: ModelSettings | None) -> ModelAnyResponse:
         # if there are tools, the first thing we want to do is call all of them
         if self.tool_calls and not any(m.role == 'model-structured-response' for m in messages):
             calls = [ToolCall.from_dict(name, self.gen_tool_args(args)) for name, args in self.tool_calls]

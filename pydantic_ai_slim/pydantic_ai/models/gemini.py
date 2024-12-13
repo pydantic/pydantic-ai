@@ -166,7 +166,7 @@ class GeminiAgentModel(AgentModel):
         self.url = url
 
     async def request(
-        self, messages: list[Message], model_settings: ModelSettings | None = None
+        self, messages: list[Message], model_settings: ModelSettings | None
     ) -> tuple[ModelAnyResponse, result.Cost]:
         async with self._make_request(messages, False, model_settings) as http_response:
             response = _gemini_response_ta.validate_json(await http_response.aread())
@@ -174,14 +174,14 @@ class GeminiAgentModel(AgentModel):
 
     @asynccontextmanager
     async def request_stream(
-        self, messages: list[Message], model_settings: ModelSettings | None = None
+        self, messages: list[Message], model_settings: ModelSettings | None
     ) -> AsyncIterator[EitherStreamedResponse]:
         async with self._make_request(messages, True, model_settings) as http_response:
             yield await self._process_streamed_response(http_response)
 
     @asynccontextmanager
     async def _make_request(
-        self, messages: list[Message], streamed: bool, model_settings: ModelSettings | None = None
+        self, messages: list[Message], streamed: bool, model_settings: ModelSettings | None
     ) -> AsyncIterator[HTTPResponse]:
         contents: list[_GeminiContent] = []
         sys_prompt_parts: list[_GeminiTextPart] = []
