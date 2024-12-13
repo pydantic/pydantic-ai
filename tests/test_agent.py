@@ -99,14 +99,9 @@ def test_result_pydantic_model_retry(set_event_loop: None):
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelStructuredResponse(
-                calls=[ToolCall.from_json('final_result', '{"a": 42, "b": "foo"}')],
-                timestamp=IsNow(tz=timezone.utc),
+                calls=[ToolCall.from_json('final_result', '{"a": 42, "b": "foo"}')], timestamp=IsNow(tz=timezone.utc)
             ),
-            ToolReturn(
-                tool_name='final_result',
-                content='Final result processed.',
-                timestamp=IsNow(tz=timezone.utc),
-            ),
+            ToolReturn(tool_name='final_result', content='Final result processed.', timestamp=IsNow(tz=timezone.utc)),
         ]
     )
     assert result.all_messages_json().startswith(b'[{"content":"Hello"')
@@ -190,11 +185,7 @@ def test_result_validator(set_event_loop: None):
             ModelStructuredResponse(
                 calls=[ToolCall.from_json('final_result', '{"a": 42, "b": "foo"}')], timestamp=IsNow(tz=timezone.utc)
             ),
-            ToolReturn(
-                tool_name='final_result',
-                content='Final result processed.',
-                timestamp=IsNow(tz=timezone.utc),
-            ),
+            ToolReturn(tool_name='final_result', content='Final result processed.', timestamp=IsNow(tz=timezone.utc)),
         ]
     )
 
@@ -230,11 +221,7 @@ def test_plain_response(set_event_loop: None):
                 calls=[ToolCall(tool_name='final_result', args=ArgsJson(args_json='{"response": ["foo", "bar"]}'))],
                 timestamp=IsNow(tz=timezone.utc),
             ),
-            ToolReturn(
-                tool_name='final_result',
-                content='Final result processed.',
-                timestamp=IsNow(tz=timezone.utc),
-            ),
+            ToolReturn(tool_name='final_result', content='Final result processed.', timestamp=IsNow(tz=timezone.utc)),
         ]
     )
 
@@ -448,10 +435,7 @@ def test_run_with_history_new(set_event_loop: None):
         RunResult(
             _all_messages=[
                 SystemPrompt(content='Foobar'),
-                UserPrompt(
-                    content='Hello',
-                    timestamp=IsNow(tz=timezone.utc),
-                ),
+                UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
                 ModelStructuredResponse(
                     calls=[ToolCall(tool_name='ret_a', args=ArgsDict(args_dict={'x': 'a'}))],
                     timestamp=IsNow(tz=timezone.utc),
@@ -798,13 +782,13 @@ class TestMultipleToolCalls:
         agent = Agent(FunctionModel(return_model), result_type=self.ResultType, end_strategy='early')
 
         @agent.tool_plain
-        def regular_tool(x: int) -> int:
+        def regular_tool(x: int) -> int:  # pragma: no cover
             """A regular tool that should not be called."""
             tool_called.append('regular_tool')
             return x
 
         @agent.tool_plain
-        def another_tool(y: int) -> int:
+        def another_tool(y: int) -> int:  # pragma: no cover
             """Another tool that should not be called."""
             tool_called.append('another_tool')
             return y
@@ -880,6 +864,7 @@ class TestMultipleToolCalls:
                     ToolCall.from_dict('final_result', {'value': 'first'}),
                     ToolCall.from_dict('another_tool', {'y': 2}),
                     ToolCall.from_dict('final_result', {'value': 'second'}),
+                    ToolCall.from_dict('unknown_tool', {'value': '???'}),
                 ]
             )
 
@@ -906,9 +891,19 @@ class TestMultipleToolCalls:
         assert sorted(tool_called) == sorted(['regular_tool', 'another_tool'])
 
         # Verify we got tool returns in the correct order
-        tool_returns = [m for m in result.all_messages() if isinstance(m, ToolReturn)]
-        assert tool_returns == snapshot(
+        assert result.all_messages() == snapshot(
             [
+                UserPrompt(content='test exhaustive strategy', timestamp=IsNow(tz=timezone.utc)),
+                ModelStructuredResponse(
+                    calls=[
+                        ToolCall(tool_name='regular_tool', args=ArgsDict(args_dict={'x': 42})),
+                        ToolCall(tool_name='final_result', args=ArgsDict(args_dict={'value': 'first'})),
+                        ToolCall(tool_name='another_tool', args=ArgsDict(args_dict={'y': 2})),
+                        ToolCall(tool_name='final_result', args=ArgsDict(args_dict={'value': 'second'})),
+                        ToolCall(tool_name='unknown_tool', args=ArgsDict(args_dict={'value': '???'})),
+                    ],
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
                 ToolReturn(
                     tool_name='final_result', content='Final result processed.', timestamp=IsNow(tz=timezone.utc)
                 ),
@@ -917,16 +912,12 @@ class TestMultipleToolCalls:
                     content='Result tool not used - a final result was already processed.',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
-                ToolReturn(
-                    tool_name='regular_tool',
-                    content=42,
+                RetryPrompt(
+                    content="Unknown tool name: 'unknown_tool'. Available tools: regular_tool, another_tool, final_result",
                     timestamp=IsNow(tz=timezone.utc),
                 ),
-                ToolReturn(
-                    tool_name='another_tool',
-                    content=2,
-                    timestamp=IsNow(tz=timezone.utc),
-                ),
+                ToolReturn(tool_name='regular_tool', content=42, timestamp=IsNow(tz=timezone.utc)),
+                ToolReturn(tool_name='another_tool', content=2, timestamp=IsNow(tz=timezone.utc)),
             ]
         )
 
@@ -941,19 +932,20 @@ class TestMultipleToolCalls:
                     ToolCall.from_dict('regular_tool', {'x': 1}),
                     ToolCall.from_dict('final_result', {'value': 'final'}),
                     ToolCall.from_dict('another_tool', {'y': 2}),
+                    ToolCall.from_dict('unknown_tool', {'value': '???'}),
                 ]
             )
 
         agent = Agent(FunctionModel(return_model), result_type=self.ResultType, end_strategy='early')
 
         @agent.tool_plain
-        def regular_tool(x: int) -> int:
+        def regular_tool(x: int) -> int:  # pragma: no cover
             """A regular tool that should not be called."""
             tool_called.append('regular_tool')
             return x
 
         @agent.tool_plain
-        def another_tool(y: int) -> int:
+        def another_tool(y: int) -> int:  # pragma: no cover
             """A tool that should not be called."""
             tool_called.append('another_tool')
             return y
@@ -964,9 +956,18 @@ class TestMultipleToolCalls:
         assert tool_called == []
 
         # Verify we got appropriate tool returns
-        tool_returns = [m for m in result.all_messages() if isinstance(m, ToolReturn)]
-        assert tool_returns == snapshot(
+        assert result.all_messages() == snapshot(
             [
+                UserPrompt(content='test early strategy with final result in middle', timestamp=IsNow(tz=timezone.utc)),
+                ModelStructuredResponse(
+                    calls=[
+                        ToolCall(tool_name='regular_tool', args=ArgsDict(args_dict={'x': 1})),
+                        ToolCall(tool_name='final_result', args=ArgsDict(args_dict={'value': 'final'})),
+                        ToolCall(tool_name='another_tool', args=ArgsDict(args_dict={'y': 2})),
+                        ToolCall(tool_name='unknown_tool', args=ArgsDict(args_dict={'value': '???'})),
+                    ],
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
                 ToolReturn(
                     tool_name='final_result', content='Final result processed.', timestamp=IsNow(tz=timezone.utc)
                 ),
@@ -978,6 +979,10 @@ class TestMultipleToolCalls:
                 ToolReturn(
                     tool_name='another_tool',
                     content='Tool not executed - a final result was already processed.',
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
+                RetryPrompt(
+                    content="Unknown tool name: 'unknown_tool'. Available tools: regular_tool, another_tool, final_result",
                     timestamp=IsNow(tz=timezone.utc),
                 ),
             ]
@@ -1000,15 +1005,9 @@ class TestMultipleToolCalls:
         tool_returns = [m for m in result.all_messages() if isinstance(m, ToolReturn)]
         assert tool_returns == snapshot(
             [
+                ToolReturn(tool_name='regular_tool', content=0, timestamp=IsNow(tz=timezone.utc)),
                 ToolReturn(
-                    tool_name='regular_tool',
-                    content=0,
-                    timestamp=IsNow(tz=timezone.utc),
-                ),
-                ToolReturn(
-                    tool_name='final_result',
-                    content='Final result processed.',
-                    timestamp=IsNow(tz=timezone.utc),
+                    tool_name='final_result', content='Final result processed.', timestamp=IsNow(tz=timezone.utc)
                 ),
             ]
         )
