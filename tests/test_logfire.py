@@ -140,7 +140,7 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary], set_event_lo
                         'role': 'tool-return',
                     },
                     {
-                        'parts': [{'content': '{"my_ret":"1"}', 'kind': 'text-item'}],
+                        'parts': [{'content': '{"my_ret":"1"}', 'kind': 'text'}],
                         'role': 'model-response',
                         'timestamp': IsStr(regex=r'\d{4}-\d{2}-.+'),
                     },

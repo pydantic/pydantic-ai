@@ -121,7 +121,7 @@ class TextPart:
 
     content: str
     """The text content of the response."""
-    kind: Literal['text-item'] = 'text-item'
+    kind: Literal['text'] = 'text'
     """Message type identifier, this type is available on all message as a discriminator."""
 
 

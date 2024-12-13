@@ -50,7 +50,7 @@ print(result.all_messages())
         parts=[
             TextPart(
                 content='Did you hear about the toothpaste scandal? They called it Colgate.',
-                kind='text-item',
+                kind='text',
             )
         ],
         role='model-response',
@@ -72,7 +72,7 @@ print(result.new_messages())
         parts=[
             TextPart(
                 content='Did you hear about the toothpaste scandal? They called it Colgate.',
-                kind='text-item',
+                kind='text',
             )
         ],
         role='model-response',
@@ -127,7 +127,7 @@ async def main():
                 parts=[
                     TextPart(
                         content='Did you hear about the toothpaste scandal? They called it Colgate.',
-                        kind='text-item',
+                        kind='text',
                     )
                 ],
                 role='model-response',
@@ -183,7 +183,7 @@ print(result2.all_messages())
         parts=[
             TextPart(
                 content='Did you hear about the toothpaste scandal? They called it Colgate.',
-                kind='text-item',
+                kind='text',
             )
         ],
         role='model-response',
@@ -198,7 +198,7 @@ print(result2.all_messages())
         parts=[
             TextPart(
                 content='This is an excellent joke invent by Samuel Colvin, it needs no explanation.',
-                kind='text-item',
+                kind='text',
             )
         ],
         role='model-response',
@@ -243,7 +243,7 @@ print(result2.all_messages())
         parts=[
             TextPart(
                 content='Did you hear about the toothpaste scandal? They called it Colgate.',
-                kind='text-item',
+                kind='text',
             )
         ],
         role='model-response',
@@ -258,7 +258,7 @@ print(result2.all_messages())
         parts=[
             TextPart(
                 content='This is an excellent joke invent by Samuel Colvin, it needs no explanation.',
-                kind='text-item',
+                kind='text',
             )
         ],
         role='model-response',

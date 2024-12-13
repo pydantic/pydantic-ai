@@ -119,7 +119,7 @@ print(dice_result.all_messages())
         parts=[
             TextPart(
                 content="Congratulations Anne, you guessed correctly! You're a winner!",
-                kind='text-item',
+                kind='text',
             )
         ],
         role='model-response',
