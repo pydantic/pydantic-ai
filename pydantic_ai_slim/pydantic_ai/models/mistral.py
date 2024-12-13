@@ -198,12 +198,12 @@ class MistralAgentModel(AgentModel):
 
         elif self.result_tools:
             # Json Mode
-            schema: str | list[dict[str, Any]]
+            schema: dict[str, Any] | list[dict[str, Any]]
             if len(self.result_tools) == 1:
-                schema = _generate_json_simple_schema(self.result_tools[0].parameters_json_schema)
+                schema = _generate_simple_json_schema(self.result_tools[0].parameters_json_schema)
             else:
                 parameters_json_schemas = [tool.parameters_json_schema for tool in self.result_tools]
-                schema = _generate_jsom_simple_schemas(parameters_json_schemas)
+                schema = _generate_simple_json_schemas(parameters_json_schemas)
 
             mistral_messages.append(
                 MistralUserMessage(
@@ -310,7 +310,7 @@ class MistralAgentModel(AgentModel):
                 content = _map_delta_content(delta.content)
 
                 tool_calls: list[MistralToolCall] | None = None
-                if isinstance(delta.tool_calls, list):
+                if delta.tool_calls:
                     tool_calls = delta.tool_calls
 
                 if content and result_tools:
@@ -327,7 +327,7 @@ class MistralAgentModel(AgentModel):
                 elif content:
                     return MistralStreamTextResponse(content, response, timestamp, start_cost)
 
-                elif tool_calls and not result_tools:
+                elif tool_calls:  # TODO: before and not result_tools
                     return MistralStreamStructuredResponse(
                         is_function_tools,
                         {c.id if c.id else 'null': c for c in tool_calls},
@@ -464,8 +464,6 @@ class MistralStreamStructuredResponse(StreamStructuredResponse):
                 tool = _map_mistral_to_pydantic_tool_call(tool_call)
                 calls.append(tool)
         elif self._delta_content and self._result_tools:
-            # TODO: add test on tool_name !=
-            # TODO add test when result_name not the ssame
             # NOTE: Params set for the most efficient and fastest way.
             output_json = repair_json(self._delta_content, return_objects=True, skip_json_loads=True)
             assert isinstance(
@@ -497,7 +495,7 @@ class MistralStreamStructuredResponse(StreamStructuredResponse):
         return self._timestamp
 
 
-TYPE_MAPPING = {
+VALIDE_JSON_TYPE_MAPPING = {
     'string': str,
     'integer': int,
     'number': float,
@@ -525,9 +523,9 @@ def _validate_required_json_shema(json_dict: dict[str, Any], json_schema: dict[s
             if not isinstance(json_dict[param], list):
                 return False
             for item in json_dict[param]:
-                if not isinstance(item, TYPE_MAPPING[param_items_type]):
+                if not isinstance(item, VALIDE_JSON_TYPE_MAPPING[param_items_type]):
                     return False
-        elif param_type and not isinstance(json_dict[param], TYPE_MAPPING[param_type]):
+        elif param_type and not isinstance(json_dict[param], VALIDE_JSON_TYPE_MAPPING[param_type]):
             return False
 
         if isinstance(json_dict[param], dict) and 'properties' in param_schema:
@@ -538,42 +536,80 @@ def _validate_required_json_shema(json_dict: dict[str, Any], json_schema: dict[s
     return True
 
 
-def _generate_json_simple_schema(schema: dict[str, Any]) -> Any:
-    """Generates a JSON example from a JSON schema."""
-    if schema.get('type') == 'object':
-        example: dict[str, Any] = {}
-        if properties := schema.get('properties'):
-            for key, value in properties.items():
-                example[key] = _generate_json_simple_schema(value)
-        return example
-
-    if schema.get('type') == 'array':
-        if items := schema.get('items'):
-            return [_generate_json_simple_schema(items)]
-
-    if schema.get('type') == 'string':
-        return 'String value'
-
-    if schema.get('type') == 'number':
-        return 'Number value'
-
-    if schema.get('type') == 'integer':
-        return 'integer value'
-
-    if schema.get('type') == 'boolean':
-        return 'Boolean value'
-
-    if schema.get('type') == 'null':
-        return 'null value'
-
-    return None
+SIMPLE_JSON_TYPE_MAPPING = {
+    'string': 'str',
+    'integer': 'int',
+    'number': 'float',
+    'boolean': 'bool',
+    'array': 'list',
+    'null': 'None',
+}
 
 
-def _generate_jsom_simple_schemas(schemas: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _get_python_type(value: dict[str, Any]) -> str:
+    """Return a string representation of the Python type for a single JSON schema property.
+
+    This function handles recursion for nested arrays/objects and `anyOf`.
+    """
+    # 1) Handle anyOf first, because it's a different schema structure
+    if 'anyOf' in value:
+        # Simplistic approach: pick the first option in anyOf
+        # (In reality, you'd possibly want to merge or union types)
+        sub_value = value['anyOf'][0]
+        return f'Optional[{_get_python_type(sub_value)}]'
+
+    # 2) If we have a top-level "type" field
+    value_type = value.get('type')
+    if not value_type:
+        # No explicit type; fallback
+        return 'Any'
+
+    # 3) Direct simple type mapping (string, integer, float, bool, None)
+    if value_type in SIMPLE_JSON_TYPE_MAPPING and value_type != 'array' and value_type != 'object':
+        return SIMPLE_JSON_TYPE_MAPPING[value_type]
+
+    # 4) Array: Recursively get the item type
+    if value_type == 'array':
+        items = value.get('items', {})
+        return f'list[{_get_python_type(items)}]'
+
+    # 5) Object: Check for additionalProperties
+    if value_type == 'object':
+        additional_properties = value.get('additionalProperties', {})
+        additional_properties_type = additional_properties.get('type')
+        if (
+            additional_properties_type in SIMPLE_JSON_TYPE_MAPPING
+            and additional_properties_type != 'array'
+            and additional_properties_type != 'object'
+        ):
+            # dict[str, bool/int/float/etc...]
+            return f'dict[str, {SIMPLE_JSON_TYPE_MAPPING[additional_properties_type]}]'
+        elif additional_properties_type == 'array':
+            array_items = additional_properties.get('items', {})
+            return f'dict[str, list[{_get_python_type(array_items)}]]'
+        elif additional_properties_type == 'object':
+            # nested dictionary of unknown shape
+            return 'dict[str, dict[str, Any]]'
+        else:
+            # If no additionalProperties type or something else, default to a generic dict
+            return 'dict[str, Any]'
+
+    # 6) Fallback
+    return 'Any'
+
+
+def _generate_simple_json_schema(schema: dict[str, Any]) -> dict[str, Any]:
+    typed_dict_definition: dict[str, Any] = {}
+    for key, value in schema.get('properties', {}).items():
+        typed_dict_definition[key] = _get_python_type(value)
+    return typed_dict_definition
+
+
+def _generate_simple_json_schemas(schemas: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Generates JSON examples from a list of JSON schemas."""
     examples: list[dict[str, Any]] = []
     for schema in schemas:
-        example = _generate_json_simple_schema(schema)
+        example = _generate_simple_json_schema(schema)
         examples.append(example)
     return examples
 

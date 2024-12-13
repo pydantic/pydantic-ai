@@ -47,7 +47,10 @@ with try_import() as imports_successful:
         ToolReturn,
         UserPrompt,
     )
-    from pydantic_ai.models.mistral import MistralModel
+    from pydantic_ai.models.mistral import (
+        MistralModel,
+        _generate_simple_json_schema,  # type: ignore
+    )
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='mistral not installed'),
@@ -94,12 +97,16 @@ class MockMistralAI:
     def create_stream_mock(cls, completions_streams: list[MistralCompletionEvent]) -> Mistral:
         return cast(Mistral, cls(stream=completions_streams))
 
+    @classmethod
+    def create_stream_structured_mock(cls, completions_streams: list[MistralCompletionEvent]) -> Mistral:
+        return cast(Mistral, cls(stream=completions_streams))
+
     async def chat_completions_create(  # pragma: no cover
         self, *_args: Any, stream: bool = False, **_kwargs: Any
     ) -> MistralChatCompletionResponse | MockAsyncStream | list[MistralChatCompletionResponse]:
-        if stream:
+        response: MistralChatCompletionResponse | MockAsyncStream | list[MistralChatCompletionResponse] = []
+        if stream or self.stream:
             assert self.stream is not None, 'you can only used `stream=True` if `stream` is provided'
-            # noinspection PyUnresolvedReferences
             if isinstance(self.stream[0], list):
                 response = MockAsyncStream(iter(self.stream[self.index]))  # type: ignore
 
@@ -152,6 +159,12 @@ def text_chunk(
     return chunk([MistralDeltaMessage(content=text, role='assistant')], finish_reason=finish_reason)
 
 
+def func_chunk(
+    tool_calls: list[MistralToolCall], finish_reason: MistralCompletionResponseStreamChoiceFinishReason | None = None
+) -> MistralCompletionEvent:
+    return chunk([MistralDeltaMessage(tool_calls=tool_calls, role='assistant')], finish_reason=finish_reason)
+
+
 def struc_chunk(
     tool_name: str,
     tool_arguments: str,
@@ -167,6 +180,16 @@ def struc_chunk(
         ],
         finish_reason=finish_reason,
     )
+
+
+#####################
+## Init
+#####################
+
+
+def test_init():
+    m = MistralModel('mistral-large-latest', api_key='foobar')
+    assert m.name() == 'mistral:mistral-large-latest'
 
 
 #####################
@@ -484,13 +507,42 @@ async def test_request_result_type_with_arguments_str_response(allow_model_reque
 #####################
 
 
-async def test_stream_structured(allow_model_requests: None):
+async def test_stream_structured_with_all_typd(allow_model_requests: None):
     class MyTypedDict(TypedDict, total=False):
         first: str
-        second: str
+        second: int
+        bool_value: bool
+        nullable_value: int | None
+        array_value: list[str]
+        dict_value: dict[str, Any]
+        dict_int_value: dict[str, int]
+        dict_str_value: dict[int, str]
 
     # Given
-    stream = [text_chunk('{"first": "One'), text_chunk('", "second": "Two"'), text_chunk('}'), chunk([])]
+    stream = [
+        text_chunk('{'),
+        text_chunk('"first": "One'),
+        text_chunk(
+            '", "second": 2',
+        ),
+        text_chunk(
+            '", "bool_value": true',
+        ),
+        text_chunk(
+            '", "nullable_value": null',
+        ),
+        text_chunk(
+            '", "array_value": ["A", "B", "C"]',
+        ),
+        text_chunk(
+            '", "dict_value": {"A": "A", "B":"B"}',
+        ),
+        text_chunk(
+            '", "dict_int_value": {"A": 1, "B":2}',
+        ),
+        text_chunk('}'),
+        chunk([]),
+    ]
 
     mock_client = MockMistralAI.create_stream_mock(stream)
     model = MistralModel('mistral-large-latest', client=mock_client)
@@ -501,18 +553,61 @@ async def test_stream_structured(allow_model_requests: None):
         # Then
         assert result.is_structured
         assert not result.is_complete
-        assert [dict(c) async for c in result.stream(debounce_by=None)] == snapshot(
+        v = [dict(c) async for c in result.stream(debounce_by=None)]
+        assert v == snapshot(
             [
                 {'first': 'One'},
-                {'first': 'One', 'second': 'Two'},
-                {'first': 'One', 'second': 'Two'},
-                {'first': 'One', 'second': 'Two'},
+                {'first': 'One', 'second': 2},
+                {'first': 'One', 'second': 2, 'bool_value': True},
+                {'first': 'One', 'second': 2, 'bool_value': True, 'nullable_value': None},
+                {
+                    'first': 'One',
+                    'second': 2,
+                    'bool_value': True,
+                    'nullable_value': None,
+                    'array_value': ['A', 'B', 'C'],
+                },
+                {
+                    'first': 'One',
+                    'second': 2,
+                    'bool_value': True,
+                    'nullable_value': None,
+                    'array_value': ['A', 'B', 'C'],
+                    'dict_value': {'A': 'A', 'B': 'B'},
+                },
+                {
+                    'first': 'One',
+                    'second': 2,
+                    'bool_value': True,
+                    'nullable_value': None,
+                    'array_value': ['A', 'B', 'C'],
+                    'dict_value': {'A': 'A', 'B': 'B'},
+                    'dict_int_value': {'A': 1, 'B': 2},
+                },
+                {
+                    'first': 'One',
+                    'second': 2,
+                    'bool_value': True,
+                    'nullable_value': None,
+                    'array_value': ['A', 'B', 'C'],
+                    'dict_value': {'A': 'A', 'B': 'B'},
+                    'dict_int_value': {'A': 1, 'B': 2},
+                },
+                {
+                    'first': 'One',
+                    'second': 2,
+                    'bool_value': True,
+                    'nullable_value': None,
+                    'array_value': ['A', 'B', 'C'],
+                    'dict_value': {'A': 'A', 'B': 'B'},
+                    'dict_int_value': {'A': 1, 'B': 2},
+                },
             ]
         )
         assert result.is_complete
-        assert result.cost().request_tokens == 4
-        assert result.cost().response_tokens == 4
-        assert result.cost().total_tokens == 4
+        assert result.cost().request_tokens == 10
+        assert result.cost().response_tokens == 10
+        assert result.cost().total_tokens == 10
 
         # double check cost matches stream count
         assert result.cost().response_tokens == len(stream)
@@ -830,8 +925,6 @@ async def test_stream_result_type_basemodel(allow_model_requests: None):
 ## Completion Function call
 #####################
 
-# TODO: Add tool_calls and with result_tools:
-
 
 async def test_request_tool_call(allow_model_requests: None):
     # Given
@@ -926,7 +1019,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 tool_call_id='2',
                 timestamp=IsNow(tz=timezone.utc),
             ),
-            ModelTextResponse(content='final response', timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc)),
+            ModelTextResponse(content='final response', timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)),
         ]
     )
     assert result.cost().request_tokens == 6
@@ -1076,3 +1169,47 @@ async def test_request_tool_call_with_result_type(allow_model_requests: None):
 #####################
 
 # TODO
+
+#####################
+## Test methods
+#####################
+
+
+def test_generate_simple_json_schema():
+    """
+    Single test that includes properties exercising every branch
+    in _get_python_type (anyOf, arrays, objects with additionalProperties, etc.).
+    """
+    schema = {
+        'properties': {
+            'prop_anyOf': {'anyOf': [{'type': 'string'}, {'type': 'integer'}]},
+            'prop_no_type': {
+                # no 'type' key
+            },
+            'prop_simple_string': {'type': 'string'},
+            'prop_array_booleans': {'type': 'array', 'items': {'type': 'boolean'}},
+            'prop_object_simple': {'type': 'object', 'additionalProperties': {'type': 'boolean'}},
+            'prop_object_array': {
+                'type': 'object',
+                'additionalProperties': {'type': 'array', 'items': {'type': 'integer'}},
+            },
+            'prop_object_object': {'type': 'object', 'additionalProperties': {'type': 'object'}},
+            'prop_object_unknown': {'type': 'object', 'additionalProperties': {'type': 'someUnknownType'}},
+            'prop_unrecognized_type': {'type': 'customSomething'},
+        }
+    }
+
+    expected_result = {
+        'prop_anyOf': 'Optional[str]',
+        'prop_no_type': 'Any',
+        'prop_simple_string': 'str',
+        'prop_array_booleans': 'list[bool]',
+        'prop_object_simple': 'dict[str, bool]',
+        'prop_object_array': 'dict[str, list[int]]',
+        'prop_object_object': 'dict[str, dict[str, Any]]',
+        'prop_object_unknown': 'dict[str, Any]',
+        'prop_unrecognized_type': 'Any',
+    }
+
+    result = _generate_simple_json_schema(schema)
+    assert result == expected_result
