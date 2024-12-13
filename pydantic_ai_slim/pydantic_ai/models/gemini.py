@@ -614,7 +614,7 @@ class _GeminiCandidates(TypedDict):
     """See <https://ai.google.dev/api/generate-content#v1beta.Candidate>."""
 
     content: _GeminiContent
-    finish_reason: NotRequired[Annotated[Literal['STOP'], Field(alias='finishReason')]]
+    finish_reason: NotRequired[Annotated[Literal['STOP', 'MAX_TOKENS'], Field(alias='finishReason')]]
     """
     See <https://ai.google.dev/api/generate-content#FinishReason>, lots of other values are possible,
     but let's wait until we see them and know what they mean to add them here.
