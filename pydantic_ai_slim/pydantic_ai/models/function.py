@@ -258,11 +258,11 @@ def _estimate_cost(messages: Iterable[Message]) -> result.Cost:
             request_tokens += _string_cost(message.model_response_str())
         elif isinstance(message, RetryPrompt):
             request_tokens += _string_cost(message.model_response())
-        elif isinstance(message, ModelResponse):  # pyright: ignore[reportUnnecessaryIsInstance]
+        elif isinstance(message, ModelResponse):
             for item in message.parts:
                 if isinstance(item, TextPart):
                     response_tokens += _string_cost(item.content)
-                elif isinstance(item, ToolCallPart):  # pyright: ignore[reportUnnecessaryIsInstance]
+                elif isinstance(item, ToolCallPart):
                     call = item
                     if isinstance(call.args, ArgsJson):
                         args_str = call.args.args_json

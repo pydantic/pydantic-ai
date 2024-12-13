@@ -123,6 +123,7 @@ quote-style = "single"
 typeCheckingMode = "strict"
 reportUnnecessaryTypeIgnoreComment = true
 reportMissingTypeStubs = false
+reportUnnecessaryIsInstance = false
 include = ["pydantic_ai_slim", "tests", "pydantic_ai_examples"]
 venvPath = ".venv"
 # see https://github.com/microsoft/pyright/issues/7771 - we don't want to error on decorated functions in tests

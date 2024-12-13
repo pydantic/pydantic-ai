@@ -146,7 +146,7 @@ class TestAgentModel(AgentModel):
         for item in msg.parts:
             if isinstance(item, TextPart):
                 texts.append(item.content)
-            elif isinstance(item, ToolCallPart):  # pyright: ignore[reportUnnecessaryIsInstance]
+            elif isinstance(item, ToolCallPart):
                 tool_calls.append(item)
             else:
                 assert_never(item)

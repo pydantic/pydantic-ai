@@ -289,7 +289,7 @@ class GeminiAgentModel(AgentModel):
             return _content_tool_return(m)
         elif isinstance(m, RetryPrompt):
             return _content_retry_prompt(m)
-        elif isinstance(m, ModelResponse):  # pyright: ignore[reportUnnecessaryIsInstance]
+        elif isinstance(m, ModelResponse):
             return _content_model_response(m)
         else:
             assert_never(m)
@@ -445,7 +445,7 @@ def _content_model_response(m: ModelResponse) -> _GeminiContent:
     for item in m.parts:
         if isinstance(item, ToolCallPart):
             parts.append(_function_call_part_from_call(item))
-        elif isinstance(item, TextPart):  # pyright: ignore[reportUnnecessaryIsInstance]
+        elif isinstance(item, TextPart):
             parts.append(_GeminiTextPart(text=item.content))
         else:
             assert_never(item)

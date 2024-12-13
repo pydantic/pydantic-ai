@@ -271,13 +271,13 @@ class GroqAgentModel(AgentModel):
                     tool_call_id=_guard_tool_call_id(t=message, model_source='Groq'),
                     content=message.model_response(),
                 )
-        elif isinstance(message, ModelResponse):  # pyright: ignore[reportUnnecessaryIsInstance]
+        elif isinstance(message, ModelResponse):
             texts: list[str] = []
             tool_calls: list[chat.ChatCompletionMessageToolCallParam] = []
             for item in message.parts:
                 if isinstance(item, TextPart):
                     texts.append(item.content)
-                elif isinstance(item, ToolCallPart):  # pyright: ignore[reportUnnecessaryIsInstance]
+                elif isinstance(item, ToolCallPart):
                     tool_calls.append(_map_tool_call(item))
                 else:
                     assert_never(item)
