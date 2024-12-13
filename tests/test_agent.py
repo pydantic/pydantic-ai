@@ -781,8 +781,8 @@ class TestMultipleToolCalls:
 
         value: str
 
-    def test_multiple_final_tools(self):
-        """Test that when multiple final result tools are called:
+    def test_multiple_final_tools_early(self):
+        """Test that when multiple final result tools are called with `early`:
         1. The first result tool is used as the final result
         2. Subsequent result tools are marked as unused
         """
@@ -796,7 +796,7 @@ class TestMultipleToolCalls:
                 ]
             )
 
-        agent = Agent(FunctionModel(return_model), result_type=self.ResultType)
+        agent = Agent(FunctionModel(return_model), result_type=self.ResultType, end_strategy='early')
         result = agent.run_sync('test multiple final tools')
         messages = result.all_messages()
 
@@ -819,12 +819,8 @@ class TestMultipleToolCalls:
             ]
         )
 
-    def test_regular_and_final_tools(self):
-        """Test that when both regular and final tools are called:
-        1. All tools get processed
-        2. Regular tool results are collected
-        3. Final tool result is used
-        """
+    def test_regular_and_final_tools_early(self):
+        """Test that when both regular and final tools are called, only the final tool is used."""
 
         def return_model(_: list[Message], info: AgentInfo) -> ModelAnyResponse:
             assert info.result_tools is not None
@@ -835,7 +831,7 @@ class TestMultipleToolCalls:
                 ]
             )
 
-        agent = Agent(FunctionModel(return_model), result_type=self.ResultType)
+        agent = Agent(FunctionModel(return_model), result_type=self.ResultType, end_strategy='early')
 
         @agent.tool_plain
         def regular_tool(x: int) -> int:
@@ -910,16 +906,6 @@ class TestMultipleToolCalls:
                 ),
                 ToolReturn(
                     tool_name='regular_tool',
-                    content='Result tool not used - a final result was already processed.',
-                    timestamp=IsNow(tz=timezone.utc),
-                ),
-                ToolReturn(
-                    tool_name='another_tool',
-                    content='Result tool not used - a final result was already processed.',
-                    timestamp=IsNow(tz=timezone.utc),
-                ),
-                ToolReturn(
-                    tool_name='regular_tool',
                     content='Tool not executed - a final result was already processed.',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
@@ -974,16 +960,6 @@ class TestMultipleToolCalls:
             [
                 ToolReturn(
                     tool_name='final_result', content='Final result processed.', timestamp=IsNow(tz=timezone.utc)
-                ),
-                ToolReturn(
-                    tool_name='regular_tool',
-                    content='Result tool not used - a final result was already processed.',
-                    timestamp=IsNow(tz=timezone.utc),
-                ),
-                ToolReturn(
-                    tool_name='another_tool',
-                    content='Result tool not used - a final result was already processed.',
-                    timestamp=IsNow(tz=timezone.utc),
                 ),
                 ToolReturn(tool_name='regular_tool', content=1, timestamp=IsNow(tz=timezone.utc)),
                 ToolReturn(tool_name='another_tool', content=2, timestamp=IsNow(tz=timezone.utc)),
@@ -1067,11 +1043,6 @@ class TestMultipleToolCalls:
             [
                 ToolReturn(
                     tool_name='final_result', content='Final result processed.', timestamp=IsNow(tz=timezone.utc)
-                ),
-                ToolReturn(
-                    tool_name='another_tool',
-                    content='Result tool not used - a final result was already processed.',
-                    timestamp=IsNow(tz=timezone.utc),
                 ),
                 ToolReturn(
                     tool_name='regular_tool',
