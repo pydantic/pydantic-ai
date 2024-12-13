@@ -77,14 +77,17 @@ print(dice_result.all_messages())
         timestamp=datetime.datetime(...),
         role='user',
     ),
-    ModelStructuredResponse(
-        calls=[
-            ToolCall(
-                tool_name='roll_die', args=ArgsDict(args_dict={}), tool_call_id=None
+    ModelResponse(
+        parts=[
+            ToolCallPart(
+                tool_name='roll_die',
+                args=ArgsDict(args_dict={}),
+                tool_call_id=None,
+                kind='tool-call',
             )
         ],
+        role='model-response',
         timestamp=datetime.datetime(...),
-        role='model-structured-response',
     ),
     ToolReturn(
         tool_name='roll_die',
@@ -93,16 +96,17 @@ print(dice_result.all_messages())
         timestamp=datetime.datetime(...),
         role='tool-return',
     ),
-    ModelStructuredResponse(
-        calls=[
-            ToolCall(
+    ModelResponse(
+        parts=[
+            ToolCallPart(
                 tool_name='get_player_name',
                 args=ArgsDict(args_dict={}),
                 tool_call_id=None,
+                kind='tool-call',
             )
         ],
+        role='model-response',
         timestamp=datetime.datetime(...),
-        role='model-structured-response',
     ),
     ToolReturn(
         tool_name='get_player_name',
@@ -111,10 +115,15 @@ print(dice_result.all_messages())
         timestamp=datetime.datetime(...),
         role='tool-return',
     ),
-    ModelTextResponse(
-        content="Congratulations Anne, you guessed correctly! You're a winner!",
+    ModelResponse(
+        parts=[
+            TextPart(
+                content="Congratulations Anne, you guessed correctly! You're a winner!",
+                kind='text',
+            )
+        ],
+        role='model-response',
         timestamp=datetime.datetime(...),
-        role='model-text-response',
     ),
 ]
 """
@@ -151,7 +160,7 @@ sequenceDiagram
     activate LLM
     Note over LLM: LLM constructs final response
 
-    LLM ->> Agent: ModelTextResponse<br>"Congratulations Anne, ..."
+    LLM ->> Agent: ModelResponse<br>"Congratulations Anne, ..."
     deactivate LLM
     Note over Agent: Game session complete
 ```
@@ -215,7 +224,7 @@ To demonstrate a tool's schema, here we use [`FunctionModel`][pydantic_ai.models
 
 ```python {title="tool_schema.py"}
 from pydantic_ai import Agent
-from pydantic_ai.messages import Message, ModelAnyResponse, ModelTextResponse
+from pydantic_ai.messages import Message, ModelResponse
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 agent = Agent()
@@ -233,7 +242,7 @@ def foobar(a: int, b: str, c: dict[str, list[float]]) -> str:
     return f'{a} {b} {c}'
 
 
-def print_schema(messages: list[Message], info: AgentInfo) -> ModelAnyResponse:
+def print_schema(messages: list[Message], info: AgentInfo) -> ModelResponse:
     tool = info.function_tools[0]
     print(tool.description)
     #> Get me foobar.
@@ -255,7 +264,7 @@ def print_schema(messages: list[Message], info: AgentInfo) -> ModelAnyResponse:
         'additionalProperties': False,
     }
     """
-    return ModelTextResponse(content='foobar')
+    return ModelResponse.from_text(content='foobar')
 
 
 agent.run_sync('hello', model=FunctionModel(print_schema))

@@ -14,12 +14,17 @@ from .._utils import guard_tool_call_id as _guard_tool_call_id
 from ..messages import (
     ArgsJson,
     Message,
-    ModelAnyResponse,
-    ModelStructuredResponse,
-    ModelTextResponse,
-    ToolCall,
+    ModelResponse,
+    ModelResponsePart,
+    RetryPrompt,
+    SystemPrompt,
+    TextPart,
+    ToolCallPart,
+    ToolReturn,
+    UserPrompt,
 )
 from ..result import Cost
+from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from . import (
     AgentModel,
@@ -134,28 +139,34 @@ class OpenAIAgentModel(AgentModel):
     allow_text_result: bool
     tools: list[chat.ChatCompletionToolParam]
 
-    async def request(self, messages: list[Message]) -> tuple[ModelAnyResponse, result.Cost]:
-        response = await self._completions_create(messages, False)
+    async def request(
+        self, messages: list[Message], model_settings: ModelSettings | None
+    ) -> tuple[ModelResponse, result.Cost]:
+        response = await self._completions_create(messages, False, model_settings)
         return self._process_response(response), _map_cost(response)
 
     @asynccontextmanager
-    async def request_stream(self, messages: list[Message]) -> AsyncIterator[EitherStreamedResponse]:
-        response = await self._completions_create(messages, True)
+    async def request_stream(
+        self, messages: list[Message], model_settings: ModelSettings | None
+    ) -> AsyncIterator[EitherStreamedResponse]:
+        response = await self._completions_create(messages, True, model_settings)
         async with response:
             yield await self._process_streamed_response(response)
 
     @overload
     async def _completions_create(
-        self, messages: list[Message], stream: Literal[True]
+        self, messages: list[Message], stream: Literal[True], model_settings: ModelSettings | None
     ) -> AsyncStream[ChatCompletionChunk]:
         pass
 
     @overload
-    async def _completions_create(self, messages: list[Message], stream: Literal[False]) -> chat.ChatCompletion:
+    async def _completions_create(
+        self, messages: list[Message], stream: Literal[False], model_settings: ModelSettings | None
+    ) -> chat.ChatCompletion:
         pass
 
     async def _completions_create(
-        self, messages: list[Message], stream: bool
+        self, messages: list[Message], stream: bool, model_settings: ModelSettings | None
     ) -> chat.ChatCompletion | AsyncStream[ChatCompletionChunk]:
         # standalone function to make it easier to override
         if not self.tools:
@@ -166,6 +177,9 @@ class OpenAIAgentModel(AgentModel):
             tool_choice = 'auto'
 
         openai_messages = [self._map_message(m) for m in messages]
+
+        model_settings = model_settings or {}
+
         return await self.client.chat.completions.create(
             model=self.model_name,
             messages=openai_messages,
@@ -175,21 +189,24 @@ class OpenAIAgentModel(AgentModel):
             tool_choice=tool_choice or NOT_GIVEN,
             stream=stream,
             stream_options={'include_usage': True} if stream else NOT_GIVEN,
+            max_tokens=model_settings.get('max_tokens', NOT_GIVEN),
+            temperature=model_settings.get('temperature', NOT_GIVEN),
+            top_p=model_settings.get('top_p', NOT_GIVEN),
+            timeout=model_settings.get('timeout', NOT_GIVEN),
         )
 
     @staticmethod
-    def _process_response(response: chat.ChatCompletion) -> ModelAnyResponse:
+    def _process_response(response: chat.ChatCompletion) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
         timestamp = datetime.fromtimestamp(response.created, tz=timezone.utc)
         choice = response.choices[0]
+        items: list[ModelResponsePart] = []
+        if choice.message.content is not None:
+            items.append(TextPart(choice.message.content))
         if choice.message.tool_calls is not None:
-            return ModelStructuredResponse(
-                [ToolCall.from_json(c.function.name, c.function.arguments, c.id) for c in choice.message.tool_calls],
-                timestamp=timestamp,
-            )
-        else:
-            assert choice.message.content is not None, choice
-            return ModelTextResponse(choice.message.content, timestamp=timestamp)
+            for c in choice.message.tool_calls:
+                items.append(ToolCallPart.from_json(c.function.name, c.function.arguments, c.id))
+        return ModelResponse(items, timestamp=timestamp)
 
     @staticmethod
     async def _process_streamed_response(response: AsyncStream[ChatCompletionChunk]) -> EitherStreamedResponse:
@@ -223,21 +240,17 @@ class OpenAIAgentModel(AgentModel):
     @staticmethod
     def _map_message(message: Message) -> chat.ChatCompletionMessageParam:
         """Just maps a `pydantic_ai.Message` to a `openai.types.ChatCompletionMessageParam`."""
-        if message.role == 'system':
-            # SystemPrompt ->
+        if isinstance(message, SystemPrompt):
             return chat.ChatCompletionSystemMessageParam(role='system', content=message.content)
-        elif message.role == 'user':
-            # UserPrompt ->
+        elif isinstance(message, UserPrompt):
             return chat.ChatCompletionUserMessageParam(role='user', content=message.content)
-        elif message.role == 'tool-return':
-            # ToolReturn ->
+        elif isinstance(message, ToolReturn):
             return chat.ChatCompletionToolMessageParam(
                 role='tool',
                 tool_call_id=_guard_tool_call_id(t=message, model_source='OpenAI'),
                 content=message.model_response_str(),
             )
-        elif message.role == 'retry-prompt':
-            # RetryPrompt ->
+        elif isinstance(message, RetryPrompt):
             if message.tool_name is None:
                 return chat.ChatCompletionUserMessageParam(role='user', content=message.model_response())
             else:
@@ -246,15 +259,24 @@ class OpenAIAgentModel(AgentModel):
                     tool_call_id=_guard_tool_call_id(t=message, model_source='OpenAI'),
                     content=message.model_response(),
                 )
-        elif message.role == 'model-text-response':
-            # ModelTextResponse ->
-            return chat.ChatCompletionAssistantMessageParam(role='assistant', content=message.content)
-        elif message.role == 'model-structured-response':
-            # ModelStructuredResponse ->
-            return chat.ChatCompletionAssistantMessageParam(
-                role='assistant',
-                tool_calls=[_map_tool_call(t) for t in message.calls],
-            )
+        elif isinstance(message, ModelResponse):
+            texts: list[str] = []
+            tool_calls: list[chat.ChatCompletionMessageToolCallParam] = []
+            for item in message.parts:
+                if isinstance(item, TextPart):
+                    texts.append(item.content)
+                elif isinstance(item, ToolCallPart):
+                    tool_calls.append(_map_tool_call(item))
+                else:
+                    assert_never(item)
+            message_param = chat.ChatCompletionAssistantMessageParam(role='assistant')
+            if texts:
+                # Note: model responses from this model should only have one text item, so the following
+                # shouldn't merge multiple texts into one unless you switch models between runs:
+                message_param['content'] = '\n\n'.join(texts)
+            if tool_calls:
+                message_param['tool_calls'] = tool_calls
+            return message_param
         else:
             assert_never(message)
 
@@ -331,14 +353,14 @@ class OpenAIStreamStructuredResponse(StreamStructuredResponse):
             else:
                 self._delta_tool_calls[new.index] = new
 
-    def get(self, *, final: bool = False) -> ModelStructuredResponse:
-        calls: list[ToolCall] = []
+    def get(self, *, final: bool = False) -> ModelResponse:
+        items: list[ModelResponsePart] = []
         for c in self._delta_tool_calls.values():
             if f := c.function:
                 if f.name is not None and f.arguments is not None:
-                    calls.append(ToolCall.from_json(f.name, f.arguments, c.id))
+                    items.append(ToolCallPart.from_json(f.name, f.arguments, c.id))
 
-        return ModelStructuredResponse(calls, timestamp=self._timestamp)
+        return ModelResponse(items, timestamp=self._timestamp)
 
     def cost(self) -> Cost:
         return self._cost
@@ -347,7 +369,7 @@ class OpenAIStreamStructuredResponse(StreamStructuredResponse):
         return self._timestamp
 
 
-def _map_tool_call(t: ToolCall) -> chat.ChatCompletionMessageToolCallParam:
+def _map_tool_call(t: ToolCallPart) -> chat.ChatCompletionMessageToolCallParam:
     assert isinstance(t.args, ArgsJson), f'Expected ArgsJson, got {t.args}'
     return chat.ChatCompletionMessageToolCallParam(
         id=_guard_tool_call_id(t=t, model_source='OpenAI'),

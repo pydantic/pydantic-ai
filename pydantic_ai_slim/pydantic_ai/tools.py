@@ -235,7 +235,7 @@ class Tool(Generic[AgentDeps]):
         else:
             return tool_def
 
-    async def run(self, deps: AgentDeps, message: messages.ToolCall) -> messages.Message:
+    async def run(self, deps: AgentDeps, message: messages.ToolCallPart) -> messages.Message:
         """Run the tool function asynchronously."""
         try:
             if isinstance(message.args, messages.ArgsJson):
@@ -264,7 +264,7 @@ class Tool(Generic[AgentDeps]):
         )
 
     def _call_args(
-        self, deps: AgentDeps, args_dict: dict[str, Any], message: messages.ToolCall
+        self, deps: AgentDeps, args_dict: dict[str, Any], message: messages.ToolCallPart
     ) -> tuple[list[Any], dict[str, Any]]:
         if self._single_arg_name:
             args_dict = {self._single_arg_name: args_dict}
@@ -277,7 +277,7 @@ class Tool(Generic[AgentDeps]):
 
         return args, args_dict
 
-    def _on_error(self, exc: ValidationError | ModelRetry, call_message: messages.ToolCall) -> messages.RetryPrompt:
+    def _on_error(self, exc: ValidationError | ModelRetry, call_message: messages.ToolCallPart) -> messages.RetryPrompt:
         self.current_retry += 1
         if self.max_retries is None or self.current_retry > self.max_retries:
             raise UnexpectedModelBehavior(f'Tool exceeded max retries count of {self.max_retries}') from exc
@@ -298,7 +298,7 @@ ObjectJsonSchema: TypeAlias = dict[str, Any]
 
 This type is used to define tools parameters (aka arguments) in [ToolDefinition][pydantic_ai.tools.ToolDefinition].
 
-With PEP-728 this should be a TypedDict with `type: Literal['object']`, and `extra_items=Any`
+With PEP-728 this should be a TypedDict with `type: Literal['object']`, and `extra_parts=Any`
 """
 
 
