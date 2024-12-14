@@ -77,6 +77,7 @@ async def get_chat(database: Database = Depends(get_db)) -> Response:
 
 
 class ChatMessage(TypedDict):
+    """Format of messages sent to the browser."""
     role: Literal['user', 'model']
     timestamp: datetime
     content: str
