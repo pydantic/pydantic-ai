@@ -52,6 +52,7 @@ with try_import() as imports_successful:
         MistralModel,
         _generate_simple_json_schema,  # type: ignore
         _generate_simple_json_schemas,  # type: ignore
+        _validate_required_json_shema,  # type: ignore
     )
 
 pytestmark = [
@@ -1408,3 +1409,95 @@ def test_generate_simple_json_schemas():
     expected_result = {'prop_anyOf': 'Optional[str]'}
     result = _generate_simple_json_schemas([schema, schema])
     assert result == [expected_result, expected_result]
+
+
+@pytest.mark.parametrize(
+    'desc, schema, data, expected',
+    [
+        (
+            'Missing required parameter',
+            {
+                'required': ['name', 'age'],
+                'properties': {
+                    'name': {'type': 'string'},
+                    'age': {'type': 'integer'},
+                },
+            },
+            {'name': 'Alice'},  # Missing "age"
+            False,
+        ),
+        (
+            'Type mismatch (expected string, got int)',
+            {'required': ['name'], 'properties': {'name': {'type': 'string'}}},
+            {'name': 123},  # Should be a string, got int
+            False,
+        ),
+        (
+            'Array parameter check (param not a list)',
+            {'required': ['tags'], 'properties': {'tags': {'type': 'array', 'items': {'type': 'string'}}}},
+            {'tags': 'not a list'},  # Not a list
+            False,
+        ),
+        (
+            'Array item type mismatch',
+            {'required': ['tags'], 'properties': {'tags': {'type': 'array', 'items': {'type': 'string'}}}},
+            {'tags': ['ok', 123, 'still ok']},  # One item is int, not str
+            False,
+        ),
+        (
+            'Nested object fails',
+            {
+                'required': ['user'],
+                'properties': {
+                    'user': {
+                        'type': 'object',
+                        'required': ['id', 'profile'],
+                        'properties': {
+                            'id': {'type': 'integer'},
+                            'profile': {
+                                'type': 'object',
+                                'required': ['address'],
+                                'properties': {'address': {'type': 'string'}},
+                            },
+                        },
+                    }
+                },
+            },
+            {'user': {'id': 101, 'profile': {}}},  # Missing "address" in the nested profile
+            False,
+        ),
+        (
+            'All requirements met (success)',
+            {
+                'required': ['name', 'age', 'tags', 'user'],
+                'properties': {
+                    'name': {'type': 'string'},
+                    'age': {'type': 'integer'},
+                    'tags': {'type': 'array', 'items': {'type': 'string'}},
+                    'user': {
+                        'type': 'object',
+                        'required': ['id', 'profile'],
+                        'properties': {
+                            'id': {'type': 'integer'},
+                            'profile': {
+                                'type': 'object',
+                                'required': ['address'],
+                                'properties': {'address': {'type': 'string'}},
+                            },
+                        },
+                    },
+                },
+            },
+            {
+                'name': 'Alice',
+                'age': 30,
+                'tags': ['tag1', 'tag2'],
+                'user': {'id': 101, 'profile': {'address': '123 Street'}},
+            },
+            True,
+        ),
+    ],
+)
+def test_validate_required_json_shema(desc: str, schema: dict[str, Any], data: dict[str, Any], expected: bool) -> None:
+    result = _validate_required_json_shema(data, schema)
+    assert result == expected, f'{desc} — expected {expected}, got {result}'
