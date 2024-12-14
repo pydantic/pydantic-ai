@@ -255,7 +255,7 @@ The big disadvantage is that for local development you may need to create and co
 
 Whichever way you authenticate, you'll need to have VertexAI enabled in your GCP account.
 
-### application default credentials
+### Application default credentials
 
 Luckily if you're running PydanticAI inside GCP, or you have the [`gcloud` CLI](https://cloud.google.com/sdk/gcloud) installed and configured, you should be able to use `VertexAIModel` without any additional setup.
 
@@ -277,7 +277,7 @@ Internally this uses [`google.auth.default()`](https://google-auth.readthedocs.i
 
 You may also need to pass the [`project_id` argument to `VertexAIModel`][pydantic_ai.models.vertexai.VertexAIModel.__init__] if application default credentials don't set a project, if you pass `project_id` and it conflicts with the project set by application default credentials, an error is raised.
 
-### service account
+### Service account
 
 If instead of application default credentials, you want to authenticate with a service account, you'll need to create a service account, add it to your GCP project (note: AFAIK this step is necessary even if you created the service account within the project), give that service account the "Vertex AI Service Agent" role, and download the service account JSON file.
 
