@@ -149,6 +149,7 @@ class MistralAgentModel(AgentModel):
     allow_text_result: bool
     function_tools: list[ToolDefinition]
     result_tools: list[ToolDefinition]
+    json_mode_schema_prompt: str = """Answer in JSON Object, respect this following format:\n```\n{schema}\n```\n"""
 
     async def request(
         self, messages: list[Message], model_settings: ModelSettings | None
@@ -171,17 +172,13 @@ class MistralAgentModel(AgentModel):
         self, messages: list[Message], model_settings: ModelSettings | None
     ) -> MistralChatCompletionResponse:
         """Make a non-streaming request to the model."""
-        mistral_messages = [self._map_message(m) for m in messages]
-
-        tool_choice = self._get_tool_choice()
-
         model_settings = model_settings or {}
         response = await self.client.chat.complete_async(
             model=str(self.model_name),
-            messages=mistral_messages,
+            messages=[self._map_message(m) for m in messages],
             n=1,
-            tools=self._map_function_and_result_tools_definition(),
-            tool_choice=tool_choice,
+            tools=self._map_function_and_result_tools_definition() or UNSET,
+            tool_choice=self._get_tool_choice(),
             stream=False,
             max_tokens=model_settings.get('max_tokens', UNSET),
             temperature=model_settings.get('temperature', UNSET),
@@ -200,7 +197,6 @@ class MistralAgentModel(AgentModel):
         response: MistralEventStreamAsync[MistralCompletionEvent] | None = None
         mistral_messages = [self._map_message(m) for m in messages]
 
-        tool_choice = self._get_tool_choice()
         model_settings = model_settings or {}
 
         if self.result_tools and self.function_tools or self.function_tools:
@@ -209,8 +205,8 @@ class MistralAgentModel(AgentModel):
                 model=str(self.model_name),
                 messages=mistral_messages,
                 n=1,
-                tools=self._map_function_and_result_tools_definition(),
-                tool_choice=tool_choice,
+                tools=self._map_function_and_result_tools_definition() or UNSET,
+                tool_choice=self._get_tool_choice(),
                 temperature=model_settings.get('temperature', UNSET),
                 top_p=model_settings.get('top_p', 1),
                 max_tokens=model_settings.get('max_tokens', UNSET),
@@ -226,11 +222,7 @@ class MistralAgentModel(AgentModel):
                 parameters_json_schemas = [tool.parameters_json_schema for tool in self.result_tools]
                 schema = _generate_simple_json_schemas(parameters_json_schemas)
 
-            mistral_messages.append(
-                MistralUserMessage(
-                    content=f"""Answer in JSON Object, respect this following format:\n```\n{schema}\n```\n"""
-                )
-            )
+            mistral_messages.append(MistralUserMessage(content=self.json_mode_schema_prompt.format(schema=schema)))
             response = await self.client.chat.stream_async(
                 model=str(self.model_name),
                 messages=mistral_messages,
