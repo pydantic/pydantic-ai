@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Callable, Literal, Union
 
-from httpx import AsyncClient as AsyncHTTPClient
+from httpx import AsyncClient as AsyncHTTPClient, Timeout
 from typing_extensions import assert_never
 
 from .. import UnexpectedModelBehavior
@@ -14,12 +14,17 @@ from .._utils import now_utc as _now_utc
 from ..messages import (
     ArgsJson,
     Message,
-    ModelAnyResponse,
-    ModelStructuredResponse,
-    ModelTextResponse,
-    ToolCall,
+    ModelResponse,
+    ModelResponsePart,
+    RetryPrompt,
+    SystemPrompt,
+    TextPart,
+    ToolCallPart,
+    ToolReturn,
+    UserPrompt,
 )
 from ..result import Cost
+from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from . import (
     AgentModel,
@@ -33,8 +38,10 @@ from . import (
 try:
     from json_repair import repair_json
     from mistralai import (
+        UNSET,
         CompletionChunk as MistralCompletionChunk,
         Content as MistralContent,
+        ContentChunk as MistralContentChunk,
         FunctionCall as MistralFunctionCall,
         Mistral,
         OptionalNullable as MistralOptionalNullable,
@@ -143,28 +150,32 @@ class MistralAgentModel(AgentModel):
     function_tools: list[ToolDefinition]
     result_tools: list[ToolDefinition]
 
-    async def request(self, messages: list[Message]) -> tuple[ModelAnyResponse, Cost]:
+    async def request(
+        self, messages: list[Message], model_settings: ModelSettings | None
+    ) -> tuple[ModelResponse, Cost]:
         """Make a non-streaming request to the model from Pydantic AI call."""
-        response = await self._completions_create(messages)
+        response = await self._completions_create(messages, model_settings)
         return self._process_response(response), _map_cost(response)
 
     @asynccontextmanager
-    async def request_stream(self, messages: list[Message]) -> AsyncIterator[EitherStreamedResponse]:
+    async def request_stream(
+        self, messages: list[Message], model_settings: ModelSettings | None
+    ) -> AsyncIterator[EitherStreamedResponse]:
         """Make a streaming request to the model from Pydantic AI call."""
-        response = await self._stream_completions_create(messages)
+        response = await self._stream_completions_create(messages, model_settings)
         is_function_tool = True if self.function_tools else False  # TODO: see how improve
         async with response:
             yield await self._process_streamed_response(is_function_tool, self.result_tools, response)
 
     async def _completions_create(
-        self,
-        messages: list[Message],
+        self, messages: list[Message], model_settings: ModelSettings | None
     ) -> MistralChatCompletionResponse:
         """Make a non-streaming request to the model."""
         mistral_messages = [self._map_message(m) for m in messages]
 
         tool_choice = self._get_tool_choice()
 
+        model_settings = model_settings or {}
         response = await self.client.chat.complete_async(
             model=str(self.model_name),
             messages=mistral_messages,
@@ -172,6 +183,10 @@ class MistralAgentModel(AgentModel):
             tools=self._map_function_and_result_tools_definition(),
             tool_choice=tool_choice,
             stream=False,
+            max_tokens=model_settings.get('max_tokens', UNSET),
+            temperature=model_settings.get('temperature', UNSET),
+            top_p=model_settings.get('top_p', 1),
+            timeout_ms=_get_timeout_ms(model_settings.get('timeout')),
         )
         assert response, 'A unexpected empty response from Mistral.'
         return response
@@ -179,12 +194,14 @@ class MistralAgentModel(AgentModel):
     async def _stream_completions_create(
         self,
         messages: list[Message],
+        model_settings: ModelSettings | None,
     ) -> MistralEventStreamAsync[MistralCompletionEvent]:
         """Create a streaming completion request to the Mistral model."""
         response: MistralEventStreamAsync[MistralCompletionEvent] | None = None
         mistral_messages = [self._map_message(m) for m in messages]
 
         tool_choice = self._get_tool_choice()
+        model_settings = model_settings or {}
 
         if self.result_tools and self.function_tools or self.function_tools:
             # Function Calling Mode
@@ -194,6 +211,10 @@ class MistralAgentModel(AgentModel):
                 n=1,
                 tools=self._map_function_and_result_tools_definition(),
                 tool_choice=tool_choice,
+                temperature=model_settings.get('temperature', UNSET),
+                top_p=model_settings.get('top_p', 1),
+                max_tokens=model_settings.get('max_tokens', UNSET),
+                timeout_ms=_get_timeout_ms(model_settings.get('timeout')),
             )
 
         elif self.result_tools:
@@ -257,29 +278,34 @@ class MistralAgentModel(AgentModel):
         return tools if tools else None
 
     @staticmethod
-    def _process_response(response: MistralChatCompletionResponse) -> ModelAnyResponse:
+    def _process_response(response: MistralChatCompletionResponse) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
         if response.created:
             timestamp = datetime.fromtimestamp(response.created, tz=timezone.utc)
         else:
             timestamp = _now_utc()
 
-        assert response.choices, 'A unexpected empty response choice.'
+        assert response.choices, 'Unexpected empty response choice.'
         choice = response.choices[0]
 
-        tools_calls = choice.message.tool_calls
-        if tools_calls is not None and isinstance(tools_calls, list):
-            return ModelStructuredResponse(
-                [_map_mistral_to_pydantic_tool_call(tool_call) for tool_call in tools_calls],
-                timestamp=timestamp,
-            )
-        else:
-            content = choice.message.content
-            assert content, f'Unexpected null content in assistant msg: {choice.message}'
-            assert not isinstance(
-                content, list
-            ), f'Unexpected ContentChunk from stream, got {type(content)}, expected list'
-            return ModelTextResponse(content, timestamp=timestamp)
+        parts: list[ModelResponsePart] = []
+        if choice.message.content is not None:
+            if isinstance(choice.message.content, str):
+                parts.append(TextPart(choice.message.content))
+            else:
+                for chunk in choice.message.content:
+                    if isinstance(chunk, MistralTextChunk):
+                        parts.append(TextPart(chunk.text))
+                    # Note: the current implementation ignores ImageURLChunk and ReferenceChunk
+                    # maybe it should raise an error if these are encountered?
+        if isinstance(choice.message.tool_calls, list):
+            for c in choice.message.tool_calls:
+                if isinstance(c.function.arguments, str):
+                    parts.append(ToolCallPart.from_json(c.function.name, c.function.arguments, c.id))
+                else:
+                    parts.append(ToolCallPart.from_dict(c.function.name, c.function.arguments, c.id))
+
+        return ModelResponse(parts, timestamp=timestamp)
 
     @staticmethod
     async def _process_streamed_response(
@@ -341,20 +367,16 @@ class MistralAgentModel(AgentModel):
     @staticmethod
     def _map_message(message: Message) -> MistralMessages:
         """Just maps a `pydantic_ai.Message` to a `Mistral Message`."""
-        if message.role == 'system':
-            # SystemPrompt ->
+        if isinstance(message, SystemPrompt):
             return MistralSystemMessage(content=message.content)
-        elif message.role == 'user':
-            # UserPrompt ->
+        elif isinstance(message, UserPrompt):
             return MistralUserMessage(content=message.content)
-        elif message.role == 'tool-return':
-            # ToolReturn ->
+        elif isinstance(message, ToolReturn):
             return MistralToolMessage(
                 tool_call_id=message.tool_call_id,
                 content=message.model_response_str(),
             )
-        elif message.role == 'retry-prompt':
-            # RetryPrompt ->
+        elif isinstance(message, RetryPrompt):
             if message.tool_name is None:
                 return MistralUserMessage(content=message.model_response())
             else:
@@ -362,14 +384,18 @@ class MistralAgentModel(AgentModel):
                     tool_call_id=message.tool_call_id,
                     content=message.model_response(),
                 )
-        elif message.role == 'model-text-response':
-            # ModelTextResponse ->
-            return MistralAssistantMessage(content=message.content)
-        elif message.role == 'model-structured-response':
-            # ModelStructuredResponse ->
-            return MistralAssistantMessage(
-                tool_calls=[_map_pydantic_to_mistral_tool_call(t) for t in message.calls],
-            )
+        elif isinstance(message, ModelResponse):
+            content_chunks: list[MistralContentChunk] = []
+            tool_calls: list[MistralToolCall] = []
+
+            for part in message.parts:
+                if isinstance(part, TextPart):
+                    content_chunks.append(MistralTextChunk(text=part.content))
+                elif isinstance(part, ToolCallPart):
+                    tool_calls.append(_map_pydantic_to_mistral_tool_call(part))
+                else:
+                    assert_never(part)
+            return MistralAssistantMessage(content=content_chunks, tool_calls=tool_calls)
         else:
             assert_never(message)
 
@@ -456,8 +482,8 @@ class MistralStreamStructuredResponse(StreamStructuredResponse):
             else:
                 self._delta_content += content
 
-    def get(self, *, final: bool = False) -> ModelStructuredResponse:
-        calls: list[ToolCall] = []
+    def get(self, *, final: bool = False) -> ModelResponse:
+        calls: list[ModelResponsePart] = []
 
         if self._function_tools and self._result_tools or self._function_tools:
             for tool_call in self._function_tools.values():
@@ -480,13 +506,13 @@ class MistralStreamStructuredResponse(StreamStructuredResponse):
                     if not _validate_required_json_shema(output_json, result_tool.parameters_json_schema):
                         continue
 
-                    tool = ToolCall.from_dict(
+                    tool = ToolCallPart.from_dict(
                         tool_name=result_tool.name,
                         args_dict=output_json,
                     )
                     calls.append(tool)
 
-        return ModelStructuredResponse(calls, timestamp=self._timestamp)
+        return ModelResponse(calls, timestamp=self._timestamp)
 
     def cost(self) -> Cost:
         return self._cost
@@ -614,22 +640,24 @@ def _generate_simple_json_schemas(schemas: list[dict[str, Any]]) -> list[dict[st
     return examples
 
 
-def _map_mistral_to_pydantic_tool_call(tool_call: MistralToolCall) -> ToolCall:
+def _map_mistral_to_pydantic_tool_call(tool_call: MistralToolCall) -> ToolCallPart:
     """Maps a MistralToolCall to a ToolCall."""
     tool_call_id = tool_call.id or None
     func_call = tool_call.function
 
     if isinstance(func_call.arguments, str):
-        return ToolCall.from_json(
+        return ToolCallPart.from_json(
             tool_name=func_call.name,
             args_json=func_call.arguments,
             tool_call_id=tool_call_id,
         )
     else:
-        return ToolCall.from_dict(tool_name=func_call.name, args_dict=func_call.arguments, tool_call_id=tool_call_id)
+        return ToolCallPart.from_dict(
+            tool_name=func_call.name, args_dict=func_call.arguments, tool_call_id=tool_call_id
+        )
 
 
-def _map_pydantic_to_mistral_tool_call(t: ToolCall) -> MistralToolCall:
+def _map_pydantic_to_mistral_tool_call(t: ToolCallPart) -> MistralToolCall:
     """Maps a Pydantic ToolCall to a MistralToolCall."""
     if isinstance(t.args, ArgsJson):
         return MistralToolCall(
@@ -674,3 +702,12 @@ def _map_delta_content(delta_content: MistralOptionalNullable[MistralContent]) -
     if content and content == '':
         content = None
     return content
+
+
+def _get_timeout_ms(timeout: Timeout | float | None) -> int | None:
+    """Convert a timeout to milliseconds."""
+    if timeout is None:
+        return None
+    if isinstance(timeout, float):
+        return int(1000 * timeout)
+    raise NotImplementedError('Timeout object is not yet supported for MistralModel.')
