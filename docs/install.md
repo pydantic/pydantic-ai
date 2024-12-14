@@ -128,6 +128,23 @@ agent = Agent(model)
 ...
 ```
 
+#### `base_url` argument
+
+To use another OpenAI-compatible API, such as [OpenRouter](https://openrouter.ai), you can make use of the [`base_url` argument][pydantic_ai.models.openai.OpenAIModel.__init__]:
+
+```python {title="openai_model_base_url.py"}
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIModel
+
+model = OpenAIModel(
+    'anthropic/claude-3.5-sonnet',
+    base_url='https://openrouter.ai/api/v1',
+    api_key='your-api-key',
+)
+agent = Agent(model)
+...
+```
+
 #### Custom OpenAI Client
 
 `OpenAIModel` also accepts a custom `AsyncOpenAI` client via the [`openai_client` parameter][pydantic_ai.models.openai.OpenAIModel.__init__],

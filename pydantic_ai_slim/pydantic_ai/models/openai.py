@@ -70,6 +70,7 @@ class OpenAIModel(Model):
         self,
         model_name: OpenAIModelName,
         *,
+        base_url: str | None = None,
         api_key: str | None = None,
         openai_client: AsyncOpenAI | None = None,
         http_client: AsyncHTTPClient | None = None,
@@ -80,22 +81,25 @@ class OpenAIModel(Model):
             model_name: The name of the OpenAI model to use. List of model names available
                 [here](https://github.com/openai/openai-python/blob/v1.54.3/src/openai/types/chat_model.py#L7)
                 (Unfortunately, despite being ask to do so, OpenAI do not provide `.inv` files for their API).
+            base_url: The base url for the OpenAI requests. If not provided, the `OPENAI_BASE_URL` environment variable
+                will be used if available. Otherwise, defaults to OpenAI's base url.
             api_key: The API key to use for authentication, if not provided, the `OPENAI_API_KEY` environment variable
                 will be used if available.
             openai_client: An existing
                 [`AsyncOpenAI`](https://github.com/openai/openai-python?tab=readme-ov-file#async-usage)
-                client to use, if provided, `api_key` and `http_client` must be `None`.
+                client to use. If provided, `base_url`, `api_key`, and `http_client` must be `None`.
             http_client: An existing `httpx.AsyncClient` to use for making HTTP requests.
         """
         self.model_name: OpenAIModelName = model_name
         if openai_client is not None:
             assert http_client is None, 'Cannot provide both `openai_client` and `http_client`'
+            assert base_url is None, 'Cannot provide both `openai_client` and `base_url`'
             assert api_key is None, 'Cannot provide both `openai_client` and `api_key`'
             self.client = openai_client
         elif http_client is not None:
-            self.client = AsyncOpenAI(api_key=api_key, http_client=http_client)
+            self.client = AsyncOpenAI(base_url=base_url, api_key=api_key, http_client=http_client)
         else:
-            self.client = AsyncOpenAI(api_key=api_key, http_client=cached_async_http_client())
+            self.client = AsyncOpenAI(base_url=base_url, api_key=api_key, http_client=cached_async_http_client())
 
     async def agent_model(
         self,

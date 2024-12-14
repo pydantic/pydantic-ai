@@ -49,8 +49,17 @@ pytestmark = [
 
 def test_init():
     m = OpenAIModel('gpt-4', api_key='foobar')
+    assert str(m.client.base_url) == 'https://api.openai.com/v1/'
     assert m.client.api_key == 'foobar'
     assert m.name() == 'openai:gpt-4'
+
+
+def test_init_with_base_url():
+    m = OpenAIModel('gpt-4', base_url='https://example.com/v1', api_key='foobar')
+    assert str(m.client.base_url) == 'https://example.com/v1/'
+    assert m.client.api_key == 'foobar'
+    assert m.name() == 'openai:gpt-4'
+    m.name()
 
 
 @dataclass
