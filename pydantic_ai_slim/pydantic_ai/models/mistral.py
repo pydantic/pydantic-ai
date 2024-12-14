@@ -282,11 +282,12 @@ class MistralAgentModel(AgentModel):
 
         parts: list[ModelResponsePart] = []
         if choice.message.content is not None:
-            if isinstance(choice.message.content, str):
+            # Note: Check len to handle potential mismatch between function calls and responses from the API. (`msg: not the same number of function class and reponses`)
+            if isinstance(choice.message.content, str) and len(choice.message.content) > 0:
                 parts.append(TextPart(choice.message.content))
             elif isinstance(choice.message.content, list):
                 for chunk in choice.message.content:
-                    if isinstance(chunk, MistralTextChunk):
+                    if isinstance(chunk, MistralTextChunk) and len(chunk.text) > 0:
                         parts.append(TextPart(chunk.text))
                     else:
                         raise Exception(
