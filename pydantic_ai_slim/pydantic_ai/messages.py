@@ -6,6 +6,7 @@ from typing import Annotated, Any, Literal, Union
 
 import pydantic
 import pydantic_core
+from typing_extensions import Self
 
 from ._utils import now_utc as _now_utc
 
@@ -20,11 +21,8 @@ class SystemPrompt:
     content: str
     """The content of the prompt."""
 
-    role: Literal['user'] = 'user'
-    """Message source identifier, this type is available on all messages as either 'user' or 'model'."""
-
-    message_kind: Literal['system-prompt'] = 'system-prompt'
-    """Message type identifier, this type is available on all messages as a discriminator."""
+    kind: Literal['system-prompt'] = 'system-prompt'
+    """Part type identifier."""
 
 
 @dataclass
@@ -41,11 +39,8 @@ class UserPrompt:
     timestamp: datetime = field(default_factory=_now_utc)
     """The timestamp of the prompt."""
 
-    role: Literal['user'] = 'user'
-    """Message source identifier, this type is available on all messages as either 'user' or 'model'."""
-
-    message_kind: Literal['user-prompt'] = 'user-prompt'
-    """Message type identifier, this type is available on all messages as a discriminator."""
+    kind: Literal['user-prompt'] = 'user-prompt'
+    """Part type identifier."""
 
 
 tool_return_ta: pydantic.TypeAdapter[Any] = pydantic.TypeAdapter(Any, config=pydantic.ConfigDict(defer_build=True))
@@ -67,11 +62,8 @@ class ToolReturn:
     timestamp: datetime = field(default_factory=_now_utc)
     """The timestamp, when the tool returned."""
 
-    role: Literal['user'] = 'user'
-    """Message source identifier, this type is available on all messages as either 'user' or 'model'."""
-
-    message_kind: Literal['tool-return'] = 'tool-return'
-    """Message type identifier, this type is available on all messages as a discriminator."""
+    kind: Literal['tool-return'] = 'tool-return'
+    """Part type identifier."""
 
     def model_response_str(self) -> str:
         if isinstance(self.content, str):
@@ -87,7 +79,7 @@ class ToolReturn:
             return {'return_value': tool_return_ta.dump_python(self.content, mode='json')}
 
 
-ErrorDetailsTa = pydantic.TypeAdapter(list[pydantic_core.ErrorDetails], config=pydantic.ConfigDict(defer_build=True))
+error_details_ta = pydantic.TypeAdapter(list[pydantic_core.ErrorDetails], config=pydantic.ConfigDict(defer_build=True))
 
 
 @dataclass
@@ -122,19 +114,30 @@ class RetryPrompt:
     timestamp: datetime = field(default_factory=_now_utc)
     """The timestamp, when the retry was triggered."""
 
-    role: Literal['user'] = 'user'
-    """Message source identifier, this type is available on all messages as either 'user' or 'model'."""
-
-    message_kind: Literal['retry-prompt'] = 'retry-prompt'
-    """Message type identifier, this type is available on all messages as a discriminator."""
+    kind: Literal['retry-prompt'] = 'retry-prompt'
+    """Part type identifier."""
 
     def model_response(self) -> str:
         if isinstance(self.content, str):
             description = self.content
         else:
-            json_errors = ErrorDetailsTa.dump_json(self.content, exclude={'__all__': {'ctx'}}, indent=2)
+            json_errors = error_details_ta.dump_json(self.content, exclude={'__all__': {'ctx'}}, indent=2)
             description = f'{len(self.content)} validation errors: {json_errors.decode()}'
         return f'{description}\n\nFix the errors and try again.'
+
+
+UserMessagePart = Annotated[Union[SystemPrompt, UserPrompt, ToolReturn, RetryPrompt], pydantic.Discriminator('kind')]
+
+
+@dataclass
+class UserMessage:
+    """A message from a user, this represents the (new) data sent to the model."""
+
+    parts: list[UserMessagePart]
+    """The parts of the user message."""
+
+    role: Literal['user'] = 'user'
+    """Message source identifier."""
 
 
 @dataclass
@@ -144,8 +147,8 @@ class TextPart:
     content: str
     """The text content of the response."""
 
-    part_kind: Literal['text'] = 'text'
-    """Part type identifier, this type is available on all message parts as a discriminator."""
+    kind: Literal['text'] = 'text'
+    """Part type identifier."""
 
 
 @dataclass
@@ -166,7 +169,7 @@ class ArgsDict:
 
 @dataclass
 class ToolCallPart:
-    """A tool call from the agent."""
+    """A tool call from a model."""
 
     tool_name: str
     """The name of the tool to call."""
@@ -180,15 +183,15 @@ class ToolCallPart:
     tool_call_id: str | None = None
     """Optional tool call identifier, this is used by some models including OpenAI."""
 
-    part_kind: Literal['tool-call'] = 'tool-call'
-    """Part type identifier, this type is available on all message parts as a discriminator."""
+    kind: Literal['tool-call'] = 'tool-call'
+    """Part type identifier."""
 
     @classmethod
-    def from_json(cls, tool_name: str, args_json: str, tool_call_id: str | None = None) -> ToolCallPart:
+    def from_json(cls, tool_name: str, args_json: str, tool_call_id: str | None = None) -> Self:
         return cls(tool_name, ArgsJson(args_json), tool_call_id)
 
     @classmethod
-    def from_dict(cls, tool_name: str, args_dict: dict[str, Any], tool_call_id: str | None = None) -> ToolCallPart:
+    def from_dict(cls, tool_name: str, args_dict: dict[str, Any], tool_call_id: str | None = None) -> Self:
         return cls(tool_name, ArgsDict(args_dict), tool_call_id)
 
     def has_content(self) -> bool:
@@ -198,15 +201,15 @@ class ToolCallPart:
             return bool(self.args.args_json)
 
 
-ModelResponsePart = Annotated[Union[TextPart, ToolCallPart], pydantic.Discriminator('part_kind')]
+ModelMessagePart = Annotated[Union[TextPart, ToolCallPart], pydantic.Discriminator('kind')]
 
 
 @dataclass
-class ModelResponse:
+class ModelMessage:
     """A response from a model."""
 
-    parts: list[ModelResponsePart]
-    """The parts of the response."""
+    parts: list[ModelMessagePart]
+    """The parts of the model message."""
 
     timestamp: datetime = field(default_factory=_now_utc)
     """The timestamp of the response.
@@ -215,24 +218,21 @@ class ModelResponse:
     """
 
     role: Literal['model'] = 'model'
-    """Message source identifier, this type is available on all messages as either 'user' or 'model'."""
-
-    message_kind: Literal['model-response'] = 'model-response'
-    """Message source identifier, this type is available on all messages as a discriminator."""
+    """Message source identifier."""
 
     @classmethod
-    def from_text(cls, content: str, timestamp: datetime | None = None) -> ModelResponse:
+    def from_text(cls, content: str, timestamp: datetime | None = None) -> Self:
         return cls([TextPart(content)], timestamp=timestamp or _now_utc())
 
     @classmethod
-    def from_tool_call(cls, tool_call: ToolCallPart) -> ModelResponse:
+    def from_tool_call(cls, tool_call: ToolCallPart) -> Self:
         return cls([tool_call])
 
 
-Message = Union[SystemPrompt, UserPrompt, ToolReturn, RetryPrompt, ModelResponse]
+Message = Union[UserMessage, ModelMessage]
 """Any message send to or returned by a model."""
 
 MessagesTypeAdapter = pydantic.TypeAdapter(
-    list[Annotated[Message, pydantic.Discriminator('message_kind')]], config=pydantic.ConfigDict(defer_build=True)
+    list[Annotated[Message, pydantic.Discriminator('role')]], config=pydantic.ConfigDict(defer_build=True)
 )
 """Pydantic [`TypeAdapter`][pydantic.type_adapter.TypeAdapter] for (de)serializing messages."""

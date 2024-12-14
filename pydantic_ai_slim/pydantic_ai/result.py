@@ -205,11 +205,11 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
                     combined = await self._validate_text_result(''.join(chunks))
                     yield combined
                 lf_span.set_attribute('combined_text', combined)
-                self._marked_completed(_messages.ModelResponse.from_text(combined))
+                self._marked_completed(_messages.ModelMessage.from_text(combined))
 
     async def stream_structured(
         self, *, debounce_by: float | None = 0.1
-    ) -> AsyncIterator[tuple[_messages.ModelResponse, bool]]:
+    ) -> AsyncIterator[tuple[_messages.ModelMessage, bool]]:
         """Stream the response as an async iterable of Structured LLM Messages.
 
         !!! note
@@ -253,7 +253,7 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
         if isinstance(self._stream_response, models.StreamTextResponse):
             text = ''.join(self._stream_response.get(final=True))
             text = await self._validate_text_result(text)
-            self._marked_completed(_messages.ModelResponse.from_text(text))
+            self._marked_completed(_messages.ModelMessage.from_text(text))
             return cast(ResultData, text)
         else:
             message = self._stream_response.get(final=True)
@@ -278,7 +278,7 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
         return self._stream_response.timestamp()
 
     async def validate_structured_result(
-        self, message: _messages.ModelResponse, *, allow_partial: bool = False
+        self, message: _messages.ModelMessage, *, allow_partial: bool = False
     ) -> ResultData:
         """Validate a structured result message."""
         assert self._result_schema is not None, 'Expected _result_schema to not be None'
@@ -306,7 +306,7 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
             )
         return text
 
-    def _marked_completed(self, message: _messages.ModelResponse) -> None:
+    def _marked_completed(self, message: _messages.ModelMessage) -> None:
         self.is_complete = True
         self._all_messages.append(message)
         self._on_complete(self._all_messages)

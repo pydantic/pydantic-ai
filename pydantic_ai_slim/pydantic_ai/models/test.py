@@ -14,11 +14,12 @@ from typing_extensions import assert_never
 from .. import _utils
 from ..messages import (
     Message,
-    ModelResponse,
+    ModelMessage,
     RetryPrompt,
     TextPart,
     ToolCallPart,
     ToolReturn,
+    UserMessage,
 )
 from ..result import Cost
 from ..settings import ModelSettings
@@ -128,9 +129,7 @@ class TestAgentModel(AgentModel):
     result_tools: list[ToolDefinition]
     seed: int
 
-    async def request(
-        self, messages: list[Message], model_settings: ModelSettings | None
-    ) -> tuple[ModelResponse, Cost]:
+    async def request(self, messages: list[Message], model_settings: ModelSettings | None) -> tuple[ModelMessage, Cost]:
         return self._request(messages, model_settings), Cost()
 
     @asynccontextmanager
@@ -159,61 +158,52 @@ class TestAgentModel(AgentModel):
     def gen_tool_args(self, tool_def: ToolDefinition) -> Any:
         return _JsonSchemaTestData(tool_def.parameters_json_schema, self.seed).generate()
 
-    def _request(self, messages: list[Message], model_settings: ModelSettings | None) -> ModelResponse:
+    def _request(self, messages: list[Message], model_settings: ModelSettings | None) -> ModelMessage:
         # if there are tools, the first thing we want to do is call all of them
-        if self.tool_calls and not any(isinstance(m, ModelResponse) for m in messages):
-            return ModelResponse(
+        if self.tool_calls and not any(isinstance(m, ModelMessage) for m in messages):
+            return ModelMessage(
                 parts=[ToolCallPart.from_dict(name, self.gen_tool_args(args)) for name, args in self.tool_calls]
             )
 
-        # get messages since the last model response
-        new_messages = _get_new_messages(messages)
+        if messages:
+            last_message = messages[-1]
+            assert isinstance(last_message, UserMessage), 'Expected last message to be a `UserMessage`.'
 
-        # check if there are any retry prompts, if so retry them
-        new_retry_names = {m.tool_name for m in new_messages if isinstance(m, RetryPrompt)}
-        if new_retry_names:
-            return ModelResponse(
-                parts=[
-                    ToolCallPart.from_dict(name, self.gen_tool_args(args))
-                    for name, args in self.tool_calls
-                    if name in new_retry_names
-                ]
-            )
+            # check if there are any retry prompts, if so retry them
+            new_retry_names = {p.tool_name for p in last_message.parts if isinstance(p, RetryPrompt)}
+            if new_retry_names:
+                return ModelMessage(
+                    parts=[
+                        ToolCallPart.from_dict(name, self.gen_tool_args(args))
+                        for name, args in self.tool_calls
+                        if name in new_retry_names
+                    ]
+                )
 
         if response_text := self.result.left:
             if response_text.value is None:
                 # build up details of tool responses
                 output: dict[str, Any] = {}
                 for message in messages:
-                    if isinstance(message, ToolReturn):
-                        output[message.tool_name] = message.content
+                    if isinstance(message, UserMessage):
+                        for part in message.parts:
+                            if isinstance(part, ToolReturn):
+                                output[part.tool_name] = part.content
                 if output:
-                    return ModelResponse.from_text(pydantic_core.to_json(output).decode())
+                    return ModelMessage.from_text(pydantic_core.to_json(output).decode())
                 else:
-                    return ModelResponse.from_text('success (no tool calls)')
+                    return ModelMessage.from_text('success (no tool calls)')
             else:
-                return ModelResponse.from_text(response_text.value)
+                return ModelMessage.from_text(response_text.value)
         else:
             assert self.result_tools, 'No result tools provided'
             custom_result_args = self.result.right
             result_tool = self.result_tools[self.seed % len(self.result_tools)]
             if custom_result_args is not None:
-                return ModelResponse(parts=[ToolCallPart.from_dict(result_tool.name, custom_result_args)])
+                return ModelMessage(parts=[ToolCallPart.from_dict(result_tool.name, custom_result_args)])
             else:
                 response_args = self.gen_tool_args(result_tool)
-                return ModelResponse(parts=[ToolCallPart.from_dict(result_tool.name, response_args)])
-
-
-def _get_new_messages(messages: list[Message]) -> list[Message]:
-    last_model_index = None
-    for i, m in enumerate(messages):
-        if isinstance(m, ModelResponse):
-            last_model_index = i
-
-    if last_model_index is not None:
-        return messages[last_model_index + 1 :]
-    else:
-        return []
+                return ModelMessage(parts=[ToolCallPart.from_dict(result_tool.name, response_args)])
 
 
 @dataclass
@@ -253,7 +243,7 @@ class TestStreamTextResponse(StreamTextResponse):
 class TestStreamStructuredResponse(StreamStructuredResponse):
     """A structured response that streams test data."""
 
-    _structured_response: ModelResponse
+    _structured_response: ModelMessage
     _cost: Cost
     _iter: Iterator[None] = field(default_factory=lambda: iter([None]))
     _timestamp: datetime = field(default_factory=_utils.now_utc, init=False)
@@ -261,7 +251,7 @@ class TestStreamStructuredResponse(StreamStructuredResponse):
     async def __anext__(self) -> None:
         return _utils.sync_anext(self._iter)
 
-    def get(self, *, final: bool = False) -> ModelResponse:
+    def get(self, *, final: bool = False) -> ModelMessage:
         return self._structured_response
 
     def cost(self) -> Cost:

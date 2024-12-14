@@ -114,7 +114,7 @@ class ResultSchema(Generic[ResultData]):
         return cls(tools=tools, allow_text_result=allow_text_result)
 
     def find_tool(
-        self, message: _messages.ModelResponse
+        self, message: _messages.ModelMessage
     ) -> tuple[_messages.ToolCallPart, ResultTool[ResultData]] | None:
         """Find a tool that matches one of the calls."""
         for item in message.parts:

@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 from pydantic_core import PydanticSerializationError
 
 from pydantic_ai import Agent, RunContext, Tool, UserError
-from pydantic_ai.messages import Message, ModelResponse, ToolCallPart
+from pydantic_ai.messages import Message, ModelMessage, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
@@ -71,10 +71,10 @@ async def google_style_docstring(foo: int, bar: str) -> str:  # pragma: no cover
     return f'{foo} {bar}'
 
 
-async def get_json_schema(_messages: list[Message], info: AgentInfo) -> ModelResponse:
+async def get_json_schema(_messages: list[Message], info: AgentInfo) -> ModelMessage:
     assert len(info.function_tools) == 1
     r = info.function_tools[0]
-    return ModelResponse.from_text(pydantic_core.to_json(r).decode())
+    return ModelMessage.from_text(pydantic_core.to_json(r).decode())
 
 
 def test_docstring_google(set_event_loop: None):
@@ -487,12 +487,12 @@ def test_dynamic_tool_decorator(set_event_loop: None):
 
 
 def test_dynamic_tool_use_messages(set_event_loop: None):
-    async def repeat_call_foobar(_messages: list[Message], info: AgentInfo) -> ModelResponse:
+    async def repeat_call_foobar(_messages: list[Message], info: AgentInfo) -> ModelMessage:
         if info.function_tools:
             tool = info.function_tools[0]
-            return ModelResponse.from_tool_call(ToolCallPart.from_dict(tool.name, {'x': 42, 'y': 'a'}))
+            return ModelMessage.from_tool_call(ToolCallPart.from_dict(tool.name, {'x': 42, 'y': 'a'}))
         else:
-            return ModelResponse.from_text('done')
+            return ModelMessage.from_text('done')
 
     agent = Agent(FunctionModel(repeat_call_foobar), deps_type=int)
 
@@ -506,15 +506,15 @@ def test_dynamic_tool_use_messages(set_event_loop: None):
 
     r = agent.run_sync('', deps=1)
     assert r.data == snapshot('done')
-    message_kinds = [m.message_kind for m in r.all_messages()]
+    message_kinds = [(m.role, [p.kind for p in m.parts]) for m in r.all_messages()]
     assert message_kinds == snapshot(
         [
-            'user-prompt',
-            'model-response',
-            'tool-return',
-            'model-response',
-            'tool-return',
-            'model-response',
+            ('user', ['user-prompt']),
+            ('model', ['tool-call']),
+            ('user', ['tool-return']),
+            ('model', ['tool-call']),
+            ('user', ['tool-return']),
+            ('model', ['text']),
         ]
     )
 

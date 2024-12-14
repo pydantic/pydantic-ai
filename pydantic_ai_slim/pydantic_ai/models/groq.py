@@ -4,6 +4,7 @@ from collections.abc import AsyncIterator, Iterable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from itertools import chain
 from typing import Literal, overload
 
 from httpx import AsyncClient as AsyncHTTPClient
@@ -14,13 +15,14 @@ from .._utils import guard_tool_call_id as _guard_tool_call_id
 from ..messages import (
     ArgsJson,
     Message,
-    ModelResponse,
-    ModelResponsePart,
+    ModelMessage,
+    ModelMessagePart,
     RetryPrompt,
     SystemPrompt,
     TextPart,
     ToolCallPart,
     ToolReturn,
+    UserMessage,
     UserPrompt,
 )
 from ..result import Cost
@@ -156,7 +158,7 @@ class GroqAgentModel(AgentModel):
 
     async def request(
         self, messages: list[Message], model_settings: ModelSettings | None
-    ) -> tuple[ModelResponse, result.Cost]:
+    ) -> tuple[ModelMessage, result.Cost]:
         response = await self._completions_create(messages, False, model_settings)
         return self._process_response(response), _map_cost(response)
 
@@ -191,7 +193,7 @@ class GroqAgentModel(AgentModel):
         else:
             tool_choice = 'auto'
 
-        groq_messages = [self._map_message(m) for m in messages]
+        groq_messages = list(chain(*(self._map_message(m) for m in messages)))
 
         model_settings = model_settings or {}
 
@@ -210,17 +212,17 @@ class GroqAgentModel(AgentModel):
         )
 
     @staticmethod
-    def _process_response(response: chat.ChatCompletion) -> ModelResponse:
+    def _process_response(response: chat.ChatCompletion) -> ModelMessage:
         """Process a non-streamed response, and prepare a message to return."""
         timestamp = datetime.fromtimestamp(response.created, tz=timezone.utc)
         choice = response.choices[0]
-        items: list[ModelResponsePart] = []
+        items: list[ModelMessagePart] = []
         if choice.message.content is not None:
             items.append(TextPart(choice.message.content))
         if choice.message.tool_calls is not None:
             for c in choice.message.tool_calls:
                 items.append(ToolCallPart.from_json(c.function.name, c.function.arguments, c.id))
-        return ModelResponse(items, timestamp=timestamp)
+        return ModelMessage(items, timestamp=timestamp)
 
     @staticmethod
     async def _process_streamed_response(response: AsyncStream[ChatCompletionChunk]) -> EitherStreamedResponse:
@@ -249,29 +251,12 @@ class GroqAgentModel(AgentModel):
                         start_cost,
                     )
 
-    @staticmethod
-    def _map_message(message: Message) -> chat.ChatCompletionMessageParam:
+    @classmethod
+    def _map_message(cls, message: Message) -> Iterable[chat.ChatCompletionMessageParam]:
         """Just maps a `pydantic_ai.Message` to a `groq.types.ChatCompletionMessageParam`."""
-        if isinstance(message, SystemPrompt):
-            return chat.ChatCompletionSystemMessageParam(role='system', content=message.content)
-        elif isinstance(message, UserPrompt):
-            return chat.ChatCompletionUserMessageParam(role='user', content=message.content)
-        elif isinstance(message, ToolReturn):
-            return chat.ChatCompletionToolMessageParam(
-                role='tool',
-                tool_call_id=_guard_tool_call_id(t=message, model_source='Groq'),
-                content=message.model_response_str(),
-            )
-        elif isinstance(message, RetryPrompt):
-            if message.tool_name is None:
-                return chat.ChatCompletionUserMessageParam(role='user', content=message.model_response())
-            else:
-                return chat.ChatCompletionToolMessageParam(
-                    role='tool',
-                    tool_call_id=_guard_tool_call_id(t=message, model_source='Groq'),
-                    content=message.model_response(),
-                )
-        elif isinstance(message, ModelResponse):
+        if isinstance(message, UserMessage):
+            yield from cls._map_user_message(message)
+        elif isinstance(message, ModelMessage):
             texts: list[str] = []
             tool_calls: list[chat.ChatCompletionMessageToolCallParam] = []
             for item in message.parts:
@@ -288,9 +273,32 @@ class GroqAgentModel(AgentModel):
                 message_param['content'] = '\n\n'.join(texts)
             if tool_calls:
                 message_param['tool_calls'] = tool_calls
-            return message_param
+            yield message_param
         else:
             assert_never(message)
+
+    @classmethod
+    def _map_user_message(cls, message: UserMessage) -> Iterable[chat.ChatCompletionMessageParam]:
+        for part in message.parts:
+            if isinstance(part, SystemPrompt):
+                yield chat.ChatCompletionSystemMessageParam(role='system', content=part.content)
+            elif isinstance(part, UserPrompt):
+                yield chat.ChatCompletionUserMessageParam(role='user', content=part.content)
+            elif isinstance(part, ToolReturn):
+                yield chat.ChatCompletionToolMessageParam(
+                    role='tool',
+                    tool_call_id=_guard_tool_call_id(t=part, model_source='Groq'),
+                    content=part.model_response_str(),
+                )
+            elif isinstance(part, RetryPrompt):
+                if part.tool_name is None:
+                    yield chat.ChatCompletionUserMessageParam(role='user', content=part.model_response())
+                else:
+                    yield chat.ChatCompletionToolMessageParam(
+                        role='tool',
+                        tool_call_id=_guard_tool_call_id(t=part, model_source='Groq'),
+                        content=part.model_response(),
+                    )
 
 
 @dataclass
@@ -367,14 +375,14 @@ class GroqStreamStructuredResponse(StreamStructuredResponse):
             else:
                 self._delta_tool_calls[new.index] = new
 
-    def get(self, *, final: bool = False) -> ModelResponse:
-        items: list[ModelResponsePart] = []
+    def get(self, *, final: bool = False) -> ModelMessage:
+        items: list[ModelMessagePart] = []
         for c in self._delta_tool_calls.values():
             if f := c.function:
                 if f.name is not None and f.arguments is not None:
                     items.append(ToolCallPart.from_json(f.name, f.arguments, c.id))
 
-        return ModelResponse(items, timestamp=self._timestamp)
+        return ModelMessage(items, timestamp=self._timestamp)
 
     def cost(self) -> Cost:
         return self._cost

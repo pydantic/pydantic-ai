@@ -99,7 +99,7 @@ from pydantic_ai import models
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.messages import (
     ArgsDict,
-    ModelResponse,
+    ModelMessage,
     SystemPrompt,
     TextPart,
     ToolCallPart,
@@ -136,7 +136,7 @@ async def test_forecast():
             role='user',
             message_kind='user-prompt',
         ),
-        ModelResponse(
+        ModelMessage(
             parts=[
                 ToolCallPart(
                     tool_name='weather_forecast',
@@ -161,7 +161,7 @@ async def test_forecast():
             role='user',
             message_kind='tool-return',
         ),
-        ModelResponse(
+        ModelMessage(
             parts=[
                 TextPart(
                     content='{"weather_forecast":"Sunny with a chance of rain"}',
@@ -199,7 +199,7 @@ import pytest
 from pydantic_ai import models
 from pydantic_ai.messages import (
     Message,
-    ModelResponse,
+    ModelMessage,
     ToolCallPart,
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -212,20 +212,20 @@ models.ALLOW_MODEL_REQUESTS = False
 
 
 def call_weather_forecast(  # (1)!
-    messages: list[Message], info: AgentInfo
-) -> ModelResponse:
+        messages: list[Message], info: AgentInfo
+) -> ModelMessage:
     if len(messages) == 2:
         # first call, call the weather forecast tool
         user_prompt = messages[1]
         m = re.search(r'\d{4}-\d{2}-\d{2}', user_prompt.content)
         assert m is not None
         args = {'location': 'London', 'forecast_date': m.group()}  # (2)!
-        return ModelResponse(parts=[ToolCallPart.from_dict('weather_forecast', args)])
+        return ModelMessage(parts=[ToolCallPart.from_dict('weather_forecast', args)])
     else:
         # second call, return the forecast
         msg = messages[-1]
         assert msg.message_kind == 'tool-return'
-        return ModelResponse.from_text(f'The forecast is: {msg.content}')
+        return ModelMessage.from_text(f'The forecast is: {msg.content}')
 
 
 async def test_forecast_future():

@@ -18,13 +18,14 @@ from .. import UnexpectedModelBehavior, _utils, exceptions, result
 from ..messages import (
     ArgsDict,
     Message,
-    ModelResponse,
-    ModelResponsePart,
+    ModelMessage,
+    ModelMessagePart,
     RetryPrompt,
     SystemPrompt,
     TextPart,
     ToolCallPart,
     ToolReturn,
+    UserMessage,
     UserPrompt,
 )
 from ..settings import ModelSettings
@@ -171,7 +172,7 @@ class GeminiAgentModel(AgentModel):
 
     async def request(
         self, messages: list[Message], model_settings: ModelSettings | None
-    ) -> tuple[ModelResponse, result.Cost]:
+    ) -> tuple[ModelMessage, result.Cost]:
         async with self._make_request(messages, False, model_settings) as http_response:
             response = _gemini_response_ta.validate_json(await http_response.aread())
         return self._process_response(response), _metadata_as_cost(response)
@@ -187,13 +188,7 @@ class GeminiAgentModel(AgentModel):
     async def _make_request(
         self, messages: list[Message], streamed: bool, model_settings: ModelSettings | None
     ) -> AsyncIterator[HTTPResponse]:
-        sys_prompt_parts: list[_GeminiTextPart] = []
-        contents: list[_GeminiContent] = []
-        for m in messages:
-            if (sys_prompt := self._message_to_gemini_system_prompt(m)) is not None:
-                sys_prompt_parts.append(sys_prompt)
-            if (content := self._message_to_gemini_content(m)) is not None:
-                contents.append(content)
+        sys_prompt_parts, contents = self._message_to_gemini_content(messages)
 
         request_data = _GeminiRequest(contents=contents)
         if sys_prompt_parts:
@@ -237,7 +232,7 @@ class GeminiAgentModel(AgentModel):
             yield r
 
     @staticmethod
-    def _process_response(response: _GeminiResponse) -> ModelResponse:
+    def _process_response(response: _GeminiResponse) -> ModelMessage:
         if len(response['candidates']) != 1:
             raise UnexpectedModelBehavior('Expected exactly one candidate in Gemini response')
         parts = response['candidates'][0]['content']['parts']
@@ -271,28 +266,29 @@ class GeminiAgentModel(AgentModel):
         else:
             return GeminiStreamTextResponse(_json_content=content, _stream=aiter_bytes)
 
-    @staticmethod
-    def _message_to_gemini_system_prompt(m: Message) -> _GeminiTextPart | None:
-        """Convert a message to a _GeminiTextPart for "system_instructions" or _GeminiContent for "contents"."""
-        if isinstance(m, SystemPrompt):
-            return _GeminiTextPart(text=m.content)
-        else:
-            return None
+    @classmethod
+    def _message_to_gemini_content(cls, messages: list[Message]) -> tuple[list[_GeminiTextPart], list[_GeminiContent]]:
+        sys_prompt_parts: list[_GeminiTextPart] = []
+        contents: list[_GeminiContent] = []
+        for m in messages:
+            if isinstance(m, UserMessage):
+                for part in m.parts:
+                    if isinstance(part, SystemPrompt):
+                        sys_prompt_parts.append(_GeminiTextPart(text=part.content))
+                    elif isinstance(part, UserPrompt):
+                        contents.append(_content_user_prompt(part))
+                    elif isinstance(part, ToolReturn):
+                        contents.append(_content_tool_return(part))
+                    elif isinstance(part, RetryPrompt):
+                        contents.append(_content_retry_prompt(part))
+                    else:
+                        assert_never(part)
+            elif isinstance(m, ModelMessage):
+                contents.append(_content_model_response(m))
+            else:
+                assert_never(m)
 
-    @staticmethod
-    def _message_to_gemini_content(m: Message) -> _GeminiContent | None:
-        if isinstance(m, SystemPrompt):
-            return None
-        elif isinstance(m, UserPrompt):
-            return _content_user_prompt(m)
-        elif isinstance(m, ToolReturn):
-            return _content_tool_return(m)
-        elif isinstance(m, RetryPrompt):
-            return _content_retry_prompt(m)
-        elif isinstance(m, ModelResponse):
-            return _content_model_response(m)
-        else:
-            assert_never(m)
+        return sys_prompt_parts, contents
 
 
 @dataclass
@@ -353,7 +349,7 @@ class GeminiStreamStructuredResponse(StreamStructuredResponse):
         chunk = await self._stream.__anext__()
         self._content.extend(chunk)
 
-    def get(self, *, final: bool = False) -> ModelResponse:
+    def get(self, *, final: bool = False) -> ModelMessage:
         """Get the `ModelResponse` at this point.
 
         NOTE: It's not clear how the stream of responses should be combined because Gemini seems to always
@@ -441,7 +437,7 @@ def _content_retry_prompt(m: RetryPrompt) -> _GeminiContent:
     return _GeminiContent(role='user', parts=[part])
 
 
-def _content_model_response(m: ModelResponse) -> _GeminiContent:
+def _content_model_response(m: ModelMessage) -> _GeminiContent:
     parts: list[_GeminiPartUnion] = []
     for item in m.parts:
         if isinstance(item, ToolCallPart):
@@ -466,8 +462,8 @@ def _function_call_part_from_call(tool: ToolCallPart) -> _GeminiFunctionCallPart
     return _GeminiFunctionCallPart(function_call=_GeminiFunctionCall(name=tool.tool_name, args=tool.args.args_dict))
 
 
-def _process_response_from_parts(parts: Sequence[_GeminiPartUnion], timestamp: datetime | None = None) -> ModelResponse:
-    items: list[ModelResponsePart] = []
+def _process_response_from_parts(parts: Sequence[_GeminiPartUnion], timestamp: datetime | None = None) -> ModelMessage:
+    items: list[ModelMessagePart] = []
     for part in parts:
         if 'text' in part:
             items.append(TextPart(part['text']))
@@ -477,7 +473,7 @@ def _process_response_from_parts(parts: Sequence[_GeminiPartUnion], timestamp: d
             raise exceptions.UnexpectedModelBehavior(
                 f'Unsupported response from Gemini, expected all parts to be function calls or text, got: {part!r}'
             )
-    return ModelResponse(items, timestamp=timestamp or _utils.now_utc())
+    return ModelMessage(items, timestamp=timestamp or _utils.now_utc())
 
 
 class _GeminiFunctionCall(TypedDict):

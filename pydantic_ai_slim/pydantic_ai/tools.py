@@ -239,7 +239,7 @@ class Tool(Generic[AgentDeps]):
 
     async def run(
         self, deps: AgentDeps, message: _messages.ToolCallPart, conv_messages: list[_messages.Message]
-    ) -> _messages.Message:
+    ) -> _messages.UserMessagePart:
         """Run the tool function asynchronously."""
         try:
             if isinstance(message.args, _messages.ArgsJson):

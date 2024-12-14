@@ -31,7 +31,7 @@ from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.messages import (
     Message,
     MessagesTypeAdapter,
-    ModelResponse,
+    ModelMessage,
     TextPart,
     UserPrompt,
 )
@@ -92,7 +92,7 @@ def to_chat_message(m: Message) -> ChatMessage:
             'timestamp': m.timestamp.isoformat(),
             'content': m.content,
         }
-    elif isinstance(m, ModelResponse):
+    elif isinstance(m, ModelMessage):
         first_part = m.parts[0]
         if isinstance(first_part, TextPart):
             return {
@@ -127,7 +127,7 @@ async def post_chat(
             async for text in result.stream(debounce_by=0.01):
                 # text here is a `str` and the frontend wants
                 # JSON encoded ModelResponse, so we create one
-                m = ModelResponse.from_text(content=text, timestamp=result.timestamp())
+                m = ModelMessage.from_text(content=text, timestamp=result.timestamp())
                 yield json.dumps(to_chat_message(m)).encode('utf-8') + b'\n'
 
         # add new messages (e.g. the user prompt and the agent response in this case) to the database

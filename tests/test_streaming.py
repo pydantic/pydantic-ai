@@ -12,10 +12,11 @@ from pydantic_ai.messages import (
     ArgsDict,
     ArgsJson,
     Message,
-    ModelResponse,
+    ModelMessage,
     RetryPrompt,
     ToolCallPart,
     ToolReturn,
+    UserMessage,
     UserPrompt,
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
@@ -43,12 +44,12 @@ async def test_streamed_text_response():
         assert not result.is_complete
         assert result.all_messages() == snapshot(
             [
-                UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
-                ModelResponse(
+                UserMessage(parts=[UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
+                ModelMessage(
                     parts=[ToolCallPart(tool_name='ret_a', args=ArgsDict(args_dict={'x': 'a'}))],
                     timestamp=IsNow(tz=timezone.utc),
                 ),
-                ToolReturn(tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc)),
+                UserMessage(parts=[ToolReturn(tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc))]),
             ]
         )
         response = await result.get_data()
@@ -58,13 +59,13 @@ async def test_streamed_text_response():
         assert result.timestamp() == IsNow(tz=timezone.utc)
         assert result.all_messages() == snapshot(
             [
-                UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
-                ModelResponse(
+                UserMessage(parts=[UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
+                ModelMessage(
                     parts=[ToolCallPart(tool_name='ret_a', args=ArgsDict(args_dict={'x': 'a'}))],
                     timestamp=IsNow(tz=timezone.utc),
                 ),
-                ToolReturn(tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc)),
-                ModelResponse.from_text(content='{"ret_a":"a-apple"}', timestamp=IsNow(tz=timezone.utc)),
+                UserMessage(parts=[ToolReturn(tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc))]),
+                ModelMessage.from_text(content='{"ret_a":"a-apple"}', timestamp=IsNow(tz=timezone.utc)),
             ]
         )
 
@@ -173,18 +174,20 @@ async def test_call_tool():
             assert len(agent_info.function_tools) == 1
             name = agent_info.function_tools[0].name
             first = messages[0]
-            assert isinstance(first, UserPrompt)
-            json_string = json.dumps({'x': first.content})
+            assert isinstance(first, UserMessage)
+            assert isinstance(first.parts[0], UserPrompt)
+            json_string = json.dumps({'x': first.parts[0].content})
             yield {0: DeltaToolCall(name=name)}
             yield {0: DeltaToolCall(json_args=json_string[:3])}
             yield {0: DeltaToolCall(json_args=json_string[3:])}
         else:
             last = messages[-1]
-            assert isinstance(last, ToolReturn)
+            assert isinstance(last, UserMessage)
+            assert isinstance(last.parts[0], ToolReturn)
             assert agent_info.result_tools is not None
             assert len(agent_info.result_tools) == 1
             name = agent_info.result_tools[0].name
-            json_data = json.dumps({'response': [last.content, 2]})
+            json_data = json.dumps({'response': [last.parts[0].content, 2]})
             yield {0: DeltaToolCall(name=name)}
             yield {0: DeltaToolCall(json_args=json_data[:5])}
             yield {0: DeltaToolCall(json_args=json_data[5:])}
@@ -199,34 +202,46 @@ async def test_call_tool():
     async with agent.run_stream('hello') as result:
         assert result.all_messages() == snapshot(
             [
-                UserPrompt(content='hello', timestamp=IsNow(tz=timezone.utc)),
-                ModelResponse(
+                UserMessage(parts=[UserPrompt(content='hello', timestamp=IsNow(tz=timezone.utc))]),
+                ModelMessage(
                     parts=[ToolCallPart(tool_name='ret_a', args=ArgsJson(args_json='{"x": "hello"}'))],
                     timestamp=IsNow(tz=timezone.utc),
                 ),
-                ToolReturn(tool_name='ret_a', content='hello world', timestamp=IsNow(tz=timezone.utc)),
-                ToolReturn(
-                    tool_name='final_result',
-                    content='Final result processed.',
-                    timestamp=IsNow(tz=timezone.utc),
+                UserMessage(
+                    parts=[ToolReturn(tool_name='ret_a', content='hello world', timestamp=IsNow(tz=timezone.utc))]
+                ),
+                UserMessage(
+                    parts=[
+                        ToolReturn(
+                            tool_name='final_result',
+                            content='Final result processed.',
+                            timestamp=IsNow(tz=timezone.utc),
+                        )
+                    ]
                 ),
             ]
         )
         assert await result.get_data() == snapshot(('hello world', 2))
         assert result.all_messages() == snapshot(
             [
-                UserPrompt(content='hello', timestamp=IsNow(tz=timezone.utc)),
-                ModelResponse(
+                UserMessage(parts=[UserPrompt(content='hello', timestamp=IsNow(tz=timezone.utc))]),
+                ModelMessage(
                     parts=[ToolCallPart(tool_name='ret_a', args=ArgsJson(args_json='{"x": "hello"}'))],
                     timestamp=IsNow(tz=timezone.utc),
                 ),
-                ToolReturn(tool_name='ret_a', content='hello world', timestamp=IsNow(tz=timezone.utc)),
-                ToolReturn(
-                    tool_name='final_result',
-                    content='Final result processed.',
-                    timestamp=IsNow(tz=timezone.utc),
+                UserMessage(
+                    parts=[ToolReturn(tool_name='ret_a', content='hello world', timestamp=IsNow(tz=timezone.utc))]
                 ),
-                ModelResponse(
+                UserMessage(
+                    parts=[
+                        ToolReturn(
+                            tool_name='final_result',
+                            content='Final result processed.',
+                            timestamp=IsNow(tz=timezone.utc),
+                        )
+                    ]
+                ),
+                ModelMessage(
                     parts=[
                         ToolCallPart(
                             tool_name='final_result',
@@ -265,14 +280,18 @@ async def test_call_tool_wrong_name():
             pass
     assert agent.last_run_messages == snapshot(
         [
-            UserPrompt(content='hello', timestamp=IsNow(tz=timezone.utc)),
-            ModelResponse(
+            UserMessage(parts=[UserPrompt(content='hello', timestamp=IsNow(tz=timezone.utc))]),
+            ModelMessage(
                 parts=[ToolCallPart(tool_name='foobar', args=ArgsJson(args_json='{}'))],
                 timestamp=IsNow(tz=timezone.utc),
             ),
-            RetryPrompt(
-                content="Unknown tool name: 'foobar'. Available tools: ret_a, final_result",
-                timestamp=IsNow(tz=timezone.utc),
+            UserMessage(
+                parts=[
+                    RetryPrompt(
+                        content="Unknown tool name: 'foobar'. Available tools: ret_a, final_result",
+                        timestamp=IsNow(tz=timezone.utc),
+                    )
+                ]
             ),
         ]
     )

@@ -81,14 +81,14 @@ class Agent(Generic[AgentDeps, ResultData]):
     end_strategy: EndStrategy
     """Strategy for handling tool calls when a final result is found."""
 
-    model_settings: ModelSettings | None = None
+    model_settings: ModelSettings | None
     """Optional model request settings to use for this agents's runs, by default.
 
     Note, if `model_settings` is provided by `run`, `run_sync`, or `run_stream`, those settings will
     be merged with this value, with the runtime argument taking priority.
     """
 
-    last_run_messages: list[_messages.Message] | None = None
+    last_run_messages: list[_messages.Message] | None
     """The messages from the last run, useful when a run raised an exception.
 
     Note: these are not used by the agent, e.g. in future runs, they are just stored for developers' convenience.
@@ -161,6 +161,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         self.end_strategy = end_strategy
         self.name = name
         self.model_settings = model_settings
+        self.last_run_messages = None
         self._result_schema = _result.ResultSchema[result_type].build(
             result_type, result_tool_name, result_tool_description
         )
@@ -220,6 +221,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         model_used, mode_selection = await self._get_model(model)
 
         deps = self._get_deps(deps)
+        new_message_index = len(message_history) if message_history else 0
 
         with _logfire.span(
             '{agent_name} run {prompt=}',
@@ -229,8 +231,7 @@ class Agent(Generic[AgentDeps, ResultData]):
             model_name=model_used.name(),
             agent_name=self.name or 'agent',
         ) as run_span:
-            new_message_index, messages = await self._prepare_messages(deps, user_prompt, message_history)
-            self.last_run_messages = messages
+            self.last_run_messages = messages = await self._prepare_messages(deps, user_prompt, message_history)
 
             for tool in self._function_tools.values():
                 tool.current_retry = 0
@@ -249,16 +250,16 @@ class Agent(Generic[AgentDeps, ResultData]):
                     model_response, request_cost = await agent_model.request(messages, model_settings)
                     model_req_span.set_attribute('response', model_response)
                     model_req_span.set_attribute('cost', request_cost)
-                    model_req_span.message = f'model request -> {model_response.message_kind}'
 
                 messages.append(model_response)
                 cost += request_cost
 
                 with _logfire.span('handle model response', run_step=run_step) as handle_span:
-                    final_result, response_messages = await self._handle_model_response(model_response, deps, messages)
+                    final_result, user_msg_parts = await self._handle_model_response(model_response, deps, messages)
 
-                    # Add all messages to the conversation
-                    messages.extend(response_messages)
+                    if user_msg_parts:
+                        # Add parts to the conversation as a new message
+                        messages.append(_messages.UserMessage(user_msg_parts))
 
                     # Check if we got a final result
                     if final_result is not None:
@@ -270,8 +271,8 @@ class Agent(Generic[AgentDeps, ResultData]):
                         return result.RunResult(messages, new_message_index, result_data, cost)
                     else:
                         # continue the conversation
-                        handle_span.set_attribute('tool_responses', response_messages)
-                        response_msgs = ' '.join(r.message_kind for r in response_messages)
+                        handle_span.set_attribute('tool_responses', user_msg_parts)
+                        response_msgs = ' '.join(r.kind for r in user_msg_parts)
                         handle_span.message = f'handle model response -> {response_msgs}'
 
     def run_sync(
@@ -368,6 +369,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         model_used, mode_selection = await self._get_model(model)
 
         deps = self._get_deps(deps)
+        new_message_index = len(message_history) if message_history else 0
 
         with _logfire.span(
             '{agent_name} run stream {prompt=}',
@@ -377,8 +379,7 @@ class Agent(Generic[AgentDeps, ResultData]):
             model_name=model_used.name(),
             agent_name=self.name or 'agent',
         ) as run_span:
-            new_message_index, messages = await self._prepare_messages(deps, user_prompt, message_history)
-            self.last_run_messages = messages
+            self.last_run_messages = messages = await self._prepare_messages(deps, user_prompt, message_history)
 
             for tool in self._function_tools.values():
                 tool.current_retry = 0
@@ -428,7 +429,8 @@ class Agent(Generic[AgentDeps, ResultData]):
                             else:
                                 # continue the conversation
                                 handle_span.set_attribute('tool_responses', response_messages)
-                                response_msgs = ' '.join(r.message_kind for r in response_messages)
+                                # TODO this is wrong, it should be a list of parts
+                                response_msgs = ' '.join(r.role for r in response_messages)
                                 handle_span.message = f'handle model response -> {response_msgs}'
                                 # the model_response should have been fully streamed by now, we can add it's cost
                                 cost += model_response.cost()
@@ -794,23 +796,21 @@ class Agent(Generic[AgentDeps, ResultData]):
 
     async def _prepare_messages(
         self, deps: AgentDeps, user_prompt: str, message_history: list[_messages.Message] | None
-    ) -> tuple[int, list[_messages.Message]]:
-        # if message history includes system prompts, we don't want to regenerate them
-        if message_history and any(isinstance(m, _messages.SystemPrompt) for m in message_history):
+    ) -> list[_messages.Message]:
+        if message_history:
             # shallow copy messages
             messages = message_history.copy()
+            messages.append(_messages.UserMessage([_messages.UserPrompt(user_prompt)]))
         else:
-            messages = await self._init_messages(deps)
-            if message_history:
-                messages += message_history
+            parts = await self._sys_parts(deps)
+            parts.append(_messages.UserPrompt(user_prompt))
+            messages: list[_messages.Message] = [_messages.UserMessage(parts)]
 
-        new_message_index = len(messages)
-        messages.append(_messages.UserPrompt(user_prompt))
-        return new_message_index, messages
+        return messages
 
     async def _handle_model_response(
-        self, model_response: _messages.ModelResponse, deps: AgentDeps, conv_messages: list[_messages.Message]
-    ) -> tuple[_MarkFinalResult[ResultData] | None, list[_messages.Message]]:
+        self, model_response: _messages.ModelMessage, deps: AgentDeps, conv_messages: list[_messages.Message]
+    ) -> tuple[_MarkFinalResult[ResultData] | None, list[_messages.UserMessagePart]]:
         """Process a non-streamed response from the model.
 
         Returns:
@@ -834,7 +834,7 @@ class Agent(Generic[AgentDeps, ResultData]):
 
     async def _handle_text_response(
         self, text: str, deps: AgentDeps, conv_messages: list[_messages.Message]
-    ) -> tuple[_MarkFinalResult[ResultData] | None, list[_messages.Message]]:
+    ) -> tuple[_MarkFinalResult[ResultData] | None, list[_messages.UserMessagePart]]:
         """Handle a plain text response from the model for non-streaming responses."""
         if self._allow_text_result:
             result_data_input = cast(ResultData, text)
@@ -854,7 +854,7 @@ class Agent(Generic[AgentDeps, ResultData]):
 
     async def _handle_structured_response(
         self, tool_calls: list[_messages.ToolCallPart], deps: AgentDeps, conv_messages: list[_messages.Message]
-    ) -> tuple[_MarkFinalResult[ResultData] | None, list[_messages.Message]]:
+    ) -> tuple[_MarkFinalResult[ResultData] | None, list[_messages.UserMessagePart]]:
         """Handle a structured response containing tool calls from the model for non-streaming responses."""
         assert tool_calls, 'Expected at least one tool call'
 
@@ -863,20 +863,20 @@ class Agent(Generic[AgentDeps, ResultData]):
 
         # Then process regular tools based on end strategy
         if self.end_strategy == 'early' and final_result:
-            tool_messages = self._mark_skipped_function_tools(tool_calls)
+            tool_parts = self._mark_skipped_function_tools(tool_calls)
         else:
-            tool_messages = await self._process_function_tools(tool_calls, deps, conv_messages)
+            tool_parts = await self._process_function_tools(tool_calls, deps, conv_messages)
 
-        return final_result, [*final_messages, *tool_messages]
+        return final_result, [*final_messages, *tool_parts]
 
     async def _process_final_tool_calls(
         self, tool_calls: list[_messages.ToolCallPart], deps: AgentDeps, conv_messages: list[_messages.Message]
-    ) -> tuple[_MarkFinalResult[ResultData] | None, list[_messages.Message]]:
+    ) -> tuple[_MarkFinalResult[ResultData] | None, list[_messages.UserMessagePart]]:
         """Process any final result tool calls and return the first valid result."""
         if not self._result_schema:
             return None, []
 
-        messages: list[_messages.Message] = []
+        parts: list[_messages.UserMessagePart] = []
         final_result = None
 
         for call in tool_calls:
@@ -891,10 +891,10 @@ class Agent(Generic[AgentDeps, ResultData]):
                     result_data = await self._validate_result(result_data, deps, call, conv_messages)
                 except _result.ToolRetryError as e:
                     self._incr_result_retry()
-                    messages.append(e.tool_retry)
+                    parts.append(e.tool_retry)
                 else:
                     final_result = _MarkFinalResult(result_data)
-                    messages.append(
+                    parts.append(
                         _messages.ToolReturn(
                             tool_name=call.tool_name,
                             content='Final result processed.',
@@ -903,7 +903,7 @@ class Agent(Generic[AgentDeps, ResultData]):
                     )
             else:
                 # We already have a final result - mark this one as unused
-                messages.append(
+                parts.append(
                     _messages.ToolReturn(
                         tool_name=call.tool_name,
                         content='Result tool not used - a final result was already processed.',
@@ -911,39 +911,39 @@ class Agent(Generic[AgentDeps, ResultData]):
                     )
                 )
 
-        return final_result, messages
+        return final_result, parts
 
     async def _process_function_tools(
         self, tool_calls: list[_messages.ToolCallPart], deps: AgentDeps, conv_messages: list[_messages.Message]
-    ) -> list[_messages.Message]:
+    ) -> list[_messages.UserMessagePart]:
         """Process function (non-final) tool calls in parallel."""
-        messages: list[_messages.Message] = []
-        tasks: list[asyncio.Task[_messages.Message]] = []
+        parts: list[_messages.UserMessagePart] = []
+        tasks: list[asyncio.Task[_messages.UserMessagePart]] = []
 
         for call in tool_calls:
             if tool := self._function_tools.get(call.tool_name):
                 tasks.append(asyncio.create_task(tool.run(deps, call, conv_messages), name=call.tool_name))
             elif self._result_schema is None or call.tool_name not in self._result_schema.tools:
-                messages.append(self._unknown_tool(call.tool_name))
+                parts.append(self._unknown_tool(call.tool_name))
 
         # Run all tool tasks in parallel
         if tasks:
             with _logfire.span('running {tools=}', tools=[t.get_name() for t in tasks]):
-                task_results: Sequence[_messages.Message] = await asyncio.gather(*tasks)
-                messages.extend(task_results)
+                task_results: Sequence[_messages.UserMessagePart] = await asyncio.gather(*tasks)
+                parts.extend(task_results)
 
-        return messages
+        return parts
 
     def _mark_skipped_function_tools(
         self,
         tool_calls: list[_messages.ToolCallPart],
-    ) -> list[_messages.Message]:
+    ) -> list[_messages.UserMessagePart]:
         """Mark function tools as skipped when a final result was found with 'early' end strategy."""
-        messages: list[_messages.Message] = []
+        parts: list[_messages.UserMessagePart] = []
 
         for call in tool_calls:
             if call.tool_name in self._function_tools:
-                messages.append(
+                parts.append(
                     _messages.ToolReturn(
                         tool_name=call.tool_name,
                         content='Tool not executed - a final result was already processed.',
@@ -951,9 +951,9 @@ class Agent(Generic[AgentDeps, ResultData]):
                     )
                 )
             elif self._result_schema is None or call.tool_name not in self._result_schema.tools:
-                messages.append(self._unknown_tool(call.tool_name))
+                parts.append(self._unknown_tool(call.tool_name))
 
-        return messages
+        return parts
 
     async def _handle_streamed_model_response(
         self, model_response: models.EitherStreamedResponse, deps: AgentDeps, conv_messages: list[_messages.Message]
@@ -976,7 +976,7 @@ class Agent(Generic[AgentDeps, ResultData]):
                 async for _ in model_response:
                     pass
 
-                return None, [response]
+                return None, [_messages.UserMessage([response])]
         else:
             assert isinstance(model_response, models.StreamStructuredResponse), f'Unexpected response: {model_response}'
             if self._result_schema is not None:
@@ -997,7 +997,7 @@ class Agent(Generic[AgentDeps, ResultData]):
                         content='Final result processed.',
                         tool_call_id=call.tool_call_id,
                     )
-                    return _MarkFinalResult(model_response), [tool_return]
+                    return _MarkFinalResult(model_response), [_messages.UserMessage([tool_return])]
 
             # the model is calling a tool function, consume the response to get the next message
             async for _ in model_response:
@@ -1008,18 +1008,20 @@ class Agent(Generic[AgentDeps, ResultData]):
             messages: list[_messages.Message] = [structured_msg]
 
             # we now run all tool functions in parallel
-            tasks: list[asyncio.Task[_messages.Message]] = []
+            tasks: list[asyncio.Task[_messages.UserMessagePart]] = []
+            parts: list[_messages.UserMessagePart] = []
             for item in structured_msg.parts:
                 if isinstance(item, _messages.ToolCallPart):
                     call = item
                     if tool := self._function_tools.get(call.tool_name):
                         tasks.append(asyncio.create_task(tool.run(deps, call, conv_messages), name=call.tool_name))
                     else:
-                        messages.append(self._unknown_tool(call.tool_name))
+                        parts.append(self._unknown_tool(call.tool_name))
 
             with _logfire.span('running {tools=}', tools=[t.get_name() for t in tasks]):
-                task_results: Sequence[_messages.Message] = await asyncio.gather(*tasks)
-                messages.extend(task_results)
+                task_results: Sequence[_messages.UserMessagePart] = await asyncio.gather(*tasks)
+                parts.extend(task_results)
+            messages.append(_messages.UserMessage(parts))
             return None, messages
 
     async def _validate_result(
@@ -1042,9 +1044,9 @@ class Agent(Generic[AgentDeps, ResultData]):
                 f'Exceeded maximum retries ({self._max_result_retries}) for result validation'
             )
 
-    async def _init_messages(self, deps: AgentDeps) -> list[_messages.Message]:
+    async def _sys_parts(self, deps: AgentDeps) -> list[_messages.UserMessagePart]:
         """Build the initial messages for the conversation."""
-        messages: list[_messages.Message] = [_messages.SystemPrompt(p) for p in self._system_prompts]
+        messages: list[_messages.UserMessagePart] = [_messages.SystemPrompt(p) for p in self._system_prompts]
         for sys_prompt_runner in self._system_prompt_functions:
             prompt = await sys_prompt_runner.run(deps)
             messages.append(_messages.SystemPrompt(prompt))

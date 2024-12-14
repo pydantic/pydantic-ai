@@ -11,13 +11,13 @@ Here's a minimal example:
 
 ```py {title="function_model_usage.py" call_name="test_my_agent" lint="not-imports"}
 from pydantic_ai import Agent
-from pydantic_ai.messages import Message, ModelResponse
+from pydantic_ai.messages import Message, ModelMessage
 from pydantic_ai.models.function import FunctionModel, AgentInfo
 
 my_agent = Agent('openai:gpt-4o')
 
 
-async def model_function(messages: list[Message], info: AgentInfo) -> ModelResponse:
+async def model_function(messages: list[Message], info: AgentInfo) -> ModelMessage:
     print(messages)
     """
     [
@@ -35,7 +35,7 @@ async def model_function(messages: list[Message], info: AgentInfo) -> ModelRespo
         function_tools=[], allow_text_result=True, result_tools=[], model_settings=None
     )
     """
-    return ModelResponse.from_text('hello world')
+    return ModelMessage.from_text('hello world')
 
 
 async def test_my_agent():

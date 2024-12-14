@@ -231,7 +231,7 @@ To demonstrate a tool's schema, here we use [`FunctionModel`][pydantic_ai.models
 
 ```python {title="tool_schema.py"}
 from pydantic_ai import Agent
-from pydantic_ai.messages import Message, ModelResponse
+from pydantic_ai.messages import Message, ModelMessage
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 agent = Agent()
@@ -249,10 +249,10 @@ def foobar(a: int, b: str, c: dict[str, list[float]]) -> str:
     return f'{a} {b} {c}'
 
 
-def print_schema(messages: list[Message], info: AgentInfo) -> ModelResponse:
+def print_schema(messages: list[Message], info: AgentInfo) -> ModelMessage:
     tool = info.function_tools[0]
     print(tool.description)
-    #> Get me foobar.
+    # > Get me foobar.
     print(tool.parameters_json_schema)
     """
     {
@@ -271,7 +271,7 @@ def print_schema(messages: list[Message], info: AgentInfo) -> ModelResponse:
         'additionalProperties': False,
     }
     """
-    return ModelResponse.from_text(content='foobar')
+    return ModelMessage.from_text(content='foobar')
 
 
 agent.run_sync('hello', model=FunctionModel(print_schema))

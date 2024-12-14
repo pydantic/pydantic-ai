@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Literal, Union
 import httpx
 
 from ..exceptions import UserError
-from ..messages import Message, ModelResponse
+from ..messages import Message, ModelMessage
 from ..settings import ModelSettings
 
 if TYPE_CHECKING:
@@ -120,9 +120,7 @@ class AgentModel(ABC):
     """Model configured for each step of an Agent run."""
 
     @abstractmethod
-    async def request(
-        self, messages: list[Message], model_settings: ModelSettings | None
-    ) -> tuple[ModelResponse, Cost]:
+    async def request(self, messages: list[Message], model_settings: ModelSettings | None) -> tuple[ModelMessage, Cost]:
         """Make a request to the model."""
         raise NotImplementedError()
 
@@ -194,7 +192,7 @@ class StreamStructuredResponse(ABC):
         raise NotImplementedError()
 
     @abstractmethod
-    def get(self, *, final: bool = False) -> ModelResponse:
+    def get(self, *, final: bool = False) -> ModelMessage:
         """Get the `ModelResponse` at this point.
 
         The `ModelResponse` may or may not be complete, depending on whether the stream is finished.
