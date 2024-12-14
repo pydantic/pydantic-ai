@@ -76,14 +76,14 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary], set_event_lo
                 'message': 'my_agent run prompt=Hello',
                 'children': [
                     {'id': 1, 'message': 'preparing model and tools run_step=1'},
-                    {'id': 2, 'message': 'model request -> model-response'},
+                    {'id': 2, 'message': 'model request'},
                     {
                         'id': 3,
                         'message': 'handle model response -> tool-return',
                         'children': [{'id': 4, 'message': "running tools=['my_ret']"}],
                     },
                     {'id': 5, 'message': 'preparing model and tools run_step=2'},
-                    {'id': 6, 'message': 'model request -> model-response'},
+                    {'id': 6, 'message': 'model request'},
                     {'id': 7, 'message': 'handle model response -> final result'},
                 ],
             }
@@ -121,10 +121,14 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary], set_event_lo
             'all_messages': IsJson(
                 [
                     {
-                        'content': 'Hello',
-                        'timestamp': IsStr(regex=r'\d{4}-\d{2}-.+'),
+                        'parts': [
+                            {
+                                'content': 'Hello',
+                                'timestamp': IsStr(regex=r'\d{4}-\d{2}-.+'),
+                                'kind': 'user-prompt',
+                            },
+                        ],
                         'role': 'user',
-                        'message_kind': 'user-prompt',
                     },
                     {
                         'parts': [
@@ -132,26 +136,28 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary], set_event_lo
                                 'tool_name': 'my_ret',
                                 'args': {'args_dict': {'x': 0}},
                                 'tool_call_id': None,
-                                'part_kind': 'tool-call',
+                                'kind': 'tool-call',
                             }
                         ],
                         'timestamp': IsStr(regex=r'\d{4}-\d{2}-.+'),
                         'role': 'model',
-                        'message_kind': 'model-response',
                     },
                     {
-                        'tool_name': 'my_ret',
-                        'content': '1',
-                        'tool_call_id': None,
-                        'timestamp': IsStr(regex=r'\d{4}-\d{2}-.+'),
+                        'parts': [
+                            {
+                                'tool_name': 'my_ret',
+                                'content': '1',
+                                'tool_call_id': None,
+                                'timestamp': IsStr(regex=r'\d{4}-\d{2}-.+'),
+                                'kind': 'tool-return',
+                            },
+                        ],
                         'role': 'user',
-                        'message_kind': 'tool-return',
                     },
                     {
-                        'parts': [{'content': '{"my_ret":"1"}', 'part_kind': 'text'}],
+                        'parts': [{'content': '{"my_ret":"1"}', 'kind': 'text'}],
                         'timestamp': IsStr(regex=r'\d{4}-\d{2}-.+'),
                         'role': 'model',
-                        'message_kind': 'model-response',
                     },
                 ]
             ),
@@ -177,13 +183,23 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary], set_event_lo
                             'prefixItems': [
                                 {
                                     'type': 'object',
-                                    'title': 'UserPrompt',
+                                    'title': 'UserMessage',
                                     'x-python-datatype': 'dataclass',
-                                    'properties': {'timestamp': {'type': 'string', 'format': 'date-time'}},
+                                    'properties': {
+                                        'parts': {
+                                            'type': 'array',
+                                            'items': {
+                                                'type': 'object',
+                                                'title': 'UserPrompt',
+                                                'x-python-datatype': 'dataclass',
+                                                'properties': {'timestamp': {'type': 'string', 'format': 'date-time'}},
+                                            },
+                                        }
+                                    },
                                 },
                                 {
                                     'type': 'object',
-                                    'title': 'ModelResponse',
+                                    'title': 'ModelMessage',
                                     'x-python-datatype': 'dataclass',
                                     'properties': {
                                         'parts': {
@@ -206,13 +222,23 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary], set_event_lo
                                 },
                                 {
                                     'type': 'object',
-                                    'title': 'ToolReturn',
+                                    'title': 'UserMessage',
                                     'x-python-datatype': 'dataclass',
-                                    'properties': {'timestamp': {'type': 'string', 'format': 'date-time'}},
+                                    'properties': {
+                                        'parts': {
+                                            'type': 'array',
+                                            'items': {
+                                                'type': 'object',
+                                                'title': 'ToolReturn',
+                                                'x-python-datatype': 'dataclass',
+                                                'properties': {'timestamp': {'type': 'string', 'format': 'date-time'}},
+                                            },
+                                        }
+                                    },
                                 },
                                 {
                                     'type': 'object',
-                                    'title': 'ModelResponse',
+                                    'title': 'ModelMessage',
                                     'x-python-datatype': 'dataclass',
                                     'properties': {
                                         'parts': {
