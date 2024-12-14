@@ -60,6 +60,12 @@ def ollama(http_client: httpx.AsyncClient, _tmp_path: Path) -> Model:
     return OllamaModel('qwen2:0.5b', http_client=http_client)
 
 
+def mistral(http_client: httpx.AsyncClient, _tmp_path: Path) -> Model:
+    from pydantic_ai.models.mistral import MistralModel
+
+    return MistralModel('mistral-small-latest', http_client=http_client)
+
+
 params = [
     pytest.param(openai, id='openai'),
     pytest.param(gemini, id='gemini'),
@@ -67,6 +73,7 @@ params = [
     pytest.param(groq, id='groq'),
     pytest.param(anthropic, id='anthropic'),
     pytest.param(ollama, id='ollama'),
+    pytest.param(mistral, id='mistral'),
 ]
 GetModel = Callable[[httpx.AsyncClient, Path], Model]
 

@@ -97,6 +97,7 @@ jobs:
           --extra vertexai
           --extra groq
           --extra anthropic
+          --extra mistral
           pytest tests/test_live.py -v
           --durations=100
         env:
@@ -106,6 +107,7 @@ jobs:
           GOOGLE_SERVICE_ACCOUNT_CONTENT: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_CONTENT }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
 
   test:
     name: test on ${{ matrix.python-version }}
