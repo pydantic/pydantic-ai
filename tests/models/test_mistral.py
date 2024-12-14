@@ -1220,6 +1220,7 @@ async def test_stream_tool_call_with_return_type(allow_model_requests: None):
         v = [c async for c in result.stream(debounce_by=None)]
         assert v == snapshot([{'won': True}, {'won': True}])
         assert result.is_complete
+        assert result.timestamp() == IsNow(tz=timezone.utc)
         assert result.cost().request_tokens == 4
         assert result.cost().response_tokens == 4
         assert result.cost().total_tokens == 4
@@ -1314,6 +1315,7 @@ async def test_stream_tool_call(allow_model_requests: None):
         v = [c async for c in result.stream(debounce_by=None)]
         assert v == snapshot(['final ', 'final response', 'final response'])
         assert result.is_complete
+        assert result.timestamp() == IsNow(tz=timezone.utc)
         assert result.cost().request_tokens == 6
         assert result.cost().response_tokens == 6
         assert result.cost().total_tokens == 6

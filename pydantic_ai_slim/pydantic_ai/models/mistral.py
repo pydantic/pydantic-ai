@@ -296,8 +296,11 @@ class MistralAgentModel(AgentModel):
                 for chunk in choice.message.content:
                     if isinstance(chunk, MistralTextChunk):
                         parts.append(TextPart(chunk.text))
-                    # Note: the current implementation ignores ImageURLChunk and ReferenceChunk
-                    # maybe it should raise an error if these are encountered?
+                    else:
+                        raise Exception(
+                            f'Implementation for ImageURLChunk and ReferenceChunk is not available for the moment: {type(chunk)}'
+                        )
+
         if isinstance(choice.message.tool_calls, list):
             for c in choice.message.tool_calls:
                 if isinstance(c.function.arguments, str):
@@ -430,6 +433,10 @@ class MistralStreamTextResponse(StreamTextResponse):
             self._buffer.append(choice.delta.content)
         elif isinstance(choice.delta.content, MistralTextChunk):
             self._buffer.append(choice.delta.content.text)
+        else:
+            raise Exception(
+                f'Implementation for ImageURLChunk and ReferenceChunk is not available for the moment: {type(choice.delta.content)}'
+            )
 
     def get(self, *, final: bool = False) -> Iterable[str]:
         yield from self._buffer
