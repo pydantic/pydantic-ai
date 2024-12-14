@@ -38,6 +38,7 @@ class UserPrompt:
 
     content: str
     """The content of the prompt."""
+
     timestamp: datetime = field(default_factory=_now_utc)
     """The timestamp of the prompt."""
 
@@ -57,10 +58,13 @@ class ToolReturn:
 
     tool_name: str
     """The name of the "tool" was called."""
+
     content: Any
     """The return value."""
+
     tool_call_id: str | None = None
     """Optional tool call identifier, this is used by some models including OpenAI."""
+
     timestamp: datetime = field(default_factory=_now_utc)
     """The timestamp, when the tool returned."""
 
@@ -109,10 +113,13 @@ class RetryPrompt:
     If the retry was triggered by a [`ValidationError`][pydantic_core.ValidationError], this will be a list of
     error details.
     """
+
     tool_name: str | None = None
     """The name of the tool that was called, if any."""
+
     tool_call_id: str | None = None
     """Optional tool call identifier, this is used by some models including OpenAI."""
+
     timestamp: datetime = field(default_factory=_now_utc)
     """The timestamp, when the retry was triggered."""
 
@@ -164,11 +171,13 @@ class ToolCallPart:
 
     tool_name: str
     """The name of the tool to call."""
+
     args: ArgsJson | ArgsDict
     """The arguments to pass to the tool.
 
     Either as JSON or a Python dictionary depending on how data was returned.
     """
+
     tool_call_id: str | None = None
     """Optional tool call identifier, this is used by some models including OpenAI."""
 
