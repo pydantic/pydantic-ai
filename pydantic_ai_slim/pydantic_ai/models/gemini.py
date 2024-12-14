@@ -350,7 +350,7 @@ class GeminiStreamStructuredResponse(StreamStructuredResponse):
         self._content.extend(chunk)
 
     def get(self, *, final: bool = False) -> ModelMessage:
-        """Get the `ModelResponse` at this point.
+        """Get the `ModelMessage` at this point.
 
         NOTE: It's not clear how the stream of responses should be combined because Gemini seems to always
         reply with a single response, when returning a structured data.
