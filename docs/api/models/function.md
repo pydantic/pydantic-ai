@@ -21,11 +21,15 @@ async def model_function(messages: list[Message], info: AgentInfo) -> ModelMessa
     print(messages)
     """
     [
-        UserPrompt(
-            content='Testing my agent...',
-            timestamp=datetime.datetime(...),
+        UserMessage(
+            parts=[
+                UserPrompt(
+                    content='Testing my agent...',
+                    timestamp=datetime.datetime(...),
+                    kind='user-prompt',
+                )
+            ],
             role='user',
-            message_kind='user-prompt',
         )
     ]
     """

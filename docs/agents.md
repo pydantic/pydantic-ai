@@ -348,45 +348,51 @@ except UnexpectedModelBehavior as e:
     """
     messages:
     [
-        UserPrompt(
-            content='Please get me the volume of a box with size 6.',
-            timestamp=datetime.datetime(...),
+        UserMessage(
+            parts=[
+                UserPrompt(
+                    content='Please get me the volume of a box with size 6.',
+                    timestamp=datetime.datetime(...),
+                    kind='user-prompt',
+                )
+            ],
             role='user',
-            message_kind='user-prompt',
         ),
-        ModelResponse(
+        ModelMessage(
             parts=[
                 ToolCallPart(
                     tool_name='calc_volume',
                     args=ArgsDict(args_dict={'size': 6}),
                     tool_call_id=None,
-                    part_kind='tool-call',
+                    kind='tool-call',
                 )
             ],
             timestamp=datetime.datetime(...),
             role='model',
-            message_kind='model-response',
         ),
-        RetryPrompt(
-            content='Please try again.',
-            tool_name='calc_volume',
-            tool_call_id=None,
-            timestamp=datetime.datetime(...),
+        UserMessage(
+            parts=[
+                RetryPrompt(
+                    content='Please try again.',
+                    tool_name='calc_volume',
+                    tool_call_id=None,
+                    timestamp=datetime.datetime(...),
+                    kind='retry-prompt',
+                )
+            ],
             role='user',
-            message_kind='retry-prompt',
         ),
-        ModelResponse(
+        ModelMessage(
             parts=[
                 ToolCallPart(
                     tool_name='calc_volume',
                     args=ArgsDict(args_dict={'size': 6}),
                     tool_call_id=None,
-                    part_kind='tool-call',
+                    kind='tool-call',
                 )
             ],
             timestamp=datetime.datetime(...),
             role='model',
-            message_kind='model-response',
         ),
     ]
     """

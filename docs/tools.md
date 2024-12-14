@@ -68,69 +68,77 @@ from dice_game import dice_result
 print(dice_result.all_messages())
 """
 [
-    SystemPrompt(
-        content="You're a dice game, you should roll the die and see if the number you get back matches the user's guess. If so, tell them they're a winner. Use the player's name in the response.",
+    UserMessage(
+        parts=[
+            SystemPrompt(
+                content="You're a dice game, you should roll the die and see if the number you get back matches the user's guess. If so, tell them they're a winner. Use the player's name in the response.",
+                kind='system-prompt',
+            ),
+            UserPrompt(
+                content='My guess is 4',
+                timestamp=datetime.datetime(...),
+                kind='user-prompt',
+            ),
+        ],
         role='user',
-        message_kind='system-prompt',
     ),
-    UserPrompt(
-        content='My guess is 4',
-        timestamp=datetime.datetime(...),
-        role='user',
-        message_kind='user-prompt',
-    ),
-    ModelResponse(
+    ModelMessage(
         parts=[
             ToolCallPart(
                 tool_name='roll_die',
                 args=ArgsDict(args_dict={}),
                 tool_call_id=None,
-                part_kind='tool-call',
+                kind='tool-call',
             )
         ],
         timestamp=datetime.datetime(...),
         role='model',
-        message_kind='model-response',
     ),
-    ToolReturn(
-        tool_name='roll_die',
-        content='4',
-        tool_call_id=None,
-        timestamp=datetime.datetime(...),
+    UserMessage(
+        parts=[
+            ToolReturn(
+                tool_name='roll_die',
+                content='4',
+                tool_call_id=None,
+                timestamp=datetime.datetime(...),
+                kind='tool-return',
+            )
+        ],
         role='user',
-        message_kind='tool-return',
     ),
-    ModelResponse(
+    ModelMessage(
         parts=[
             ToolCallPart(
                 tool_name='get_player_name',
                 args=ArgsDict(args_dict={}),
                 tool_call_id=None,
-                part_kind='tool-call',
+                kind='tool-call',
             )
         ],
         timestamp=datetime.datetime(...),
         role='model',
-        message_kind='model-response',
     ),
-    ToolReturn(
-        tool_name='get_player_name',
-        content='Anne',
-        tool_call_id=None,
-        timestamp=datetime.datetime(...),
+    UserMessage(
+        parts=[
+            ToolReturn(
+                tool_name='get_player_name',
+                content='Anne',
+                tool_call_id=None,
+                timestamp=datetime.datetime(...),
+                kind='tool-return',
+            )
+        ],
         role='user',
-        message_kind='tool-return',
     ),
-    ModelResponse(
+    ModelMessage(
         parts=[
             TextPart(
                 content="Congratulations Anne, you guessed correctly! You're a winner!",
-                part_kind='text',
+                kind='text',
             )
         ],
         timestamp=datetime.datetime(...),
         role='model',
-        message_kind='model-response',
     ),
 ]
 """
@@ -252,7 +260,7 @@ def foobar(a: int, b: str, c: dict[str, list[float]]) -> str:
 def print_schema(messages: list[Message], info: AgentInfo) -> ModelMessage:
     tool = info.function_tools[0]
     print(tool.description)
-    # > Get me foobar.
+    #> Get me foobar.
     print(tool.parameters_json_schema)
     """
     {

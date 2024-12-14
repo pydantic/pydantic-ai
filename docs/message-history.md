@@ -40,25 +40,26 @@ print(result.data)
 print(result.all_messages())
 """
 [
-    SystemPrompt(
-        content='Be a helpful assistant.', role='user', message_kind='system-prompt'
-    ),
-    UserPrompt(
-        content='Tell me a joke.',
-        timestamp=datetime.datetime(...),
+    UserMessage(
+        parts=[
+            SystemPrompt(content='Be a helpful assistant.', kind='system-prompt'),
+            UserPrompt(
+                content='Tell me a joke.',
+                timestamp=datetime.datetime(...),
+                kind='user-prompt',
+            ),
+        ],
         role='user',
-        message_kind='user-prompt',
     ),
-    ModelResponse(
+    ModelMessage(
         parts=[
             TextPart(
                 content='Did you hear about the toothpaste scandal? They called it Colgate.',
-                part_kind='text',
+                kind='text',
             )
         ],
         timestamp=datetime.datetime(...),
         role='model',
-        message_kind='model-response',
     ),
 ]
 """
@@ -67,22 +68,26 @@ print(result.all_messages())
 print(result.new_messages())
 """
 [
-    UserPrompt(
-        content='Tell me a joke.',
-        timestamp=datetime.datetime(...),
+    UserMessage(
+        parts=[
+            SystemPrompt(content='Be a helpful assistant.', kind='system-prompt'),
+            UserPrompt(
+                content='Tell me a joke.',
+                timestamp=datetime.datetime(...),
+                kind='user-prompt',
+            ),
+        ],
         role='user',
-        message_kind='user-prompt',
     ),
-    ModelResponse(
+    ModelMessage(
         parts=[
             TextPart(
                 content='Did you hear about the toothpaste scandal? They called it Colgate.',
-                part_kind='text',
+                kind='text',
             )
         ],
         timestamp=datetime.datetime(...),
         role='model',
-        message_kind='model-response',
     ),
 ]
 """
@@ -103,17 +108,19 @@ async def main():
         print(result.all_messages())
         """
         [
-            SystemPrompt(
-                content='Be a helpful assistant.',
+            UserMessage(
+                parts=[
+                    SystemPrompt(
+                        content='Be a helpful assistant.', kind='system-prompt'
+                    ),
+                    UserPrompt(
+                        content='Tell me a joke.',
+                        timestamp=datetime.datetime(...),
+                        kind='user-prompt',
+                    ),
+                ],
                 role='user',
-                message_kind='system-prompt',
-            ),
-            UserPrompt(
-                content='Tell me a joke.',
-                timestamp=datetime.datetime(...),
-                role='user',
-                message_kind='user-prompt',
-            ),
+            )
         ]
         """
 
@@ -128,27 +135,28 @@ async def main():
         print(result.all_messages())
         """
         [
-            SystemPrompt(
-                content='Be a helpful assistant.',
+            UserMessage(
+                parts=[
+                    SystemPrompt(
+                        content='Be a helpful assistant.', kind='system-prompt'
+                    ),
+                    UserPrompt(
+                        content='Tell me a joke.',
+                        timestamp=datetime.datetime(...),
+                        kind='user-prompt',
+                    ),
+                ],
                 role='user',
-                message_kind='system-prompt',
             ),
-            UserPrompt(
-                content='Tell me a joke.',
-                timestamp=datetime.datetime(...),
-                role='user',
-                message_kind='user-prompt',
-            ),
-            ModelResponse(
+            ModelMessage(
                 parts=[
                     TextPart(
                         content='Did you hear about the toothpaste scandal? They called it Colgate.',
-                        part_kind='text',
+                        kind='text',
                     )
                 ],
                 timestamp=datetime.datetime(...),
                 role='model',
-                message_kind='model-response',
             ),
         ]
         """
@@ -190,42 +198,46 @@ print(result2.data)
 print(result2.all_messages())
 """
 [
-    SystemPrompt(
-        content='Be a helpful assistant.', role='user', message_kind='system-prompt'
-    ),
-    UserPrompt(
-        content='Tell me a joke.',
-        timestamp=datetime.datetime(...),
+    UserMessage(
+        parts=[
+            SystemPrompt(content='Be a helpful assistant.', kind='system-prompt'),
+            UserPrompt(
+                content='Tell me a joke.',
+                timestamp=datetime.datetime(...),
+                kind='user-prompt',
+            ),
+        ],
         role='user',
-        message_kind='user-prompt',
     ),
-    ModelResponse(
+    ModelMessage(
         parts=[
             TextPart(
                 content='Did you hear about the toothpaste scandal? They called it Colgate.',
-                part_kind='text',
+                kind='text',
             )
         ],
         timestamp=datetime.datetime(...),
         role='model',
-        message_kind='model-response',
     ),
-    UserPrompt(
-        content='Explain?',
-        timestamp=datetime.datetime(...),
+    UserMessage(
+        parts=[
+            UserPrompt(
+                content='Explain?',
+                timestamp=datetime.datetime(...),
+                kind='user-prompt',
+            )
+        ],
         role='user',
-        message_kind='user-prompt',
     ),
-    ModelResponse(
+    ModelMessage(
         parts=[
             TextPart(
                 content='This is an excellent joke invent by Samuel Colvin, it needs no explanation.',
-                part_kind='text',
+                kind='text',
             )
         ],
         timestamp=datetime.datetime(...),
         role='model',
-        message_kind='model-response',
     ),
 ]
 """
@@ -256,42 +268,46 @@ print(result2.data)
 print(result2.all_messages())
 """
 [
-    SystemPrompt(
-        content='Be a helpful assistant.', role='user', message_kind='system-prompt'
-    ),
-    UserPrompt(
-        content='Tell me a joke.',
-        timestamp=datetime.datetime(...),
+    UserMessage(
+        parts=[
+            SystemPrompt(content='Be a helpful assistant.', kind='system-prompt'),
+            UserPrompt(
+                content='Tell me a joke.',
+                timestamp=datetime.datetime(...),
+                kind='user-prompt',
+            ),
+        ],
         role='user',
-        message_kind='user-prompt',
     ),
-    ModelResponse(
+    ModelMessage(
         parts=[
             TextPart(
                 content='Did you hear about the toothpaste scandal? They called it Colgate.',
-                part_kind='text',
+                kind='text',
             )
         ],
         timestamp=datetime.datetime(...),
         role='model',
-        message_kind='model-response',
     ),
-    UserPrompt(
-        content='Explain?',
-        timestamp=datetime.datetime(...),
+    UserMessage(
+        parts=[
+            UserPrompt(
+                content='Explain?',
+                timestamp=datetime.datetime(...),
+                kind='user-prompt',
+            )
+        ],
         role='user',
-        message_kind='user-prompt',
     ),
-    ModelResponse(
+    ModelMessage(
         parts=[
             TextPart(
                 content='This is an excellent joke invent by Samuel Colvin, it needs no explanation.',
-                part_kind='text',
+                kind='text',
             )
         ],
         timestamp=datetime.datetime(...),
         role='model',
-        message_kind='model-response',
     ),
 ]
 """

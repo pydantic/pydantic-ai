@@ -105,6 +105,7 @@ from pydantic_ai.messages import (
     ToolCallPart,
     ToolReturn,
     UserPrompt,
+    UserMessage,
 )
 
 from fake_database import DatabaseConn
@@ -125,16 +126,16 @@ async def test_forecast():
     assert forecast == '{"weather_forecast":"Sunny with a chance of rain"}'  # (5)!
 
     assert weather_agent.last_run_messages == [  # (6)!
-        SystemPrompt(
-            content='Providing a weather forecast at the locations the user provides.',
-            role='user',
-            message_kind='system-prompt',
-        ),
-        UserPrompt(
-            content='What will the weather be like in London on 2024-11-28?',
-            timestamp=IsNow(tz=timezone.utc),  # (7)!
-            role='user',
-            message_kind='user-prompt',
+        UserMessage(
+            parts=[
+                SystemPrompt(
+                    content='Providing a weather forecast at the locations the user provides.',
+                ),
+                UserPrompt(
+                    content='What will the weather be like in London on 2024-11-28?',
+                    timestamp=IsNow(tz=timezone.utc),  # (7)!
+                ),
+            ]
         ),
         ModelMessage(
             parts=[
@@ -150,16 +151,16 @@ async def test_forecast():
                 )
             ],
             timestamp=IsNow(tz=timezone.utc),
-            role='model',
-            message_kind='model-response',
         ),
-        ToolReturn(
-            tool_name='weather_forecast',
-            content='Sunny with a chance of rain',
-            tool_call_id=None,
-            timestamp=IsNow(tz=timezone.utc),
-            role='user',
-            message_kind='tool-return',
+        UserMessage(
+            parts=[
+                ToolReturn(
+                    tool_name='weather_forecast',
+                    content='Sunny with a chance of rain',
+                    tool_call_id=None,
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
+            ],
         ),
         ModelMessage(
             parts=[
@@ -168,8 +169,6 @@ async def test_forecast():
                 )
             ],
             timestamp=IsNow(tz=timezone.utc),
-            role='model',
-            message_kind='model-response',
         ),
     ]
 ```
@@ -212,19 +211,19 @@ models.ALLOW_MODEL_REQUESTS = False
 
 
 def call_weather_forecast(  # (1)!
-        messages: list[Message], info: AgentInfo
+    messages: list[Message], info: AgentInfo
 ) -> ModelMessage:
-    if len(messages) == 2:
+    if len(messages) == 1:
         # first call, call the weather forecast tool
-        user_prompt = messages[1]
+        user_prompt = messages[0].parts[-1]
         m = re.search(r'\d{4}-\d{2}-\d{2}', user_prompt.content)
         assert m is not None
         args = {'location': 'London', 'forecast_date': m.group()}  # (2)!
         return ModelMessage(parts=[ToolCallPart.from_dict('weather_forecast', args)])
     else:
         # second call, return the forecast
-        msg = messages[-1]
-        assert msg.message_kind == 'tool-return'
+        msg = messages[-1].parts[0]
+        assert msg.kind == 'tool-return'
         return ModelMessage.from_text(f'The forecast is: {msg.content}')
 
 
