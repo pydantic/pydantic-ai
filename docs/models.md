@@ -458,11 +458,4 @@ This in turn will require you to implement the following other abstract base cla
 
 The best place to start is to review the source code for existing implementations, e.g. [`OpenAIModel`](https://github.com/pydantic/pydantic-ai/blob/main/pydantic_ai_slim/pydantic_ai/models/openai.py).
 
-## Rules for adding new models to PydanticAI
-
-To avoid an excessive workload for the maintainers of PydanticAI, we can't accept all model contributions going forward, so we're setting the following rules for when we'll accept new models and when we won't. This should hopefully reduce the chances of disappointment and wasted work.
-
-* to add a new model with an extra dependency, that dependency needs > 500k monthly downloads from PyPI, consistently over 3 months or more
-* to add a new model which uses another models logic internally and has no extra dependencies, that model's GitHub org needs > 20k stars in total
-* for any other model that's just a custom URL and API key, we're happy to add a one-paragraph description with a link and instructions on the URL to use
-* for any other model that requires more logic, we recommend you release your own Python package `pydantic-ai-xxx`, which depends on [`pydantic-ai-slim`](install.md#slim-install) and implements a model that inherits from our [`Model`][pydantic_ai.models.Model] ABC
+For details on when we'll accept contributions adding new models to PydanticAI, see the [contributing guidelines](contributing.md#new-model-rules).
