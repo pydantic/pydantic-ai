@@ -13,22 +13,25 @@ from collections.abc import AsyncIterator
 from concurrent.futures.thread import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from datetime import datetime
 from functools import partial
 from pathlib import Path
-from typing import Annotated, Any, Callable, TypeVar
+from typing import Annotated, Any, Callable, Literal, TypeVar
 
 import fastapi
 import logfire
 from fastapi import Depends, Request
 from fastapi.responses import HTMLResponse, Response, StreamingResponse
 from pydantic import Field, TypeAdapter
-from typing_extensions import LiteralString, ParamSpec
+from typing_extensions import LiteralString, ParamSpec, TypedDict
 
 from pydantic_ai import Agent
+from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.messages import (
     Message,
     MessagesTypeAdapter,
     ModelResponse,
+    TextPart,
     UserPrompt,
 )
 
@@ -68,9 +71,36 @@ async def get_db(request: Request) -> Database:
 async def get_chat(database: Database = Depends(get_db)) -> Response:
     msgs = await database.get_messages()
     return Response(
-        b'\n'.join(MessageTypeAdapter.dump_json(m) for m in msgs),
+        b'\n'.join(ChatMessageTypeAdapter.dump_json(to_chat_message(m)) for m in msgs),
         media_type='text/plain',
     )
+
+
+class ChatMessage(TypedDict):
+    role: Literal['user', 'model']
+    timestamp: datetime
+    content: str
+
+
+def to_chat_message(m: Message) -> ChatMessage:
+    if isinstance(m, UserPrompt):
+        return {
+            'role': 'user',
+            'timestamp': m.timestamp,
+            'content': m.content,
+        }
+    elif isinstance(m, ModelResponse):
+        first_part = m.parts[0]
+        if isinstance(first_part, TextPart):
+            return {
+                'role': 'model',
+                'timestamp': m.timestamp,
+                'content': first_part.content,
+            }
+    raise UnexpectedModelBehavior(f'Unexpected message type for chat app: {m}')
+
+
+ChatMessageTypeAdapter: TypeAdapter[ChatMessage] = TypeAdapter(ChatMessage)
 
 
 @app.post('/chat/')
@@ -80,7 +110,12 @@ async def post_chat(
     async def stream_messages():
         """Streams new line delimited JSON `Message`s to the client."""
         # stream the user prompt so that can be displayed straight away
-        yield MessageTypeAdapter.dump_json(UserPrompt(content=prompt)) + b'\n'
+        yield (
+            ChatMessageTypeAdapter.dump_json(
+                to_chat_message(UserPrompt(content=prompt))
+            )
+            + b'\n'
+        )
         # get the chat history so far to pass as context to the agent
         messages = await database.get_messages()
         # run the agent with the user prompt and the chat history
@@ -89,7 +124,7 @@ async def post_chat(
                 # text here is a `str` and the frontend wants
                 # JSON encoded ModelResponse, so we create one
                 m = ModelResponse.from_text(content=text, timestamp=result.timestamp())
-                yield MessageTypeAdapter.dump_json(m) + b'\n'
+                yield ChatMessageTypeAdapter.dump_json(to_chat_message(m)) + b'\n'
 
         # add new messages (e.g. the user prompt and the agent response in this case) to the database
         await database.add_messages(result.new_messages_json())

@@ -36,7 +36,7 @@ async function onFetchResponse(response: Response): Promise<void> {
 // The format of messages, this matches pydantic-ai both for brevity and understanding
 // in production, you might not want to keep this format all the way to the frontend
 interface Message {
-  message_kind: string
+  role: string
   content: string
   timestamp: string
 }
@@ -50,14 +50,14 @@ function addMessages(responseText: string) {
   const messages: Message[] = lines.filter(line => line.length > 1).map(j => JSON.parse(j))
   for (const message of messages) {
     // we use the timestamp as a crude element id
-    const {timestamp, message_kind, content} = message
+    const {timestamp, role, content} = message
     const id = `msg-${timestamp}`
     let msgDiv = document.getElementById(id)
     if (!msgDiv) {
       msgDiv = document.createElement('div')
       msgDiv.id = id
-      msgDiv.title = `${message_kind} at ${timestamp}`
-      msgDiv.classList.add('border-top', 'pt-2', message_kind)
+      msgDiv.title = `${role} at ${timestamp}`
+      msgDiv.classList.add('border-top', 'pt-2', role)
       convElement.appendChild(msgDiv)
     }
     msgDiv.innerHTML = marked.parse(content)
