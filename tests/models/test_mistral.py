@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+import json
 from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import timezone
@@ -8,13 +9,26 @@ from typing import Any, cast
 
 import pytest
 from inline_snapshot import snapshot
+from pydantic import BaseModel
 from typing_extensions import TypedDict
+
+from pydantic_ai import _utils
+from pydantic_ai.agent import Agent
+from pydantic_ai.exceptions import ModelRetry
+from pydantic_ai.messages import (
+    ArgsDict,
+    ArgsJson,
+    ModelResponse,
+    RetryPrompt,
+    SystemPrompt,
+    ToolCallPart,
+    ToolReturn,
+    UserPrompt,
+)
 
 from ..conftest import IsNow, try_import
 
 with try_import() as imports_successful:
-    import json
-
     from mistralai import (
         AssistantMessage as MistralAssistantMessage,
         ChatCompletionChoice as MistralChatCompletionChoice,
@@ -32,22 +46,7 @@ with try_import() as imports_successful:
         ToolCall as MistralToolCall,
     )
     from mistralai.types.basemodel import Unset as MistralUnset
-    from pydantic import BaseModel
 
-    from pydantic_ai import _utils
-    from pydantic_ai.agent import Agent
-    from pydantic_ai.exceptions import ModelRetry
-    from pydantic_ai.messages import (
-        ArgsDict,
-        ArgsJson,
-        ModelStructuredResponse,
-        ModelTextResponse,
-        RetryPrompt,
-        SystemPrompt,
-        ToolCall,
-        ToolReturn,
-        UserPrompt,
-    )
     from pydantic_ai.models.mistral import (
         MistralModel,
         _generate_simple_json_schema,  # type: ignore
@@ -128,7 +127,7 @@ def completion_message(
     return MistralChatCompletionResponse(
         id='123',
         choices=[MistralChatCompletionChoice(finish_reason='stop', index=0, message=message)],
-        created=1704067200,  # 2024-01-01
+        # created=1704067200,  # 2024-01-01
         model='mistral-large-latest',
         object='chat.completion',
         usage=usage or MistralUsageInfo(prompt_tokens=1, completion_tokens=1, total_tokens=1),
@@ -145,7 +144,7 @@ def chunk(
                 MistralCompletionResponseStreamChoice(index=index, delta=delta, finish_reason=finish_reason)
                 for index, delta in enumerate(delta)
             ],
-            created=1704067200,  # 2024-01-01
+            # created=1704067200,  # 2024-01-01
             model='gpt-4',
             object='chat.completion.chunk',
             usage=MistralUsageInfo(prompt_tokens=1, completion_tokens=1, total_tokens=1),
@@ -227,12 +226,9 @@ async def test_multiple_completions(allow_model_requests: None):
     assert result.all_messages() == snapshot(
         [
             UserPrompt(content='hello', timestamp=IsNow(tz=timezone.utc)),
-            ModelTextResponse(content='world', timestamp=IsNow(tz=timezone.utc)),
+            ModelResponse.from_text(content='world', timestamp=IsNow(tz=timezone.utc)),
             UserPrompt(content='hello again', timestamp=IsNow(tz=timezone.utc)),
-            ModelTextResponse(
-                content='hello again',
-                timestamp=IsNow(tz=timezone.utc),
-            ),
+            ModelResponse.from_text(content='hello again', timestamp=IsNow(tz=timezone.utc)),
         ]
     )
 
@@ -274,11 +270,11 @@ async def test_three_completions(allow_model_requests: None):
     assert result.all_messages() == snapshot(
         [
             UserPrompt(content='hello', timestamp=IsNow(tz=timezone.utc)),
-            ModelTextResponse(content='world', timestamp=IsNow(tz=timezone.utc)),
+            ModelResponse.from_text(content='world', timestamp=IsNow(tz=timezone.utc)),
             UserPrompt(content='hello again', timestamp=IsNow(tz=timezone.utc)),
-            ModelTextResponse(content='hello again', timestamp=IsNow(tz=timezone.utc)),
+            ModelResponse.from_text(content='hello again', timestamp=IsNow(tz=timezone.utc)),
             UserPrompt(content='final message', timestamp=IsNow(tz=timezone.utc)),
-            ModelTextResponse(content='final message', timestamp=IsNow(tz=timezone.utc)),
+            ModelResponse.from_text(content='final message', timestamp=IsNow(tz=timezone.utc)),
         ]
     )
 
@@ -381,9 +377,9 @@ async def test_request_model_structured_with_arguments_dict_response(allow_model
     assert result.all_messages() == snapshot(
         [
             UserPrompt(content='User prompt value', timestamp=IsNow(tz=timezone.utc)),
-            ModelStructuredResponse(
-                calls=[
-                    ToolCall(
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
                         tool_name='final_result',
                         args=ArgsDict(args_dict={'city': 'paris', 'country': 'france'}),
                         tool_call_id='123',
@@ -437,9 +433,9 @@ async def test_request_model_structured_with_arguments_str_response(allow_model_
     assert result.all_messages() == snapshot(
         [
             UserPrompt(content='User prompt value', timestamp=IsNow(tz=timezone.utc)),
-            ModelStructuredResponse(
-                calls=[
-                    ToolCall(
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
                         tool_name='final_result',
                         args=ArgsJson(args_json='{"city": "paris", "country": "france"}'),
                         tool_call_id='123',
@@ -485,9 +481,9 @@ async def test_request_result_type_with_arguments_str_response(allow_model_reque
         [
             SystemPrompt(content='System prompt value'),
             UserPrompt(content='User prompt value', timestamp=IsNow(tz=timezone.utc)),
-            ModelStructuredResponse(
-                calls=[
-                    ToolCall(
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
                         tool_name='final_result',
                         args=ArgsJson(args_json='{"response": 42}'),
                         tool_call_id='123',
@@ -990,9 +986,9 @@ async def test_request_tool_call(allow_model_requests: None):
         [
             SystemPrompt(content='this is the system prompt'),
             UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
-            ModelStructuredResponse(
-                calls=[
-                    ToolCall(
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
                         tool_name='get_location',
                         args=ArgsJson(args_json='{"loc_name": "San Fransisco"}'),
                         tool_call_id='1',
@@ -1006,9 +1002,9 @@ async def test_request_tool_call(allow_model_requests: None):
                 tool_call_id='1',
                 timestamp=IsNow(tz=timezone.utc),
             ),
-            ModelStructuredResponse(
-                calls=[
-                    ToolCall(
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
                         tool_name='get_location',
                         args=ArgsJson(args_json='{"loc_name": "London"}'),
                         tool_call_id='2',
@@ -1022,10 +1018,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 tool_call_id='2',
                 timestamp=IsNow(tz=timezone.utc),
             ),
-            ModelTextResponse(
-                content='final response',
-                timestamp=IsNow(tz=timezone.utc),
-            ),
+            ModelResponse.from_text(content='final response', timestamp=IsNow(tz=timezone.utc)),
         ]
     )
     assert result.cost().request_tokens == 6
@@ -1115,9 +1108,9 @@ async def test_request_tool_call_with_result_type(allow_model_requests: None):
         [
             SystemPrompt(content='this is the system prompt'),
             UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
-            ModelStructuredResponse(
-                calls=[
-                    ToolCall(
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
                         tool_name='get_location',
                         args=ArgsJson(args_json='{"loc_name": "San Fransisco"}'),
                         tool_call_id='1',
@@ -1131,9 +1124,9 @@ async def test_request_tool_call_with_result_type(allow_model_requests: None):
                 tool_call_id='1',
                 timestamp=IsNow(tz=timezone.utc),
             ),
-            ModelStructuredResponse(
-                calls=[
-                    ToolCall(
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
                         tool_name='get_location',
                         args=ArgsJson(args_json='{"loc_name": "London"}'),
                         tool_call_id='2',
@@ -1147,9 +1140,9 @@ async def test_request_tool_call_with_result_type(allow_model_requests: None):
                 tool_call_id='2',
                 timestamp=IsNow(tz=timezone.utc),
             ),
-            ModelStructuredResponse(
-                calls=[
-                    ToolCall(
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
                         tool_name='final_result',
                         args=ArgsJson(args_json='{"lat": 51, "lng": 0}'),
                         tool_call_id='1',
@@ -1242,16 +1235,15 @@ async def test_stream_tool_call_with_return_type(allow_model_requests: None):
                 timestamp=IsNow(tz=timezone.utc),
                 role='user',
             ),
-            ModelStructuredResponse(
-                calls=[
-                    ToolCall(
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
                         tool_name='get_location',
                         args=ArgsJson(args_json='{"loc_name": "San Fransisco"}'),
                         tool_call_id='1',
                     )
                 ],
                 timestamp=IsNow(tz=timezone.utc),
-                role='model-structured-response',
             ),
             ToolReturn(
                 tool_name='get_location',
@@ -1267,10 +1259,11 @@ async def test_stream_tool_call_with_return_type(allow_model_requests: None):
                 timestamp=IsNow(tz=timezone.utc),
                 role='tool-return',
             ),
-            ModelStructuredResponse(
-                calls=[ToolCall(tool_name='final_result', args=ArgsJson(args_json='{"won": true}'), tool_call_id='1')],
+            ModelResponse(
+                parts=[
+                    ToolCallPart(tool_name='final_result', args=ArgsJson(args_json='{"won": true}'), tool_call_id='1')
+                ],
                 timestamp=IsNow(tz=timezone.utc),
-                role='model-structured-response',
             ),
         ]
     )
@@ -1332,9 +1325,9 @@ async def test_stream_tool_call(allow_model_requests: None):
         [
             SystemPrompt(content='this is the system prompt'),
             UserPrompt(content='User prompt value', timestamp=IsNow(tz=timezone.utc)),
-            ModelStructuredResponse(
-                calls=[
-                    ToolCall(
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
                         tool_name='get_location',
                         args=ArgsJson(args_json='{"loc_name": "San Fransisco"}'),
                         tool_call_id='1',
@@ -1348,7 +1341,7 @@ async def test_stream_tool_call(allow_model_requests: None):
                 tool_call_id='1',
                 timestamp=IsNow(tz=timezone.utc),
             ),
-            ModelTextResponse(content='final response', timestamp=IsNow(tz=timezone.utc)),
+            ModelResponse.from_text(content='final response', timestamp=IsNow(tz=timezone.utc)),
         ]
     )
 
