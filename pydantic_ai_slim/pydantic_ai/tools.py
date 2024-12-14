@@ -9,7 +9,7 @@ from pydantic import ValidationError
 from pydantic_core import SchemaValidator
 from typing_extensions import Concatenate, ParamSpec, TypeAlias
 
-from . import _pydantic, _utils, messages
+from . import _pydantic, _utils, messages as _messages
 from .exceptions import ModelRetry, UnexpectedModelBehavior
 
 if TYPE_CHECKING:
@@ -45,7 +45,9 @@ class RunContext(Generic[AgentDeps]):
     """Dependencies for the agent."""
     retry: int
     """Number of retries so far."""
-    tool_name: str | None = None
+    messages: list[_messages.Message]
+    """Messages exchanged in the conversation so far."""
+    tool_name: str | None
     """Name of the tool being called."""
 
 
@@ -235,17 +237,19 @@ class Tool(Generic[AgentDeps]):
         else:
             return tool_def
 
-    async def run(self, deps: AgentDeps, message: messages.ToolCallPart) -> messages.Message:
+    async def run(
+        self, deps: AgentDeps, message: _messages.ToolCallPart, conv_messages: list[_messages.Message]
+    ) -> _messages.Message:
         """Run the tool function asynchronously."""
         try:
-            if isinstance(message.args, messages.ArgsJson):
+            if isinstance(message.args, _messages.ArgsJson):
                 args_dict = self._validator.validate_json(message.args.args_json)
             else:
                 args_dict = self._validator.validate_python(message.args.args_dict)
         except ValidationError as e:
             return self._on_error(e, message)
 
-        args, kwargs = self._call_args(deps, args_dict, message)
+        args, kwargs = self._call_args(deps, args_dict, message, conv_messages)
         try:
             if self._is_async:
                 function = cast(Callable[[Any], Awaitable[str]], self.function)
@@ -257,19 +261,23 @@ class Tool(Generic[AgentDeps]):
             return self._on_error(e, message)
 
         self.current_retry = 0
-        return messages.ToolReturn(
+        return _messages.ToolReturn(
             tool_name=message.tool_name,
             content=response_content,
             tool_call_id=message.tool_call_id,
         )
 
     def _call_args(
-        self, deps: AgentDeps, args_dict: dict[str, Any], message: messages.ToolCallPart
+        self,
+        deps: AgentDeps,
+        args_dict: dict[str, Any],
+        message: _messages.ToolCallPart,
+        conv_messages: list[_messages.Message],
     ) -> tuple[list[Any], dict[str, Any]]:
         if self._single_arg_name:
             args_dict = {self._single_arg_name: args_dict}
 
-        args = [RunContext(deps, self.current_retry, message.tool_name)] if self.takes_ctx else []
+        args = [RunContext(deps, self.current_retry, conv_messages, message.tool_name)] if self.takes_ctx else []
         for positional_field in self._positional_fields:
             args.append(args_dict.pop(positional_field))
         if self._var_positional_field:
@@ -277,7 +285,9 @@ class Tool(Generic[AgentDeps]):
 
         return args, args_dict
 
-    def _on_error(self, exc: ValidationError | ModelRetry, call_message: messages.ToolCallPart) -> messages.RetryPrompt:
+    def _on_error(
+        self, exc: ValidationError | ModelRetry, call_message: _messages.ToolCallPart
+    ) -> _messages.RetryPrompt:
         self.current_retry += 1
         if self.max_retries is None or self.current_retry > self.max_retries:
             raise UnexpectedModelBehavior(f'Tool exceeded max retries count of {self.max_retries}') from exc
@@ -286,7 +296,7 @@ class Tool(Generic[AgentDeps]):
                 content = exc.errors(include_url=False)
             else:
                 content = exc.message
-            return messages.RetryPrompt(
+            return _messages.RetryPrompt(
                 tool_name=call_message.tool_name,
                 content=content,
                 tool_call_id=call_message.tool_call_id,

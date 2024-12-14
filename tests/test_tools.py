@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 from pydantic_core import PydanticSerializationError
 
 from pydantic_ai import Agent, RunContext, Tool, UserError
-from pydantic_ai.messages import Message, ModelResponse
+from pydantic_ai.messages import Message, ModelResponse, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
@@ -484,6 +484,39 @@ def test_dynamic_tool_decorator(set_event_loop: None):
 
     r = agent.run_sync('', deps=42)
     assert r.data == snapshot('success (no tool calls)')
+
+
+def test_dynamic_tool_use_messages(set_event_loop: None):
+    async def repeat_call_foobar(_messages: list[Message], info: AgentInfo) -> ModelResponse:
+        if info.function_tools:
+            tool = info.function_tools[0]
+            return ModelResponse.from_tool_call(ToolCallPart.from_dict(tool.name, {'x': 42, 'y': 'a'}))
+        else:
+            return ModelResponse.from_text('done')
+
+    agent = Agent(FunctionModel(repeat_call_foobar), deps_type=int)
+
+    async def prepare_tool_def(ctx: RunContext[int], tool_def: ToolDefinition) -> Union[ToolDefinition, None]:
+        if len(ctx.messages) < 5:
+            return tool_def
+
+    @agent.tool(prepare=prepare_tool_def)
+    def foobar(ctx: RunContext[int], x: int, y: str) -> str:
+        return f'{ctx.deps} {x} {y}'
+
+    r = agent.run_sync('', deps=1)
+    assert r.data == snapshot('done')
+    message_kinds = [m.message_kind for m in r.all_messages()]
+    assert message_kinds == snapshot(
+        [
+            'user-prompt',
+            'model-response',
+            'tool-return',
+            'model-response',
+            'tool-return',
+            'model-response',
+        ]
+    )
 
 
 def test_future_run_context(set_event_loop: None, create_module: Callable[[str], Any]):

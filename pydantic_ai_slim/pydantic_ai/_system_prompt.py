@@ -21,7 +21,7 @@ class SystemPromptRunner(Generic[AgentDeps]):
 
     async def run(self, deps: AgentDeps) -> str:
         if self._takes_ctx:
-            args = (RunContext(deps, 0),)
+            args = (RunContext(deps, 0, [], None),)
         else:
             args = ()
 

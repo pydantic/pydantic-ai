@@ -220,9 +220,13 @@ class ModelResponse:
     message_kind: Literal['model-response'] = 'model-response'
     """Message source identifier, this type is available on all messages as a discriminator."""
 
-    @staticmethod
-    def from_text(content: str, timestamp: datetime | None = None) -> ModelResponse:
-        return ModelResponse([TextPart(content)], timestamp=timestamp or _now_utc())
+    @classmethod
+    def from_text(cls, content: str, timestamp: datetime | None = None) -> ModelResponse:
+        return cls([TextPart(content)], timestamp=timestamp or _now_utc())
+
+    @classmethod
+    def from_tool_call(cls, tool_call: ToolCallPart) -> ModelResponse:
+        return cls([tool_call])
 
 
 Message = Union[SystemPrompt, UserPrompt, ToolReturn, RetryPrompt, ModelResponse]

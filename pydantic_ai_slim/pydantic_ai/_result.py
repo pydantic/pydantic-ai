@@ -10,9 +10,8 @@ from typing import Any, Callable, Generic, Literal, Union, cast, get_args, get_o
 from pydantic import TypeAdapter, ValidationError
 from typing_extensions import Self, TypeAliasType, TypedDict
 
-from . import _utils, messages
+from . import _utils, messages as _messages
 from .exceptions import ModelRetry
-from .messages import ModelResponse, ToolCallPart
 from .result import ResultData
 from .tools import AgentDeps, ResultValidatorFunc, RunContext, ToolDefinition
 
@@ -28,7 +27,12 @@ class ResultValidator(Generic[AgentDeps, ResultData]):
         self._is_async = inspect.iscoroutinefunction(self.function)
 
     async def validate(
-        self, result: ResultData, deps: AgentDeps, retry: int, tool_call: messages.ToolCallPart | None
+        self,
+        result: ResultData,
+        deps: AgentDeps,
+        retry: int,
+        tool_call: _messages.ToolCallPart | None,
+        messages: list[_messages.Message],
     ) -> ResultData:
         """Validate a result but calling the function.
 
@@ -37,12 +41,13 @@ class ResultValidator(Generic[AgentDeps, ResultData]):
             deps: The agent dependencies.
             retry: The current retry number.
             tool_call: The original tool call message, `None` if there was no tool call.
+            messages: The messages exchanged so far in the conversation.
 
         Returns:
             Result of either the validated result data (ok) or a retry message (Err).
         """
         if self._takes_ctx:
-            args = RunContext(deps, retry, tool_call.tool_name if tool_call else None), result
+            args = RunContext(deps, retry, messages, tool_call.tool_name if tool_call else None), result
         else:
             args = (result,)
 
@@ -54,7 +59,7 @@ class ResultValidator(Generic[AgentDeps, ResultData]):
                 function = cast(Callable[[Any], ResultData], self.function)
                 result_data = await _utils.run_in_executor(function, *args)
         except ModelRetry as r:
-            m = messages.RetryPrompt(content=r.message)
+            m = _messages.RetryPrompt(content=r.message)
             if tool_call is not None:
                 m.tool_name = tool_call.tool_name
                 m.tool_call_id = tool_call.tool_call_id
@@ -66,7 +71,7 @@ class ResultValidator(Generic[AgentDeps, ResultData]):
 class ToolRetryError(Exception):
     """Internal exception used to signal a `ToolRetry` message should be returned to the LLM."""
 
-    def __init__(self, tool_retry: messages.RetryPrompt):
+    def __init__(self, tool_retry: _messages.RetryPrompt):
         self.tool_retry = tool_retry
         super().__init__()
 
@@ -108,10 +113,12 @@ class ResultSchema(Generic[ResultData]):
 
         return cls(tools=tools, allow_text_result=allow_text_result)
 
-    def find_tool(self, message: ModelResponse) -> tuple[ToolCallPart, ResultTool[ResultData]] | None:
+    def find_tool(
+        self, message: _messages.ModelResponse
+    ) -> tuple[_messages.ToolCallPart, ResultTool[ResultData]] | None:
         """Find a tool that matches one of the calls."""
         for item in message.parts:
-            if isinstance(item, ToolCallPart):
+            if isinstance(item, _messages.ToolCallPart):
                 if result := self.tools.get(item.tool_name):
                     return item, result
 
@@ -168,7 +175,7 @@ class ResultTool(Generic[ResultData]):
         )
 
     def validate(
-        self, tool_call: messages.ToolCallPart, allow_partial: bool = False, wrap_validation_errors: bool = True
+        self, tool_call: _messages.ToolCallPart, allow_partial: bool = False, wrap_validation_errors: bool = True
     ) -> ResultData:
         """Validate a result message.
 
@@ -182,7 +189,7 @@ class ResultTool(Generic[ResultData]):
         """
         try:
             pyd_allow_partial: Literal['off', 'trailing-strings'] = 'trailing-strings' if allow_partial else 'off'
-            if isinstance(tool_call.args, messages.ArgsJson):
+            if isinstance(tool_call.args, _messages.ArgsJson):
                 result = self.type_adapter.validate_json(
                     tool_call.args.args_json or '', experimental_allow_partial=pyd_allow_partial
                 )
@@ -192,7 +199,7 @@ class ResultTool(Generic[ResultData]):
                 )
         except ValidationError as e:
             if wrap_validation_errors:
-                m = messages.RetryPrompt(
+                m = _messages.RetryPrompt(
                     tool_name=tool_call.tool_name,
                     content=e.errors(include_url=False),
                     tool_call_id=tool_call.tool_call_id,
