@@ -20,7 +20,7 @@ from . import (
     models,
     result,
 )
-from .messages import TextPart, ToolCallPart
+from .messages import SystemPrompt, TextPart, ToolCallPart
 from .result import ResultData
 from .settings import ModelSettings, merge_model_settings
 from .tools import (
@@ -795,7 +795,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         self, deps: AgentDeps, user_prompt: str, message_history: list[_messages.Message] | None
     ) -> tuple[int, list[_messages.Message]]:
         # if message history includes system prompts, we don't want to regenerate them
-        if message_history and any(m.message_kind == 'system-prompt' for m in message_history):
+        if message_history and any(isinstance(m, SystemPrompt) for m in message_history):
             # shallow copy messages
             messages = message_history.copy()
         else:
