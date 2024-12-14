@@ -4,10 +4,9 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Annotated, Any, Literal, Union
 
-import pydantic
 import pydantic_core
+from pydantic import ConfigDict, Discriminator, TypeAdapter
 
-from . import _pydantic
 from ._utils import now_utc as _now_utc
 
 
@@ -48,7 +47,7 @@ class UserPrompt:
     """Message type identifier, this type is available on all messages as a discriminator."""
 
 
-tool_return_ta: pydantic.TypeAdapter[Any] = _pydantic.LazyTypeAdapter(Any)
+tool_return_ta: TypeAdapter[Any] = TypeAdapter(Any, config=ConfigDict(defer_build=True))
 
 
 @dataclass
@@ -84,7 +83,7 @@ class ToolReturn:
             return {'return_value': tool_return_ta.dump_python(self.content, mode='json')}
 
 
-ErrorDetailsTa = _pydantic.LazyTypeAdapter(list[pydantic_core.ErrorDetails])
+ErrorDetailsTa = TypeAdapter(list[pydantic_core.ErrorDetails], config=ConfigDict(defer_build=True))
 
 
 @dataclass
@@ -190,7 +189,7 @@ class ToolCallPart:
             return bool(self.args.args_json)
 
 
-ModelResponsePart = Annotated[Union[TextPart, ToolCallPart], pydantic.Discriminator('part_kind')]
+ModelResponsePart = Annotated[Union[TextPart, ToolCallPart], Discriminator('part_kind')]
 
 
 @dataclass
@@ -220,5 +219,7 @@ class ModelResponse:
 Message = Union[SystemPrompt, UserPrompt, ToolReturn, RetryPrompt, ModelResponse]
 """Any message send to or returned by a model."""
 
-MessagesTypeAdapter = _pydantic.LazyTypeAdapter(list[Annotated[Message, pydantic.Discriminator('message_kind')]])
+MessagesTypeAdapter = TypeAdapter(
+    list[Annotated[Message, Discriminator('message_kind')]], config=ConfigDict(defer_build=True)
+)
 """Pydantic [`TypeAdapter`][pydantic.type_adapter.TypeAdapter] for (de)serializing messages."""

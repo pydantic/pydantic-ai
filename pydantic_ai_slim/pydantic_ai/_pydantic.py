@@ -8,7 +8,7 @@ from __future__ import annotations as _annotations
 from inspect import Parameter, signature
 from typing import TYPE_CHECKING, Any, Callable, TypedDict, cast, get_origin
 
-from pydantic import ConfigDict, TypeAdapter
+from pydantic import ConfigDict
 from pydantic._internal import _decorators, _generate_schema, _typing_extra
 from pydantic._internal._config import ConfigWrapper
 from pydantic.fields import FieldInfo
@@ -23,7 +23,7 @@ if TYPE_CHECKING:
     from .tools import ObjectJsonSchema
 
 
-__all__ = 'function_schema', 'LazyTypeAdapter'
+__all__ = ('function_schema',)
 
 
 class FunctionSchema(TypedDict):
@@ -214,21 +214,3 @@ def _is_call_ctx(annotation: Any) -> bool:
     return annotation is RunContext or (
         _typing_extra.is_generic_alias(annotation) and get_origin(annotation) is RunContext
     )
-
-
-if TYPE_CHECKING:
-    LazyTypeAdapter = TypeAdapter
-else:
-
-    class LazyTypeAdapter:
-        __slots__ = '_args', '_kwargs', '_type_adapter'
-
-        def __init__(self, *args, **kwargs):
-            self._args = args
-            self._kwargs = kwargs
-            self._type_adapter = None
-
-        def __getattr__(self, item):
-            if self._type_adapter is None:
-                self._type_adapter = TypeAdapter(*self._args, **self._kwargs)
-            return getattr(self._type_adapter, item)

@@ -11,10 +11,10 @@ from typing import Annotated, Any, Literal, Protocol, Union
 
 import pydantic_core
 from httpx import USE_CLIENT_DEFAULT, AsyncClient as AsyncHTTPClient, Response as HTTPResponse
-from pydantic import Discriminator, Field, Tag
+from pydantic import ConfigDict, Discriminator, Field, Tag, TypeAdapter, with_config
 from typing_extensions import NotRequired, TypedDict, TypeGuard, assert_never
 
-from .. import UnexpectedModelBehavior, _pydantic, _utils, exceptions, result
+from .. import UnexpectedModelBehavior, _utils, exceptions, result
 from ..messages import (
     ArgsDict,
     Message,
@@ -386,6 +386,7 @@ class GeminiStreamStructuredResponse(StreamStructuredResponse):
 # TypeAdapters take care of validation and serialization
 
 
+@with_config(ConfigDict(defer_build=True))
 class _GeminiRequest(TypedDict):
     """Schema for an API request to the Gemini API.
 
@@ -572,6 +573,7 @@ class _GeminiFunctionCallingConfig(TypedDict):
     allowed_function_names: list[str]
 
 
+@with_config(ConfigDict(defer_build=True))
 class _GeminiResponse(TypedDict):
     """Schema for the response from the Gemini API.
 
@@ -675,11 +677,11 @@ class _GeminiPromptFeedback(TypedDict):
     safety_ratings: Annotated[list[_GeminiSafetyRating], Field(alias='safetyRatings')]
 
 
-_gemini_request_ta = _pydantic.LazyTypeAdapter(_GeminiRequest)
-_gemini_response_ta = _pydantic.LazyTypeAdapter(_GeminiResponse)
+_gemini_request_ta = TypeAdapter(_GeminiRequest)
+_gemini_response_ta = TypeAdapter(_GeminiResponse)
 
 # steam requests return a list of https://ai.google.dev/api/generate-content#method:-models.streamgeneratecontent
-_gemini_streamed_response_ta = _pydantic.LazyTypeAdapter(list[_GeminiResponse])
+_gemini_streamed_response_ta = TypeAdapter(list[_GeminiResponse], config=ConfigDict(defer_build=True))
 
 
 class _GeminiJsonSchema:
