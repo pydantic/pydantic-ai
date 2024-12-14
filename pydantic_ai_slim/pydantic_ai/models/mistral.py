@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+import os
 from collections.abc import AsyncIterator, Iterable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -68,15 +69,15 @@ except ImportError as e:
         "you can use the `mistral` optional group — `pip install 'pydantic-ai-slim[mistral]'`"
     ) from e
 
-LatestMistralModelName = Literal[
+NamedMistralModels = Literal[
     'mistral-large-latest', 'mistral-small-latest', 'codestral-latest', 'mistral-moderation-latest'
 ]
-"""Latest named Mistral models."""
+"""Latest / most popular named Mistral models."""
 
-MistralModelName = Union[str, LatestMistralModelName]
+MistralModelName = Union[NamedMistralModels, str]
 """Possible Mistral model names.
 
-Since Mistral supports a variety of date-stamped models, we explicitly list the latest models but
+Since Mistral supports a variety of date-stamped models, we explicitly list the most popular models but
 allow any name in the type hints.
 Since [the Mistral docs](https://docs.mistral.ai/getting-started/models/models_overview/) for a full list.
 """
@@ -106,7 +107,7 @@ class MistralModel(Model):
 
         Args:
             model_name: The name of the model to use.
-            api_key: The API key to use for authentication,
+            api_key: The API key to use for authentication, if unset uses `MISTRAL_API_KEY` environment variable.
             client: An existing `Mistral` client to use, if provided, `api_key` and `http_client` must be `None`.
             http_client: An existing `httpx.AsyncClient` to use for making HTTP requests.
         """
@@ -114,11 +115,11 @@ class MistralModel(Model):
 
         if client is not None:
             assert http_client is None, 'Cannot provide both `mistral_client` and `http_client`'
+            assert api_key is None, 'Cannot provide both `mistral_client` and `api_key`'
             self.client = client
-        elif http_client is not None:
-            self.client = Mistral(api_key=api_key, async_client=http_client)
         else:
-            self.client = Mistral(api_key=api_key, async_client=cached_async_http_client())
+            api_key = os.getenv('MISTRAL_API_KEY') if api_key is None else api_key
+            self.client = Mistral(api_key=api_key, async_client=http_client or cached_async_http_client())
 
     async def agent_model(
         self,
@@ -194,7 +195,7 @@ class MistralAgentModel(AgentModel):
         model_settings: ModelSettings | None,
     ) -> MistralEventStreamAsync[MistralCompletionEvent]:
         """Create a streaming completion request to the Mistral model."""
-        response: MistralEventStreamAsync[MistralCompletionEvent] | None = None
+        response: MistralEventStreamAsync[MistralCompletionEvent] | None
         mistral_messages = [self._map_message(m) for m in messages]
 
         model_settings = model_settings or {}

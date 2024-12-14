@@ -52,10 +52,12 @@ KnownModelName = Literal[
     'gemini-2.0-flash-exp',
     'vertexai:gemini-1.5-flash',
     'vertexai:gemini-1.5-pro',
+    # since mistral models are supported by other providers (e.g. ollama), and some of their models (e.g. "codestral")
+    # don't start with "mistral", we add the "mistral:" prefix to all to be explicit
     'mistral:mistral-small-latest',
-    'mistral:small-mistral',
     'mistral:mistral-large-latest',
     'mistral:codestral-latest',
+    'mistral:mistral-moderation-latest',
     'ollama:codellama',
     'ollama:gemma',
     'ollama:gemma2',
