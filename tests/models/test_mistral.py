@@ -38,6 +38,7 @@ with try_import() as imports_successful:
         DeltaMessage as MistralDeltaMessage,
         FunctionCall as MistralFunctionCall,
         Mistral,
+        TextChunk as MistralTextChunk,
         UsageInfo as MistralUsageInfo,
     )
     from mistralai.models import (
@@ -157,6 +158,14 @@ def text_chunk(
     text: str, finish_reason: MistralCompletionResponseStreamChoiceFinishReason | None = None
 ) -> MistralCompletionEvent:
     return chunk([MistralDeltaMessage(content=text, role='assistant')], finish_reason=finish_reason)
+
+
+def text_chunkk(
+    text: str, finish_reason: MistralCompletionResponseStreamChoiceFinishReason | None = None
+) -> MistralCompletionEvent:
+    return chunk(
+        [MistralDeltaMessage(content=[MistralTextChunk(text=text)], role='assistant')], finish_reason=finish_reason
+    )
 
 
 def func_chunk(
@@ -287,7 +296,7 @@ async def test_three_completions(allow_model_requests: None):
 
 async def test_stream_text(allow_model_requests: None):
     # Given
-    stream = [text_chunk('hello '), text_chunk('world '), text_chunk('welcome '), text_chunk('mistral'), chunk([])]
+    stream = [text_chunk('hello '), text_chunk('world '), text_chunk('welcome '), text_chunkk('mistral'), chunk([])]
     mock_client = MockMistralAI.create_stream_mock(stream)
     model = MistralModel('mistral-large-latest', client=mock_client)
     agent = Agent(model=model)
@@ -308,7 +317,7 @@ async def test_stream_text(allow_model_requests: None):
 
 async def test_stream_text_finish_reason(allow_model_requests: None):
     # Given
-    stream = [text_chunk('hello '), text_chunk('world'), text_chunk('.', finish_reason='stop')]
+    stream = [text_chunk('hello '), text_chunkk('world'), text_chunk('.', finish_reason='stop')]
     mock_client = MockMistralAI.create_stream_mock(stream)
     model = MistralModel('mistral-large-latest', client=mock_client)
     agent = Agent(model=model)

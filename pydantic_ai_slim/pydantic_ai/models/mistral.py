@@ -427,16 +427,19 @@ class MistralStreamTextResponse(StreamTextResponse):
         except IndexError:
             raise StopAsyncIteration()
 
+        content = choice.delta.content
         if choice.finish_reason is None:
-            assert choice.delta.content is not None, f'Expected delta with content, invalid chunk: {chunk!r}'
-        if isinstance(choice.delta.content, str):
-            self._buffer.append(choice.delta.content)
-        elif isinstance(choice.delta.content, MistralTextChunk):
-            self._buffer.append(choice.delta.content.text)
-        else:
-            raise Exception(
-                f'Implementation for ImageURLChunk and ReferenceChunk is not available for the moment: {type(choice.delta.content)}'
-            )
+            assert content is not None, f'Expected delta with content, invalid chunk: {chunk!r}'
+        if isinstance(content, str):
+            self._buffer.append(content)
+        elif isinstance(content, list):
+            for chunk in content:
+                if isinstance(chunk, MistralTextChunk):
+                    self._buffer.append(chunk.text)
+                else:
+                    raise Exception(
+                        f'Implementation for ImageURLChunk and ReferenceChunk is not available for the moment: {type(chunk)}'
+                    )
 
     def get(self, *, final: bool = False) -> Iterable[str]:
         yield from self._buffer
