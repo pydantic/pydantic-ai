@@ -20,8 +20,12 @@ class SystemPrompt:
 
     content: str
     """The content of the prompt."""
-    role: Literal['system'] = 'system'
-    """Message type identifier, this type is available on all message as a discriminator."""
+
+    role: Literal['user'] = 'user'
+    """Message source identifier, this type is available on all messages as either 'user' or 'model'."""
+
+    message_kind: Literal['system-prompt'] = 'system-prompt'
+    """Message type identifier, this type is available on all messages as a discriminator."""
 
 
 @dataclass
@@ -36,8 +40,12 @@ class UserPrompt:
     """The content of the prompt."""
     timestamp: datetime = field(default_factory=_now_utc)
     """The timestamp of the prompt."""
+
     role: Literal['user'] = 'user'
-    """Message type identifier, this type is available on all message as a discriminator."""
+    """Message source identifier, this type is available on all messages as either 'user' or 'model'."""
+
+    message_kind: Literal['user-prompt'] = 'user-prompt'
+    """Message type identifier, this type is available on all messages as a discriminator."""
 
 
 tool_return_ta: pydantic.TypeAdapter[Any] = _pydantic.LazyTypeAdapter(Any)
@@ -55,8 +63,12 @@ class ToolReturn:
     """Optional tool call identifier, this is used by some models including OpenAI."""
     timestamp: datetime = field(default_factory=_now_utc)
     """The timestamp, when the tool returned."""
-    role: Literal['tool-return'] = 'tool-return'
-    """Message type identifier, this type is available on all message as a discriminator."""
+
+    role: Literal['user'] = 'user'
+    """Message source identifier, this type is available on all messages as either 'user' or 'model'."""
+
+    message_kind: Literal['tool-return'] = 'tool-return'
+    """Message type identifier, this type is available on all messages as a discriminator."""
 
     def model_response_str(self) -> str:
         if isinstance(self.content, str):
@@ -103,8 +115,12 @@ class RetryPrompt:
     """Optional tool call identifier, this is used by some models including OpenAI."""
     timestamp: datetime = field(default_factory=_now_utc)
     """The timestamp, when the retry was triggered."""
-    role: Literal['retry-prompt'] = 'retry-prompt'
-    """Message type identifier, this type is available on all message as a discriminator."""
+
+    role: Literal['user'] = 'user'
+    """Message source identifier, this type is available on all messages as either 'user' or 'model'."""
+
+    message_kind: Literal['retry-prompt'] = 'retry-prompt'
+    """Message type identifier, this type is available on all messages as a discriminator."""
 
     def model_response(self) -> str:
         if isinstance(self.content, str):
@@ -121,8 +137,9 @@ class TextPart:
 
     content: str
     """The text content of the response."""
-    kind: Literal['text'] = 'text'
-    """Message type identifier, this type is available on all message as a discriminator."""
+
+    part_kind: Literal['text'] = 'text'
+    """Part type identifier, this type is available on all message parts as a discriminator."""
 
 
 @dataclass
@@ -155,8 +172,8 @@ class ToolCallPart:
     tool_call_id: str | None = None
     """Optional tool call identifier, this is used by some models including OpenAI."""
 
-    kind: Literal['tool-call'] = 'tool-call'
-    """Message type identifier, this type is available on all message as a discriminator."""
+    part_kind: Literal['tool-call'] = 'tool-call'
+    """Part type identifier, this type is available on all message parts as a discriminator."""
 
     @classmethod
     def from_json(cls, tool_name: str, args_json: str, tool_call_id: str | None = None) -> ToolCallPart:
@@ -173,7 +190,7 @@ class ToolCallPart:
             return bool(self.args.args_json)
 
 
-ModelResponsePart = Annotated[Union[TextPart, ToolCallPart], pydantic.Discriminator('kind')]
+ModelResponsePart = Annotated[Union[TextPart, ToolCallPart], pydantic.Discriminator('part_kind')]
 
 
 @dataclass
@@ -183,13 +200,17 @@ class ModelResponse:
     parts: list[ModelResponsePart]
     """The parts of the response."""
 
-    role: Literal['model-response'] = 'model-response'
-    """Message type identifier, this type is available on all message as a discriminator."""
     timestamp: datetime = field(default_factory=_now_utc)
     """The timestamp of the response.
 
     If the model provides a timestamp in the response (as OpenAI does) that will be used.
     """
+
+    role: Literal['model'] = 'model'
+    """Message source identifier, this type is available on all messages as either 'user' or 'model'."""
+
+    message_kind: Literal['model-response'] = 'model-response'
+    """Message source identifier, this type is available on all messages as a discriminator."""
 
     @staticmethod
     def from_text(content: str, timestamp: datetime | None = None) -> ModelResponse:
@@ -199,5 +220,5 @@ class ModelResponse:
 Message = Union[SystemPrompt, UserPrompt, ToolReturn, RetryPrompt, ModelResponse]
 """Any message send to or returned by a model."""
 
-MessagesTypeAdapter = _pydantic.LazyTypeAdapter(list[Annotated[Message, pydantic.Discriminator('role')]])
+MessagesTypeAdapter = _pydantic.LazyTypeAdapter(list[Annotated[Message, pydantic.Discriminator('message_kind')]])
 """Pydantic [`TypeAdapter`][pydantic.type_adapter.TypeAdapter] for (de)serializing messages."""

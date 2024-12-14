@@ -70,12 +70,14 @@ print(dice_result.all_messages())
 [
     SystemPrompt(
         content="You're a dice game, you should roll the die and see if the number you get back matches the user's guess. If so, tell them they're a winner. Use the player's name in the response.",
-        role='system',
+        role='user',
+        message_kind='system-prompt',
     ),
     UserPrompt(
         content='My guess is 4',
         timestamp=datetime.datetime(...),
         role='user',
+        message_kind='user-prompt',
     ),
     ModelResponse(
         parts=[
@@ -83,18 +85,20 @@ print(dice_result.all_messages())
                 tool_name='roll_die',
                 args=ArgsDict(args_dict={}),
                 tool_call_id=None,
-                kind='tool-call',
+                part_kind='tool-call',
             )
         ],
-        role='model-response',
         timestamp=datetime.datetime(...),
+        role='model',
+        message_kind='model-response',
     ),
     ToolReturn(
         tool_name='roll_die',
         content='4',
         tool_call_id=None,
         timestamp=datetime.datetime(...),
-        role='tool-return',
+        role='user',
+        message_kind='tool-return',
     ),
     ModelResponse(
         parts=[
@@ -102,28 +106,31 @@ print(dice_result.all_messages())
                 tool_name='get_player_name',
                 args=ArgsDict(args_dict={}),
                 tool_call_id=None,
-                kind='tool-call',
+                part_kind='tool-call',
             )
         ],
-        role='model-response',
         timestamp=datetime.datetime(...),
+        role='model',
+        message_kind='model-response',
     ),
     ToolReturn(
         tool_name='get_player_name',
         content='Anne',
         tool_call_id=None,
         timestamp=datetime.datetime(...),
-        role='tool-return',
+        role='user',
+        message_kind='tool-return',
     ),
     ModelResponse(
         parts=[
             TextPart(
                 content="Congratulations Anne, you guessed correctly! You're a winner!",
-                kind='text',
+                part_kind='text',
             )
         ],
-        role='model-response',
         timestamp=datetime.datetime(...),
+        role='model',
+        message_kind='model-response',
     ),
 ]
 """

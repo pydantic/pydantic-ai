@@ -120,30 +120,38 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary], set_event_lo
             'logfire.span_type': 'span',
             'all_messages': IsJson(
                 [
-                    {'content': 'Hello', 'timestamp': IsStr(regex=r'\d{4}-\d{2}-.+'), 'role': 'user'},
+                    {
+                        'content': 'Hello',
+                        'timestamp': IsStr(regex=r'\d{4}-\d{2}-.+'),
+                        'role': 'user',
+                        'message_kind': 'user-prompt',
+                    },
                     {
                         'parts': [
                             {
                                 'tool_name': 'my_ret',
                                 'args': {'args_dict': {'x': 0}},
                                 'tool_call_id': None,
-                                'kind': 'tool-call',
+                                'part_kind': 'tool-call',
                             }
                         ],
-                        'role': 'model-response',
                         'timestamp': IsStr(regex=r'\d{4}-\d{2}-.+'),
+                        'role': 'model',
+                        'message_kind': 'model-response',
                     },
                     {
                         'tool_name': 'my_ret',
                         'content': '1',
                         'tool_call_id': None,
                         'timestamp': IsStr(regex=r'\d{4}-\d{2}-.+'),
-                        'role': 'tool-return',
+                        'role': 'user',
+                        'message_kind': 'tool-return',
                     },
                     {
-                        'parts': [{'content': '{"my_ret":"1"}', 'kind': 'text'}],
-                        'role': 'model-response',
+                        'parts': [{'content': '{"my_ret":"1"}', 'part_kind': 'text'}],
                         'timestamp': IsStr(regex=r'\d{4}-\d{2}-.+'),
+                        'role': 'model',
+                        'message_kind': 'model-response',
                     },
                 ]
             ),

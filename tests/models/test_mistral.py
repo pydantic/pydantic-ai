@@ -1241,11 +1241,12 @@ async def test_stream_tool_call_with_return_type(allow_model_requests: None):
 
     assert result.all_messages() == snapshot(
         [
-            SystemPrompt(content='this is the system prompt', role='system'),
+            SystemPrompt(content='this is the system prompt', role='user', message_kind='system-prompt'),
             UserPrompt(
                 content='User prompt value',
                 timestamp=IsNow(tz=timezone.utc),
                 role='user',
+                message_kind='user-prompt',
             ),
             ModelResponse(
                 parts=[
@@ -1262,20 +1263,24 @@ async def test_stream_tool_call_with_return_type(allow_model_requests: None):
                 content='{"lat": 51, "lng": 0}',
                 tool_call_id='1',
                 timestamp=IsNow(tz=timezone.utc),
-                role='tool-return',
+                role='user',
+                message_kind='tool-return',
             ),
             ToolReturn(
                 tool_name='final_result',
                 content='Final result processed.',
                 tool_call_id='1',
                 timestamp=IsNow(tz=timezone.utc),
-                role='tool-return',
+                role='user',
+                message_kind='tool-return',
             ),
             ModelResponse(
                 parts=[
                     ToolCallPart(tool_name='final_result', args=ArgsJson(args_json='{"won": true}'), tool_call_id='1')
                 ],
                 timestamp=IsNow(tz=timezone.utc),
+                role='model',
+                message_kind='model-response',
             ),
         ]
     )

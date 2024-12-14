@@ -37,6 +37,7 @@ async function onFetchResponse(response: Response): Promise<void> {
 // in production, you might not want to keep this format all the way to the frontend
 interface Message {
   role: string
+  message_kind: string
   content: string
   timestamp: string
 }

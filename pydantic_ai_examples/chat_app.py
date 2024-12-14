@@ -98,7 +98,7 @@ async def post_chat(
 
 
 MessageTypeAdapter: TypeAdapter[Message] = TypeAdapter(
-    Annotated[Message, Field(discriminator='role')]
+    Annotated[Message, Field(discriminator='message_kind')]
 )
 P = ParamSpec('P')
 R = TypeVar('R')

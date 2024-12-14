@@ -250,7 +250,7 @@ class Agent(Generic[AgentDeps, ResultData]):
                     model_response, request_cost = await agent_model.request(messages, model_settings)
                     model_req_span.set_attribute('response', model_response)
                     model_req_span.set_attribute('cost', request_cost)
-                    model_req_span.message = f'model request -> {model_response.role}'
+                    model_req_span.message = f'model request -> {model_response.message_kind}'
 
                 messages.append(model_response)
                 cost += request_cost
@@ -272,7 +272,7 @@ class Agent(Generic[AgentDeps, ResultData]):
                     else:
                         # continue the conversation
                         handle_span.set_attribute('tool_responses', response_messages)
-                        response_msgs = ' '.join(r.role for r in response_messages)
+                        response_msgs = ' '.join(r.message_kind for r in response_messages)
                         handle_span.message = f'handle model response -> {response_msgs}'
 
     def run_sync(
@@ -429,7 +429,7 @@ class Agent(Generic[AgentDeps, ResultData]):
                             else:
                                 # continue the conversation
                                 handle_span.set_attribute('tool_responses', response_messages)
-                                response_msgs = ' '.join(r.role for r in response_messages)
+                                response_msgs = ' '.join(r.message_kind for r in response_messages)
                                 handle_span.message = f'handle model response -> {response_msgs}'
                                 # the model_response should have been fully streamed by now, we can add it's cost
                                 cost += model_response.cost()
@@ -795,7 +795,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         self, deps: AgentDeps, user_prompt: str, message_history: list[_messages.Message] | None
     ) -> tuple[int, list[_messages.Message]]:
         # if message history includes system prompts, we don't want to regenerate them
-        if message_history and any(m.role == 'system' for m in message_history):
+        if message_history and any(m.message_kind == 'system-prompt' for m in message_history):
             # shallow copy messages
             messages = message_history.copy()
         else:
