@@ -8,12 +8,13 @@ Run with:
 from __future__ import annotations as _annotations
 
 import asyncio
+import json
 import sqlite3
 from collections.abc import AsyncIterator
 from concurrent.futures.thread import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from functools import partial
 from pathlib import Path
 from typing import Annotated, Any, Callable, Literal, TypeVar
@@ -38,7 +39,7 @@ from pydantic_ai.messages import (
 # 'if-token-present' means nothing will be sent (and the example will work) if you don't have logfire configured
 logfire.configure(send_to_logfire='if-token-present')
 
-agent = Agent('openai:gpt-4o')
+agent = Agent('gemini-1.5-flash')
 THIS_DIR = Path(__file__).parent
 
 
@@ -71,15 +72,16 @@ async def get_db(request: Request) -> Database:
 async def get_chat(database: Database = Depends(get_db)) -> Response:
     msgs = await database.get_messages()
     return Response(
-        b'\n'.join(ChatMessageTypeAdapter.dump_json(to_chat_message(m)) for m in msgs),
+        b'\n'.join(json.dumps(to_chat_message(m)).encode('utf-8') for m in msgs),
         media_type='text/plain',
     )
 
 
 class ChatMessage(TypedDict):
     """Format of messages sent to the browser."""
+
     role: Literal['user', 'model']
-    timestamp: datetime
+    timestamp: str
     content: str
 
 
@@ -87,7 +89,7 @@ def to_chat_message(m: Message) -> ChatMessage:
     if isinstance(m, UserPrompt):
         return {
             'role': 'user',
-            'timestamp': m.timestamp,
+            'timestamp': m.timestamp.isoformat(),
             'content': m.content,
         }
     elif isinstance(m, ModelResponse):
@@ -95,13 +97,10 @@ def to_chat_message(m: Message) -> ChatMessage:
         if isinstance(first_part, TextPart):
             return {
                 'role': 'model',
-                'timestamp': m.timestamp,
+                'timestamp': m.timestamp.isoformat(),
                 'content': first_part.content,
             }
     raise UnexpectedModelBehavior(f'Unexpected message type for chat app: {m}')
-
-
-ChatMessageTypeAdapter: TypeAdapter[ChatMessage] = TypeAdapter(ChatMessage)
 
 
 @app.post('/chat/')
@@ -112,9 +111,13 @@ async def post_chat(
         """Streams new line delimited JSON `Message`s to the client."""
         # stream the user prompt so that can be displayed straight away
         yield (
-            ChatMessageTypeAdapter.dump_json(
-                to_chat_message(UserPrompt(content=prompt))
-            )
+            json.dumps(
+                {
+                    'role': 'user',
+                    'timestamp': datetime.now(tz=timezone.utc).isoformat(),
+                    'content': prompt,
+                }
+            ).encode('utf-8')
             + b'\n'
         )
         # get the chat history so far to pass as context to the agent
@@ -125,7 +128,7 @@ async def post_chat(
                 # text here is a `str` and the frontend wants
                 # JSON encoded ModelResponse, so we create one
                 m = ModelResponse.from_text(content=text, timestamp=result.timestamp())
-                yield ChatMessageTypeAdapter.dump_json(to_chat_message(m)) + b'\n'
+                yield json.dumps(to_chat_message(m)).encode('utf-8') + b'\n'
 
         # add new messages (e.g. the user prompt and the agent response in this case) to the database
         await database.add_messages(result.new_messages_json())
