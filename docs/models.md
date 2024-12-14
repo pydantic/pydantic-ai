@@ -9,6 +9,8 @@ PydanticAI is Model-agnostic and has built in support for the following model pr
 
 You can also [add support for other models](#implementing-custom-models).
 
+PydanticAI also comes with [`TestModel`](api/models/test.md) and [`FunctionModel`](api/models/function.md) for testing and development.
+
 To use each model provider, you need to configure your local environment and make sure you have the right packages installed.
 
 ## OpenAI
@@ -166,6 +168,12 @@ agent = Agent(model)
 
 ## Gemini
 
+!!! warning "For prototyping only"
+    Google themselves refer to this API as the "hobby" API, I've received 503 responses from it a number of times.
+    The API is easy to use and useful for prototyping and simple demos, but I would not rely on it in production.
+
+    If you want to run Gemini models in production, you should use the [VertexAI API](#gemini-via-vertexai) described below.
+
 ### Install
 
 To use [`GeminiModel`][pydantic_ai.models.gemini.GeminiModel] models, you just need to install [`pydantic-ai`](install.md) or [`pydantic-ai-slim`](install.md#slim-install), no extra dependencies are required.
@@ -175,12 +183,6 @@ To use [`GeminiModel`][pydantic_ai.models.gemini.GeminiModel] models, you just n
 [`GeminiModel`][pydantic_ai.models.gemini.GeminiModel] let's you use the Google's Gemini models through their [Generative Language API](https://ai.google.dev/api/all-methods), `generativelanguage.googleapis.com`.
 
 [`GeminiModelName`][pydantic_ai.models.gemini.GeminiModelName] contains a list of available Gemini models that can be used through this interface.
-
-!!! warning "For prototyping only"
-    Google themselves refer to this API as the "hobby" API, I've received 503 responses from it a number of times.
-    The API is easy to use and useful for prototyping and simple demos, but I would not rely on it in production.
-
-    If you want to run Gemini models in production, you should use the [VertexAI API](#gemini-via-vertexai) described below.
 
 To use `GeminiModel`, go to [aistudio.google.com](https://aistudio.google.com/) and follow your nose until you find the place to generate an API key.
 
