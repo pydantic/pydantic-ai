@@ -39,7 +39,7 @@ from pydantic_ai.messages import (
 # 'if-token-present' means nothing will be sent (and the example will work) if you don't have logfire configured
 logfire.configure(send_to_logfire='if-token-present')
 
-agent = Agent('gemini-1.5-flash')
+agent = Agent('openai:gpt-4o')
 THIS_DIR = Path(__file__).parent
 
 
