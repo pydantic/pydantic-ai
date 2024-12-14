@@ -127,12 +127,14 @@ async def test_forecast():
     assert weather_agent.last_run_messages == [  # (6)!
         SystemPrompt(
             content='Providing a weather forecast at the locations the user provides.',
-            role='system',
+            role='user',
+            message_kind='system-prompt',
         ),
         UserPrompt(
             content='What will the weather be like in London on 2024-11-28?',
             timestamp=IsNow(tz=timezone.utc),  # (7)!
             role='user',
+            message_kind='user-prompt',
         ),
         ModelResponse(
             parts=[
@@ -148,14 +150,16 @@ async def test_forecast():
                 )
             ],
             timestamp=IsNow(tz=timezone.utc),
-            role='model-response',
+            role='model',
+            message_kind='model-response',
         ),
         ToolReturn(
             tool_name='weather_forecast',
             content='Sunny with a chance of rain',
             tool_call_id=None,
             timestamp=IsNow(tz=timezone.utc),
-            role='tool-return',
+            role='user',
+            message_kind='tool-return',
         ),
         ModelResponse(
             parts=[
@@ -164,7 +168,8 @@ async def test_forecast():
                 )
             ],
             timestamp=IsNow(tz=timezone.utc),
-            role='model-response',
+            role='model',
+            message_kind='model-response',
         ),
     ]
 ```
@@ -219,7 +224,7 @@ def call_weather_forecast(  # (1)!
     else:
         # second call, return the forecast
         msg = messages[-1]
-        assert msg.role == 'tool-return'
+        assert msg.message_kind == 'tool-return'
         return ModelResponse.from_text(f'The forecast is: {msg.content}')
 
 

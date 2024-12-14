@@ -132,8 +132,10 @@ def test_result_pydantic_model_validation_error(set_event_loop: None):
     result = agent.run_sync('Hello')
     assert isinstance(result.data, Bar)
     assert result.data.model_dump() == snapshot({'a': 1, 'b': 'bar'})
-    message_roles = [m.role for m in result.all_messages()]
-    assert message_roles == snapshot(['user', 'model-response', 'retry-prompt', 'model-response', 'tool-return'])
+    messages_kinds = [m.message_kind for m in result.all_messages()]
+    assert messages_kinds == snapshot(
+        ['user-prompt', 'model-response', 'retry-prompt', 'model-response', 'tool-return']
+    )
 
     retry_prompt = result.all_messages()[2]
     assert isinstance(retry_prompt, RetryPrompt)
@@ -467,8 +469,8 @@ def test_run_with_history_new(set_event_loop: None):
             _cost=Cost(),
         )
     )
-    new_msg_roles = [msg.role for msg in result2.new_messages()]
-    assert new_msg_roles == snapshot(['user', 'model-response'])
+    new_msg_kinds = [msg.message_kind for msg in result2.new_messages()]
+    assert new_msg_kinds == snapshot(['user-prompt', 'model-response'])
     assert result2.new_messages_json().startswith(b'[{"content":"Hello again",')
 
     # if we pass all_messages, system prompt is NOT inserted before the message_history messages,
@@ -565,8 +567,8 @@ def test_run_with_history_new_structured(set_event_loop: None):
             _cost=Cost(),
         )
     )
-    new_msg_roles = [msg.role for msg in result2.new_messages()]
-    assert new_msg_roles == snapshot(['user', 'model-response', 'tool-return'])
+    new_msg_kinds = [msg.message_kind for msg in result2.new_messages()]
+    assert new_msg_kinds == snapshot(['user-prompt', 'model-response', 'tool-return'])
     assert result2.new_messages_json().startswith(b'[{"content":"Hello again",')
 
     # if we pass all_messages, system prompt is NOT inserted before the message_history messages,

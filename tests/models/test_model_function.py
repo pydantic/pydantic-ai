@@ -39,41 +39,39 @@ async def return_last(messages: list[Message], _: AgentInfo) -> ModelResponse:
 def test_simple(set_event_loop: None):
     agent = Agent(FunctionModel(return_last))
     result = agent.run_sync('Hello')
-    assert result.data == snapshot("content='Hello' role='user' message_count=1")
+    assert result.data == snapshot("content='Hello' role='user' message_kind='user-prompt' message_count=1")
     assert result.all_messages() == snapshot(
         [
             UserPrompt(
                 content='Hello',
                 timestamp=IsNow(tz=timezone.utc),
                 role='user',
+                message_kind='user-prompt',
             ),
             ModelResponse.from_text(
-                content="content='Hello' role='user' message_count=1",
+                content="content='Hello' role='user' message_kind='user-prompt' message_count=1",
                 timestamp=IsNow(tz=timezone.utc),
             ),
         ]
     )
 
     result2 = agent.run_sync('World', message_history=result.all_messages())
-    assert result2.data == snapshot("content='World' role='user' message_count=3")
+    assert result2.data == snapshot("content='World' role='user' message_kind='user-prompt' message_count=3")
     assert result2.all_messages() == snapshot(
         [
-            UserPrompt(
-                content='Hello',
-                timestamp=IsNow(tz=timezone.utc),
-                role='user',
-            ),
+            UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc), role='user', message_kind='user-prompt'),
             ModelResponse.from_text(
-                content="content='Hello' role='user' message_count=1",
+                content="content='Hello' role='user' message_kind='user-prompt' message_count=1",
                 timestamp=IsNow(tz=timezone.utc),
             ),
             UserPrompt(
                 content='World',
                 timestamp=IsNow(tz=timezone.utc),
                 role='user',
+                message_kind='user-prompt',
             ),
             ModelResponse.from_text(
-                content="content='World' role='user' message_count=3",
+                content="content='World' role='user' message_kind='user-prompt' message_count=3",
                 timestamp=IsNow(tz=timezone.utc),
             ),
         ]
@@ -84,7 +82,7 @@ async def weather_model(messages: list[Message], info: AgentInfo) -> ModelRespon
     assert info.allow_text_result
     assert {t.name for t in info.function_tools} == {'get_location', 'get_weather'}
     last = messages[-1]
-    if last.role == 'user':
+    if last.message_kind == 'user-prompt':
         return ModelResponse(
             parts=[
                 ToolCallPart.from_json(
@@ -93,11 +91,11 @@ async def weather_model(messages: list[Message], info: AgentInfo) -> ModelRespon
                 )
             ]
         )
-    elif last.role == 'tool-return':
+    elif last.message_kind == 'tool-return':
         if last.tool_name == 'get_location':
             return ModelResponse(parts=[ToolCallPart.from_json('get_weather', last.model_response_str())])
         elif last.tool_name == 'get_weather':
-            location_name = next(m.content for m in messages if m.role == 'user')
+            location_name = next(m.content for m in messages if m.message_kind == 'user-prompt')
             return ModelResponse.from_text(f'{last.content} in {location_name}')
 
     raise ValueError(f'Unexpected message: {last}')
@@ -133,17 +131,20 @@ def test_weather(set_event_loop: None):
                 content='London',
                 timestamp=IsNow(tz=timezone.utc),
                 role='user',
+                message_kind='user-prompt',
             ),
             ModelResponse(
                 parts=[ToolCallPart.from_json('get_location', '{"location_description": "London"}')],
                 timestamp=IsNow(tz=timezone.utc),
-                role='model-response',
+                role='model',
+                message_kind='model-response',
             ),
             ToolReturn(
                 tool_name='get_location',
                 content='{"lat": 51, "lng": 0}',
                 timestamp=IsNow(tz=timezone.utc),
-                role='tool-return',
+                role='user',
+                message_kind='tool-return',
             ),
             ModelResponse(
                 parts=[
@@ -153,13 +154,15 @@ def test_weather(set_event_loop: None):
                     )
                 ],
                 timestamp=IsNow(tz=timezone.utc),
-                role='model-response',
+                role='model',
+                message_kind='model-response',
             ),
             ToolReturn(
                 tool_name='get_weather',
                 content='Raining',
                 timestamp=IsNow(tz=timezone.utc),
-                role='tool-return',
+                role='user',
+                message_kind='tool-return',
             ),
             ModelResponse.from_text(
                 content='Raining in London',
@@ -174,7 +177,7 @@ def test_weather(set_event_loop: None):
 
 async def call_function_model(messages: list[Message], _: AgentInfo) -> ModelResponse:  # pragma: no cover
     last = messages[-1]
-    if last.role == 'user':
+    if last.message_kind == 'user-prompt':
         if last.content.startswith('{'):
             details = json.loads(last.content)
             return ModelResponse(
@@ -185,7 +188,7 @@ async def call_function_model(messages: list[Message], _: AgentInfo) -> ModelRes
                     )
                 ]
             )
-    elif last.role == 'tool-return':
+    elif last.message_kind == 'tool-return':
         return ModelResponse.from_text(pydantic_core.to_json(last).decode())
 
     raise ValueError(f'Unexpected message: {last}')
@@ -211,7 +214,8 @@ def test_var_args(set_event_loop: None):
             'content': '{"args": [1, 2, 3]}',
             'tool_call_id': None,
             'timestamp': IsStr() & IsNow(iso_string=True, tz=timezone.utc),
-            'role': 'tool-return',
+            'role': 'user',
+            'message_kind': 'tool-return',
         }
     )
 
@@ -263,7 +267,7 @@ def test_deps_init(set_event_loop: None):
 def test_model_arg(set_event_loop: None):
     agent = Agent()
     result = agent.run_sync('Hello', model=FunctionModel(return_last))
-    assert result.data == snapshot("content='Hello' role='user' message_count=1")
+    assert result.data == snapshot("content='Hello' role='user' message_kind='user-prompt' message_count=1")
 
     with pytest.raises(RuntimeError, match='`model` must be set either when creating the agent or when calling it.'):
         agent.run_sync('Hello')
