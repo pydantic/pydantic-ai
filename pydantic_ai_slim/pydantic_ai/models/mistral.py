@@ -163,7 +163,7 @@ class MistralAgentModel(AgentModel):
     ) -> AsyncIterator[EitherStreamedResponse]:
         """Make a streaming request to the model from Pydantic AI call."""
         response = await self._stream_completions_create(messages, model_settings)
-        is_function_tool = True if self.function_tools else False  # TODO: see how improve
+        is_function_tool = True if self.function_tools else False
         async with response:
             yield await self._process_streamed_response(is_function_tool, self.result_tools, response)
 
@@ -356,7 +356,7 @@ class MistralAgentModel(AgentModel):
                 elif content:
                     return MistralStreamTextResponse(content, response, timestamp, start_cost)
 
-                elif tool_calls:  # TODO: before and not result_tools
+                elif tool_calls:
                     return MistralStreamStructuredResponse(
                         is_function_tools,
                         {c.id if c.id else 'null': c for c in tool_calls},
@@ -632,6 +632,7 @@ def _get_python_type(value: dict[str, Any]) -> str:
 
 
 def _generate_simple_json_schema(schema: dict[str, Any]) -> dict[str, Any]:
+    """Generate a typed dict definition from a JSON schema."""
     typed_dict_definition: dict[str, Any] = {}
     for key, value in schema.get('properties', {}).items():
         typed_dict_definition[key] = _get_python_type(value)
