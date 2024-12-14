@@ -13,7 +13,7 @@ having the same schemas as the equivalent [Gemini endpoints][pydantic_ai.models.
 ## Setup
 
 For details on how to set up authentication with this model as well as a comparison with the `generativelanguage.googleapis.com` API used by [`GeminiModel`][pydantic_ai.models.gemini.GeminiModel],
-see [model configuration for Gemini via VertexAI](../../install.md#gemini-via-vertexai).
+see [model configuration for Gemini via VertexAI](../../models.md#gemini-via-vertexai).
 
 ## Example Usage
 

@@ -44,7 +44,7 @@ try:
 except ImportError as _import_error:
     raise ImportError(
         'Please install `groq` to use the Groq model, '
-        "you can use the `groq` optional group — `pip install 'pydantic-ai[groq]'`"
+        "you can use the `groq` optional group — `pip install 'pydantic-ai-slim[groq]'`"
     ) from _import_error
 
 GroqModelName = Literal[

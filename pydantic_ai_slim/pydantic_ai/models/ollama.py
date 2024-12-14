@@ -17,7 +17,7 @@ try:
 except ImportError as e:
     raise ImportError(
         'Please install `openai` to use the OpenAI model, '
-        "you can use the `openai` optional group — `pip install 'pydantic-ai[openai]'`"
+        "you can use the `openai` optional group — `pip install 'pydantic-ai-slim[openai]'`"
     ) from e
 
 
