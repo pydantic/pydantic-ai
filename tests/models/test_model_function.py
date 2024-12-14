@@ -82,7 +82,7 @@ async def weather_model(messages: list[Message], info: AgentInfo) -> ModelRespon
     assert info.allow_text_result
     assert {t.name for t in info.function_tools} == {'get_location', 'get_weather'}
     last = messages[-1]
-    if last.message_kind == 'user-prompt':
+    if isinstance(last, UserPrompt):
         return ModelResponse(
             parts=[
                 ToolCallPart.from_json(
@@ -91,11 +91,11 @@ async def weather_model(messages: list[Message], info: AgentInfo) -> ModelRespon
                 )
             ]
         )
-    elif last.message_kind == 'tool-return':
+    elif isinstance(last, ToolReturn):
         if last.tool_name == 'get_location':
             return ModelResponse(parts=[ToolCallPart.from_json('get_weather', last.model_response_str())])
         elif last.tool_name == 'get_weather':
-            location_name = next(m.content for m in messages if m.message_kind == 'user-prompt')
+            location_name = next(m.content for m in messages if isinstance(m, UserPrompt))
             return ModelResponse.from_text(f'{last.content} in {location_name}')
 
     raise ValueError(f'Unexpected message: {last}')
@@ -177,7 +177,7 @@ def test_weather(set_event_loop: None):
 
 async def call_function_model(messages: list[Message], _: AgentInfo) -> ModelResponse:  # pragma: no cover
     last = messages[-1]
-    if last.message_kind == 'user-prompt':
+    if isinstance(last, UserPrompt):
         if last.content.startswith('{'):
             details = json.loads(last.content)
             return ModelResponse(
@@ -188,7 +188,7 @@ async def call_function_model(messages: list[Message], _: AgentInfo) -> ModelRes
                     )
                 ]
             )
-    elif last.message_kind == 'tool-return':
+    elif isinstance(last, ToolReturn):
         return ModelResponse.from_text(pydantic_core.to_json(last).decode())
 
     raise ValueError(f'Unexpected message: {last}')

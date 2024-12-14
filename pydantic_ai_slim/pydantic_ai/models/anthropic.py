@@ -196,7 +196,7 @@ class AnthropicAgentModel(AgentModel):
         anthropic_messages: list[MessageParam] = []
 
         for m in messages:
-            if m.message_kind == 'system-prompt':
+            if isinstance(m, SystemPrompt):
                 system_prompt += m.content
             else:
                 anthropic_messages.append(self._map_message(m))

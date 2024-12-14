@@ -20,7 +20,6 @@ from . import (
     models,
     result,
 )
-from .messages import TextPart, ToolCallPart
 from .result import ResultData
 from .settings import ModelSettings, merge_model_settings
 from .tools import (
@@ -795,7 +794,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         self, deps: AgentDeps, user_prompt: str, message_history: list[_messages.Message] | None
     ) -> tuple[int, list[_messages.Message]]:
         # if message history includes system prompts, we don't want to regenerate them
-        if message_history and any(m.message_kind == 'system-prompt' for m in message_history):
+        if message_history and any(isinstance(m, _messages.SystemPrompt) for m in message_history):
             # shallow copy messages
             messages = message_history.copy()
         else:
@@ -816,9 +815,9 @@ class Agent(Generic[AgentDeps, ResultData]):
             A tuple of `(final_result, messages)`. If `final_result` is not `None`, the conversation should end.
         """
         texts: list[str] = []
-        tool_calls: list[ToolCallPart] = []
+        tool_calls: list[_messages.ToolCallPart] = []
         for item in model_response.parts:
-            if isinstance(item, TextPart):
+            if isinstance(item, _messages.TextPart):
                 texts.append(item.content)
             else:
                 tool_calls.append(item)
@@ -852,7 +851,7 @@ class Agent(Generic[AgentDeps, ResultData]):
             return None, [response]
 
     async def _handle_structured_response(
-        self, tool_calls: list[ToolCallPart], deps: AgentDeps
+        self, tool_calls: list[_messages.ToolCallPart], deps: AgentDeps
     ) -> tuple[_MarkFinalResult[ResultData] | None, list[_messages.Message]]:
         """Handle a structured response containing tool calls from the model for non-streaming responses."""
         assert tool_calls, 'Expected at least one tool call'
@@ -870,7 +869,7 @@ class Agent(Generic[AgentDeps, ResultData]):
 
     async def _process_final_tool_calls(
         self,
-        tool_calls: list[ToolCallPart],
+        tool_calls: list[_messages.ToolCallPart],
         deps: AgentDeps,
     ) -> tuple[_MarkFinalResult[ResultData] | None, list[_messages.Message]]:
         """Process any final result tool calls and return the first valid result."""
@@ -916,7 +915,7 @@ class Agent(Generic[AgentDeps, ResultData]):
 
     async def _process_function_tools(
         self,
-        tool_calls: list[ToolCallPart],
+        tool_calls: list[_messages.ToolCallPart],
         deps: AgentDeps,
     ) -> list[_messages.Message]:
         """Process function (non-final) tool calls in parallel."""
@@ -1013,7 +1012,7 @@ class Agent(Generic[AgentDeps, ResultData]):
             # we now run all tool functions in parallel
             tasks: list[asyncio.Task[_messages.Message]] = []
             for item in structured_msg.parts:
-                if isinstance(item, ToolCallPart):
+                if isinstance(item, _messages.ToolCallPart):
                     call = item
                     if tool := self._function_tools.get(call.tool_name):
                         tasks.append(asyncio.create_task(tool.run(deps, call), name=call.tool_name))
