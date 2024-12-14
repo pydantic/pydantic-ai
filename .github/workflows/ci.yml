@@ -84,7 +84,7 @@ jobs:
         with:
           enable-cache: true
 
-      - uses: pydantic/ollama-action@main
+      - uses: pydantic/ollama-action@v3
         with:
           model: qwen2:0.5b
 
