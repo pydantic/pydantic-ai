@@ -21,7 +21,7 @@ try:
 except ImportError as _import_error:
     raise ImportError(
         'Please install `google-auth` to use the VertexAI model, '
-        "you can use the `vertexai` optional group — `pip install 'pydantic-ai[vertexai]'`"
+        "you can use the `vertexai` optional group — `pip install 'pydantic-ai-slim[vertexai]'`"
     ) from _import_error
 
 VERTEX_AI_URL_TEMPLATE = (
@@ -114,7 +114,7 @@ class VertexAIModel(Model):
         allow_text_result: bool,
         result_tools: list[ToolDefinition],
     ) -> GeminiAgentModel:
-        url, auth = await self._ainit()
+        url, auth = await self.ainit()
         return GeminiAgentModel(
             http_client=self.http_client,
             model_name=self.model_name,
@@ -125,7 +125,11 @@ class VertexAIModel(Model):
             result_tools=result_tools,
         )
 
-    async def _ainit(self) -> tuple[str, BearerTokenAuth]:
+    async def ainit(self) -> tuple[str, BearerTokenAuth]:
+        """Initialize the model, setting the URL and auth.
+
+        This will raise an error if authentication fails.
+        """
         if self.url is not None and self.auth is not None:
             return self.url, self.auth
 

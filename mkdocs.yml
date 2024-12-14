@@ -16,6 +16,7 @@ nav:
   - contributing.md
   - Documentation:
     - agents.md
+    - models.md
     - dependencies.md
     - tools.md
     - results.md

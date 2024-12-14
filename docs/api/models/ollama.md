@@ -2,7 +2,7 @@
 
 ## Setup
 
-For details on how to set up authentication with this model, see [model configuration for Ollama](../../install.md#ollama).
+For details on how to set up authentication with this model, see [model configuration for Ollama](../../models.md#ollama).
 
 ## Example local usage
 
