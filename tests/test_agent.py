@@ -4,20 +4,20 @@ from typing import Any, Callable, Union
 
 import httpx
 import pytest
+from dirty_equals import IsJson
 from inline_snapshot import snapshot
 from pydantic import BaseModel, field_validator
+from pydantic_core import to_json
 
 from pydantic_ai import Agent, ModelRetry, RunContext, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
     ArgsDict,
     ArgsJson,
     Message,
-    ModelAnyResponse,
-    ModelStructuredResponse,
-    ModelTextResponse,
+    ModelResponse,
     RetryPrompt,
     SystemPrompt,
-    ToolCall,
+    ToolCallPart,
     ToolReturn,
     UserPrompt,
 )
@@ -33,10 +33,10 @@ pytestmark = pytest.mark.anyio
 
 
 def test_result_tuple(set_event_loop: None):
-    def return_tuple(_: list[Message], info: AgentInfo) -> ModelAnyResponse:
+    def return_tuple(_: list[Message], info: AgentInfo) -> ModelResponse:
         assert info.result_tools is not None
         args_json = '{"response": ["foo", "bar"]}'
-        return ModelStructuredResponse(calls=[ToolCall.from_json(info.result_tools[0].name, args_json)])
+        return ModelResponse(parts=[ToolCallPart.from_json(info.result_tools[0].name, args_json)])
 
     agent = Agent(FunctionModel(return_tuple), result_type=tuple[str, str])
 
@@ -50,10 +50,10 @@ class Foo(BaseModel):
 
 
 def test_result_pydantic_model(set_event_loop: None):
-    def return_model(_: list[Message], info: AgentInfo) -> ModelAnyResponse:
+    def return_model(_: list[Message], info: AgentInfo) -> ModelResponse:
         assert info.result_tools is not None
         args_json = '{"a": 1, "b": "foo"}'
-        return ModelStructuredResponse(calls=[ToolCall.from_json(info.result_tools[0].name, args_json)])
+        return ModelResponse(parts=[ToolCallPart.from_json(info.result_tools[0].name, args_json)])
 
     agent = Agent(FunctionModel(return_model), result_type=Foo)
 
@@ -63,13 +63,13 @@ def test_result_pydantic_model(set_event_loop: None):
 
 
 def test_result_pydantic_model_retry(set_event_loop: None):
-    def return_model(messages: list[Message], info: AgentInfo) -> ModelAnyResponse:
+    def return_model(messages: list[Message], info: AgentInfo) -> ModelResponse:
         assert info.result_tools is not None
         if len(messages) == 1:
             args_json = '{"a": "wrong", "b": "foo"}'
         else:
             args_json = '{"a": 42, "b": "foo"}'
-        return ModelStructuredResponse(calls=[ToolCall.from_json(info.result_tools[0].name, args_json)])
+        return ModelResponse(parts=[ToolCallPart.from_json(info.result_tools[0].name, args_json)])
 
     agent = Agent(FunctionModel(return_model), result_type=Foo)
 
@@ -82,8 +82,8 @@ def test_result_pydantic_model_retry(set_event_loop: None):
     assert result.all_messages() == snapshot(
         [
             UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
-            ModelStructuredResponse(
-                calls=[ToolCall.from_json('final_result', '{"a": "wrong", "b": "foo"}')],
+            ModelResponse(
+                parts=[ToolCallPart.from_json('final_result', '{"a": "wrong", "b": "foo"}')],
                 timestamp=IsNow(tz=timezone.utc),
             ),
             RetryPrompt(
@@ -98,28 +98,24 @@ def test_result_pydantic_model_retry(set_event_loop: None):
                 ],
                 timestamp=IsNow(tz=timezone.utc),
             ),
-            ModelStructuredResponse(
-                calls=[ToolCall.from_json('final_result', '{"a": 42, "b": "foo"}')],
+            ModelResponse(
+                parts=[ToolCallPart.from_json('final_result', '{"a": 42, "b": "foo"}')],
                 timestamp=IsNow(tz=timezone.utc),
             ),
-            ToolReturn(
-                tool_name='final_result',
-                content='Final result processed.',
-                timestamp=IsNow(tz=timezone.utc),
-            ),
+            ToolReturn(tool_name='final_result', content='Final result processed.', timestamp=IsNow(tz=timezone.utc)),
         ]
     )
     assert result.all_messages_json().startswith(b'[{"content":"Hello"')
 
 
 def test_result_pydantic_model_validation_error(set_event_loop: None):
-    def return_model(messages: list[Message], info: AgentInfo) -> ModelAnyResponse:
+    def return_model(messages: list[Message], info: AgentInfo) -> ModelResponse:
         assert info.result_tools is not None
         if len(messages) == 1:
             args_json = '{"a": 1, "b": "foo"}'
         else:
             args_json = '{"a": 1, "b": "bar"}'
-        return ModelStructuredResponse(calls=[ToolCall.from_json(info.result_tools[0].name, args_json)])
+        return ModelResponse(parts=[ToolCallPart.from_json(info.result_tools[0].name, args_json)])
 
     class Bar(BaseModel):
         a: int
@@ -137,9 +133,7 @@ def test_result_pydantic_model_validation_error(set_event_loop: None):
     assert isinstance(result.data, Bar)
     assert result.data.model_dump() == snapshot({'a': 1, 'b': 'bar'})
     message_roles = [m.role for m in result.all_messages()]
-    assert message_roles == snapshot(
-        ['user', 'model-structured-response', 'retry-prompt', 'model-structured-response', 'tool-return']
-    )
+    assert message_roles == snapshot(['user', 'model-response', 'retry-prompt', 'model-response', 'tool-return'])
 
     retry_prompt = result.all_messages()[2]
     assert isinstance(retry_prompt, RetryPrompt)
@@ -159,13 +153,13 @@ Fix the errors and try again.""")
 
 
 def test_result_validator(set_event_loop: None):
-    def return_model(messages: list[Message], info: AgentInfo) -> ModelAnyResponse:
+    def return_model(messages: list[Message], info: AgentInfo) -> ModelResponse:
         assert info.result_tools is not None
         if len(messages) == 1:
             args_json = '{"a": 41, "b": "foo"}'
         else:
             args_json = '{"a": 42, "b": "foo"}'
-        return ModelStructuredResponse(calls=[ToolCall.from_json(info.result_tools[0].name, args_json)])
+        return ModelResponse(parts=[ToolCallPart.from_json(info.result_tools[0].name, args_json)])
 
     agent = Agent(FunctionModel(return_model), result_type=Foo)
 
@@ -183,18 +177,16 @@ def test_result_validator(set_event_loop: None):
     assert result.all_messages() == snapshot(
         [
             UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
-            ModelStructuredResponse(
-                calls=[ToolCall.from_json('final_result', '{"a": 41, "b": "foo"}')], timestamp=IsNow(tz=timezone.utc)
-            ),
-            RetryPrompt(tool_name='final_result', content='"a" should be 42', timestamp=IsNow(tz=timezone.utc)),
-            ModelStructuredResponse(
-                calls=[ToolCall.from_json('final_result', '{"a": 42, "b": "foo"}')], timestamp=IsNow(tz=timezone.utc)
-            ),
-            ToolReturn(
-                tool_name='final_result',
-                content='Final result processed.',
+            ModelResponse(
+                parts=[ToolCallPart.from_json('final_result', '{"a": 41, "b": "foo"}')],
                 timestamp=IsNow(tz=timezone.utc),
             ),
+            RetryPrompt(tool_name='final_result', content='"a" should be 42', timestamp=IsNow(tz=timezone.utc)),
+            ModelResponse(
+                parts=[ToolCallPart.from_json('final_result', '{"a": 42, "b": "foo"}')],
+                timestamp=IsNow(tz=timezone.utc),
+            ),
+            ToolReturn(tool_name='final_result', content='Final result processed.', timestamp=IsNow(tz=timezone.utc)),
         ]
     )
 
@@ -202,16 +194,16 @@ def test_result_validator(set_event_loop: None):
 def test_plain_response(set_event_loop: None):
     call_index = 0
 
-    def return_tuple(_: list[Message], info: AgentInfo) -> ModelAnyResponse:
+    def return_tuple(_: list[Message], info: AgentInfo) -> ModelResponse:
         nonlocal call_index
 
         assert info.result_tools is not None
         call_index += 1
         if call_index == 1:
-            return ModelTextResponse(content='hello')
+            return ModelResponse.from_text('hello')
         else:
             args_json = '{"response": ["foo", "bar"]}'
-            return ModelStructuredResponse(calls=[ToolCall.from_json(info.result_tools[0].name, args_json)])
+            return ModelResponse(parts=[ToolCallPart.from_json(info.result_tools[0].name, args_json)])
 
     agent = Agent(FunctionModel(return_tuple), result_type=tuple[str, str])
 
@@ -221,20 +213,16 @@ def test_plain_response(set_event_loop: None):
     assert result.all_messages() == snapshot(
         [
             UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
-            ModelTextResponse(content='hello', timestamp=IsNow(tz=timezone.utc)),
+            ModelResponse.from_text(content='hello', timestamp=IsNow(tz=timezone.utc)),
             RetryPrompt(
                 content='Plain text responses are not permitted, please call one of the functions instead.',
                 timestamp=IsNow(tz=timezone.utc),
             ),
-            ModelStructuredResponse(
-                calls=[ToolCall(tool_name='final_result', args=ArgsJson(args_json='{"response": ["foo", "bar"]}'))],
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='final_result', args=ArgsJson(args_json='{"response": ["foo", "bar"]}'))],
                 timestamp=IsNow(tz=timezone.utc),
             ),
-            ToolReturn(
-                tool_name='final_result',
-                content='Final result processed.',
-                timestamp=IsNow(tz=timezone.utc),
-            ),
+            ToolReturn(tool_name='final_result', content='Final result processed.', timestamp=IsNow(tz=timezone.utc)),
         ]
     )
 
@@ -287,7 +275,7 @@ def test_response_union_allow_str(set_event_loop: None, input_union_callable: Ca
     try:
         union = input_union_callable()
     except TypeError:
-        raise pytest.skip('Python version does not support `|` syntax for unions')
+        pytest.skip('Python version does not support `|` syntax for unions')
 
     m = TestModel()
     agent: Agent[None, Union[str, Foo]] = Agent(m, result_type=union)
@@ -433,12 +421,12 @@ def test_run_with_history_new(set_event_loop: None):
     assert result1.new_messages() == snapshot(
         [
             UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
-            ModelStructuredResponse(
-                calls=[ToolCall(tool_name='ret_a', args=ArgsDict(args_dict={'x': 'a'}))],
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='ret_a', args=ArgsDict(args_dict={'x': 'a'}))],
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ToolReturn(tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc)),
-            ModelTextResponse(content='{"ret_a":"a-apple"}', timestamp=IsNow(tz=timezone.utc)),
+            ModelResponse.from_text(content='{"ret_a":"a-apple"}', timestamp=IsNow(tz=timezone.utc)),
         ]
     )
 
@@ -452,8 +440,8 @@ def test_run_with_history_new(set_event_loop: None):
                     content='Hello',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
-                ModelStructuredResponse(
-                    calls=[ToolCall(tool_name='ret_a', args=ArgsDict(args_dict={'x': 'a'}))],
+                ModelResponse(
+                    parts=[ToolCallPart(tool_name='ret_a', args=ArgsDict(args_dict={'x': 'a'}))],
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 ToolReturn(
@@ -461,7 +449,7 @@ def test_run_with_history_new(set_event_loop: None):
                     content='a-apple',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
-                ModelTextResponse(
+                ModelResponse.from_text(
                     content='{"ret_a":"a-apple"}',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
@@ -469,7 +457,7 @@ def test_run_with_history_new(set_event_loop: None):
                     content='Hello again',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
-                ModelTextResponse(
+                ModelResponse.from_text(
                     content='{"ret_a":"a-apple"}',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
@@ -480,7 +468,7 @@ def test_run_with_history_new(set_event_loop: None):
         )
     )
     new_msg_roles = [msg.role for msg in result2.new_messages()]
-    assert new_msg_roles == snapshot(['user', 'model-text-response'])
+    assert new_msg_roles == snapshot(['user', 'model-response'])
     assert result2.new_messages_json().startswith(b'[{"content":"Hello again",')
 
     # if we pass all_messages, system prompt is NOT inserted before the message_history messages,
@@ -493,15 +481,15 @@ def test_run_with_history_new(set_event_loop: None):
             _all_messages=[
                 SystemPrompt(content='Foobar'),
                 UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
-                ModelStructuredResponse(
-                    calls=[ToolCall(tool_name='ret_a', args=ArgsDict(args_dict={'x': 'a'}))],
+                ModelResponse(
+                    parts=[ToolCallPart(tool_name='ret_a', args=ArgsDict(args_dict={'x': 'a'}))],
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 ToolReturn(tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc)),
-                ModelTextResponse(content='{"ret_a":"a-apple"}', timestamp=IsNow(tz=timezone.utc)),
+                ModelResponse.from_text(content='{"ret_a":"a-apple"}', timestamp=IsNow(tz=timezone.utc)),
                 # second call, notice no repeated system prompt
                 UserPrompt(content='Hello again', timestamp=IsNow(tz=timezone.utc)),
-                ModelTextResponse(content='{"ret_a":"a-apple"}', timestamp=IsNow(tz=timezone.utc)),
+                ModelResponse.from_text(content='{"ret_a":"a-apple"}', timestamp=IsNow(tz=timezone.utc)),
             ],
             _new_message_index=5,
             _cost=Cost(),
@@ -525,13 +513,13 @@ def test_run_with_history_new_structured(set_event_loop: None):
     assert result1.new_messages() == snapshot(
         [
             UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
-            ModelStructuredResponse(
-                calls=[ToolCall(tool_name='ret_a', args=ArgsDict(args_dict={'x': 'a'}))],
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='ret_a', args=ArgsDict(args_dict={'x': 'a'}))],
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ToolReturn(tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc)),
-            ModelStructuredResponse(
-                calls=[ToolCall(tool_name='final_result', args=ArgsDict(args_dict={'a': 0}), tool_call_id=None)],
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='final_result', args=ArgsDict(args_dict={'a': 0}), tool_call_id=None)],
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ToolReturn(
@@ -551,13 +539,13 @@ def test_run_with_history_new_structured(set_event_loop: None):
             _all_messages=[
                 SystemPrompt(content='Foobar'),
                 UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
-                ModelStructuredResponse(
-                    calls=[ToolCall(tool_name='ret_a', args=ArgsDict(args_dict={'x': 'a'}))],
+                ModelResponse(
+                    parts=[ToolCallPart(tool_name='ret_a', args=ArgsDict(args_dict={'x': 'a'}))],
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 ToolReturn(tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc)),
-                ModelStructuredResponse(
-                    calls=[ToolCall(tool_name='final_result', args=ArgsDict(args_dict={'a': 0}))],
+                ModelResponse(
+                    parts=[ToolCallPart(tool_name='final_result', args=ArgsDict(args_dict={'a': 0}))],
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 ToolReturn(
@@ -565,8 +553,8 @@ def test_run_with_history_new_structured(set_event_loop: None):
                 ),
                 # second call, notice no repeated system prompt
                 UserPrompt(content='Hello again', timestamp=IsNow(tz=timezone.utc)),
-                ModelStructuredResponse(
-                    calls=[ToolCall(tool_name='final_result', args=ArgsDict(args_dict={'a': 0}))],
+                ModelResponse(
+                    parts=[ToolCallPart(tool_name='final_result', args=ArgsDict(args_dict={'a': 0}))],
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 ToolReturn(
@@ -578,7 +566,7 @@ def test_run_with_history_new_structured(set_event_loop: None):
         )
     )
     new_msg_roles = [msg.role for msg in result2.new_messages()]
-    assert new_msg_roles == snapshot(['user', 'model-structured-response', 'tool-return'])
+    assert new_msg_roles == snapshot(['user', 'model-response', 'tool-return'])
     assert result2.new_messages_json().startswith(b'[{"content":"Hello again",')
 
     # if we pass all_messages, system prompt is NOT inserted before the message_history messages,
@@ -591,13 +579,13 @@ def test_run_with_history_new_structured(set_event_loop: None):
             _all_messages=[
                 SystemPrompt(content='Foobar'),
                 UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
-                ModelStructuredResponse(
-                    calls=[ToolCall(tool_name='ret_a', args=ArgsDict(args_dict={'x': 'a'}))],
+                ModelResponse(
+                    parts=[ToolCallPart(tool_name='ret_a', args=ArgsDict(args_dict={'x': 'a'}))],
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 ToolReturn(tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc)),
-                ModelStructuredResponse(
-                    calls=[ToolCall(tool_name='final_result', args=ArgsDict(args_dict={'a': 0}))],
+                ModelResponse(
+                    parts=[ToolCallPart(tool_name='final_result', args=ArgsDict(args_dict={'a': 0}))],
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 ToolReturn(
@@ -605,8 +593,8 @@ def test_run_with_history_new_structured(set_event_loop: None):
                 ),
                 # second call, notice no repeated system prompt
                 UserPrompt(content='Hello again', timestamp=IsNow(tz=timezone.utc)),
-                ModelStructuredResponse(
-                    calls=[ToolCall(tool_name='final_result', args=ArgsDict(args_dict={'a': 0}))],
+                ModelResponse(
+                    parts=[ToolCallPart(tool_name='final_result', args=ArgsDict(args_dict={'a': 0}))],
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 ToolReturn(
@@ -620,18 +608,18 @@ def test_run_with_history_new_structured(set_event_loop: None):
 
 
 def test_empty_tool_calls(set_event_loop: None):
-    def empty(_: list[Message], _info: AgentInfo) -> ModelAnyResponse:
-        return ModelStructuredResponse(calls=[])
+    def empty(_: list[Message], _info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[])
 
     agent = Agent(FunctionModel(empty))
 
-    with pytest.raises(UnexpectedModelBehavior, match='Received empty tool call message'):
+    with pytest.raises(UnexpectedModelBehavior, match='Received empty model response'):
         agent.run_sync('Hello')
 
 
 def test_unknown_tool(set_event_loop: None):
-    def empty(_: list[Message], _info: AgentInfo) -> ModelAnyResponse:
-        return ModelStructuredResponse(calls=[ToolCall.from_json('foobar', '{}')])
+    def empty(_: list[Message], _info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart.from_json('foobar', '{}')])
 
     agent = Agent(FunctionModel(empty))
 
@@ -640,23 +628,25 @@ def test_unknown_tool(set_event_loop: None):
     assert agent.last_run_messages == snapshot(
         [
             UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
-            ModelStructuredResponse(
-                calls=[ToolCall(tool_name='foobar', args=ArgsJson(args_json='{}'))], timestamp=IsNow(tz=timezone.utc)
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='foobar', args=ArgsJson(args_json='{}'))],
+                timestamp=IsNow(tz=timezone.utc),
             ),
             RetryPrompt(content="Unknown tool name: 'foobar'. No tools available.", timestamp=IsNow(tz=timezone.utc)),
-            ModelStructuredResponse(
-                calls=[ToolCall(tool_name='foobar', args=ArgsJson(args_json='{}'))], timestamp=IsNow(tz=timezone.utc)
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='foobar', args=ArgsJson(args_json='{}'))],
+                timestamp=IsNow(tz=timezone.utc),
             ),
         ]
     )
 
 
 def test_unknown_tool_fix(set_event_loop: None):
-    def empty(m: list[Message], _info: AgentInfo) -> ModelAnyResponse:
+    def empty(m: list[Message], _info: AgentInfo) -> ModelResponse:
         if len(m) > 1:
-            return ModelTextResponse(content='success')
+            return ModelResponse.from_text(content='success')
         else:
-            return ModelStructuredResponse(calls=[ToolCall.from_json('foobar', '{}')])
+            return ModelResponse(parts=[ToolCallPart.from_json('foobar', '{}')])
 
     agent = Agent(FunctionModel(empty))
 
@@ -665,11 +655,12 @@ def test_unknown_tool_fix(set_event_loop: None):
     assert result.all_messages() == snapshot(
         [
             UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
-            ModelStructuredResponse(
-                calls=[ToolCall(tool_name='foobar', args=ArgsJson(args_json='{}'))], timestamp=IsNow(tz=timezone.utc)
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='foobar', args=ArgsJson(args_json='{}'))],
+                timestamp=IsNow(tz=timezone.utc),
             ),
             RetryPrompt(content="Unknown tool name: 'foobar'. No tools available.", timestamp=IsNow(tz=timezone.utc)),
-            ModelTextResponse(content='success', timestamp=IsNow(tz=timezone.utc)),
+            ModelResponse.from_text(content='success', timestamp=IsNow(tz=timezone.utc)),
         ]
     )
 
@@ -769,3 +760,274 @@ def foo():
     assert mod.my_agent.name is None
     assert mod.foo() == snapshot('success (no tool calls)')
     assert mod.my_agent.name == 'my_agent'
+
+
+class TestMultipleToolCalls:
+    """Tests for scenarios where multiple tool calls are made in a single response."""
+
+    pytestmark = pytest.mark.usefixtures('set_event_loop')
+
+    class ResultType(BaseModel):
+        """Result type used by all tests."""
+
+        value: str
+
+    def test_early_strategy_stops_after_first_final_result(self):
+        """Test that 'early' strategy stops processing regular tools after first final result."""
+        tool_called = []
+
+        def return_model(_: list[Message], info: AgentInfo) -> ModelResponse:
+            assert info.result_tools is not None
+            return ModelResponse(
+                parts=[
+                    ToolCallPart.from_dict('final_result', {'value': 'final'}),
+                    ToolCallPart.from_dict('regular_tool', {'x': 1}),
+                    ToolCallPart.from_dict('another_tool', {'y': 2}),
+                ]
+            )
+
+        agent = Agent(FunctionModel(return_model), result_type=self.ResultType, end_strategy='early')
+
+        @agent.tool_plain
+        def regular_tool(x: int) -> int:  # pragma: no cover
+            """A regular tool that should not be called."""
+            tool_called.append('regular_tool')
+            return x
+
+        @agent.tool_plain
+        def another_tool(y: int) -> int:  # pragma: no cover
+            """Another tool that should not be called."""
+            tool_called.append('another_tool')
+            return y
+
+        result = agent.run_sync('test early strategy')
+        messages = result.all_messages()
+
+        # Verify no tools were called after final result
+        assert tool_called == []
+
+        # Verify we got tool returns for all calls
+        tool_returns = [m for m in messages if isinstance(m, ToolReturn)]
+        assert tool_returns == snapshot(
+            [
+                ToolReturn(
+                    tool_name='final_result', content='Final result processed.', timestamp=IsNow(tz=timezone.utc)
+                ),
+                ToolReturn(
+                    tool_name='regular_tool',
+                    content='Tool not executed - a final result was already processed.',
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
+                ToolReturn(
+                    tool_name='another_tool',
+                    content='Tool not executed - a final result was already processed.',
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
+            ]
+        )
+
+    def test_early_strategy_uses_first_final_result(self):
+        """Test that 'early' strategy uses the first final result and ignores subsequent ones."""
+
+        def return_model(_: list[Message], info: AgentInfo) -> ModelResponse:
+            assert info.result_tools is not None
+            return ModelResponse(
+                parts=[
+                    ToolCallPart.from_dict('final_result', {'value': 'first'}),
+                    ToolCallPart.from_dict('final_result', {'value': 'second'}),
+                ]
+            )
+
+        agent = Agent(FunctionModel(return_model), result_type=self.ResultType, end_strategy='early')
+        result = agent.run_sync('test multiple final results')
+
+        # Verify the result came from the first final tool
+        assert result.data.value == 'first'
+
+        # Verify we got appropriate tool returns
+        tool_returns = [m for m in result.all_messages() if isinstance(m, ToolReturn)]
+        assert tool_returns == snapshot(
+            [
+                ToolReturn(
+                    tool_name='final_result', content='Final result processed.', timestamp=IsNow(tz=timezone.utc)
+                ),
+                ToolReturn(
+                    tool_name='final_result',
+                    content='Result tool not used - a final result was already processed.',
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
+            ]
+        )
+
+    def test_exhaustive_strategy_executes_all_tools(self):
+        """Test that 'exhaustive' strategy executes all tools while using first final result."""
+        tool_called: list[str] = []
+
+        def return_model(_: list[Message], info: AgentInfo) -> ModelResponse:
+            assert info.result_tools is not None
+            return ModelResponse(
+                parts=[
+                    ToolCallPart.from_dict('regular_tool', {'x': 42}),
+                    ToolCallPart.from_dict('final_result', {'value': 'first'}),
+                    ToolCallPart.from_dict('another_tool', {'y': 2}),
+                    ToolCallPart.from_dict('final_result', {'value': 'second'}),
+                    ToolCallPart.from_dict('unknown_tool', {'value': '???'}),
+                ]
+            )
+
+        agent = Agent(FunctionModel(return_model), result_type=self.ResultType, end_strategy='exhaustive')
+
+        @agent.tool_plain
+        def regular_tool(x: int) -> int:
+            """A regular tool that should be called."""
+            tool_called.append('regular_tool')
+            return x
+
+        @agent.tool_plain
+        def another_tool(y: int) -> int:
+            """Another tool that should be called."""
+            tool_called.append('another_tool')
+            return y
+
+        result = agent.run_sync('test exhaustive strategy')
+
+        # Verify the result came from the first final tool
+        assert result.data.value == 'first'
+
+        # Verify all regular tools were called
+        assert sorted(tool_called) == sorted(['regular_tool', 'another_tool'])
+
+        # Verify we got tool returns in the correct order
+        assert result.all_messages() == snapshot(
+            [
+                UserPrompt(content='test exhaustive strategy', timestamp=IsNow(tz=timezone.utc)),
+                ModelResponse(
+                    parts=[
+                        ToolCallPart(tool_name='regular_tool', args=ArgsDict(args_dict={'x': 42})),
+                        ToolCallPart(tool_name='final_result', args=ArgsDict(args_dict={'value': 'first'})),
+                        ToolCallPart(tool_name='another_tool', args=ArgsDict(args_dict={'y': 2})),
+                        ToolCallPart(tool_name='final_result', args=ArgsDict(args_dict={'value': 'second'})),
+                        ToolCallPart(tool_name='unknown_tool', args=ArgsDict(args_dict={'value': '???'})),
+                    ],
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
+                ToolReturn(
+                    tool_name='final_result', content='Final result processed.', timestamp=IsNow(tz=timezone.utc)
+                ),
+                ToolReturn(
+                    tool_name='final_result',
+                    content='Result tool not used - a final result was already processed.',
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
+                RetryPrompt(
+                    content="Unknown tool name: 'unknown_tool'. Available tools: regular_tool, another_tool, final_result",
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
+                ToolReturn(tool_name='regular_tool', content=42, timestamp=IsNow(tz=timezone.utc)),
+                ToolReturn(tool_name='another_tool', content=2, timestamp=IsNow(tz=timezone.utc)),
+            ]
+        )
+
+    def test_early_strategy_with_final_result_in_middle(self):
+        """Test that 'early' strategy stops at first final result, regardless of position."""
+        tool_called = []
+
+        def return_model(_: list[Message], info: AgentInfo) -> ModelResponse:
+            assert info.result_tools is not None
+            return ModelResponse(
+                parts=[
+                    ToolCallPart.from_dict('regular_tool', {'x': 1}),
+                    ToolCallPart.from_dict('final_result', {'value': 'final'}),
+                    ToolCallPart.from_dict('another_tool', {'y': 2}),
+                    ToolCallPart.from_dict('unknown_tool', {'value': '???'}),
+                ]
+            )
+
+        agent = Agent(FunctionModel(return_model), result_type=self.ResultType, end_strategy='early')
+
+        @agent.tool_plain
+        def regular_tool(x: int) -> int:  # pragma: no cover
+            """A regular tool that should not be called."""
+            tool_called.append('regular_tool')
+            return x
+
+        @agent.tool_plain
+        def another_tool(y: int) -> int:  # pragma: no cover
+            """A tool that should not be called."""
+            tool_called.append('another_tool')
+            return y
+
+        result = agent.run_sync('test early strategy with final result in middle')
+
+        # Verify no tools were called
+        assert tool_called == []
+
+        # Verify we got appropriate tool returns
+        assert result.all_messages() == snapshot(
+            [
+                UserPrompt(content='test early strategy with final result in middle', timestamp=IsNow(tz=timezone.utc)),
+                ModelResponse(
+                    parts=[
+                        ToolCallPart(tool_name='regular_tool', args=ArgsDict(args_dict={'x': 1})),
+                        ToolCallPart(tool_name='final_result', args=ArgsDict(args_dict={'value': 'final'})),
+                        ToolCallPart(tool_name='another_tool', args=ArgsDict(args_dict={'y': 2})),
+                        ToolCallPart(tool_name='unknown_tool', args=ArgsDict(args_dict={'value': '???'})),
+                    ],
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
+                ToolReturn(
+                    tool_name='final_result', content='Final result processed.', timestamp=IsNow(tz=timezone.utc)
+                ),
+                ToolReturn(
+                    tool_name='regular_tool',
+                    content='Tool not executed - a final result was already processed.',
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
+                ToolReturn(
+                    tool_name='another_tool',
+                    content='Tool not executed - a final result was already processed.',
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
+                RetryPrompt(
+                    content="Unknown tool name: 'unknown_tool'. Available tools: regular_tool, another_tool, final_result",
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
+            ]
+        )
+
+    def test_early_strategy_does_not_apply_to_tool_calls_without_final_tool(self):
+        """Test that 'early' strategy does not apply to tool calls without final tool."""
+        tool_called = []
+        agent = Agent(TestModel(), result_type=self.ResultType, end_strategy='early')
+
+        @agent.tool_plain
+        def regular_tool(x: int) -> int:
+            """A regular tool that should be called."""
+            tool_called.append('regular_tool')
+            return x
+
+        result = agent.run_sync('test early strategy with regular tool calls')
+        assert tool_called == ['regular_tool']
+
+        tool_returns = [m for m in result.all_messages() if isinstance(m, ToolReturn)]
+        assert tool_returns == snapshot(
+            [
+                ToolReturn(tool_name='regular_tool', content=0, timestamp=IsNow(tz=timezone.utc)),
+                ToolReturn(
+                    tool_name='final_result', content='Final result processed.', timestamp=IsNow(tz=timezone.utc)
+                ),
+            ]
+        )
+
+
+async def test_model_settings_override() -> None:
+    def return_settings(_: list[Message], info: AgentInfo) -> ModelResponse:
+        return ModelResponse.from_text(to_json(info.model_settings).decode())
+
+    my_agent = Agent(FunctionModel(return_settings))
+    assert (await my_agent.run('Hello')).data == IsJson(None)
+    assert (await my_agent.run('Hello', model_settings={'temperature': 0.5})).data == IsJson({'temperature': 0.5})
+
+    my_agent = Agent(FunctionModel(return_settings), model_settings={'temperature': 0.1})
+    assert (await my_agent.run('Hello')).data == IsJson({'temperature': 0.1})
+    assert (await my_agent.run('Hello', model_settings={'temperature': 0.5})).data == IsJson({'temperature': 0.5})

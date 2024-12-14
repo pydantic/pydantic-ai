@@ -66,8 +66,7 @@ params = [
     pytest.param(vertexai, id='vertexai'),
     pytest.param(groq, id='groq'),
     pytest.param(anthropic, id='anthropic'),
-    # excluding from live testing for now due to flaky responses
-    # pytest.param(ollama, id='ollama'),
+    pytest.param(ollama, id='ollama'),
 ]
 GetModel = Callable[[httpx.AsyncClient, Path], Model]
 
@@ -80,7 +79,7 @@ async def http_client(allow_model_requests: None) -> AsyncIterator[httpx.AsyncCl
 
 @pytest.mark.parametrize('get_model', params)
 async def test_text(http_client: httpx.AsyncClient, tmp_path: Path, get_model: GetModel):
-    agent = Agent(get_model(http_client, tmp_path))
+    agent = Agent(get_model(http_client, tmp_path), model_settings={'temperature': 0.0}, retries=2)
     result = await agent.run('What is the capital of France?')
     print('Text response:', result.data)
     assert 'paris' in result.data.lower()
@@ -94,7 +93,7 @@ stream_params = [p for p in params if p.id != 'anthropic']
 
 @pytest.mark.parametrize('get_model', stream_params)
 async def test_stream(http_client: httpx.AsyncClient, tmp_path: Path, get_model: GetModel):
-    agent = Agent(get_model(http_client, tmp_path))
+    agent = Agent(get_model(http_client, tmp_path), model_settings={'temperature': 0.0}, retries=2)
     async with agent.run_stream('What is the capital of France?') as result:
         data = await result.get_data()
     print('Stream response:', data)
@@ -114,7 +113,7 @@ structured_params = [p for p in params if p.id != 'ollama']
 
 @pytest.mark.parametrize('get_model', structured_params)
 async def test_structured(http_client: httpx.AsyncClient, tmp_path: Path, get_model: GetModel):
-    agent = Agent(get_model(http_client, tmp_path), result_type=MyModel)
+    agent = Agent(get_model(http_client, tmp_path), result_type=MyModel, model_settings={'temperature': 0.0}, retries=2)
     result = await agent.run('What is the capital of the UK?')
     print('Structured response:', result.data)
     assert result.data.city.lower() == 'london'
