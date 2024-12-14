@@ -292,7 +292,7 @@ class MistralAgentModel(AgentModel):
         if choice.message.content is not None:
             if isinstance(choice.message.content, str):
                 parts.append(TextPart(choice.message.content))
-            else:
+            elif isinstance(choice.message.content, list):
                 for chunk in choice.message.content:
                     if isinstance(chunk, MistralTextChunk):
                         parts.append(TextPart(chunk.text))

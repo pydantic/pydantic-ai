@@ -50,6 +50,7 @@ with try_import() as imports_successful:
     from pydantic_ai.models.mistral import (
         MistralModel,
         _generate_simple_json_schema,  # type: ignore
+        _generate_simple_json_schemas,  # type: ignore
     )
 
 pytestmark = [
@@ -1391,3 +1392,10 @@ def test_generate_simple_json_schema():
 
     result = _generate_simple_json_schema(schema)
     assert result == expected_result
+
+
+def test_generate_simple_json_schemas():
+    schema = {'properties': {'prop_anyOf': {'anyOf': [{'type': 'string'}, {'type': 'integer'}]}}}
+    expected_result = {'prop_anyOf': 'Optional[str]'}
+    result = _generate_simple_json_schemas([schema, schema])
+    assert result == [expected_result, expected_result]
