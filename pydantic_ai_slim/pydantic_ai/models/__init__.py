@@ -52,6 +52,12 @@ KnownModelName = Literal[
     'gemini-2.0-flash-exp',
     'vertexai:gemini-1.5-flash',
     'vertexai:gemini-1.5-pro',
+    # since mistral models are supported by other providers (e.g. ollama), and some of their models (e.g. "codestral")
+    # don't start with "mistral", we add the "mistral:" prefix to all to be explicit
+    'mistral:mistral-small-latest',
+    'mistral:mistral-large-latest',
+    'mistral:codestral-latest',
+    'mistral:mistral-moderation-latest',
     'ollama:codellama',
     'ollama:gemma',
     'ollama:gemma2',
@@ -280,6 +286,10 @@ def infer_model(model: Model | KnownModelName) -> Model:
         from .vertexai import VertexAIModel
 
         return VertexAIModel(model[9:])  # pyright: ignore[reportArgumentType]
+    elif model.startswith('mistral:'):
+        from .mistral import MistralModel
+
+        return MistralModel(model[8:])
     elif model.startswith('ollama:'):
         from .ollama import OllamaModel
 
