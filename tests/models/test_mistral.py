@@ -130,7 +130,7 @@ def completion_message(
     return MistralChatCompletionResponse(
         id='123',
         choices=[MistralChatCompletionChoice(finish_reason='stop', index=0, message=message)],
-        # created=1704067200,  # 2024-01-01
+        created=1704067200,
         model='mistral-large-latest',
         object='chat.completion',
         usage=usage or MistralUsageInfo(prompt_tokens=1, completion_tokens=1, total_tokens=1),
@@ -237,9 +237,9 @@ async def test_multiple_completions(allow_model_requests: None):
     assert result.all_messages() == snapshot(
         [
             UserPrompt(content='hello', timestamp=IsNow(tz=timezone.utc)),
-            ModelResponse.from_text(content='world', timestamp=IsNow(tz=timezone.utc)),
+            ModelResponse.from_text(content='world', timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)),
             UserPrompt(content='hello again', timestamp=IsNow(tz=timezone.utc)),
-            ModelResponse.from_text(content='hello again', timestamp=IsNow(tz=timezone.utc)),
+            ModelResponse.from_text(content='hello again', timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)),
         ]
     )
 
@@ -281,11 +281,11 @@ async def test_three_completions(allow_model_requests: None):
     assert result.all_messages() == snapshot(
         [
             UserPrompt(content='hello', timestamp=IsNow(tz=timezone.utc)),
-            ModelResponse.from_text(content='world', timestamp=IsNow(tz=timezone.utc)),
+            ModelResponse.from_text(content='world', timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)),
             UserPrompt(content='hello again', timestamp=IsNow(tz=timezone.utc)),
-            ModelResponse.from_text(content='hello again', timestamp=IsNow(tz=timezone.utc)),
+            ModelResponse.from_text(content='hello again', timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)),
             UserPrompt(content='final message', timestamp=IsNow(tz=timezone.utc)),
-            ModelResponse.from_text(content='final message', timestamp=IsNow(tz=timezone.utc)),
+            ModelResponse.from_text(content='final message', timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)),
         ]
     )
 
@@ -396,7 +396,7 @@ async def test_request_model_structured_with_arguments_dict_response(allow_model
                         tool_call_id='123',
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
             ),
             ToolReturn(
                 tool_name='final_result',
@@ -452,7 +452,7 @@ async def test_request_model_structured_with_arguments_str_response(allow_model_
                         tool_call_id='123',
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
             ),
             ToolReturn(
                 tool_name='final_result',
@@ -500,7 +500,7 @@ async def test_request_result_type_with_arguments_str_response(allow_model_reque
                         tool_call_id='123',
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
             ),
             ToolReturn(
                 tool_name='final_result',
@@ -1005,7 +1005,7 @@ async def test_request_tool_call(allow_model_requests: None):
                         tool_call_id='1',
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
             ),
             RetryPrompt(
                 tool_name='get_location',
@@ -1021,7 +1021,7 @@ async def test_request_tool_call(allow_model_requests: None):
                         tool_call_id='2',
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
             ),
             ToolReturn(
                 tool_name='get_location',
@@ -1029,7 +1029,9 @@ async def test_request_tool_call(allow_model_requests: None):
                 tool_call_id='2',
                 timestamp=IsNow(tz=timezone.utc),
             ),
-            ModelResponse.from_text(content='final response', timestamp=IsNow(tz=timezone.utc)),
+            ModelResponse.from_text(
+                content='final response', timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)
+            ),
         ]
     )
     assert result.cost().request_tokens == 6
@@ -1127,7 +1129,7 @@ async def test_request_tool_call_with_result_type(allow_model_requests: None):
                         tool_call_id='1',
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
             ),
             RetryPrompt(
                 tool_name='get_location',
@@ -1143,7 +1145,7 @@ async def test_request_tool_call_with_result_type(allow_model_requests: None):
                         tool_call_id='2',
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
             ),
             ToolReturn(
                 tool_name='get_location',
@@ -1159,7 +1161,7 @@ async def test_request_tool_call_with_result_type(allow_model_requests: None):
                         tool_call_id='1',
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
             ),
             ToolReturn(
                 tool_name='final_result',
