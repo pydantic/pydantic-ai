@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Literal, Union
 import httpx
 
 from ..exceptions import UserError
-from ..messages import Message, ModelMessage
+from ..messages import ModelMessage, ModelResponse
 from ..settings import ModelSettings
 
 if TYPE_CHECKING:
@@ -120,13 +120,15 @@ class AgentModel(ABC):
     """Model configured for each step of an Agent run."""
 
     @abstractmethod
-    async def request(self, messages: list[Message], model_settings: ModelSettings | None) -> tuple[ModelMessage, Cost]:
+    async def request(
+        self, messages: list[ModelMessage], model_settings: ModelSettings | None
+    ) -> tuple[ModelResponse, Cost]:
         """Make a request to the model."""
         raise NotImplementedError()
 
     @asynccontextmanager
     async def request_stream(
-        self, messages: list[Message], model_settings: ModelSettings | None
+        self, messages: list[ModelMessage], model_settings: ModelSettings | None
     ) -> AsyncIterator[EitherStreamedResponse]:
         """Make a request to the model and return a streaming response."""
         raise NotImplementedError(f'Streamed requests not supported by this {self.__class__.__name__}')
@@ -192,10 +194,10 @@ class StreamStructuredResponse(ABC):
         raise NotImplementedError()
 
     @abstractmethod
-    def get(self, *, final: bool = False) -> ModelMessage:
-        """Get the `ModelMessage` at this point.
+    def get(self, *, final: bool = False) -> ModelResponse:
+        """Get the `ModelResponse` at this point.
 
-        The `ModelMessage` may or may not be complete, depending on whether the stream is finished.
+        The `ModelResponse` may or may not be complete, depending on whether the stream is finished.
 
         Args:
             final: If True, this is the final call, after iteration is complete, the response should be fully validated.

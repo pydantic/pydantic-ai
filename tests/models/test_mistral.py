@@ -18,12 +18,12 @@ from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import (
     ArgsDict,
     ArgsJson,
-    ModelMessage,
+    ModelRequest,
+    ModelResponse,
     RetryPrompt,
     SystemPrompt,
     ToolCallPart,
     ToolReturn,
-    UserMessage,
     UserPrompt,
 )
 
@@ -237,10 +237,10 @@ async def test_multiple_completions(allow_model_requests: None):
     assert result.cost().total_tokens == 1
     assert result.all_messages() == snapshot(
         [
-            UserMessage(parts=[UserPrompt(content='hello', timestamp=IsNow(tz=timezone.utc))]),
-            ModelMessage.from_text(content='world', timestamp=IsNow(tz=timezone.utc)),
-            UserMessage(parts=[UserPrompt(content='hello again', timestamp=IsNow(tz=timezone.utc))]),
-            ModelMessage.from_text(content='hello again', timestamp=IsNow(tz=timezone.utc)),
+            ModelRequest(parts=[UserPrompt(content='hello', timestamp=IsNow(tz=timezone.utc))]),
+            ModelResponse.from_text(content='world', timestamp=IsNow(tz=timezone.utc)),
+            ModelRequest(parts=[UserPrompt(content='hello again', timestamp=IsNow(tz=timezone.utc))]),
+            ModelResponse.from_text(content='hello again', timestamp=IsNow(tz=timezone.utc)),
         ]
     )
 
@@ -281,12 +281,12 @@ async def test_three_completions(allow_model_requests: None):
     assert result.cost().total_tokens == 1
     assert result.all_messages() == snapshot(
         [
-            UserMessage(parts=[UserPrompt(content='hello', timestamp=IsNow(tz=timezone.utc))]),
-            ModelMessage.from_text(content='world', timestamp=IsNow(tz=timezone.utc)),
-            UserMessage(parts=[UserPrompt(content='hello again', timestamp=IsNow(tz=timezone.utc))]),
-            ModelMessage.from_text(content='hello again', timestamp=IsNow(tz=timezone.utc)),
-            UserMessage(parts=[UserPrompt(content='final message', timestamp=IsNow(tz=timezone.utc))]),
-            ModelMessage.from_text(content='final message', timestamp=IsNow(tz=timezone.utc)),
+            ModelRequest(parts=[UserPrompt(content='hello', timestamp=IsNow(tz=timezone.utc))]),
+            ModelResponse.from_text(content='world', timestamp=IsNow(tz=timezone.utc)),
+            ModelRequest(parts=[UserPrompt(content='hello again', timestamp=IsNow(tz=timezone.utc))]),
+            ModelResponse.from_text(content='hello again', timestamp=IsNow(tz=timezone.utc)),
+            ModelRequest(parts=[UserPrompt(content='final message', timestamp=IsNow(tz=timezone.utc))]),
+            ModelResponse.from_text(content='final message', timestamp=IsNow(tz=timezone.utc)),
         ]
     )
 
@@ -388,8 +388,8 @@ async def test_request_model_structured_with_arguments_dict_response(allow_model
     assert result.data == CityLocation(city='paris', country='france')
     assert result.all_messages() == snapshot(
         [
-            UserMessage(parts=[UserPrompt(content='User prompt value', timestamp=IsNow(tz=timezone.utc))]),
-            ModelMessage(
+            ModelRequest(parts=[UserPrompt(content='User prompt value', timestamp=IsNow(tz=timezone.utc))]),
+            ModelResponse(
                 parts=[
                     ToolCallPart(
                         tool_name='final_result',
@@ -399,7 +399,7 @@ async def test_request_model_structured_with_arguments_dict_response(allow_model
                 ],
                 timestamp=IsNow(tz=timezone.utc),
             ),
-            UserMessage(
+            ModelRequest(
                 parts=[
                     ToolReturn(
                         tool_name='final_result',
@@ -448,8 +448,8 @@ async def test_request_model_structured_with_arguments_str_response(allow_model_
     assert result.data == CityLocation(city='paris', country='france')
     assert result.all_messages() == snapshot(
         [
-            UserMessage(parts=[UserPrompt(content='User prompt value', timestamp=IsNow(tz=timezone.utc))]),
-            ModelMessage(
+            ModelRequest(parts=[UserPrompt(content='User prompt value', timestamp=IsNow(tz=timezone.utc))]),
+            ModelResponse(
                 parts=[
                     ToolCallPart(
                         tool_name='final_result',
@@ -459,7 +459,7 @@ async def test_request_model_structured_with_arguments_str_response(allow_model_
                 ],
                 timestamp=IsNow(tz=timezone.utc),
             ),
-            UserMessage(
+            ModelRequest(
                 parts=[
                     ToolReturn(
                         tool_name='final_result',
@@ -499,13 +499,13 @@ async def test_request_result_type_with_arguments_str_response(allow_model_reque
     assert result.data == 42
     assert result.all_messages() == snapshot(
         [
-            UserMessage(
+            ModelRequest(
                 parts=[
                     SystemPrompt(content='System prompt value'),
                     UserPrompt(content='User prompt value', timestamp=IsNow(tz=timezone.utc)),
                 ]
             ),
-            ModelMessage(
+            ModelResponse(
                 parts=[
                     ToolCallPart(
                         tool_name='final_result',
@@ -515,7 +515,7 @@ async def test_request_result_type_with_arguments_str_response(allow_model_reque
                 ],
                 timestamp=IsNow(tz=timezone.utc),
             ),
-            UserMessage(
+            ModelRequest(
                 parts=[
                     ToolReturn(
                         tool_name='final_result',
@@ -1012,13 +1012,13 @@ async def test_request_tool_call(allow_model_requests: None):
     assert result.data == 'final response'
     assert result.all_messages() == snapshot(
         [
-            UserMessage(
+            ModelRequest(
                 parts=[
                     SystemPrompt(content='this is the system prompt'),
                     UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
                 ]
             ),
-            ModelMessage(
+            ModelResponse(
                 parts=[
                     ToolCallPart(
                         tool_name='get_location',
@@ -1028,7 +1028,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 ],
                 timestamp=IsNow(tz=timezone.utc),
             ),
-            UserMessage(
+            ModelRequest(
                 parts=[
                     RetryPrompt(
                         content='Wrong location, please try again',
@@ -1038,7 +1038,7 @@ async def test_request_tool_call(allow_model_requests: None):
                     )
                 ]
             ),
-            ModelMessage(
+            ModelResponse(
                 parts=[
                     ToolCallPart(
                         tool_name='get_location',
@@ -1048,7 +1048,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 ],
                 timestamp=IsNow(tz=timezone.utc),
             ),
-            UserMessage(
+            ModelRequest(
                 parts=[
                     ToolReturn(
                         tool_name='get_location',
@@ -1058,7 +1058,7 @@ async def test_request_tool_call(allow_model_requests: None):
                     )
                 ]
             ),
-            ModelMessage.from_text(content='final response', timestamp=IsNow(tz=timezone.utc)),
+            ModelResponse.from_text(content='final response', timestamp=IsNow(tz=timezone.utc)),
         ]
     )
     assert result.cost().request_tokens == 6
@@ -1146,13 +1146,13 @@ async def test_request_tool_call_with_result_type(allow_model_requests: None):
     assert result.data == {'lat': 51, 'lng': 0}
     assert result.all_messages() == snapshot(
         [
-            UserMessage(
+            ModelRequest(
                 parts=[
                     SystemPrompt(content='this is the system prompt'),
                     UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
                 ]
             ),
-            ModelMessage(
+            ModelResponse(
                 parts=[
                     ToolCallPart(
                         tool_name='get_location',
@@ -1162,7 +1162,7 @@ async def test_request_tool_call_with_result_type(allow_model_requests: None):
                 ],
                 timestamp=IsNow(tz=timezone.utc),
             ),
-            UserMessage(
+            ModelRequest(
                 parts=[
                     RetryPrompt(
                         content='Wrong location, please try again',
@@ -1172,7 +1172,7 @@ async def test_request_tool_call_with_result_type(allow_model_requests: None):
                     )
                 ]
             ),
-            ModelMessage(
+            ModelResponse(
                 parts=[
                     ToolCallPart(
                         tool_name='get_location',
@@ -1182,7 +1182,7 @@ async def test_request_tool_call_with_result_type(allow_model_requests: None):
                 ],
                 timestamp=IsNow(tz=timezone.utc),
             ),
-            UserMessage(
+            ModelRequest(
                 parts=[
                     ToolReturn(
                         tool_name='get_location',
@@ -1192,7 +1192,7 @@ async def test_request_tool_call_with_result_type(allow_model_requests: None):
                     )
                 ]
             ),
-            ModelMessage(
+            ModelResponse(
                 parts=[
                     ToolCallPart(
                         tool_name='final_result',
@@ -1202,7 +1202,7 @@ async def test_request_tool_call_with_result_type(allow_model_requests: None):
                 ],
                 timestamp=IsNow(tz=timezone.utc),
             ),
-            UserMessage(
+            ModelRequest(
                 parts=[
                     ToolReturn(
                         tool_name='final_result',
@@ -1286,13 +1286,13 @@ async def test_stream_tool_call_with_return_type(allow_model_requests: None):
 
     assert result.all_messages() == snapshot(
         [
-            UserMessage(
+            ModelRequest(
                 parts=[
                     SystemPrompt(content='this is the system prompt'),
                     UserPrompt(content='User prompt value', timestamp=IsNow(tz=timezone.utc)),
                 ]
             ),
-            ModelMessage(
+            ModelResponse(
                 parts=[
                     ToolCallPart(
                         tool_name='get_location',
@@ -1302,7 +1302,7 @@ async def test_stream_tool_call_with_return_type(allow_model_requests: None):
                 ],
                 timestamp=IsNow(tz=timezone.utc),
             ),
-            UserMessage(
+            ModelRequest(
                 parts=[
                     ToolReturn(
                         tool_name='get_location',
@@ -1312,7 +1312,7 @@ async def test_stream_tool_call_with_return_type(allow_model_requests: None):
                     )
                 ]
             ),
-            UserMessage(
+            ModelRequest(
                 parts=[
                     ToolReturn(
                         tool_name='final_result',
@@ -1322,7 +1322,7 @@ async def test_stream_tool_call_with_return_type(allow_model_requests: None):
                     )
                 ]
             ),
-            ModelMessage(
+            ModelResponse(
                 parts=[
                     ToolCallPart(tool_name='final_result', args=ArgsJson(args_json='{"won": true}'), tool_call_id='1')
                 ],
@@ -1387,13 +1387,13 @@ async def test_stream_tool_call(allow_model_requests: None):
 
     assert result.all_messages() == snapshot(
         [
-            UserMessage(
+            ModelRequest(
                 parts=[
                     SystemPrompt(content='this is the system prompt'),
                     UserPrompt(content='User prompt value', timestamp=IsNow(tz=timezone.utc)),
                 ]
             ),
-            ModelMessage(
+            ModelResponse(
                 parts=[
                     ToolCallPart(
                         tool_name='get_location',
@@ -1403,7 +1403,7 @@ async def test_stream_tool_call(allow_model_requests: None):
                 ],
                 timestamp=IsNow(tz=timezone.utc),
             ),
-            UserMessage(
+            ModelRequest(
                 parts=[
                     ToolReturn(
                         tool_name='get_location',
@@ -1413,7 +1413,7 @@ async def test_stream_tool_call(allow_model_requests: None):
                     )
                 ]
             ),
-            ModelMessage.from_text(content='final response', timestamp=IsNow(tz=timezone.utc)),
+            ModelResponse.from_text(content='final response', timestamp=IsNow(tz=timezone.utc)),
         ]
     )
 

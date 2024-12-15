@@ -11,12 +11,12 @@ from pydantic_ai import Agent, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
     ArgsDict,
     ArgsJson,
-    Message,
     ModelMessage,
+    ModelRequest,
+    ModelResponse,
     RetryPrompt,
     ToolCallPart,
     ToolReturn,
-    UserMessage,
     UserPrompt,
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
@@ -44,12 +44,14 @@ async def test_streamed_text_response():
         assert not result.is_complete
         assert result.all_messages() == snapshot(
             [
-                UserMessage(parts=[UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
-                ModelMessage(
+                ModelRequest(parts=[UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
+                ModelResponse(
                     parts=[ToolCallPart(tool_name='ret_a', args=ArgsDict(args_dict={'x': 'a'}))],
                     timestamp=IsNow(tz=timezone.utc),
                 ),
-                UserMessage(parts=[ToolReturn(tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc))]),
+                ModelRequest(
+                    parts=[ToolReturn(tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc))]
+                ),
             ]
         )
         response = await result.get_data()
@@ -59,13 +61,15 @@ async def test_streamed_text_response():
         assert result.timestamp() == IsNow(tz=timezone.utc)
         assert result.all_messages() == snapshot(
             [
-                UserMessage(parts=[UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
-                ModelMessage(
+                ModelRequest(parts=[UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
+                ModelResponse(
                     parts=[ToolCallPart(tool_name='ret_a', args=ArgsDict(args_dict={'x': 'a'}))],
                     timestamp=IsNow(tz=timezone.utc),
                 ),
-                UserMessage(parts=[ToolReturn(tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc))]),
-                ModelMessage.from_text(content='{"ret_a":"a-apple"}', timestamp=IsNow(tz=timezone.utc)),
+                ModelRequest(
+                    parts=[ToolReturn(tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc))]
+                ),
+                ModelResponse.from_text(content='{"ret_a":"a-apple"}', timestamp=IsNow(tz=timezone.utc)),
             ]
         )
 
@@ -85,7 +89,7 @@ async def test_streamed_structured_response():
 
 
 async def test_structured_response_iter():
-    async def text_stream(_messages: list[Message], agent_info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
+    async def text_stream(_messages: list[ModelMessage], agent_info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
         assert agent_info.result_tools is not None
         assert len(agent_info.result_tools) == 1
         name = agent_info.result_tools[0].name
@@ -149,7 +153,7 @@ async def test_streamed_text_stream():
 async def test_plain_response():
     call_index = 0
 
-    async def text_stream(_messages: list[Message], _: AgentInfo) -> AsyncIterator[str]:
+    async def text_stream(_messages: list[ModelMessage], _: AgentInfo) -> AsyncIterator[str]:
         nonlocal call_index
 
         call_index += 1
@@ -167,14 +171,14 @@ async def test_plain_response():
 
 async def test_call_tool():
     async def stream_structured_function(
-        messages: list[Message], agent_info: AgentInfo
+        messages: list[ModelMessage], agent_info: AgentInfo
     ) -> AsyncIterator[DeltaToolCalls | str]:
         if len(messages) == 1:
             assert agent_info.function_tools is not None
             assert len(agent_info.function_tools) == 1
             name = agent_info.function_tools[0].name
             first = messages[0]
-            assert isinstance(first, UserMessage)
+            assert isinstance(first, ModelRequest)
             assert isinstance(first.parts[0], UserPrompt)
             json_string = json.dumps({'x': first.parts[0].content})
             yield {0: DeltaToolCall(name=name)}
@@ -182,7 +186,7 @@ async def test_call_tool():
             yield {0: DeltaToolCall(json_args=json_string[3:])}
         else:
             last = messages[-1]
-            assert isinstance(last, UserMessage)
+            assert isinstance(last, ModelRequest)
             assert isinstance(last.parts[0], ToolReturn)
             assert agent_info.result_tools is not None
             assert len(agent_info.result_tools) == 1
@@ -202,15 +206,15 @@ async def test_call_tool():
     async with agent.run_stream('hello') as result:
         assert result.all_messages() == snapshot(
             [
-                UserMessage(parts=[UserPrompt(content='hello', timestamp=IsNow(tz=timezone.utc))]),
-                ModelMessage(
+                ModelRequest(parts=[UserPrompt(content='hello', timestamp=IsNow(tz=timezone.utc))]),
+                ModelResponse(
                     parts=[ToolCallPart(tool_name='ret_a', args=ArgsJson(args_json='{"x": "hello"}'))],
                     timestamp=IsNow(tz=timezone.utc),
                 ),
-                UserMessage(
+                ModelRequest(
                     parts=[ToolReturn(tool_name='ret_a', content='hello world', timestamp=IsNow(tz=timezone.utc))]
                 ),
-                UserMessage(
+                ModelRequest(
                     parts=[
                         ToolReturn(
                             tool_name='final_result',
@@ -224,15 +228,15 @@ async def test_call_tool():
         assert await result.get_data() == snapshot(('hello world', 2))
         assert result.all_messages() == snapshot(
             [
-                UserMessage(parts=[UserPrompt(content='hello', timestamp=IsNow(tz=timezone.utc))]),
-                ModelMessage(
+                ModelRequest(parts=[UserPrompt(content='hello', timestamp=IsNow(tz=timezone.utc))]),
+                ModelResponse(
                     parts=[ToolCallPart(tool_name='ret_a', args=ArgsJson(args_json='{"x": "hello"}'))],
                     timestamp=IsNow(tz=timezone.utc),
                 ),
-                UserMessage(
+                ModelRequest(
                     parts=[ToolReturn(tool_name='ret_a', content='hello world', timestamp=IsNow(tz=timezone.utc))]
                 ),
-                UserMessage(
+                ModelRequest(
                     parts=[
                         ToolReturn(
                             tool_name='final_result',
@@ -241,7 +245,7 @@ async def test_call_tool():
                         )
                     ]
                 ),
-                ModelMessage(
+                ModelResponse(
                     parts=[
                         ToolCallPart(
                             tool_name='final_result',
@@ -255,7 +259,7 @@ async def test_call_tool():
 
 
 async def test_call_tool_empty():
-    async def stream_structured_function(_messages: list[Message], _: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
+    async def stream_structured_function(_messages: list[ModelMessage], _: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
         yield {}
 
     agent = Agent(FunctionModel(stream_function=stream_structured_function), result_type=tuple[str, int])
@@ -266,7 +270,7 @@ async def test_call_tool_empty():
 
 
 async def test_call_tool_wrong_name():
-    async def stream_structured_function(_messages: list[Message], _: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
+    async def stream_structured_function(_messages: list[ModelMessage], _: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
         yield {0: DeltaToolCall(name='foobar', json_args='{}')}
 
     agent = Agent(FunctionModel(stream_function=stream_structured_function), result_type=tuple[str, int])
@@ -280,12 +284,12 @@ async def test_call_tool_wrong_name():
             pass
     assert agent.last_run_messages == snapshot(
         [
-            UserMessage(parts=[UserPrompt(content='hello', timestamp=IsNow(tz=timezone.utc))]),
-            ModelMessage(
+            ModelRequest(parts=[UserPrompt(content='hello', timestamp=IsNow(tz=timezone.utc))]),
+            ModelResponse(
                 parts=[ToolCallPart(tool_name='foobar', args=ArgsJson(args_json='{}'))],
                 timestamp=IsNow(tz=timezone.utc),
             ),
-            UserMessage(
+            ModelRequest(
                 parts=[
                     RetryPrompt(
                         content="Unknown tool name: 'foobar'. Available tools: ret_a, final_result",

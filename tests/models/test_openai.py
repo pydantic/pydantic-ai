@@ -14,12 +14,12 @@ from typing_extensions import TypedDict
 from pydantic_ai import Agent, ModelRetry, UnexpectedModelBehavior, _utils
 from pydantic_ai.messages import (
     ArgsJson,
-    ModelMessage,
+    ModelRequest,
+    ModelResponse,
     RetryPrompt,
     SystemPrompt,
     ToolCallPart,
     ToolReturn,
-    UserMessage,
     UserPrompt,
 )
 from pydantic_ai.result import Cost
@@ -147,10 +147,10 @@ async def test_request_simple_success(allow_model_requests: None):
     assert result.cost() == snapshot(Cost())
     assert result.all_messages() == snapshot(
         [
-            UserMessage(parts=[UserPrompt(content='hello', timestamp=IsNow(tz=timezone.utc))]),
-            ModelMessage.from_text(content='world', timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)),
-            UserMessage(parts=[UserPrompt(content='hello', timestamp=IsNow(tz=timezone.utc))]),
-            ModelMessage.from_text(content='world', timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)),
+            ModelRequest(parts=[UserPrompt(content='hello', timestamp=IsNow(tz=timezone.utc))]),
+            ModelResponse.from_text(content='world', timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)),
+            ModelRequest(parts=[UserPrompt(content='hello', timestamp=IsNow(tz=timezone.utc))]),
+            ModelResponse.from_text(content='world', timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)),
         ]
     )
 
@@ -191,8 +191,8 @@ async def test_request_structured_response(allow_model_requests: None):
     assert result.data == [1, 2, 123]
     assert result.all_messages() == snapshot(
         [
-            UserMessage(parts=[UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
-            ModelMessage(
+            ModelRequest(parts=[UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
+            ModelResponse(
                 parts=[
                     ToolCallPart(
                         tool_name='final_result',
@@ -202,7 +202,7 @@ async def test_request_structured_response(allow_model_requests: None):
                 ],
                 timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc),
             ),
-            UserMessage(
+            ModelRequest(
                 parts=[
                     ToolReturn(
                         tool_name='final_result',
@@ -273,13 +273,13 @@ async def test_request_tool_call(allow_model_requests: None):
     assert result.data == 'final response'
     assert result.all_messages() == snapshot(
         [
-            UserMessage(
+            ModelRequest(
                 parts=[
                     SystemPrompt(content='this is the system prompt'),
                     UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
                 ]
             ),
-            ModelMessage(
+            ModelResponse(
                 parts=[
                     ToolCallPart(
                         tool_name='get_location',
@@ -289,7 +289,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 ],
                 timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc),
             ),
-            UserMessage(
+            ModelRequest(
                 parts=[
                     RetryPrompt(
                         content='Wrong location, please try again',
@@ -299,7 +299,7 @@ async def test_request_tool_call(allow_model_requests: None):
                     )
                 ]
             ),
-            ModelMessage(
+            ModelResponse(
                 parts=[
                     ToolCallPart(
                         tool_name='get_location',
@@ -309,7 +309,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 ],
                 timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc),
             ),
-            UserMessage(
+            ModelRequest(
                 parts=[
                     ToolReturn(
                         tool_name='get_location',
@@ -319,7 +319,7 @@ async def test_request_tool_call(allow_model_requests: None):
                     )
                 ]
             ),
-            ModelMessage.from_text(content='final response', timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc)),
+            ModelResponse.from_text(content='final response', timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc)),
         ]
     )
     assert result.cost() == snapshot(

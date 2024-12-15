@@ -15,15 +15,15 @@ from typing_extensions import TypeAlias, assert_never, overload
 from .. import _utils, result
 from ..messages import (
     ArgsJson,
-    Message,
     ModelMessage,
-    ModelMessagePart,
+    ModelRequest,
+    ModelResponse,
+    ModelResponsePart,
     RetryPrompt,
     SystemPrompt,
     TextPart,
     ToolCallPart,
     ToolReturn,
-    UserMessage,
     UserPrompt,
 )
 from ..settings import ModelSettings
@@ -121,10 +121,10 @@ class DeltaToolCall:
 DeltaToolCalls: TypeAlias = dict[int, DeltaToolCall]
 """A mapping of tool call IDs to incremental changes."""
 
-FunctionDef: TypeAlias = Callable[[list[Message], AgentInfo], Union[ModelMessage, Awaitable[ModelMessage]]]
+FunctionDef: TypeAlias = Callable[[list[ModelMessage], AgentInfo], Union[ModelResponse, Awaitable[ModelResponse]]]
 """A function used to generate a non-streamed response."""
 
-StreamFunctionDef: TypeAlias = Callable[[list[Message], AgentInfo], AsyncIterator[Union[str, DeltaToolCalls]]]
+StreamFunctionDef: TypeAlias = Callable[[list[ModelMessage], AgentInfo], AsyncIterator[Union[str, DeltaToolCalls]]]
 """A function used to generate a streamed response.
 
 While this is defined as having return type of `AsyncIterator[Union[str, DeltaToolCalls]]`, it should
@@ -143,8 +143,8 @@ class FunctionAgentModel(AgentModel):
     agent_info: AgentInfo
 
     async def request(
-        self, messages: list[Message], model_settings: ModelSettings | None
-    ) -> tuple[ModelMessage, result.Cost]:
+        self, messages: list[ModelMessage], model_settings: ModelSettings | None
+    ) -> tuple[ModelResponse, result.Cost]:
         agent_info = replace(self.agent_info, model_settings=model_settings)
 
         assert self.function is not None, 'FunctionModel must receive a `function` to support non-streamed requests'
@@ -152,14 +152,14 @@ class FunctionAgentModel(AgentModel):
             response = await self.function(messages, agent_info)
         else:
             response_ = await _utils.run_in_executor(self.function, messages, agent_info)
-            assert isinstance(response_, ModelMessage), response_
+            assert isinstance(response_, ModelResponse), response_
             response = response_
         # TODO is `messages` right here? Should it just be new messages?
         return response, _estimate_cost(chain(messages, [response]))
 
     @asynccontextmanager
     async def request_stream(
-        self, messages: list[Message], model_settings: ModelSettings | None
+        self, messages: list[ModelMessage], model_settings: ModelSettings | None
     ) -> AsyncIterator[EitherStreamedResponse]:
         assert (
             self.stream_function is not None
@@ -228,13 +228,13 @@ class FunctionStreamStructuredResponse(StreamStructuredResponse):
             else:
                 self._delta_tool_calls[key] = new
 
-    def get(self, *, final: bool = False) -> ModelMessage:
-        calls: list[ModelMessagePart] = []
+    def get(self, *, final: bool = False) -> ModelResponse:
+        calls: list[ModelResponsePart] = []
         for c in self._delta_tool_calls.values():
             if c.name is not None and c.json_args is not None:
                 calls.append(ToolCallPart.from_json(c.name, c.json_args))
 
-        return ModelMessage(calls, timestamp=self._timestamp)
+        return ModelResponse(calls, timestamp=self._timestamp)
 
     def cost(self) -> result.Cost:
         return result.Cost()
@@ -243,7 +243,7 @@ class FunctionStreamStructuredResponse(StreamStructuredResponse):
         return self._timestamp
 
 
-def _estimate_cost(messages: Iterable[Message]) -> result.Cost:
+def _estimate_cost(messages: Iterable[ModelMessage]) -> result.Cost:
     """Very rough guesstimate of the number of tokens associate with a series of messages.
 
     This is designed to be used solely to give plausible numbers for testing!
@@ -252,7 +252,7 @@ def _estimate_cost(messages: Iterable[Message]) -> result.Cost:
     request_tokens = 50
     response_tokens = 0
     for message in messages:
-        if isinstance(message, UserMessage):
+        if isinstance(message, ModelRequest):
             for part in message.parts:
                 if isinstance(part, (SystemPrompt, UserPrompt)):
                     request_tokens += _string_cost(part.content)
@@ -262,7 +262,7 @@ def _estimate_cost(messages: Iterable[Message]) -> result.Cost:
                     request_tokens += _string_cost(part.model_response())
                 else:
                     assert_never(part)
-        elif isinstance(message, ModelMessage):
+        elif isinstance(message, ModelResponse):
             for part in message.parts:
                 if isinstance(part, TextPart):
                     response_tokens += _string_cost(part.content)

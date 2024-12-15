@@ -45,7 +45,7 @@ class RunContext(Generic[AgentDeps]):
     """Dependencies for the agent."""
     retry: int
     """Number of retries so far."""
-    messages: list[_messages.Message]
+    messages: list[_messages.ModelMessage]
     """Messages exchanged in the conversation so far."""
     tool_name: str | None
     """Name of the tool being called."""
@@ -238,8 +238,8 @@ class Tool(Generic[AgentDeps]):
             return tool_def
 
     async def run(
-        self, deps: AgentDeps, message: _messages.ToolCallPart, conv_messages: list[_messages.Message]
-    ) -> _messages.UserMessagePart:
+        self, deps: AgentDeps, message: _messages.ToolCallPart, conv_messages: list[_messages.ModelMessage]
+    ) -> _messages.ModelRequestPart:
         """Run the tool function asynchronously."""
         try:
             if isinstance(message.args, _messages.ArgsJson):
@@ -272,7 +272,7 @@ class Tool(Generic[AgentDeps]):
         deps: AgentDeps,
         args_dict: dict[str, Any],
         message: _messages.ToolCallPart,
-        conv_messages: list[_messages.Message],
+        conv_messages: list[_messages.ModelMessage],
     ) -> tuple[list[Any], dict[str, Any]]:
         if self._single_arg_name:
             args_dict = {self._single_arg_name: args_dict}

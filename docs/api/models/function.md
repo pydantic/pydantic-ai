@@ -11,17 +11,19 @@ Here's a minimal example:
 
 ```py {title="function_model_usage.py" call_name="test_my_agent" lint="not-imports"}
 from pydantic_ai import Agent
-from pydantic_ai.messages import Message, ModelMessage
+from pydantic_ai.messages import ModelMessage, ModelResponse
 from pydantic_ai.models.function import FunctionModel, AgentInfo
 
 my_agent = Agent('openai:gpt-4o')
 
 
-async def model_function(messages: list[Message], info: AgentInfo) -> ModelMessage:
+async def model_function(
+    messages: list[ModelMessage], info: AgentInfo
+) -> ModelResponse:
     print(messages)
     """
     [
-        UserMessage(
+        ModelRequest(
             parts=[
                 UserPrompt(
                     content='Testing my agent...',
@@ -39,7 +41,7 @@ async def model_function(messages: list[Message], info: AgentInfo) -> ModelMessa
         function_tools=[], allow_text_result=True, result_tools=[], model_settings=None
     )
     """
-    return ModelMessage.from_text('hello world')
+    return ModelResponse.from_text('hello world')
 
 
 async def test_my_agent():

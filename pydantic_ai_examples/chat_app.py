@@ -29,9 +29,9 @@ from typing_extensions import LiteralString, ParamSpec, TypedDict
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.messages import (
-    Message,
-    MessagesTypeAdapter,
     ModelMessage,
+    ModelMessagesTypeAdapter,
+    ModelResponse,
     TextPart,
     UserPrompt,
 )
@@ -85,14 +85,14 @@ class ChatMessage(TypedDict):
     content: str
 
 
-def to_chat_message(m: Message) -> ChatMessage:
+def to_chat_message(m: ModelMessage) -> ChatMessage:
     if isinstance(m, UserPrompt):
         return {
             'role': 'user',
             'timestamp': m.timestamp.isoformat(),
             'content': m.content,
         }
-    elif isinstance(m, ModelMessage):
+    elif isinstance(m, ModelResponse):
         first_part = m.parts[0]
         if isinstance(first_part, TextPart):
             return {
@@ -126,8 +126,8 @@ async def post_chat(
         async with agent.run_stream(prompt, message_history=messages) as result:
             async for text in result.stream(debounce_by=0.01):
                 # text here is a `str` and the frontend wants
-                # JSON encoded ModelMessage, so we create one
-                m = ModelMessage.from_text(content=text, timestamp=result.timestamp())
+                # JSON encoded ModelResponse, so we create one
+                m = ModelResponse.from_text(content=text, timestamp=result.timestamp())
                 yield json.dumps(to_chat_message(m)).encode('utf-8') + b'\n'
 
         # add new messages (e.g. the user prompt and the agent response in this case) to the database
@@ -136,8 +136,8 @@ async def post_chat(
     return StreamingResponse(stream_messages(), media_type='text/plain')
 
 
-MessageTypeAdapter: TypeAdapter[Message] = TypeAdapter(
-    Annotated[Message, Field(discriminator='message_kind')]
+MessageTypeAdapter: TypeAdapter[ModelMessage] = TypeAdapter(
+    Annotated[ModelMessage, Field(discriminator='message_kind')]
 )
 P = ParamSpec('P')
 R = TypeVar('R')
@@ -190,14 +190,14 @@ class Database:
         )
         await self._asyncify(self.con.commit)
 
-    async def get_messages(self) -> list[Message]:
+    async def get_messages(self) -> list[ModelMessage]:
         c = await self._asyncify(
             self._execute, 'SELECT message_list FROM messages order by id desc'
         )
         rows = await self._asyncify(c.fetchall)
-        messages: list[Message] = []
+        messages: list[ModelMessage] = []
         for row in rows:
-            messages.extend(MessagesTypeAdapter.validate_json(row[0]))
+            messages.extend(ModelMessagesTypeAdapter.validate_json(row[0]))
         return messages
 
     def _execute(

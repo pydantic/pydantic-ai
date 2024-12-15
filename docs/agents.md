@@ -348,7 +348,7 @@ except UnexpectedModelBehavior as e:
     """
     messages:
     [
-        UserMessage(
+        ModelRequest(
             parts=[
                 UserPrompt(
                     content='Please get me the volume of a box with size 6.',
@@ -358,7 +358,7 @@ except UnexpectedModelBehavior as e:
             ],
             role='user',
         ),
-        ModelMessage(
+        ModelResponse(
             parts=[
                 ToolCallPart(
                     tool_name='calc_volume',
@@ -370,7 +370,7 @@ except UnexpectedModelBehavior as e:
             timestamp=datetime.datetime(...),
             role='model',
         ),
-        UserMessage(
+        ModelRequest(
             parts=[
                 RetryPrompt(
                     content='Please try again.',
@@ -382,7 +382,7 @@ except UnexpectedModelBehavior as e:
             ],
             role='user',
         ),
-        ModelMessage(
+        ModelResponse(
             parts=[
                 ToolCallPart(
                     tool_name='calc_volume',

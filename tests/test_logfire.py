@@ -183,7 +183,7 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary], set_event_lo
                             'prefixItems': [
                                 {
                                     'type': 'object',
-                                    'title': 'UserMessage',
+                                    'title': 'ModelRequest',
                                     'x-python-datatype': 'dataclass',
                                     'properties': {
                                         'parts': {
@@ -199,7 +199,7 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary], set_event_lo
                                 },
                                 {
                                     'type': 'object',
-                                    'title': 'ModelMessage',
+                                    'title': 'ModelResponse',
                                     'x-python-datatype': 'dataclass',
                                     'properties': {
                                         'parts': {
@@ -222,7 +222,7 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary], set_event_lo
                                 },
                                 {
                                     'type': 'object',
-                                    'title': 'UserMessage',
+                                    'title': 'ModelRequest',
                                     'x-python-datatype': 'dataclass',
                                     'properties': {
                                         'parts': {
@@ -238,7 +238,7 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary], set_event_lo
                                 },
                                 {
                                     'type': 'object',
-                                    'title': 'ModelMessage',
+                                    'title': 'ModelResponse',
                                     'x-python-datatype': 'dataclass',
                                     'properties': {
                                         'parts': {

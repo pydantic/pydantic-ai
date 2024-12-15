@@ -99,13 +99,13 @@ from pydantic_ai import models
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.messages import (
     ArgsDict,
-    ModelMessage,
+    ModelResponse,
     SystemPrompt,
     TextPart,
     ToolCallPart,
     ToolReturn,
     UserPrompt,
-    UserMessage,
+    ModelRequest,
 )
 
 from fake_database import DatabaseConn
@@ -126,7 +126,7 @@ async def test_forecast():
     assert forecast == '{"weather_forecast":"Sunny with a chance of rain"}'  # (5)!
 
     assert weather_agent.last_run_messages == [  # (6)!
-        UserMessage(
+        ModelRequest(
             parts=[
                 SystemPrompt(
                     content='Providing a weather forecast at the locations the user provides.',
@@ -137,7 +137,7 @@ async def test_forecast():
                 ),
             ]
         ),
-        ModelMessage(
+        ModelResponse(
             parts=[
                 ToolCallPart(
                     tool_name='weather_forecast',
@@ -152,7 +152,7 @@ async def test_forecast():
             ],
             timestamp=IsNow(tz=timezone.utc),
         ),
-        UserMessage(
+        ModelRequest(
             parts=[
                 ToolReturn(
                     tool_name='weather_forecast',
@@ -162,7 +162,7 @@ async def test_forecast():
                 ),
             ],
         ),
-        ModelMessage(
+        ModelResponse(
             parts=[
                 TextPart(
                     content='{"weather_forecast":"Sunny with a chance of rain"}',
@@ -197,8 +197,8 @@ import pytest
 
 from pydantic_ai import models
 from pydantic_ai.messages import (
-    Message,
     ModelMessage,
+    ModelResponse,
     ToolCallPart,
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -211,20 +211,20 @@ models.ALLOW_MODEL_REQUESTS = False
 
 
 def call_weather_forecast(  # (1)!
-    messages: list[Message], info: AgentInfo
-) -> ModelMessage:
+    messages: list[ModelMessage], info: AgentInfo
+) -> ModelResponse:
     if len(messages) == 1:
         # first call, call the weather forecast tool
         user_prompt = messages[0].parts[-1]
         m = re.search(r'\d{4}-\d{2}-\d{2}', user_prompt.content)
         assert m is not None
         args = {'location': 'London', 'forecast_date': m.group()}  # (2)!
-        return ModelMessage(parts=[ToolCallPart.from_dict('weather_forecast', args)])
+        return ModelResponse(parts=[ToolCallPart.from_dict('weather_forecast', args)])
     else:
         # second call, return the forecast
         msg = messages[-1].parts[0]
         assert msg.kind == 'tool-return'
-        return ModelMessage.from_text(f'The forecast is: {msg.content}')
+        return ModelResponse.from_text(f'The forecast is: {msg.content}')
 
 
 async def test_forecast_future():

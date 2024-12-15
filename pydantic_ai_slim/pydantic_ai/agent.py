@@ -88,7 +88,7 @@ class Agent(Generic[AgentDeps, ResultData]):
     be merged with this value, with the runtime argument taking priority.
     """
 
-    last_run_messages: list[_messages.Message] | None
+    last_run_messages: list[_messages.ModelMessage] | None
     """The messages from the last run, useful when a run raised an exception.
 
     Note: these are not used by the agent, e.g. in future runs, they are just stored for developers' convenience.
@@ -186,7 +186,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         self,
         user_prompt: str,
         *,
-        message_history: list[_messages.Message] | None = None,
+        message_history: list[_messages.ModelMessage] | None = None,
         model: models.Model | models.KnownModelName | None = None,
         deps: AgentDeps = None,
         model_settings: ModelSettings | None = None,
@@ -259,7 +259,7 @@ class Agent(Generic[AgentDeps, ResultData]):
 
                     if user_msg_parts:
                         # Add parts to the conversation as a new message
-                        messages.append(_messages.UserMessage(user_msg_parts))
+                        messages.append(_messages.ModelRequest(user_msg_parts))
 
                     # Check if we got a final result
                     if final_result is not None:
@@ -279,7 +279,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         self,
         user_prompt: str,
         *,
-        message_history: list[_messages.Message] | None = None,
+        message_history: list[_messages.ModelMessage] | None = None,
         model: models.Model | models.KnownModelName | None = None,
         deps: AgentDeps = None,
         model_settings: ModelSettings | None = None,
@@ -331,7 +331,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         self,
         user_prompt: str,
         *,
-        message_history: list[_messages.Message] | None = None,
+        message_history: list[_messages.ModelMessage] | None = None,
         model: models.Model | models.KnownModelName | None = None,
         deps: AgentDeps = None,
         model_settings: ModelSettings | None = None,
@@ -776,7 +776,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         return model_, mode_selection
 
     async def _prepare_model(
-        self, model: models.Model, deps: AgentDeps, messages: list[_messages.Message]
+        self, model: models.Model, deps: AgentDeps, messages: list[_messages.ModelMessage]
     ) -> models.AgentModel:
         """Create building tools and create an agent model."""
         function_tools: list[ToolDefinition] = []
@@ -795,22 +795,22 @@ class Agent(Generic[AgentDeps, ResultData]):
         )
 
     async def _prepare_messages(
-        self, deps: AgentDeps, user_prompt: str, message_history: list[_messages.Message] | None
-    ) -> list[_messages.Message]:
+        self, deps: AgentDeps, user_prompt: str, message_history: list[_messages.ModelMessage] | None
+    ) -> list[_messages.ModelMessage]:
         if message_history:
             # shallow copy messages
             messages = message_history.copy()
-            messages.append(_messages.UserMessage([_messages.UserPrompt(user_prompt)]))
+            messages.append(_messages.ModelRequest([_messages.UserPrompt(user_prompt)]))
         else:
             parts = await self._sys_parts(deps)
             parts.append(_messages.UserPrompt(user_prompt))
-            messages: list[_messages.Message] = [_messages.UserMessage(parts)]
+            messages: list[_messages.ModelMessage] = [_messages.ModelRequest(parts)]
 
         return messages
 
     async def _handle_model_response(
-        self, model_response: _messages.ModelMessage, deps: AgentDeps, conv_messages: list[_messages.Message]
-    ) -> tuple[_MarkFinalResult[ResultData] | None, list[_messages.UserMessagePart]]:
+        self, model_response: _messages.ModelResponse, deps: AgentDeps, conv_messages: list[_messages.ModelMessage]
+    ) -> tuple[_MarkFinalResult[ResultData] | None, list[_messages.ModelRequestPart]]:
         """Process a non-streamed response from the model.
 
         Returns:
@@ -833,8 +833,8 @@ class Agent(Generic[AgentDeps, ResultData]):
             raise exceptions.UnexpectedModelBehavior('Received empty model response')
 
     async def _handle_text_response(
-        self, text: str, deps: AgentDeps, conv_messages: list[_messages.Message]
-    ) -> tuple[_MarkFinalResult[ResultData] | None, list[_messages.UserMessagePart]]:
+        self, text: str, deps: AgentDeps, conv_messages: list[_messages.ModelMessage]
+    ) -> tuple[_MarkFinalResult[ResultData] | None, list[_messages.ModelRequestPart]]:
         """Handle a plain text response from the model for non-streaming responses."""
         if self._allow_text_result:
             result_data_input = cast(ResultData, text)
@@ -853,8 +853,8 @@ class Agent(Generic[AgentDeps, ResultData]):
             return None, [response]
 
     async def _handle_structured_response(
-        self, tool_calls: list[_messages.ToolCallPart], deps: AgentDeps, conv_messages: list[_messages.Message]
-    ) -> tuple[_MarkFinalResult[ResultData] | None, list[_messages.UserMessagePart]]:
+        self, tool_calls: list[_messages.ToolCallPart], deps: AgentDeps, conv_messages: list[_messages.ModelMessage]
+    ) -> tuple[_MarkFinalResult[ResultData] | None, list[_messages.ModelRequestPart]]:
         """Handle a structured response containing tool calls from the model for non-streaming responses."""
         assert tool_calls, 'Expected at least one tool call'
 
@@ -870,13 +870,13 @@ class Agent(Generic[AgentDeps, ResultData]):
         return final_result, [*final_messages, *tool_parts]
 
     async def _process_final_tool_calls(
-        self, tool_calls: list[_messages.ToolCallPart], deps: AgentDeps, conv_messages: list[_messages.Message]
-    ) -> tuple[_MarkFinalResult[ResultData] | None, list[_messages.UserMessagePart]]:
+        self, tool_calls: list[_messages.ToolCallPart], deps: AgentDeps, conv_messages: list[_messages.ModelMessage]
+    ) -> tuple[_MarkFinalResult[ResultData] | None, list[_messages.ModelRequestPart]]:
         """Process any final result tool calls and return the first valid result."""
         if not self._result_schema:
             return None, []
 
-        parts: list[_messages.UserMessagePart] = []
+        parts: list[_messages.ModelRequestPart] = []
         final_result = None
 
         for call in tool_calls:
@@ -914,11 +914,11 @@ class Agent(Generic[AgentDeps, ResultData]):
         return final_result, parts
 
     async def _process_function_tools(
-        self, tool_calls: list[_messages.ToolCallPart], deps: AgentDeps, conv_messages: list[_messages.Message]
-    ) -> list[_messages.UserMessagePart]:
+        self, tool_calls: list[_messages.ToolCallPart], deps: AgentDeps, conv_messages: list[_messages.ModelMessage]
+    ) -> list[_messages.ModelRequestPart]:
         """Process function (non-final) tool calls in parallel."""
-        parts: list[_messages.UserMessagePart] = []
-        tasks: list[asyncio.Task[_messages.UserMessagePart]] = []
+        parts: list[_messages.ModelRequestPart] = []
+        tasks: list[asyncio.Task[_messages.ModelRequestPart]] = []
 
         for call in tool_calls:
             if tool := self._function_tools.get(call.tool_name):
@@ -929,7 +929,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         # Run all tool tasks in parallel
         if tasks:
             with _logfire.span('running {tools=}', tools=[t.get_name() for t in tasks]):
-                task_results: Sequence[_messages.UserMessagePart] = await asyncio.gather(*tasks)
+                task_results: Sequence[_messages.ModelRequestPart] = await asyncio.gather(*tasks)
                 parts.extend(task_results)
 
         return parts
@@ -937,9 +937,9 @@ class Agent(Generic[AgentDeps, ResultData]):
     def _mark_skipped_function_tools(
         self,
         tool_calls: list[_messages.ToolCallPart],
-    ) -> list[_messages.UserMessagePart]:
+    ) -> list[_messages.ModelRequestPart]:
         """Mark function tools as skipped when a final result was found with 'early' end strategy."""
-        parts: list[_messages.UserMessagePart] = []
+        parts: list[_messages.ModelRequestPart] = []
 
         for call in tool_calls:
             if call.tool_name in self._function_tools:
@@ -956,8 +956,11 @@ class Agent(Generic[AgentDeps, ResultData]):
         return parts
 
     async def _handle_streamed_model_response(
-        self, model_response: models.EitherStreamedResponse, deps: AgentDeps, conv_messages: list[_messages.Message]
-    ) -> tuple[_MarkFinalResult[models.EitherStreamedResponse] | None, list[_messages.Message]]:
+        self,
+        model_response: models.EitherStreamedResponse,
+        deps: AgentDeps,
+        conv_messages: list[_messages.ModelMessage],
+    ) -> tuple[_MarkFinalResult[models.EitherStreamedResponse] | None, list[_messages.ModelMessage]]:
         """Process a streamed response from the model.
 
         Returns:
@@ -976,7 +979,7 @@ class Agent(Generic[AgentDeps, ResultData]):
                 async for _ in model_response:
                     pass
 
-                return None, [_messages.UserMessage([response])]
+                return None, [_messages.ModelRequest([response])]
         else:
             assert isinstance(model_response, models.StreamStructuredResponse), f'Unexpected response: {model_response}'
             if self._result_schema is not None:
@@ -997,7 +1000,7 @@ class Agent(Generic[AgentDeps, ResultData]):
                         content='Final result processed.',
                         tool_call_id=call.tool_call_id,
                     )
-                    return _MarkFinalResult(model_response), [_messages.UserMessage([tool_return])]
+                    return _MarkFinalResult(model_response), [_messages.ModelRequest([tool_return])]
 
             # the model is calling a tool function, consume the response to get the next message
             async for _ in model_response:
@@ -1005,11 +1008,11 @@ class Agent(Generic[AgentDeps, ResultData]):
             structured_msg = model_response.get()
             if not structured_msg.parts:
                 raise exceptions.UnexpectedModelBehavior('Received empty tool call message')
-            messages: list[_messages.Message] = [structured_msg]
+            messages: list[_messages.ModelMessage] = [structured_msg]
 
             # we now run all tool functions in parallel
-            tasks: list[asyncio.Task[_messages.UserMessagePart]] = []
-            parts: list[_messages.UserMessagePart] = []
+            tasks: list[asyncio.Task[_messages.ModelRequestPart]] = []
+            parts: list[_messages.ModelRequestPart] = []
             for item in structured_msg.parts:
                 if isinstance(item, _messages.ToolCallPart):
                     call = item
@@ -1019,9 +1022,9 @@ class Agent(Generic[AgentDeps, ResultData]):
                         parts.append(self._unknown_tool(call.tool_name))
 
             with _logfire.span('running {tools=}', tools=[t.get_name() for t in tasks]):
-                task_results: Sequence[_messages.UserMessagePart] = await asyncio.gather(*tasks)
+                task_results: Sequence[_messages.ModelRequestPart] = await asyncio.gather(*tasks)
                 parts.extend(task_results)
-            messages.append(_messages.UserMessage(parts))
+            messages.append(_messages.ModelRequest(parts))
             return None, messages
 
     async def _validate_result(
@@ -1029,7 +1032,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         result_data: ResultData,
         deps: AgentDeps,
         tool_call: _messages.ToolCallPart | None,
-        conv_messages: list[_messages.Message],
+        conv_messages: list[_messages.ModelMessage],
     ) -> ResultData:
         for validator in self._result_validators:
             result_data = await validator.validate(
@@ -1044,9 +1047,9 @@ class Agent(Generic[AgentDeps, ResultData]):
                 f'Exceeded maximum retries ({self._max_result_retries}) for result validation'
             )
 
-    async def _sys_parts(self, deps: AgentDeps) -> list[_messages.UserMessagePart]:
+    async def _sys_parts(self, deps: AgentDeps) -> list[_messages.ModelRequestPart]:
         """Build the initial messages for the conversation."""
-        messages: list[_messages.UserMessagePart] = [_messages.SystemPrompt(p) for p in self._system_prompts]
+        messages: list[_messages.ModelRequestPart] = [_messages.SystemPrompt(p) for p in self._system_prompts]
         for sys_prompt_runner in self._system_prompt_functions:
             prompt = await sys_prompt_runner.run(deps)
             messages.append(_messages.SystemPrompt(prompt))

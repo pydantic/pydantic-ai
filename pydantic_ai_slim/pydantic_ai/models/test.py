@@ -13,13 +13,13 @@ from typing_extensions import assert_never
 
 from .. import _utils
 from ..messages import (
-    Message,
     ModelMessage,
+    ModelRequest,
+    ModelResponse,
     RetryPrompt,
     TextPart,
     ToolCallPart,
     ToolReturn,
-    UserMessage,
 )
 from ..result import Cost
 from ..settings import ModelSettings
@@ -129,12 +129,14 @@ class TestAgentModel(AgentModel):
     result_tools: list[ToolDefinition]
     seed: int
 
-    async def request(self, messages: list[Message], model_settings: ModelSettings | None) -> tuple[ModelMessage, Cost]:
+    async def request(
+        self, messages: list[ModelMessage], model_settings: ModelSettings | None
+    ) -> tuple[ModelResponse, Cost]:
         return self._request(messages, model_settings), Cost()
 
     @asynccontextmanager
     async def request_stream(
-        self, messages: list[Message], model_settings: ModelSettings | None
+        self, messages: list[ModelMessage], model_settings: ModelSettings | None
     ) -> AsyncIterator[EitherStreamedResponse]:
         msg = self._request(messages, model_settings)
         cost = Cost()
@@ -158,21 +160,21 @@ class TestAgentModel(AgentModel):
     def gen_tool_args(self, tool_def: ToolDefinition) -> Any:
         return _JsonSchemaTestData(tool_def.parameters_json_schema, self.seed).generate()
 
-    def _request(self, messages: list[Message], model_settings: ModelSettings | None) -> ModelMessage:
+    def _request(self, messages: list[ModelMessage], model_settings: ModelSettings | None) -> ModelResponse:
         # if there are tools, the first thing we want to do is call all of them
-        if self.tool_calls and not any(isinstance(m, ModelMessage) for m in messages):
-            return ModelMessage(
+        if self.tool_calls and not any(isinstance(m, ModelResponse) for m in messages):
+            return ModelResponse(
                 parts=[ToolCallPart.from_dict(name, self.gen_tool_args(args)) for name, args in self.tool_calls]
             )
 
         if messages:
             last_message = messages[-1]
-            assert isinstance(last_message, UserMessage), 'Expected last message to be a `UserMessage`.'
+            assert isinstance(last_message, ModelRequest), 'Expected last message to be a `ModelRequest`.'
 
             # check if there are any retry prompts, if so retry them
             new_retry_names = {p.tool_name for p in last_message.parts if isinstance(p, RetryPrompt)}
             if new_retry_names:
-                return ModelMessage(
+                return ModelResponse(
                     parts=[
                         ToolCallPart.from_dict(name, self.gen_tool_args(args))
                         for name, args in self.tool_calls
@@ -185,25 +187,25 @@ class TestAgentModel(AgentModel):
                 # build up details of tool responses
                 output: dict[str, Any] = {}
                 for message in messages:
-                    if isinstance(message, UserMessage):
+                    if isinstance(message, ModelRequest):
                         for part in message.parts:
                             if isinstance(part, ToolReturn):
                                 output[part.tool_name] = part.content
                 if output:
-                    return ModelMessage.from_text(pydantic_core.to_json(output).decode())
+                    return ModelResponse.from_text(pydantic_core.to_json(output).decode())
                 else:
-                    return ModelMessage.from_text('success (no tool calls)')
+                    return ModelResponse.from_text('success (no tool calls)')
             else:
-                return ModelMessage.from_text(response_text.value)
+                return ModelResponse.from_text(response_text.value)
         else:
             assert self.result_tools, 'No result tools provided'
             custom_result_args = self.result.right
             result_tool = self.result_tools[self.seed % len(self.result_tools)]
             if custom_result_args is not None:
-                return ModelMessage(parts=[ToolCallPart.from_dict(result_tool.name, custom_result_args)])
+                return ModelResponse(parts=[ToolCallPart.from_dict(result_tool.name, custom_result_args)])
             else:
                 response_args = self.gen_tool_args(result_tool)
-                return ModelMessage(parts=[ToolCallPart.from_dict(result_tool.name, response_args)])
+                return ModelResponse(parts=[ToolCallPart.from_dict(result_tool.name, response_args)])
 
 
 @dataclass
@@ -243,7 +245,7 @@ class TestStreamTextResponse(StreamTextResponse):
 class TestStreamStructuredResponse(StreamStructuredResponse):
     """A structured response that streams test data."""
 
-    _structured_response: ModelMessage
+    _structured_response: ModelResponse
     _cost: Cost
     _iter: Iterator[None] = field(default_factory=lambda: iter([None]))
     _timestamp: datetime = field(default_factory=_utils.now_utc, init=False)
@@ -251,7 +253,7 @@ class TestStreamStructuredResponse(StreamStructuredResponse):
     async def __anext__(self) -> None:
         return _utils.sync_anext(self._iter)
 
-    def get(self, *, final: bool = False) -> ModelMessage:
+    def get(self, *, final: bool = False) -> ModelResponse:
         return self._structured_response
 
     def cost(self) -> Cost:

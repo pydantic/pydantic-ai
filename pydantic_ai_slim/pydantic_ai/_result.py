@@ -32,7 +32,7 @@ class ResultValidator(Generic[AgentDeps, ResultData]):
         deps: AgentDeps,
         retry: int,
         tool_call: _messages.ToolCallPart | None,
-        messages: list[_messages.Message],
+        messages: list[_messages.ModelMessage],
     ) -> ResultData:
         """Validate a result but calling the function.
 
@@ -114,7 +114,7 @@ class ResultSchema(Generic[ResultData]):
         return cls(tools=tools, allow_text_result=allow_text_result)
 
     def find_tool(
-        self, message: _messages.ModelMessage
+        self, message: _messages.ModelResponse
     ) -> tuple[_messages.ToolCallPart, ResultTool[ResultData]] | None:
         """Find a tool that matches one of the calls."""
         for item in message.parts:

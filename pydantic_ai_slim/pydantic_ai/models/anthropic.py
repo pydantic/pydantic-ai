@@ -12,15 +12,15 @@ from .. import result
 from .._utils import guard_tool_call_id as _guard_tool_call_id
 from ..messages import (
     ArgsDict,
-    Message,
     ModelMessage,
-    ModelMessagePart,
+    ModelRequest,
+    ModelResponse,
+    ModelResponsePart,
     RetryPrompt,
     SystemPrompt,
     TextPart,
     ToolCallPart,
     ToolReturn,
-    UserMessage,
     UserPrompt,
 )
 from ..settings import ModelSettings
@@ -157,14 +157,14 @@ class AnthropicAgentModel(AgentModel):
     tools: list[ToolParam]
 
     async def request(
-        self, messages: list[Message], model_settings: ModelSettings | None
-    ) -> tuple[ModelMessage, result.Cost]:
+        self, messages: list[ModelMessage], model_settings: ModelSettings | None
+    ) -> tuple[ModelResponse, result.Cost]:
         response = await self._messages_create(messages, False, model_settings)
         return self._process_response(response), _map_cost(response)
 
     @asynccontextmanager
     async def request_stream(
-        self, messages: list[Message], model_settings: ModelSettings | None
+        self, messages: list[ModelMessage], model_settings: ModelSettings | None
     ) -> AsyncIterator[EitherStreamedResponse]:
         response = await self._messages_create(messages, True, model_settings)
         async with response:
@@ -172,18 +172,18 @@ class AnthropicAgentModel(AgentModel):
 
     @overload
     async def _messages_create(
-        self, messages: list[Message], stream: Literal[True], model_settings: ModelSettings | None
+        self, messages: list[ModelMessage], stream: Literal[True], model_settings: ModelSettings | None
     ) -> AsyncStream[RawMessageStreamEvent]:
         pass
 
     @overload
     async def _messages_create(
-        self, messages: list[Message], stream: Literal[False], model_settings: ModelSettings | None
+        self, messages: list[ModelMessage], stream: Literal[False], model_settings: ModelSettings | None
     ) -> AnthropicMessage:
         pass
 
     async def _messages_create(
-        self, messages: list[Message], stream: bool, model_settings: ModelSettings | None
+        self, messages: list[ModelMessage], stream: bool, model_settings: ModelSettings | None
     ) -> AnthropicMessage | AsyncStream[RawMessageStreamEvent]:
         # standalone function to make it easier to override
         if not self.tools:
@@ -211,9 +211,9 @@ class AnthropicAgentModel(AgentModel):
         )
 
     @staticmethod
-    def _process_response(response: AnthropicMessage) -> ModelMessage:
+    def _process_response(response: AnthropicMessage) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
-        items: list[ModelMessagePart] = []
+        items: list[ModelResponsePart] = []
         for item in response.content:
             if isinstance(item, TextBlock):
                 items.append(TextPart(item.text))
@@ -227,7 +227,7 @@ class AnthropicAgentModel(AgentModel):
                     )
                 )
 
-        return ModelMessage(items)
+        return ModelResponse(items)
 
     @staticmethod
     async def _process_streamed_response(response: AsyncStream[RawMessageStreamEvent]) -> EitherStreamedResponse:
@@ -249,12 +249,12 @@ class AnthropicAgentModel(AgentModel):
         # We might refactor streaming internally before we implement this...
 
     @staticmethod
-    def _map_message(messages: list[Message]) -> tuple[str, list[MessageParam]]:
+    def _map_message(messages: list[ModelMessage]) -> tuple[str, list[MessageParam]]:
         """Just maps a `pydantic_ai.Message` to a `anthropic.types.MessageParam`."""
         system_prompt: str = ''
         anthropic_messages: list[MessageParam] = []
         for m in messages:
-            if isinstance(m, UserMessage):
+            if isinstance(m, ModelRequest):
                 for part in m.parts:
                     if isinstance(part, SystemPrompt):
                         system_prompt += part.content
@@ -291,7 +291,7 @@ class AnthropicAgentModel(AgentModel):
                                     ],
                                 )
                             )
-            elif isinstance(m, ModelMessage):
+            elif isinstance(m, ModelResponse):
                 content: list[TextBlockParam | ToolUseBlockParam] = []
                 for item in m.parts:
                     if isinstance(item, TextPart):

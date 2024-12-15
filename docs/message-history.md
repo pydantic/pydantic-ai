@@ -40,7 +40,7 @@ print(result.data)
 print(result.all_messages())
 """
 [
-    UserMessage(
+    ModelRequest(
         parts=[
             SystemPrompt(content='Be a helpful assistant.', kind='system-prompt'),
             UserPrompt(
@@ -51,7 +51,7 @@ print(result.all_messages())
         ],
         role='user',
     ),
-    ModelMessage(
+    ModelResponse(
         parts=[
             TextPart(
                 content='Did you hear about the toothpaste scandal? They called it Colgate.',
@@ -68,7 +68,7 @@ print(result.all_messages())
 print(result.new_messages())
 """
 [
-    UserMessage(
+    ModelRequest(
         parts=[
             SystemPrompt(content='Be a helpful assistant.', kind='system-prompt'),
             UserPrompt(
@@ -79,7 +79,7 @@ print(result.new_messages())
         ],
         role='user',
     ),
-    ModelMessage(
+    ModelResponse(
         parts=[
             TextPart(
                 content='Did you hear about the toothpaste scandal? They called it Colgate.',
@@ -108,7 +108,7 @@ async def main():
         print(result.all_messages())
         """
         [
-            UserMessage(
+            ModelRequest(
                 parts=[
                     SystemPrompt(
                         content='Be a helpful assistant.', kind='system-prompt'
@@ -135,7 +135,7 @@ async def main():
         print(result.all_messages())
         """
         [
-            UserMessage(
+            ModelRequest(
                 parts=[
                     SystemPrompt(
                         content='Be a helpful assistant.', kind='system-prompt'
@@ -148,7 +148,7 @@ async def main():
                 ],
                 role='user',
             ),
-            ModelMessage(
+            ModelResponse(
                 parts=[
                     TextPart(
                         content='Did you hear about the toothpaste scandal? They called it Colgate.',
@@ -198,7 +198,7 @@ print(result2.data)
 print(result2.all_messages())
 """
 [
-    UserMessage(
+    ModelRequest(
         parts=[
             SystemPrompt(content='Be a helpful assistant.', kind='system-prompt'),
             UserPrompt(
@@ -209,7 +209,7 @@ print(result2.all_messages())
         ],
         role='user',
     ),
-    ModelMessage(
+    ModelResponse(
         parts=[
             TextPart(
                 content='Did you hear about the toothpaste scandal? They called it Colgate.',
@@ -219,7 +219,7 @@ print(result2.all_messages())
         timestamp=datetime.datetime(...),
         role='model',
     ),
-    UserMessage(
+    ModelRequest(
         parts=[
             UserPrompt(
                 content='Explain?',
@@ -229,7 +229,7 @@ print(result2.all_messages())
         ],
         role='user',
     ),
-    ModelMessage(
+    ModelResponse(
         parts=[
             TextPart(
                 content='This is an excellent joke invent by Samuel Colvin, it needs no explanation.',
@@ -268,7 +268,7 @@ print(result2.data)
 print(result2.all_messages())
 """
 [
-    UserMessage(
+    ModelRequest(
         parts=[
             SystemPrompt(content='Be a helpful assistant.', kind='system-prompt'),
             UserPrompt(
@@ -279,7 +279,7 @@ print(result2.all_messages())
         ],
         role='user',
     ),
-    ModelMessage(
+    ModelResponse(
         parts=[
             TextPart(
                 content='Did you hear about the toothpaste scandal? They called it Colgate.',
@@ -289,7 +289,7 @@ print(result2.all_messages())
         timestamp=datetime.datetime(...),
         role='model',
     ),
-    UserMessage(
+    ModelRequest(
         parts=[
             UserPrompt(
                 content='Explain?',
@@ -299,7 +299,7 @@ print(result2.all_messages())
         ],
         role='user',
     ),
-    ModelMessage(
+    ModelResponse(
         parts=[
             TextPart(
                 content='This is an excellent joke invent by Samuel Colvin, it needs no explanation.',

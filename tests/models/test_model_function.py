@@ -12,13 +12,13 @@ from pydantic import BaseModel
 
 from pydantic_ai import Agent, ModelRetry, RunContext
 from pydantic_ai.messages import (
-    Message,
     ModelMessage,
+    ModelRequest,
+    ModelResponse,
     SystemPrompt,
     TextPart,
     ToolCallPart,
     ToolReturn,
-    UserMessage,
     UserPrompt,
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
@@ -30,12 +30,12 @@ from ..conftest import IsNow
 pytestmark = pytest.mark.anyio
 
 
-async def return_last(messages: list[Message], _: AgentInfo) -> ModelMessage:
+async def return_last(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:
     last = messages[-1].parts[-1]
     response = asdict(last)
     response.pop('timestamp', None)
     response['message_count'] = len(messages)
-    return ModelMessage.from_text(' '.join(f'{k}={v!r}' for k, v in response.items()))
+    return ModelResponse.from_text(' '.join(f'{k}={v!r}' for k, v in response.items()))
 
 
 def test_simple(set_event_loop: None):
@@ -44,8 +44,8 @@ def test_simple(set_event_loop: None):
     assert result.data == snapshot("content='Hello' kind='user-prompt' message_count=1")
     assert result.all_messages() == snapshot(
         [
-            UserMessage(parts=[UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
-            ModelMessage(
+            ModelRequest(parts=[UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
+            ModelResponse(
                 parts=[TextPart(content="content='Hello' kind='user-prompt' message_count=1")],
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -56,13 +56,13 @@ def test_simple(set_event_loop: None):
     assert result2.data == snapshot("content='World' kind='user-prompt' message_count=3")
     assert result2.all_messages() == snapshot(
         [
-            UserMessage(parts=[UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
-            ModelMessage(
+            ModelRequest(parts=[UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
+            ModelResponse(
                 parts=[TextPart(content="content='Hello' kind='user-prompt' message_count=1")],
                 timestamp=IsNow(tz=timezone.utc),
             ),
-            UserMessage(parts=[UserPrompt(content='World', timestamp=IsNow(tz=timezone.utc))]),
-            ModelMessage(
+            ModelRequest(parts=[UserPrompt(content='World', timestamp=IsNow(tz=timezone.utc))]),
+            ModelResponse(
                 parts=[TextPart(content="content='World' kind='user-prompt' message_count=3")],
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -70,12 +70,12 @@ def test_simple(set_event_loop: None):
     )
 
 
-async def weather_model(messages: list[Message], info: AgentInfo) -> ModelMessage:  # pragma: no cover
+async def weather_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:  # pragma: no cover
     assert info.allow_text_result
     assert {t.name for t in info.function_tools} == {'get_location', 'get_weather'}
     last = messages[-1].parts[-1]
     if isinstance(last, UserPrompt):
-        return ModelMessage(
+        return ModelResponse(
             parts=[
                 ToolCallPart.from_json(
                     'get_location',
@@ -85,7 +85,7 @@ async def weather_model(messages: list[Message], info: AgentInfo) -> ModelMessag
         )
     elif isinstance(last, ToolReturn):
         if last.tool_name == 'get_location':
-            return ModelMessage(parts=[ToolCallPart.from_json('get_weather', last.model_response_str())])
+            return ModelResponse(parts=[ToolCallPart.from_json('get_weather', last.model_response_str())])
         elif last.tool_name == 'get_weather':
             location_name: str | None = None
             for m in messages:
@@ -94,7 +94,7 @@ async def weather_model(messages: list[Message], info: AgentInfo) -> ModelMessag
                     break
 
             assert location_name is not None
-            return ModelMessage.from_text(f'{last.content} in {location_name}')
+            return ModelResponse.from_text(f'{last.content} in {location_name}')
 
     raise ValueError(f'Unexpected message: {last}')
 
@@ -125,19 +125,19 @@ def test_weather(set_event_loop: None):
     assert result.data == 'Raining in London'
     assert result.all_messages() == snapshot(
         [
-            UserMessage(parts=[UserPrompt(content='London', timestamp=IsNow(tz=timezone.utc))]),
-            ModelMessage(
+            ModelRequest(parts=[UserPrompt(content='London', timestamp=IsNow(tz=timezone.utc))]),
+            ModelResponse(
                 parts=[ToolCallPart.from_json('get_location', '{"location_description": "London"}')],
                 timestamp=IsNow(tz=timezone.utc),
             ),
-            UserMessage(
+            ModelRequest(
                 parts=[
                     ToolReturn(
                         tool_name='get_location', content='{"lat": 51, "lng": 0}', timestamp=IsNow(tz=timezone.utc)
                     )
                 ]
             ),
-            ModelMessage(
+            ModelResponse(
                 parts=[
                     ToolCallPart.from_json(
                         'get_weather',
@@ -146,10 +146,10 @@ def test_weather(set_event_loop: None):
                 ],
                 timestamp=IsNow(tz=timezone.utc),
             ),
-            UserMessage(
+            ModelRequest(
                 parts=[ToolReturn(tool_name='get_weather', content='Raining', timestamp=IsNow(tz=timezone.utc))]
             ),
-            ModelMessage.from_text(
+            ModelResponse.from_text(
                 content='Raining in London',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -160,12 +160,12 @@ def test_weather(set_event_loop: None):
     assert result.data == 'Sunny in Ipswich'
 
 
-async def call_function_model(messages: list[Message], _: AgentInfo) -> ModelMessage:  # pragma: no cover
+async def call_function_model(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:  # pragma: no cover
     last = messages[-1].parts[-1]
     if isinstance(last, UserPrompt):
         if last.content.startswith('{'):
             details = json.loads(last.content)
-            return ModelMessage(
+            return ModelResponse(
                 parts=[
                     ToolCallPart.from_json(
                         details['function'],
@@ -174,7 +174,7 @@ async def call_function_model(messages: list[Message], _: AgentInfo) -> ModelMes
                 ]
             )
     elif isinstance(last, ToolReturn):
-        return ModelMessage.from_text(pydantic_core.to_json(last).decode())
+        return ModelResponse.from_text(pydantic_core.to_json(last).decode())
 
     raise ValueError(f'Unexpected message: {last}')
 
@@ -204,13 +204,13 @@ def test_var_args(set_event_loop: None):
     )
 
 
-async def call_tool(messages: list[Message], info: AgentInfo) -> ModelMessage:
+async def call_tool(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
     if len(messages) == 1:
         assert len(info.function_tools) == 1
         tool_name = info.function_tools[0].name
-        return ModelMessage(parts=[ToolCallPart.from_json(tool_name, '{}')])
+        return ModelResponse(parts=[ToolCallPart.from_json(tool_name, '{}')])
     else:
-        return ModelMessage.from_text('final response')
+        return ModelResponse.from_text('final response')
 
 
 def test_deps_none(set_event_loop: None):
@@ -291,8 +291,8 @@ def spam() -> str:
 
 
 def test_register_all(set_event_loop: None):
-    async def f(messages: list[Message], info: AgentInfo) -> ModelMessage:
-        return ModelMessage.from_text(
+    async def f(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse.from_text(
             f'messages={len(messages)} allow_text_result={info.allow_text_result} tools={len(info.function_tools)}'
         )
 
@@ -305,13 +305,13 @@ def test_call_all(set_event_loop: None):
     assert result.data == snapshot('{"foo":"1","bar":"2","baz":"3","qux":"4","quz":"a"}')
     assert result.all_messages() == snapshot(
         [
-            UserMessage(
+            ModelRequest(
                 parts=[
                     SystemPrompt(content='foobar'),
                     UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
                 ]
             ),
-            ModelMessage(
+            ModelResponse(
                 parts=[
                     ToolCallPart.from_dict('foo', {'x': 0}),
                     ToolCallPart.from_dict('bar', {'x': 0}),
@@ -321,7 +321,7 @@ def test_call_all(set_event_loop: None):
                 ],
                 timestamp=IsNow(tz=timezone.utc),
             ),
-            UserMessage(
+            ModelRequest(
                 parts=[
                     ToolReturn(tool_name='foo', content='1', timestamp=IsNow(tz=timezone.utc)),
                     ToolReturn(tool_name='bar', content='2', timestamp=IsNow(tz=timezone.utc)),
@@ -330,7 +330,7 @@ def test_call_all(set_event_loop: None):
                     ToolReturn(tool_name='quz', content='a', timestamp=IsNow(tz=timezone.utc)),
                 ]
             ),
-            ModelMessage.from_text(
+            ModelResponse.from_text(
                 content='{"foo":"1","bar":"2","baz":"3","qux":"4","quz":"a"}', timestamp=IsNow(tz=timezone.utc)
             ),
         ]
@@ -340,11 +340,11 @@ def test_call_all(set_event_loop: None):
 def test_retry_str(set_event_loop: None):
     call_count = 0
 
-    async def try_again(msgs_: list[Message], _agent_info: AgentInfo) -> ModelMessage:
+    async def try_again(msgs_: list[ModelMessage], _agent_info: AgentInfo) -> ModelResponse:
         nonlocal call_count
         call_count += 1
 
-        return ModelMessage.from_text(str(call_count))
+        return ModelResponse.from_text(str(call_count))
 
     agent = Agent(FunctionModel(try_again))
 
@@ -362,11 +362,11 @@ def test_retry_str(set_event_loop: None):
 def test_retry_result_type(set_event_loop: None):
     call_count = 0
 
-    async def try_again(messages: list[Message], _: AgentInfo) -> ModelMessage:
+    async def try_again(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:
         nonlocal call_count
         call_count += 1
 
-        return ModelMessage(parts=[ToolCallPart.from_dict('final_result', {'x': call_count})])
+        return ModelResponse(parts=[ToolCallPart.from_dict('final_result', {'x': call_count})])
 
     class Foo(BaseModel):
         x: int
@@ -384,7 +384,7 @@ def test_retry_result_type(set_event_loop: None):
     assert result.data == snapshot(Foo(x=2))
 
 
-async def stream_text_function(_messages: list[Message], _: AgentInfo) -> AsyncIterator[str]:
+async def stream_text_function(_messages: list[ModelMessage], _: AgentInfo) -> AsyncIterator[str]:
     yield 'hello '
     yield 'world'
 
@@ -395,8 +395,8 @@ async def test_stream_text():
         assert await result.get_data() == snapshot('hello world')
         assert result.all_messages() == snapshot(
             [
-                UserMessage(parts=[UserPrompt(content='', timestamp=IsNow(tz=timezone.utc))]),
-                ModelMessage.from_text(content='hello world', timestamp=IsNow(tz=timezone.utc)),
+                ModelRequest(parts=[UserPrompt(content='', timestamp=IsNow(tz=timezone.utc))]),
+                ModelResponse.from_text(content='hello world', timestamp=IsNow(tz=timezone.utc)),
             ]
         )
         assert result.cost() == snapshot(Cost())
@@ -408,7 +408,7 @@ class Foo(BaseModel):
 
 async def test_stream_structure():
     async def stream_structured_function(
-        _messages: list[Message], agent_info: AgentInfo
+        _messages: list[ModelMessage], agent_info: AgentInfo
     ) -> AsyncIterator[DeltaToolCalls]:
         assert agent_info.result_tools is not None
         assert len(agent_info.result_tools) == 1
@@ -432,7 +432,7 @@ async def test_pass_both():
     Agent(FunctionModel(return_last, stream_function=stream_text_function))
 
 
-async def stream_text_function_empty(_messages: list[Message], _: AgentInfo) -> AsyncIterator[str]:
+async def stream_text_function_empty(_messages: list[ModelMessage], _: AgentInfo) -> AsyncIterator[str]:
     if False:
         yield 'hello '
 

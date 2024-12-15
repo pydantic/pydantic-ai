@@ -71,19 +71,19 @@ class _BaseRunResult(ABC, Generic[ResultData]):
     You should not import or use this type directly, instead use its subclasses `RunResult` and `StreamedRunResult`.
     """
 
-    _all_messages: list[_messages.Message]
+    _all_messages: list[_messages.ModelMessage]
     _new_message_index: int
 
-    def all_messages(self) -> list[_messages.Message]:
+    def all_messages(self) -> list[_messages.ModelMessage]:
         """Return the history of _messages."""
         # this is a method to be consistent with the other methods
         return self._all_messages
 
     def all_messages_json(self) -> bytes:
         """Return all messages from [`all_messages`][pydantic_ai.result._BaseRunResult.all_messages] as JSON bytes."""
-        return _messages.MessagesTypeAdapter.dump_json(self.all_messages())
+        return _messages.ModelMessagesTypeAdapter.dump_json(self.all_messages())
 
-    def new_messages(self) -> list[_messages.Message]:
+    def new_messages(self) -> list[_messages.ModelMessage]:
         """Return new messages associated with this run.
 
         System prompts and any messages from older runs are excluded.
@@ -92,7 +92,7 @@ class _BaseRunResult(ABC, Generic[ResultData]):
 
     def new_messages_json(self) -> bytes:
         """Return new messages from [`new_messages`][pydantic_ai.result._BaseRunResult.new_messages] as JSON bytes."""
-        return _messages.MessagesTypeAdapter.dump_json(self.new_messages())
+        return _messages.ModelMessagesTypeAdapter.dump_json(self.new_messages())
 
     @abstractmethod
     def cost(self) -> Cost:
@@ -122,7 +122,7 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
     _result_schema: _result.ResultSchema[ResultData] | None
     _deps: AgentDeps
     _result_validators: list[_result.ResultValidator[AgentDeps, ResultData]]
-    _on_complete: Callable[[list[_messages.Message]], None]
+    _on_complete: Callable[[list[_messages.ModelMessage]], None]
     is_complete: bool = field(default=False, init=False)
     """Whether the stream has all been received.
 
@@ -205,11 +205,11 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
                     combined = await self._validate_text_result(''.join(chunks))
                     yield combined
                 lf_span.set_attribute('combined_text', combined)
-                self._marked_completed(_messages.ModelMessage.from_text(combined))
+                self._marked_completed(_messages.ModelResponse.from_text(combined))
 
     async def stream_structured(
         self, *, debounce_by: float | None = 0.1
-    ) -> AsyncIterator[tuple[_messages.ModelMessage, bool]]:
+    ) -> AsyncIterator[tuple[_messages.ModelResponse, bool]]:
         """Stream the response as an async iterable of Structured LLM Messages.
 
         !!! note
@@ -253,7 +253,7 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
         if isinstance(self._stream_response, models.StreamTextResponse):
             text = ''.join(self._stream_response.get(final=True))
             text = await self._validate_text_result(text)
-            self._marked_completed(_messages.ModelMessage.from_text(text))
+            self._marked_completed(_messages.ModelResponse.from_text(text))
             return cast(ResultData, text)
         else:
             message = self._stream_response.get(final=True)
@@ -278,7 +278,7 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
         return self._stream_response.timestamp()
 
     async def validate_structured_result(
-        self, message: _messages.ModelMessage, *, allow_partial: bool = False
+        self, message: _messages.ModelResponse, *, allow_partial: bool = False
     ) -> ResultData:
         """Validate a structured result message."""
         assert self._result_schema is not None, 'Expected _result_schema to not be None'
@@ -306,7 +306,7 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
             )
         return text
 
-    def _marked_completed(self, message: _messages.ModelMessage) -> None:
+    def _marked_completed(self, message: _messages.ModelResponse) -> None:
         self.is_complete = True
         self._all_messages.append(message)
         self._on_complete(self._all_messages)

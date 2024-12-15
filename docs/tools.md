@@ -68,7 +68,7 @@ from dice_game import dice_result
 print(dice_result.all_messages())
 """
 [
-    UserMessage(
+    ModelRequest(
         parts=[
             SystemPrompt(
                 content="You're a dice game, you should roll the die and see if the number you get back matches the user's guess. If so, tell them they're a winner. Use the player's name in the response.",
@@ -82,7 +82,7 @@ print(dice_result.all_messages())
         ],
         role='user',
     ),
-    ModelMessage(
+    ModelResponse(
         parts=[
             ToolCallPart(
                 tool_name='roll_die',
@@ -94,7 +94,7 @@ print(dice_result.all_messages())
         timestamp=datetime.datetime(...),
         role='model',
     ),
-    UserMessage(
+    ModelRequest(
         parts=[
             ToolReturn(
                 tool_name='roll_die',
@@ -106,7 +106,7 @@ print(dice_result.all_messages())
         ],
         role='user',
     ),
-    ModelMessage(
+    ModelResponse(
         parts=[
             ToolCallPart(
                 tool_name='get_player_name',
@@ -118,7 +118,7 @@ print(dice_result.all_messages())
         timestamp=datetime.datetime(...),
         role='model',
     ),
-    UserMessage(
+    ModelRequest(
         parts=[
             ToolReturn(
                 tool_name='get_player_name',
@@ -130,7 +130,7 @@ print(dice_result.all_messages())
         ],
         role='user',
     ),
-    ModelMessage(
+    ModelResponse(
         parts=[
             TextPart(
                 content="Congratulations Anne, you guessed correctly! You're a winner!",
@@ -175,7 +175,7 @@ sequenceDiagram
     activate LLM
     Note over LLM: LLM constructs final response
 
-    LLM ->> Agent: ModelMessage<br>"Congratulations Anne, ..."
+    LLM ->> Agent: ModelResponse<br>"Congratulations Anne, ..."
     deactivate LLM
     Note over Agent: Game session complete
 ```
@@ -239,7 +239,7 @@ To demonstrate a tool's schema, here we use [`FunctionModel`][pydantic_ai.models
 
 ```python {title="tool_schema.py"}
 from pydantic_ai import Agent
-from pydantic_ai.messages import Message, ModelMessage
+from pydantic_ai.messages import ModelMessage, ModelResponse
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 agent = Agent()
@@ -257,7 +257,7 @@ def foobar(a: int, b: str, c: dict[str, list[float]]) -> str:
     return f'{a} {b} {c}'
 
 
-def print_schema(messages: list[Message], info: AgentInfo) -> ModelMessage:
+def print_schema(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
     tool = info.function_tools[0]
     print(tool.description)
     #> Get me foobar.
@@ -279,7 +279,7 @@ def print_schema(messages: list[Message], info: AgentInfo) -> ModelMessage:
         'additionalProperties': False,
     }
     """
-    return ModelMessage.from_text(content='foobar')
+    return ModelResponse.from_text(content='foobar')
 
 
 agent.run_sync('hello', model=FunctionModel(print_schema))

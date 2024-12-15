@@ -14,15 +14,15 @@ from .. import UnexpectedModelBehavior, _utils, result
 from .._utils import guard_tool_call_id as _guard_tool_call_id
 from ..messages import (
     ArgsJson,
-    Message,
     ModelMessage,
-    ModelMessagePart,
+    ModelRequest,
+    ModelResponse,
+    ModelResponsePart,
     RetryPrompt,
     SystemPrompt,
     TextPart,
     ToolCallPart,
     ToolReturn,
-    UserMessage,
     UserPrompt,
 )
 from ..result import Cost
@@ -146,14 +146,14 @@ class OpenAIAgentModel(AgentModel):
     tools: list[chat.ChatCompletionToolParam]
 
     async def request(
-        self, messages: list[Message], model_settings: ModelSettings | None
-    ) -> tuple[ModelMessage, result.Cost]:
+        self, messages: list[ModelMessage], model_settings: ModelSettings | None
+    ) -> tuple[ModelResponse, result.Cost]:
         response = await self._completions_create(messages, False, model_settings)
         return self._process_response(response), _map_cost(response)
 
     @asynccontextmanager
     async def request_stream(
-        self, messages: list[Message], model_settings: ModelSettings | None
+        self, messages: list[ModelMessage], model_settings: ModelSettings | None
     ) -> AsyncIterator[EitherStreamedResponse]:
         response = await self._completions_create(messages, True, model_settings)
         async with response:
@@ -161,18 +161,18 @@ class OpenAIAgentModel(AgentModel):
 
     @overload
     async def _completions_create(
-        self, messages: list[Message], stream: Literal[True], model_settings: ModelSettings | None
+        self, messages: list[ModelMessage], stream: Literal[True], model_settings: ModelSettings | None
     ) -> AsyncStream[ChatCompletionChunk]:
         pass
 
     @overload
     async def _completions_create(
-        self, messages: list[Message], stream: Literal[False], model_settings: ModelSettings | None
+        self, messages: list[ModelMessage], stream: Literal[False], model_settings: ModelSettings | None
     ) -> chat.ChatCompletion:
         pass
 
     async def _completions_create(
-        self, messages: list[Message], stream: bool, model_settings: ModelSettings | None
+        self, messages: list[ModelMessage], stream: bool, model_settings: ModelSettings | None
     ) -> chat.ChatCompletion | AsyncStream[ChatCompletionChunk]:
         # standalone function to make it easier to override
         if not self.tools:
@@ -202,17 +202,17 @@ class OpenAIAgentModel(AgentModel):
         )
 
     @staticmethod
-    def _process_response(response: chat.ChatCompletion) -> ModelMessage:
+    def _process_response(response: chat.ChatCompletion) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
         timestamp = datetime.fromtimestamp(response.created, tz=timezone.utc)
         choice = response.choices[0]
-        items: list[ModelMessagePart] = []
+        items: list[ModelResponsePart] = []
         if choice.message.content is not None:
             items.append(TextPart(choice.message.content))
         if choice.message.tool_calls is not None:
             for c in choice.message.tool_calls:
                 items.append(ToolCallPart.from_json(c.function.name, c.function.arguments, c.id))
-        return ModelMessage(items, timestamp=timestamp)
+        return ModelResponse(items, timestamp=timestamp)
 
     @staticmethod
     async def _process_streamed_response(response: AsyncStream[ChatCompletionChunk]) -> EitherStreamedResponse:
@@ -244,11 +244,11 @@ class OpenAIAgentModel(AgentModel):
                 # else continue until we get either delta.content or delta.tool_calls
 
     @classmethod
-    def _map_message(cls, message: Message) -> Iterable[chat.ChatCompletionMessageParam]:
+    def _map_message(cls, message: ModelMessage) -> Iterable[chat.ChatCompletionMessageParam]:
         """Just maps a `pydantic_ai.Message` to a `openai.types.ChatCompletionMessageParam`."""
-        if isinstance(message, UserMessage):
+        if isinstance(message, ModelRequest):
             yield from cls._map_user_message(message)
-        elif isinstance(message, ModelMessage):
+        elif isinstance(message, ModelResponse):
             texts: list[str] = []
             tool_calls: list[chat.ChatCompletionMessageToolCallParam] = []
             for item in message.parts:
@@ -270,7 +270,7 @@ class OpenAIAgentModel(AgentModel):
             assert_never(message)
 
     @classmethod
-    def _map_user_message(cls, message: UserMessage) -> Iterable[chat.ChatCompletionMessageParam]:
+    def _map_user_message(cls, message: ModelRequest) -> Iterable[chat.ChatCompletionMessageParam]:
         for part in message.parts:
             if isinstance(part, SystemPrompt):
                 yield chat.ChatCompletionSystemMessageParam(role='system', content=part.content)
@@ -367,14 +367,14 @@ class OpenAIStreamStructuredResponse(StreamStructuredResponse):
             else:
                 self._delta_tool_calls[new.index] = new
 
-    def get(self, *, final: bool = False) -> ModelMessage:
-        items: list[ModelMessagePart] = []
+    def get(self, *, final: bool = False) -> ModelResponse:
+        items: list[ModelResponsePart] = []
         for c in self._delta_tool_calls.values():
             if f := c.function:
                 if f.name is not None and f.arguments is not None:
                     items.append(ToolCallPart.from_json(f.name, f.arguments, c.id))
 
-        return ModelMessage(items, timestamp=self._timestamp)
+        return ModelResponse(items, timestamp=self._timestamp)
 
     def cost(self) -> Cost:
         return self._cost
