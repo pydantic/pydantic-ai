@@ -29,11 +29,11 @@ from typing_extensions import LiteralString, ParamSpec, TypedDict
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.messages import (
-    Message,
-    MessagesTypeAdapter,
+    ModelMessage,
+    ModelMessagesTypeAdapter,
     ModelResponse,
     TextPart,
-    UserPrompt,
+    UserPromptPart,
 )
 
 # 'if-token-present' means nothing will be sent (and the example will work) if you don't have logfire configured
@@ -85,8 +85,8 @@ class ChatMessage(TypedDict):
     content: str
 
 
-def to_chat_message(m: Message) -> ChatMessage:
-    if isinstance(m, UserPrompt):
+def to_chat_message(m: ModelMessage) -> ChatMessage:
+    if isinstance(m, UserPromptPart):
         return {
             'role': 'user',
             'timestamp': m.timestamp.isoformat(),
@@ -136,8 +136,8 @@ async def post_chat(
     return StreamingResponse(stream_messages(), media_type='text/plain')
 
 
-MessageTypeAdapter: TypeAdapter[Message] = TypeAdapter(
-    Annotated[Message, Field(discriminator='message_kind')]
+MessageTypeAdapter: TypeAdapter[ModelMessage] = TypeAdapter(
+    Annotated[ModelMessage, Field(discriminator='message_kind')]
 )
 P = ParamSpec('P')
 R = TypeVar('R')
@@ -190,14 +190,14 @@ class Database:
         )
         await self._asyncify(self.con.commit)
 
-    async def get_messages(self) -> list[Message]:
+    async def get_messages(self) -> list[ModelMessage]:
         c = await self._asyncify(
             self._execute, 'SELECT message_list FROM messages order by id desc'
         )
         rows = await self._asyncify(c.fetchall)
-        messages: list[Message] = []
+        messages: list[ModelMessage] = []
         for row in rows:
-            messages.extend(MessagesTypeAdapter.validate_json(row[0]))
+            messages.extend(ModelMessagesTypeAdapter.validate_json(row[0]))
         return messages
 
     def _execute(

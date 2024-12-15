@@ -15,15 +15,16 @@ from typing_extensions import TypeAlias, assert_never, overload
 from .. import _utils, result
 from ..messages import (
     ArgsJson,
-    Message,
+    ModelMessage,
+    ModelRequest,
     ModelResponse,
     ModelResponsePart,
-    RetryPrompt,
-    SystemPrompt,
+    RetryPromptPart,
+    SystemPromptPart,
     TextPart,
     ToolCallPart,
-    ToolReturn,
-    UserPrompt,
+    ToolReturnPart,
+    UserPromptPart,
 )
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
@@ -120,10 +121,10 @@ class DeltaToolCall:
 DeltaToolCalls: TypeAlias = dict[int, DeltaToolCall]
 """A mapping of tool call IDs to incremental changes."""
 
-FunctionDef: TypeAlias = Callable[[list[Message], AgentInfo], Union[ModelResponse, Awaitable[ModelResponse]]]
+FunctionDef: TypeAlias = Callable[[list[ModelMessage], AgentInfo], Union[ModelResponse, Awaitable[ModelResponse]]]
 """A function used to generate a non-streamed response."""
 
-StreamFunctionDef: TypeAlias = Callable[[list[Message], AgentInfo], AsyncIterator[Union[str, DeltaToolCalls]]]
+StreamFunctionDef: TypeAlias = Callable[[list[ModelMessage], AgentInfo], AsyncIterator[Union[str, DeltaToolCalls]]]
 """A function used to generate a streamed response.
 
 While this is defined as having return type of `AsyncIterator[Union[str, DeltaToolCalls]]`, it should
@@ -142,7 +143,7 @@ class FunctionAgentModel(AgentModel):
     agent_info: AgentInfo
 
     async def request(
-        self, messages: list[Message], model_settings: ModelSettings | None
+        self, messages: list[ModelMessage], model_settings: ModelSettings | None
     ) -> tuple[ModelResponse, result.Cost]:
         agent_info = replace(self.agent_info, model_settings=model_settings)
 
@@ -158,7 +159,7 @@ class FunctionAgentModel(AgentModel):
 
     @asynccontextmanager
     async def request_stream(
-        self, messages: list[Message], model_settings: ModelSettings | None
+        self, messages: list[ModelMessage], model_settings: ModelSettings | None
     ) -> AsyncIterator[EitherStreamedResponse]:
         assert (
             self.stream_function is not None
@@ -242,35 +243,38 @@ class FunctionStreamStructuredResponse(StreamStructuredResponse):
         return self._timestamp
 
 
-def _estimate_cost(messages: Iterable[Message]) -> result.Cost:
+def _estimate_cost(messages: Iterable[ModelMessage]) -> result.Cost:
     """Very rough guesstimate of the number of tokens associate with a series of messages.
 
     This is designed to be used solely to give plausible numbers for testing!
     """
     # there seem to be about 50 tokens of overhead for both Gemini and OpenAI calls, so add that here ¯\_(ツ)_/¯
-
     request_tokens = 50
     response_tokens = 0
     for message in messages:
-        if isinstance(message, (SystemPrompt, UserPrompt)):
-            request_tokens += _string_cost(message.content)
-        elif isinstance(message, ToolReturn):
-            request_tokens += _string_cost(message.model_response_str())
-        elif isinstance(message, RetryPrompt):
-            request_tokens += _string_cost(message.model_response())
+        if isinstance(message, ModelRequest):
+            for part in message.parts:
+                if isinstance(part, (SystemPromptPart, UserPromptPart)):
+                    request_tokens += _string_cost(part.content)
+                elif isinstance(part, ToolReturnPart):
+                    request_tokens += _string_cost(part.model_response_str())
+                elif isinstance(part, RetryPromptPart):
+                    request_tokens += _string_cost(part.model_response())
+                else:
+                    assert_never(part)
         elif isinstance(message, ModelResponse):
-            for item in message.parts:
-                if isinstance(item, TextPart):
-                    response_tokens += _string_cost(item.content)
-                elif isinstance(item, ToolCallPart):
-                    call = item
+            for part in message.parts:
+                if isinstance(part, TextPart):
+                    response_tokens += _string_cost(part.content)
+                elif isinstance(part, ToolCallPart):
+                    call = part
                     if isinstance(call.args, ArgsJson):
                         args_str = call.args.args_json
                     else:
                         args_str = pydantic_core.to_json(call.args.args_dict).decode()
                     response_tokens += 1 + _string_cost(args_str)
                 else:
-                    assert_never(item)
+                    assert_never(part)
         else:
             assert_never(message)
     return result.Cost(

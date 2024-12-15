@@ -76,14 +76,14 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary], set_event_lo
                 'message': 'my_agent run prompt=Hello',
                 'children': [
                     {'id': 1, 'message': 'preparing model and tools run_step=1'},
-                    {'id': 2, 'message': 'model request -> model-response'},
+                    {'id': 2, 'message': 'model request'},
                     {
                         'id': 3,
                         'message': 'handle model response -> tool-return',
                         'children': [{'id': 4, 'message': "running tools=['my_ret']"}],
                     },
                     {'id': 5, 'message': 'preparing model and tools run_step=2'},
-                    {'id': 6, 'message': 'model request -> model-response'},
+                    {'id': 6, 'message': 'model request'},
                     {'id': 7, 'message': 'handle model response -> final result'},
                 ],
             }
@@ -121,10 +121,14 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary], set_event_lo
             'all_messages': IsJson(
                 [
                     {
-                        'content': 'Hello',
-                        'timestamp': IsStr(regex=r'\d{4}-\d{2}-.+'),
-                        'role': 'user',
-                        'message_kind': 'user-prompt',
+                        'parts': [
+                            {
+                                'content': 'Hello',
+                                'timestamp': IsStr(regex=r'\d{4}-\d{2}-.+'),
+                                'part_kind': 'user-prompt',
+                            },
+                        ],
+                        'kind': 'request',
                     },
                     {
                         'parts': [
@@ -136,22 +140,24 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary], set_event_lo
                             }
                         ],
                         'timestamp': IsStr(regex=r'\d{4}-\d{2}-.+'),
-                        'role': 'model',
-                        'message_kind': 'model-response',
+                        'kind': 'response',
                     },
                     {
-                        'tool_name': 'my_ret',
-                        'content': '1',
-                        'tool_call_id': None,
-                        'timestamp': IsStr(regex=r'\d{4}-\d{2}-.+'),
-                        'role': 'user',
-                        'message_kind': 'tool-return',
+                        'parts': [
+                            {
+                                'tool_name': 'my_ret',
+                                'content': '1',
+                                'tool_call_id': None,
+                                'timestamp': IsStr(regex=r'\d{4}-\d{2}-.+'),
+                                'part_kind': 'tool-return',
+                            },
+                        ],
+                        'kind': 'request',
                     },
                     {
                         'parts': [{'content': '{"my_ret":"1"}', 'part_kind': 'text'}],
                         'timestamp': IsStr(regex=r'\d{4}-\d{2}-.+'),
-                        'role': 'model',
-                        'message_kind': 'model-response',
+                        'kind': 'response',
                     },
                 ]
             ),
@@ -177,9 +183,19 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary], set_event_lo
                             'prefixItems': [
                                 {
                                     'type': 'object',
-                                    'title': 'UserPrompt',
+                                    'title': 'ModelRequest',
                                     'x-python-datatype': 'dataclass',
-                                    'properties': {'timestamp': {'type': 'string', 'format': 'date-time'}},
+                                    'properties': {
+                                        'parts': {
+                                            'type': 'array',
+                                            'items': {
+                                                'type': 'object',
+                                                'title': 'UserPromptPart',
+                                                'x-python-datatype': 'dataclass',
+                                                'properties': {'timestamp': {'type': 'string', 'format': 'date-time'}},
+                                            },
+                                        }
+                                    },
                                 },
                                 {
                                     'type': 'object',
@@ -206,9 +222,19 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary], set_event_lo
                                 },
                                 {
                                     'type': 'object',
-                                    'title': 'ToolReturn',
+                                    'title': 'ModelRequest',
                                     'x-python-datatype': 'dataclass',
-                                    'properties': {'timestamp': {'type': 'string', 'format': 'date-time'}},
+                                    'properties': {
+                                        'parts': {
+                                            'type': 'array',
+                                            'items': {
+                                                'type': 'object',
+                                                'title': 'ToolReturnPart',
+                                                'x-python-datatype': 'dataclass',
+                                                'properties': {'timestamp': {'type': 'string', 'format': 'date-time'}},
+                                            },
+                                        }
+                                    },
                                 },
                                 {
                                     'type': 'object',

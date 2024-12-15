@@ -68,16 +68,19 @@ from dice_game import dice_result
 print(dice_result.all_messages())
 """
 [
-    SystemPrompt(
-        content="You're a dice game, you should roll the die and see if the number you get back matches the user's guess. If so, tell them they're a winner. Use the player's name in the response.",
-        role='user',
-        message_kind='system-prompt',
-    ),
-    UserPrompt(
-        content='My guess is 4',
-        timestamp=datetime.datetime(...),
-        role='user',
-        message_kind='user-prompt',
+    ModelRequest(
+        parts=[
+            SystemPromptPart(
+                content="You're a dice game, you should roll the die and see if the number you get back matches the user's guess. If so, tell them they're a winner. Use the player's name in the response.",
+                part_kind='system-prompt',
+            ),
+            UserPromptPart(
+                content='My guess is 4',
+                timestamp=datetime.datetime(...),
+                part_kind='user-prompt',
+            ),
+        ],
+        kind='request',
     ),
     ModelResponse(
         parts=[
@@ -89,16 +92,19 @@ print(dice_result.all_messages())
             )
         ],
         timestamp=datetime.datetime(...),
-        role='model',
-        message_kind='model-response',
+        kind='response',
     ),
-    ToolReturn(
-        tool_name='roll_die',
-        content='4',
-        tool_call_id=None,
-        timestamp=datetime.datetime(...),
-        role='user',
-        message_kind='tool-return',
+    ModelRequest(
+        parts=[
+            ToolReturnPart(
+                tool_name='roll_die',
+                content='4',
+                tool_call_id=None,
+                timestamp=datetime.datetime(...),
+                part_kind='tool-return',
+            )
+        ],
+        kind='request',
     ),
     ModelResponse(
         parts=[
@@ -110,16 +116,19 @@ print(dice_result.all_messages())
             )
         ],
         timestamp=datetime.datetime(...),
-        role='model',
-        message_kind='model-response',
+        kind='response',
     ),
-    ToolReturn(
-        tool_name='get_player_name',
-        content='Anne',
-        tool_call_id=None,
-        timestamp=datetime.datetime(...),
-        role='user',
-        message_kind='tool-return',
+    ModelRequest(
+        parts=[
+            ToolReturnPart(
+                tool_name='get_player_name',
+                content='Anne',
+                tool_call_id=None,
+                timestamp=datetime.datetime(...),
+                part_kind='tool-return',
+            )
+        ],
+        kind='request',
     ),
     ModelResponse(
         parts=[
@@ -129,8 +138,7 @@ print(dice_result.all_messages())
             )
         ],
         timestamp=datetime.datetime(...),
-        role='model',
-        message_kind='model-response',
+        kind='response',
     ),
 ]
 """
@@ -231,7 +239,7 @@ To demonstrate a tool's schema, here we use [`FunctionModel`][pydantic_ai.models
 
 ```python {title="tool_schema.py"}
 from pydantic_ai import Agent
-from pydantic_ai.messages import Message, ModelResponse
+from pydantic_ai.messages import ModelMessage, ModelResponse
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 agent = Agent()
@@ -249,7 +257,7 @@ def foobar(a: int, b: str, c: dict[str, list[float]]) -> str:
     return f'{a} {b} {c}'
 
 
-def print_schema(messages: list[Message], info: AgentInfo) -> ModelResponse:
+def print_schema(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
     tool = info.function_tools[0]
     print(tool.description)
     #> Get me foobar.

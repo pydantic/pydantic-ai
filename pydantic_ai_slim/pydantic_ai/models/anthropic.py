@@ -6,21 +6,22 @@ from dataclasses import dataclass, field
 from typing import Any, Literal, Union, cast, overload
 
 from httpx import AsyncClient as AsyncHTTPClient
+from typing_extensions import assert_never
 
 from .. import result
 from .._utils import guard_tool_call_id as _guard_tool_call_id
-from ..exceptions import UnexpectedModelBehavior
 from ..messages import (
     ArgsDict,
-    Message,
+    ModelMessage,
+    ModelRequest,
     ModelResponse,
     ModelResponsePart,
-    RetryPrompt,
-    SystemPrompt,
+    RetryPromptPart,
+    SystemPromptPart,
     TextPart,
     ToolCallPart,
-    ToolReturn,
-    UserPrompt,
+    ToolReturnPart,
+    UserPromptPart,
 )
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
@@ -156,14 +157,14 @@ class AnthropicAgentModel(AgentModel):
     tools: list[ToolParam]
 
     async def request(
-        self, messages: list[Message], model_settings: ModelSettings | None
+        self, messages: list[ModelMessage], model_settings: ModelSettings | None
     ) -> tuple[ModelResponse, result.Cost]:
         response = await self._messages_create(messages, False, model_settings)
         return self._process_response(response), _map_cost(response)
 
     @asynccontextmanager
     async def request_stream(
-        self, messages: list[Message], model_settings: ModelSettings | None
+        self, messages: list[ModelMessage], model_settings: ModelSettings | None
     ) -> AsyncIterator[EitherStreamedResponse]:
         response = await self._messages_create(messages, True, model_settings)
         async with response:
@@ -171,18 +172,18 @@ class AnthropicAgentModel(AgentModel):
 
     @overload
     async def _messages_create(
-        self, messages: list[Message], stream: Literal[True], model_settings: ModelSettings | None
+        self, messages: list[ModelMessage], stream: Literal[True], model_settings: ModelSettings | None
     ) -> AsyncStream[RawMessageStreamEvent]:
         pass
 
     @overload
     async def _messages_create(
-        self, messages: list[Message], stream: Literal[False], model_settings: ModelSettings | None
+        self, messages: list[ModelMessage], stream: Literal[False], model_settings: ModelSettings | None
     ) -> AnthropicMessage:
         pass
 
     async def _messages_create(
-        self, messages: list[Message], stream: bool, model_settings: ModelSettings | None
+        self, messages: list[ModelMessage], stream: bool, model_settings: ModelSettings | None
     ) -> AnthropicMessage | AsyncStream[RawMessageStreamEvent]:
         # standalone function to make it easier to override
         if not self.tools:
@@ -192,14 +193,7 @@ class AnthropicAgentModel(AgentModel):
         else:
             tool_choice = {'type': 'auto'}
 
-        system_prompt: str = ''
-        anthropic_messages: list[MessageParam] = []
-
-        for m in messages:
-            if isinstance(m, SystemPrompt):
-                system_prompt += m.content
-            else:
-                anthropic_messages.append(self._map_message(m))
+        system_prompt, anthropic_messages = self._map_message(messages)
 
         model_settings = model_settings or {}
 
@@ -255,51 +249,60 @@ class AnthropicAgentModel(AgentModel):
         # We might refactor streaming internally before we implement this...
 
     @staticmethod
-    def _map_message(message: Message) -> MessageParam:
+    def _map_message(messages: list[ModelMessage]) -> tuple[str, list[MessageParam]]:
         """Just maps a `pydantic_ai.Message` to a `anthropic.types.MessageParam`."""
-        if isinstance(message, UserPrompt):
-            return MessageParam(role='user', content=message.content)
-        elif isinstance(message, ToolReturn):
-            return MessageParam(
-                role='user',
-                content=[
-                    ToolResultBlockParam(
-                        tool_use_id=_guard_tool_call_id(t=message, model_source='Anthropic'),
-                        type='tool_result',
-                        content=message.model_response_str(),
-                        is_error=False,
-                    )
-                ],
-            )
-        elif isinstance(message, RetryPrompt):
-            if message.tool_name is None:
-                return MessageParam(role='user', content=message.model_response())
+        system_prompt: str = ''
+        anthropic_messages: list[MessageParam] = []
+        for m in messages:
+            if isinstance(m, ModelRequest):
+                for part in m.parts:
+                    if isinstance(part, SystemPromptPart):
+                        system_prompt += part.content
+                    elif isinstance(part, UserPromptPart):
+                        anthropic_messages.append(MessageParam(role='user', content=part.content))
+                    elif isinstance(part, ToolReturnPart):
+                        anthropic_messages.append(
+                            MessageParam(
+                                role='user',
+                                content=[
+                                    ToolResultBlockParam(
+                                        tool_use_id=_guard_tool_call_id(t=part, model_source='Anthropic'),
+                                        type='tool_result',
+                                        content=part.model_response_str(),
+                                        is_error=False,
+                                    )
+                                ],
+                            )
+                        )
+                    elif isinstance(part, RetryPromptPart):
+                        if part.tool_name is None:
+                            anthropic_messages.append(MessageParam(role='user', content=part.model_response()))
+                        else:
+                            anthropic_messages.append(
+                                MessageParam(
+                                    role='user',
+                                    content=[
+                                        ToolUseBlockParam(
+                                            id=_guard_tool_call_id(t=part, model_source='Anthropic'),
+                                            input=part.model_response(),
+                                            name=part.tool_name,
+                                            type='tool_use',
+                                        ),
+                                    ],
+                                )
+                            )
+            elif isinstance(m, ModelResponse):
+                content: list[TextBlockParam | ToolUseBlockParam] = []
+                for item in m.parts:
+                    if isinstance(item, TextPart):
+                        content.append(TextBlockParam(text=item.content, type='text'))
+                    else:
+                        assert isinstance(item, ToolCallPart)
+                        content.append(_map_tool_call(item))
+                anthropic_messages.append(MessageParam(role='assistant', content=content))
             else:
-                return MessageParam(
-                    role='user',
-                    content=[
-                        ToolUseBlockParam(
-                            id=_guard_tool_call_id(t=message, model_source='Anthropic'),
-                            input=message.model_response(),
-                            name=message.tool_name,
-                            type='tool_use',
-                        ),
-                    ],
-                )
-        elif isinstance(message, ModelResponse):
-            content: list[TextBlockParam | ToolUseBlockParam] = []
-            for item in message.parts:
-                if isinstance(item, TextPart):
-                    content.append(TextBlockParam(text=item.content, type='text'))
-                else:
-                    assert isinstance(item, ToolCallPart)
-                    content.append(_map_tool_call(item))
-            return MessageParam(role='assistant', content=content)
-        else:
-            assert isinstance(message, SystemPrompt)
-            raise UnexpectedModelBehavior(
-                'System messages are handled separately for Anthropic, this is a bug, please report it.'
-            )
+                assert_never(m)
+        return system_prompt, anthropic_messages
 
 
 def _map_tool_call(t: ToolCallPart) -> ToolUseBlockParam:

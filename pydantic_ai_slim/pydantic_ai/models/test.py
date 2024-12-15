@@ -13,12 +13,13 @@ from typing_extensions import assert_never
 
 from .. import _utils
 from ..messages import (
-    Message,
+    ModelMessage,
+    ModelRequest,
     ModelResponse,
-    RetryPrompt,
+    RetryPromptPart,
     TextPart,
     ToolCallPart,
-    ToolReturn,
+    ToolReturnPart,
 )
 from ..result import Cost
 from ..settings import ModelSettings
@@ -129,13 +130,13 @@ class TestAgentModel(AgentModel):
     seed: int
 
     async def request(
-        self, messages: list[Message], model_settings: ModelSettings | None
+        self, messages: list[ModelMessage], model_settings: ModelSettings | None
     ) -> tuple[ModelResponse, Cost]:
         return self._request(messages, model_settings), Cost()
 
     @asynccontextmanager
     async def request_stream(
-        self, messages: list[Message], model_settings: ModelSettings | None
+        self, messages: list[ModelMessage], model_settings: ModelSettings | None
     ) -> AsyncIterator[EitherStreamedResponse]:
         msg = self._request(messages, model_settings)
         cost = Cost()
@@ -159,34 +160,37 @@ class TestAgentModel(AgentModel):
     def gen_tool_args(self, tool_def: ToolDefinition) -> Any:
         return _JsonSchemaTestData(tool_def.parameters_json_schema, self.seed).generate()
 
-    def _request(self, messages: list[Message], model_settings: ModelSettings | None) -> ModelResponse:
+    def _request(self, messages: list[ModelMessage], model_settings: ModelSettings | None) -> ModelResponse:
         # if there are tools, the first thing we want to do is call all of them
         if self.tool_calls and not any(isinstance(m, ModelResponse) for m in messages):
             return ModelResponse(
                 parts=[ToolCallPart.from_dict(name, self.gen_tool_args(args)) for name, args in self.tool_calls]
             )
 
-        # get messages since the last model response
-        new_messages = _get_new_messages(messages)
+        if messages:
+            last_message = messages[-1]
+            assert isinstance(last_message, ModelRequest), 'Expected last message to be a `ModelRequest`.'
 
-        # check if there are any retry prompts, if so retry them
-        new_retry_names = {m.tool_name for m in new_messages if isinstance(m, RetryPrompt)}
-        if new_retry_names:
-            return ModelResponse(
-                parts=[
-                    ToolCallPart.from_dict(name, self.gen_tool_args(args))
-                    for name, args in self.tool_calls
-                    if name in new_retry_names
-                ]
-            )
+            # check if there are any retry prompts, if so retry them
+            new_retry_names = {p.tool_name for p in last_message.parts if isinstance(p, RetryPromptPart)}
+            if new_retry_names:
+                return ModelResponse(
+                    parts=[
+                        ToolCallPart.from_dict(name, self.gen_tool_args(args))
+                        for name, args in self.tool_calls
+                        if name in new_retry_names
+                    ]
+                )
 
         if response_text := self.result.left:
             if response_text.value is None:
                 # build up details of tool responses
                 output: dict[str, Any] = {}
                 for message in messages:
-                    if isinstance(message, ToolReturn):
-                        output[message.tool_name] = message.content
+                    if isinstance(message, ModelRequest):
+                        for part in message.parts:
+                            if isinstance(part, ToolReturnPart):
+                                output[part.tool_name] = part.content
                 if output:
                     return ModelResponse.from_text(pydantic_core.to_json(output).decode())
                 else:
@@ -202,18 +206,6 @@ class TestAgentModel(AgentModel):
             else:
                 response_args = self.gen_tool_args(result_tool)
                 return ModelResponse(parts=[ToolCallPart.from_dict(result_tool.name, response_args)])
-
-
-def _get_new_messages(messages: list[Message]) -> list[Message]:
-    last_model_index = None
-    for i, m in enumerate(messages):
-        if isinstance(m, ModelResponse):
-            last_model_index = i
-
-    if last_model_index is not None:
-        return messages[last_model_index + 1 :]
-    else:
-        return []
 
 
 @dataclass

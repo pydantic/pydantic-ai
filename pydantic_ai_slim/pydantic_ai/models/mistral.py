@@ -5,6 +5,7 @@ from collections.abc import AsyncIterator, Iterable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from itertools import chain
 from typing import Any, Callable, Literal, Union
 
 from httpx import AsyncClient as AsyncHTTPClient, Timeout
@@ -14,15 +15,16 @@ from .. import UnexpectedModelBehavior
 from .._utils import now_utc as _now_utc
 from ..messages import (
     ArgsJson,
-    Message,
+    ModelMessage,
+    ModelRequest,
     ModelResponse,
     ModelResponsePart,
-    RetryPrompt,
-    SystemPrompt,
+    RetryPromptPart,
+    SystemPromptPart,
     TextPart,
     ToolCallPart,
-    ToolReturn,
-    UserPrompt,
+    ToolReturnPart,
+    UserPromptPart,
 )
 from ..result import Cost
 from ..settings import ModelSettings
@@ -153,7 +155,7 @@ class MistralAgentModel(AgentModel):
     json_mode_schema_prompt: str = """Answer in JSON Object, respect this following format:\n```\n{schema}\n```\n"""
 
     async def request(
-        self, messages: list[Message], model_settings: ModelSettings | None
+        self, messages: list[ModelMessage], model_settings: ModelSettings | None
     ) -> tuple[ModelResponse, Cost]:
         """Make a non-streaming request to the model from Pydantic AI call."""
         response = await self._completions_create(messages, model_settings)
@@ -161,7 +163,7 @@ class MistralAgentModel(AgentModel):
 
     @asynccontextmanager
     async def request_stream(
-        self, messages: list[Message], model_settings: ModelSettings | None
+        self, messages: list[ModelMessage], model_settings: ModelSettings | None
     ) -> AsyncIterator[EitherStreamedResponse]:
         """Make a streaming request to the model from Pydantic AI call."""
         response = await self._stream_completions_create(messages, model_settings)
@@ -170,13 +172,13 @@ class MistralAgentModel(AgentModel):
             yield await self._process_streamed_response(is_function_tool, self.result_tools, response)
 
     async def _completions_create(
-        self, messages: list[Message], model_settings: ModelSettings | None
+        self, messages: list[ModelMessage], model_settings: ModelSettings | None
     ) -> MistralChatCompletionResponse:
         """Make a non-streaming request to the model."""
         model_settings = model_settings or {}
         response = await self.client.chat.complete_async(
             model=str(self.model_name),
-            messages=[self._map_message(m) for m in messages],
+            messages=list(chain(*(self._map_message(m) for m in messages))),
             n=1,
             tools=self._map_function_and_result_tools_definition() or UNSET,
             tool_choice=self._get_tool_choice(),
@@ -191,12 +193,12 @@ class MistralAgentModel(AgentModel):
 
     async def _stream_completions_create(
         self,
-        messages: list[Message],
+        messages: list[ModelMessage],
         model_settings: ModelSettings | None,
     ) -> MistralEventStreamAsync[MistralCompletionEvent]:
         """Create a streaming completion request to the Mistral model."""
         response: MistralEventStreamAsync[MistralCompletionEvent] | None
-        mistral_messages = [self._map_message(m) for m in messages]
+        mistral_messages = list(chain(*(self._map_message(m) for m in messages)))
 
         model_settings = model_settings or {}
 
@@ -361,26 +363,11 @@ class MistralAgentModel(AgentModel):
                         start_cost,
                     )
 
-    @staticmethod
-    def _map_message(message: Message) -> MistralMessages:
+    @classmethod
+    def _map_message(cls, message: ModelMessage) -> Iterable[MistralMessages]:
         """Just maps a `pydantic_ai.Message` to a `Mistral Message`."""
-        if isinstance(message, SystemPrompt):
-            return MistralSystemMessage(content=message.content)
-        elif isinstance(message, UserPrompt):
-            return MistralUserMessage(content=message.content)
-        elif isinstance(message, ToolReturn):
-            return MistralToolMessage(
-                tool_call_id=message.tool_call_id,
-                content=message.model_response_str(),
-            )
-        elif isinstance(message, RetryPrompt):
-            if message.tool_name is None:
-                return MistralUserMessage(content=message.model_response())
-            else:
-                return MistralToolMessage(
-                    tool_call_id=message.tool_call_id,
-                    content=message.model_response(),
-                )
+        if isinstance(message, ModelRequest):
+            yield from cls._map_user_message(message)
         elif isinstance(message, ModelResponse):
             content_chunks: list[MistralContentChunk] = []
             tool_calls: list[MistralToolCall] = []
@@ -392,9 +379,32 @@ class MistralAgentModel(AgentModel):
                     tool_calls.append(_map_pydantic_to_mistral_tool_call(part))
                 else:
                     assert_never(part)
-            return MistralAssistantMessage(content=content_chunks, tool_calls=tool_calls)
+            yield MistralAssistantMessage(content=content_chunks, tool_calls=tool_calls)
         else:
             assert_never(message)
+
+    @classmethod
+    def _map_user_message(cls, message: ModelRequest) -> Iterable[MistralMessages]:
+        for part in message.parts:
+            if isinstance(part, SystemPromptPart):
+                yield MistralSystemMessage(content=part.content)
+            elif isinstance(part, UserPromptPart):
+                yield MistralUserMessage(content=part.content)
+            elif isinstance(part, ToolReturnPart):
+                yield MistralToolMessage(
+                    tool_call_id=part.tool_call_id,
+                    content=part.model_response_str(),
+                )
+            elif isinstance(part, RetryPromptPart):
+                if part.tool_name is None:
+                    yield MistralUserMessage(content=part.model_response())
+                else:
+                    yield MistralToolMessage(
+                        tool_call_id=part.tool_call_id,
+                        content=part.model_response(),
+                    )
+            else:
+                assert_never(part)
 
 
 @dataclass

@@ -15,7 +15,7 @@ from pydantic.json_schema import JsonSchemaValue
 from typing_extensions import ParamSpec, TypeAlias, TypeGuard, is_typeddict
 
 if TYPE_CHECKING:
-    from .messages import RetryPrompt, ToolCallPart, ToolReturn
+    from .messages import RetryPromptPart, ToolCallPart, ToolReturnPart
     from .tools import ObjectJsonSchema
 
 _P = ParamSpec('_P')
@@ -257,7 +257,7 @@ def now_utc() -> datetime:
     return datetime.now(tz=timezone.utc)
 
 
-def guard_tool_call_id(t: ToolCallPart | ToolReturn | RetryPrompt, model_source: str) -> str:
+def guard_tool_call_id(t: ToolCallPart | ToolReturnPart | RetryPromptPart, model_source: str) -> str:
     """Type guard that checks a `tool_call_id` is not None both for static typing and runtime."""
     assert t.tool_call_id is not None, f'{model_source} requires `tool_call_id` to be set: {t}'
     return t.tool_call_id
