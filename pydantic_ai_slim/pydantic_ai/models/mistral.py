@@ -542,7 +542,7 @@ class MistralStreamStructuredResponse(StreamStructuredResponse):
         return True
 
 
-VALIDE_JSON_TYPE_MAPPING = {
+VALIDE_JSON_TYPE_MAPPING: dict[str, Any] = {
     'string': str,
     'integer': int,
     'number': float,
