@@ -184,7 +184,7 @@ class MistralAgentModel(AgentModel):
             max_tokens=model_settings.get('max_tokens', UNSET),
             temperature=model_settings.get('temperature', UNSET),
             top_p=model_settings.get('top_p', 1),
-            timeout_ms=_get_timeout_ms(model_settings.get('timeout')),
+            timeout_ms=self._get_timeout_ms(model_settings.get('timeout')),
         )
         assert response, 'A unexpected empty response from Mistral.'
         return response
@@ -211,7 +211,7 @@ class MistralAgentModel(AgentModel):
                 temperature=model_settings.get('temperature', UNSET),
                 top_p=model_settings.get('top_p', 1),
                 max_tokens=model_settings.get('max_tokens', UNSET),
-                timeout_ms=_get_timeout_ms(model_settings.get('timeout')),
+                timeout_ms=self._get_timeout_ms(model_settings.get('timeout')),
             )
 
         elif self.result_tools:
@@ -364,12 +364,28 @@ class MistralAgentModel(AgentModel):
                 if isinstance(part, TextPart):
                     content_chunks.append(MistralTextChunk(text=part.content))
                 elif isinstance(part, ToolCallPart):
-                    tool_calls.append(_map_pydantic_to_mistral_tool_call(part))
+                    tool_calls.append(MistralAgentModel._map_pydantic_to_mistral_tool_call(part))
                 else:
                     assert_never(part)
             return MistralAssistantMessage(content=content_chunks, tool_calls=tool_calls)
         else:
             assert_never(message)
+
+    @staticmethod
+    def _map_pydantic_to_mistral_tool_call(t: ToolCallPart) -> MistralToolCall:
+        """Maps a Pydantic ToolCall to a MistralToolCall."""
+        if isinstance(t.args, ArgsJson):
+            return MistralToolCall(
+                id=t.tool_call_id,
+                type='function',
+                function=MistralFunctionCall(name=t.tool_name, arguments=t.args.args_json),
+            )
+        else:
+            return MistralToolCall(
+                id=t.tool_call_id,
+                type='function',
+                function=MistralFunctionCall(name=t.tool_name, arguments=t.args.args_dict),
+            )
 
     @staticmethod
     def _generate_user_output_format(schemas: list[dict[str, Any]], json_mode_schema_prompt: str) -> MistralUserMessage:
@@ -383,6 +399,15 @@ class MistralAgentModel(AgentModel):
 
         example_schema = examples[0] if len(examples) == 1 else examples
         return MistralUserMessage(content=json_mode_schema_prompt.format(schema=example_schema))
+
+    @staticmethod
+    def _get_timeout_ms(timeout: Timeout | float | None) -> int | None:
+        """Convert a timeout to milliseconds."""
+        if timeout is None:
+            return None
+        if isinstance(timeout, float):
+            return int(1000 * timeout)
+        raise NotImplementedError('Timeout object is not yet supported for MistralModel.')
 
 
 @dataclass
@@ -461,7 +486,7 @@ class MistralStreamStructuredResponse(StreamStructuredResponse):
 
         if self._function_tools and self._result_tools or self._function_tools:
             for tool_call in self._function_tools.values():
-                tool = _map_mistral_to_pydantic_tool_call(tool_call)
+                tool = self._map_mistral_to_pydantic_tool_call(tool_call)
                 calls.append(tool)
         elif self._delta_content and self._result_tools:
             # NOTE: Params set for the most efficient and fastest way.
@@ -523,6 +548,23 @@ class MistralStreamStructuredResponse(StreamStructuredResponse):
                     return False
 
         return True
+
+    @staticmethod
+    def _map_mistral_to_pydantic_tool_call(tool_call: MistralToolCall) -> ToolCallPart:
+        """Maps a MistralToolCall to a ToolCall."""
+        tool_call_id = tool_call.id or None
+        func_call = tool_call.function
+
+        if isinstance(func_call.arguments, str):
+            return ToolCallPart.from_json(
+                tool_name=func_call.name,
+                args_json=func_call.arguments,
+                tool_call_id=tool_call_id,
+            )
+        else:
+            return ToolCallPart.from_dict(
+                tool_name=func_call.name, args_dict=func_call.arguments, tool_call_id=tool_call_id
+            )
 
 
 VALIDE_JSON_TYPE_MAPPING: dict[str, Any] = {
@@ -597,39 +639,6 @@ def _get_python_type(value: dict[str, Any]) -> str:
     return 'Any'
 
 
-def _map_mistral_to_pydantic_tool_call(tool_call: MistralToolCall) -> ToolCallPart:
-    """Maps a MistralToolCall to a ToolCall."""
-    tool_call_id = tool_call.id or None
-    func_call = tool_call.function
-
-    if isinstance(func_call.arguments, str):
-        return ToolCallPart.from_json(
-            tool_name=func_call.name,
-            args_json=func_call.arguments,
-            tool_call_id=tool_call_id,
-        )
-    else:
-        return ToolCallPart.from_dict(
-            tool_name=func_call.name, args_dict=func_call.arguments, tool_call_id=tool_call_id
-        )
-
-
-def _map_pydantic_to_mistral_tool_call(t: ToolCallPart) -> MistralToolCall:
-    """Maps a Pydantic ToolCall to a MistralToolCall."""
-    if isinstance(t.args, ArgsJson):
-        return MistralToolCall(
-            id=t.tool_call_id,
-            type='function',
-            function=MistralFunctionCall(name=t.tool_name, arguments=t.args.args_json),
-        )
-    else:
-        return MistralToolCall(
-            id=t.tool_call_id,
-            type='function',
-            function=MistralFunctionCall(name=t.tool_name, arguments=t.args.args_dict),
-        )
-
-
 def _map_cost(response: MistralChatCompletionResponse | MistralCompletionChunk) -> Cost:
     """Maps a Mistral Completion Chunk or Chat Completion Response to a Cost."""
     if response.usage:
@@ -663,12 +672,3 @@ def _map_content(content: MistralOptionalNullable[MistralContent]) -> str | None
         result = None
 
     return result
-
-
-def _get_timeout_ms(timeout: Timeout | float | None) -> int | None:
-    """Convert a timeout to milliseconds."""
-    if timeout is None:
-        return None
-    if isinstance(timeout, float):
-        return int(1000 * timeout)
-    raise NotImplementedError('Timeout object is not yet supported for MistralModel.')
