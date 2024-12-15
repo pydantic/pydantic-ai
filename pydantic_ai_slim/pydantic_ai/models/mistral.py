@@ -280,17 +280,8 @@ class MistralAgentModel(AgentModel):
 
         parts: list[ModelResponsePart] = []
         if choice.message.content is not None:
-            # Note: Check len to handle potential mismatch between function calls and responses from the API. (`msg: not the same number of function class and reponses`)
-            if isinstance(choice.message.content, str) and len(choice.message.content) > 0:
-                parts.append(TextPart(choice.message.content))
-            elif isinstance(choice.message.content, list):
-                for chunk in choice.message.content:
-                    if isinstance(chunk, MistralTextChunk) and len(chunk.text) > 0:
-                        parts.append(TextPart(chunk.text))
-                    else:
-                        raise Exception(
-                            f'Implementation for ImageURLChunk and ReferenceChunk is not available for the moment: {type(chunk)}'
-                        )
+            if text := _map_content(choice.message.content):
+                parts.append(TextPart(text))
 
         if isinstance(choice.message.tool_calls, list):
             for c in choice.message.tool_calls:
@@ -326,7 +317,7 @@ class MistralAgentModel(AgentModel):
 
             if chunk.choices:
                 delta = chunk.choices[0].delta
-                content = _map_delta_content(delta.content)
+                content = _map_content(delta.content)
 
                 tool_calls: list[MistralToolCall] | None = None
                 if delta.tool_calls:
@@ -421,16 +412,9 @@ class MistralStreamTextResponse(StreamTextResponse):
         content = choice.delta.content
         if choice.finish_reason is None:
             assert content is not None, f'Expected delta with content, invalid chunk: {chunk!r}'
-        if isinstance(content, str):
-            self._buffer.append(content)
-        elif isinstance(content, list):
-            for chunk in content:
-                if isinstance(chunk, MistralTextChunk):
-                    self._buffer.append(chunk.text)
-                else:
-                    raise Exception(
-                        f'Implementation for ImageURLChunk and ReferenceChunk is not available for the moment: {type(chunk)}'
-                    )
+
+        if text := _map_content(content):
+            self._buffer.append(text)
 
     def get(self, *, final: bool = False) -> Iterable[str]:
         yield from self._buffer
@@ -468,10 +452,9 @@ class MistralStreamStructuredResponse(StreamStructuredResponse):
             raise StopAsyncIteration()
 
         delta = choice.delta
-        content = _map_delta_content(delta.content)
-
-        if self._result_tools and content:
-            self._delta_content = (self._delta_content or '') + content
+        if self._result_tools:
+            if text := _map_content(delta.content):
+                self._delta_content = (self._delta_content or '') + text
 
     def get(self, *, final: bool = False) -> ModelResponse:
         calls: list[ModelResponsePart] = []
@@ -660,22 +643,26 @@ def _map_cost(response: MistralChatCompletionResponse | MistralCompletionChunk) 
         return Cost()
 
 
-def _map_delta_content(delta_content: MistralOptionalNullable[MistralContent]) -> str | None:
+def _map_content(content: MistralOptionalNullable[MistralContent]) -> str | None:
     """Maps the delta content from a Mistral Completion Chunk to a string or None."""
-    content: str | None = None
+    result: str | None = None
 
-    if isinstance(delta_content, list) and isinstance(delta_content[0], MistralTextChunk):
-        content = delta_content[0].text
-    elif isinstance(delta_content, str):
-        content = delta_content
-    elif isinstance(delta_content, MistralUnset) or delta_content is None:
-        content = None
-    else:
-        assert False, f'Other data types like (Image, Reference) are not yet supported,  got {type(delta_content)}'
+    if isinstance(content, list):
+        for chunk in content:
+            if isinstance(chunk, MistralTextChunk):
+                result = result or '' + chunk.text
+            else:
+                assert False, f'Other data types like (Image, Reference) are not yet supported,  got {type(chunk)}'
+    elif isinstance(content, str):
+        result = content
+    elif isinstance(content, MistralUnset) or content is None:
+        result = None
 
-    if content and content == '':
-        content = None
-    return content
+    # Note: Check len to handle potential mismatch between function calls and responses from the API. (`msg: not the same number of function class and reponses`)
+    if result and len(result) == 0:
+        result = None
+
+    return result
 
 
 def _get_timeout_ms(timeout: Timeout | float | None) -> int | None:

@@ -1329,7 +1329,7 @@ async def test_stream_tool_call(allow_model_requests: None):
         # Then
         assert not result.is_complete
         v = [c async for c in result.stream(debounce_by=None)]
-        assert v == snapshot(['final ', 'final response', 'final response'])
+        assert v == snapshot(['final ', 'final response'])
         assert result.is_complete
         assert result.timestamp() == datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)
         assert result.cost().request_tokens == 6
@@ -1422,7 +1422,7 @@ async def test_stream_tool_call_with_retry(allow_model_requests: None):
         # Then
         assert not result.is_complete
         v = [c async for c in result.stream(debounce_by=None)]
-        assert v == snapshot(['final ', 'final response', 'final response'])
+        assert v == snapshot(['final ', 'final response'])
         assert result.is_complete
         assert result.timestamp() == datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)
         assert result.cost().request_tokens == 7
