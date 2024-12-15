@@ -165,7 +165,6 @@ class MistralAgentModel(AgentModel):
     ) -> AsyncIterator[EitherStreamedResponse]:
         """Make a streaming request to the model from Pydantic AI call."""
         response = await self._stream_completions_create(messages, model_settings)
-
         async with response:
             yield await self._process_streamed_response(self.result_tools, response)
 
@@ -277,18 +276,17 @@ class MistralAgentModel(AgentModel):
 
         assert response.choices, 'Unexpected empty response choice.'
         choice = response.choices[0]
+        content = choice.message.content
+        tool_calls = choice.message.tool_calls
 
         parts: list[ModelResponsePart] = []
-        content = choice.message.content
         if text := _map_content(content):
             parts.append(TextPart(text))
 
-        if isinstance(choice.message.tool_calls, list):
-            for c in choice.message.tool_calls:
-                if isinstance(c.function.arguments, str):
-                    parts.append(ToolCallPart.from_json(c.function.name, c.function.arguments, c.id))
-                else:
-                    parts.append(ToolCallPart.from_dict(c.function.name, c.function.arguments, c.id))
+        if isinstance(tool_calls, list):
+            for tool_call in tool_calls:
+                tool = _map_mistral_to_pydantic_tool_call(tool_call)
+                parts.append(tool)
 
         return ModelResponse(parts, timestamp=timestamp)
 
@@ -535,10 +533,9 @@ class MistralStreamStructuredResponse(StreamStructuredResponse):
 
     def get(self, *, final: bool = False) -> ModelResponse:
         calls: list[ModelResponsePart] = []
-
         if self._function_tools and self._result_tools or self._function_tools:
             for tool_call in self._function_tools.values():
-                tool = self._map_mistral_to_pydantic_tool_call(tool_call)
+                tool = _map_mistral_to_pydantic_tool_call(tool_call)
                 calls.append(tool)
 
         elif self._delta_content and self._result_tools:
@@ -603,23 +600,6 @@ class MistralStreamStructuredResponse(StreamStructuredResponse):
 
         return True
 
-    @staticmethod
-    def _map_mistral_to_pydantic_tool_call(tool_call: MistralToolCall) -> ToolCallPart:
-        """Maps a MistralToolCall to a ToolCall."""
-        tool_call_id = tool_call.id or None
-        func_call = tool_call.function
-
-        if isinstance(func_call.arguments, str):
-            return ToolCallPart.from_json(
-                tool_name=func_call.name,
-                args_json=func_call.arguments,
-                tool_call_id=tool_call_id,
-            )
-        else:
-            return ToolCallPart.from_dict(
-                tool_name=func_call.name, args_dict=func_call.arguments, tool_call_id=tool_call_id
-            )
-
 
 VALIDE_JSON_TYPE_MAPPING: dict[str, Any] = {
     'string': str,
@@ -639,6 +619,23 @@ SIMPLE_JSON_TYPE_MAPPING = {
     'array': 'list',
     'null': 'None',
 }
+
+
+def _map_mistral_to_pydantic_tool_call(tool_call: MistralToolCall) -> ToolCallPart:
+    """Maps a MistralToolCall to a ToolCall."""
+    tool_call_id = tool_call.id or None
+    func_call = tool_call.function
+
+    if isinstance(func_call.arguments, str):
+        return ToolCallPart.from_json(
+            tool_name=func_call.name,
+            args_json=func_call.arguments,
+            tool_call_id=tool_call_id,
+        )
+    else:
+        return ToolCallPart.from_dict(
+            tool_name=func_call.name, args_dict=func_call.arguments, tool_call_id=tool_call_id
+        )
 
 
 def _map_cost(response: MistralChatCompletionResponse | MistralCompletionChunk) -> Cost:
