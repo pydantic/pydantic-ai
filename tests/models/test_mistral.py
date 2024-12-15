@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 import json
 from collections.abc import Iterator
 from dataclasses import dataclass
-from datetime import timezone
+from datetime import datetime, timezone
 from functools import cached_property
 from typing import Any, cast
 
@@ -147,7 +147,7 @@ def chunk(
                 MistralCompletionResponseStreamChoice(index=index, delta=delta, finish_reason=finish_reason)
                 for index, delta in enumerate(delta)
             ],
-            # created=1704067200,  # 2024-01-01
+            created=1704067200,  # 2024-01-01
             model='gpt-4',
             object='chat.completion.chunk',
             usage=MistralUsageInfo(prompt_tokens=1, completion_tokens=1, total_tokens=1),
@@ -1231,7 +1231,7 @@ async def test_stream_tool_call_with_return_type(allow_model_requests: None):
         v = [c async for c in result.stream(debounce_by=None)]
         assert v == snapshot([{'won': True}, {'won': True}])
         assert result.is_complete
-        assert result.timestamp() == IsNow(tz=timezone.utc)
+        assert result.timestamp() == datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)
         assert result.cost().request_tokens == 4
         assert result.cost().response_tokens == 4
         assert result.cost().total_tokens == 4
@@ -1256,7 +1256,7 @@ async def test_stream_tool_call_with_return_type(allow_model_requests: None):
                         tool_call_id='1',
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
             ),
             ToolReturn(
                 tool_name='get_location',
@@ -1278,7 +1278,7 @@ async def test_stream_tool_call_with_return_type(allow_model_requests: None):
                 parts=[
                     ToolCallPart(tool_name='final_result', args=ArgsJson(args_json='{"won": true}'), tool_call_id='1')
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
                 role='model',
                 message_kind='model-response',
             ),
@@ -1331,7 +1331,7 @@ async def test_stream_tool_call(allow_model_requests: None):
         v = [c async for c in result.stream(debounce_by=None)]
         assert v == snapshot(['final ', 'final response', 'final response'])
         assert result.is_complete
-        assert result.timestamp() == IsNow(tz=timezone.utc)
+        assert result.timestamp() == datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)
         assert result.cost().request_tokens == 6
         assert result.cost().response_tokens == 6
         assert result.cost().total_tokens == 6
@@ -1351,7 +1351,7 @@ async def test_stream_tool_call(allow_model_requests: None):
                         tool_call_id='1',
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
             ),
             ToolReturn(
                 tool_name='get_location',
