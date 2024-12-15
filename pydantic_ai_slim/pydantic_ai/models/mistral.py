@@ -460,17 +460,8 @@ class MistralStreamStructuredResponse(StreamStructuredResponse):
         delta = choice.delta
         content = _map_delta_content(delta.content)
 
-        if self._function_tools and self._result_tools or self._function_tools:
-            for new in delta.tool_calls or []:
-                if current := self._function_tools.get(new.id or 'null'):
-                    current.function = new.function
-                else:
-                    self._function_tools[new.id or 'null'] = new
-        elif self._result_tools and content:
-            if not self._delta_content:
-                self._delta_content = content
-            else:
-                self._delta_content += content
+        if self._result_tools and content:
+            self._delta_content = (self._delta_content or '') + content
 
     def get(self, *, final: bool = False) -> ModelResponse:
         calls: list[ModelResponsePart] = []
