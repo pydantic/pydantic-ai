@@ -1366,6 +1366,115 @@ async def test_stream_tool_call(allow_model_requests: None):
     )
 
 
+async def test_stream_tool_call_with_retry(allow_model_requests: None):
+    # Given
+    completion = [
+        [
+            chunk(
+                delta=[MistralDeltaMessage(role=MistralUnset(), content='', tool_calls=MistralUnset())],
+                finish_reason='tool_calls',
+            ),
+            func_chunk(
+                tool_calls=[
+                    MistralToolCall(
+                        id='1',
+                        function=MistralFunctionCall(arguments='{"loc_name": "San Fransisco"}', name='get_location'),
+                        type='function',
+                    )
+                ],
+                finish_reason='tool_calls',
+            ),
+        ],
+        [
+            func_chunk(
+                tool_calls=[
+                    MistralToolCall(
+                        id='2',
+                        function=MistralFunctionCall(arguments='{"loc_name": "London"}', name='get_location'),
+                        type='function',
+                    )
+                ],
+                finish_reason='tool_calls',
+            ),
+        ],
+        [
+            chunk(delta=[MistralDeltaMessage(role='assistant', content='', tool_calls=MistralUnset())]),
+            chunk(delta=[MistralDeltaMessage(role=MistralUnset(), content='final ', tool_calls=MistralUnset())]),
+            chunk(delta=[MistralDeltaMessage(role=MistralUnset(), content='response', tool_calls=MistralUnset())]),
+            chunk(
+                delta=[MistralDeltaMessage(role=MistralUnset(), content='', tool_calls=MistralUnset())],
+                finish_reason='stop',
+            ),
+        ],
+    ]
+
+    mock_client = MockMistralAI.create_stream_mock(completion)
+    model = MistralModel('mistral-large-latest', client=mock_client)
+    agent = Agent(model, system_prompt='this is the system prompt')
+
+    @agent.tool_plain
+    async def get_location(loc_name: str) -> str:
+        if loc_name == 'London':
+            return json.dumps({'lat': 51, 'lng': 0})
+        else:
+            raise ModelRetry('Wrong location, please try again')
+
+    # When
+    async with agent.run_stream('User prompt value') as result:
+        # Then
+        assert not result.is_complete
+        v = [c async for c in result.stream(debounce_by=None)]
+        assert v == snapshot(['final ', 'final response', 'final response'])
+        assert result.is_complete
+        assert result.timestamp() == datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)
+        assert result.cost().request_tokens == 7
+        assert result.cost().response_tokens == 7
+        assert result.cost().total_tokens == 7
+
+        # double check cost matches stream count
+        assert result.cost().response_tokens == 7
+
+    assert result.all_messages() == snapshot(
+        [
+            SystemPrompt(content='this is the system prompt'),
+            UserPrompt(content='User prompt value', timestamp=IsNow(tz=timezone.utc)),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='get_location',
+                        args=ArgsJson(args_json='{"loc_name": "San Fransisco"}'),
+                        tool_call_id='1',
+                    )
+                ],
+                timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+            ),
+            RetryPrompt(
+                tool_name='get_location',
+                content='Wrong location, please try again',
+                tool_call_id='1',
+                timestamp=IsNow(tz=timezone.utc),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='get_location',
+                        args=ArgsJson(args_json='{"loc_name": "London"}'),
+                        tool_call_id='2',
+                    )
+                ],
+                timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+            ),
+            ToolReturn(
+                tool_name='get_location',
+                content='{"lat": 51, "lng": 0}',
+                tool_call_id='2',
+                timestamp=IsNow(tz=timezone.utc),
+            ),
+            ModelResponse.from_text(content='final response', timestamp=IsNow(tz=timezone.utc)),
+        ]
+    )
+
+
 #####################
 ## Test methods
 #####################
