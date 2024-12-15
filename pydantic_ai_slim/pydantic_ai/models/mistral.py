@@ -279,9 +279,9 @@ class MistralAgentModel(AgentModel):
         choice = response.choices[0]
 
         parts: list[ModelResponsePart] = []
-        if choice.message.content is not None:
-            if text := _map_content(choice.message.content):
-                parts.append(TextPart(text))
+        content = choice.message.content
+        if text := _map_content(content):
+            parts.append(TextPart(text))
 
         if isinstance(choice.message.tool_calls, list):
             for c in choice.message.tool_calls:
@@ -451,9 +451,9 @@ class MistralStreamStructuredResponse(StreamStructuredResponse):
         if choice.finish_reason is not None:
             raise StopAsyncIteration()
 
-        delta = choice.delta
+        content = choice.delta.content
         if self._result_tools:
-            if text := _map_content(delta.content):
+            if text := _map_content(content):
                 self._delta_content = (self._delta_content or '') + text
 
     def get(self, *, final: bool = False) -> ModelResponse:
@@ -647,7 +647,9 @@ def _map_content(content: MistralOptionalNullable[MistralContent]) -> str | None
     """Maps the delta content from a Mistral Completion Chunk to a string or None."""
     result: str | None = None
 
-    if isinstance(content, list):
+    if isinstance(content, MistralUnset) or not content:
+        result = None
+    elif isinstance(content, list):
         for chunk in content:
             if isinstance(chunk, MistralTextChunk):
                 result = result or '' + chunk.text
@@ -655,8 +657,6 @@ def _map_content(content: MistralOptionalNullable[MistralContent]) -> str | None
                 assert False, f'Other data types like (Image, Reference) are not yet supported,  got {type(chunk)}'
     elif isinstance(content, str):
         result = content
-    elif isinstance(content, MistralUnset) or content is None:
-        result = None
 
     # Note: Check len to handle potential mismatch between function calls and responses from the API. (`msg: not the same number of function class and reponses`)
     if result and len(result) == 0:
