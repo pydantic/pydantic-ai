@@ -190,7 +190,7 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary], set_event_lo
                                             'type': 'array',
                                             'items': {
                                                 'type': 'object',
-                                                'title': 'UserPrompt',
+                                                'title': 'UserPromptPart',
                                                 'x-python-datatype': 'dataclass',
                                                 'properties': {'timestamp': {'type': 'string', 'format': 'date-time'}},
                                             },
@@ -229,7 +229,7 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary], set_event_lo
                                             'type': 'array',
                                             'items': {
                                                 'type': 'object',
-                                                'title': 'ToolReturn',
+                                                'title': 'ToolReturnPart',
                                                 'x-python-datatype': 'dataclass',
                                                 'properties': {'timestamp': {'type': 'string', 'format': 'date-time'}},
                                             },
