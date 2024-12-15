@@ -394,11 +394,63 @@ class MistralAgentModel(AgentModel):
         for schema in schemas:
             typed_dict_definition: dict[str, Any] = {}
             for key, value in schema.get('properties', {}).items():
-                typed_dict_definition[key] = _get_python_type(value)
+                typed_dict_definition[key] = MistralAgentModel._get_python_type(value)
             examples.append(typed_dict_definition)
 
         example_schema = examples[0] if len(examples) == 1 else examples
         return MistralUserMessage(content=json_mode_schema_prompt.format(schema=example_schema))
+
+    @staticmethod
+    def _get_python_type(value: dict[str, Any]) -> str:
+        """Return a string representation of the Python type for a single JSON schema property.
+
+        This function handles recursion for nested arrays/objects and `anyOf`.
+        """
+        # 1) Handle anyOf first, because it's a different schema structure
+        if 'anyOf' in value:
+            # Simplistic approach: pick the first option in anyOf
+            # (In reality, you'd possibly want to merge or union types)
+            sub_value = value['anyOf'][0]
+            return f'Optional[{MistralAgentModel._get_python_type(sub_value)}]'
+
+        # 2) If we have a top-level "type" field
+        value_type = value.get('type')
+        if not value_type:
+            # No explicit type; fallback
+            return 'Any'
+
+        # 3) Direct simple type mapping (string, integer, float, bool, None)
+        if value_type in SIMPLE_JSON_TYPE_MAPPING and value_type != 'array' and value_type != 'object':
+            return SIMPLE_JSON_TYPE_MAPPING[value_type]
+
+        # 4) Array: Recursively get the item type
+        if value_type == 'array':
+            items = value.get('items', {})
+            return f'list[{MistralAgentModel._get_python_type(items)}]'
+
+        # 5) Object: Check for additionalProperties
+        if value_type == 'object':
+            additional_properties = value.get('additionalProperties', {})
+            additional_properties_type = additional_properties.get('type')
+            if (
+                additional_properties_type in SIMPLE_JSON_TYPE_MAPPING
+                and additional_properties_type != 'array'
+                and additional_properties_type != 'object'
+            ):
+                # dict[str, bool/int/float/etc...]
+                return f'dict[str, {SIMPLE_JSON_TYPE_MAPPING[additional_properties_type]}]'
+            elif additional_properties_type == 'array':
+                array_items = additional_properties.get('items', {})
+                return f'dict[str, list[{MistralAgentModel._get_python_type(array_items)}]]'
+            elif additional_properties_type == 'object':
+                # nested dictionary of unknown shape
+                return 'dict[str, dict[str, Any]]'
+            else:
+                # If no additionalProperties type or something else, default to a generic dict
+                return 'dict[str, Any]'
+
+        # 6) Fallback
+        return 'Any'
 
     @staticmethod
     def _get_timeout_ms(timeout: Timeout | float | None) -> int | None:
@@ -488,12 +540,14 @@ class MistralStreamStructuredResponse(StreamStructuredResponse):
             for tool_call in self._function_tools.values():
                 tool = self._map_mistral_to_pydantic_tool_call(tool_call)
                 calls.append(tool)
+
         elif self._delta_content and self._result_tools:
             # NOTE: Params set for the most efficient and fastest way.
             output_json = repair_json(self._delta_content, return_objects=True, skip_json_loads=True)
             assert isinstance(
                 output_json, dict
             ), f'Expected repair_json as type dict, invalid type: {type(output_json)}'
+
             if output_json:
                 for result_tool in self._result_tools.values():
                     # NOTE: Additional verification to prevent JSON validation to crash in `result.py`
@@ -585,58 +639,6 @@ SIMPLE_JSON_TYPE_MAPPING = {
     'array': 'list',
     'null': 'None',
 }
-
-
-def _get_python_type(value: dict[str, Any]) -> str:
-    """Return a string representation of the Python type for a single JSON schema property.
-
-    This function handles recursion for nested arrays/objects and `anyOf`.
-    """
-    # 1) Handle anyOf first, because it's a different schema structure
-    if 'anyOf' in value:
-        # Simplistic approach: pick the first option in anyOf
-        # (In reality, you'd possibly want to merge or union types)
-        sub_value = value['anyOf'][0]
-        return f'Optional[{_get_python_type(sub_value)}]'
-
-    # 2) If we have a top-level "type" field
-    value_type = value.get('type')
-    if not value_type:
-        # No explicit type; fallback
-        return 'Any'
-
-    # 3) Direct simple type mapping (string, integer, float, bool, None)
-    if value_type in SIMPLE_JSON_TYPE_MAPPING and value_type != 'array' and value_type != 'object':
-        return SIMPLE_JSON_TYPE_MAPPING[value_type]
-
-    # 4) Array: Recursively get the item type
-    if value_type == 'array':
-        items = value.get('items', {})
-        return f'list[{_get_python_type(items)}]'
-
-    # 5) Object: Check for additionalProperties
-    if value_type == 'object':
-        additional_properties = value.get('additionalProperties', {})
-        additional_properties_type = additional_properties.get('type')
-        if (
-            additional_properties_type in SIMPLE_JSON_TYPE_MAPPING
-            and additional_properties_type != 'array'
-            and additional_properties_type != 'object'
-        ):
-            # dict[str, bool/int/float/etc...]
-            return f'dict[str, {SIMPLE_JSON_TYPE_MAPPING[additional_properties_type]}]'
-        elif additional_properties_type == 'array':
-            array_items = additional_properties.get('items', {})
-            return f'dict[str, list[{_get_python_type(array_items)}]]'
-        elif additional_properties_type == 'object':
-            # nested dictionary of unknown shape
-            return 'dict[str, dict[str, Any]]'
-        else:
-            # If no additionalProperties type or something else, default to a generic dict
-            return 'dict[str, Any]'
-
-    # 6) Fallback
-    return 'Any'
 
 
 def _map_cost(response: MistralChatCompletionResponse | MistralCompletionChunk) -> Cost:
