@@ -48,7 +48,11 @@ with try_import() as imports_successful:
     )
     from mistralai.types.basemodel import Unset as MistralUnset
 
-    from pydantic_ai.models.mistral import MistralAgentModel, MistralModel, MistralStreamStructuredResponse
+    from pydantic_ai.models.mistral import (
+        MistralAgentModel,
+        MistralModel,
+        MistralStreamStructuredResponse,
+    )
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='mistral not installed'),
