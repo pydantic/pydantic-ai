@@ -336,10 +336,10 @@ class MistralAgentModel(AgentModel):
                 if delta.tool_calls:
                     tool_calls = delta.tool_calls
 
-                if content and result_tools:
+                if tool_calls or content and result_tools:
                     return MistralStreamStructuredResponse(
                         is_function_tools,
-                        {},
+                        {c.id if c.id else 'null': c for c in tool_calls} if tool_calls else {},
                         {c.name: c for c in result_tools},
                         response,
                         content,
@@ -349,17 +349,6 @@ class MistralAgentModel(AgentModel):
 
                 elif content:
                     return MistralStreamTextResponse(content, response, timestamp, start_cost)
-
-                elif tool_calls:
-                    return MistralStreamStructuredResponse(
-                        is_function_tools,
-                        {c.id if c.id else 'null': c for c in tool_calls},
-                        {c.name: c for c in result_tools},
-                        response,
-                        None,
-                        timestamp,
-                        start_cost,
-                    )
 
     @staticmethod
     def _map_message(message: Message) -> MistralMessages:
