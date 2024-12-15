@@ -125,10 +125,10 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary], set_event_lo
                             {
                                 'content': 'Hello',
                                 'timestamp': IsStr(regex=r'\d{4}-\d{2}-.+'),
-                                'kind': 'user-prompt',
+                                'part_kind': 'user-prompt',
                             },
                         ],
-                        'role': 'user',
+                        'kind': 'request',
                     },
                     {
                         'parts': [
@@ -136,11 +136,11 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary], set_event_lo
                                 'tool_name': 'my_ret',
                                 'args': {'args_dict': {'x': 0}},
                                 'tool_call_id': None,
-                                'kind': 'tool-call',
+                                'part_kind': 'tool-call',
                             }
                         ],
                         'timestamp': IsStr(regex=r'\d{4}-\d{2}-.+'),
-                        'role': 'model',
+                        'kind': 'response',
                     },
                     {
                         'parts': [
@@ -149,15 +149,15 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary], set_event_lo
                                 'content': '1',
                                 'tool_call_id': None,
                                 'timestamp': IsStr(regex=r'\d{4}-\d{2}-.+'),
-                                'kind': 'tool-return',
+                                'part_kind': 'tool-return',
                             },
                         ],
-                        'role': 'user',
+                        'kind': 'request',
                     },
                     {
-                        'parts': [{'content': '{"my_ret":"1"}', 'kind': 'text'}],
+                        'parts': [{'content': '{"my_ret":"1"}', 'part_kind': 'text'}],
                         'timestamp': IsStr(regex=r'\d{4}-\d{2}-.+'),
-                        'role': 'model',
+                        'kind': 'response',
                     },
                 ]
             ),

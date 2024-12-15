@@ -72,15 +72,15 @@ print(dice_result.all_messages())
         parts=[
             SystemPromptPart(
                 content="You're a dice game, you should roll the die and see if the number you get back matches the user's guess. If so, tell them they're a winner. Use the player's name in the response.",
-                kind='system-prompt',
+                part_kind='system-prompt',
             ),
             UserPromptPart(
                 content='My guess is 4',
                 timestamp=datetime.datetime(...),
-                kind='user-prompt',
+                part_kind='user-prompt',
             ),
         ],
-        role='user',
+        kind='request',
     ),
     ModelResponse(
         parts=[
@@ -88,11 +88,11 @@ print(dice_result.all_messages())
                 tool_name='roll_die',
                 args=ArgsDict(args_dict={}),
                 tool_call_id=None,
-                kind='tool-call',
+                part_kind='tool-call',
             )
         ],
         timestamp=datetime.datetime(...),
-        role='model',
+        kind='response',
     ),
     ModelRequest(
         parts=[
@@ -101,10 +101,10 @@ print(dice_result.all_messages())
                 content='4',
                 tool_call_id=None,
                 timestamp=datetime.datetime(...),
-                kind='tool-return',
+                part_kind='tool-return',
             )
         ],
-        role='user',
+        kind='request',
     ),
     ModelResponse(
         parts=[
@@ -112,11 +112,11 @@ print(dice_result.all_messages())
                 tool_name='get_player_name',
                 args=ArgsDict(args_dict={}),
                 tool_call_id=None,
-                kind='tool-call',
+                part_kind='tool-call',
             )
         ],
         timestamp=datetime.datetime(...),
-        role='model',
+        kind='response',
     ),
     ModelRequest(
         parts=[
@@ -125,20 +125,20 @@ print(dice_result.all_messages())
                 content='Anne',
                 tool_call_id=None,
                 timestamp=datetime.datetime(...),
-                kind='tool-return',
+                part_kind='tool-return',
             )
         ],
-        role='user',
+        kind='request',
     ),
     ModelResponse(
         parts=[
             TextPart(
                 content="Congratulations Anne, you guessed correctly! You're a winner!",
-                kind='text',
+                part_kind='text',
             )
         ],
         timestamp=datetime.datetime(...),
-        role='model',
+        kind='response',
     ),
 ]
 """

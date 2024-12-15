@@ -506,15 +506,15 @@ def test_dynamic_tool_use_messages(set_event_loop: None):
 
     r = agent.run_sync('', deps=1)
     assert r.data == snapshot('done')
-    message_kinds = [(m.role, [p.kind for p in m.parts]) for m in r.all_messages()]
-    assert message_kinds == snapshot(
+    message_part_kinds = [(m.kind, [p.part_kind for p in m.parts]) for m in r.all_messages()]
+    assert message_part_kinds == snapshot(
         [
-            ('user', ['user-prompt']),
-            ('model', ['tool-call']),
-            ('user', ['tool-return']),
-            ('model', ['tool-call']),
-            ('user', ['tool-return']),
-            ('model', ['text']),
+            ('request', ['user-prompt']),
+            ('response', ['tool-call']),
+            ('request', ['tool-return']),
+            ('response', ['tool-call']),
+            ('request', ['tool-return']),
+            ('response', ['text']),
         ]
     )
 

@@ -41,29 +41,29 @@ async def return_last(messages: list[ModelMessage], _: AgentInfo) -> ModelRespon
 def test_simple(set_event_loop: None):
     agent = Agent(FunctionModel(return_last))
     result = agent.run_sync('Hello')
-    assert result.data == snapshot("content='Hello' kind='user-prompt' message_count=1")
+    assert result.data == snapshot("content='Hello' part_kind='user-prompt' message_count=1")
     assert result.all_messages() == snapshot(
         [
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
-                parts=[TextPart(content="content='Hello' kind='user-prompt' message_count=1")],
+                parts=[TextPart(content="content='Hello' part_kind='user-prompt' message_count=1")],
                 timestamp=IsNow(tz=timezone.utc),
             ),
         ]
     )
 
     result2 = agent.run_sync('World', message_history=result.all_messages())
-    assert result2.data == snapshot("content='World' kind='user-prompt' message_count=3")
+    assert result2.data == snapshot("content='World' part_kind='user-prompt' message_count=3")
     assert result2.all_messages() == snapshot(
         [
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
-                parts=[TextPart(content="content='Hello' kind='user-prompt' message_count=1")],
+                parts=[TextPart(content="content='Hello' part_kind='user-prompt' message_count=1")],
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(parts=[UserPromptPart(content='World', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
-                parts=[TextPart(content="content='World' kind='user-prompt' message_count=3")],
+                parts=[TextPart(content="content='World' part_kind='user-prompt' message_count=3")],
                 timestamp=IsNow(tz=timezone.utc),
             ),
         ]
@@ -199,7 +199,7 @@ def test_var_args(set_event_loop: None):
             'content': '{"args": [1, 2, 3]}',
             'tool_call_id': None,
             'timestamp': IsStr() & IsNow(iso_string=True, tz=timezone.utc),
-            'kind': 'tool-return',
+            'part_kind': 'tool-return',
         }
     )
 
@@ -251,7 +251,7 @@ def test_deps_init(set_event_loop: None):
 def test_model_arg(set_event_loop: None):
     agent = Agent()
     result = agent.run_sync('Hello', model=FunctionModel(return_last))
-    assert result.data == snapshot("content='Hello' kind='user-prompt' message_count=1")
+    assert result.data == snapshot("content='Hello' part_kind='user-prompt' message_count=1")
 
     with pytest.raises(RuntimeError, match='`model` must be set either when creating the agent or when calling it.'):
         agent.run_sync('Hello')

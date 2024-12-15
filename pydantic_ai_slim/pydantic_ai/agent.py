@@ -272,7 +272,7 @@ class Agent(Generic[AgentDeps, ResultData]):
                     else:
                         # continue the conversation
                         handle_span.set_attribute('tool_responses', user_msg_parts)
-                        response_msgs = ' '.join(r.kind for r in user_msg_parts)
+                        response_msgs = ' '.join(r.part_kind for r in user_msg_parts)
                         handle_span.message = f'handle model response -> {response_msgs}'
 
     def run_sync(
@@ -430,7 +430,7 @@ class Agent(Generic[AgentDeps, ResultData]):
                                 # continue the conversation
                                 handle_span.set_attribute('tool_responses', response_messages)
                                 # TODO this is wrong, it should be a list of parts
-                                response_msgs = ' '.join(r.role for r in response_messages)
+                                response_msgs = ' '.join(r.kind for r in response_messages)
                                 handle_span.message = f'handle model response -> {response_msgs}'
                                 # the model_response should have been fully streamed by now, we can add it's cost
                                 cost += model_response.cost()

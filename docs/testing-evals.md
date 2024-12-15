@@ -223,7 +223,7 @@ def call_weather_forecast(  # (1)!
     else:
         # second call, return the forecast
         msg = messages[-1].parts[0]
-        assert msg.kind == 'tool-return'
+        assert msg.part_kind == 'tool-return'
         return ModelResponse.from_text(f'The forecast is: {msg.content}')
 
 

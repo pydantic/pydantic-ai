@@ -144,14 +144,14 @@ def test_result_pydantic_model_validation_error(set_event_loop: None):
     result = agent.run_sync('Hello')
     assert isinstance(result.data, Bar)
     assert result.data.model_dump() == snapshot({'a': 1, 'b': 'bar'})
-    messages_kinds = [(m.role, [p.kind for p in m.parts]) for m in result.all_messages()]
-    assert messages_kinds == snapshot(
+    messages_part_kinds = [(m.kind, [p.part_kind for p in m.parts]) for m in result.all_messages()]
+    assert messages_part_kinds == snapshot(
         [
-            ('user', ['user-prompt']),
-            ('model', ['tool-call']),
-            ('user', ['retry-prompt']),
-            ('model', ['tool-call']),
-            ('user', ['tool-return']),
+            ('request', ['user-prompt']),
+            ('response', ['tool-call']),
+            ('request', ['retry-prompt']),
+            ('response', ['tool-call']),
+            ('request', ['tool-return']),
         ]
     )
 
@@ -508,15 +508,15 @@ def test_run_with_history_new(set_event_loop: None):
             _cost=Cost(),
         )
     )
-    new_msg_kinds = [(m.role, [p.kind for p in m.parts]) for m in result2.all_messages()]
-    assert new_msg_kinds == snapshot(
+    new_msg_part_kinds = [(m.kind, [p.part_kind for p in m.parts]) for m in result2.all_messages()]
+    assert new_msg_part_kinds == snapshot(
         [
-            ('user', ['system-prompt', 'user-prompt']),
-            ('model', ['tool-call']),
-            ('user', ['tool-return']),
-            ('model', ['text']),
-            ('user', ['user-prompt']),
-            ('model', ['text']),
+            ('request', ['system-prompt', 'user-prompt']),
+            ('response', ['tool-call']),
+            ('request', ['tool-return']),
+            ('response', ['text']),
+            ('request', ['user-prompt']),
+            ('response', ['text']),
         ]
     )
     assert result2.new_messages_json().startswith(b'[{"parts":[{"content":"Hello again",')
@@ -649,17 +649,17 @@ def test_run_with_history_new_structured(set_event_loop: None):
             _cost=Cost(),
         )
     )
-    new_msg_kinds = [(m.role, [p.kind for p in m.parts]) for m in result2.all_messages()]
-    assert new_msg_kinds == snapshot(
+    new_msg_part_kinds = [(m.kind, [p.part_kind for p in m.parts]) for m in result2.all_messages()]
+    assert new_msg_part_kinds == snapshot(
         [
-            ('user', ['system-prompt', 'user-prompt']),
-            ('model', ['tool-call']),
-            ('user', ['tool-return']),
-            ('model', ['tool-call']),
-            ('user', ['tool-return']),
-            ('user', ['user-prompt']),
-            ('model', ['tool-call']),
-            ('user', ['tool-return']),
+            ('request', ['system-prompt', 'user-prompt']),
+            ('response', ['tool-call']),
+            ('request', ['tool-return']),
+            ('response', ['tool-call']),
+            ('request', ['tool-return']),
+            ('request', ['user-prompt']),
+            ('response', ['tool-call']),
+            ('request', ['tool-return']),
         ]
     )
     assert result2.new_messages_json().startswith(b'[{"parts":[{"content":"Hello again",')

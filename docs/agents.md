@@ -353,10 +353,10 @@ except UnexpectedModelBehavior as e:
                 UserPromptPart(
                     content='Please get me the volume of a box with size 6.',
                     timestamp=datetime.datetime(...),
-                    kind='user-prompt',
+                    part_kind='user-prompt',
                 )
             ],
-            role='user',
+            kind='request',
         ),
         ModelResponse(
             parts=[
@@ -364,11 +364,11 @@ except UnexpectedModelBehavior as e:
                     tool_name='calc_volume',
                     args=ArgsDict(args_dict={'size': 6}),
                     tool_call_id=None,
-                    kind='tool-call',
+                    part_kind='tool-call',
                 )
             ],
             timestamp=datetime.datetime(...),
-            role='model',
+            kind='response',
         ),
         ModelRequest(
             parts=[
@@ -377,10 +377,10 @@ except UnexpectedModelBehavior as e:
                     tool_name='calc_volume',
                     tool_call_id=None,
                     timestamp=datetime.datetime(...),
-                    kind='retry-prompt',
+                    part_kind='retry-prompt',
                 )
             ],
-            role='user',
+            kind='request',
         ),
         ModelResponse(
             parts=[
@@ -388,11 +388,11 @@ except UnexpectedModelBehavior as e:
                     tool_name='calc_volume',
                     args=ArgsDict(args_dict={'size': 6}),
                     tool_call_id=None,
-                    kind='tool-call',
+                    part_kind='tool-call',
                 )
             ],
             timestamp=datetime.datetime(...),
-            role='model',
+            kind='response',
         ),
     ]
     """
