@@ -165,9 +165,9 @@ class MistralAgentModel(AgentModel):
     ) -> AsyncIterator[EitherStreamedResponse]:
         """Make a streaming request to the model from Pydantic AI call."""
         response = await self._stream_completions_create(messages, model_settings)
-        is_function_tool = True if self.function_tools else False
+
         async with response:
-            yield await self._process_streamed_response(is_function_tool, self.result_tools, response)
+            yield await self._process_streamed_response(self.result_tools, response)
 
     async def _completions_create(
         self, messages: list[Message], model_settings: ModelSettings | None
@@ -306,7 +306,6 @@ class MistralAgentModel(AgentModel):
 
     @staticmethod
     async def _process_streamed_response(
-        is_function_tools: bool,
         result_tools: list[ToolDefinition],
         response: MistralEventStreamAsync[MistralCompletionEvent],
     ) -> EitherStreamedResponse:
@@ -338,8 +337,7 @@ class MistralAgentModel(AgentModel):
 
                 if tool_calls or content and result_tools:
                     return MistralStreamStructuredResponse(
-                        is_function_tools,
-                        {c.id if c.id else 'null': c for c in tool_calls} if tool_calls else {},
+                        {c.id if c.id else 'null': c for c in tool_calls or []},
                         {c.name: c for c in result_tools},
                         response,
                         content,
@@ -439,7 +437,6 @@ class MistralStreamTextResponse(StreamTextResponse):
 class MistralStreamStructuredResponse(StreamStructuredResponse):
     """Implementation of `StreamStructuredResponse` for Mistral models."""
 
-    _is_function_tools: bool
     _function_tools: dict[str, MistralToolCall]
     _result_tools: dict[str, ToolDefinition]
     _response: MistralEventStreamAsync[MistralCompletionEvent]
