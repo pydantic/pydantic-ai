@@ -120,12 +120,12 @@ class MockMistralAI:
 
 
 def completion_message(
-    message: MistralAssistantMessage, *, usage: MistralUsageInfo | None = None
+    message: MistralAssistantMessage, *, usage: MistralUsageInfo | None = None, with_created: bool = True
 ) -> MistralChatCompletionResponse:
     return MistralChatCompletionResponse(
         id='123',
         choices=[MistralChatCompletionChoice(finish_reason='stop', index=0, message=message)],
-        created=1704067200,
+        created=1704067200 if with_created else None,  # 2024-01-01
         model='mistral-large-latest',
         object='chat.completion',
         usage=usage or MistralUsageInfo(prompt_tokens=1, completion_tokens=1, total_tokens=1),
@@ -133,7 +133,9 @@ def completion_message(
 
 
 def chunk(
-    delta: list[MistralDeltaMessage], finish_reason: MistralCompletionResponseStreamChoiceFinishReason | None = None
+    delta: list[MistralDeltaMessage],
+    finish_reason: MistralCompletionResponseStreamChoiceFinishReason | None = None,
+    with_created: bool = True,
 ) -> MistralCompletionEvent:
     return MistralCompletionEvent(
         data=MistralCompletionChunk(
@@ -142,7 +144,7 @@ def chunk(
                 MistralCompletionResponseStreamChoice(index=index, delta=delta, finish_reason=finish_reason)
                 for index, delta in enumerate(delta)
             ],
-            created=1704067200,  # 2024-01-01
+            created=1704067200 if with_created else None,  # 2024-01-01
             model='gpt-4',
             object='chat.completion.chunk',
             usage=MistralUsageInfo(prompt_tokens=1, completion_tokens=1, total_tokens=1),
@@ -208,6 +210,7 @@ async def test_multiple_completions(allow_model_requests: None):
         completion_message(
             MistralAssistantMessage(content='world'),
             usage=MistralUsageInfo(prompt_tokens=1, completion_tokens=1, total_tokens=1),
+            with_created=False,
         ),
         completion_message(MistralAssistantMessage(content='hello again')),
     ]
@@ -232,7 +235,7 @@ async def test_multiple_completions(allow_model_requests: None):
     assert result.all_messages() == snapshot(
         [
             UserPrompt(content='hello', timestamp=IsNow(tz=timezone.utc)),
-            ModelResponse.from_text(content='world', timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)),
+            ModelResponse.from_text(content='world', timestamp=IsNow(tz=timezone.utc)),
             UserPrompt(content='hello again', timestamp=IsNow(tz=timezone.utc)),
             ModelResponse.from_text(content='hello again', timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)),
         ]
@@ -329,7 +332,7 @@ async def test_stream_text_finish_reason(allow_model_requests: None):
 
 async def test_no_delta(allow_model_requests: None):
     # Given
-    stream = [chunk([]), text_chunk('hello '), text_chunk('world')]
+    stream = [chunk([], with_created=False), text_chunk('hello '), text_chunk('world')]
     mock_client = MockMistralAI.create_stream_mock(stream)
     model = MistralModel('mistral-large-latest', client=mock_client)
     agent = Agent(model=model)
