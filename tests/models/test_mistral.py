@@ -48,12 +48,7 @@ with try_import() as imports_successful:
     )
     from mistralai.types.basemodel import Unset as MistralUnset
 
-    from pydantic_ai.models.mistral import (
-        MistralModel,
-        _generate_simple_json_schema,  # type: ignore
-        _generate_simple_json_schemas,  # type: ignore
-        _validate_required_json_shema,  # type: ignore
-    )
+    from pydantic_ai.models.mistral import MistralAgentModel, MistralModel, MistralStreamStructuredResponse
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='mistral not installed'),
@@ -1480,7 +1475,7 @@ async def test_stream_tool_call_with_retry(allow_model_requests: None):
 #####################
 
 
-def test_generate_simple_json_schema():
+def test_generate_user_output_format_complex():
     """
     Single test that includes properties exercising every branch
     in _get_python_type (anyOf, arrays, objects with additionalProperties, etc.).
@@ -1503,28 +1498,16 @@ def test_generate_simple_json_schema():
             'prop_unrecognized_type': {'type': 'customSomething'},
         }
     }
-
-    expected_result = {
-        'prop_anyOf': 'Optional[str]',
-        'prop_no_type': 'Any',
-        'prop_simple_string': 'str',
-        'prop_array_booleans': 'list[bool]',
-        'prop_object_simple': 'dict[str, bool]',
-        'prop_object_array': 'dict[str, list[int]]',
-        'prop_object_object': 'dict[str, dict[str, Any]]',
-        'prop_object_unknown': 'dict[str, Any]',
-        'prop_unrecognized_type': 'Any',
-    }
-
-    result = _generate_simple_json_schema(schema)
-    assert result == expected_result
+    expected_result = "{'prop_anyOf': 'Optional[str]', 'prop_no_type': 'Any', 'prop_simple_string': 'str', 'prop_array_booleans': 'list[bool]', 'prop_object_simple': 'dict[str, bool]', 'prop_object_array': 'dict[str, list[int]]', 'prop_object_object': 'dict[str, dict[str, Any]]', 'prop_object_unknown': 'dict[str, Any]', 'prop_unrecognized_type': 'Any'}"
+    result = MistralAgentModel._generate_user_output_format([schema], '{schema}')  # type: ignore
+    assert result.content == expected_result
 
 
-def test_generate_simple_json_schemas():
+def test_generate_user_output_format_multiple():
     schema = {'properties': {'prop_anyOf': {'anyOf': [{'type': 'string'}, {'type': 'integer'}]}}}
-    expected_result = {'prop_anyOf': 'Optional[str]'}
-    result = _generate_simple_json_schemas([schema, schema])
-    assert result == [expected_result, expected_result]
+    expected_result = "[{'prop_anyOf': 'Optional[str]'}, {'prop_anyOf': 'Optional[str]'}]"
+    result = MistralAgentModel._generate_user_output_format([schema, schema], '{schema}')  # type: ignore
+    assert result.content == expected_result
 
 
 @pytest.mark.parametrize(
@@ -1615,5 +1598,5 @@ def test_generate_simple_json_schemas():
     ],
 )
 def test_validate_required_json_shema(desc: str, schema: dict[str, Any], data: dict[str, Any], expected: bool) -> None:
-    result = _validate_required_json_shema(data, schema)
+    result = MistralStreamStructuredResponse._validate_required_json_shema(data, schema)  # type: ignore
     assert result == expected, f'{desc} — expected {expected}, got {result}'

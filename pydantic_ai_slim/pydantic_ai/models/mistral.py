@@ -216,14 +216,11 @@ class MistralAgentModel(AgentModel):
 
         elif self.result_tools:
             # Json Mode
-            schema: dict[str, Any] | list[dict[str, Any]]
-            if len(self.result_tools) == 1:
-                schema = _generate_simple_json_schema(self.result_tools[0].parameters_json_schema)
-            else:
-                parameters_json_schemas = [tool.parameters_json_schema for tool in self.result_tools]
-                schema = _generate_simple_json_schemas(parameters_json_schemas)
-
-            mistral_messages.append(MistralUserMessage(content=self.json_mode_schema_prompt.format(schema=schema)))
+            parameters_json_schemas = [tool.parameters_json_schema for tool in self.result_tools]
+            user_ouput_format_message = self._generate_user_output_format(
+                parameters_json_schemas, self.json_mode_schema_prompt
+            )
+            mistral_messages.append(user_ouput_format_message)
             response = await self.client.chat.stream_async(
                 model=str(self.model_name),
                 messages=mistral_messages,
@@ -383,6 +380,19 @@ class MistralAgentModel(AgentModel):
         else:
             assert_never(message)
 
+    @staticmethod
+    def _generate_user_output_format(schemas: list[dict[str, Any]], json_mode_schema_prompt: str) -> MistralUserMessage:
+        """Get a user prompt output format that generate a simple JSON Simple."""
+        examples: list[dict[str, Any]] = []
+        for schema in schemas:
+            typed_dict_definition: dict[str, Any] = {}
+            for key, value in schema.get('properties', {}).items():
+                typed_dict_definition[key] = _get_python_type(value)
+            examples.append(typed_dict_definition)
+
+        example_schema = examples[0] if len(examples) == 1 else examples
+        return MistralUserMessage(content=json_mode_schema_prompt.format(schema=example_schema))
+
 
 @dataclass
 class MistralStreamTextResponse(StreamTextResponse):
@@ -484,7 +494,7 @@ class MistralStreamStructuredResponse(StreamStructuredResponse):
                     # when `{"response":` then `repair_json` sets `{"response": ""}` (type not found default str)
                     # when `{"response": {` then `repair_json` sets `{"response": {}}` (type found)
                     # This ensures it's corrected to `{"response": {}}` and other required parameters and type.
-                    if not _validate_required_json_shema(output_json, result_tool.parameters_json_schema):
+                    if not self._validate_required_json_shema(output_json, result_tool.parameters_json_schema):
                         continue
 
                     tool = ToolCallPart.from_dict(
@@ -501,6 +511,36 @@ class MistralStreamStructuredResponse(StreamStructuredResponse):
     def timestamp(self) -> datetime:
         return self._timestamp
 
+    @staticmethod
+    def _validate_required_json_shema(json_dict: dict[str, Any], json_schema: dict[str, Any]) -> bool:
+        """Validate that all required parameters in the JSON schema are present in the JSON dictionary."""
+        required_params = json_schema.get('required', [])
+        properties = json_schema.get('properties', {})
+
+        for param in required_params:
+            if param not in json_dict:
+                return False
+
+            param_schema = properties.get(param, {})
+            param_type = param_schema.get('type')
+            param_items_type = param_schema.get('items', {}).get('type')
+
+            if param_type == 'array' and param_items_type:
+                if not isinstance(json_dict[param], list):
+                    return False
+                for item in json_dict[param]:
+                    if not isinstance(item, VALIDE_JSON_TYPE_MAPPING[param_items_type]):
+                        return False
+            elif param_type and not isinstance(json_dict[param], VALIDE_JSON_TYPE_MAPPING[param_type]):
+                return False
+
+            if isinstance(json_dict[param], dict) and 'properties' in param_schema:
+                nested_schema = param_schema
+                if not MistralStreamStructuredResponse._validate_required_json_shema(json_dict[param], nested_schema):
+                    return False
+
+        return True
+
 
 VALIDE_JSON_TYPE_MAPPING = {
     'string': str,
@@ -511,37 +551,6 @@ VALIDE_JSON_TYPE_MAPPING = {
     'object': dict,
     'null': type(None),
 }
-
-
-def _validate_required_json_shema(json_dict: dict[str, Any], json_schema: dict[str, Any]) -> bool:
-    """Validate that all required parameters in the JSON schema are present in the JSON dictionary."""
-    required_params = json_schema.get('required', [])
-    properties = json_schema.get('properties', {})
-
-    for param in required_params:
-        if param not in json_dict:
-            return False
-
-        param_schema = properties.get(param, {})
-        param_type = param_schema.get('type')
-        param_items_type = param_schema.get('items', {}).get('type')
-
-        if param_type == 'array' and param_items_type:
-            if not isinstance(json_dict[param], list):
-                return False
-            for item in json_dict[param]:
-                if not isinstance(item, VALIDE_JSON_TYPE_MAPPING[param_items_type]):
-                    return False
-        elif param_type and not isinstance(json_dict[param], VALIDE_JSON_TYPE_MAPPING[param_type]):
-            return False
-
-        if isinstance(json_dict[param], dict) and 'properties' in param_schema:
-            nested_schema = param_schema
-            if not _validate_required_json_shema(json_dict[param], nested_schema):
-                return False
-
-    return True
-
 
 SIMPLE_JSON_TYPE_MAPPING = {
     'string': 'str',
@@ -603,23 +612,6 @@ def _get_python_type(value: dict[str, Any]) -> str:
 
     # 6) Fallback
     return 'Any'
-
-
-def _generate_simple_json_schema(schema: dict[str, Any]) -> dict[str, Any]:
-    """Generate a typed dict definition from a JSON schema."""
-    typed_dict_definition: dict[str, Any] = {}
-    for key, value in schema.get('properties', {}).items():
-        typed_dict_definition[key] = _get_python_type(value)
-    return typed_dict_definition
-
-
-def _generate_simple_json_schemas(schemas: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Generates JSON examples from a list of JSON schemas."""
-    examples: list[dict[str, Any]] = []
-    for schema in schemas:
-        example = _generate_simple_json_schema(schema)
-        examples.append(example)
-    return examples
 
 
 def _map_mistral_to_pydantic_tool_call(tool_call: MistralToolCall) -> ToolCallPart:
