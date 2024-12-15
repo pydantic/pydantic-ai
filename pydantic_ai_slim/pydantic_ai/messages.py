@@ -12,7 +12,7 @@ from ._utils import now_utc as _now_utc
 
 
 @dataclass
-class SystemPrompt:
+class SystemPromptPart:
     """A system prompt, generally written by the application developer.
 
     This gives the model context and guidance on how to respond.
@@ -22,11 +22,11 @@ class SystemPrompt:
     """The content of the prompt."""
 
     kind: Literal['system-prompt'] = 'system-prompt'
-    """Part type identifier."""
+    """Part type identifier, this is available on all parts as a discriminator."""
 
 
 @dataclass
-class UserPrompt:
+class UserPromptPart:
     """A user prompt, generally written by the end user.
 
     Content comes from the `user_prompt` parameter of [`Agent.run`][pydantic_ai.Agent.run],
@@ -40,14 +40,14 @@ class UserPrompt:
     """The timestamp of the prompt."""
 
     kind: Literal['user-prompt'] = 'user-prompt'
-    """Part type identifier."""
+    """Part type identifier, this is available on all parts as a discriminator."""
 
 
 tool_return_ta: pydantic.TypeAdapter[Any] = pydantic.TypeAdapter(Any, config=pydantic.ConfigDict(defer_build=True))
 
 
 @dataclass
-class ToolReturn:
+class ToolReturnPart:
     """A tool return message, this encodes the result of running a tool."""
 
     tool_name: str
@@ -63,7 +63,7 @@ class ToolReturn:
     """The timestamp, when the tool returned."""
 
     kind: Literal['tool-return'] = 'tool-return'
-    """Part type identifier."""
+    """Part type identifier, this is available on all parts as a discriminator."""
 
     def model_response_str(self) -> str:
         if isinstance(self.content, str):
@@ -83,7 +83,7 @@ error_details_ta = pydantic.TypeAdapter(list[pydantic_core.ErrorDetails], config
 
 
 @dataclass
-class RetryPrompt:
+class RetryPromptPart:
     """A message back to a model asking it to try again.
 
     This can be sent for a number of reasons:
@@ -115,7 +115,7 @@ class RetryPrompt:
     """The timestamp, when the retry was triggered."""
 
     kind: Literal['retry-prompt'] = 'retry-prompt'
-    """Part type identifier."""
+    """Part type identifier, this is available on all parts as a discriminator."""
 
     def model_response(self) -> str:
         if isinstance(self.content, str):
@@ -126,7 +126,9 @@ class RetryPrompt:
         return f'{description}\n\nFix the errors and try again.'
 
 
-ModelRequestPart = Annotated[Union[SystemPrompt, UserPrompt, ToolReturn, RetryPrompt], pydantic.Discriminator('kind')]
+ModelRequestPart = Annotated[
+    Union[SystemPromptPart, UserPromptPart, ToolReturnPart, RetryPromptPart], pydantic.Discriminator('kind')
+]
 """A message part sent by PydanticAI to a model."""
 
 
@@ -152,7 +154,7 @@ class TextPart:
     """The text content of the response."""
 
     kind: Literal['text'] = 'text'
-    """Part type identifier."""
+    """Part type identifier, this is available on all parts as a discriminator."""
 
 
 @dataclass
@@ -188,7 +190,7 @@ class ToolCallPart:
     """Optional tool call identifier, this is used by some models including OpenAI."""
 
     kind: Literal['tool-call'] = 'tool-call'
-    """Part type identifier."""
+    """Part type identifier, this is available on all parts as a discriminator."""
 
     @classmethod
     def from_json(cls, tool_name: str, args_json: str, tool_call_id: str | None = None) -> Self:

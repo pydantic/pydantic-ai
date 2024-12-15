@@ -16,10 +16,10 @@ from ..messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
-    RetryPrompt,
+    RetryPromptPart,
     TextPart,
     ToolCallPart,
-    ToolReturn,
+    ToolReturnPart,
 )
 from ..result import Cost
 from ..settings import ModelSettings
@@ -172,7 +172,7 @@ class TestAgentModel(AgentModel):
             assert isinstance(last_message, ModelRequest), 'Expected last message to be a `ModelRequest`.'
 
             # check if there are any retry prompts, if so retry them
-            new_retry_names = {p.tool_name for p in last_message.parts if isinstance(p, RetryPrompt)}
+            new_retry_names = {p.tool_name for p in last_message.parts if isinstance(p, RetryPromptPart)}
             if new_retry_names:
                 return ModelResponse(
                     parts=[
@@ -189,7 +189,7 @@ class TestAgentModel(AgentModel):
                 for message in messages:
                     if isinstance(message, ModelRequest):
                         for part in message.parts:
-                            if isinstance(part, ToolReturn):
+                            if isinstance(part, ToolReturnPart):
                                 output[part.tool_name] = part.content
                 if output:
                     return ModelResponse.from_text(pydantic_core.to_json(output).decode())

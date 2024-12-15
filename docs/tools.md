@@ -70,11 +70,11 @@ print(dice_result.all_messages())
 [
     ModelRequest(
         parts=[
-            SystemPrompt(
+            SystemPromptPart(
                 content="You're a dice game, you should roll the die and see if the number you get back matches the user's guess. If so, tell them they're a winner. Use the player's name in the response.",
                 kind='system-prompt',
             ),
-            UserPrompt(
+            UserPromptPart(
                 content='My guess is 4',
                 timestamp=datetime.datetime(...),
                 kind='user-prompt',
@@ -96,7 +96,7 @@ print(dice_result.all_messages())
     ),
     ModelRequest(
         parts=[
-            ToolReturn(
+            ToolReturnPart(
                 tool_name='roll_die',
                 content='4',
                 tool_call_id=None,
@@ -120,7 +120,7 @@ print(dice_result.all_messages())
     ),
     ModelRequest(
         parts=[
-            ToolReturn(
+            ToolReturnPart(
                 tool_name='get_player_name',
                 content='Anne',
                 tool_call_id=None,

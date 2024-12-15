@@ -21,12 +21,12 @@ from ..messages import (
     ModelRequest,
     ModelResponse,
     ModelResponsePart,
-    RetryPrompt,
-    SystemPrompt,
+    RetryPromptPart,
+    SystemPromptPart,
     TextPart,
     ToolCallPart,
-    ToolReturn,
-    UserPrompt,
+    ToolReturnPart,
+    UserPromptPart,
 )
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
@@ -275,13 +275,13 @@ class GeminiAgentModel(AgentModel):
         for m in messages:
             if isinstance(m, ModelRequest):
                 for part in m.parts:
-                    if isinstance(part, SystemPrompt):
+                    if isinstance(part, SystemPromptPart):
                         sys_prompt_parts.append(_GeminiTextPart(text=part.content))
-                    elif isinstance(part, UserPrompt):
+                    elif isinstance(part, UserPromptPart):
                         contents.append(_content_user_prompt(part))
-                    elif isinstance(part, ToolReturn):
+                    elif isinstance(part, ToolReturnPart):
                         contents.append(_content_tool_return(part))
-                    elif isinstance(part, RetryPrompt):
+                    elif isinstance(part, RetryPromptPart):
                         contents.append(_content_retry_prompt(part))
                     else:
                         assert_never(part)
@@ -421,16 +421,16 @@ class _GeminiContent(TypedDict):
     parts: list[_GeminiPartUnion]
 
 
-def _content_user_prompt(m: UserPrompt) -> _GeminiContent:
+def _content_user_prompt(m: UserPromptPart) -> _GeminiContent:
     return _GeminiContent(role='user', parts=[_GeminiTextPart(text=m.content)])
 
 
-def _content_tool_return(m: ToolReturn) -> _GeminiContent:
+def _content_tool_return(m: ToolReturnPart) -> _GeminiContent:
     f_response = _response_part_from_response(m.tool_name, m.model_response_object())
     return _GeminiContent(role='user', parts=[f_response])
 
 
-def _content_retry_prompt(m: RetryPrompt) -> _GeminiContent:
+def _content_retry_prompt(m: RetryPromptPart) -> _GeminiContent:
     if m.tool_name is None:
         part = _GeminiTextPart(text=m.model_response())
     else:

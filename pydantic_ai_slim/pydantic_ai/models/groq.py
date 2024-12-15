@@ -18,12 +18,12 @@ from ..messages import (
     ModelRequest,
     ModelResponse,
     ModelResponsePart,
-    RetryPrompt,
-    SystemPrompt,
+    RetryPromptPart,
+    SystemPromptPart,
     TextPart,
     ToolCallPart,
-    ToolReturn,
-    UserPrompt,
+    ToolReturnPart,
+    UserPromptPart,
 )
 from ..result import Cost
 from ..settings import ModelSettings
@@ -280,17 +280,17 @@ class GroqAgentModel(AgentModel):
     @classmethod
     def _map_user_message(cls, message: ModelRequest) -> Iterable[chat.ChatCompletionMessageParam]:
         for part in message.parts:
-            if isinstance(part, SystemPrompt):
+            if isinstance(part, SystemPromptPart):
                 yield chat.ChatCompletionSystemMessageParam(role='system', content=part.content)
-            elif isinstance(part, UserPrompt):
+            elif isinstance(part, UserPromptPart):
                 yield chat.ChatCompletionUserMessageParam(role='user', content=part.content)
-            elif isinstance(part, ToolReturn):
+            elif isinstance(part, ToolReturnPart):
                 yield chat.ChatCompletionToolMessageParam(
                     role='tool',
                     tool_call_id=_guard_tool_call_id(t=part, model_source='Groq'),
                     content=part.model_response_str(),
                 )
-            elif isinstance(part, RetryPrompt):
+            elif isinstance(part, RetryPromptPart):
                 if part.tool_name is None:
                     yield chat.ChatCompletionUserMessageParam(role='user', content=part.model_response())
                 else:

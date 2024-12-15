@@ -25,7 +25,7 @@ async def model_function(
     [
         ModelRequest(
             parts=[
-                UserPrompt(
+                UserPromptPart(
                     content='Testing my agent...',
                     timestamp=datetime.datetime(...),
                     kind='user-prompt',

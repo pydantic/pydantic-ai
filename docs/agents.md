@@ -350,7 +350,7 @@ except UnexpectedModelBehavior as e:
     [
         ModelRequest(
             parts=[
-                UserPrompt(
+                UserPromptPart(
                     content='Please get me the volume of a box with size 6.',
                     timestamp=datetime.datetime(...),
                     kind='user-prompt',
@@ -372,7 +372,7 @@ except UnexpectedModelBehavior as e:
         ),
         ModelRequest(
             parts=[
-                RetryPrompt(
+                RetryPromptPart(
                     content='Please try again.',
                     tool_name='calc_volume',
                     tool_call_id=None,

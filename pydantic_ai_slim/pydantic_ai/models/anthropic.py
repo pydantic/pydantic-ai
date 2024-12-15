@@ -16,12 +16,12 @@ from ..messages import (
     ModelRequest,
     ModelResponse,
     ModelResponsePart,
-    RetryPrompt,
-    SystemPrompt,
+    RetryPromptPart,
+    SystemPromptPart,
     TextPart,
     ToolCallPart,
-    ToolReturn,
-    UserPrompt,
+    ToolReturnPart,
+    UserPromptPart,
 )
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
@@ -256,11 +256,11 @@ class AnthropicAgentModel(AgentModel):
         for m in messages:
             if isinstance(m, ModelRequest):
                 for part in m.parts:
-                    if isinstance(part, SystemPrompt):
+                    if isinstance(part, SystemPromptPart):
                         system_prompt += part.content
-                    elif isinstance(part, UserPrompt):
+                    elif isinstance(part, UserPromptPart):
                         anthropic_messages.append(MessageParam(role='user', content=part.content))
-                    elif isinstance(part, ToolReturn):
+                    elif isinstance(part, ToolReturnPart):
                         anthropic_messages.append(
                             MessageParam(
                                 role='user',
@@ -274,7 +274,7 @@ class AnthropicAgentModel(AgentModel):
                                 ],
                             )
                         )
-                    elif isinstance(part, RetryPrompt):
+                    elif isinstance(part, RetryPromptPart):
                         if part.tool_name is None:
                             anthropic_messages.append(MessageParam(role='user', content=part.model_response()))
                         else:

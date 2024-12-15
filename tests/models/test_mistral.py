@@ -20,11 +20,11 @@ from pydantic_ai.messages import (
     ArgsJson,
     ModelRequest,
     ModelResponse,
-    RetryPrompt,
-    SystemPrompt,
+    RetryPromptPart,
+    SystemPromptPart,
     ToolCallPart,
-    ToolReturn,
-    UserPrompt,
+    ToolReturnPart,
+    UserPromptPart,
 )
 
 from ..conftest import IsNow, try_import
@@ -237,9 +237,9 @@ async def test_multiple_completions(allow_model_requests: None):
     assert result.cost().total_tokens == 1
     assert result.all_messages() == snapshot(
         [
-            ModelRequest(parts=[UserPrompt(content='hello', timestamp=IsNow(tz=timezone.utc))]),
+            ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse.from_text(content='world', timestamp=IsNow(tz=timezone.utc)),
-            ModelRequest(parts=[UserPrompt(content='hello again', timestamp=IsNow(tz=timezone.utc))]),
+            ModelRequest(parts=[UserPromptPart(content='hello again', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse.from_text(content='hello again', timestamp=IsNow(tz=timezone.utc)),
         ]
     )
@@ -281,11 +281,11 @@ async def test_three_completions(allow_model_requests: None):
     assert result.cost().total_tokens == 1
     assert result.all_messages() == snapshot(
         [
-            ModelRequest(parts=[UserPrompt(content='hello', timestamp=IsNow(tz=timezone.utc))]),
+            ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse.from_text(content='world', timestamp=IsNow(tz=timezone.utc)),
-            ModelRequest(parts=[UserPrompt(content='hello again', timestamp=IsNow(tz=timezone.utc))]),
+            ModelRequest(parts=[UserPromptPart(content='hello again', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse.from_text(content='hello again', timestamp=IsNow(tz=timezone.utc)),
-            ModelRequest(parts=[UserPrompt(content='final message', timestamp=IsNow(tz=timezone.utc))]),
+            ModelRequest(parts=[UserPromptPart(content='final message', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse.from_text(content='final message', timestamp=IsNow(tz=timezone.utc)),
         ]
     )
@@ -388,7 +388,7 @@ async def test_request_model_structured_with_arguments_dict_response(allow_model
     assert result.data == CityLocation(city='paris', country='france')
     assert result.all_messages() == snapshot(
         [
-            ModelRequest(parts=[UserPrompt(content='User prompt value', timestamp=IsNow(tz=timezone.utc))]),
+            ModelRequest(parts=[UserPromptPart(content='User prompt value', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[
                     ToolCallPart(
@@ -401,7 +401,7 @@ async def test_request_model_structured_with_arguments_dict_response(allow_model
             ),
             ModelRequest(
                 parts=[
-                    ToolReturn(
+                    ToolReturnPart(
                         tool_name='final_result',
                         content='Final result processed.',
                         tool_call_id='123',
@@ -448,7 +448,7 @@ async def test_request_model_structured_with_arguments_str_response(allow_model_
     assert result.data == CityLocation(city='paris', country='france')
     assert result.all_messages() == snapshot(
         [
-            ModelRequest(parts=[UserPrompt(content='User prompt value', timestamp=IsNow(tz=timezone.utc))]),
+            ModelRequest(parts=[UserPromptPart(content='User prompt value', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[
                     ToolCallPart(
@@ -461,7 +461,7 @@ async def test_request_model_structured_with_arguments_str_response(allow_model_
             ),
             ModelRequest(
                 parts=[
-                    ToolReturn(
+                    ToolReturnPart(
                         tool_name='final_result',
                         content='Final result processed.',
                         tool_call_id='123',
@@ -501,8 +501,8 @@ async def test_request_result_type_with_arguments_str_response(allow_model_reque
         [
             ModelRequest(
                 parts=[
-                    SystemPrompt(content='System prompt value'),
-                    UserPrompt(content='User prompt value', timestamp=IsNow(tz=timezone.utc)),
+                    SystemPromptPart(content='System prompt value'),
+                    UserPromptPart(content='User prompt value', timestamp=IsNow(tz=timezone.utc)),
                 ]
             ),
             ModelResponse(
@@ -517,7 +517,7 @@ async def test_request_result_type_with_arguments_str_response(allow_model_reque
             ),
             ModelRequest(
                 parts=[
-                    ToolReturn(
+                    ToolReturnPart(
                         tool_name='final_result',
                         content='Final result processed.',
                         tool_call_id='123',
@@ -1014,8 +1014,8 @@ async def test_request_tool_call(allow_model_requests: None):
         [
             ModelRequest(
                 parts=[
-                    SystemPrompt(content='this is the system prompt'),
-                    UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
+                    SystemPromptPart(content='this is the system prompt'),
+                    UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc)),
                 ]
             ),
             ModelResponse(
@@ -1030,7 +1030,7 @@ async def test_request_tool_call(allow_model_requests: None):
             ),
             ModelRequest(
                 parts=[
-                    RetryPrompt(
+                    RetryPromptPart(
                         content='Wrong location, please try again',
                         tool_name='get_location',
                         tool_call_id='1',
@@ -1050,7 +1050,7 @@ async def test_request_tool_call(allow_model_requests: None):
             ),
             ModelRequest(
                 parts=[
-                    ToolReturn(
+                    ToolReturnPart(
                         tool_name='get_location',
                         content='{"lat": 51, "lng": 0}',
                         tool_call_id='2',
@@ -1148,8 +1148,8 @@ async def test_request_tool_call_with_result_type(allow_model_requests: None):
         [
             ModelRequest(
                 parts=[
-                    SystemPrompt(content='this is the system prompt'),
-                    UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
+                    SystemPromptPart(content='this is the system prompt'),
+                    UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc)),
                 ]
             ),
             ModelResponse(
@@ -1164,7 +1164,7 @@ async def test_request_tool_call_with_result_type(allow_model_requests: None):
             ),
             ModelRequest(
                 parts=[
-                    RetryPrompt(
+                    RetryPromptPart(
                         content='Wrong location, please try again',
                         tool_name='get_location',
                         tool_call_id='1',
@@ -1184,7 +1184,7 @@ async def test_request_tool_call_with_result_type(allow_model_requests: None):
             ),
             ModelRequest(
                 parts=[
-                    ToolReturn(
+                    ToolReturnPart(
                         tool_name='get_location',
                         content='{"lat": 51, "lng": 0}',
                         tool_call_id='2',
@@ -1204,7 +1204,7 @@ async def test_request_tool_call_with_result_type(allow_model_requests: None):
             ),
             ModelRequest(
                 parts=[
-                    ToolReturn(
+                    ToolReturnPart(
                         tool_name='final_result',
                         content='Final result processed.',
                         tool_call_id='1',
@@ -1288,8 +1288,8 @@ async def test_stream_tool_call_with_return_type(allow_model_requests: None):
         [
             ModelRequest(
                 parts=[
-                    SystemPrompt(content='this is the system prompt'),
-                    UserPrompt(content='User prompt value', timestamp=IsNow(tz=timezone.utc)),
+                    SystemPromptPart(content='this is the system prompt'),
+                    UserPromptPart(content='User prompt value', timestamp=IsNow(tz=timezone.utc)),
                 ]
             ),
             ModelResponse(
@@ -1304,7 +1304,7 @@ async def test_stream_tool_call_with_return_type(allow_model_requests: None):
             ),
             ModelRequest(
                 parts=[
-                    ToolReturn(
+                    ToolReturnPart(
                         tool_name='get_location',
                         content='{"lat": 51, "lng": 0}',
                         tool_call_id='1',
@@ -1314,7 +1314,7 @@ async def test_stream_tool_call_with_return_type(allow_model_requests: None):
             ),
             ModelRequest(
                 parts=[
-                    ToolReturn(
+                    ToolReturnPart(
                         tool_name='final_result',
                         content='Final result processed.',
                         tool_call_id='1',
@@ -1389,8 +1389,8 @@ async def test_stream_tool_call(allow_model_requests: None):
         [
             ModelRequest(
                 parts=[
-                    SystemPrompt(content='this is the system prompt'),
-                    UserPrompt(content='User prompt value', timestamp=IsNow(tz=timezone.utc)),
+                    SystemPromptPart(content='this is the system prompt'),
+                    UserPromptPart(content='User prompt value', timestamp=IsNow(tz=timezone.utc)),
                 ]
             ),
             ModelResponse(
@@ -1405,7 +1405,7 @@ async def test_stream_tool_call(allow_model_requests: None):
             ),
             ModelRequest(
                 parts=[
-                    ToolReturn(
+                    ToolReturnPart(
                         tool_name='get_location',
                         content='{"lat": 51, "lng": 0}',
                         tool_call_id='1',

@@ -19,12 +19,12 @@ from ..messages import (
     ModelRequest,
     ModelResponse,
     ModelResponsePart,
-    RetryPrompt,
-    SystemPrompt,
+    RetryPromptPart,
+    SystemPromptPart,
     TextPart,
     ToolCallPart,
-    ToolReturn,
-    UserPrompt,
+    ToolReturnPart,
+    UserPromptPart,
 )
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
@@ -254,11 +254,11 @@ def _estimate_cost(messages: Iterable[ModelMessage]) -> result.Cost:
     for message in messages:
         if isinstance(message, ModelRequest):
             for part in message.parts:
-                if isinstance(part, (SystemPrompt, UserPrompt)):
+                if isinstance(part, (SystemPromptPart, UserPromptPart)):
                     request_tokens += _string_cost(part.content)
-                elif isinstance(part, ToolReturn):
+                elif isinstance(part, ToolReturnPart):
                     request_tokens += _string_cost(part.model_response_str())
-                elif isinstance(part, RetryPrompt):
+                elif isinstance(part, RetryPromptPart):
                     request_tokens += _string_cost(part.model_response())
                 else:
                     assert_never(part)

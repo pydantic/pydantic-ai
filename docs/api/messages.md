@@ -1,13 +1,13 @@
 # `pydantic_ai.messages`
 
-The structure of [Message][pydantic_ai.messages.Message] can be shown as a graph:
+The structure of [Message][pydantic_ai.messages.ModelMessage] can be shown as a graph:
 
 ```mermaid
 graph RL
-    SystemPrompt(SystemPrompt) --- ModelRequestPart
-    UserPrompt(UserPrompt) --- ModelRequestPart
-    ToolReturn(ToolReturn) --- ModelRequestPart
-    RetryPrompt(RetryPrompt) --- ModelRequestPart
+    SystemPromptPart(SystemPromptPart) --- ModelRequestPart
+    UserPromptPart(UserPromptPart) --- ModelRequestPart
+    ToolReturnPart(ToolReturnPart) --- ModelRequestPart
+    RetryPromptPart(RetryPromptPart) --- ModelRequestPart
     TextPart(TextPart) --- ModelResponsePart
     ToolCallPart(ToolCallPart) --- ModelResponsePart
     ModelRequestPart("ModelRequestPart<br>(Union)") --- ModelRequest

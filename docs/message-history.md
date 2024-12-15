@@ -42,8 +42,8 @@ print(result.all_messages())
 [
     ModelRequest(
         parts=[
-            SystemPrompt(content='Be a helpful assistant.', kind='system-prompt'),
-            UserPrompt(
+            SystemPromptPart(content='Be a helpful assistant.', kind='system-prompt'),
+            UserPromptPart(
                 content='Tell me a joke.',
                 timestamp=datetime.datetime(...),
                 kind='user-prompt',
@@ -70,8 +70,8 @@ print(result.new_messages())
 [
     ModelRequest(
         parts=[
-            SystemPrompt(content='Be a helpful assistant.', kind='system-prompt'),
-            UserPrompt(
+            SystemPromptPart(content='Be a helpful assistant.', kind='system-prompt'),
+            UserPromptPart(
                 content='Tell me a joke.',
                 timestamp=datetime.datetime(...),
                 kind='user-prompt',
@@ -110,10 +110,10 @@ async def main():
         [
             ModelRequest(
                 parts=[
-                    SystemPrompt(
+                    SystemPromptPart(
                         content='Be a helpful assistant.', kind='system-prompt'
                     ),
-                    UserPrompt(
+                    UserPromptPart(
                         content='Tell me a joke.',
                         timestamp=datetime.datetime(...),
                         kind='user-prompt',
@@ -137,10 +137,10 @@ async def main():
         [
             ModelRequest(
                 parts=[
-                    SystemPrompt(
+                    SystemPromptPart(
                         content='Be a helpful assistant.', kind='system-prompt'
                     ),
-                    UserPrompt(
+                    UserPromptPart(
                         content='Tell me a joke.',
                         timestamp=datetime.datetime(...),
                         kind='user-prompt',
@@ -200,8 +200,8 @@ print(result2.all_messages())
 [
     ModelRequest(
         parts=[
-            SystemPrompt(content='Be a helpful assistant.', kind='system-prompt'),
-            UserPrompt(
+            SystemPromptPart(content='Be a helpful assistant.', kind='system-prompt'),
+            UserPromptPart(
                 content='Tell me a joke.',
                 timestamp=datetime.datetime(...),
                 kind='user-prompt',
@@ -221,7 +221,7 @@ print(result2.all_messages())
     ),
     ModelRequest(
         parts=[
-            UserPrompt(
+            UserPromptPart(
                 content='Explain?',
                 timestamp=datetime.datetime(...),
                 kind='user-prompt',
@@ -270,8 +270,8 @@ print(result2.all_messages())
 [
     ModelRequest(
         parts=[
-            SystemPrompt(content='Be a helpful assistant.', kind='system-prompt'),
-            UserPrompt(
+            SystemPromptPart(content='Be a helpful assistant.', kind='system-prompt'),
+            UserPromptPart(
                 content='Tell me a joke.',
                 timestamp=datetime.datetime(...),
                 kind='user-prompt',
@@ -291,7 +291,7 @@ print(result2.all_messages())
     ),
     ModelRequest(
         parts=[
-            UserPrompt(
+            UserPromptPart(
                 content='Explain?',
                 timestamp=datetime.datetime(...),
                 kind='user-prompt',

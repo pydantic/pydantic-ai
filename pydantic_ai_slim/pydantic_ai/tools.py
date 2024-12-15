@@ -261,7 +261,7 @@ class Tool(Generic[AgentDeps]):
             return self._on_error(e, message)
 
         self.current_retry = 0
-        return _messages.ToolReturn(
+        return _messages.ToolReturnPart(
             tool_name=message.tool_name,
             content=response_content,
             tool_call_id=message.tool_call_id,
@@ -287,7 +287,7 @@ class Tool(Generic[AgentDeps]):
 
     def _on_error(
         self, exc: ValidationError | ModelRetry, call_message: _messages.ToolCallPart
-    ) -> _messages.RetryPrompt:
+    ) -> _messages.RetryPromptPart:
         self.current_retry += 1
         if self.max_retries is None or self.current_retry > self.max_retries:
             raise UnexpectedModelBehavior(f'Tool exceeded max retries count of {self.max_retries}') from exc
@@ -296,7 +296,7 @@ class Tool(Generic[AgentDeps]):
                 content = exc.errors(include_url=False)
             else:
                 content = exc.message
-            return _messages.RetryPrompt(
+            return _messages.RetryPromptPart(
                 tool_name=call_message.tool_name,
                 content=content,
                 tool_call_id=call_message.tool_call_id,

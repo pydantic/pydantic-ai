@@ -100,11 +100,11 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.messages import (
     ArgsDict,
     ModelResponse,
-    SystemPrompt,
+    SystemPromptPart,
     TextPart,
     ToolCallPart,
-    ToolReturn,
-    UserPrompt,
+    ToolReturnPart,
+    UserPromptPart,
     ModelRequest,
 )
 
@@ -128,10 +128,10 @@ async def test_forecast():
     assert weather_agent.last_run_messages == [  # (6)!
         ModelRequest(
             parts=[
-                SystemPrompt(
+                SystemPromptPart(
                     content='Providing a weather forecast at the locations the user provides.',
                 ),
-                UserPrompt(
+                UserPromptPart(
                     content='What will the weather be like in London on 2024-11-28?',
                     timestamp=IsNow(tz=timezone.utc),  # (7)!
                 ),
@@ -154,7 +154,7 @@ async def test_forecast():
         ),
         ModelRequest(
             parts=[
-                ToolReturn(
+                ToolReturnPart(
                     tool_name='weather_forecast',
                     content='Sunny with a chance of rain',
                     tool_call_id=None,
@@ -238,7 +238,7 @@ async def test_forecast_future():
     assert forecast == 'The forecast is: Rainy with a chance of sun'
 ```
 
-1. We define a function `call_weather_forecast` that will be called by `FunctionModel` in place of the LLM, this function has access to the list of [`Message`][pydantic_ai.messages.Message]s that make up the run, and [`AgentInfo`][pydantic_ai.models.function.AgentInfo] which contains information about the agent and the function tools and return tools.
+1. We define a function `call_weather_forecast` that will be called by `FunctionModel` in place of the LLM, this function has access to the list of [`Message`][pydantic_ai.messages.ModelMessage]s that make up the run, and [`AgentInfo`][pydantic_ai.models.function.AgentInfo] which contains information about the agent and the function tools and return tools.
 2. Our function is slightly intelligent in that it tries to extract a date from the prompt, but just hard codes the location.
 3. We use [`FunctionModel`][pydantic_ai.models.function.FunctionModel] to replace the agent's model with our custom function.
 

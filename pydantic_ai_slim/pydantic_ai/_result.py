@@ -59,7 +59,7 @@ class ResultValidator(Generic[AgentDeps, ResultData]):
                 function = cast(Callable[[Any], ResultData], self.function)
                 result_data = await _utils.run_in_executor(function, *args)
         except ModelRetry as r:
-            m = _messages.RetryPrompt(content=r.message)
+            m = _messages.RetryPromptPart(content=r.message)
             if tool_call is not None:
                 m.tool_name = tool_call.tool_name
                 m.tool_call_id = tool_call.tool_call_id
@@ -71,7 +71,7 @@ class ResultValidator(Generic[AgentDeps, ResultData]):
 class ToolRetryError(Exception):
     """Internal exception used to signal a `ToolRetry` message should be returned to the LLM."""
 
-    def __init__(self, tool_retry: _messages.RetryPrompt):
+    def __init__(self, tool_retry: _messages.RetryPromptPart):
         self.tool_retry = tool_retry
         super().__init__()
 
@@ -199,7 +199,7 @@ class ResultTool(Generic[ResultData]):
                 )
         except ValidationError as e:
             if wrap_validation_errors:
-                m = _messages.RetryPrompt(
+                m = _messages.RetryPromptPart(
                     tool_name=tool_call.tool_name,
                     content=e.errors(include_url=False),
                     tool_call_id=tool_call.tool_call_id,

@@ -9,7 +9,7 @@ from pydantic_ai import Agent
 from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
-    UserPrompt,
+    UserPromptPart,
 )
 from pydantic_ai.result import Cost
 
@@ -54,9 +54,9 @@ async def test_request_simple_success(allow_model_requests: None):
     assert result.cost() == snapshot(Cost())
     assert result.all_messages() == snapshot(
         [
-            ModelRequest(parts=[UserPrompt(content='hello', timestamp=IsNow(tz=timezone.utc))]),
+            ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse.from_text(content='world', timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)),
-            ModelRequest(parts=[UserPrompt(content='hello', timestamp=IsNow(tz=timezone.utc))]),
+            ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse.from_text(content='world', timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)),
         ]
     )

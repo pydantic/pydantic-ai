@@ -14,11 +14,11 @@ from pydantic_ai.messages import (
     ArgsDict,
     ModelRequest,
     ModelResponse,
-    RetryPrompt,
-    SystemPrompt,
+    RetryPromptPart,
+    SystemPromptPart,
     ToolCallPart,
-    ToolReturn,
-    UserPrompt,
+    ToolReturnPart,
+    UserPromptPart,
 )
 from pydantic_ai.result import Cost
 
@@ -101,9 +101,9 @@ async def test_sync_request_text_response(allow_model_requests: None):
     assert result.cost() == snapshot(Cost(request_tokens=5, response_tokens=10, total_tokens=15))
     assert result.all_messages() == snapshot(
         [
-            ModelRequest(parts=[UserPrompt(content='hello', timestamp=IsNow(tz=timezone.utc))]),
+            ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse.from_text(content='world', timestamp=IsNow(tz=timezone.utc)),
-            ModelRequest(parts=[UserPrompt(content='hello', timestamp=IsNow(tz=timezone.utc))]),
+            ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse.from_text(content='world', timestamp=IsNow(tz=timezone.utc)),
         ]
     )
@@ -136,7 +136,7 @@ async def test_request_structured_response(allow_model_requests: None):
     assert result.data == [1, 2, 3]
     assert result.all_messages() == snapshot(
         [
-            ModelRequest(parts=[UserPrompt(content='hello', timestamp=IsNow(tz=timezone.utc))]),
+            ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[
                     ToolCallPart(
@@ -149,7 +149,7 @@ async def test_request_structured_response(allow_model_requests: None):
             ),
             ModelRequest(
                 parts=[
-                    ToolReturn(
+                    ToolReturnPart(
                         tool_name='final_result',
                         content='Final result processed.',
                         tool_call_id='123',
@@ -194,8 +194,8 @@ async def test_request_tool_call(allow_model_requests: None):
         [
             ModelRequest(
                 parts=[
-                    SystemPrompt(content='this is the system prompt'),
-                    UserPrompt(content='hello', timestamp=IsNow(tz=timezone.utc)),
+                    SystemPromptPart(content='this is the system prompt'),
+                    UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc)),
                 ]
             ),
             ModelResponse(
@@ -210,7 +210,7 @@ async def test_request_tool_call(allow_model_requests: None):
             ),
             ModelRequest(
                 parts=[
-                    RetryPrompt(
+                    RetryPromptPart(
                         content='Wrong location, please try again',
                         tool_name='get_location',
                         tool_call_id='1',
@@ -230,7 +230,7 @@ async def test_request_tool_call(allow_model_requests: None):
             ),
             ModelRequest(
                 parts=[
-                    ToolReturn(
+                    ToolReturnPart(
                         tool_name='get_location',
                         content='{"lat": 51, "lng": 0}',
                         tool_call_id='2',

@@ -15,11 +15,11 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
-    SystemPrompt,
+    SystemPromptPart,
     TextPart,
     ToolCallPart,
-    ToolReturn,
-    UserPrompt,
+    ToolReturnPart,
+    UserPromptPart,
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -44,7 +44,7 @@ def test_simple(set_event_loop: None):
     assert result.data == snapshot("content='Hello' kind='user-prompt' message_count=1")
     assert result.all_messages() == snapshot(
         [
-            ModelRequest(parts=[UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
+            ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[TextPart(content="content='Hello' kind='user-prompt' message_count=1")],
                 timestamp=IsNow(tz=timezone.utc),
@@ -56,12 +56,12 @@ def test_simple(set_event_loop: None):
     assert result2.data == snapshot("content='World' kind='user-prompt' message_count=3")
     assert result2.all_messages() == snapshot(
         [
-            ModelRequest(parts=[UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
+            ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[TextPart(content="content='Hello' kind='user-prompt' message_count=1")],
                 timestamp=IsNow(tz=timezone.utc),
             ),
-            ModelRequest(parts=[UserPrompt(content='World', timestamp=IsNow(tz=timezone.utc))]),
+            ModelRequest(parts=[UserPromptPart(content='World', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[TextPart(content="content='World' kind='user-prompt' message_count=3")],
                 timestamp=IsNow(tz=timezone.utc),
@@ -74,7 +74,7 @@ async def weather_model(messages: list[ModelMessage], info: AgentInfo) -> ModelR
     assert info.allow_text_result
     assert {t.name for t in info.function_tools} == {'get_location', 'get_weather'}
     last = messages[-1].parts[-1]
-    if isinstance(last, UserPrompt):
+    if isinstance(last, UserPromptPart):
         return ModelResponse(
             parts=[
                 ToolCallPart.from_json(
@@ -83,13 +83,13 @@ async def weather_model(messages: list[ModelMessage], info: AgentInfo) -> ModelR
                 )
             ]
         )
-    elif isinstance(last, ToolReturn):
+    elif isinstance(last, ToolReturnPart):
         if last.tool_name == 'get_location':
             return ModelResponse(parts=[ToolCallPart.from_json('get_weather', last.model_response_str())])
         elif last.tool_name == 'get_weather':
             location_name: str | None = None
             for m in messages:
-                location_name = next((part.content for part in m.parts if isinstance(part, UserPrompt)), None)
+                location_name = next((part.content for part in m.parts if isinstance(part, UserPromptPart)), None)
                 if location_name is not None:
                     break
 
@@ -125,14 +125,14 @@ def test_weather(set_event_loop: None):
     assert result.data == 'Raining in London'
     assert result.all_messages() == snapshot(
         [
-            ModelRequest(parts=[UserPrompt(content='London', timestamp=IsNow(tz=timezone.utc))]),
+            ModelRequest(parts=[UserPromptPart(content='London', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[ToolCallPart.from_json('get_location', '{"location_description": "London"}')],
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
                 parts=[
-                    ToolReturn(
+                    ToolReturnPart(
                         tool_name='get_location', content='{"lat": 51, "lng": 0}', timestamp=IsNow(tz=timezone.utc)
                     )
                 ]
@@ -147,7 +147,7 @@ def test_weather(set_event_loop: None):
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
-                parts=[ToolReturn(tool_name='get_weather', content='Raining', timestamp=IsNow(tz=timezone.utc))]
+                parts=[ToolReturnPart(tool_name='get_weather', content='Raining', timestamp=IsNow(tz=timezone.utc))]
             ),
             ModelResponse.from_text(
                 content='Raining in London',
@@ -162,7 +162,7 @@ def test_weather(set_event_loop: None):
 
 async def call_function_model(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:  # pragma: no cover
     last = messages[-1].parts[-1]
-    if isinstance(last, UserPrompt):
+    if isinstance(last, UserPromptPart):
         if last.content.startswith('{'):
             details = json.loads(last.content)
             return ModelResponse(
@@ -173,7 +173,7 @@ async def call_function_model(messages: list[ModelMessage], _: AgentInfo) -> Mod
                     )
                 ]
             )
-    elif isinstance(last, ToolReturn):
+    elif isinstance(last, ToolReturnPart):
         return ModelResponse.from_text(pydantic_core.to_json(last).decode())
 
     raise ValueError(f'Unexpected message: {last}')
@@ -307,8 +307,8 @@ def test_call_all(set_event_loop: None):
         [
             ModelRequest(
                 parts=[
-                    SystemPrompt(content='foobar'),
-                    UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
+                    SystemPromptPart(content='foobar'),
+                    UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc)),
                 ]
             ),
             ModelResponse(
@@ -323,11 +323,11 @@ def test_call_all(set_event_loop: None):
             ),
             ModelRequest(
                 parts=[
-                    ToolReturn(tool_name='foo', content='1', timestamp=IsNow(tz=timezone.utc)),
-                    ToolReturn(tool_name='bar', content='2', timestamp=IsNow(tz=timezone.utc)),
-                    ToolReturn(tool_name='baz', content='3', timestamp=IsNow(tz=timezone.utc)),
-                    ToolReturn(tool_name='qux', content='4', timestamp=IsNow(tz=timezone.utc)),
-                    ToolReturn(tool_name='quz', content='a', timestamp=IsNow(tz=timezone.utc)),
+                    ToolReturnPart(tool_name='foo', content='1', timestamp=IsNow(tz=timezone.utc)),
+                    ToolReturnPart(tool_name='bar', content='2', timestamp=IsNow(tz=timezone.utc)),
+                    ToolReturnPart(tool_name='baz', content='3', timestamp=IsNow(tz=timezone.utc)),
+                    ToolReturnPart(tool_name='qux', content='4', timestamp=IsNow(tz=timezone.utc)),
+                    ToolReturnPart(tool_name='quz', content='a', timestamp=IsNow(tz=timezone.utc)),
                 ]
             ),
             ModelResponse.from_text(
@@ -395,7 +395,7 @@ async def test_stream_text():
         assert await result.get_data() == snapshot('hello world')
         assert result.all_messages() == snapshot(
             [
-                ModelRequest(parts=[UserPrompt(content='', timestamp=IsNow(tz=timezone.utc))]),
+                ModelRequest(parts=[UserPromptPart(content='', timestamp=IsNow(tz=timezone.utc))]),
                 ModelResponse.from_text(content='hello world', timestamp=IsNow(tz=timezone.utc)),
             ]
         )

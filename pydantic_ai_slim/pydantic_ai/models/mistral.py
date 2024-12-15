@@ -19,12 +19,12 @@ from ..messages import (
     ModelRequest,
     ModelResponse,
     ModelResponsePart,
-    RetryPrompt,
-    SystemPrompt,
+    RetryPromptPart,
+    SystemPromptPart,
     TextPart,
     ToolCallPart,
-    ToolReturn,
-    UserPrompt,
+    ToolReturnPart,
+    UserPromptPart,
 )
 from ..result import Cost
 from ..settings import ModelSettings
@@ -386,16 +386,16 @@ class MistralAgentModel(AgentModel):
     @classmethod
     def _map_user_message(cls, message: ModelRequest) -> Iterable[MistralMessages]:
         for part in message.parts:
-            if isinstance(part, SystemPrompt):
+            if isinstance(part, SystemPromptPart):
                 yield MistralSystemMessage(content=part.content)
-            elif isinstance(part, UserPrompt):
+            elif isinstance(part, UserPromptPart):
                 yield MistralUserMessage(content=part.content)
-            elif isinstance(part, ToolReturn):
+            elif isinstance(part, ToolReturnPart):
                 yield MistralToolMessage(
                     tool_call_id=part.tool_call_id,
                     content=part.model_response_str(),
                 )
-            elif isinstance(part, RetryPrompt):
+            elif isinstance(part, RetryPromptPart):
                 if part.tool_name is None:
                     yield MistralUserMessage(content=part.model_response())
                 else:

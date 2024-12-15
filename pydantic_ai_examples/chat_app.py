@@ -33,7 +33,7 @@ from pydantic_ai.messages import (
     ModelMessagesTypeAdapter,
     ModelResponse,
     TextPart,
-    UserPrompt,
+    UserPromptPart,
 )
 
 # 'if-token-present' means nothing will be sent (and the example will work) if you don't have logfire configured
@@ -86,7 +86,7 @@ class ChatMessage(TypedDict):
 
 
 def to_chat_message(m: ModelMessage) -> ChatMessage:
-    if isinstance(m, UserPrompt):
+    if isinstance(m, UserPromptPart):
         return {
             'role': 'user',
             'timestamp': m.timestamp.isoformat(),

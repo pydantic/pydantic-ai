@@ -800,10 +800,10 @@ class Agent(Generic[AgentDeps, ResultData]):
         if message_history:
             # shallow copy messages
             messages = message_history.copy()
-            messages.append(_messages.ModelRequest([_messages.UserPrompt(user_prompt)]))
+            messages.append(_messages.ModelRequest([_messages.UserPromptPart(user_prompt)]))
         else:
             parts = await self._sys_parts(deps)
-            parts.append(_messages.UserPrompt(user_prompt))
+            parts.append(_messages.UserPromptPart(user_prompt))
             messages: list[_messages.ModelMessage] = [_messages.ModelRequest(parts)]
 
         return messages
@@ -847,7 +847,7 @@ class Agent(Generic[AgentDeps, ResultData]):
                 return _MarkFinalResult(result_data), []
         else:
             self._incr_result_retry()
-            response = _messages.RetryPrompt(
+            response = _messages.RetryPromptPart(
                 content='Plain text responses are not permitted, please call one of the functions instead.',
             )
             return None, [response]
@@ -895,7 +895,7 @@ class Agent(Generic[AgentDeps, ResultData]):
                 else:
                     final_result = _MarkFinalResult(result_data)
                     parts.append(
-                        _messages.ToolReturn(
+                        _messages.ToolReturnPart(
                             tool_name=call.tool_name,
                             content='Final result processed.',
                             tool_call_id=call.tool_call_id,
@@ -904,7 +904,7 @@ class Agent(Generic[AgentDeps, ResultData]):
             else:
                 # We already have a final result - mark this one as unused
                 parts.append(
-                    _messages.ToolReturn(
+                    _messages.ToolReturnPart(
                         tool_name=call.tool_name,
                         content='Result tool not used - a final result was already processed.',
                         tool_call_id=call.tool_call_id,
@@ -944,7 +944,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         for call in tool_calls:
             if call.tool_name in self._function_tools:
                 parts.append(
-                    _messages.ToolReturn(
+                    _messages.ToolReturnPart(
                         tool_name=call.tool_name,
                         content='Tool not executed - a final result was already processed.',
                         tool_call_id=call.tool_call_id,
@@ -972,7 +972,7 @@ class Agent(Generic[AgentDeps, ResultData]):
                 return _MarkFinalResult(model_response), []
             else:
                 self._incr_result_retry()
-                response = _messages.RetryPrompt(
+                response = _messages.RetryPromptPart(
                     content='Plain text responses are not permitted, please call one of the functions instead.',
                 )
                 # stream the response, so cost is correct
@@ -995,7 +995,7 @@ class Agent(Generic[AgentDeps, ResultData]):
 
                 if match := self._result_schema.find_tool(structured_msg):
                     call, _ = match
-                    tool_return = _messages.ToolReturn(
+                    tool_return = _messages.ToolReturnPart(
                         tool_name=call.tool_name,
                         content='Final result processed.',
                         tool_call_id=call.tool_call_id,
@@ -1049,13 +1049,13 @@ class Agent(Generic[AgentDeps, ResultData]):
 
     async def _sys_parts(self, deps: AgentDeps) -> list[_messages.ModelRequestPart]:
         """Build the initial messages for the conversation."""
-        messages: list[_messages.ModelRequestPart] = [_messages.SystemPrompt(p) for p in self._system_prompts]
+        messages: list[_messages.ModelRequestPart] = [_messages.SystemPromptPart(p) for p in self._system_prompts]
         for sys_prompt_runner in self._system_prompt_functions:
             prompt = await sys_prompt_runner.run(deps)
-            messages.append(_messages.SystemPrompt(prompt))
+            messages.append(_messages.SystemPromptPart(prompt))
         return messages
 
-    def _unknown_tool(self, tool_name: str) -> _messages.RetryPrompt:
+    def _unknown_tool(self, tool_name: str) -> _messages.RetryPromptPart:
         self._incr_result_retry()
         names = list(self._function_tools.keys())
         if self._result_schema:
@@ -1064,7 +1064,7 @@ class Agent(Generic[AgentDeps, ResultData]):
             msg = f'Available tools: {", ".join(names)}'
         else:
             msg = 'No tools available.'
-        return _messages.RetryPrompt(content=f'Unknown tool name: {tool_name!r}. {msg}')
+        return _messages.RetryPromptPart(content=f'Unknown tool name: {tool_name!r}. {msg}')
 
     def _get_deps(self, deps: AgentDeps) -> AgentDeps:
         """Get deps for a run.
