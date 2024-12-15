@@ -10,8 +10,8 @@ Both [`RunResult`][pydantic_ai.result.RunResult]
 (returned by [`Agent.run`][pydantic_ai.Agent.run], [`Agent.run_sync`][pydantic_ai.Agent.run_sync])
 and [`StreamedRunResult`][pydantic_ai.result.StreamedRunResult] (returned by [`Agent.run_stream`][pydantic_ai.Agent.run_stream]) have the following methods:
 
-* [`all_messages()`][pydantic_ai.result.RunResult.all_messages]: returns all messages, including messages from prior runs and system prompts. There's also a variant that returns JSON bytes, [`all_messages_json()`][pydantic_ai.result.RunResult.all_messages_json].
-* [`new_messages()`][pydantic_ai.result.RunResult.new_messages]: returns only the messages from the current run, excluding system prompts, this is generally the data you want when you want to use the messages in further runs to continue the conversation. There's also a variant that returns JSON bytes, [`new_messages_json()`][pydantic_ai.result.RunResult.new_messages_json].
+* [`all_messages()`][pydantic_ai.result.RunResult.all_messages]: returns all messages, including messages from prior runs. There's also a variant that returns JSON bytes, [`all_messages_json()`][pydantic_ai.result.RunResult.all_messages_json].
+* [`new_messages()`][pydantic_ai.result.RunResult.new_messages]: returns only the messages from the current run. There's also a variant that returns JSON bytes, [`new_messages_json()`][pydantic_ai.result.RunResult.new_messages_json].
 
 !!! info "StreamedRunResult and complete messages"
     On [`StreamedRunResult`][pydantic_ai.result.StreamedRunResult], the messages returned from these methods will only include the final result message once the stream has finished.
@@ -38,36 +38,6 @@ print(result.data)
 
 # all messages from the run
 print(result.all_messages())
-"""
-[
-    ModelRequest(
-        parts=[
-            SystemPromptPart(
-                content='Be a helpful assistant.', part_kind='system-prompt'
-            ),
-            UserPromptPart(
-                content='Tell me a joke.',
-                timestamp=datetime.datetime(...),
-                part_kind='user-prompt',
-            ),
-        ],
-        kind='request',
-    ),
-    ModelResponse(
-        parts=[
-            TextPart(
-                content='Did you hear about the toothpaste scandal? They called it Colgate.',
-                part_kind='text',
-            )
-        ],
-        timestamp=datetime.datetime(...),
-        kind='response',
-    ),
-]
-"""
-
-# messages excluding system prompts
-print(result.new_messages())
 """
 [
     ModelRequest(
@@ -175,16 +145,7 @@ To use existing messages in a run, pass them to the `message_history` parameter 
 [`Agent.run`][pydantic_ai.Agent.run], [`Agent.run_sync`][pydantic_ai.Agent.run_sync] or
 [`Agent.run_stream`][pydantic_ai.Agent.run_stream].
 
-!!! info "`all_messages()` vs. `new_messages()`"
-    PydanticAI will inspect any messages it receives for system prompts.
-
-    If any system prompts are found in `message_history`, new system prompts are not generated,
-    otherwise new system prompts are generated and inserted before `message_history` in the list of messages
-    used in the run.
-
-    Thus you can decide whether you want to use system prompts from a previous run or generate them again by using
-    [`all_messages()`][pydantic_ai.result.RunResult.all_messages] or [`new_messages()`][pydantic_ai.result.RunResult.new_messages].
-
+If `message_history` is set and not empty, a new system prompt is not generated — we assume the existing message history includes a system prompt.
 
 ```python {title="Reusing messages in a conversation" hl_lines="9 13"}
 from pydantic_ai import Agent
