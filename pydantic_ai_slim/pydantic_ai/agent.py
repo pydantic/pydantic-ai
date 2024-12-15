@@ -255,11 +255,11 @@ class Agent(Generic[AgentDeps, ResultData]):
                 cost += request_cost
 
                 with _logfire.span('handle model response', run_step=run_step) as handle_span:
-                    final_result, user_msg_parts = await self._handle_model_response(model_response, deps, messages)
+                    final_result, tool_responses = await self._handle_model_response(model_response, deps, messages)
 
-                    if user_msg_parts:
+                    if tool_responses:
                         # Add parts to the conversation as a new message
-                        messages.append(_messages.ModelRequest(user_msg_parts))
+                        messages.append(_messages.ModelRequest(tool_responses))
 
                     # Check if we got a final result
                     if final_result is not None:
@@ -271,9 +271,9 @@ class Agent(Generic[AgentDeps, ResultData]):
                         return result.RunResult(messages, new_message_index, result_data, cost)
                     else:
                         # continue the conversation
-                        handle_span.set_attribute('tool_responses', user_msg_parts)
-                        response_msgs = ' '.join(r.part_kind for r in user_msg_parts)
-                        handle_span.message = f'handle model response -> {response_msgs}'
+                        handle_span.set_attribute('tool_responses', tool_responses)
+                        tool_responses = ' '.join(r.part_kind for r in tool_responses)
+                        handle_span.message = f'handle model response -> {tool_responses}'
 
     def run_sync(
         self,
@@ -402,12 +402,12 @@ class Agent(Generic[AgentDeps, ResultData]):
                         model_req_span.__exit__(None, None, None)
 
                         with _logfire.span('handle model response') as handle_span:
-                            final_result, response_messages = await self._handle_streamed_model_response(
+                            final_result, new_messages = await self._handle_streamed_model_response(
                                 model_response, deps, messages
                             )
 
                             # Add all messages to the conversation
-                            messages.extend(response_messages)
+                            messages.extend(new_messages)
 
                             # Check if we got a final result
                             if final_result is not None:
@@ -428,10 +428,12 @@ class Agent(Generic[AgentDeps, ResultData]):
                                 return
                             else:
                                 # continue the conversation
-                                handle_span.set_attribute('tool_responses', response_messages)
-                                # TODO this is wrong, it should be a list of parts
-                                response_msgs = ' '.join(r.kind for r in response_messages)
-                                handle_span.message = f'handle model response -> {response_msgs}'
+                                # the last new message should always be a model request
+                                tool_response_msg = new_messages[-1]
+                                assert isinstance(tool_response_msg, _messages.ModelRequest)
+                                handle_span.set_attribute('tool_responses', tool_response_msg.parts)
+                                tool_responses = ' '.join(r.part_kind for r in tool_response_msg.parts)
+                                handle_span.message = f'handle model response -> {tool_responses}'
                                 # the model_response should have been fully streamed by now, we can add it's cost
                                 cost += model_response.cost()
 
@@ -814,7 +816,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         """Process a non-streamed response from the model.
 
         Returns:
-            A tuple of `(final_result, messages)`. If `final_result` is not `None`, the conversation should end.
+            A tuple of `(final_result, request parts)`. If `final_result` is not `None`, the conversation should end.
         """
         texts: list[str] = []
         tool_calls: list[_messages.ToolCallPart] = []
@@ -1005,15 +1007,15 @@ class Agent(Generic[AgentDeps, ResultData]):
             # the model is calling a tool function, consume the response to get the next message
             async for _ in model_response:
                 pass
-            structured_msg = model_response.get()
-            if not structured_msg.parts:
+            model_response_msg = model_response.get()
+            if not model_response_msg.parts:
                 raise exceptions.UnexpectedModelBehavior('Received empty tool call message')
-            messages: list[_messages.ModelMessage] = [structured_msg]
+            messages: list[_messages.ModelMessage] = [model_response_msg]
 
             # we now run all tool functions in parallel
             tasks: list[asyncio.Task[_messages.ModelRequestPart]] = []
             parts: list[_messages.ModelRequestPart] = []
-            for item in structured_msg.parts:
+            for item in model_response_msg.parts:
                 if isinstance(item, _messages.ToolCallPart):
                     call = item
                     if tool := self._function_tools.get(call.tool_name):
