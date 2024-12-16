@@ -1060,13 +1060,13 @@ class TestMultipleToolCalls:
                 ModelRequest(
                     parts=[
                         ToolReturnPart(
-                            tool_name='final_result',
-                            content='Final result processed.',
+                            tool_name='regular_tool',
+                            content='Tool not executed - a final result was already processed.',
                             timestamp=IsNow(tz=timezone.utc),
                         ),
                         ToolReturnPart(
-                            tool_name='regular_tool',
-                            content='Tool not executed - a final result was already processed.',
+                            tool_name='final_result',
+                            content='Final result processed.',
                             timestamp=IsNow(tz=timezone.utc),
                         ),
                         ToolReturnPart(

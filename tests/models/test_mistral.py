@@ -1327,6 +1327,12 @@ async def test_stream_tool_call_with_return_type(allow_model_requests: None):
                     )
                 ]
             ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(tool_name='final_result', args=ArgsJson(args_json='{"won": true}'), tool_call_id='1')
+                ],
+                timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+            ),
             ModelRequest(
                 parts=[
                     ToolReturnPart(
@@ -1336,12 +1342,6 @@ async def test_stream_tool_call_with_return_type(allow_model_requests: None):
                         timestamp=IsNow(tz=timezone.utc),
                     )
                 ]
-            ),
-            ModelResponse(
-                parts=[
-                    ToolCallPart(tool_name='final_result', args=ArgsJson(args_json='{"won": true}'), tool_call_id='1')
-                ],
-                timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
             ),
         ]
     )

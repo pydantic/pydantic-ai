@@ -6,6 +6,7 @@ from datetime import timezone
 
 import pytest
 from inline_snapshot import snapshot
+from pydantic import BaseModel
 
 from pydantic_ai import Agent, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
@@ -214,15 +215,6 @@ async def test_call_tool():
                 ModelRequest(
                     parts=[ToolReturnPart(tool_name='ret_a', content='hello world', timestamp=IsNow(tz=timezone.utc))]
                 ),
-                ModelRequest(
-                    parts=[
-                        ToolReturnPart(
-                            tool_name='final_result',
-                            content='Final result processed.',
-                            timestamp=IsNow(tz=timezone.utc),
-                        )
-                    ]
-                ),
             ]
         )
         assert await result.get_data() == snapshot(('hello world', 2))
@@ -236,15 +228,6 @@ async def test_call_tool():
                 ModelRequest(
                     parts=[ToolReturnPart(tool_name='ret_a', content='hello world', timestamp=IsNow(tz=timezone.utc))]
                 ),
-                ModelRequest(
-                    parts=[
-                        ToolReturnPart(
-                            tool_name='final_result',
-                            content='Final result processed.',
-                            timestamp=IsNow(tz=timezone.utc),
-                        )
-                    ]
-                ),
                 ModelResponse(
                     parts=[
                         ToolCallPart(
@@ -253,6 +236,15 @@ async def test_call_tool():
                         )
                     ],
                     timestamp=IsNow(tz=timezone.utc),
+                ),
+                ModelRequest(
+                    parts=[
+                        ToolReturnPart(
+                            tool_name='final_result',
+                            content='Final result processed.',
+                            timestamp=IsNow(tz=timezone.utc),
+                        )
+                    ]
                 ),
             ]
         )
@@ -294,6 +286,277 @@ async def test_call_tool_wrong_name():
                     RetryPromptPart(
                         content="Unknown tool name: 'foobar'. Available tools: ret_a, final_result",
                         timestamp=IsNow(tz=timezone.utc),
+                    )
+                ]
+            ),
+        ]
+    )
+
+
+class ResultType(BaseModel):
+    """Result type used by all tests."""
+
+    value: str
+
+
+async def test_early_strategy_stops_after_first_final_result():
+    """Test that 'early' strategy stops processing regular tools after first final result."""
+    tool_called: list[str] = []
+
+    async def sf(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        assert info.result_tools is not None
+        yield {1: DeltaToolCall('final_result', '{"value": "final"}')}
+        yield {2: DeltaToolCall('regular_tool', '{"x": 1}')}
+        yield {3: DeltaToolCall('another_tool', '{"y": 2}')}
+
+    agent = Agent(FunctionModel(stream_function=sf), result_type=ResultType, end_strategy='early')
+
+    @agent.tool_plain
+    def regular_tool(x: int) -> int:  # pragma: no cover
+        """A regular tool that should not be called."""
+        tool_called.append('regular_tool')
+        return x
+
+    @agent.tool_plain
+    def another_tool(y: int) -> int:  # pragma: no cover
+        """Another tool that should not be called."""
+        tool_called.append('another_tool')
+        return y
+
+    async with agent.run_stream('test early strategy') as result:
+        response = await result.get_data()
+        assert response.value == snapshot('final')
+        messages = result.all_messages()
+
+    # Verify no tools were called after final result
+    assert tool_called == []
+
+    # Verify we got tool returns for all calls
+    assert messages == snapshot(
+        [
+            ModelRequest(parts=[UserPromptPart(content='test early strategy', timestamp=IsNow(tz=timezone.utc))]),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(tool_name='final_result', args=ArgsJson(args_json='{"value": "final"}')),
+                    ToolCallPart(tool_name='regular_tool', args=ArgsJson(args_json='{"x": 1}')),
+                    ToolCallPart(tool_name='another_tool', args=ArgsJson(args_json='{"y": 2}')),
+                ],
+                timestamp=IsNow(tz=timezone.utc),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='final_result',
+                        content='Final result processed.',
+                        timestamp=IsNow(tz=timezone.utc),
+                    ),
+                    ToolReturnPart(
+                        tool_name='regular_tool',
+                        content='Tool not executed - a final result was already processed.',
+                        timestamp=IsNow(tz=timezone.utc),
+                    ),
+                    ToolReturnPart(
+                        tool_name='another_tool',
+                        content='Tool not executed - a final result was already processed.',
+                        timestamp=IsNow(tz=timezone.utc),
+                    ),
+                ]
+            ),
+        ]
+    )
+
+
+async def test_early_strategy_uses_first_final_result():
+    """Test that 'early' strategy uses the first final result and ignores subsequent ones."""
+
+    async def sf(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        assert info.result_tools is not None
+        yield {1: DeltaToolCall('final_result', '{"value": "first"}')}
+        yield {2: DeltaToolCall('final_result', '{"value": "second"}')}
+
+    agent = Agent(FunctionModel(stream_function=sf), result_type=ResultType, end_strategy='early')
+
+    async with agent.run_stream('test multiple final results') as result:
+        response = await result.get_data()
+        assert response.value == snapshot('first')
+        messages = result.all_messages()
+
+    # Verify we got appropriate tool returns
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='test multiple final results', timestamp=IsNow(tz=timezone.utc))]
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(tool_name='final_result', args=ArgsJson(args_json='{"value": "first"}')),
+                    ToolCallPart(tool_name='final_result', args=ArgsJson(args_json='{"value": "second"}')),
+                ],
+                timestamp=IsNow(tz=timezone.utc),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='final_result', content='Final result processed.', timestamp=IsNow(tz=timezone.utc)
+                    ),
+                    ToolReturnPart(
+                        tool_name='final_result',
+                        content='Result tool not used - a final result was already processed.',
+                        timestamp=IsNow(tz=timezone.utc),
+                    ),
+                ]
+            ),
+        ]
+    )
+
+
+async def test_exhaustive_strategy_executes_all_tools():
+    """Test that 'exhaustive' strategy executes all tools while using first final result."""
+    tool_called: list[str] = []
+
+    async def sf(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        assert info.result_tools is not None
+        yield {1: DeltaToolCall('final_result', '{"value": "first"}')}
+        yield {2: DeltaToolCall('regular_tool', '{"x": 42}')}
+        yield {3: DeltaToolCall('another_tool', '{"y": 2}')}
+        yield {4: DeltaToolCall('final_result', '{"value": "second"}')}
+        yield {5: DeltaToolCall('unknown_tool', '{"value": "???"}')}
+
+    agent = Agent(FunctionModel(stream_function=sf), result_type=ResultType, end_strategy='exhaustive')
+
+    @agent.tool_plain
+    def regular_tool(x: int) -> int:
+        """A regular tool that should be called."""
+        tool_called.append('regular_tool')
+        return x
+
+    @agent.tool_plain
+    def another_tool(y: int) -> int:
+        """Another tool that should be called."""
+        tool_called.append('another_tool')
+        return y
+
+    async with agent.run_stream('test exhaustive strategy') as result:
+        response = await result.get_data()
+        assert response.value == snapshot('first')
+        messages = result.all_messages()
+
+    # Verify we got tool returns in the correct order
+    assert messages == snapshot(
+        [
+            ModelRequest(parts=[UserPromptPart(content='test exhaustive strategy', timestamp=IsNow(tz=timezone.utc))]),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(tool_name='final_result', args=ArgsJson(args_json='{"value": "first"}')),
+                    ToolCallPart(tool_name='regular_tool', args=ArgsJson(args_json='{"x": 42}')),
+                    ToolCallPart(tool_name='another_tool', args=ArgsJson(args_json='{"y": 2}')),
+                    ToolCallPart(tool_name='final_result', args=ArgsJson(args_json='{"value": "second"}')),
+                    ToolCallPart(tool_name='unknown_tool', args=ArgsJson(args_json='{"value": "???"}')),
+                ],
+                timestamp=IsNow(tz=timezone.utc),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='final_result',
+                        content='Final result processed.',
+                        timestamp=IsNow(tz=timezone.utc),
+                    ),
+                    ToolReturnPart(
+                        tool_name='final_result',
+                        content='Result tool not used - a final result was already processed.',
+                        timestamp=IsNow(tz=timezone.utc),
+                    ),
+                    RetryPromptPart(
+                        content="Unknown tool name: 'unknown_tool'. Available tools: regular_tool, another_tool, final_result",
+                        timestamp=IsNow(tz=timezone.utc),
+                    ),
+                    ToolReturnPart(tool_name='regular_tool', content=42, timestamp=IsNow(tz=timezone.utc)),
+                    ToolReturnPart(tool_name='another_tool', content=2, timestamp=IsNow(tz=timezone.utc)),
+                ]
+            ),
+        ]
+    )
+
+
+@pytest.mark.xfail(reason='final result tool not first is not yet supported')
+async def test_early_strategy_with_final_result_in_middle():
+    """Test that 'early' strategy stops at first final result, regardless of position."""
+    tool_called: list[str] = []
+
+    async def sf(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        assert info.result_tools is not None
+        yield {1: DeltaToolCall('regular_tool', '{"x": 1}')}
+        yield {2: DeltaToolCall('final_result', '{"value": "final"}')}
+        yield {3: DeltaToolCall('another_tool', '{"y": 2}')}
+        yield {4: DeltaToolCall('unknown_tool', '{"value": "???"}')}
+
+    agent = Agent(FunctionModel(stream_function=sf), result_type=ResultType, end_strategy='early')
+
+    @agent.tool_plain
+    def regular_tool(x: int) -> int:  # pragma: no cover
+        """A regular tool that should not be called."""
+        tool_called.append('regular_tool')
+        return x
+
+    @agent.tool_plain
+    def another_tool(y: int) -> int:  # pragma: no cover
+        """A tool that should not be called."""
+        tool_called.append('another_tool')
+        return y
+
+    async with agent.run_stream('test early strategy with final result in middle') as result:
+        response = await result.get_data()
+        assert response.value == snapshot('first')
+        messages = result.all_messages()
+
+    # Verify no tools were called
+    assert tool_called == []
+
+    # Verify we got appropriate tool returns
+    assert messages == snapshot()
+
+
+async def test_early_strategy_does_not_apply_to_tool_calls_without_final_tool():
+    """Test that 'early' strategy does not apply to tool calls without final tool."""
+    tool_called: list[str] = []
+    agent = Agent(TestModel(), result_type=ResultType, end_strategy='early')
+
+    @agent.tool_plain
+    def regular_tool(x: int) -> int:
+        """A regular tool that should be called."""
+        tool_called.append('regular_tool')
+        return x
+
+    async with agent.run_stream('test early strategy with regular tool calls') as result:
+        response = await result.get_data()
+        assert response.value == snapshot('a')
+        messages = result.all_messages()
+
+    assert tool_called == ['regular_tool']
+
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='test early strategy with regular tool calls', timestamp=IsNow(tz=timezone.utc)
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='regular_tool', args=ArgsDict(args_dict={'x': 0}))],
+                timestamp=IsNow(tz=timezone.utc),
+            ),
+            ModelRequest(parts=[ToolReturnPart(tool_name='regular_tool', content=0, timestamp=IsNow(tz=timezone.utc))]),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='final_result', args=ArgsDict(args_dict={'value': 'a'}))],
+                timestamp=IsNow(tz=timezone.utc),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='final_result', content='Final result processed.', timestamp=IsNow(tz=timezone.utc)
                     )
                 ]
             ),

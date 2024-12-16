@@ -1,7 +1,7 @@
 from __future__ import annotations as _annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Generic, TypeVar, cast
@@ -122,7 +122,8 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
     _result_schema: _result.ResultSchema[ResultData] | None
     _deps: AgentDeps
     _result_validators: list[_result.ResultValidator[AgentDeps, ResultData]]
-    _on_complete: Callable[[list[_messages.ModelMessage]], None]
+    _result_tool_name: str | None
+    _on_complete: Callable[[], Awaitable[None]]
     is_complete: bool = field(default=False, init=False)
     """Whether the stream has all been received.
 
@@ -205,7 +206,7 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
                     combined = await self._validate_text_result(''.join(chunks))
                     yield combined
                 lf_span.set_attribute('combined_text', combined)
-                self._marked_completed(_messages.ModelResponse.from_text(combined))
+                await self._marked_completed(_messages.ModelResponse.from_text(combined))
 
     async def stream_structured(
         self, *, debounce_by: float | None = 0.1
@@ -244,7 +245,7 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
                 msg = self._stream_response.get(final=True)
                 yield msg, True
                 lf_span.set_attribute('structured_response', msg)
-                self._marked_completed(msg)
+                await self._marked_completed(msg)
 
     async def get_data(self) -> ResultData:
         """Stream the whole response, validate and return it."""
@@ -253,11 +254,11 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
         if isinstance(self._stream_response, models.StreamTextResponse):
             text = ''.join(self._stream_response.get(final=True))
             text = await self._validate_text_result(text)
-            self._marked_completed(_messages.ModelResponse.from_text(text))
+            await self._marked_completed(_messages.ModelResponse.from_text(text))
             return cast(ResultData, text)
         else:
             message = self._stream_response.get(final=True)
-            self._marked_completed(message)
+            await self._marked_completed(message)
             return await self.validate_structured_result(message)
 
     @property
@@ -282,7 +283,8 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
     ) -> ResultData:
         """Validate a structured result message."""
         assert self._result_schema is not None, 'Expected _result_schema to not be None'
-        match = self._result_schema.find_tool(message)
+        assert self._result_tool_name is not None, 'Expected _result_tool_name to not be None'
+        match = self._result_schema.find_named_tool(message.parts, self._result_tool_name)
         if match is None:
             raise exceptions.UnexpectedModelBehavior(
                 f'Invalid message, unable to find tool: {self._result_schema.tool_names()}'
@@ -306,7 +308,7 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
             )
         return text
 
-    def _marked_completed(self, message: _messages.ModelResponse) -> None:
+    async def _marked_completed(self, message: _messages.ModelResponse) -> None:
         self.is_complete = True
         self._all_messages.append(message)
-        self._on_complete(self._all_messages)
+        await self._on_complete()

@@ -669,13 +669,6 @@ async def test_stream_structured_tool_calls(get_gemini_client: GetGeminiClient):
                     ToolReturnPart(tool_name='bar', content='b', timestamp=IsNow(tz=timezone.utc)),
                 ]
             ),
-            ModelRequest(
-                parts=[
-                    ToolReturnPart(
-                        tool_name='final_result', content='Final result processed.', timestamp=IsNow(tz=timezone.utc)
-                    )
-                ]
-            ),
             ModelResponse(
                 parts=[
                     ToolCallPart(
@@ -684,6 +677,13 @@ async def test_stream_structured_tool_calls(get_gemini_client: GetGeminiClient):
                     )
                 ],
                 timestamp=IsNow(tz=timezone.utc),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='final_result', content='Final result processed.', timestamp=IsNow(tz=timezone.utc)
+                    )
+                ]
             ),
         ]
     )
