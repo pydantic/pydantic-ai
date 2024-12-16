@@ -25,6 +25,10 @@ if TYPE_CHECKING:
 
 
 KnownModelName = Literal[
+    # Cohere Models
+    'cohere:command-r',
+    'cohere:command-r-plus',
+    # OpenAI Models
     'openai:gpt-4o',
     'openai:gpt-4o-mini',
     'openai:gpt-4-turbo',
@@ -32,6 +36,7 @@ KnownModelName = Literal[
     'openai:o1-preview',
     'openai:o1-mini',
     'openai:gpt-3.5-turbo',
+    # Groq Models
     'groq:llama-3.3-70b-versatile',
     'groq:llama-3.1-70b-versatile',
     'groq:llama3-groq-70b-8192-tool-use-preview',
@@ -47,17 +52,20 @@ KnownModelName = Literal[
     'groq:mixtral-8x7b-32768',
     'groq:gemma2-9b-it',
     'groq:gemma-7b-it',
+    # Gemini Models
     'gemini-1.5-flash',
     'gemini-1.5-pro',
     'gemini-2.0-flash-exp',
     'vertexai:gemini-1.5-flash',
     'vertexai:gemini-1.5-pro',
+    # Mistral Models
     # since mistral models are supported by other providers (e.g. ollama), and some of their models (e.g. "codestral")
     # don't start with "mistral", we add the "mistral:" prefix to all to be explicit
     'mistral:mistral-small-latest',
     'mistral:mistral-large-latest',
     'mistral:codestral-latest',
     'mistral:mistral-moderation-latest',
+    # Ollama Models
     'ollama:codellama',
     'ollama:gemma',
     'ollama:gemma2',
@@ -75,9 +83,11 @@ KnownModelName = Literal[
     'ollama:qwen2',
     'ollama:qwen2.5',
     'ollama:starcoder2',
+    # Claude Models
     'claude-3-5-haiku-latest',
     'claude-3-5-sonnet-latest',
     'claude-3-opus-latest',
+    # Test Models
     'test',
 ]
 """Known model names that can be used with the `model` parameter of [`Agent`][pydantic_ai.Agent].
@@ -298,6 +308,10 @@ def infer_model(model: Model | KnownModelName) -> Model:
         from .anthropic import AnthropicModel
 
         return AnthropicModel(model)
+    elif model.startswith(cohere_prefix := 'cohere:'):
+        from .cohere import CohereModel
+
+        return CohereModel(model[len(cohere_prefix) :])
     else:
         raise UserError(f'Unknown model: {model}')
 
