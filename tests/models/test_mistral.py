@@ -388,6 +388,9 @@ async def test_request_model_structured_with_arguments_dict_response(allow_model
 
     # Then
     assert result.data == CityLocation(city='paris', country='france')
+    assert result.cost().request_tokens == 1
+    assert result.cost().response_tokens == 2
+    assert result.cost().total_tokens == 3
     assert result.all_messages() == snapshot(
         [
             ModelRequest(parts=[UserPromptPart(content='User prompt value', timestamp=IsNow(tz=timezone.utc))]),
@@ -413,9 +416,6 @@ async def test_request_model_structured_with_arguments_dict_response(allow_model
             ),
         ]
     )
-    assert result.cost().request_tokens == 1
-    assert result.cost().response_tokens == 2
-    assert result.cost().total_tokens == 3
 
 
 async def test_request_model_structured_with_arguments_str_response(allow_model_requests: None):
@@ -448,6 +448,10 @@ async def test_request_model_structured_with_arguments_str_response(allow_model_
 
     # Then
     assert result.data == CityLocation(city='paris', country='france')
+    assert result.cost().request_tokens == 1
+    assert result.cost().response_tokens == 1
+    assert result.cost().total_tokens == 1
+    assert result.cost().details is None
     assert result.all_messages() == snapshot(
         [
             ModelRequest(parts=[UserPromptPart(content='User prompt value', timestamp=IsNow(tz=timezone.utc))]),
@@ -499,6 +503,10 @@ async def test_request_result_type_with_arguments_str_response(allow_model_reque
 
     # Then
     assert result.data == 42
+    assert result.cost().request_tokens == 1
+    assert result.cost().response_tokens == 1
+    assert result.cost().total_tokens == 1
+    assert result.cost().details is None
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -1012,6 +1020,9 @@ async def test_request_tool_call(allow_model_requests: None):
 
     # Then
     assert result.data == 'final response'
+    assert result.cost().request_tokens == 6
+    assert result.cost().response_tokens == 4
+    assert result.cost().total_tokens == 10
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -1065,9 +1076,6 @@ async def test_request_tool_call(allow_model_requests: None):
             ),
         ]
     )
-    assert result.cost().request_tokens == 6
-    assert result.cost().response_tokens == 4
-    assert result.cost().total_tokens == 10
 
 
 async def test_request_tool_call_with_result_type(allow_model_requests: None):
@@ -1148,6 +1156,9 @@ async def test_request_tool_call_with_result_type(allow_model_requests: None):
 
     # Then
     assert result.data == {'lat': 51, 'lng': 0}
+    assert result.cost().request_tokens == 7
+    assert result.cost().response_tokens == 4
+    assert result.cost().total_tokens == 12
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -1218,9 +1229,6 @@ async def test_request_tool_call_with_result_type(allow_model_requests: None):
             ),
         ]
     )
-    assert result.cost().request_tokens == 7
-    assert result.cost().response_tokens == 4
-    assert result.cost().total_tokens == 12
 
 
 #####################
@@ -1251,7 +1259,10 @@ async def test_stream_tool_call_with_return_type(allow_model_requests: None):
             ),
         ],
         [
-            chunk(delta=[MistralDeltaMessage(role='assistant', content='', tool_calls=MistralUnset())]),
+            chunk(
+                delta=[MistralDeltaMessage(role=MistralUnset(), content='', tool_calls=MistralUnset())],
+                finish_reason='tool_calls',
+            ),
             func_chunk(
                 tool_calls=[
                     MistralToolCall(
@@ -1334,6 +1345,8 @@ async def test_stream_tool_call_with_return_type(allow_model_requests: None):
             ),
         ]
     )
+
+    assert await result.get_data() == {'won': True}
 
 
 async def test_stream_tool_call(allow_model_requests: None):
