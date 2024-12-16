@@ -26,7 +26,7 @@ class CityLocation(BaseModel):
     country: str
 
 
-agent = Agent('llama3.2', result_type=CityLocation)
+agent = Agent('ollama:llama3.2', result_type=CityLocation)
 
 result = agent.run_sync('Where were the olympics held in 2012?')
 print(result.data)
