@@ -152,7 +152,7 @@ class MistralAgentModel(AgentModel):
     allow_text_result: bool
     function_tools: list[ToolDefinition]
     result_tools: list[ToolDefinition]
-    json_mode_schema_prompt: str = """Answer in JSON Object, respect this following format:\n```\n{schema}\n```\n"""
+    json_mode_schema_prompt: str = """Answer in JSON Object, respect the format:\n```\n{schema}\n```\n"""
 
     async def request(
         self, messages: list[ModelMessage], model_settings: ModelSettings | None
@@ -167,9 +167,8 @@ class MistralAgentModel(AgentModel):
     ) -> AsyncIterator[EitherStreamedResponse]:
         """Make a streaming request to the model from Pydantic AI call."""
         response = await self._stream_completions_create(messages, model_settings)
-        is_function_tool = True if self.function_tools else False
         async with response:
-            yield await self._process_streamed_response(is_function_tool, self.result_tools, response)
+            yield await self._process_streamed_response(self.result_tools, response)
 
     async def _completions_create(
         self, messages: list[ModelMessage], model_settings: ModelSettings | None
@@ -186,7 +185,7 @@ class MistralAgentModel(AgentModel):
             max_tokens=model_settings.get('max_tokens', UNSET),
             temperature=model_settings.get('temperature', UNSET),
             top_p=model_settings.get('top_p', 1),
-            timeout_ms=_get_timeout_ms(model_settings.get('timeout')),
+            timeout_ms=self._get_timeout_ms(model_settings.get('timeout')),
         )
         assert response, 'A unexpected empty response from Mistral.'
         return response
@@ -213,19 +212,15 @@ class MistralAgentModel(AgentModel):
                 temperature=model_settings.get('temperature', UNSET),
                 top_p=model_settings.get('top_p', 1),
                 max_tokens=model_settings.get('max_tokens', UNSET),
-                timeout_ms=_get_timeout_ms(model_settings.get('timeout')),
+                timeout_ms=self._get_timeout_ms(model_settings.get('timeout')),
             )
 
         elif self.result_tools:
             # Json Mode
-            schema: dict[str, Any] | list[dict[str, Any]]
-            if len(self.result_tools) == 1:
-                schema = _generate_simple_json_schema(self.result_tools[0].parameters_json_schema)
-            else:
-                parameters_json_schemas = [tool.parameters_json_schema for tool in self.result_tools]
-                schema = _generate_simple_json_schemas(parameters_json_schemas)
+            parameters_json_schemas = [tool.parameters_json_schema for tool in self.result_tools]
 
-            mistral_messages.append(MistralUserMessage(content=self.json_mode_schema_prompt.format(schema=schema)))
+            user_output_format_message = self._generate_user_output_format(parameters_json_schemas)
+            mistral_messages.append(user_output_format_message)
             response = await self.client.chat.stream_async(
                 model=str(self.model_name),
                 messages=mistral_messages,
@@ -282,33 +277,22 @@ class MistralAgentModel(AgentModel):
 
         assert response.choices, 'Unexpected empty response choice.'
         choice = response.choices[0]
+        content = choice.message.content
+        tool_calls = choice.message.tool_calls
 
         parts: list[ModelResponsePart] = []
-        if choice.message.content is not None:
-            # Note: Check len to handle potential mismatch between function calls and responses from the API. (`msg: not the same number of function class and reponses`)
-            if isinstance(choice.message.content, str) and len(choice.message.content) > 0:
-                parts.append(TextPart(choice.message.content))
-            elif isinstance(choice.message.content, list):
-                for chunk in choice.message.content:
-                    if isinstance(chunk, MistralTextChunk) and len(chunk.text) > 0:
-                        parts.append(TextPart(chunk.text))
-                    else:
-                        raise Exception(
-                            f'Implementation for ImageURLChunk and ReferenceChunk is not available for the moment: {type(chunk)}'
-                        )
+        if text := _map_content(content):
+            parts.append(TextPart(text))
 
-        if isinstance(choice.message.tool_calls, list):
-            for c in choice.message.tool_calls:
-                if isinstance(c.function.arguments, str):
-                    parts.append(ToolCallPart.from_json(c.function.name, c.function.arguments, c.id))
-                else:
-                    parts.append(ToolCallPart.from_dict(c.function.name, c.function.arguments, c.id))
+        if isinstance(tool_calls, list):
+            for tool_call in tool_calls:
+                tool = _map_mistral_to_pydantic_tool_call(tool_call)
+                parts.append(tool)
 
         return ModelResponse(parts, timestamp=timestamp)
 
     @staticmethod
     async def _process_streamed_response(
-        is_function_tools: bool,
         result_tools: list[ToolDefinition],
         response: MistralEventStreamAsync[MistralCompletionEvent],
     ) -> EitherStreamedResponse:
@@ -332,16 +316,15 @@ class MistralAgentModel(AgentModel):
 
             if chunk.choices:
                 delta = chunk.choices[0].delta
-                content = _map_delta_content(delta.content)
+                content = _map_content(delta.content)
 
                 tool_calls: list[MistralToolCall] | None = None
                 if delta.tool_calls:
                     tool_calls = delta.tool_calls
 
-                if content and result_tools:
+                if tool_calls or content and result_tools:
                     return MistralStreamStructuredResponse(
-                        is_function_tools,
-                        {},
+                        {c.id if c.id else 'null': c for c in tool_calls or []},
                         {c.name: c for c in result_tools},
                         response,
                         content,
@@ -352,36 +335,93 @@ class MistralAgentModel(AgentModel):
                 elif content:
                     return MistralStreamTextResponse(content, response, timestamp, start_cost)
 
-                elif tool_calls:
-                    return MistralStreamStructuredResponse(
-                        is_function_tools,
-                        {c.id if c.id else 'null': c for c in tool_calls},
-                        {c.name: c for c in result_tools},
-                        response,
-                        None,
-                        timestamp,
-                        start_cost,
-                    )
+    @staticmethod
+    def _map_to_mistral_tool_call(t: ToolCallPart) -> MistralToolCall:
+        """Maps a pydantic-ai ToolCall to a MistralToolCall."""
+        if isinstance(t.args, ArgsJson):
+            return MistralToolCall(
+                id=t.tool_call_id,
+                type='function',
+                function=MistralFunctionCall(name=t.tool_name, arguments=t.args.args_json),
+            )
+        else:
+            return MistralToolCall(
+                id=t.tool_call_id,
+                type='function',
+                function=MistralFunctionCall(name=t.tool_name, arguments=t.args.args_dict),
+            )
+
+    def _generate_user_output_format(self, schemas: list[dict[str, Any]]) -> MistralUserMessage:
+        """Get a message with an example of the expected output format."""
+        examples: list[dict[str, Any]] = []
+        for schema in schemas:
+            typed_dict_definition: dict[str, Any] = {}
+            for key, value in schema.get('properties', {}).items():
+                typed_dict_definition[key] = self._get_python_type(value)
+            examples.append(typed_dict_definition)
+
+        example_schema = examples[0] if len(examples) == 1 else examples
+        return MistralUserMessage(content=self.json_mode_schema_prompt.format(schema=example_schema))
 
     @classmethod
-    def _map_message(cls, message: ModelMessage) -> Iterable[MistralMessages]:
-        """Just maps a `pydantic_ai.Message` to a `Mistral Message`."""
-        if isinstance(message, ModelRequest):
-            yield from cls._map_user_message(message)
-        elif isinstance(message, ModelResponse):
-            content_chunks: list[MistralContentChunk] = []
-            tool_calls: list[MistralToolCall] = []
+    def _get_python_type(cls, value: dict[str, Any]) -> str:
+        """Return a string representation of the Python type for a single JSON schema property.
 
-            for part in message.parts:
-                if isinstance(part, TextPart):
-                    content_chunks.append(MistralTextChunk(text=part.content))
-                elif isinstance(part, ToolCallPart):
-                    tool_calls.append(_map_pydantic_to_mistral_tool_call(part))
-                else:
-                    assert_never(part)
-            yield MistralAssistantMessage(content=content_chunks, tool_calls=tool_calls)
-        else:
-            assert_never(message)
+        This function handles recursion for nested arrays/objects and `anyOf`.
+        """
+        # 1) Handle anyOf first, because it's a different schema structure
+        if any_of := value.get('anyOf'):
+            # Simplistic approach: pick the first option in anyOf
+            # (In reality, you'd possibly want to merge or union types)
+            return f'Optional[{cls._get_python_type(any_of[0])}]'
+
+        # 2) If we have a top-level "type" field
+        value_type = value.get('type')
+        if not value_type:
+            # No explicit type; fallback
+            return 'Any'
+
+        # 3) Direct simple type mapping (string, integer, float, bool, None)
+        if value_type in SIMPLE_JSON_TYPE_MAPPING and value_type != 'array' and value_type != 'object':
+            return SIMPLE_JSON_TYPE_MAPPING[value_type]
+
+        # 4) Array: Recursively get the item type
+        if value_type == 'array':
+            items = value.get('items', {})
+            return f'list[{cls._get_python_type(items)}]'
+
+        # 5) Object: Check for additionalProperties
+        if value_type == 'object':
+            additional_properties = value.get('additionalProperties', {})
+            additional_properties_type = additional_properties.get('type')
+            if (
+                additional_properties_type in SIMPLE_JSON_TYPE_MAPPING
+                and additional_properties_type != 'array'
+                and additional_properties_type != 'object'
+            ):
+                # dict[str, bool/int/float/etc...]
+                return f'dict[str, {SIMPLE_JSON_TYPE_MAPPING[additional_properties_type]}]'
+            elif additional_properties_type == 'array':
+                array_items = additional_properties.get('items', {})
+                return f'dict[str, list[{cls._get_python_type(array_items)}]]'
+            elif additional_properties_type == 'object':
+                # nested dictionary of unknown shape
+                return 'dict[str, dict[str, Any]]'
+            else:
+                # If no additionalProperties type or something else, default to a generic dict
+                return 'dict[str, Any]'
+
+        # 6) Fallback
+        return 'Any'
+
+    @staticmethod
+    def _get_timeout_ms(timeout: Timeout | float | None) -> int | None:
+        """Convert a timeout to milliseconds."""
+        if timeout is None:
+            return None
+        if isinstance(timeout, float):
+            return int(1000 * timeout)
+        raise NotImplementedError('Timeout object is not yet supported for MistralModel.')
 
     @classmethod
     def _map_user_message(cls, message: ModelRequest) -> Iterable[MistralMessages]:
@@ -405,6 +445,26 @@ class MistralAgentModel(AgentModel):
                     )
             else:
                 assert_never(part)
+
+    @classmethod
+    def _map_message(cls, message: ModelMessage) -> Iterable[MistralMessages]:
+        """Just maps a `pydantic_ai.Message` to a `MistralMessage`."""
+        if isinstance(message, ModelRequest):
+            yield from cls._map_user_message(message)
+        elif isinstance(message, ModelResponse):
+            content_chunks: list[MistralContentChunk] = []
+            tool_calls: list[MistralToolCall] = []
+
+            for part in message.parts:
+                if isinstance(part, TextPart):
+                    content_chunks.append(MistralTextChunk(text=part.content))
+                elif isinstance(part, ToolCallPart):
+                    tool_calls.append(cls._map_to_mistral_tool_call(part))
+                else:
+                    assert_never(part)
+            yield MistralAssistantMessage(content=content_chunks, tool_calls=tool_calls)
+        else:
+            assert_never(message)
 
 
 @dataclass
@@ -434,16 +494,9 @@ class MistralStreamTextResponse(StreamTextResponse):
         content = choice.delta.content
         if choice.finish_reason is None:
             assert content is not None, f'Expected delta with content, invalid chunk: {chunk!r}'
-        if isinstance(content, str):
-            self._buffer.append(content)
-        elif isinstance(content, list):
-            for chunk in content:
-                if isinstance(chunk, MistralTextChunk):
-                    self._buffer.append(chunk.text)
-                else:
-                    raise Exception(
-                        f'Implementation for ImageURLChunk and ReferenceChunk is not available for the moment: {type(chunk)}'
-                    )
+
+        if text := _map_content(content):
+            self._buffer.append(text)
 
     def get(self, *, final: bool = False) -> Iterable[str]:
         yield from self._buffer
@@ -460,7 +513,6 @@ class MistralStreamTextResponse(StreamTextResponse):
 class MistralStreamStructuredResponse(StreamStructuredResponse):
     """Implementation of `StreamStructuredResponse` for Mistral models."""
 
-    _is_function_tools: bool
     _function_tools: dict[str, MistralToolCall]
     _result_tools: dict[str, ToolDefinition]
     _response: MistralEventStreamAsync[MistralCompletionEvent]
@@ -481,34 +533,25 @@ class MistralStreamStructuredResponse(StreamStructuredResponse):
         if choice.finish_reason is not None:
             raise StopAsyncIteration()
 
-        delta = choice.delta
-        content = _map_delta_content(delta.content)
-
-        if self._function_tools and self._result_tools or self._function_tools:
-            for new in delta.tool_calls or []:
-                if current := self._function_tools.get(new.id or 'null'):
-                    current.function = new.function
-                else:
-                    self._function_tools[new.id or 'null'] = new
-        elif self._result_tools and content:
-            if not self._delta_content:
-                self._delta_content = content
-            else:
-                self._delta_content += content
+        content = choice.delta.content
+        if self._result_tools:
+            if text := _map_content(content):
+                self._delta_content = (self._delta_content or '') + text
 
     def get(self, *, final: bool = False) -> ModelResponse:
         calls: list[ModelResponsePart] = []
-
         if self._function_tools and self._result_tools or self._function_tools:
             for tool_call in self._function_tools.values():
                 tool = _map_mistral_to_pydantic_tool_call(tool_call)
                 calls.append(tool)
+
         elif self._delta_content and self._result_tools:
             # NOTE: Params set for the most efficient and fastest way.
             output_json = repair_json(self._delta_content, return_objects=True, skip_json_loads=True)
             assert isinstance(
                 output_json, dict
             ), f'Expected repair_json as type dict, invalid type: {type(output_json)}'
+
             if output_json:
                 for result_tool in self._result_tools.values():
                     # NOTE: Additional verification to prevent JSON validation to crash in `result.py`
@@ -517,7 +560,7 @@ class MistralStreamStructuredResponse(StreamStructuredResponse):
                     # when `{"response":` then `repair_json` sets `{"response": ""}` (type not found default str)
                     # when `{"response": {` then `repair_json` sets `{"response": {}}` (type found)
                     # This ensures it's corrected to `{"response": {}}` and other required parameters and type.
-                    if not _validate_required_json_shema(output_json, result_tool.parameters_json_schema):
+                    if not self._validate_required_json_shema(output_json, result_tool.parameters_json_schema):
                         continue
 
                     tool = ToolCallPart.from_dict(
@@ -534,8 +577,38 @@ class MistralStreamStructuredResponse(StreamStructuredResponse):
     def timestamp(self) -> datetime:
         return self._timestamp
 
+    @staticmethod
+    def _validate_required_json_shema(json_dict: dict[str, Any], json_schema: dict[str, Any]) -> bool:
+        """Validate that all required parameters in the JSON schema are present in the JSON dictionary."""
+        required_params = json_schema.get('required', [])
+        properties = json_schema.get('properties', {})
 
-VALIDE_JSON_TYPE_MAPPING = {
+        for param in required_params:
+            if param not in json_dict:
+                return False
+
+            param_schema = properties.get(param, {})
+            param_type = param_schema.get('type')
+            param_items_type = param_schema.get('items', {}).get('type')
+
+            if param_type == 'array' and param_items_type:
+                if not isinstance(json_dict[param], list):
+                    return False
+                for item in json_dict[param]:
+                    if not isinstance(item, VALIDE_JSON_TYPE_MAPPING[param_items_type]):
+                        return False
+            elif param_type and not isinstance(json_dict[param], VALIDE_JSON_TYPE_MAPPING[param_type]):
+                return False
+
+            if isinstance(json_dict[param], dict) and 'properties' in param_schema:
+                nested_schema = param_schema
+                if not MistralStreamStructuredResponse._validate_required_json_shema(json_dict[param], nested_schema):
+                    return False
+
+        return True
+
+
+VALIDE_JSON_TYPE_MAPPING: dict[str, Any] = {
     'string': str,
     'integer': int,
     'number': float,
@@ -545,37 +618,6 @@ VALIDE_JSON_TYPE_MAPPING = {
     'null': type(None),
 }
 
-
-def _validate_required_json_shema(json_dict: dict[str, Any], json_schema: dict[str, Any]) -> bool:
-    """Validate that all required parameters in the JSON schema are present in the JSON dictionary."""
-    required_params = json_schema.get('required', [])
-    properties = json_schema.get('properties', {})
-
-    for param in required_params:
-        if param not in json_dict:
-            return False
-
-        param_schema = properties.get(param, {})
-        param_type = param_schema.get('type')
-        param_items_type = param_schema.get('items', {}).get('type')
-
-        if param_type == 'array' and param_items_type:
-            if not isinstance(json_dict[param], list):
-                return False
-            for item in json_dict[param]:
-                if not isinstance(item, VALIDE_JSON_TYPE_MAPPING[param_items_type]):
-                    return False
-        elif param_type and not isinstance(json_dict[param], VALIDE_JSON_TYPE_MAPPING[param_type]):
-            return False
-
-        if isinstance(json_dict[param], dict) and 'properties' in param_schema:
-            nested_schema = param_schema
-            if not _validate_required_json_shema(json_dict[param], nested_schema):
-                return False
-
-    return True
-
-
 SIMPLE_JSON_TYPE_MAPPING = {
     'string': 'str',
     'integer': 'int',
@@ -584,75 +626,6 @@ SIMPLE_JSON_TYPE_MAPPING = {
     'array': 'list',
     'null': 'None',
 }
-
-
-def _get_python_type(value: dict[str, Any]) -> str:
-    """Return a string representation of the Python type for a single JSON schema property.
-
-    This function handles recursion for nested arrays/objects and `anyOf`.
-    """
-    # 1) Handle anyOf first, because it's a different schema structure
-    if 'anyOf' in value:
-        # Simplistic approach: pick the first option in anyOf
-        # (In reality, you'd possibly want to merge or union types)
-        sub_value = value['anyOf'][0]
-        return f'Optional[{_get_python_type(sub_value)}]'
-
-    # 2) If we have a top-level "type" field
-    value_type = value.get('type')
-    if not value_type:
-        # No explicit type; fallback
-        return 'Any'
-
-    # 3) Direct simple type mapping (string, integer, float, bool, None)
-    if value_type in SIMPLE_JSON_TYPE_MAPPING and value_type != 'array' and value_type != 'object':
-        return SIMPLE_JSON_TYPE_MAPPING[value_type]
-
-    # 4) Array: Recursively get the item type
-    if value_type == 'array':
-        items = value.get('items', {})
-        return f'list[{_get_python_type(items)}]'
-
-    # 5) Object: Check for additionalProperties
-    if value_type == 'object':
-        additional_properties = value.get('additionalProperties', {})
-        additional_properties_type = additional_properties.get('type')
-        if (
-            additional_properties_type in SIMPLE_JSON_TYPE_MAPPING
-            and additional_properties_type != 'array'
-            and additional_properties_type != 'object'
-        ):
-            # dict[str, bool/int/float/etc...]
-            return f'dict[str, {SIMPLE_JSON_TYPE_MAPPING[additional_properties_type]}]'
-        elif additional_properties_type == 'array':
-            array_items = additional_properties.get('items', {})
-            return f'dict[str, list[{_get_python_type(array_items)}]]'
-        elif additional_properties_type == 'object':
-            # nested dictionary of unknown shape
-            return 'dict[str, dict[str, Any]]'
-        else:
-            # If no additionalProperties type or something else, default to a generic dict
-            return 'dict[str, Any]'
-
-    # 6) Fallback
-    return 'Any'
-
-
-def _generate_simple_json_schema(schema: dict[str, Any]) -> dict[str, Any]:
-    """Generate a typed dict definition from a JSON schema."""
-    typed_dict_definition: dict[str, Any] = {}
-    for key, value in schema.get('properties', {}).items():
-        typed_dict_definition[key] = _get_python_type(value)
-    return typed_dict_definition
-
-
-def _generate_simple_json_schemas(schemas: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Generates JSON examples from a list of JSON schemas."""
-    examples: list[dict[str, Any]] = []
-    for schema in schemas:
-        example = _generate_simple_json_schema(schema)
-        examples.append(example)
-    return examples
 
 
 def _map_mistral_to_pydantic_tool_call(tool_call: MistralToolCall) -> ToolCallPart:
@@ -672,22 +645,6 @@ def _map_mistral_to_pydantic_tool_call(tool_call: MistralToolCall) -> ToolCallPa
         )
 
 
-def _map_pydantic_to_mistral_tool_call(t: ToolCallPart) -> MistralToolCall:
-    """Maps a Pydantic ToolCall to a MistralToolCall."""
-    if isinstance(t.args, ArgsJson):
-        return MistralToolCall(
-            id=t.tool_call_id,
-            type='function',
-            function=MistralFunctionCall(name=t.tool_name, arguments=t.args.args_json),
-        )
-    else:
-        return MistralToolCall(
-            id=t.tool_call_id,
-            type='function',
-            function=MistralFunctionCall(name=t.tool_name, arguments=t.args.args_dict),
-        )
-
-
 def _map_cost(response: MistralChatCompletionResponse | MistralCompletionChunk) -> Cost:
     """Maps a Mistral Completion Chunk or Chat Completion Response to a Cost."""
     if response.usage:
@@ -701,28 +658,23 @@ def _map_cost(response: MistralChatCompletionResponse | MistralCompletionChunk) 
         return Cost()
 
 
-def _map_delta_content(delta_content: MistralOptionalNullable[MistralContent]) -> str | None:
+def _map_content(content: MistralOptionalNullable[MistralContent]) -> str | None:
     """Maps the delta content from a Mistral Completion Chunk to a string or None."""
-    content: str | None = None
+    result: str | None = None
 
-    if isinstance(delta_content, list) and isinstance(delta_content[0], MistralTextChunk):
-        content = delta_content[0].text
-    elif isinstance(delta_content, str):
-        content = delta_content
-    elif isinstance(delta_content, MistralUnset) or delta_content is None:
-        content = None
-    else:
-        assert False, f'Other data types like (Image, Reference) are not yet supported,  got {type(delta_content)}'
+    if isinstance(content, MistralUnset) or not content:
+        result = None
+    elif isinstance(content, list):
+        for chunk in content:
+            if isinstance(chunk, MistralTextChunk):
+                result = result or '' + chunk.text
+            else:
+                assert False, f'Other data types like (Image, Reference) are not yet supported,  got {type(chunk)}'
+    elif isinstance(content, str):
+        result = content
 
-    if content and content == '':
-        content = None
-    return content
+    # Note: Check len to handle potential mismatch between function calls and responses from the API. (`msg: not the same number of function class and reponses`)
+    if result and len(result) == 0:
+        result = None
 
-
-def _get_timeout_ms(timeout: Timeout | float | None) -> int | None:
-    """Convert a timeout to milliseconds."""
-    if timeout is None:
-        return None
-    if isinstance(timeout, float):
-        return int(1000 * timeout)
-    raise NotImplementedError('Timeout object is not yet supported for MistralModel.')
+    return result
