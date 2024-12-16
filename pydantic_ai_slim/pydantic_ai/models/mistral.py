@@ -152,7 +152,7 @@ class MistralAgentModel(AgentModel):
     allow_text_result: bool
     function_tools: list[ToolDefinition]
     result_tools: list[ToolDefinition]
-    json_mode_schema_prompt: str = """Answer in JSON Object, respect this following format:\n```\n{schema}\n```\n"""
+    json_mode_schema_prompt: str = """Answer in JSON Object, respect the format:\n```\n{schema}\n```\n"""
 
     async def request(
         self, messages: list[ModelMessage], model_settings: ModelSettings | None
@@ -218,10 +218,9 @@ class MistralAgentModel(AgentModel):
         elif self.result_tools:
             # Json Mode
             parameters_json_schemas = [tool.parameters_json_schema for tool in self.result_tools]
-            user_ouput_format_message = self._generate_user_output_format(
-                parameters_json_schemas, self.json_mode_schema_prompt
-            )
-            mistral_messages.append(user_ouput_format_message)
+
+            user_output_format_message = self._generate_user_output_format(parameters_json_schemas)
+            mistral_messages.append(user_output_format_message)
             response = await self.client.chat.stream_async(
                 model=str(self.model_name),
                 messages=mistral_messages,
@@ -337,8 +336,8 @@ class MistralAgentModel(AgentModel):
                     return MistralStreamTextResponse(content, response, timestamp, start_cost)
 
     @staticmethod
-    def _map_pydantic_to_mistral_tool_call(t: ToolCallPart) -> MistralToolCall:
-        """Maps a Pydantic ToolCall to a MistralToolCall."""
+    def _map_to_mistral_tool_call(t: ToolCallPart) -> MistralToolCall:
+        """Maps a pydantic-ai ToolCall to a MistralToolCall."""
         if isinstance(t.args, ArgsJson):
             return MistralToolCall(
                 id=t.tool_call_id,
@@ -352,31 +351,29 @@ class MistralAgentModel(AgentModel):
                 function=MistralFunctionCall(name=t.tool_name, arguments=t.args.args_dict),
             )
 
-    @staticmethod
-    def _generate_user_output_format(schemas: list[dict[str, Any]], json_mode_schema_prompt: str) -> MistralUserMessage:
-        """Get a user prompt output format that generate a simple JSON Simple."""
+    def _generate_user_output_format(self, schemas: list[dict[str, Any]]) -> MistralUserMessage:
+        """Get a message with an example of the expected output format."""
         examples: list[dict[str, Any]] = []
         for schema in schemas:
             typed_dict_definition: dict[str, Any] = {}
             for key, value in schema.get('properties', {}).items():
-                typed_dict_definition[key] = MistralAgentModel._get_python_type(value)
+                typed_dict_definition[key] = self._get_python_type(value)
             examples.append(typed_dict_definition)
 
         example_schema = examples[0] if len(examples) == 1 else examples
-        return MistralUserMessage(content=json_mode_schema_prompt.format(schema=example_schema))
+        return MistralUserMessage(content=self.json_mode_schema_prompt.format(schema=example_schema))
 
-    @staticmethod
-    def _get_python_type(value: dict[str, Any]) -> str:
+    @classmethod
+    def _get_python_type(cls, value: dict[str, Any]) -> str:
         """Return a string representation of the Python type for a single JSON schema property.
 
         This function handles recursion for nested arrays/objects and `anyOf`.
         """
         # 1) Handle anyOf first, because it's a different schema structure
-        if 'anyOf' in value:
+        if any_of := value.get('anyOf'):
             # Simplistic approach: pick the first option in anyOf
             # (In reality, you'd possibly want to merge or union types)
-            sub_value = value['anyOf'][0]
-            return f'Optional[{MistralAgentModel._get_python_type(sub_value)}]'
+            return f'Optional[{cls._get_python_type(any_of[0])}]'
 
         # 2) If we have a top-level "type" field
         value_type = value.get('type')
@@ -391,7 +388,7 @@ class MistralAgentModel(AgentModel):
         # 4) Array: Recursively get the item type
         if value_type == 'array':
             items = value.get('items', {})
-            return f'list[{MistralAgentModel._get_python_type(items)}]'
+            return f'list[{cls._get_python_type(items)}]'
 
         # 5) Object: Check for additionalProperties
         if value_type == 'object':
@@ -406,7 +403,7 @@ class MistralAgentModel(AgentModel):
                 return f'dict[str, {SIMPLE_JSON_TYPE_MAPPING[additional_properties_type]}]'
             elif additional_properties_type == 'array':
                 array_items = additional_properties.get('items', {})
-                return f'dict[str, list[{MistralAgentModel._get_python_type(array_items)}]]'
+                return f'dict[str, list[{cls._get_python_type(array_items)}]]'
             elif additional_properties_type == 'object':
                 # nested dictionary of unknown shape
                 return 'dict[str, dict[str, Any]]'
@@ -451,7 +448,7 @@ class MistralAgentModel(AgentModel):
 
     @classmethod
     def _map_message(cls, message: ModelMessage) -> Iterable[MistralMessages]:
-        """Just maps a `pydantic_ai.Message` to a `Mistral Message`."""
+        """Just maps a `pydantic_ai.Message` to a `MistralMessage`."""
         if isinstance(message, ModelRequest):
             yield from cls._map_user_message(message)
         elif isinstance(message, ModelResponse):
@@ -462,7 +459,7 @@ class MistralAgentModel(AgentModel):
                 if isinstance(part, TextPart):
                     content_chunks.append(MistralTextChunk(text=part.content))
                 elif isinstance(part, ToolCallPart):
-                    tool_calls.append(MistralAgentModel._map_pydantic_to_mistral_tool_call(part))
+                    tool_calls.append(cls._map_to_mistral_tool_call(part))
                 else:
                     assert_never(part)
             yield MistralAssistantMessage(content=content_chunks, tool_calls=tool_calls)

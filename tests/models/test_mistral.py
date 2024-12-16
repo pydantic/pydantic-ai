@@ -105,14 +105,14 @@ class MockMistralAI:
     async def chat_completions_create(  # pragma: no cover
         self, *_args: Any, stream: bool = False, **_kwargs: Any
     ) -> MistralChatCompletionResponse | MockAsyncStream | list[MistralChatCompletionResponse]:
-        response: MistralChatCompletionResponse | MockAsyncStream | list[MistralChatCompletionResponse] = []
+        response: MistralChatCompletionResponse | MockAsyncStream | list[MistralChatCompletionResponse]
         if stream or self.stream:
             assert self.stream is not None, 'you can only used `stream=True` if `stream` is provided'
             if isinstance(self.stream[0], list):
-                response = MockAsyncStream(iter(self.stream[self.index]))  # type: ignore
+                response = MockAsyncStream(iter(self.stream[self.index]))  # pyright: ignore[reportArgumentType]
 
             else:
-                response = MockAsyncStream(iter(self.stream))  # type: ignore
+                response = MockAsyncStream(iter(self.stream))  # pyright: ignore[reportArgumentType]
 
         else:
             assert self.completions is not None, 'you can only used `stream=False` if `completions` are provided'
@@ -1584,16 +1584,26 @@ def test_generate_user_output_format_complex():
             'prop_unrecognized_type': {'type': 'customSomething'},
         }
     }
-    expected_result = "{'prop_anyOf': 'Optional[str]', 'prop_no_type': 'Any', 'prop_simple_string': 'str', 'prop_array_booleans': 'list[bool]', 'prop_object_simple': 'dict[str, bool]', 'prop_object_array': 'dict[str, list[int]]', 'prop_object_object': 'dict[str, dict[str, Any]]', 'prop_object_unknown': 'dict[str, Any]', 'prop_unrecognized_type': 'Any'}"
-    result = MistralAgentModel._generate_user_output_format([schema], '{schema}')  # type: ignore
-    assert result.content == expected_result
+    mam = MistralAgentModel(Mistral(api_key=''), '', False, [], [], '{schema}')
+    result = mam._generate_user_output_format([schema])  # pyright: ignore[reportPrivateUsage]
+    assert result.content == (
+        "{'prop_anyOf': 'Optional[str]', "
+        "'prop_no_type': 'Any', "
+        "'prop_simple_string': 'str', "
+        "'prop_array_booleans': 'list[bool]', "
+        "'prop_object_simple': 'dict[str, bool]', "
+        "'prop_object_array': 'dict[str, list[int]]', "
+        "'prop_object_object': 'dict[str, dict[str, Any]]', "
+        "'prop_object_unknown': 'dict[str, Any]', "
+        "'prop_unrecognized_type': 'Any'}"
+    )
 
 
 def test_generate_user_output_format_multiple():
     schema = {'properties': {'prop_anyOf': {'anyOf': [{'type': 'string'}, {'type': 'integer'}]}}}
-    expected_result = "[{'prop_anyOf': 'Optional[str]'}, {'prop_anyOf': 'Optional[str]'}]"
-    result = MistralAgentModel._generate_user_output_format([schema, schema], '{schema}')  # type: ignore
-    assert result.content == expected_result
+    mam = MistralAgentModel(Mistral(api_key=''), '', False, [], [], '{schema}')
+    result = mam._generate_user_output_format([schema, schema])  # pyright: ignore[reportPrivateUsage]
+    assert result.content == "[{'prop_anyOf': 'Optional[str]'}, {'prop_anyOf': 'Optional[str]'}]"
 
 
 @pytest.mark.parametrize(
@@ -1684,5 +1694,5 @@ def test_generate_user_output_format_multiple():
     ],
 )
 def test_validate_required_json_shema(desc: str, schema: dict[str, Any], data: dict[str, Any], expected: bool) -> None:
-    result = MistralStreamStructuredResponse._validate_required_json_shema(data, schema)  # type: ignore
+    result = MistralStreamStructuredResponse._validate_required_json_shema(data, schema)  # pyright: ignore[reportPrivateUsage]
     assert result == expected, f'{desc} — expected {expected}, got {result}'
