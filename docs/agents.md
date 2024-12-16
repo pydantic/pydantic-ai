@@ -243,7 +243,7 @@ agent = Agent(
 
 @agent.system_prompt  # (3)!
 def add_the_users_name(ctx: RunContext[str]) -> str:
-    return f"The user's named is {ctx.deps}."
+    return f"The user's name is {ctx.deps}."
 
 
 @agent.system_prompt
