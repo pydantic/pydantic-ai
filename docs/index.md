@@ -10,14 +10,73 @@ PydanticAI is a Python Agent Framework designed to make it less painful to build
 
 ## Why use PydanticAI
 
-* Built by the team behind Pydantic (the validation layer of the OpenAI SDK, the Anthropic SDK, LangChain, LlamaIndex, AutoGPT, Transformers, CrewAI, Instructor and many more)
-* [Model-agnostic](models.md) — currently OpenAI, Anthropic, Gemini, Ollama, Groq, and Mistral are supported, and there is a simple interface to implement support for other models.
-* [Type-safe](agents.md#static-type-checking)
-* Control flow and agent composition is done with vanilla Python, allowing you to make use of the same Python development best practices you'd use in any other (non-AI) project
-* [Structured response](results.md#structured-result-validation) validation with Pydantic
-* [Streamed responses](results.md#streamed-results), including validation of streamed _structured_ responses with Pydantic
-* Novel, type-safe [dependency injection system](dependencies.md), useful for testing and eval-driven iterative development
-* [Logfire integration](logfire.md) for debugging and monitoring the performance and general behavior of your LLM-powered application
+<div class="grid cards" markdown>
+
+-   :material-account-group:{ .lg .middle  .team-blue } __Built by the Pydantic Team__
+
+    ---
+
+    Built by the team behind [Pydantic](https://docs.pydantic.dev/latest/) (the validation layer of the OpenAI SDK, the Anthropic SDK, LangChain, LlamaIndex, AutoGPT, Transformers, CrewAI, Instructor and many more).
+
+-   :fontawesome-solid-shapes:{ .lg .middle .shapes-orange } __Model-agnostic__
+
+    ---
+
+    Supports OpenAI, Anthropic, Gemini, Ollama, Groq, and Mistral, and there is a simple interface to implement support for other models.
+
+    [:octicons-arrow-right-24: Read more](models.md)
+
+-   :logfire-logo:{ .lg .middle } __Pydantic Logfire integration__
+
+    ---
+
+    Seamlessly integrates with [Pydantic Logfire](https://pydantic.dev/logfire) for real-time debugging, performance monitoring, and behavior tracking of your LLM-powered applications.
+
+    [:octicons-arrow-right-24: Read more](logfire.md)
+
+-   :material-shield-check:{ .lg .middle .secure-green } __Type-safe__
+
+    ---
+
+    Designed to make type checking as useful as possible for you, so it integrates well with static type checkers, like [`mypy`](https://github.com/python/mypy) and [`pyright`](https://github.com/microsoft/pyright).
+
+    [:octicons-arrow-right-24: Read more](agents.md#static-type-checking)
+
+-   :snake:{ .lg .middle } __Python-centric Design__
+
+    ---
+
+    Leverages Python’s familiar control flow and agent composition to build your AI-driven projects, making it easy to apply standard Python best practices you'd use in any other (non-AI) project
+
+
+-   :simple-pydantic:{ .lg .middle .pydantic-pink } __Structured Response__
+
+    ---
+
+    Harnesses the power of [Pydantic](https://docs.pydantic.dev/latest/) to validate and structure model outputs, ensuring responses are consistent across runs.
+
+    [:octicons-arrow-right-24: Read more](results.md#structured-result-validation)
+
+-   :material-puzzle-plus:{ .lg .middle .puzzle-purple } __Dependency Injection System__
+
+    ---
+
+    Offers an optional dependency injection system to provide data and services to your agent's [system prompts](agents.md#system-prompts), [tools](tools.md) and [result validators](results.md#result-validators-functions).
+
+    This is useful for testing and eval-driven iterative development.
+
+    [:octicons-arrow-right-24: Read more](dependencies.md)
+
+-   :material-sine-wave:{ .lg .middle } __Streamed Response__
+
+    ---
+
+    Provides the ability to stream LLM outputs continuously, with immediate validation, ensuring rapid and accurate results.
+
+    [:octicons-arrow-right-24: Read more](results.md#streamed-results)
+
+</div>
+
 
 !!! example "In Beta"
     PydanticAI is in early beta, the API is still subject to change and there's a lot more to do.

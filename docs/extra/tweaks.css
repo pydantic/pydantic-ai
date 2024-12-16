@@ -16,3 +16,27 @@ img.index-header {
   width: 70%;
   max-width: 500px;
 }
+
+.pydantic-pink {
+  color: #FF007F;
+}
+
+.team-blue {
+  color: #0072CE;
+}
+
+.secure-green {
+  color: #00A86B;
+}
+
+.shapes-orange {
+  color: #FF7F32;
+}
+
+.puzzle-purple {
+  color: #652D90;
+}
+
+.wheel-gray {
+  color: #6E6E6E;
+}
