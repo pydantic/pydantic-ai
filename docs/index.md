@@ -6,7 +6,7 @@
 
 FastAPI revolutionized web development by offering an innovative and ergonomic design, built on the foundation of [Pydantic](https://docs.pydantic.dev).
 
-Similarly, virtually every Agent Framework and LLM library in Python uses Pydantic, yet when we began to use LLMs in [Pydantic Logfire](https://pydantic.dev/logfire), we couldn't find anything that gave me the same feeling.
+Similarly, virtually every Agent Framework and LLM library in Python uses Pydantic, yet when we began to use LLMs in [Pydantic Logfire](https://pydantic.dev/logfire), we couldn't find anything that gave us the same feeling.
 
 We built PydanticAI with one simple aim: to bring the same feeling you get building with FastAPI to GenAI app development.
 
