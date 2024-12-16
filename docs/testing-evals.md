@@ -100,11 +100,12 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.messages import (
     ArgsDict,
     ModelResponse,
-    SystemPrompt,
+    SystemPromptPart,
     TextPart,
     ToolCallPart,
-    ToolReturn,
-    UserPrompt,
+    ToolReturnPart,
+    UserPromptPart,
+    ModelRequest,
 )
 
 from fake_database import DatabaseConn
@@ -125,16 +126,16 @@ async def test_forecast():
     assert forecast == '{"weather_forecast":"Sunny with a chance of rain"}'  # (5)!
 
     assert weather_agent.last_run_messages == [  # (6)!
-        SystemPrompt(
-            content='Providing a weather forecast at the locations the user provides.',
-            role='user',
-            message_kind='system-prompt',
-        ),
-        UserPrompt(
-            content='What will the weather be like in London on 2024-11-28?',
-            timestamp=IsNow(tz=timezone.utc),  # (7)!
-            role='user',
-            message_kind='user-prompt',
+        ModelRequest(
+            parts=[
+                SystemPromptPart(
+                    content='Providing a weather forecast at the locations the user provides.',
+                ),
+                UserPromptPart(
+                    content='What will the weather be like in London on 2024-11-28?',
+                    timestamp=IsNow(tz=timezone.utc),  # (7)!
+                ),
+            ]
         ),
         ModelResponse(
             parts=[
@@ -150,16 +151,16 @@ async def test_forecast():
                 )
             ],
             timestamp=IsNow(tz=timezone.utc),
-            role='model',
-            message_kind='model-response',
         ),
-        ToolReturn(
-            tool_name='weather_forecast',
-            content='Sunny with a chance of rain',
-            tool_call_id=None,
-            timestamp=IsNow(tz=timezone.utc),
-            role='user',
-            message_kind='tool-return',
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='weather_forecast',
+                    content='Sunny with a chance of rain',
+                    tool_call_id=None,
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
+            ],
         ),
         ModelResponse(
             parts=[
@@ -168,8 +169,6 @@ async def test_forecast():
                 )
             ],
             timestamp=IsNow(tz=timezone.utc),
-            role='model',
-            message_kind='model-response',
         ),
     ]
 ```
@@ -198,7 +197,7 @@ import pytest
 
 from pydantic_ai import models
 from pydantic_ai.messages import (
-    Message,
+    ModelMessage,
     ModelResponse,
     ToolCallPart,
 )
@@ -212,19 +211,19 @@ models.ALLOW_MODEL_REQUESTS = False
 
 
 def call_weather_forecast(  # (1)!
-    messages: list[Message], info: AgentInfo
+    messages: list[ModelMessage], info: AgentInfo
 ) -> ModelResponse:
-    if len(messages) == 2:
+    if len(messages) == 1:
         # first call, call the weather forecast tool
-        user_prompt = messages[1]
+        user_prompt = messages[0].parts[-1]
         m = re.search(r'\d{4}-\d{2}-\d{2}', user_prompt.content)
         assert m is not None
         args = {'location': 'London', 'forecast_date': m.group()}  # (2)!
         return ModelResponse(parts=[ToolCallPart.from_dict('weather_forecast', args)])
     else:
         # second call, return the forecast
-        msg = messages[-1]
-        assert msg.message_kind == 'tool-return'
+        msg = messages[-1].parts[0]
+        assert msg.part_kind == 'tool-return'
         return ModelResponse.from_text(f'The forecast is: {msg.content}')
 
 
@@ -239,7 +238,7 @@ async def test_forecast_future():
     assert forecast == 'The forecast is: Rainy with a chance of sun'
 ```
 
-1. We define a function `call_weather_forecast` that will be called by `FunctionModel` in place of the LLM, this function has access to the list of [`Message`][pydantic_ai.messages.Message]s that make up the run, and [`AgentInfo`][pydantic_ai.models.function.AgentInfo] which contains information about the agent and the function tools and return tools.
+1. We define a function `call_weather_forecast` that will be called by `FunctionModel` in place of the LLM, this function has access to the list of [`ModelMessage`][pydantic_ai.messages.ModelMessage]s that make up the run, and [`AgentInfo`][pydantic_ai.models.function.AgentInfo] which contains information about the agent and the function tools and return tools.
 2. Our function is slightly intelligent in that it tries to extract a date from the prompt, but just hard codes the location.
 3. We use [`FunctionModel`][pydantic_ai.models.function.FunctionModel] to replace the agent's model with our custom function.
 

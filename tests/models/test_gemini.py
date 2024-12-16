@@ -15,12 +15,13 @@ from typing_extensions import Literal, TypeAlias
 from pydantic_ai import Agent, ModelRetry, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
     ArgsDict,
+    ModelRequest,
     ModelResponse,
-    RetryPrompt,
-    SystemPrompt,
+    RetryPromptPart,
+    SystemPromptPart,
     ToolCallPart,
-    ToolReturn,
-    UserPrompt,
+    ToolReturnPart,
+    UserPromptPart,
 )
 from pydantic_ai.models.gemini import (
     ApiKeyAuth,
@@ -391,7 +392,7 @@ async def test_text_success(get_gemini_client: GetGeminiClient):
     assert result.data == 'Hello world'
     assert result.all_messages() == snapshot(
         [
-            UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
+            ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse.from_text(content='Hello world', timestamp=IsNow(tz=timezone.utc)),
         ]
     )
@@ -401,9 +402,9 @@ async def test_text_success(get_gemini_client: GetGeminiClient):
     assert result.data == 'Hello world'
     assert result.all_messages() == snapshot(
         [
-            UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
+            ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse.from_text(content='Hello world', timestamp=IsNow(tz=timezone.utc)),
-            UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
+            ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse.from_text(content='Hello world', timestamp=IsNow(tz=timezone.utc)),
         ]
     )
@@ -423,7 +424,7 @@ async def test_request_structured_response(get_gemini_client: GetGeminiClient):
     assert result.data == [1, 2, 123]
     assert result.all_messages() == snapshot(
         [
-            UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
+            ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[
                     ToolCallPart(
@@ -433,10 +434,12 @@ async def test_request_structured_response(get_gemini_client: GetGeminiClient):
                 ],
                 timestamp=IsNow(tz=timezone.utc),
             ),
-            ToolReturn(
-                tool_name='final_result',
-                content='Final result processed.',
-                timestamp=IsNow(tz=timezone.utc),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='final_result', content='Final result processed.', timestamp=IsNow(tz=timezone.utc)
+                    )
+                ]
             ),
         ]
     )
@@ -471,8 +474,12 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
     assert result.data == 'final response'
     assert result.all_messages() == snapshot(
         [
-            SystemPrompt(content='this is the system prompt'),
-            UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(content='this is the system prompt'),
+                    UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc)),
+                ]
+            ),
             ModelResponse(
                 parts=[
                     ToolCallPart(
@@ -482,8 +489,14 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
                 ],
                 timestamp=IsNow(tz=timezone.utc),
             ),
-            RetryPrompt(
-                tool_name='get_location', content='Wrong location, please try again', timestamp=IsNow(tz=timezone.utc)
+            ModelRequest(
+                parts=[
+                    RetryPromptPart(
+                        content='Wrong location, please try again',
+                        tool_name='get_location',
+                        timestamp=IsNow(tz=timezone.utc),
+                    )
+                ]
             ),
             ModelResponse(
                 parts=[
@@ -494,7 +507,13 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
                 ],
                 timestamp=IsNow(tz=timezone.utc),
             ),
-            ToolReturn(tool_name='get_location', content='{"lat": 51, "lng": 0}', timestamp=IsNow(tz=timezone.utc)),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='get_location', content='{"lat": 51, "lng": 0}', timestamp=IsNow(tz=timezone.utc)
+                    )
+                ]
+            ),
             ModelResponse.from_text(content='final response', timestamp=IsNow(tz=timezone.utc)),
         ]
     )
@@ -636,7 +655,7 @@ async def test_stream_structured_tool_calls(get_gemini_client: GetGeminiClient):
     assert result.cost() == snapshot(Cost(request_tokens=3, response_tokens=6, total_tokens=9))
     assert result.all_messages() == snapshot(
         [
-            UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
+            ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[
                     ToolCallPart(tool_name='foo', args=ArgsDict(args_dict={'x': 'a'})),
@@ -644,12 +663,18 @@ async def test_stream_structured_tool_calls(get_gemini_client: GetGeminiClient):
                 ],
                 timestamp=IsNow(tz=timezone.utc),
             ),
-            ToolReturn(tool_name='foo', content='a', timestamp=IsNow(tz=timezone.utc)),
-            ToolReturn(tool_name='bar', content='b', timestamp=IsNow(tz=timezone.utc)),
-            ToolReturn(
-                tool_name='final_result',
-                content='Final result processed.',
-                timestamp=IsNow(tz=timezone.utc),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(tool_name='foo', content='a', timestamp=IsNow(tz=timezone.utc)),
+                    ToolReturnPart(tool_name='bar', content='b', timestamp=IsNow(tz=timezone.utc)),
+                ]
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='final_result', content='Final result processed.', timestamp=IsNow(tz=timezone.utc)
+                    )
+                ]
             ),
             ModelResponse(
                 parts=[

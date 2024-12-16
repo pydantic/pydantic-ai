@@ -4,6 +4,7 @@ from collections.abc import AsyncIterator, Iterable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from itertools import chain
 from typing import Literal, overload
 
 from httpx import AsyncClient as AsyncHTTPClient
@@ -13,15 +14,16 @@ from .. import UnexpectedModelBehavior, _utils, result
 from .._utils import guard_tool_call_id as _guard_tool_call_id
 from ..messages import (
     ArgsJson,
-    Message,
+    ModelMessage,
+    ModelRequest,
     ModelResponse,
     ModelResponsePart,
-    RetryPrompt,
-    SystemPrompt,
+    RetryPromptPart,
+    SystemPromptPart,
     TextPart,
     ToolCallPart,
-    ToolReturn,
-    UserPrompt,
+    ToolReturnPart,
+    UserPromptPart,
 )
 from ..result import Cost
 from ..settings import ModelSettings
@@ -155,14 +157,14 @@ class GroqAgentModel(AgentModel):
     tools: list[chat.ChatCompletionToolParam]
 
     async def request(
-        self, messages: list[Message], model_settings: ModelSettings | None
+        self, messages: list[ModelMessage], model_settings: ModelSettings | None
     ) -> tuple[ModelResponse, result.Cost]:
         response = await self._completions_create(messages, False, model_settings)
         return self._process_response(response), _map_cost(response)
 
     @asynccontextmanager
     async def request_stream(
-        self, messages: list[Message], model_settings: ModelSettings | None
+        self, messages: list[ModelMessage], model_settings: ModelSettings | None
     ) -> AsyncIterator[EitherStreamedResponse]:
         response = await self._completions_create(messages, True, model_settings)
         async with response:
@@ -170,18 +172,18 @@ class GroqAgentModel(AgentModel):
 
     @overload
     async def _completions_create(
-        self, messages: list[Message], stream: Literal[True], model_settings: ModelSettings | None
+        self, messages: list[ModelMessage], stream: Literal[True], model_settings: ModelSettings | None
     ) -> AsyncStream[ChatCompletionChunk]:
         pass
 
     @overload
     async def _completions_create(
-        self, messages: list[Message], stream: Literal[False], model_settings: ModelSettings | None
+        self, messages: list[ModelMessage], stream: Literal[False], model_settings: ModelSettings | None
     ) -> chat.ChatCompletion:
         pass
 
     async def _completions_create(
-        self, messages: list[Message], stream: bool, model_settings: ModelSettings | None
+        self, messages: list[ModelMessage], stream: bool, model_settings: ModelSettings | None
     ) -> chat.ChatCompletion | AsyncStream[ChatCompletionChunk]:
         # standalone function to make it easier to override
         if not self.tools:
@@ -191,7 +193,7 @@ class GroqAgentModel(AgentModel):
         else:
             tool_choice = 'auto'
 
-        groq_messages = [self._map_message(m) for m in messages]
+        groq_messages = list(chain(*(self._map_message(m) for m in messages)))
 
         model_settings = model_settings or {}
 
@@ -249,28 +251,11 @@ class GroqAgentModel(AgentModel):
                         start_cost,
                     )
 
-    @staticmethod
-    def _map_message(message: Message) -> chat.ChatCompletionMessageParam:
+    @classmethod
+    def _map_message(cls, message: ModelMessage) -> Iterable[chat.ChatCompletionMessageParam]:
         """Just maps a `pydantic_ai.Message` to a `groq.types.ChatCompletionMessageParam`."""
-        if isinstance(message, SystemPrompt):
-            return chat.ChatCompletionSystemMessageParam(role='system', content=message.content)
-        elif isinstance(message, UserPrompt):
-            return chat.ChatCompletionUserMessageParam(role='user', content=message.content)
-        elif isinstance(message, ToolReturn):
-            return chat.ChatCompletionToolMessageParam(
-                role='tool',
-                tool_call_id=_guard_tool_call_id(t=message, model_source='Groq'),
-                content=message.model_response_str(),
-            )
-        elif isinstance(message, RetryPrompt):
-            if message.tool_name is None:
-                return chat.ChatCompletionUserMessageParam(role='user', content=message.model_response())
-            else:
-                return chat.ChatCompletionToolMessageParam(
-                    role='tool',
-                    tool_call_id=_guard_tool_call_id(t=message, model_source='Groq'),
-                    content=message.model_response(),
-                )
+        if isinstance(message, ModelRequest):
+            yield from cls._map_user_message(message)
         elif isinstance(message, ModelResponse):
             texts: list[str] = []
             tool_calls: list[chat.ChatCompletionMessageToolCallParam] = []
@@ -288,9 +273,32 @@ class GroqAgentModel(AgentModel):
                 message_param['content'] = '\n\n'.join(texts)
             if tool_calls:
                 message_param['tool_calls'] = tool_calls
-            return message_param
+            yield message_param
         else:
             assert_never(message)
+
+    @classmethod
+    def _map_user_message(cls, message: ModelRequest) -> Iterable[chat.ChatCompletionMessageParam]:
+        for part in message.parts:
+            if isinstance(part, SystemPromptPart):
+                yield chat.ChatCompletionSystemMessageParam(role='system', content=part.content)
+            elif isinstance(part, UserPromptPart):
+                yield chat.ChatCompletionUserMessageParam(role='user', content=part.content)
+            elif isinstance(part, ToolReturnPart):
+                yield chat.ChatCompletionToolMessageParam(
+                    role='tool',
+                    tool_call_id=_guard_tool_call_id(t=part, model_source='Groq'),
+                    content=part.model_response_str(),
+                )
+            elif isinstance(part, RetryPromptPart):
+                if part.tool_name is None:
+                    yield chat.ChatCompletionUserMessageParam(role='user', content=part.model_response())
+                else:
+                    yield chat.ChatCompletionToolMessageParam(
+                        role='tool',
+                        tool_call_id=_guard_tool_call_id(t=part, model_source='Groq'),
+                        content=part.model_response(),
+                    )
 
 
 @dataclass

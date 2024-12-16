@@ -17,15 +17,16 @@ from typing_extensions import NotRequired, TypedDict, TypeGuard, assert_never
 from .. import UnexpectedModelBehavior, _utils, exceptions, result
 from ..messages import (
     ArgsDict,
-    Message,
+    ModelMessage,
+    ModelRequest,
     ModelResponse,
     ModelResponsePart,
-    RetryPrompt,
-    SystemPrompt,
+    RetryPromptPart,
+    SystemPromptPart,
     TextPart,
     ToolCallPart,
-    ToolReturn,
-    UserPrompt,
+    ToolReturnPart,
+    UserPromptPart,
 )
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
@@ -170,7 +171,7 @@ class GeminiAgentModel(AgentModel):
         self.url = url
 
     async def request(
-        self, messages: list[Message], model_settings: ModelSettings | None
+        self, messages: list[ModelMessage], model_settings: ModelSettings | None
     ) -> tuple[ModelResponse, result.Cost]:
         async with self._make_request(messages, False, model_settings) as http_response:
             response = _gemini_response_ta.validate_json(await http_response.aread())
@@ -178,22 +179,16 @@ class GeminiAgentModel(AgentModel):
 
     @asynccontextmanager
     async def request_stream(
-        self, messages: list[Message], model_settings: ModelSettings | None
+        self, messages: list[ModelMessage], model_settings: ModelSettings | None
     ) -> AsyncIterator[EitherStreamedResponse]:
         async with self._make_request(messages, True, model_settings) as http_response:
             yield await self._process_streamed_response(http_response)
 
     @asynccontextmanager
     async def _make_request(
-        self, messages: list[Message], streamed: bool, model_settings: ModelSettings | None
+        self, messages: list[ModelMessage], streamed: bool, model_settings: ModelSettings | None
     ) -> AsyncIterator[HTTPResponse]:
-        sys_prompt_parts: list[_GeminiTextPart] = []
-        contents: list[_GeminiContent] = []
-        for m in messages:
-            if (sys_prompt := self._message_to_gemini_system_prompt(m)) is not None:
-                sys_prompt_parts.append(sys_prompt)
-            if (content := self._message_to_gemini_content(m)) is not None:
-                contents.append(content)
+        sys_prompt_parts, contents = self._message_to_gemini_content(messages)
 
         request_data = _GeminiRequest(contents=contents)
         if sys_prompt_parts:
@@ -271,28 +266,31 @@ class GeminiAgentModel(AgentModel):
         else:
             return GeminiStreamTextResponse(_json_content=content, _stream=aiter_bytes)
 
-    @staticmethod
-    def _message_to_gemini_system_prompt(m: Message) -> _GeminiTextPart | None:
-        """Convert a message to a _GeminiTextPart for "system_instructions" or _GeminiContent for "contents"."""
-        if isinstance(m, SystemPrompt):
-            return _GeminiTextPart(text=m.content)
-        else:
-            return None
+    @classmethod
+    def _message_to_gemini_content(
+        cls, messages: list[ModelMessage]
+    ) -> tuple[list[_GeminiTextPart], list[_GeminiContent]]:
+        sys_prompt_parts: list[_GeminiTextPart] = []
+        contents: list[_GeminiContent] = []
+        for m in messages:
+            if isinstance(m, ModelRequest):
+                for part in m.parts:
+                    if isinstance(part, SystemPromptPart):
+                        sys_prompt_parts.append(_GeminiTextPart(text=part.content))
+                    elif isinstance(part, UserPromptPart):
+                        contents.append(_content_user_prompt(part))
+                    elif isinstance(part, ToolReturnPart):
+                        contents.append(_content_tool_return(part))
+                    elif isinstance(part, RetryPromptPart):
+                        contents.append(_content_retry_prompt(part))
+                    else:
+                        assert_never(part)
+            elif isinstance(m, ModelResponse):
+                contents.append(_content_model_response(m))
+            else:
+                assert_never(m)
 
-    @staticmethod
-    def _message_to_gemini_content(m: Message) -> _GeminiContent | None:
-        if isinstance(m, SystemPrompt):
-            return None
-        elif isinstance(m, UserPrompt):
-            return _content_user_prompt(m)
-        elif isinstance(m, ToolReturn):
-            return _content_tool_return(m)
-        elif isinstance(m, RetryPrompt):
-            return _content_retry_prompt(m)
-        elif isinstance(m, ModelResponse):
-            return _content_model_response(m)
-        else:
-            assert_never(m)
+        return sys_prompt_parts, contents
 
 
 @dataclass
@@ -423,16 +421,16 @@ class _GeminiContent(TypedDict):
     parts: list[_GeminiPartUnion]
 
 
-def _content_user_prompt(m: UserPrompt) -> _GeminiContent:
+def _content_user_prompt(m: UserPromptPart) -> _GeminiContent:
     return _GeminiContent(role='user', parts=[_GeminiTextPart(text=m.content)])
 
 
-def _content_tool_return(m: ToolReturn) -> _GeminiContent:
+def _content_tool_return(m: ToolReturnPart) -> _GeminiContent:
     f_response = _response_part_from_response(m.tool_name, m.model_response_object())
     return _GeminiContent(role='user', parts=[f_response])
 
 
-def _content_retry_prompt(m: RetryPrompt) -> _GeminiContent:
+def _content_retry_prompt(m: RetryPromptPart) -> _GeminiContent:
     if m.tool_name is None:
         part = _GeminiTextPart(text=m.model_response())
     else:

@@ -12,11 +12,12 @@ from pydantic import BaseModel, Field
 
 from pydantic_ai import Agent, ModelRetry
 from pydantic_ai.messages import (
+    ModelRequest,
     ModelResponse,
-    RetryPrompt,
+    RetryPromptPart,
     ToolCallPart,
-    ToolReturn,
-    UserPrompt,
+    ToolReturnPart,
+    UserPromptPart,
 )
 from pydantic_ai.models.test import TestModel, _chars, _JsonSchemaTestData  # pyright: ignore[reportPrivateUsage]
 
@@ -91,14 +92,18 @@ def test_tool_retry(set_event_loop: None):
     assert result.data == snapshot('{"my_ret":"1"}')
     assert result.all_messages() == snapshot(
         [
-            UserPrompt(content='Hello', timestamp=IsNow(tz=timezone.utc)),
+            ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[ToolCallPart.from_dict('my_ret', {'x': 0})],
                 timestamp=IsNow(tz=timezone.utc),
             ),
-            RetryPrompt(tool_name='my_ret', content='First call failed', timestamp=IsNow(tz=timezone.utc)),
+            ModelRequest(
+                parts=[
+                    RetryPromptPart(content='First call failed', tool_name='my_ret', timestamp=IsNow(tz=timezone.utc))
+                ]
+            ),
             ModelResponse(parts=[ToolCallPart.from_dict('my_ret', {'x': 0})], timestamp=IsNow(tz=timezone.utc)),
-            ToolReturn(tool_name='my_ret', content='1', timestamp=IsNow(tz=timezone.utc)),
+            ModelRequest(parts=[ToolReturnPart(tool_name='my_ret', content='1', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse.from_text(content='{"my_ret":"1"}', timestamp=IsNow(tz=timezone.utc)),
         ]
     )

@@ -20,12 +20,12 @@ from pytest_mock import MockerFixture
 from pydantic_ai._utils import group_by_temporal
 from pydantic_ai.messages import (
     ArgsDict,
-    Message,
+    ModelMessage,
     ModelResponse,
-    RetryPrompt,
+    RetryPromptPart,
     ToolCallPart,
-    ToolReturn,
-    UserPrompt,
+    ToolReturnPart,
+    UserPromptPart,
 )
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
@@ -216,9 +216,9 @@ text_responses: dict[str, str | ToolCallPart] = {
 }
 
 
-async def model_logic(messages: list[Message], info: AgentInfo) -> ModelResponse:  # pragma: no cover
-    m = messages[-1]
-    if isinstance(m, UserPrompt):
+async def model_logic(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:  # pragma: no cover
+    m = messages[-1].parts[-1]
+    if isinstance(m, UserPromptPart):
         if response := text_responses.get(m.content):
             if isinstance(response, str):
                 return ModelResponse.from_text(content=response)
@@ -228,28 +228,28 @@ async def model_logic(messages: list[Message], info: AgentInfo) -> ModelResponse
         if re.fullmatch(r'sql prompt \d+', m.content):
             return ModelResponse.from_text(content='SELECT 1')
 
-    elif isinstance(m, ToolReturn) and m.tool_name == 'roulette_wheel':
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'roulette_wheel':
         win = m.content == 'winner'
         return ModelResponse(parts=[ToolCallPart(tool_name='final_result', args=ArgsDict({'response': win}))])
-    elif isinstance(m, ToolReturn) and m.tool_name == 'roll_die':
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'roll_die':
         return ModelResponse(parts=[ToolCallPart(tool_name='get_player_name', args=ArgsDict({}))])
-    elif isinstance(m, ToolReturn) and m.tool_name == 'get_player_name':
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_player_name':
         return ModelResponse.from_text(content="Congratulations Anne, you guessed correctly! You're a winner!")
     if (
-        isinstance(m, RetryPrompt)
+        isinstance(m, RetryPromptPart)
         and isinstance(m.content, str)
         and m.content.startswith("No user found with name 'Joh")
     ):
         return ModelResponse(parts=[ToolCallPart(tool_name='get_user_by_name', args=ArgsDict({'name': 'John Doe'}))])
-    elif isinstance(m, ToolReturn) and m.tool_name == 'get_user_by_name':
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_user_by_name':
         args = {
             'message': 'Hello John, would you be free for coffee sometime next week? Let me know what works for you!',
             'user_id': 123,
         }
         return ModelResponse(parts=[ToolCallPart(tool_name='final_result', args=ArgsDict(args))])
-    elif isinstance(m, RetryPrompt) and m.tool_name == 'calc_volume':
+    elif isinstance(m, RetryPromptPart) and m.tool_name == 'calc_volume':
         return ModelResponse(parts=[ToolCallPart(tool_name='calc_volume', args=ArgsDict({'size': 6}))])
-    elif isinstance(m, ToolReturn) and m.tool_name == 'customer_balance':
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'customer_balance':
         args = {
             'support_advice': 'Hello John, your current account balance, including pending transactions, is $123.45.',
             'block_card': False,
@@ -262,10 +262,10 @@ async def model_logic(messages: list[Message], info: AgentInfo) -> ModelResponse
 
 
 async def stream_model_logic(
-    messages: list[Message], info: AgentInfo
+    messages: list[ModelMessage], info: AgentInfo
 ) -> AsyncIterator[str | DeltaToolCalls]:  # pragma: no cover
-    m = messages[-1]
-    if isinstance(m, UserPrompt):
+    m = messages[-1].parts[-1]
+    if isinstance(m, UserPromptPart):
         if response := text_responses.get(m.content):
             if isinstance(response, str):
                 words = response.split(' ')
