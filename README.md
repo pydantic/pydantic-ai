@@ -23,16 +23,18 @@
 
 ---
 
-When I first found FastAPI, I got it immediately. I was excited to find something so innovative and ergonomic built on Pydantic.
+PydanticAI is a Python agent framework designed to make it less painful to build production grade applications with Generative AI.
 
-Virtually every Agent Framework and LLM library in Python uses Pydantic, but when we began to use LLMs in [Pydantic Logfire](https://pydantic.dev/logfire), I couldn't find anything that gave me the same feeling.
+FastAPI revolutionized web development by offering an innovative and ergonomic design, built on the foundation of [Pydantic](https://docs.pydantic.dev).
 
-PydanticAI is a Python Agent Framework designed to make it less painful to build production grade applications with Generative AI.
+Similarly, virtually every agent framework and LLM library in Python uses Pydantic, yet when we began to use LLMs in [Pydantic Logfire](https://pydantic.dev/logfire), we couldn't find anything that gave us the same feeling.
+
+We built PydanticAI with one simple aim: to bring that FastAPI feeling to GenAI app development.
 
 ## Why use PydanticAI
 
 * Built by the team behind Pydantic (the validation layer of the OpenAI SDK, the Anthropic SDK, LangChain, LlamaIndex, AutoGPT, Transformers, CrewAI, Instructor and many more)
-* Model-agnostic — currently OpenAI, Gemini, Anthropic, Groq, and Mistral are supported. And there is a simple interface to implement support for other models.
+* [Model-agnostic](https://ai.pydantic.dev/models/) — currently OpenAI, Anthropic, Gemini, Ollama, Groq, and Mistral are supported, and there is a simple interface to implement support for other models.
 * [Type-safe](https://ai.pydantic.dev/agents/#static-type-checking)
 * Control flow and agent composition is done with vanilla Python, allowing you to make use of the same Python development best practices you'd use in any other (non-AI) project
 * [Structured response](https://ai.pydantic.dev/results/#structured-result-validation) validation with Pydantic

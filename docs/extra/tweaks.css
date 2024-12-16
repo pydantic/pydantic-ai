@@ -16,3 +16,9 @@ img.index-header {
   width: 70%;
   max-width: 500px;
 }
+
+.text-emphasis {
+  font-size: 1rem;
+  font-weight: 300;
+  font-style: italic;
+}
