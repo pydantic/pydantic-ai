@@ -554,7 +554,7 @@ class MistralStreamStructuredResponse(StreamStructuredResponse):
 
             if output_json:
                 for result_tool in self._result_tools.values():
-                    # NOTE: Additional verification to prevent JSON validation to crash in `result.py`
+                    # NOTE: Additional verification to prevent JSON validation to crash in `_result.py`
                     # Ensures required parameters in the JSON schema are respected, especially for stream-based return types.
                     # For example, `return_type=list[str]` expects a 'response' key with value type array of str.
                     # when `{"response":` then `repair_json` sets `{"response": ""}` (type not found default str)
