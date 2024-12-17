@@ -44,3 +44,9 @@ img.index-header {
 .vertical-middle {
   vertical-align: middle;
 }
+
+.text-emphasis {
+  font-size: 1rem;
+  font-weight: 300;
+  font-style: italic;
+}
