@@ -12,13 +12,13 @@ PydanticAI is a Python Agent Framework designed to make it less painful to build
 
 <div class="grid cards" markdown>
 
--   :material-account-group:{ .lg .middle  .team-blue } __Built by the Pydantic Team__
+-   :material-account-group:{ .lg .middle .team-blue }&nbsp;&nbsp;<strong class="vertical-middle">Built by the Pydantic Team</strong>
 
     ---
 
     Built by the team behind [Pydantic](https://docs.pydantic.dev/latest/) (the validation layer of the OpenAI SDK, the Anthropic SDK, LangChain, LlamaIndex, AutoGPT, Transformers, CrewAI, Instructor and many more).
 
--   :fontawesome-solid-shapes:{ .lg .middle .shapes-orange } __Model-agnostic__
+-   :fontawesome-solid-shapes:{ .lg .middle .shapes-orange }&nbsp;&nbsp;<strong class="vertical-middle">Model-agnostic</strong>
 
     ---
 
@@ -26,7 +26,7 @@ PydanticAI is a Python Agent Framework designed to make it less painful to build
 
     [:octicons-arrow-right-24: Read more](models.md)
 
--   :logfire-logo:{ .lg .middle } __Pydantic Logfire integration__
+-   :logfire-logo:{ .lg .middle }&nbsp;&nbsp;<strong class="vertical-middle">Pydantic Logfire Integration</strong>
 
     ---
 
@@ -34,7 +34,7 @@ PydanticAI is a Python Agent Framework designed to make it less painful to build
 
     [:octicons-arrow-right-24: Read more](logfire.md)
 
--   :material-shield-check:{ .lg .middle .secure-green } __Type-safe__
+-   :material-shield-check:{ .lg .middle .secure-green }&nbsp;&nbsp;<strong class="vertical-middle">Type-safe</strong>
 
     ---
 
@@ -42,14 +42,14 @@ PydanticAI is a Python Agent Framework designed to make it less painful to build
 
     [:octicons-arrow-right-24: Read more](agents.md#static-type-checking)
 
--   :snake:{ .lg .middle } __Python-centric Design__
+-   :snake:{ .lg .middle }&nbsp;&nbsp;<strong class="vertical-middle">Python-centric Design</strong>
 
     ---
 
     Leverages Python’s familiar control flow and agent composition to build your AI-driven projects, making it easy to apply standard Python best practices you'd use in any other (non-AI) project
 
 
--   :simple-pydantic:{ .lg .middle .pydantic-pink } __Structured Response__
+-   :simple-pydantic:{ .lg .middle .pydantic-pink }&nbsp;&nbsp;<strong class="vertical-middle">Structured Responses</strong>
 
     ---
 
@@ -57,7 +57,7 @@ PydanticAI is a Python Agent Framework designed to make it less painful to build
 
     [:octicons-arrow-right-24: Read more](results.md#structured-result-validation)
 
--   :material-puzzle-plus:{ .lg .middle .puzzle-purple } __Dependency Injection System__
+-   :material-puzzle-plus:{ .lg .middle .puzzle-purple }&nbsp;&nbsp;<strong class="vertical-middle">Dependency Injection System</strong>
 
     ---
 
@@ -67,7 +67,7 @@ PydanticAI is a Python Agent Framework designed to make it less painful to build
 
     [:octicons-arrow-right-24: Read more](dependencies.md)
 
--   :material-sine-wave:{ .lg .middle } __Streamed Response__
+-   :material-sine-wave:{ .lg .middle }&nbsp;&nbsp;<strong class="vertical-middle">Streamed Responses</strong>
 
     ---
 
@@ -84,7 +84,7 @@ PydanticAI is a Python Agent Framework designed to make it less painful to build
 
 ## Hello World Example
 
-Here's a minimal example of PydanticAI:
+Here's a minimal example of PydanticAI, where we define a very simple [Agent](agents.md) that uses the [Gemini 1.5 Flash](api/models/gemini.md) model.
 
 ```python {title="hello_world.py"}
 from pydantic_ai import Agent
@@ -101,13 +101,13 @@ The first known use of "hello, world" was in a 1974 textbook about the C program
 """
 ```
 
-1. Define a very simple agent — here we configure the agent to use [Gemini 1.5's Flash](api/models/gemini.md) model, but you can also set the model when running the agent.
-2. Register a static [system prompt](agents.md#system-prompts) using a keyword argument to the agent. For more complex dynamically-generated system prompts, see the example below.
-3. [Run the agent](agents.md#running-agents) synchronously, conducting a conversation with the LLM. Here the exchange should be very short: PydanticAI will send the system prompt and the user query to the LLM, the model will return a text response.
+1. We configure the agent to use [Gemini 1.5's Flash](api/models/gemini.md) model, but you can also set the model when running the agent.
+2. Register a static [system prompt](agents.md#system-prompts) using a keyword argument to the agent.
+3. [Run the agent](agents.md#running-agents) synchronously, conducting a conversation with the LLM.
 
-_(This example is complete, it can be run "as is")_
+The exchange should be very short: PydanticAI will send the system prompt and the user query to the LLM, the model will return a text response.
 
-Not very interesting yet, but we can easily add "tools", dynamic system prompts, and structured responses to build more powerful agents.
+Continue reading to learn more about other features of PydanticAI like [tools](tools.md), [system prompts](agents.md#system-prompts), and [structured results](results.md#structured-result-validation) that help us build more powerful agents 💪.
 
 ## Tools & Dependency Injection Example
 

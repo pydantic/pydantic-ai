@@ -40,3 +40,7 @@ img.index-header {
 .wheel-gray {
   color: #6E6E6E;
 }
+
+.vertical-middle {
+  vertical-align: middle;
+}
