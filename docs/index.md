@@ -13,73 +13,39 @@ We built PydanticAI with one simple aim: to bring that FastAPI feeling to GenAI 
 
 ## Why use PydanticAI
 
-<div class="grid cards" markdown>
+:material-account-group:{ .lg .middle .team-blue }&nbsp;&nbsp;<strong class="vertical-middle">Built by the Pydantic Team</strong>
 
--   :material-account-group:{ .lg .middle .team-blue }&nbsp;&nbsp;<strong class="vertical-middle">Built by the Pydantic Team</strong>
+Built by the team behind [Pydantic](https://docs.pydantic.dev/latest/) (the validation layer of the OpenAI SDK, the Anthropic SDK, LangChain, LlamaIndex, AutoGPT, Transformers, CrewAI, Instructor and many more).
 
-    ---
+:fontawesome-solid-shapes:{ .lg .middle .shapes-orange }&nbsp;&nbsp;<strong class="vertical-middle">Model-agnostic</strong>
 
-    Built by the team behind [Pydantic](https://docs.pydantic.dev/latest/) (the validation layer of the OpenAI SDK, the Anthropic SDK, LangChain, LlamaIndex, AutoGPT, Transformers, CrewAI, Instructor and many more).
+Supports OpenAI, Anthropic, Gemini, Ollama, Groq, and Mistral, and there is a simple interface to implement support for [other models](models.md).
 
--   :fontawesome-solid-shapes:{ .lg .middle .shapes-orange }&nbsp;&nbsp;<strong class="vertical-middle">Model-agnostic</strong>
+:logfire-logo:{ .lg .middle }&nbsp;&nbsp;<strong class="vertical-middle">Pydantic Logfire Integration</strong>
 
-    ---
+Seamlessly [integrates](logfire.md) with [Pydantic Logfire](https://pydantic.dev/logfire) for real-time debugging, performance monitoring, and behavior tracking of your LLM-powered applications.
 
-    Supports OpenAI, Anthropic, Gemini, Ollama, Groq, and Mistral, and there is a simple interface to implement support for other models.
+:material-shield-check:{ .lg .middle .secure-green }&nbsp;&nbsp;<strong class="vertical-middle">Type-safe</strong>
 
-    [:octicons-arrow-right-24: Read more](models.md)
+Designed to make type checking as useful as possible for you, so it [integrates](agents.md#static-type-checking) well with static type checkers, like [`mypy`](https://github.com/python/mypy) and [`pyright`](https://github.com/microsoft/pyright).
 
--   :logfire-logo:{ .lg .middle }&nbsp;&nbsp;<strong class="vertical-middle">Pydantic Logfire Integration</strong>
+:snake:{ .lg .middle }&nbsp;&nbsp;<strong class="vertical-middle">Python-centric Design</strong>
 
-    ---
+Leverages Python’s familiar control flow and agent composition to build your AI-driven projects, making it easy to apply standard Python best practices you'd use in any other (non-AI) project
 
-    Seamlessly integrates with [Pydantic Logfire](https://pydantic.dev/logfire) for real-time debugging, performance monitoring, and behavior tracking of your LLM-powered applications.
+:simple-pydantic:{ .lg .middle .pydantic-pink }&nbsp;&nbsp;<strong class="vertical-middle">Structured Responses</strong>
 
-    [:octicons-arrow-right-24: Read more](logfire.md)
+Harnesses the power of [Pydantic](https://docs.pydantic.dev/latest/) to [validate and structure](results.md#structured-result-validation) model outputs, ensuring responses are consistent across runs.
 
--   :material-shield-check:{ .lg .middle .secure-green }&nbsp;&nbsp;<strong class="vertical-middle">Type-safe</strong>
+:material-puzzle-plus:{ .lg .middle .puzzle-purple }&nbsp;&nbsp;<strong class="vertical-middle">Dependency Injection System</strong>
 
-    ---
+Offers an optional [dependency injection](dependencies.md) system to provide data and services to your agent's [system prompts](agents.md#system-prompts), [tools](tools.md) and [result validators](results.md#result-validators-functions).
 
-    Designed to make type checking as useful as possible for you, so it integrates well with static type checkers, like [`mypy`](https://github.com/python/mypy) and [`pyright`](https://github.com/microsoft/pyright).
+This is useful for testing and eval-driven iterative development.
 
-    [:octicons-arrow-right-24: Read more](agents.md#static-type-checking)
+:material-sine-wave:{ .lg .middle }&nbsp;&nbsp;<strong class="vertical-middle">Streamed Responses</strong>
 
--   :snake:{ .lg .middle }&nbsp;&nbsp;<strong class="vertical-middle">Python-centric Design</strong>
-
-    ---
-
-    Leverages Python’s familiar control flow and agent composition to build your AI-driven projects, making it easy to apply standard Python best practices you'd use in any other (non-AI) project
-
-
--   :simple-pydantic:{ .lg .middle .pydantic-pink }&nbsp;&nbsp;<strong class="vertical-middle">Structured Responses</strong>
-
-    ---
-
-    Harnesses the power of [Pydantic](https://docs.pydantic.dev/latest/) to validate and structure model outputs, ensuring responses are consistent across runs.
-
-    [:octicons-arrow-right-24: Read more](results.md#structured-result-validation)
-
--   :material-puzzle-plus:{ .lg .middle .puzzle-purple }&nbsp;&nbsp;<strong class="vertical-middle">Dependency Injection System</strong>
-
-    ---
-
-    Offers an optional dependency injection system to provide data and services to your agent's [system prompts](agents.md#system-prompts), [tools](tools.md) and [result validators](results.md#result-validators-functions).
-
-    This is useful for testing and eval-driven iterative development.
-
-    [:octicons-arrow-right-24: Read more](dependencies.md)
-
--   :material-sine-wave:{ .lg .middle }&nbsp;&nbsp;<strong class="vertical-middle">Streamed Responses</strong>
-
-    ---
-
-    Provides the ability to stream LLM outputs continuously, with immediate validation, ensuring rapid and accurate results.
-
-    [:octicons-arrow-right-24: Read more](results.md#streamed-results)
-
-</div>
-
+Provides the ability to [stream](results.md#streamed-results) LLM outputs continuously, with immediate validation, ensuring rapid and accurate results.
 
 !!! example "In Beta"
     PydanticAI is in early beta, the API is still subject to change and there's a lot more to do.
