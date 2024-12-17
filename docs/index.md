@@ -78,7 +78,7 @@ _(This example is complete, it can be run "as is")_
 
 The exchange should be very short: PydanticAI will send the system prompt and the user query to the LLM, the model will return a text response.
 
-Continue reading to learn more about other features of PydanticAI like [tools](tools.md), [system prompts](agents.md#system-prompts), and [structured results](results.md#structured-result-validation) that help us build more powerful agents 💪.
+Not very interesting yet, but we can easily add "tools", dynamic system prompts, and structured responses to build more powerful agents.
 
 ## Tools & Dependency Injection Example
 
