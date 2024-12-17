@@ -136,9 +136,10 @@ async def post_chat(
     return StreamingResponse(stream_messages(), media_type='text/plain')
 
 
-MessageTypeAdapter: TypeAdapter[ModelMessage] = TypeAdapter(
-    Annotated[ModelMessage, Field(discriminator='message_kind')]
-)
+# MessageTypeAdapter: TypeAdapter[ModelMessage] = TypeAdapter(
+#     Annotated[ModelMessage, Field(discriminator='message_kind')]
+# )
+
 P = ParamSpec('P')
 R = TypeVar('R')
 
@@ -223,5 +224,5 @@ if __name__ == '__main__':
     import uvicorn
 
     uvicorn.run(
-        'pydantic_ai_examples.chat_app:app', reload=True, reload_dirs=[str(THIS_DIR)]
+        'chat_app:app', reload=True, reload_dirs=[str(THIS_DIR)]
     )
