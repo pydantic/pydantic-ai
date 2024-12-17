@@ -13,38 +13,29 @@ We built PydanticAI with one simple aim: to bring that FastAPI feeling to GenAI 
 
 ## Why use PydanticAI
 
-:material-account-group:{ .lg .middle .team-blue }&nbsp;&nbsp;<strong class="vertical-middle">Built by the Pydantic Team</strong>
-
+:material-account-group:{ .md .middle .team-blue }&nbsp;<strong class="vertical-middle">Built by the Pydantic Team</strong><br>
 Built by the team behind [Pydantic](https://docs.pydantic.dev/latest/) (the validation layer of the OpenAI SDK, the Anthropic SDK, LangChain, LlamaIndex, AutoGPT, Transformers, CrewAI, Instructor and many more).
 
-:fontawesome-solid-shapes:{ .lg .middle .shapes-orange }&nbsp;&nbsp;<strong class="vertical-middle">Model-agnostic</strong>
-
+:fontawesome-solid-shapes:{ .md .middle .shapes-orange }&nbsp;<strong class="vertical-middle">Model-agnostic</strong><br>
 Supports OpenAI, Anthropic, Gemini, Ollama, Groq, and Mistral, and there is a simple interface to implement support for [other models](models.md).
 
-:logfire-logo:{ .lg .middle }&nbsp;&nbsp;<strong class="vertical-middle">Pydantic Logfire Integration</strong>
-
+:logfire-logo:{ .md .middle }&nbsp;<strong class="vertical-middle">Pydantic Logfire Integration</strong><br>
 Seamlessly [integrates](logfire.md) with [Pydantic Logfire](https://pydantic.dev/logfire) for real-time debugging, performance monitoring, and behavior tracking of your LLM-powered applications.
 
-:material-shield-check:{ .lg .middle .secure-green }&nbsp;&nbsp;<strong class="vertical-middle">Type-safe</strong>
-
+:material-shield-check:{ .md .middle .secure-green }&nbsp;<strong class="vertical-middle">Type-safe</strong><br>
 Designed to make type checking as useful as possible for you, so it [integrates](agents.md#static-type-checking) well with static type checkers, like [`mypy`](https://github.com/python/mypy) and [`pyright`](https://github.com/microsoft/pyright).
 
-:snake:{ .lg .middle }&nbsp;&nbsp;<strong class="vertical-middle">Python-centric Design</strong>
-
+:snake:{ .md .middle }&nbsp;<strong class="vertical-middle">Python-centric Design</strong><br>
 Leverages Python’s familiar control flow and agent composition to build your AI-driven projects, making it easy to apply standard Python best practices you'd use in any other (non-AI) project
 
-:simple-pydantic:{ .lg .middle .pydantic-pink }&nbsp;&nbsp;<strong class="vertical-middle">Structured Responses</strong>
-
+:simple-pydantic:{ .md .middle .pydantic-pink }&nbsp;<strong class="vertical-middle">Structured Responses</strong><br>
 Harnesses the power of [Pydantic](https://docs.pydantic.dev/latest/) to [validate and structure](results.md#structured-result-validation) model outputs, ensuring responses are consistent across runs.
 
-:material-puzzle-plus:{ .lg .middle .puzzle-purple }&nbsp;&nbsp;<strong class="vertical-middle">Dependency Injection System</strong>
-
+:material-puzzle-plus:{ .md .middle .puzzle-purple }&nbsp;<strong class="vertical-middle">Dependency Injection System</strong><br>
 Offers an optional [dependency injection](dependencies.md) system to provide data and services to your agent's [system prompts](agents.md#system-prompts), [tools](tools.md) and [result validators](results.md#result-validators-functions).
-
 This is useful for testing and eval-driven iterative development.
 
-:material-sine-wave:{ .lg .middle }&nbsp;&nbsp;<strong class="vertical-middle">Streamed Responses</strong>
-
+:material-sine-wave:{ .md .middle }&nbsp;<strong class="vertical-middle">Streamed Responses</strong><br>
 Provides the ability to [stream](results.md#streamed-results) LLM outputs continuously, with immediate validation, ensuring rapid and accurate results.
 
 !!! example "In Beta"
