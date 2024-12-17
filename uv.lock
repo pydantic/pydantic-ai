@@ -821,15 +821,6 @@ wheels = [
 ]
 
 [[package]]
-name = "json-repair"
-version = "0.30.3"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/2f/7a/7745d0d908563a478421c7520649dfd6a5c551858e2233ff7caf20cb8df7/json_repair-0.30.3.tar.gz", hash = "sha256:0ac56e7ae9253ee9c507a7e1a3a26799c9b0bbe5e2bec1b2cc5053e90d5b05e3", size = 27803 }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/fd/2d/79a46330c4b97ee90dd403fb0d267da7b25b24d7db604c5294e5c57d5f7c/json_repair-0.30.3-py3-none-any.whl", hash = "sha256:63bb588162b0958ae93d85356ecbe54c06b8c33f8a4834f93fa2719ea669804e", size = 18951 },
-]
-
-[[package]]
 name = "jsonpath-python"
 version = "1.0.6"
 source = { registry = "https://pypi.org/simple" }
@@ -1677,7 +1668,6 @@ logfire = [
     { name = "logfire" },
 ]
 mistral = [
-    { name = "json-repair" },
     { name = "mistralai" },
 ]
 openai = [
@@ -1709,7 +1699,6 @@ requires-dist = [
     { name = "griffe", specifier = ">=1.3.2" },
     { name = "groq", marker = "extra == 'groq'", specifier = ">=0.12.0" },
     { name = "httpx", specifier = ">=0.27.2" },
-    { name = "json-repair", marker = "extra == 'mistral'", specifier = ">=0.30.3" },
     { name = "logfire", marker = "extra == 'logfire'", specifier = ">=2.3" },
     { name = "logfire-api", specifier = ">=1.2.0" },
     { name = "mistralai", marker = "extra == 'mistral'", specifier = ">=1.2.5" },
