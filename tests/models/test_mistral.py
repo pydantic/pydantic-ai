@@ -869,10 +869,10 @@ async def test_stream_result_type_primitif_array(allow_model_requests: None):
         assert result.cost().response_tokens == len(stream)
 
 
-async def test_stream_result_type_basemodel(allow_model_requests: None):
+async def test_stream_result_type_basemodel_with_default_params(allow_model_requests: None):
     class MyTypedBaseModel(BaseModel):
-        first: str = ''  # Note: Don't forget to set default values
-        second: str = ''
+        first: str = ''  # Note: Default, set value.
+        second: str = ''  # Note: Default, set value.
 
     # Given
     stream = [
@@ -938,6 +938,81 @@ async def test_stream_result_type_basemodel(allow_model_requests: None):
                 MyTypedBaseModel(first='One', second=''),
                 MyTypedBaseModel(first='One', second=''),
                 MyTypedBaseModel(first='One', second=''),
+                MyTypedBaseModel(first='One', second=''),
+                MyTypedBaseModel(first='One', second=''),
+                MyTypedBaseModel(first='One', second=''),
+                MyTypedBaseModel(first='One', second='T'),
+                MyTypedBaseModel(first='One', second='Tw'),
+                MyTypedBaseModel(first='One', second='Two'),
+                MyTypedBaseModel(first='One', second='Two'),
+                MyTypedBaseModel(first='One', second='Two'),
+                MyTypedBaseModel(first='One', second='Two'),
+            ]
+        )
+        assert result.is_complete
+        assert result.cost().request_tokens == 34
+        assert result.cost().response_tokens == 34
+        assert result.cost().total_tokens == 34
+
+        # double check cost matches stream count
+        assert result.cost().response_tokens == len(stream)
+
+
+async def test_stream_result_type_basemodel_with_required_params(allow_model_requests: None):
+    class MyTypedBaseModel(BaseModel):
+        first: str  # Note: Required params
+        second: str  # Note: Required params
+
+    # Given
+    stream = [
+        text_chunk('{'),
+        text_chunk('"'),
+        text_chunk('f'),
+        text_chunk('i'),
+        text_chunk('r'),
+        text_chunk('s'),
+        text_chunk('t'),
+        text_chunk('"'),
+        text_chunk(':'),
+        text_chunk(' '),
+        text_chunk('"'),
+        text_chunk('O'),
+        text_chunk('n'),
+        text_chunk('e'),
+        text_chunk('"'),
+        text_chunk(','),
+        text_chunk(' '),
+        text_chunk('"'),
+        text_chunk('s'),
+        text_chunk('e'),
+        text_chunk('c'),
+        text_chunk('o'),
+        text_chunk('n'),
+        text_chunk('d'),
+        text_chunk('"'),
+        text_chunk(':'),
+        text_chunk(' '),
+        text_chunk('"'),
+        text_chunk('T'),
+        text_chunk('w'),
+        text_chunk('o'),
+        text_chunk('"'),
+        text_chunk('}'),
+        chunk([]),
+    ]
+
+    mock_client = MockMistralAI.create_stream_mock(stream)
+    model = MistralModel('mistral-large-latest', client=mock_client)
+    agent = Agent(model=model, result_type=MyTypedBaseModel)
+
+    # When
+    async with agent.run_stream('User prompt value') as result:
+        # Then
+        assert result.is_structured
+        assert not result.is_complete
+        v = [c async for c in result.stream(debounce_by=None)]
+        assert v == snapshot(
+            [
                 MyTypedBaseModel(first='One', second=''),
                 MyTypedBaseModel(first='One', second=''),
                 MyTypedBaseModel(first='One', second=''),
