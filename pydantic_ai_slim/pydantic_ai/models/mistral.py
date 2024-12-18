@@ -527,7 +527,6 @@ class JSONRepairer:
         self.stack: list[Any] = []
         self.is_inside_string = False
         self.escaped = False
-        self.closing_map = {'"': '"', '{': '}', '[': ']'}
 
     def process_chunk(self, chunk: str) -> dict[str, Any] | None:
         """Process a JSON chunk, attempting to parse it into a valid JSON object by repairing issues."""
@@ -591,7 +590,8 @@ class JSONRepairer:
             except json.JSONDecodeError:
                 # Remove the last character and retry
                 value = repaired_chars.pop()
-                if closing_chars and closing_chars[0] == self.closing_map.get(value):
+                # Check if the last character removed was a opening character
+                if closing_chars and closing_chars[0] == {'"': '"', '{': '}', '[': ']'}.get(value):
                     closing_chars.pop(0)
 
         # Return None if parsing fails after all attempts
