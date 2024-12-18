@@ -1730,7 +1730,7 @@ def test_repair_malformed_indended_json(repairer: _JSONChunkParser):
     malformed_json = """{
     "key": "val\\nue",
     "nested": {
-        "list": [1"""
+        "list": [1"""  # Extra \\n to test indent in string
     # When
     result = repairer.process_chunk(malformed_json)
     # Then
@@ -1839,7 +1839,7 @@ def test_repair_malformed_json_with_whitespace(repairer: _JSONChunkParser):
     "nested": {
         "list": [1, {"inner_key": "inner_value"}, 3],
         "boolean": true
-    }\n\r\t"""
+    }\n\r\t"""  # Extra \\n to test indent in string
 
     # When
     result = repairer.process_chunk(malformed_json)
