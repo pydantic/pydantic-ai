@@ -542,6 +542,7 @@ class _JSONChunkParser:
 
     def _repair_json(self, chunk: str) -> dict[str, Any] | None:
         """Attempts to repair and parse the accumulated buffer as JSON, handling common issues."""
+        # Next string to continue processing from the previous iteration.
         start_index = len(self.new_chars)
         for char in chunk[start_index:]:
             if self.is_inside_string:
