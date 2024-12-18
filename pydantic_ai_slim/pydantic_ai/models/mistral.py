@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+import json
 import os
 from collections.abc import AsyncIterator, Iterable
 from contextlib import asynccontextmanager
@@ -39,7 +40,6 @@ from . import (
 )
 
 try:
-    from json_repair import repair_json
     from mistralai import (
         UNSET,
         CompletionChunk as MistralCompletionChunk,
@@ -547,12 +547,12 @@ class MistralStreamStructuredResponse(StreamStructuredResponse):
 
         elif self._delta_content and self._result_tools:
             # NOTE: Params set for the most efficient and fastest way.
-            output_json = repair_json(self._delta_content, return_objects=True, skip_json_loads=True)
-            assert isinstance(
-                output_json, dict
-            ), f'Expected repair_json as type dict, invalid type: {type(output_json)}'
+            output_json = _repair_json(self._delta_content)
+            # assert isinstance(
+            #     output_json, (dict, type(None))
+            # ), f'Expected repair_json as type dict, invalid type: {type(output_json)}'
 
-            if output_json:
+            if isinstance(output_json, dict) and output_json:
                 for result_tool in self._result_tools.values():
                     # NOTE: Additional verification to prevent JSON validation to crash in `_result.py`
                     # Ensures required parameters in the JSON schema are respected, especially for stream-based return types.
@@ -678,3 +678,65 @@ def _map_content(content: MistralOptionalNullable[MistralContent]) -> str | None
         result = None
 
     return result
+
+
+def _repair_json(s: str) -> dict[str, Any] | list[Any] | None:
+    """Attempt to parse a given string as JSON, repairing common issues."""
+    # Attempt to parse the string as-is.
+    try:
+        return json.loads(s, strict=False)
+    except json.JSONDecodeError:
+        pass
+
+    new_chars: list[str] = []
+    stack: list[Any] = []
+    is_inside_string = False
+    escaped = False
+
+    # Process each character in the string.
+    for char in s:
+        if is_inside_string:
+            if char == '"' and not escaped:
+                is_inside_string = False
+            elif char == '\n' and not escaped:
+                char = '\\n'  # Replace newline with escape sequence.
+            elif char == '\\':
+                escaped = not escaped
+            else:
+                escaped = False
+        else:
+            if char == '"':
+                is_inside_string = True
+                escaped = False
+            elif char == '{':
+                stack.append('}')
+            elif char == '[':
+                stack.append(']')
+            elif char == '}' or char == ']':
+                if stack and stack[-1] == char:
+                    stack.pop()
+                else:
+                    # Mismatched closing character; the input is malformed.
+                    return None
+
+        # Append the processed character to the new string.
+        new_chars.append(char)
+
+    # If we're still inside a string at the end of processing, close the string.
+    if is_inside_string:
+        new_chars.append('"')
+
+    # Reverse the stack to get the closing characters.
+    stack.reverse()
+
+    # Try to parse the modified string until we succeed or run out of characters.
+    while new_chars:
+        try:
+            value = ''.join(new_chars + stack)
+            return json.loads(value, strict=False)
+        except json.JSONDecodeError:
+            # If parsing fails, try removing the last character.
+            new_chars.pop()
+
+    # If we still can't parse the string as JSON, return None.
+    return None

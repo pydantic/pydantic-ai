@@ -544,7 +544,7 @@ async def test_request_result_type_with_arguments_str_response(allow_model_reque
 #####################
 
 
-async def test_stream_structured_with_all_typd(allow_model_requests: None):
+async def test_stream_structured_with_all_type(allow_model_requests: None):
     class MyTypedDict(TypedDict, total=False):
         first: str
         second: int
@@ -563,19 +563,19 @@ async def test_stream_structured_with_all_typd(allow_model_requests: None):
             '", "second": 2',
         ),
         text_chunk(
-            '", "bool_value": true',
+            ', "bool_value": true',
         ),
         text_chunk(
-            '", "nullable_value": null',
+            ', "nullable_value": null',
         ),
         text_chunk(
-            '", "array_value": ["A", "B", "C"]',
+            ', "array_value": ["A", "B", "C"]',
         ),
         text_chunk(
-            '", "dict_value": {"A": "A", "B":"B"}',
+            ', "dict_value": {"A": "A", "B":"B"}',
         ),
         text_chunk(
-            '", "dict_int_value": {"A": 1, "B":2}',
+            ', "dict_int_value": {"A": 1, "B":2}',
         ),
         text_chunk('}'),
         chunk([]),
@@ -721,8 +721,8 @@ async def test_stream_result_type_primitif_dict(allow_model_requests: None):
                 {'first': 'One'},
                 {'first': 'One'},
                 {'first': 'One'},
-                {'first': 'One', 'second': ''},
-                {'first': 'One', 'second': ''},
+                {'first': 'One'},
+                {'first': 'One'},
                 {'first': 'One', 'second': ''},
                 {'first': 'One', 'second': 'T'},
                 {'first': 'One', 'second': 'Tw'},
@@ -828,6 +828,7 @@ async def test_stream_result_type_primitif_array(allow_model_requests: None):
         v = [c async for c in result.stream(debounce_by=None)]
         assert v == snapshot(
             [
+                [''],
                 ['f'],
                 ['fi'],
                 ['fir'],
@@ -835,13 +836,13 @@ async def test_stream_result_type_primitif_array(allow_model_requests: None):
                 ['first'],
                 ['first'],
                 ['first'],
-                ['first'],
+                ['first', ''],
                 ['first', 'O'],
                 ['first', 'On'],
                 ['first', 'One'],
                 ['first', 'One'],
                 ['first', 'One'],
-                ['first', 'One'],
+                ['first', 'One', ''],
                 ['first', 'One', 's'],
                 ['first', 'One', 'se'],
                 ['first', 'One', 'sec'],
@@ -850,7 +851,7 @@ async def test_stream_result_type_primitif_array(allow_model_requests: None):
                 ['first', 'One', 'second'],
                 ['first', 'One', 'second'],
                 ['first', 'One', 'second'],
-                ['first', 'One', 'second'],
+                ['first', 'One', 'second', ''],
                 ['first', 'One', 'second', 'T'],
                 ['first', 'One', 'second', 'Tw'],
                 ['first', 'One', 'second', 'Two'],
@@ -1013,8 +1014,6 @@ async def test_stream_result_type_basemodel_with_required_params(allow_model_req
         v = [c async for c in result.stream(debounce_by=None)]
         assert v == snapshot(
             [
-                MyTypedBaseModel(first='One', second=''),
-                MyTypedBaseModel(first='One', second=''),
                 MyTypedBaseModel(first='One', second=''),
                 MyTypedBaseModel(first='One', second='T'),
                 MyTypedBaseModel(first='One', second='Tw'),
