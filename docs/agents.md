@@ -114,8 +114,8 @@ Consider the following example, where we limit the number of response tokens:
 
 ```py
 from pydantic_ai import Agent
-from pydantic_ai.settings import UsageLimits
 from pydantic_ai.exceptions import UsageLimitExceeded
+from pydantic_ai.settings import UsageLimits
 
 agent = Agent('claude-3-5-sonnet-latest')
 
@@ -144,8 +144,8 @@ Restricting the number of requests can be useful in preventing infinite loops or
 from typing import TypedDict
 
 from pydantic_ai import Agent, ModelRetry
-from pydantic_ai.settings import UsageLimits
 from pydantic_ai.exceptions import UsageLimitExceeded
+from pydantic_ai.settings import UsageLimits
 
 
 class NeverResultType(TypedDict):
