@@ -514,8 +514,16 @@ class _JSONChunkParser:
     """A class to repair JSON chunks that might be corrupted (e.g. missing closing quotes)."""
 
     def __init__(self) -> None:
+        """Initialize the state of the JSON chunk parser.
+
+        State variables:
+        - `new_chars`: A list of characters that have been processed.
+        - `closing_stack`: A stack of characters to add closing quotes (e.g., `", }, ]`).
+        - `is_inside_string`: A boolean indicating whether the parser is currently inside a string.
+        - `escaped`: A boolean indicating whether the last character seen was an escape character.
+        """
         self.new_chars: list[str] = []
-        self.stack: list[str] = []
+        self.closing_stack: list[str] = []
         self.is_inside_string = False
         self.escaped = False
 
@@ -560,16 +568,16 @@ class _JSONChunkParser:
 
                 # Track expected closing brace
                 elif char == '{':
-                    self.stack.append('}')
+                    self.closing_stack.append('}')
 
                 # Track expected closing bracket
                 elif char == '[':
-                    self.stack.append(']')
+                    self.closing_stack.append(']')
 
                 # Handle closing characters and check for mismatches
                 elif char == '}' or char == ']':
-                    if self.stack and self.stack[-1] == char:
-                        self.stack.pop()
+                    if self.closing_stack and self.closing_stack[-1] == char:
+                        self.closing_stack.pop()
                     else:
                         # Mismatched closing character means malformed input
                         return None
@@ -577,7 +585,7 @@ class _JSONChunkParser:
             self.new_chars.append(char)
 
         # Prepare closing characters to balance the structure (Copy)
-        closing_chars = self.stack[::]
+        closing_chars = self.closing_stack[::]
 
         # If inside a string, ensure it is closed
         if self.is_inside_string:
