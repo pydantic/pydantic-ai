@@ -282,11 +282,11 @@ class AnthropicAgentModel(AgentModel):
                                 MessageParam(
                                     role='user',
                                     content=[
-                                        ToolUseBlockParam(
-                                            id=_guard_tool_call_id(t=part, model_source='Anthropic'),
-                                            input=part.model_response(),
-                                            name=part.tool_name,
-                                            type='tool_use',
+                                        ToolResultBlockParam(
+                                            tool_use_id=_guard_tool_call_id(t=part, model_source='Anthropic'),
+                                            type='tool_result',
+                                            content=part.model_response(),
+                                            is_error=True,
                                         ),
                                     ],
                                 )
