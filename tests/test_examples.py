@@ -241,7 +241,7 @@ async def model_logic(messages: list[ModelMessage], info: AgentInfo) -> ModelRes
         return ModelResponse(parts=[ToolCallPart(tool_name='get_player_name', args=ArgsDict({}))])
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_player_name':
         return ModelResponse.from_text(content="Congratulations Anne, you guessed correctly! You're a winner!")
-    elif (
+    if (
         isinstance(m, RetryPromptPart)
         and isinstance(m.content, str)
         and m.content.startswith("No user found with name 'Joh")
