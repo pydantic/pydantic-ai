@@ -26,7 +26,7 @@ from ..messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from ..result import Cost
+from ..result import Usage
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from . import (
@@ -156,10 +156,10 @@ class MistralAgentModel(AgentModel):
 
     async def request(
         self, messages: list[ModelMessage], model_settings: ModelSettings | None
-    ) -> tuple[ModelResponse, Cost]:
+    ) -> tuple[ModelResponse, Usage]:
         """Make a non-streaming request to the model from Pydantic AI call."""
         response = await self._completions_create(messages, model_settings)
-        return self._process_response(response), _map_cost(response)
+        return self._process_response(response), _map_usage(response)
 
     @asynccontextmanager
     async def request_stream(
@@ -297,7 +297,7 @@ class MistralAgentModel(AgentModel):
         response: MistralEventStreamAsync[MistralCompletionEvent],
     ) -> EitherStreamedResponse:
         """Process a streamed response, and prepare a streaming response to return."""
-        start_cost = Cost()
+        start_usage = Usage()
 
         # Iterate until we get either `tool_calls` or `content` from the first chunk.
         while True:
@@ -307,7 +307,7 @@ class MistralAgentModel(AgentModel):
             except StopAsyncIteration as e:
                 raise UnexpectedModelBehavior('Streamed response ended without content or tool calls') from e
 
-            start_cost += _map_cost(chunk)
+            start_usage += _map_usage(chunk)
 
             if chunk.created:
                 timestamp = datetime.fromtimestamp(chunk.created, tz=timezone.utc)
@@ -329,11 +329,11 @@ class MistralAgentModel(AgentModel):
                         response,
                         content,
                         timestamp,
-                        start_cost,
+                        start_usage,
                     )
 
                 elif content:
-                    return MistralStreamTextResponse(content, response, timestamp, start_cost)
+                    return MistralStreamTextResponse(content, response, timestamp, start_usage)
 
     @staticmethod
     def _map_to_mistral_tool_call(t: ToolCallPart) -> MistralToolCall:
@@ -474,7 +474,7 @@ class MistralStreamTextResponse(StreamTextResponse):
     _first: str | None
     _response: MistralEventStreamAsync[MistralCompletionEvent]
     _timestamp: datetime
-    _cost: Cost
+    _usage: Usage
     _buffer: list[str] = field(default_factory=list, init=False)
 
     async def __anext__(self) -> None:
@@ -484,7 +484,7 @@ class MistralStreamTextResponse(StreamTextResponse):
             return None
 
         chunk = await self._response.__anext__()
-        self._cost += _map_cost(chunk.data)
+        self._usage += _map_usage(chunk.data)
 
         try:
             choice = chunk.data.choices[0]
@@ -502,8 +502,8 @@ class MistralStreamTextResponse(StreamTextResponse):
         yield from self._buffer
         self._buffer.clear()
 
-    def cost(self) -> Cost:
-        return self._cost
+    def usage(self) -> Usage:
+        return self._usage
 
     def timestamp(self) -> datetime:
         return self._timestamp
@@ -518,11 +518,11 @@ class MistralStreamStructuredResponse(StreamStructuredResponse):
     _response: MistralEventStreamAsync[MistralCompletionEvent]
     _delta_content: str | None
     _timestamp: datetime
-    _cost: Cost
+    _usage: Usage
 
     async def __anext__(self) -> None:
         chunk = await self._response.__anext__()
-        self._cost += _map_cost(chunk.data)
+        self._usage += _map_usage(chunk.data)
 
         try:
             choice = chunk.data.choices[0]
@@ -571,8 +571,8 @@ class MistralStreamStructuredResponse(StreamStructuredResponse):
 
         return ModelResponse(calls, timestamp=self._timestamp)
 
-    def cost(self) -> Cost:
-        return self._cost
+    def usage(self) -> Usage:
+        return self._usage
 
     def timestamp(self) -> datetime:
         return self._timestamp
@@ -645,17 +645,17 @@ def _map_mistral_to_pydantic_tool_call(tool_call: MistralToolCall) -> ToolCallPa
         )
 
 
-def _map_cost(response: MistralChatCompletionResponse | MistralCompletionChunk) -> Cost:
-    """Maps a Mistral Completion Chunk or Chat Completion Response to a Cost."""
+def _map_usage(response: MistralChatCompletionResponse | MistralCompletionChunk) -> Usage:
+    """Maps a Mistral Completion Chunk or Chat Completion Response to a Usage."""
     if response.usage:
-        return Cost(
+        return Usage(
             request_tokens=response.usage.prompt_tokens,
             response_tokens=response.usage.completion_tokens,
             total_tokens=response.usage.total_tokens,
             details=None,
         )
     else:
-        return Cost()
+        return Usage()
 
 
 def _map_content(content: MistralOptionalNullable[MistralContent]) -> str | None:

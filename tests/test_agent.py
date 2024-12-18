@@ -26,7 +26,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import cached_async_http_client
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.result import Cost, RunResult
+from pydantic_ai.result import RunResult, Usage
 from pydantic_ai.tools import ToolDefinition
 
 from .conftest import IsNow, TestEnv
@@ -505,7 +505,7 @@ def test_run_with_history_new(set_event_loop: None):
             ],
             _new_message_index=4,
             data='{"ret_a":"a-apple"}',
-            _cost=Cost(),
+            _usage=Usage(),
         )
     )
     new_msg_part_kinds = [(m.kind, [p.part_kind for p in m.parts]) for m in result2.all_messages()]
@@ -547,7 +547,7 @@ def test_run_with_history_new(set_event_loop: None):
             ],
             _new_message_index=4,
             data='{"ret_a":"a-apple"}',
-            _cost=Cost(),
+            _usage=Usage(),
         )
     )
 
@@ -646,7 +646,7 @@ def test_run_with_history_new_structured(set_event_loop: None):
                 ),
             ],
             _new_message_index=5,
-            _cost=Cost(),
+            _usage=Usage(),
         )
     )
     new_msg_part_kinds = [(m.kind, [p.part_kind for p in m.parts]) for m in result2.all_messages()]

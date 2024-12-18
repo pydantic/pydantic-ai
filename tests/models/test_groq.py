@@ -22,7 +22,7 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.result import Cost
+from pydantic_ai.result import Usage
 
 from ..conftest import IsNow, try_import
 
@@ -128,14 +128,14 @@ async def test_request_simple_success(allow_model_requests: None):
 
     result = await agent.run('hello')
     assert result.data == 'world'
-    assert result.cost() == snapshot(Cost())
+    assert result.usage() == snapshot(Usage())
 
     # reset the index so we get the same response again
     mock_client.index = 0  # type: ignore
 
     result = await agent.run('hello', message_history=result.new_messages())
     assert result.data == 'world'
-    assert result.cost() == snapshot(Cost())
+    assert result.usage() == snapshot(Usage())
     assert result.all_messages() == snapshot(
         [
             ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
@@ -411,7 +411,7 @@ async def test_stream_structured(allow_model_requests: None):
         )
         assert result.is_complete
 
-    assert result.cost() == snapshot(Cost())
+    assert result.usage() == snapshot(Usage())
     assert result.all_messages() == snapshot(
         [
             ModelRequest(parts=[UserPromptPart(content='', timestamp=IsNow(tz=timezone.utc))]),

@@ -20,7 +20,7 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.result import Cost
+from pydantic_ai.result import Usage
 
 from ..conftest import IsNow, try_import
 
@@ -31,7 +31,7 @@ with try_import() as imports_successful:
         Message as AnthropicMessage,
         TextBlock,
         ToolUseBlock,
-        Usage,
+        Usage as AnthropicUsage,
     )
 
     from pydantic_ai.models.anthropic import AnthropicModel
@@ -71,7 +71,7 @@ class MockAnthropic:
         return response
 
 
-def completion_message(content: list[ContentBlock], usage: Usage) -> AnthropicMessage:
+def completion_message(content: list[ContentBlock], usage: AnthropicUsage) -> AnthropicMessage:
     return AnthropicMessage(
         id='123',
         content=content,
@@ -84,21 +84,21 @@ def completion_message(content: list[ContentBlock], usage: Usage) -> AnthropicMe
 
 
 async def test_sync_request_text_response(allow_model_requests: None):
-    c = completion_message([TextBlock(text='world', type='text')], Usage(input_tokens=5, output_tokens=10))
+    c = completion_message([TextBlock(text='world', type='text')], AnthropicUsage(input_tokens=5, output_tokens=10))
     mock_client = MockAnthropic.create_mock(c)
     m = AnthropicModel('claude-3-5-haiku-latest', anthropic_client=mock_client)
     agent = Agent(m)
 
     result = await agent.run('hello')
     assert result.data == 'world'
-    assert result.cost() == snapshot(Cost(request_tokens=5, response_tokens=10, total_tokens=15))
+    assert result.usage() == snapshot(Usage(request_tokens=5, response_tokens=10, total_tokens=15))
 
     # reset the index so we get the same response again
     mock_client.index = 0  # type: ignore
 
     result = await agent.run('hello', message_history=result.new_messages())
     assert result.data == 'world'
-    assert result.cost() == snapshot(Cost(request_tokens=5, response_tokens=10, total_tokens=15))
+    assert result.usage() == snapshot(Usage(request_tokens=5, response_tokens=10, total_tokens=15))
     assert result.all_messages() == snapshot(
         [
             ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
@@ -112,7 +112,7 @@ async def test_sync_request_text_response(allow_model_requests: None):
 async def test_async_request_text_response(allow_model_requests: None):
     c = completion_message(
         [TextBlock(text='world', type='text')],
-        usage=Usage(input_tokens=3, output_tokens=5),
+        usage=AnthropicUsage(input_tokens=3, output_tokens=5),
     )
     mock_client = MockAnthropic.create_mock(c)
     m = AnthropicModel('claude-3-5-haiku-latest', anthropic_client=mock_client)
@@ -120,13 +120,13 @@ async def test_async_request_text_response(allow_model_requests: None):
 
     result = await agent.run('hello')
     assert result.data == 'world'
-    assert result.cost() == snapshot(Cost(request_tokens=3, response_tokens=5, total_tokens=8))
+    assert result.usage() == snapshot(Usage(request_tokens=3, response_tokens=5, total_tokens=8))
 
 
 async def test_request_structured_response(allow_model_requests: None):
     c = completion_message(
         [ToolUseBlock(id='123', input={'response': [1, 2, 3]}, name='final_result', type='tool_use')],
-        usage=Usage(input_tokens=3, output_tokens=5),
+        usage=AnthropicUsage(input_tokens=3, output_tokens=5),
     )
     mock_client = MockAnthropic.create_mock(c)
     m = AnthropicModel('claude-3-5-haiku-latest', anthropic_client=mock_client)
@@ -165,15 +165,15 @@ async def test_request_tool_call(allow_model_requests: None):
     responses = [
         completion_message(
             [ToolUseBlock(id='1', input={'loc_name': 'San Francisco'}, name='get_location', type='tool_use')],
-            usage=Usage(input_tokens=2, output_tokens=1),
+            usage=AnthropicUsage(input_tokens=2, output_tokens=1),
         ),
         completion_message(
             [ToolUseBlock(id='2', input={'loc_name': 'London'}, name='get_location', type='tool_use')],
-            usage=Usage(input_tokens=3, output_tokens=2),
+            usage=AnthropicUsage(input_tokens=3, output_tokens=2),
         ),
         completion_message(
             [TextBlock(text='final response', type='text')],
-            usage=Usage(input_tokens=3, output_tokens=5),
+            usage=AnthropicUsage(input_tokens=3, output_tokens=5),
         ),
     ]
 
