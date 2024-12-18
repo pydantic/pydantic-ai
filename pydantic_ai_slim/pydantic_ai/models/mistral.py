@@ -1,6 +1,5 @@
 from __future__ import annotations as _annotations
 
-import json
 import os
 from collections.abc import AsyncIterator, Iterable
 from contextlib import asynccontextmanager
@@ -9,6 +8,7 @@ from datetime import datetime, timezone
 from itertools import chain
 from typing import Any, Callable, Literal, Union
 
+import pydantic_core
 from httpx import AsyncClient as AsyncHTTPClient, Timeout
 from typing_extensions import assert_never
 
@@ -330,7 +330,6 @@ class MistralAgentModel(AgentModel):
                         content,
                         timestamp,
                         start_usage,
-                        _JSONChunkParser(),
                     )
 
                 elif content:
@@ -510,109 +509,6 @@ class MistralStreamTextResponse(StreamTextResponse):
         return self._timestamp
 
 
-class _JSONChunkParser:
-    """A class to repair JSON chunks that might be corrupted (e.g. missing closing quotes)."""
-
-    def __init__(self) -> None:
-        """Initialize the state of the JSON chunk parser.
-
-        State variables:
-        - `new_chars`: A list of characters that have been processed.
-        - `closing_stack`: A stack of characters to add closing quotes (e.g., `", }, ]`).
-        - `is_inside_string`: A boolean indicating whether the parser is currently inside a string.
-        - `escaped`: A boolean indicating whether the last character seen was an escape character.
-        """
-        self.new_chars: list[str] = []
-        self.closing_stack: list[str] = []
-        self.is_inside_string = False
-        self.escaped = False
-
-    def process_chunk(self, chunk: str) -> dict[str, Any] | None:
-        """Process a JSON chunk, attempting to parse it into a valid JSON object by repairing issues."""
-        # Strip whitespace, newlines, backtick from the start and end
-        chunk = chunk.strip(' \n\r\t`')
-        try:
-            output_json: dict[str, Any] | None = json.loads(chunk)
-            return output_json
-        except json.JSONDecodeError:
-            pass  # Continue to attempt repairing
-
-        return self._repair_json(chunk)
-
-    def _repair_json(self, chunk: str) -> dict[str, Any] | None:
-        """Attempts to repair and parse the accumulated buffer as JSON, handling common issues."""
-        # Next string to continue processing from the previous iteration.
-        start_index = len(self.new_chars)
-        for char in chunk[start_index:]:
-            if self.is_inside_string:
-                # End of string detected
-                if char == '"' and not self.escaped:
-                    self.is_inside_string = False
-
-                # Replace newline with escape sequence within a string
-                elif char == '\n' and not self.escaped:
-                    char = '\\n'
-
-                # Toggle escaped status on encountering backslash
-                elif char == '\\':
-                    self.escaped = not self.escaped
-
-                # Reset escaped status for other characters
-                else:
-                    self.escaped = False
-            else:
-                # Start of string detected
-                if char == '"':
-                    self.is_inside_string = True
-                    self.escaped = False
-
-                # Track expected closing brace
-                elif char == '{':
-                    self.closing_stack.append('}')
-
-                # Track expected closing bracket
-                elif char == '[':
-                    self.closing_stack.append(']')
-
-                # Handle closing characters and check for mismatches
-                elif char == '}' or char == ']':
-                    if self.closing_stack and self.closing_stack[-1] == char:
-                        self.closing_stack.pop()
-                    else:
-                        # Mismatched closing character means malformed input
-                        return None
-
-            self.new_chars.append(char)
-
-        # Prepare closing characters to balance the structure (Copy)
-        closing_chars = self.closing_stack[::]
-
-        # If inside a string, ensure it is closed
-        if self.is_inside_string:
-            closing_chars.append('"')
-            self.is_inside_string = True
-
-        # Reverse to maintain correct order of closing characters
-        closing_chars.reverse()
-
-        # (Copy)
-        repaired_chars = self.new_chars[::]
-
-        # Attempt to parse the repaired JSON string
-        while repaired_chars:
-            try:
-                value = ''.join(repaired_chars + closing_chars)
-                return json.loads(value)
-            except json.JSONDecodeError:
-                # Remove the last character and retry parsing
-                value = repaired_chars.pop()
-                # Check if the last character removed was an opening character
-                if closing_chars and closing_chars[0] == {'"': '"', '{': '}', '[': ']'}.get(value):
-                    closing_chars.pop(0)
-
-        return None
-
-
 @dataclass
 class MistralStreamStructuredResponse(StreamStructuredResponse):
     """Implementation of `StreamStructuredResponse` for Mistral models."""
@@ -623,7 +519,6 @@ class MistralStreamStructuredResponse(StreamStructuredResponse):
     _delta_content: str | None
     _timestamp: datetime
     _usage: Usage
-    _json: _JSONChunkParser
 
     async def __anext__(self) -> None:
         chunk = await self._response.__anext__()
@@ -651,7 +546,13 @@ class MistralStreamStructuredResponse(StreamStructuredResponse):
                 calls.append(tool)
 
         elif self._delta_content and self._result_tools:
-            output_json: dict[str, Any] | None = self._json.process_chunk(self._delta_content)
+            output_json: dict[str, Any] | None = pydantic_core.from_json(
+                self._delta_content, allow_partial='trailing-strings'
+            )
+
+            assert isinstance(
+                output_json, (dict, type(None))
+            ), f'Expected `pydantic_core.from_json` as type `dict` or `None`, invalid type: {type(output_json)}'
 
             if output_json:
                 for result_tool in self._result_tools.values():
