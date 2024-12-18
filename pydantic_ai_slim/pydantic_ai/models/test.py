@@ -13,16 +13,13 @@ from typing_extensions import assert_never
 
 from .. import _utils
 from ..messages import (
-    ArgsJson,
     ModelMessage,
     ModelRequest,
     ModelResponse,
     RetryPromptPart,
-    SystemPromptPart,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
-    UserPromptPart,
 )
 from ..result import Usage
 from ..settings import ModelSettings
@@ -34,6 +31,7 @@ from . import (
     StreamStructuredResponse,
     StreamTextResponse,
 )
+from .function import _estimate_string_usage, _estimate_usage  # pyright: ignore[reportPrivateUsage]
 
 
 @dataclass
@@ -234,7 +232,7 @@ class TestStreamTextResponse(StreamTextResponse):
 
     async def __anext__(self) -> None:
         next_str = _utils.sync_anext(self._iter)
-        response_tokens = _string_usage(next_str)
+        response_tokens = _estimate_string_usage(next_str)
         self._usage += Usage(response_tokens=response_tokens, total_tokens=response_tokens)
         self._buffer.append(next_str)
 
@@ -425,46 +423,3 @@ class _JsonSchemaTestData:
             rem //= chars
         s += _chars[self.seed % chars]
         return s
-
-
-def _estimate_usage(messages: Iterable[ModelMessage]) -> Usage:
-    """Very rough guesstimate of the token usage associated with a series of messages.
-
-    This is designed to be used solely to give plausible numbers for testing!
-    """
-    # there seem to be about 50 tokens of overhead for both Gemini and OpenAI calls, so add that here ¯\_(ツ)_/¯
-    request_tokens = 50
-    response_tokens = 0
-    for message in messages:
-        if isinstance(message, ModelRequest):
-            for part in message.parts:
-                if isinstance(part, (SystemPromptPart, UserPromptPart)):
-                    request_tokens += _string_usage(part.content)
-                elif isinstance(part, ToolReturnPart):
-                    request_tokens += _string_usage(part.model_response_str())
-                elif isinstance(part, RetryPromptPart):
-                    request_tokens += _string_usage(part.model_response())
-                else:
-                    assert_never(part)
-        elif isinstance(message, ModelResponse):
-            for part in message.parts:
-                if isinstance(part, TextPart):
-                    response_tokens += _string_usage(part.content)
-                elif isinstance(part, ToolCallPart):
-                    call = part
-                    if isinstance(call.args, ArgsJson):
-                        args_str = call.args.args_json
-                    else:
-                        args_str = pydantic_core.to_json(call.args.args_dict).decode()
-                    response_tokens += 1 + _string_usage(args_str)
-                else:
-                    assert_never(part)
-        else:
-            assert_never(message)
-    return Usage(
-        request_tokens=request_tokens, response_tokens=response_tokens, total_tokens=request_tokens + response_tokens
-    )
-
-
-def _string_usage(content: str) -> int:
-    return len(re.split(r'[\s",.:]+', content))

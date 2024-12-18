@@ -255,24 +255,24 @@ def _estimate_usage(messages: Iterable[ModelMessage]) -> result.Usage:
         if isinstance(message, ModelRequest):
             for part in message.parts:
                 if isinstance(part, (SystemPromptPart, UserPromptPart)):
-                    request_tokens += _string_usage(part.content)
+                    request_tokens += _estimate_string_usage(part.content)
                 elif isinstance(part, ToolReturnPart):
-                    request_tokens += _string_usage(part.model_response_str())
+                    request_tokens += _estimate_string_usage(part.model_response_str())
                 elif isinstance(part, RetryPromptPart):
-                    request_tokens += _string_usage(part.model_response())
+                    request_tokens += _estimate_string_usage(part.model_response())
                 else:
                     assert_never(part)
         elif isinstance(message, ModelResponse):
             for part in message.parts:
                 if isinstance(part, TextPart):
-                    response_tokens += _string_usage(part.content)
+                    response_tokens += _estimate_string_usage(part.content)
                 elif isinstance(part, ToolCallPart):
                     call = part
                     if isinstance(call.args, ArgsJson):
                         args_str = call.args.args_json
                     else:
                         args_str = pydantic_core.to_json(call.args.args_dict).decode()
-                    response_tokens += 1 + _string_usage(args_str)
+                    response_tokens += 1 + _estimate_string_usage(args_str)
                 else:
                     assert_never(part)
         else:
@@ -282,5 +282,5 @@ def _estimate_usage(messages: Iterable[ModelMessage]) -> result.Usage:
     )
 
 
-def _string_usage(content: str) -> int:
+def _estimate_string_usage(content: str) -> int:
     return len(re.split(r'[\s",.:]+', content))
