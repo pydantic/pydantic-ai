@@ -511,41 +511,35 @@ class MistralStreamTextResponse(StreamTextResponse):
 
 
 class JSONRepairer:
-    """Initialize the JSONRepairer with an empty buffer and state to maintain across chunks."""
+    """Utility class to repair JSON data that is not valid."""
 
     def __init__(self) -> None:
+        """Initialize the JSONRepairer with an empty buffer and state to maintain across chunks.
+
+        The properties are:
+
+        - `new_chars`: The characters that have been processed so far.
+        - `stack`: The stack of characters to be processed.
+        - `is_inside_string`: A boolean indicating whether we are inside a string or not.
+        - `escaped`: A boolean indicating whether the last character was an escape character or not.
+        """
         self.new_chars: list[str] = []
         self.stack: list[Any] = []
         self.is_inside_string = False
         self.escaped = False
 
-    def process_chunk(self, chunk: str) -> dict[str, Any] | list[Any] | None:
-        """Process a JSON chunk, attempting to parse it into a valid JSON object by repairing issues.
-
-        Args:
-            chunk (str): The next chunk of the JSON string.
-
-        Returns:
-            Union[dict[str, Any], list[Any], None]:
-                Parsed JSON object if successful, None if parsing fails.
-        """
+    def process_chunk(self, chunk: str) -> dict[str, Any] | None:
+        """Process a JSON chunk, attempting to parse it into a valid JSON object by repairing issues."""
         try:
-            # Try parsing the current buffer
-            result = json.loads(chunk, strict=False)
-            return result
+            output_json: dict[str, Any] | None = json.loads(chunk)
+            return output_json
         except json.JSONDecodeError:
             pass  # Continue to attempt repairing
 
-        # Attempt to repair the JSON incrementally
         return self._repair_json(chunk)
 
-    def _repair_json(self, chunk: str) -> dict[str, Any] | list[Any] | None:
-        """Attempt to repair and parse the accumulated buffer as JSON, handling common issues.
-
-        Returns:
-            Union[dict[str, Any], list[Any], None]:
-                Parsed JSON object if successful, None if parsing fails.
-        """
+    def _repair_json(self, chunk: str) -> dict[str, Any] | None:
+        """Attempts to repair and parse the accumulated buffer as JSON, handling common issues."""
         start_index = len(self.new_chars)
         for char in chunk[start_index:]:
             if self.is_inside_string:
@@ -562,7 +556,7 @@ class JSONRepairer:
                 if char == '"':
                     self.is_inside_string = True
                     self.escaped = False
-                    # self.stack.append('"')
+
                 elif char == '{':
                     self.stack.append('}')
                 elif char == '[':
@@ -577,26 +571,27 @@ class JSONRepairer:
             # Append the processed character to the new string
             self.new_chars.append(char)
 
-        r_stack = self.stack.copy()
-        # Reverse the stack to get the closing characters
+        closing_chars = self.stack.copy()  # 1
 
-        # If we're still inside a string at the end of processing, close the string
+        # If we're still inside a string, close it
         if self.is_inside_string:
-            r_stack.append('"')
+            closing_chars.append('"')  # 2
             self.is_inside_string = True
 
-        r_stack.reverse()
-        c_new_chars = self.new_chars.copy()
+        closing_chars.reverse()  # 3
+
+        repaired_chars = self.new_chars.copy()
+
         # Try to parse the modified string until we succeed or run out of characters
-        while c_new_chars:
+        while repaired_chars:
             try:
-                value = ''.join(c_new_chars + r_stack)
+                value = ''.join(repaired_chars + closing_chars)
                 return json.loads(value, strict=False)
             except json.JSONDecodeError:
-                # If parsing fails, try removing the last character
-                c_new_chars.pop()
+                # Remove the last character and retry
+                repaired_chars.pop()
 
-        # If we still can't parse the string as JSON, return None
+        # Return None if parsing fails after all attempts
         return None
 
 
@@ -639,10 +634,7 @@ class MistralStreamStructuredResponse(StreamStructuredResponse):
 
         elif self._delta_content and self._result_tools:
             # NOTE: Params set for the most efficient and fastest way.
-            output_json = self._json.process_chunk(self._delta_content)
-            # assert isinstance(
-            #     output_json, (dict, type(None))
-            # ), f'Expected repair_json as type dict, invalid type: {type(output_json)}'
+            output_json: dict[str, Any] | None = self._json.process_chunk(self._delta_content)
 
             if isinstance(output_json, dict) and output_json:
                 for result_tool in self._result_tools.values():
