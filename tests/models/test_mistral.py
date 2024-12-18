@@ -26,7 +26,6 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.models.mistral import JSONRepairer
 
 from ..conftest import IsNow, try_import
 
@@ -51,6 +50,7 @@ with try_import() as imports_successful:
     from mistralai.types.basemodel import Unset as MistralUnset
 
     from pydantic_ai.models.mistral import (
+        JSONRepairer,
         MistralAgentModel,
         MistralModel,
         MistralStreamStructuredResponse,
