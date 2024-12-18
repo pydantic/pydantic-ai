@@ -228,15 +228,15 @@ async def test_multiple_completions(allow_model_requests: None):
 
     # Then
     assert result.data == 'world'
-    assert result.cost().request_tokens == 1
-    assert result.cost().response_tokens == 1
-    assert result.cost().total_tokens == 1
+    assert result.usage().request_tokens == 1
+    assert result.usage().response_tokens == 1
+    assert result.usage().total_tokens == 1
 
     result = await agent.run('hello again', message_history=result.new_messages())
     assert result.data == 'hello again'
-    assert result.cost().request_tokens == 1
-    assert result.cost().response_tokens == 1
-    assert result.cost().total_tokens == 1
+    assert result.usage().request_tokens == 1
+    assert result.usage().response_tokens == 1
+    assert result.usage().total_tokens == 1
     assert result.all_messages() == snapshot(
         [
             ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
@@ -266,21 +266,21 @@ async def test_three_completions(allow_model_requests: None):
 
     # Them
     assert result.data == 'world'
-    assert result.cost().request_tokens == 1
-    assert result.cost().response_tokens == 1
-    assert result.cost().total_tokens == 1
+    assert result.usage().request_tokens == 1
+    assert result.usage().response_tokens == 1
+    assert result.usage().total_tokens == 1
 
     result = await agent.run('hello again', message_history=result.all_messages())
     assert result.data == 'hello again'
-    assert result.cost().request_tokens == 1
-    assert result.cost().response_tokens == 1
-    assert result.cost().total_tokens == 1
+    assert result.usage().request_tokens == 1
+    assert result.usage().response_tokens == 1
+    assert result.usage().total_tokens == 1
 
     result = await agent.run('final message', message_history=result.all_messages())
     assert result.data == 'final message'
-    assert result.cost().request_tokens == 1
-    assert result.cost().response_tokens == 1
-    assert result.cost().total_tokens == 1
+    assert result.usage().request_tokens == 1
+    assert result.usage().response_tokens == 1
+    assert result.usage().total_tokens == 1
     assert result.all_messages() == snapshot(
         [
             ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
@@ -314,9 +314,9 @@ async def test_stream_text(allow_model_requests: None):
             ['hello ', 'hello world ', 'hello world welcome ', 'hello world welcome mistral']
         )
         assert result.is_complete
-        assert result.cost().request_tokens == 5
-        assert result.cost().response_tokens == 5
-        assert result.cost().total_tokens == 5
+        assert result.usage().request_tokens == 5
+        assert result.usage().response_tokens == 5
+        assert result.usage().total_tokens == 5
 
 
 async def test_stream_text_finish_reason(allow_model_requests: None):
@@ -349,9 +349,9 @@ async def test_no_delta(allow_model_requests: None):
         assert not result.is_complete
         assert [c async for c in result.stream(debounce_by=None)] == snapshot(['hello ', 'hello world'])
         assert result.is_complete
-        assert result.cost().request_tokens == 3
-        assert result.cost().response_tokens == 3
-        assert result.cost().total_tokens == 3
+        assert result.usage().request_tokens == 3
+        assert result.usage().response_tokens == 3
+        assert result.usage().total_tokens == 3
 
 
 #####################
@@ -388,9 +388,9 @@ async def test_request_model_structured_with_arguments_dict_response(allow_model
 
     # Then
     assert result.data == CityLocation(city='paris', country='france')
-    assert result.cost().request_tokens == 1
-    assert result.cost().response_tokens == 2
-    assert result.cost().total_tokens == 3
+    assert result.usage().request_tokens == 1
+    assert result.usage().response_tokens == 2
+    assert result.usage().total_tokens == 3
     assert result.all_messages() == snapshot(
         [
             ModelRequest(parts=[UserPromptPart(content='User prompt value', timestamp=IsNow(tz=timezone.utc))]),
@@ -448,10 +448,10 @@ async def test_request_model_structured_with_arguments_str_response(allow_model_
 
     # Then
     assert result.data == CityLocation(city='paris', country='france')
-    assert result.cost().request_tokens == 1
-    assert result.cost().response_tokens == 1
-    assert result.cost().total_tokens == 1
-    assert result.cost().details is None
+    assert result.usage().request_tokens == 1
+    assert result.usage().response_tokens == 1
+    assert result.usage().total_tokens == 1
+    assert result.usage().details is None
     assert result.all_messages() == snapshot(
         [
             ModelRequest(parts=[UserPromptPart(content='User prompt value', timestamp=IsNow(tz=timezone.utc))]),
@@ -503,10 +503,10 @@ async def test_request_result_type_with_arguments_str_response(allow_model_reque
 
     # Then
     assert result.data == 42
-    assert result.cost().request_tokens == 1
-    assert result.cost().response_tokens == 1
-    assert result.cost().total_tokens == 1
-    assert result.cost().details is None
+    assert result.usage().request_tokens == 1
+    assert result.usage().response_tokens == 1
+    assert result.usage().total_tokens == 1
+    assert result.usage().details is None
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -642,12 +642,12 @@ async def test_stream_structured_with_all_type(allow_model_requests: None):
             ]
         )
         assert result.is_complete
-        assert result.cost().request_tokens == 10
-        assert result.cost().response_tokens == 10
-        assert result.cost().total_tokens == 10
+        assert result.usage().request_tokens == 10
+        assert result.usage().response_tokens == 10
+        assert result.usage().total_tokens == 10
 
-        # double check cost matches stream count
-        assert result.cost().response_tokens == len(stream)
+        # double check usage matches stream count
+        assert result.usage().response_tokens == len(stream)
 
 
 async def test_stream_result_type_primitif_dict(allow_model_requests: None):
@@ -733,12 +733,12 @@ async def test_stream_result_type_primitif_dict(allow_model_requests: None):
             ]
         )
         assert result.is_complete
-        assert result.cost().request_tokens == 34
-        assert result.cost().response_tokens == 34
-        assert result.cost().total_tokens == 34
+        assert result.usage().request_tokens == 34
+        assert result.usage().response_tokens == 34
+        assert result.usage().total_tokens == 34
 
-        # double check cost matches stream count
-        assert result.cost().response_tokens == len(stream)
+        # double check usage matches stream count
+        assert result.usage().response_tokens == len(stream)
 
 
 async def test_stream_result_type_primitif_int(allow_model_requests: None):
@@ -766,12 +766,12 @@ async def test_stream_result_type_primitif_int(allow_model_requests: None):
         v = [c async for c in result.stream(debounce_by=None)]
         assert v == snapshot([1, 1, 1])
         assert result.is_complete
-        assert result.cost().request_tokens == 6
-        assert result.cost().response_tokens == 6
-        assert result.cost().total_tokens == 6
+        assert result.usage().request_tokens == 6
+        assert result.usage().response_tokens == 6
+        assert result.usage().total_tokens == 6
 
-        # double check cost matches stream count
-        assert result.cost().response_tokens == len(stream)
+        # double check usage matches stream count
+        assert result.usage().response_tokens == len(stream)
 
 
 async def test_stream_result_type_primitif_array(allow_model_requests: None):
@@ -862,12 +862,12 @@ async def test_stream_result_type_primitif_array(allow_model_requests: None):
             ]
         )
         assert result.is_complete
-        assert result.cost().request_tokens == 35
-        assert result.cost().response_tokens == 35
-        assert result.cost().total_tokens == 35
+        assert result.usage().request_tokens == 35
+        assert result.usage().response_tokens == 35
+        assert result.usage().total_tokens == 35
 
-        # double check cost matches stream count
-        assert result.cost().response_tokens == len(stream)
+        # double check usage matches stream count
+        assert result.usage().response_tokens == len(stream)
 
 
 async def test_stream_result_type_basemodel_with_default_params(allow_model_requests: None):
@@ -951,12 +951,12 @@ async def test_stream_result_type_basemodel_with_default_params(allow_model_requ
             ]
         )
         assert result.is_complete
-        assert result.cost().request_tokens == 34
-        assert result.cost().response_tokens == 34
-        assert result.cost().total_tokens == 34
+        assert result.usage().request_tokens == 34
+        assert result.usage().response_tokens == 34
+        assert result.usage().total_tokens == 34
 
-        # double check cost matches stream count
-        assert result.cost().response_tokens == len(stream)
+        # double check usage matches stream count
+        assert result.usage().response_tokens == len(stream)
 
 
 async def test_stream_result_type_basemodel_with_required_params(allow_model_requests: None):
@@ -1024,12 +1024,12 @@ async def test_stream_result_type_basemodel_with_required_params(allow_model_req
             ]
         )
         assert result.is_complete
-        assert result.cost().request_tokens == 34
-        assert result.cost().response_tokens == 34
-        assert result.cost().total_tokens == 34
+        assert result.usage().request_tokens == 34
+        assert result.usage().response_tokens == 34
+        assert result.usage().total_tokens == 34
 
         # double check cost matches stream count
-        assert result.cost().response_tokens == len(stream)
+        assert result.usage().response_tokens == len(stream)
 
 
 #####################
@@ -1094,9 +1094,9 @@ async def test_request_tool_call(allow_model_requests: None):
 
     # Then
     assert result.data == 'final response'
-    assert result.cost().request_tokens == 6
-    assert result.cost().response_tokens == 4
-    assert result.cost().total_tokens == 10
+    assert result.usage().request_tokens == 6
+    assert result.usage().response_tokens == 4
+    assert result.usage().total_tokens == 10
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -1230,9 +1230,9 @@ async def test_request_tool_call_with_result_type(allow_model_requests: None):
 
     # Then
     assert result.data == {'lat': 51, 'lng': 0}
-    assert result.cost().request_tokens == 7
-    assert result.cost().response_tokens == 4
-    assert result.cost().total_tokens == 12
+    assert result.usage().request_tokens == 7
+    assert result.usage().response_tokens == 4
+    assert result.usage().total_tokens == 12
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -1366,12 +1366,12 @@ async def test_stream_tool_call_with_return_type(allow_model_requests: None):
         assert v == snapshot([{'won': True}, {'won': True}])
         assert result.is_complete
         assert result.timestamp() == datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)
-        assert result.cost().request_tokens == 4
-        assert result.cost().response_tokens == 4
-        assert result.cost().total_tokens == 4
+        assert result.usage().request_tokens == 4
+        assert result.usage().response_tokens == 4
+        assert result.usage().total_tokens == 4
 
-        # double check cost matches stream count
-        assert result.cost().response_tokens == 4
+        # double check usage matches stream count
+        assert result.usage().response_tokens == 4
 
     assert result.all_messages() == snapshot(
         [
@@ -1469,12 +1469,12 @@ async def test_stream_tool_call(allow_model_requests: None):
         assert v == snapshot(['final ', 'final response'])
         assert result.is_complete
         assert result.timestamp() == datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)
-        assert result.cost().request_tokens == 6
-        assert result.cost().response_tokens == 6
-        assert result.cost().total_tokens == 6
+        assert result.usage().request_tokens == 6
+        assert result.usage().response_tokens == 6
+        assert result.usage().total_tokens == 6
 
-        # double check cost matches stream count
-        assert result.cost().response_tokens == 6
+        # double check usage matches stream count
+        assert result.usage().response_tokens == 6
 
     assert result.all_messages() == snapshot(
         [
@@ -1570,12 +1570,12 @@ async def test_stream_tool_call_with_retry(allow_model_requests: None):
         assert v == snapshot(['final ', 'final response'])
         assert result.is_complete
         assert result.timestamp() == datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)
-        assert result.cost().request_tokens == 7
-        assert result.cost().response_tokens == 7
-        assert result.cost().total_tokens == 7
+        assert result.usage().request_tokens == 7
+        assert result.usage().response_tokens == 7
+        assert result.usage().total_tokens == 7
 
-        # double check cost matches stream count
-        assert result.cost().response_tokens == 7
+        # double check usage matches stream count
+        assert result.usage().response_tokens == 7
 
     assert result.all_messages() == snapshot(
         [

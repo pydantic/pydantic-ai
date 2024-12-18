@@ -13,7 +13,7 @@ from .tools import AgentDeps
 
 __all__ = (
     'ResultData',
-    'Cost',
+    'Usage',
     'RunResult',
     'StreamedRunResult',
 )
@@ -26,27 +26,27 @@ _logfire = logfire_api.Logfire(otel_scope='pydantic-ai')
 
 
 @dataclass
-class Cost:
-    """Cost of a request or run.
+class Usage:
+    """LLM usage associated to a request or run.
 
-    Responsibility for calculating costs is on the model used, PydanticAI simply sums the cost of requests.
+    Responsibility for calculating usage is on the model; PydanticAI simply sums the usage information across requests.
 
-    You'll need to look up the documentation of the model you're using to convent "token count" costs to monetary costs.
+    You'll need to look up the documentation of the model you're using to convert usage to monetary costs.
     """
 
     request_tokens: int | None = None
-    """Tokens used in processing the request."""
+    """Tokens used in processing requests."""
     response_tokens: int | None = None
-    """Tokens used in generating the response."""
+    """Tokens used in generating responses."""
     total_tokens: int | None = None
     """Total tokens used in the whole run, should generally be equal to `request_tokens + response_tokens`."""
     details: dict[str, int] | None = None
     """Any extra details returned by the model."""
 
-    def __add__(self, other: Cost) -> Cost:
-        """Add two costs together.
+    def __add__(self, other: Usage) -> Usage:
+        """Add two Usages together.
 
-        This is provided so it's trivial to sum costs from multiple requests and runs.
+        This is provided so it's trivial to sum usage information from multiple requests and runs.
         """
         counts: dict[str, int] = {}
         for f in 'request_tokens', 'response_tokens', 'total_tokens':
@@ -61,7 +61,7 @@ class Cost:
             for key, value in other.details.items():
                 details[key] = details.get(key, 0) + value
 
-        return Cost(**counts, details=details or None)
+        return Usage(**counts, details=details or None)
 
 
 @dataclass
@@ -95,7 +95,7 @@ class _BaseRunResult(ABC, Generic[ResultData]):
         return _messages.ModelMessagesTypeAdapter.dump_json(self.new_messages())
 
     @abstractmethod
-    def cost(self) -> Cost:
+    def usage(self) -> Usage:
         raise NotImplementedError()
 
 
@@ -105,19 +105,19 @@ class RunResult(_BaseRunResult[ResultData]):
 
     data: ResultData
     """Data from the final response in the run."""
-    _cost: Cost
+    _usage: Usage
 
-    def cost(self) -> Cost:
-        """Return the cost of the whole run."""
-        return self._cost
+    def usage(self) -> Usage:
+        """Return the usage of the whole run."""
+        return self._usage
 
 
 @dataclass
 class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultData]):
     """Result of a streamed run that returns structured data via a tool call."""
 
-    cost_so_far: Cost
-    """Cost of the run up until the last request."""
+    usage_so_far: Usage
+    """Usage of the run up until the last request."""
     _stream_response: models.EitherStreamedResponse
     _result_schema: _result.ResultSchema[ResultData] | None
     _deps: AgentDeps
@@ -266,13 +266,13 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
         """Return whether the stream response contains structured data (as opposed to text)."""
         return isinstance(self._stream_response, models.StreamStructuredResponse)
 
-    def cost(self) -> Cost:
-        """Return the cost of the whole run.
+    def usage(self) -> Usage:
+        """Return the usage of the whole run.
 
         !!! note
-            This won't return the full cost until the stream is finished.
+            This won't return the full usage until the stream is finished.
         """
-        return self.cost_so_far + self._stream_response.cost()
+        return self.usage_so_far + self._stream_response.usage()
 
     def timestamp(self) -> datetime:
         """Get the timestamp of the response."""

@@ -137,7 +137,7 @@ async def post_chat(
 
 
 MessageTypeAdapter: TypeAdapter[ModelMessage] = TypeAdapter(
-    Annotated[ModelMessage, Field(discriminator='message_kind')]
+    Annotated[ModelMessage, Field(discriminator='kind')]
 )
 P = ParamSpec('P')
 R = TypeVar('R')

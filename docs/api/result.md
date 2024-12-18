@@ -7,4 +7,4 @@
         - ResultData
         - RunResult
         - StreamedRunResult
-        - Cost
+        - Usage

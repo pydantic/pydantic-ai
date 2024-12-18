@@ -26,7 +26,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import cached_async_http_client
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.result import Cost, RunResult
+from pydantic_ai.result import RunResult, Usage
 from pydantic_ai.tools import ToolDefinition
 
 from .conftest import IsNow, TestEnv
@@ -505,7 +505,7 @@ def test_run_with_history_new(set_event_loop: None):
             ],
             _new_message_index=4,
             data='{"ret_a":"a-apple"}',
-            _cost=Cost(),
+            _usage=Usage(),
         )
     )
     new_msg_part_kinds = [(m.kind, [p.part_kind for p in m.parts]) for m in result2.all_messages()]
@@ -547,7 +547,7 @@ def test_run_with_history_new(set_event_loop: None):
             ],
             _new_message_index=4,
             data='{"ret_a":"a-apple"}',
-            _cost=Cost(),
+            _usage=Usage(),
         )
     )
 
@@ -646,7 +646,7 @@ def test_run_with_history_new_structured(set_event_loop: None):
                 ),
             ],
             _new_message_index=5,
-            _cost=Cost(),
+            _usage=Usage(),
         )
     )
     new_msg_part_kinds = [(m.kind, [p.part_kind for p in m.parts]) for m in result2.all_messages()]
@@ -1112,3 +1112,15 @@ async def test_model_settings_override() -> None:
     my_agent = Agent(FunctionModel(return_settings), model_settings={'temperature': 0.1})
     assert (await my_agent.run('Hello')).data == IsJson({'temperature': 0.1})
     assert (await my_agent.run('Hello', model_settings={'temperature': 0.5})).data == IsJson({'temperature': 0.5})
+
+
+async def test_empty_text_part():
+    def return_empty_text(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.result_tools is not None
+        args_json = '{"response": ["foo", "bar"]}'
+        return ModelResponse(parts=[TextPart(''), ToolCallPart.from_json(info.result_tools[0].name, args_json)])
+
+    agent = Agent(FunctionModel(return_empty_text), result_type=tuple[str, str])
+
+    result = await agent.run('Hello')
+    assert result.data == ('foo', 'bar')

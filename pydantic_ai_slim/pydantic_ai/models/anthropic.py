@@ -158,9 +158,9 @@ class AnthropicAgentModel(AgentModel):
 
     async def request(
         self, messages: list[ModelMessage], model_settings: ModelSettings | None
-    ) -> tuple[ModelResponse, result.Cost]:
+    ) -> tuple[ModelResponse, result.Usage]:
         response = await self._messages_create(messages, False, model_settings)
-        return self._process_response(response), _map_cost(response)
+        return self._process_response(response), _map_usage(response)
 
     @asynccontextmanager
     async def request_stream(
@@ -315,7 +315,7 @@ def _map_tool_call(t: ToolCallPart) -> ToolUseBlockParam:
     )
 
 
-def _map_cost(message: AnthropicMessage | RawMessageStreamEvent) -> result.Cost:
+def _map_usage(message: AnthropicMessage | RawMessageStreamEvent) -> result.Usage:
     if isinstance(message, AnthropicMessage):
         usage = message.usage
     else:
@@ -332,11 +332,11 @@ def _map_cost(message: AnthropicMessage | RawMessageStreamEvent) -> result.Cost:
             usage = None
 
     if usage is None:
-        return result.Cost()
+        return result.Usage()
 
     request_tokens = getattr(usage, 'input_tokens', None)
 
-    return result.Cost(
+    return result.Usage(
         # Usage coming from the RawMessageDeltaEvent doesn't have input token data, hence this getattr
         request_tokens=request_tokens,
         response_tokens=usage.output_tokens,
