@@ -7,11 +7,14 @@ but multiple agents can also interact to embody more complex workflows.
 
 The [`Agent`][pydantic_ai.Agent] class has full API documentation, but conceptually you can think of an agent as a container for:
 
-* A [system prompt](#system-prompts) — a set of instructions for the LLM written by the developer
-* One or more [function tool](tools.md) — functions that the LLM may call to get information while generating a response
-* An optional structured [result type](results.md) — the structured datatype the LLM must return at the end of a run
-* A [dependency](dependencies.md) type constraint — system prompt functions, tools and result validators may all use dependencies when they're run
-* Agents may optionally also have a default [LLM model](api/models/base.md) associated with them; the model to use can also be specified when running the agent
+| **Component**                                   | **Description**                                                                                          |
+|-------------------------------------------------|----------------------------------------------------------------------------------------------------------|
+| [System prompt(s)](#system-prompts)             | A set of instructions for the LLM written by the developer.                                              |
+| [Function tool(s)](tools.md)                    | Functions that the LLM may call to get information while generating a response.                          |
+| [Structured result type](results.md)            | The structured datatype the LLM must return at the end of a run, if specified.                           |
+| [Dependency type constraint](dependencies.md)   | System prompt functions, tools, and result validators may all use dependencies when they're run.         |
+| [LLM model](api/models/base.md)                 | Optional default LLM model associated with the agent. Can also be specified when running the agent.      |
+| [Model Settings](#additional-configuration)     | Optional default model settings to help fine tune requests. Can also be specified when running the agent.|
 
 In typing terms, agents are generic in their dependency and result types, e.g., an agent which required dependencies of type `#!python Foobar` and returned results of type `#!python list[str]` would have type `cAgent[Foobar, list[str]]`. In practice, you shouldn't need to care about this, it should just mean your IDE can tell you when you have the right type, and if you choose to use [static type checking](#static-type-checking) it should work well with PydanticAI.
 

@@ -13,14 +13,30 @@ We built PydanticAI with one simple aim: to bring that FastAPI feeling to GenAI 
 
 ## Why use PydanticAI
 
-* Built by the team behind Pydantic (the validation layer of the OpenAI SDK, the Anthropic SDK, LangChain, LlamaIndex, AutoGPT, Transformers, CrewAI, Instructor and many more)
-* [Model-agnostic](models.md) — currently OpenAI, Anthropic, Gemini, Ollama, Groq, and Mistral are supported, and there is a simple interface to implement support for other models.
-* [Type-safe](agents.md#static-type-checking)
-* Control flow and agent composition is done with vanilla Python, allowing you to make use of the same Python development best practices you'd use in any other (non-AI) project
-* [Structured response](results.md#structured-result-validation) validation with Pydantic
-* [Streamed responses](results.md#streamed-results), including validation of streamed _structured_ responses with Pydantic
-* Novel, type-safe [dependency injection system](dependencies.md), useful for testing and eval-driven iterative development
-* [Logfire integration](logfire.md) for debugging and monitoring the performance and general behavior of your LLM-powered application
+:material-account-group:{ .md .middle .team-blue }&nbsp;<strong class="vertical-middle">Built by the Pydantic Team</strong><br>
+Built by the team behind [Pydantic](https://docs.pydantic.dev/latest/) (the validation layer of the OpenAI SDK, the Anthropic SDK, LangChain, LlamaIndex, AutoGPT, Transformers, CrewAI, Instructor and many more).
+
+:fontawesome-solid-shapes:{ .md .middle .shapes-orange }&nbsp;<strong class="vertical-middle">Model-agnostic</strong><br>
+Supports OpenAI, Anthropic, Gemini, Ollama, Groq, and Mistral, and there is a simple interface to implement support for [other models](models.md).
+
+:logfire-logo:{ .md .middle }&nbsp;<strong class="vertical-middle">Pydantic Logfire Integration</strong><br>
+Seamlessly [integrates](logfire.md) with [Pydantic Logfire](https://pydantic.dev/logfire) for real-time debugging, performance monitoring, and behavior tracking of your LLM-powered applications.
+
+:material-shield-check:{ .md .middle .secure-green }&nbsp;<strong class="vertical-middle">Type-safe</strong><br>
+Designed to make type checking as useful as possible for you, so it [integrates](agents.md#static-type-checking) well with static type checkers, like [`mypy`](https://github.com/python/mypy) and [`pyright`](https://github.com/microsoft/pyright).
+
+:snake:{ .md .middle }&nbsp;<strong class="vertical-middle">Python-centric Design</strong><br>
+Leverages Python’s familiar control flow and agent composition to build your AI-driven projects, making it easy to apply standard Python best practices you'd use in any other (non-AI) project
+
+:simple-pydantic:{ .md .middle .pydantic-pink }&nbsp;<strong class="vertical-middle">Structured Responses</strong><br>
+Harnesses the power of [Pydantic](https://docs.pydantic.dev/latest/) to [validate and structure](results.md#structured-result-validation) model outputs, ensuring responses are consistent across runs.
+
+:material-puzzle-plus:{ .md .middle .puzzle-purple }&nbsp;<strong class="vertical-middle">Dependency Injection System</strong><br>
+Offers an optional [dependency injection](dependencies.md) system to provide data and services to your agent's [system prompts](agents.md#system-prompts), [tools](tools.md) and [result validators](results.md#result-validators-functions).
+This is useful for testing and eval-driven iterative development.
+
+:material-sine-wave:{ .md .middle }&nbsp;<strong class="vertical-middle">Streamed Responses</strong><br>
+Provides the ability to [stream](results.md#streamed-results) LLM outputs continuously, with immediate validation, ensuring rapid and accurate results.
 
 !!! example "In Beta"
     PydanticAI is in early beta, the API is still subject to change and there's a lot more to do.
@@ -45,11 +61,13 @@ The first known use of "hello, world" was in a 1974 textbook about the C program
 """
 ```
 
-1. Define a very simple agent — here we configure the agent to use [Gemini 1.5's Flash](api/models/gemini.md) model, but you can also set the model when running the agent.
-2. Register a static [system prompt](agents.md#system-prompts) using a keyword argument to the agent. For more complex dynamically-generated system prompts, see the example below.
-3. [Run the agent](agents.md#running-agents) synchronously, conducting a conversation with the LLM. Here the exchange should be very short: PydanticAI will send the system prompt and the user query to the LLM, the model will return a text response.
+1. We configure the agent to use [Gemini 1.5's Flash](api/models/gemini.md) model, but you can also set the model when running the agent.
+2. Register a static [system prompt](agents.md#system-prompts) using a keyword argument to the agent.
+3. [Run the agent](agents.md#running-agents) synchronously, conducting a conversation with the LLM.
 
 _(This example is complete, it can be run "as is")_
+
+The exchange should be very short: PydanticAI will send the system prompt and the user query to the LLM, the model will return a text response.
 
 Not very interesting yet, but we can easily add "tools", dynamic system prompts, and structured responses to build more powerful agents.
 
