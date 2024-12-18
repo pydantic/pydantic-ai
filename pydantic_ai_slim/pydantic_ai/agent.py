@@ -841,11 +841,13 @@ class Agent(Generic[AgentDeps, ResultData]):
         """
         texts: list[str] = []
         tool_calls: list[_messages.ToolCallPart] = []
-        for item in model_response.parts:
-            if isinstance(item, _messages.TextPart):
-                texts.append(item.content)
+        for part in model_response.parts:
+            if isinstance(part, _messages.TextPart):
+                # ignore empty content for text parts, see #437
+                if part.content:
+                    texts.append(part.content)
             else:
-                tool_calls.append(item)
+                tool_calls.append(part)
 
         if texts:
             text = '\n\n'.join(texts)

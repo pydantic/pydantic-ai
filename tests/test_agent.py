@@ -1112,3 +1112,15 @@ async def test_model_settings_override() -> None:
     my_agent = Agent(FunctionModel(return_settings), model_settings={'temperature': 0.1})
     assert (await my_agent.run('Hello')).data == IsJson({'temperature': 0.1})
     assert (await my_agent.run('Hello', model_settings={'temperature': 0.5})).data == IsJson({'temperature': 0.5})
+
+
+async def test_empty_text_part():
+    def return_empty_text(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.result_tools is not None
+        args_json = '{"response": ["foo", "bar"]}'
+        return ModelResponse(parts=[TextPart(''), ToolCallPart.from_json(info.result_tools[0].name, args_json)])
+
+    agent = Agent(FunctionModel(return_empty_text), result_type=tuple[str, str])
+
+    result = await agent.run('Hello')
+    assert result.data == ('foo', 'bar')
