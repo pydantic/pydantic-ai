@@ -108,7 +108,7 @@ You can also pass messages from previous runs to continue a conversation or prov
 PydanticAI offers a [`settings.UsageLimits`][pydantic_ai.settings.UsageLimits] structure to help you limit your
 usage (tokens and/or requests) on model runs.
 
-You can apply these settings by passing the `usage_limits` argument to `run{_sync,_stream}` functions.
+You can apply these settings by passing the `usage_limits` argument to the `run{_sync,_stream}` functions.
 
 Consider the following example, where we limit the number of response tokens:
 
