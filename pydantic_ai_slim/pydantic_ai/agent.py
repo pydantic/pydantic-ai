@@ -610,6 +610,8 @@ class Agent(Generic[AgentDeps, ResultData]):
         *,
         retries: int | None = None,
         prepare: ToolPrepareFunc[AgentDeps] | None = None,
+        docstring_format: Literal["google", "numpy", "sphinx", "auto"] = "auto",
+        require_parameter_descriptions: bool = False
     ) -> Callable[[ToolFuncContext[AgentDeps, ToolParams]], ToolFuncContext[AgentDeps, ToolParams]]: ...
 
     def tool(
@@ -619,6 +621,8 @@ class Agent(Generic[AgentDeps, ResultData]):
         *,
         retries: int | None = None,
         prepare: ToolPrepareFunc[AgentDeps] | None = None,
+        docstring_format: Literal["google", "numpy", "sphinx", "auto"] = "auto",
+        require_parameter_descriptions: bool = False
     ) -> Any:
         """Decorator to register a tool function which takes [`RunContext`][pydantic_ai.tools.RunContext] as its first argument.
 
@@ -663,13 +667,13 @@ class Agent(Generic[AgentDeps, ResultData]):
                 func_: ToolFuncContext[AgentDeps, ToolParams],
             ) -> ToolFuncContext[AgentDeps, ToolParams]:
                 # noinspection PyTypeChecker
-                self._register_function(func_, True, retries, prepare)
+                self._register_function(func_, True, retries, prepare, docstring_format, require_parameter_descriptions)
                 return func_
 
             return tool_decorator
         else:
             # noinspection PyTypeChecker
-            self._register_function(func, True, retries, prepare)
+            self._register_function(func, True, retries, prepare, docstring_format, require_parameter_descriptions)
             return func
 
     @overload
@@ -747,10 +751,13 @@ class Agent(Generic[AgentDeps, ResultData]):
         takes_ctx: bool,
         retries: int | None,
         prepare: ToolPrepareFunc[AgentDeps] | None,
+        docstring_format: Literal["google", "numpy", "sphinx", "auto"] = "auto",
+        require_parameter_descriptions: bool = False
     ) -> None:
         """Private utility to register a function as a tool."""
         retries_ = retries if retries is not None else self._default_retries
-        tool = Tool(func, takes_ctx=takes_ctx, max_retries=retries_, prepare=prepare)
+        tool = Tool(func, takes_ctx=takes_ctx, max_retries=retries_, prepare=prepare, docstring_format=docstring_format,
+                    require_parameter_descriptions=require_parameter_descriptions)
         self._register_tool(tool)
 
     def _register_tool(self, tool: Tool[AgentDeps]) -> None:

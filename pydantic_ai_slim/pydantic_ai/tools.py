@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 import inspect
 from collections.abc import Awaitable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Callable, Generic, TypeVar, Union, cast
+from typing import TYPE_CHECKING, Any, Callable, Generic, TypeVar, Union, cast, Literal
 
 from pydantic import ValidationError
 from pydantic_core import SchemaValidator
@@ -144,6 +144,8 @@ class Tool(Generic[AgentDeps]):
     _validator: SchemaValidator = field(init=False, repr=False)
     _parameters_json_schema: ObjectJsonSchema = field(init=False)
     current_retry: int = field(default=0, init=False)
+    docstring_format: Literal["google", "numpy", "sphinx", "auto"] = "auto"
+    require_parameter_descriptions: bool = False
 
     def __init__(
         self,
@@ -154,6 +156,8 @@ class Tool(Generic[AgentDeps]):
         name: str | None = None,
         description: str | None = None,
         prepare: ToolPrepareFunc[AgentDeps] | None = None,
+        docstring_format: Literal["google", "numpy", "sphinx", "auto"] = "auto",
+        require_parameter_descriptions: bool = False
     ):
         """Create a new tool instance.
 
@@ -211,6 +215,8 @@ class Tool(Generic[AgentDeps]):
         self.name = name or function.__name__
         self.description = description or f['description']
         self.prepare = prepare
+        self.docstring_format = docstring_format
+        self.require_parameter_descriptions = require_parameter_descriptions
         self._is_async = inspect.iscoroutinefunction(self.function)
         self._single_arg_name = f['single_arg_name']
         self._positional_fields = f['positional_fields']
