@@ -330,6 +330,7 @@ class MistralAgentModel(AgentModel):
                         content,
                         timestamp,
                         start_cost,
+                        JSONRepairer(),
                     )
 
                 elif content:
@@ -509,6 +510,96 @@ class MistralStreamTextResponse(StreamTextResponse):
         return self._timestamp
 
 
+class JSONRepairer:
+    """Initialize the JSONRepairer with an empty buffer and state to maintain across chunks."""
+
+    def __init__(self) -> None:
+        self.new_chars: list[str] = []
+        self.stack: list[Any] = []
+        self.is_inside_string = False
+        self.escaped = False
+
+    def process_chunk(self, chunk: str) -> dict[str, Any] | list[Any] | None:
+        """Process a JSON chunk, attempting to parse it into a valid JSON object by repairing issues.
+
+        Args:
+            chunk (str): The next chunk of the JSON string.
+
+        Returns:
+            Union[dict[str, Any], list[Any], None]:
+                Parsed JSON object if successful, None if parsing fails.
+        """
+        try:
+            # Try parsing the current buffer
+            result = json.loads(chunk, strict=False)
+            return result
+        except json.JSONDecodeError:
+            pass  # Continue to attempt repairing
+
+        # Attempt to repair the JSON incrementally
+        return self._repair_json(chunk)
+
+    def _repair_json(self, chunk: str) -> dict[str, Any] | list[Any] | None:
+        """Attempt to repair and parse the accumulated buffer as JSON, handling common issues.
+
+        Returns:
+            Union[dict[str, Any], list[Any], None]:
+                Parsed JSON object if successful, None if parsing fails.
+        """
+        start_index = len(self.new_chars)
+        for char in chunk[start_index:]:
+            if self.is_inside_string:
+                if char == '"' and not self.escaped:
+                    self.is_inside_string = False
+
+                elif char == '\n' and not self.escaped:
+                    char = '\\n'  # Replace newline with escape sequence
+                elif char == '\\':
+                    self.escaped = not self.escaped
+                else:
+                    self.escaped = False
+            else:
+                if char == '"':
+                    self.is_inside_string = True
+                    self.escaped = False
+                    # self.stack.append('"')
+                elif char == '{':
+                    self.stack.append('}')
+                elif char == '[':
+                    self.stack.append(']')
+                elif char == '}' or char == ']':
+                    if self.stack and self.stack[-1] == char:
+                        self.stack.pop()
+                    else:
+                        # Mismatched closing character; the input is malformed
+                        return None
+
+            # Append the processed character to the new string
+            self.new_chars.append(char)
+
+        r_stack = self.stack.copy()
+        # Reverse the stack to get the closing characters
+
+        # If we're still inside a string at the end of processing, close the string
+        if self.is_inside_string:
+            r_stack.append('"')
+            self.is_inside_string = True
+
+        r_stack.reverse()
+        c_new_chars = self.new_chars.copy()
+        # Try to parse the modified string until we succeed or run out of characters
+        while c_new_chars:
+            try:
+                value = ''.join(c_new_chars + r_stack)
+                return json.loads(value, strict=False)
+            except json.JSONDecodeError:
+                # If parsing fails, try removing the last character
+                c_new_chars.pop()
+
+        # If we still can't parse the string as JSON, return None
+        return None
+
+
 @dataclass
 class MistralStreamStructuredResponse(StreamStructuredResponse):
     """Implementation of `StreamStructuredResponse` for Mistral models."""
@@ -519,6 +610,7 @@ class MistralStreamStructuredResponse(StreamStructuredResponse):
     _delta_content: str | None
     _timestamp: datetime
     _cost: Cost
+    _json: JSONRepairer
 
     async def __anext__(self) -> None:
         chunk = await self._response.__anext__()
@@ -547,7 +639,7 @@ class MistralStreamStructuredResponse(StreamStructuredResponse):
 
         elif self._delta_content and self._result_tools:
             # NOTE: Params set for the most efficient and fastest way.
-            output_json = _repair_json(self._delta_content)
+            output_json = self._json.process_chunk(self._delta_content)
             # assert isinstance(
             #     output_json, (dict, type(None))
             # ), f'Expected repair_json as type dict, invalid type: {type(output_json)}'
@@ -678,65 +770,3 @@ def _map_content(content: MistralOptionalNullable[MistralContent]) -> str | None
         result = None
 
     return result
-
-
-def _repair_json(s: str) -> dict[str, Any] | list[Any] | None:
-    """Attempt to parse a given string as JSON, repairing common issues."""
-    # Attempt to parse the string as-is.
-    try:
-        return json.loads(s, strict=False)
-    except json.JSONDecodeError:
-        pass
-
-    new_chars: list[str] = []
-    stack: list[Any] = []
-    is_inside_string = False
-    escaped = False
-
-    # Process each character in the string.
-    for char in s:
-        if is_inside_string:
-            if char == '"' and not escaped:
-                is_inside_string = False
-            elif char == '\n' and not escaped:
-                char = '\\n'  # Replace newline with escape sequence.
-            elif char == '\\':
-                escaped = not escaped
-            else:
-                escaped = False
-        else:
-            if char == '"':
-                is_inside_string = True
-                escaped = False
-            elif char == '{':
-                stack.append('}')
-            elif char == '[':
-                stack.append(']')
-            elif char == '}' or char == ']':
-                if stack and stack[-1] == char:
-                    stack.pop()
-                else:
-                    # Mismatched closing character; the input is malformed.
-                    return None
-
-        # Append the processed character to the new string.
-        new_chars.append(char)
-
-    # If we're still inside a string at the end of processing, close the string.
-    if is_inside_string:
-        new_chars.append('"')
-
-    # Reverse the stack to get the closing characters.
-    stack.reverse()
-
-    # Try to parse the modified string until we succeed or run out of characters.
-    while new_chars:
-        try:
-            value = ''.join(new_chars + stack)
-            return json.loads(value, strict=False)
-        except json.JSONDecodeError:
-            # If parsing fails, try removing the last character.
-            new_chars.pop()
-
-    # If we still can't parse the string as JSON, return None.
-    return None
