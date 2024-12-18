@@ -120,7 +120,8 @@ from pydantic_ai.exceptions import UsageLimitExceeded
 agent = Agent('claude-3-5-sonnet-latest')
 
 result_sync = agent.run_sync(
-    'What is the capital of Italy? Answer with just the city.', usage_limits=UsageLimits(response_tokens_limit=10)
+    'What is the capital of Italy? Answer with just the city.',
+    usage_limits=UsageLimits(response_tokens_limit=10),
 )
 print(result_sync.data)
 #> Rome
@@ -129,7 +130,8 @@ print(result_sync.usage())
 
 try:
     result_sync = agent.run_sync(
-        'What is the capital of Italy? Answer with a paragraph.', usage_limits=UsageLimits(response_tokens_limit=10)
+        'What is the capital of Italy? Answer with a paragraph.',
+        usage_limits=UsageLimits(response_tokens_limit=10),
     )
 except UsageLimitExceeded as e:
     print(e)
@@ -167,7 +169,9 @@ def infinite_retry_tool() -> int:
 
 
 try:
-    result_sync = agent.run_sync('Begin!', usage_limits=UsageLimits(request_limit=3))  # (2)!
+    result_sync = agent.run_sync(
+        'Begin!', usage_limits=UsageLimits(request_limit=3)  # (2)!
+    )
 except UsageLimitExceeded as e:
     print(e)
     #> The next request would exceed the request_limit of 3.

@@ -135,7 +135,9 @@ class TestAgentModel(AgentModel):
     async def request(
         self, messages: list[ModelMessage], model_settings: ModelSettings | None
     ) -> tuple[ModelResponse, Usage]:
-        return self._request(messages, model_settings), Usage()
+        model_response = self._request(messages, model_settings)
+        usage = _estimate_usage([*messages, model_response])
+        return model_response, usage
 
     @asynccontextmanager
     async def request_stream(
