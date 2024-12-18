@@ -1632,18 +1632,18 @@ async def test_stream_tool_call_with_retry(allow_model_requests: None):
 
 
 #####################
-## JSONRepairer
+## SONChunkParser
 #####################
 
 
 @pytest.fixture
 def repairer():
-    """Fixture to set up a JSONRepairer instance."""
+    """Fixture to set up a JSONChunkParser instance."""
     return _JSONChunkParser()
 
 
 def test_valid_json_parsing(repairer: _JSONChunkParser):
-    """Test that valid JSON chunks are correctly parsed."""
+    """Test that the JSONChunkParser valid JSON chunks are correctly parsed."""
     # Given
     valid_json = '{"key": "value", "nested": {"list": [1, {"inner_key": "inner_value"}, 3]}, "boolean": true}'
     # When
@@ -1654,7 +1654,7 @@ def test_valid_json_parsing(repairer: _JSONChunkParser):
 
 
 def test_repair_malformed_json(repairer: _JSONChunkParser):
-    """Test that the JSONRepairer can repair various malformed JSON structures."""
+    """Test that the JSONChunkParser can repair various malformed JSON structures."""
 
     # Case 0: Missing closing array brace in the inner key-value structure
     # Given
@@ -1724,7 +1724,7 @@ def test_repair_malformed_json(repairer: _JSONChunkParser):
 
 
 def test_repair_malformed_indended_json(repairer: _JSONChunkParser):
-    """Test that the JSONRepairer can repair various malformed JSON structures."""
+    """Test that the JSONChunkParser can repair various malformed JSON structures."""
     # Case 0: Missing closing array brace in the inner key-value structure
     # Given
     malformed_json = """{
@@ -1830,7 +1830,7 @@ def test_repair_malformed_indended_json(repairer: _JSONChunkParser):
 
 
 def test_repair_malformed_json_with_whitespace(repairer: _JSONChunkParser):
-    """Test that the JSONRepairer can handle JSON with newlines, carriage returns, and tabs."""
+    """Test that the JSONChunkParser can handle JSON with newlines, carriage returns, and tabs."""
 
     # Malformed JSON with newlines, carriage returns, and tabs
     # Given

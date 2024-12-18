@@ -514,15 +514,6 @@ class _JSONChunkParser:
     """A class to repair JSON chunks that might be corrupted (e.g. missing closing quotes)."""
 
     def __init__(self) -> None:
-        """Initialize the JSONRepairer with an empty buffer and state to maintain across chunks.
-
-        The properties are:
-
-        - `new_chars`: The characters that have been processed so far.
-        - `stack`: The stack of characters to be processed.
-        - `is_inside_string`: A boolean indicating whether we are inside a string or not.
-        - `escaped`: A boolean indicating whether the last character was an escape character or not.
-        """
         self.new_chars: list[str] = []
         self.stack: list[str] = []
         self.is_inside_string = False
