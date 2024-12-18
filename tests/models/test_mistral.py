@@ -50,10 +50,10 @@ with try_import() as imports_successful:
     from mistralai.types.basemodel import Unset as MistralUnset
 
     from pydantic_ai.models.mistral import (
-        JSONRepairer,
         MistralAgentModel,
         MistralModel,
         MistralStreamStructuredResponse,
+        _JSONChunkParser,  # type: ignore
     )
 
 pytestmark = [
@@ -1639,10 +1639,10 @@ async def test_stream_tool_call_with_retry(allow_model_requests: None):
 @pytest.fixture
 def repairer():
     """Fixture to set up a JSONRepairer instance."""
-    return JSONRepairer()
+    return _JSONChunkParser()
 
 
-def test_valid_json_parsing(repairer: JSONRepairer):
+def test_valid_json_parsing(repairer: _JSONChunkParser):
     """Test that valid JSON chunks are correctly parsed."""
     # Given
     valid_json = '{"key": "value", "nested": {"list": [1, {"inner_key": "inner_value"}, 3]}, "boolean": true}'
@@ -1653,7 +1653,7 @@ def test_valid_json_parsing(repairer: JSONRepairer):
     assert result == expected
 
 
-def test_repair_malformed_json(repairer: JSONRepairer):
+def test_repair_malformed_json(repairer: _JSONChunkParser):
     """Test that the JSONRepairer can repair various malformed JSON structures."""
 
     # Case 0: Missing closing array brace in the inner key-value structure
@@ -1715,7 +1715,7 @@ def test_repair_malformed_json(repairer: JSONRepairer):
     assert result == expected
 
 
-def test_repair_malformed_indended_json(repairer: JSONRepairer):
+def test_repair_malformed_indended_json(repairer: _JSONChunkParser):
     """Test that the JSONRepairer can repair various malformed JSON structures."""
     # Case 0: Missing closing array brace in the inner key-value structure
     # Given
@@ -1821,7 +1821,7 @@ def test_repair_malformed_indended_json(repairer: JSONRepairer):
     assert result == expected
 
 
-def test_repair_malformed_json_with_whitespace(repairer: JSONRepairer):
+def test_repair_malformed_json_with_whitespace(repairer: _JSONChunkParser):
     """Test that the JSONRepairer can handle JSON with newlines, carriage returns, and tabs."""
 
     # Malformed JSON with newlines, carriage returns, and tabs

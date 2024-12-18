@@ -198,11 +198,10 @@ class MistralAgentModel(AgentModel):
         """Create a streaming completion request to the Mistral model."""
         response: MistralEventStreamAsync[MistralCompletionEvent] | None
         mistral_messages = list(chain(*(self._map_message(m) for m in messages)))
-
         model_settings = model_settings or {}
 
         if self.result_tools and self.function_tools or self.function_tools:
-            # Function Calling Mode
+            # Function Calling
             response = await self.client.chat.stream_async(
                 model=str(self.model_name),
                 messages=mistral_messages,
@@ -218,9 +217,9 @@ class MistralAgentModel(AgentModel):
         elif self.result_tools:
             # Json Mode
             parameters_json_schemas = [tool.parameters_json_schema for tool in self.result_tools]
-
             user_output_format_message = self._generate_user_output_format(parameters_json_schemas)
             mistral_messages.append(user_output_format_message)
+
             response = await self.client.chat.stream_async(
                 model=str(self.model_name),
                 messages=mistral_messages,
@@ -270,12 +269,13 @@ class MistralAgentModel(AgentModel):
     @staticmethod
     def _process_response(response: MistralChatCompletionResponse) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
+        assert response.choices, 'Unexpected empty response choice.'
+
         if response.created:
             timestamp = datetime.fromtimestamp(response.created, tz=timezone.utc)
         else:
             timestamp = _now_utc()
 
-        assert response.choices, 'Unexpected empty response choice.'
         choice = response.choices[0]
         content = choice.message.content
         tool_calls = choice.message.tool_calls
@@ -330,7 +330,7 @@ class MistralAgentModel(AgentModel):
                         content,
                         timestamp,
                         start_usage,
-                        JSONRepairer(),
+                        _JSONChunkParser(),
                     )
 
                 elif content:
@@ -510,8 +510,8 @@ class MistralStreamTextResponse(StreamTextResponse):
         return self._timestamp
 
 
-class JSONRepairer:
-    """Utility class to repair JSON data that is not valid."""
+class _JSONChunkParser:
+    """A class to repair JSON chunks that might be corrupted (e.g. missing closing quotes)."""
 
     def __init__(self) -> None:
         """Initialize the JSONRepairer with an empty buffer and state to maintain across chunks.
@@ -545,58 +545,71 @@ class JSONRepairer:
         start_index = len(self.new_chars)
         for char in chunk[start_index:]:
             if self.is_inside_string:
+                # End of string detected
                 if char == '"' and not self.escaped:
                     self.is_inside_string = False
 
+                # Replace newline with escape sequence within a string
                 elif char == '\n' and not self.escaped:
-                    char = '\\n'  # Replace newline with escape sequence
+                    char = '\\n'
+
+                # Toggle escaped status on encountering backslash
                 elif char == '\\':
                     self.escaped = not self.escaped
+
+                # Reset escaped status for other characters
                 else:
                     self.escaped = False
             else:
+                # Start of string detected
                 if char == '"':
                     self.is_inside_string = True
                     self.escaped = False
 
+                # Track expected closing brace
                 elif char == '{':
                     self.stack.append('}')
+
+                # Track expected closing bracket
                 elif char == '[':
                     self.stack.append(']')
+
+                # Handle closing characters and check for mismatches
                 elif char == '}' or char == ']':
                     if self.stack and self.stack[-1] == char:
                         self.stack.pop()
                     else:
-                        # Mismatched closing character; the input is malformed
+                        # Mismatched closing character means malformed input
                         return None
 
-            # Append the processed character to the new string
             self.new_chars.append(char)
 
-        closing_chars = self.stack[::]  # 1
+        # Prepare closing characters to balance the structure (Copy)
+        closing_chars = self.stack[::]
 
-        # If we're still inside a string, close it
+        # If inside a string, ensure it is closed
         if self.is_inside_string:
-            closing_chars.append('"')  # 2
+            closing_chars.append('"')
             self.is_inside_string = True
 
-        closing_chars.reverse()  # 3
+        # Reverse to maintain correct order of closing characters
+        closing_chars.reverse()
 
+        # (Copy)
         repaired_chars = self.new_chars[::]
 
-        # Try to parse the modified string until we succeed or run out of characters
+        # Attempt to parse the repaired JSON string
         while repaired_chars:
             try:
                 value = ''.join(repaired_chars + closing_chars)
                 return json.loads(value)
             except json.JSONDecodeError:
-                # Remove the last character and retry
+                # Remove the last character and retry parsing
                 value = repaired_chars.pop()
-                # Check if the last character removed was a opening character
+                # Check if the last character removed was an opening character
                 if closing_chars and closing_chars[0] == {'"': '"', '{': '}', '[': ']'}.get(value):
                     closing_chars.pop(0)
 
-        # Return None if parsing fails after all attempts
         return None
 
 
@@ -610,7 +623,7 @@ class MistralStreamStructuredResponse(StreamStructuredResponse):
     _delta_content: str | None
     _timestamp: datetime
     _usage: Usage
-    _json: JSONRepairer
+    _json: _JSONChunkParser
 
     async def __anext__(self) -> None:
         chunk = await self._response.__anext__()
@@ -638,17 +651,13 @@ class MistralStreamStructuredResponse(StreamStructuredResponse):
                 calls.append(tool)
 
         elif self._delta_content and self._result_tools:
-            # NOTE: Params set for the most efficient and fastest way.
             output_json: dict[str, Any] | None = self._json.process_chunk(self._delta_content)
 
             if output_json:
                 for result_tool in self._result_tools.values():
                     # NOTE: Additional verification to prevent JSON validation to crash in `_result.py`
                     # Ensures required parameters in the JSON schema are respected, especially for stream-based return types.
-                    # For example, `return_type=list[str]` expects a 'response' key with value type array of str.
-                    # when `{"response":` then `repair_json` sets `{"response": ""}` (type not found default str)
-                    # when `{"response": {` then `repair_json` sets `{"response": {}}` (type found)
-                    # This ensures it's corrected to `{"response": {}}` and other required parameters and type.
+                    # Example with BaseModel and required fields.
                     if not self._validate_required_json_shema(output_json, result_tool.parameters_json_schema):
                         continue
 
