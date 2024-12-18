@@ -505,7 +505,7 @@ def test_run_with_history_new(set_event_loop: None):
             ],
             _new_message_index=4,
             data='{"ret_a":"a-apple"}',
-            _usage=Usage(),
+            _usage=Usage(requests=1),
         )
     )
     new_msg_part_kinds = [(m.kind, [p.part_kind for p in m.parts]) for m in result2.all_messages()]
@@ -547,7 +547,7 @@ def test_run_with_history_new(set_event_loop: None):
             ],
             _new_message_index=4,
             data='{"ret_a":"a-apple"}',
-            _usage=Usage(),
+            _usage=Usage(requests=1),
         )
     )
 
@@ -646,7 +646,7 @@ def test_run_with_history_new_structured(set_event_loop: None):
                 ),
             ],
             _new_message_index=5,
-            _usage=Usage(),
+            _usage=Usage(requests=1),
         )
     )
     new_msg_part_kinds = [(m.kind, [p.part_kind for p in m.parts]) for m in result2.all_messages()]

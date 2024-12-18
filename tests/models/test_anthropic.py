@@ -91,14 +91,14 @@ async def test_sync_request_text_response(allow_model_requests: None):
 
     result = await agent.run('hello')
     assert result.data == 'world'
-    assert result.usage() == snapshot(Usage(request_tokens=5, response_tokens=10, total_tokens=15))
+    assert result.usage() == snapshot(Usage(requests=1, request_tokens=5, response_tokens=10, total_tokens=15))
 
     # reset the index so we get the same response again
     mock_client.index = 0  # type: ignore
 
     result = await agent.run('hello', message_history=result.new_messages())
     assert result.data == 'world'
-    assert result.usage() == snapshot(Usage(request_tokens=5, response_tokens=10, total_tokens=15))
+    assert result.usage() == snapshot(Usage(requests=1, request_tokens=5, response_tokens=10, total_tokens=15))
     assert result.all_messages() == snapshot(
         [
             ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
@@ -120,7 +120,7 @@ async def test_async_request_text_response(allow_model_requests: None):
 
     result = await agent.run('hello')
     assert result.data == 'world'
-    assert result.usage() == snapshot(Usage(request_tokens=3, response_tokens=5, total_tokens=8))
+    assert result.usage() == snapshot(Usage(requests=1, request_tokens=3, response_tokens=5, total_tokens=8))
 
 
 async def test_request_structured_response(allow_model_requests: None):

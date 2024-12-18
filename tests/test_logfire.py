@@ -161,7 +161,9 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary], set_event_lo
                     },
                 ]
             ),
-            'usage': IsJson({'request_tokens': None, 'response_tokens': None, 'total_tokens': None, 'details': None}),
+            'usage': IsJson(
+                {'requests': 2, 'request_tokens': None, 'response_tokens': None, 'total_tokens': None, 'details': None}
+            ),
             'logfire.json_schema': IsJson(
                 {
                     'type': 'object',

@@ -237,7 +237,7 @@ class FunctionStreamStructuredResponse(StreamStructuredResponse):
         return ModelResponse(calls, timestamp=self._timestamp)
 
     def usage(self) -> result.Usage:
-        return result.Usage()
+        return _estimate_usage([self.get()])
 
     def timestamp(self) -> datetime:
         return self._timestamp

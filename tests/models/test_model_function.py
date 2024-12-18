@@ -399,7 +399,7 @@ async def test_stream_text():
                 ModelResponse.from_text(content='hello world', timestamp=IsNow(tz=timezone.utc)),
             ]
         )
-        assert result.usage() == snapshot(Usage())
+        assert result.usage() == snapshot(Usage(requests=1))
 
 
 class Foo(BaseModel):
@@ -420,7 +420,14 @@ async def test_stream_structure():
     agent = Agent(FunctionModel(stream_function=stream_structured_function), result_type=Foo)
     async with agent.run_stream('') as result:
         assert await result.get_data() == snapshot(Foo(x=1))
-        assert result.usage() == snapshot(Usage())
+        assert result.usage() == snapshot(
+            Usage(
+                requests=1,
+                request_tokens=50,
+                response_tokens=4,
+                total_tokens=54,
+            )
+        )
 
 
 async def test_pass_neither():
