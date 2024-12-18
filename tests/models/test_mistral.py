@@ -1683,18 +1683,26 @@ def test_repair_malformed_json(repairer: _JSONChunkParser):
     expected = json.loads('{"key": "value", "nested": {"list": [1, {"inner_key": "inner_"}]}}')
     assert result == expected
 
-    # Case 3: Missing closing brace in the outer structure
+    # Case 3: Missing closing brace in the outer structure with extra space for test strip
     # Given
-    malformed_json = '{"key": "value", "nested": {"list": [1, {"inner_key": "inner_value"}, 3], "boolean": true'  # Missing closing brace
+    malformed_json = """{"key": "value", "nested": {"list": [1, {"inner_key": "inner_value"}, 3], "boolean": true
+
+
+
+    """  # Extra space for test strip
     # When
     result = repairer.process_chunk(malformed_json)
     # Then
     expected = json.loads('{"key": "value", "nested": {"list": [1, {"inner_key": "inner_value"}, 3], "boolean": true}}')
     assert result == expected
 
-    # Case 4: Missing closing brace with additional key
+    # Case 4: Missing closing brace with additional key with extra space for test strip
     # Given
-    malformed_json = '{"key": "value", "nested": {"list": [1, {"inner_key": "inner_value"}, 3], "boolean": true, "test":'  # Missing closing brace
+    malformed_json = """{"key": "value", "nested": {"list": [1, {"inner_key": "inner_value"}, 3], "boolean": true, "test":
+
+
+
+    """  # Extra space for test strip
     # When
     result = repairer.process_chunk(malformed_json)
     # Then
@@ -1753,7 +1761,7 @@ def test_repair_malformed_indended_json(repairer: _JSONChunkParser):
     expected = json.loads("""{"key": "val\\nue", "nested": {"list": [1, {"inner_key": "inner_"}]}}""")
     assert result == expected
 
-    # Case 3: Missing closing brace in the outer structure
+    # Case 3: Missing closing brace in the outer structure with extra space for test strip
     # Given
     malformed_json = """{
     "key": "val\\nue",
@@ -1762,7 +1770,7 @@ def test_repair_malformed_indended_json(repairer: _JSONChunkParser):
         "boolean": true
 
 
-    """  # Added extra space for test strip
+    """  # Extra space for test strip
     # When
     result = repairer.process_chunk(malformed_json)
     # Then
@@ -1784,7 +1792,7 @@ def test_repair_malformed_indended_json(repairer: _JSONChunkParser):
     )
     assert result == expected
 
-    # Case 5: Missing closing quote and brace in the "test" key
+    # Case 5: Missing closing quote and brace in the "test" key with extra space for test strip
     # Given
     malformed_json = """{
     "key": "val\\nue",
@@ -1793,7 +1801,7 @@ def test_repair_malformed_indended_json(repairer: _JSONChunkParser):
         "boolean": true,
         "test":"okay
 
-    """  # Added extra space for test strip
+    """  # Extra space for test strip
     # When
     result = repairer.process_chunk(malformed_json)
     # Then
