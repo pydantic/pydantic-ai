@@ -123,9 +123,9 @@ result_sync = agent.run_sync(
     'What is the capital of Italy? Answer with just the city.', usage_limits=UsageLimits(response_tokens_limit=10)
 )
 print(result_sync.data)
-# > Rome
+#> Rome
 print(result_sync.usage())
-# > Usage(requests=1, request_tokens=20, response_tokens=4, total_tokens=24, details=None)
+#> Usage(requests=1, request_tokens=20, response_tokens=4, total_tokens=24, details=None)
 
 try:
     result_sync = agent.run_sync(
@@ -133,7 +133,7 @@ try:
     )
 except UsageLimitExceeded as e:
     print(e)
-# > Exceeded the response_tokens_limit of 10 (response_tokens=143)
+#> Exceeded the response_tokens_limit of 10 (response_tokens=143)
 ```
 
 Restricting the number of requests can be useful in preventing infinite loops or excessive tool calling:
@@ -170,7 +170,7 @@ try:
     result_sync = agent.run_sync('Begin!', usage_limits=UsageLimits(request_limit=3))  # (2)!
 except UsageLimitExceeded as e:
     print(e)
-    # > The next request would exceed the request_limit of 3.
+    #> The next request would exceed the request_limit of 3.
 ```
 
 !!! note
