@@ -524,7 +524,7 @@ class _JSONChunkParser:
         - `escaped`: A boolean indicating whether the last character was an escape character or not.
         """
         self.new_chars: list[str] = []
-        self.stack: list[Any] = []
+        self.stack: list[str] = []
         self.is_inside_string = False
         self.escaped = False
 
