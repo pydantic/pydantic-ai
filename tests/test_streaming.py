@@ -9,8 +9,7 @@ import pytest
 from inline_snapshot import snapshot
 from pydantic import BaseModel
 
-from pydantic_ai import Agent, UnexpectedModelBehavior, UserError
-from pydantic_ai.exceptions import UsageLimitExceeded
+from pydantic_ai import Agent, UnexpectedModelBehavior, UsageLimitExceeded, UserError
 from pydantic_ai.messages import (
     ArgsDict,
     ArgsJson,
