@@ -179,6 +179,9 @@ except UsageLimitExceeded as e:
     #> The next request would exceed the request_limit of 3
 ```
 
+1. This tool has the ability to retry 5 times before erroring, simulating a tool that might get stuck in a loop.
+2. This run will error after 3 requests, preventing the infinite tool calling.
+
 !!! note
     This is especially relevant if you're registered a lot of tools, `request_limit` can be used to prevent the model from choosing to make too many of these calls.
 
