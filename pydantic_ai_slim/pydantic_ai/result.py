@@ -1,14 +1,16 @@
 from __future__ import annotations as _annotations
 
 from abc import ABC, abstractmethod
+from collections import defaultdict
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Generic, TypeVar, cast
+from typing import Generic, TypeVar
 
 import logfire_api
 
 from . import _result, _utils, exceptions, messages as _messages, models
+from .messages import PartDeltaEvent, PartStartEvent, TextPart, TextPartDelta
 from .tools import AgentDeps
 
 __all__ = (
@@ -118,7 +120,7 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
 
     cost_so_far: Cost
     """Cost of the run up until the last request."""
-    _stream_response: models.EitherStreamedResponse
+    _stream_response: models.StreamedResponse
     _result_schema: _result.ResultSchema[ResultData] | None
     _deps: AgentDeps
     _result_validators: list[_result.ResultValidator[AgentDeps, ResultData]]
@@ -149,12 +151,8 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
         Returns:
             An async iterable of the response data.
         """
-        if isinstance(self._stream_response, models.StreamTextResponse):
-            async for text in self.stream_text(debounce_by=debounce_by):
-                yield cast(ResultData, text)
-        else:
-            async for structured_message, is_last in self.stream_structured(debounce_by=debounce_by):
-                yield await self.validate_structured_result(structured_message, allow_partial=not is_last)
+        async for structured_message, is_last in self.stream_structured(debounce_by=debounce_by):
+            yield await self.validate_structured_result(structured_message, allow_partial=not is_last)
 
     async def stream_text(self, *, delta: bool = False, debounce_by: float | None = 0.1) -> AsyncIterator[str]:
         """Stream the text result as an async iterable.
@@ -173,40 +171,41 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
                 Debouncing is particularly important for long structured responses to reduce the overhead of
                 performing validation as each token is received.
         """
+
+        async def _stream_text_deltas() -> AsyncIterator[tuple[str, int]]:
+            async with _utils.group_by_temporal(self._stream_response, debounce_by) as group_iter:
+                async for group in group_iter:
+                    for maybe_event in group:
+                        if (
+                            isinstance(maybe_event, PartStartEvent)
+                            and isinstance(maybe_event.part, TextPart)
+                            and maybe_event.part.content
+                        ):
+                            yield maybe_event.part.content, maybe_event.index
+                        elif (
+                            isinstance(maybe_event, PartDeltaEvent)
+                            and isinstance(maybe_event.delta, TextPartDelta)
+                            and maybe_event.delta.content_delta
+                        ):
+                            yield maybe_event.delta.content_delta, maybe_event.index
+
         with _logfire.span('response stream text') as lf_span:
-            if isinstance(self._stream_response, models.StreamStructuredResponse):
-                raise exceptions.UserError('stream_text() can only be used with text responses')
             if delta:
-                async with _utils.group_by_temporal(self._stream_response, debounce_by) as group_iter:
-                    async for _ in group_iter:
-                        yield ''.join(self._stream_response.get())
-                final_delta = ''.join(self._stream_response.get(final=True))
-                if final_delta:
-                    yield final_delta
+                async for text, _ in _stream_text_deltas():
+                    yield text
             else:
                 # a quick benchmark shows it's faster to build up a string with concat when we're
                 # yielding at each step
-                chunks: list[str] = []
-                combined = ''
-                async with _utils.group_by_temporal(self._stream_response, debounce_by) as group_iter:
-                    async for _ in group_iter:
-                        new = False
-                        for chunk in self._stream_response.get():
-                            chunks.append(chunk)
-                            new = True
-                        if new:
-                            combined = await self._validate_text_result(''.join(chunks))
-                            yield combined
+                chunks: dict[int, str] = defaultdict(str)
+                combined_validated_text = ''
+                async for text, index in _stream_text_deltas():
+                    chunks[index] += text
+                    combined_text = ''.join([chunks[k] for k in sorted(chunks)])
+                    combined_validated_text = await self._validate_text_result(combined_text)
+                    yield combined_validated_text
 
-                new = False
-                for chunk in self._stream_response.get(final=True):
-                    chunks.append(chunk)
-                    new = True
-                if new:
-                    combined = await self._validate_text_result(''.join(chunks))
-                    yield combined
-                lf_span.set_attribute('combined_text', combined)
-                await self._marked_completed(_messages.ModelResponse.from_text(combined))
+                lf_span.set_attribute('combined_text', combined_validated_text)
+                await self._marked_completed(_messages.ModelResponse.from_text(combined_validated_text))
 
     async def stream_structured(
         self, *, debounce_by: float | None = 0.1
@@ -226,45 +225,36 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
             An async iterable of the structured response message and whether that is the last message.
         """
         with _logfire.span('response stream structured') as lf_span:
-            if isinstance(self._stream_response, models.StreamTextResponse):
-                raise exceptions.UserError('stream_structured() can only be used with structured responses')
-            else:
-                # we should already have a message at this point, yield that first if it has any content
-                msg = self._stream_response.get()
-                for item in msg.parts:
-                    if isinstance(item, _messages.ToolCallPart) and item.has_content():
-                        yield msg, False
-                        break
-                async with _utils.group_by_temporal(self._stream_response, debounce_by) as group_iter:
-                    async for _ in group_iter:
-                        msg = self._stream_response.get()
-                        for item in msg.parts:
-                            if isinstance(item, _messages.ToolCallPart) and item.has_content():
-                                yield msg, False
-                                break
-                msg = self._stream_response.get(final=True)
-                yield msg, True
-                lf_span.set_attribute('structured_response', msg)
-                await self._marked_completed(msg)
+            # we should already have a message at this point, yield that first if it has any content
+            msg = self._stream_response.get()
+            for item in msg.parts:
+                if isinstance(item, _messages.ToolCallPart) and item.has_content():
+                    yield msg, False
+                    break
+            async with _utils.group_by_temporal(self._stream_response, debounce_by) as group_iter:
+                async for _ in group_iter:
+                    msg = self._stream_response.get()
+                    for item in msg.parts:
+                        if isinstance(item, _messages.ToolCallPart) and item.has_content():
+                            yield msg, False
+                            break
+            msg = self._stream_response.get(final=True)
+            yield msg, True
+            lf_span.set_attribute('structured_response', msg)
+            await self._marked_completed(msg)
 
     async def get_data(self) -> ResultData:
         """Stream the whole response, validate and return it."""
         async for _ in self._stream_response:
             pass
-        if isinstance(self._stream_response, models.StreamTextResponse):
-            text = ''.join(self._stream_response.get(final=True))
-            text = await self._validate_text_result(text)
-            await self._marked_completed(_messages.ModelResponse.from_text(text))
-            return cast(ResultData, text)
-        else:
-            message = self._stream_response.get(final=True)
-            await self._marked_completed(message)
-            return await self.validate_structured_result(message)
+        message = self._stream_response.get(final=True)
+        await self._marked_completed(message)
+        return await self.validate_structured_result(message)
 
     @property
     def is_structured(self) -> bool:
         """Return whether the stream response contains structured data (as opposed to text)."""
-        return isinstance(self._stream_response, models.StreamStructuredResponse)
+        return isinstance(self._stream_response, models.StreamedResponse)
 
     def cost(self) -> Cost:
         """Return the cost of the whole run.

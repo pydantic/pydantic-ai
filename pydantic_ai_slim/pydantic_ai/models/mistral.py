@@ -31,9 +31,8 @@ from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from . import (
     AgentModel,
-    EitherStreamedResponse,
     Model,
-    StreamStructuredResponse,
+    StreamedResponse,
     StreamTextResponse,
     cached_async_http_client,
 )
@@ -164,7 +163,7 @@ class MistralAgentModel(AgentModel):
     @asynccontextmanager
     async def request_stream(
         self, messages: list[ModelMessage], model_settings: ModelSettings | None
-    ) -> AsyncIterator[EitherStreamedResponse]:
+    ) -> AsyncIterator[StreamedResponse]:
         """Make a streaming request to the model from Pydantic AI call."""
         response = await self._stream_completions_create(messages, model_settings)
         async with response:
@@ -295,7 +294,7 @@ class MistralAgentModel(AgentModel):
     async def _process_streamed_response(
         result_tools: list[ToolDefinition],
         response: MistralEventStreamAsync[MistralCompletionEvent],
-    ) -> EitherStreamedResponse:
+    ) -> StreamedResponse:
         """Process a streamed response, and prepare a streaming response to return."""
         start_cost = Cost()
 
@@ -323,7 +322,7 @@ class MistralAgentModel(AgentModel):
                     tool_calls = delta.tool_calls
 
                 if tool_calls or content and result_tools:
-                    return MistralStreamStructuredResponse(
+                    return MistralStreamedResponse(
                         {c.id if c.id else 'null': c for c in tool_calls or []},
                         {c.name: c for c in result_tools},
                         response,
@@ -510,8 +509,8 @@ class MistralStreamTextResponse(StreamTextResponse):
 
 
 @dataclass
-class MistralStreamStructuredResponse(StreamStructuredResponse):
-    """Implementation of `StreamStructuredResponse` for Mistral models."""
+class MistralStreamedResponse(StreamedResponse):
+    """Implementation of `StreamedResponse` for Mistral models."""
 
     _function_tools: dict[str, MistralToolCall]
     _result_tools: dict[str, ToolDefinition]
@@ -602,7 +601,7 @@ class MistralStreamStructuredResponse(StreamStructuredResponse):
 
             if isinstance(json_dict[param], dict) and 'properties' in param_schema:
                 nested_schema = param_schema
-                if not MistralStreamStructuredResponse._validate_required_json_shema(json_dict[param], nested_schema):
+                if not MistralStreamedResponse._validate_required_json_shema(json_dict[param], nested_schema):
                     return False
 
         return True

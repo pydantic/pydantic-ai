@@ -52,7 +52,7 @@ with try_import() as imports_successful:
     from pydantic_ai.models.mistral import (
         MistralAgentModel,
         MistralModel,
-        MistralStreamStructuredResponse,
+        MistralStreamedResponse,
     )
 
 pytestmark = [
@@ -1694,5 +1694,5 @@ def test_generate_user_output_format_multiple():
     ],
 )
 def test_validate_required_json_shema(desc: str, schema: dict[str, Any], data: dict[str, Any], expected: bool) -> None:
-    result = MistralStreamStructuredResponse._validate_required_json_shema(data, schema)  # pyright: ignore[reportPrivateUsage]
+    result = MistralStreamedResponse._validate_required_json_shema(data, schema)  # pyright: ignore[reportPrivateUsage]
     assert result == expected, f'{desc} — expected {expected}, got {result}'

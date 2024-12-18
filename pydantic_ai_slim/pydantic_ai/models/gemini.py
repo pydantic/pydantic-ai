@@ -32,9 +32,8 @@ from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from . import (
     AgentModel,
-    EitherStreamedResponse,
     Model,
-    StreamStructuredResponse,
+    StreamedResponse,
     StreamTextResponse,
     cached_async_http_client,
     check_allow_model_requests,
@@ -180,7 +179,7 @@ class GeminiAgentModel(AgentModel):
     @asynccontextmanager
     async def request_stream(
         self, messages: list[ModelMessage], model_settings: ModelSettings | None
-    ) -> AsyncIterator[EitherStreamedResponse]:
+    ) -> AsyncIterator[StreamedResponse]:
         async with self._make_request(messages, True, model_settings) as http_response:
             yield await self._process_streamed_response(http_response)
 
@@ -239,7 +238,7 @@ class GeminiAgentModel(AgentModel):
         return _process_response_from_parts(parts)
 
     @staticmethod
-    async def _process_streamed_response(http_response: HTTPResponse) -> EitherStreamedResponse:
+    async def _process_streamed_response(http_response: HTTPResponse) -> StreamedResponse:
         """Process a streamed response, and prepare a streaming response to return."""
         aiter_bytes = http_response.aiter_bytes()
         start_response: _GeminiResponse | None = None
@@ -262,7 +261,7 @@ class GeminiAgentModel(AgentModel):
 
         # TODO: Update this once we rework stream responses to be more flexible
         if _extract_response_parts(start_response).is_left():
-            return GeminiStreamStructuredResponse(_content=content, _stream=aiter_bytes)
+            return GeminiStreamedResponse(_content=content, _stream=aiter_bytes)
         else:
             return GeminiStreamTextResponse(_json_content=content, _stream=aiter_bytes)
 
@@ -339,8 +338,8 @@ class GeminiStreamTextResponse(StreamTextResponse):
 
 
 @dataclass
-class GeminiStreamStructuredResponse(StreamStructuredResponse):
-    """Implementation of `StreamStructuredResponse` for the Gemini model."""
+class GeminiStreamedResponse(StreamedResponse):
+    """Implementation of `StreamedResponse` for the Gemini model."""
 
     _content: bytearray
     _stream: AsyncIterator[bytes]

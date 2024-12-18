@@ -30,9 +30,8 @@ from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from . import (
     AgentModel,
-    EitherStreamedResponse,
     Model,
-    StreamStructuredResponse,
+    StreamedResponse,
     StreamTextResponse,
     cached_async_http_client,
     check_allow_model_requests,
@@ -165,7 +164,7 @@ class GroqAgentModel(AgentModel):
     @asynccontextmanager
     async def request_stream(
         self, messages: list[ModelMessage], model_settings: ModelSettings | None
-    ) -> AsyncIterator[EitherStreamedResponse]:
+    ) -> AsyncIterator[StreamedResponse]:
         response = await self._completions_create(messages, True, model_settings)
         async with response:
             yield await self._process_streamed_response(response)
@@ -225,7 +224,7 @@ class GroqAgentModel(AgentModel):
         return ModelResponse(items, timestamp=timestamp)
 
     @staticmethod
-    async def _process_streamed_response(response: AsyncStream[ChatCompletionChunk]) -> EitherStreamedResponse:
+    async def _process_streamed_response(response: AsyncStream[ChatCompletionChunk]) -> StreamedResponse:
         """Process a streamed response, and prepare a streaming response to return."""
         timestamp: datetime | None = None
         start_cost = Cost()
@@ -244,7 +243,7 @@ class GroqAgentModel(AgentModel):
                 if delta.content is not None:
                     return GroqStreamTextResponse(delta.content, response, timestamp, start_cost)
                 elif delta.tool_calls is not None:
-                    return GroqStreamStructuredResponse(
+                    return GroqStreamedResponse(
                         response,
                         {c.index: c for c in delta.tool_calls},
                         timestamp,
@@ -343,8 +342,8 @@ class GroqStreamTextResponse(StreamTextResponse):
 
 
 @dataclass
-class GroqStreamStructuredResponse(StreamStructuredResponse):
-    """Implementation of `StreamStructuredResponse` for Groq models."""
+class GroqStreamedResponse(StreamedResponse):
+    """Implementation of `StreamedResponse` for Groq models."""
 
     _response: AsyncStream[ChatCompletionChunk]
     _delta_tool_calls: dict[int, ChoiceDeltaToolCall]

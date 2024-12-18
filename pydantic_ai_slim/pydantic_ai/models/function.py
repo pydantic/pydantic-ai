@@ -28,7 +28,7 @@ from ..messages import (
 )
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
-from . import AgentModel, EitherStreamedResponse, Model, StreamStructuredResponse, StreamTextResponse
+from . import AgentModel, Model, StreamedResponse
 
 
 @dataclass(init=False)
@@ -160,57 +160,19 @@ class FunctionAgentModel(AgentModel):
     @asynccontextmanager
     async def request_stream(
         self, messages: list[ModelMessage], model_settings: ModelSettings | None
-    ) -> AsyncIterator[EitherStreamedResponse]:
+    ) -> AsyncIterator[StreamedResponse]:
         assert (
             self.stream_function is not None
         ), 'FunctionModel must receive a `stream_function` to support streamed requests'
         response_stream = self.stream_function(messages, self.agent_info)
-        try:
-            first = await response_stream.__anext__()
-        except StopAsyncIteration as e:
-            raise ValueError('Stream function must return at least one item') from e
-
-        if isinstance(first, str):
-            text_stream = cast(AsyncIterator[str], response_stream)
-            yield FunctionStreamTextResponse(first, text_stream)
-        else:
-            structured_stream = cast(AsyncIterator[DeltaToolCalls], response_stream)
-            yield FunctionStreamStructuredResponse(first, structured_stream)
+        yield FunctionStreamedResponse(response_stream)
 
 
 @dataclass
-class FunctionStreamTextResponse(StreamTextResponse):
-    """Implementation of `StreamTextResponse` for [FunctionModel][pydantic_ai.models.function.FunctionModel]."""
+class FunctionStreamedResponse(StreamedResponse):
+    """Implementation of `StreamedResponse` for [FunctionModel][pydantic_ai.models.function.FunctionModel]."""
 
-    _next: str | None
-    _iter: AsyncIterator[str]
-    _timestamp: datetime = field(default_factory=_utils.now_utc, init=False)
-    _buffer: list[str] = field(default_factory=list, init=False)
-
-    async def __anext__(self) -> None:
-        if self._next is not None:
-            self._buffer.append(self._next)
-            self._next = None
-        else:
-            self._buffer.append(await self._iter.__anext__())
-
-    def get(self, *, final: bool = False) -> Iterable[str]:
-        yield from self._buffer
-        self._buffer.clear()
-
-    def cost(self) -> result.Cost:
-        return result.Cost()
-
-    def timestamp(self) -> datetime:
-        return self._timestamp
-
-
-@dataclass
-class FunctionStreamStructuredResponse(StreamStructuredResponse):
-    """Implementation of `StreamStructuredResponse` for [FunctionModel][pydantic_ai.models.function.FunctionModel]."""
-
-    _next: DeltaToolCalls | None
-    _iter: AsyncIterator[DeltaToolCalls]
+    _iter: AsyncIterator[str | DeltaToolCalls]
     _delta_tool_calls: dict[int, DeltaToolCall] = field(default_factory=dict)
     _timestamp: datetime = field(default_factory=_utils.now_utc)
 

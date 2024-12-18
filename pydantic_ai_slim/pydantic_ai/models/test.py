@@ -26,9 +26,8 @@ from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from . import (
     AgentModel,
-    EitherStreamedResponse,
     Model,
-    StreamStructuredResponse,
+    StreamedResponse,
     StreamTextResponse,
 )
 
@@ -137,7 +136,7 @@ class TestAgentModel(AgentModel):
     @asynccontextmanager
     async def request_stream(
         self, messages: list[ModelMessage], model_settings: ModelSettings | None
-    ) -> AsyncIterator[EitherStreamedResponse]:
+    ) -> AsyncIterator[StreamedResponse]:
         msg = self._request(messages, model_settings)
         cost = Cost()
 
@@ -155,7 +154,7 @@ class TestAgentModel(AgentModel):
         if texts:
             yield TestStreamTextResponse('\n\n'.join(texts), cost)
         else:
-            yield TestStreamStructuredResponse(msg, cost)
+            yield TestStreamedResponse(msg, cost)
 
     def gen_tool_args(self, tool_def: ToolDefinition) -> Any:
         return _JsonSchemaTestData(tool_def.parameters_json_schema, self.seed).generate()
@@ -242,7 +241,7 @@ class TestStreamTextResponse(StreamTextResponse):
 
 
 @dataclass
-class TestStreamStructuredResponse(StreamStructuredResponse):
+class TestStreamedResponse(StreamedResponse):
     """A structured response that streams test data."""
 
     _structured_response: ModelResponse
