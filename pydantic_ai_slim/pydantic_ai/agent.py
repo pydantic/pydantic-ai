@@ -21,7 +21,9 @@ from . import (
     models,
     result,
 )
-from .result import ResultData
+from .messages import ModelRequestPart, ModelResponsePart
+from .models import StreamStructuredResponse
+from .result import ResultData, ResultData_Co
 from .settings import ModelSettings, merge_model_settings
 from .tools import (
     AgentDeps,
@@ -980,60 +982,74 @@ class Agent(Generic[AgentDeps, ResultData]):
             If a final result is returned, the conversation should end.
         """
         if isinstance(model_response, models.StreamTextResponse):
-            # plain string response
-            if self._allow_text_result:
-                return _MarkFinalResult(model_response, None)
-            else:
-                self._incr_result_retry()
-                response = _messages.RetryPromptPart(
-                    content='Plain text responses are not permitted, please call one of the functions instead.',
-                )
-                # stream the response, so cost is correct
-                async for _ in model_response:
-                    pass
-
-                text = ''.join(model_response.get(final=True))
-                return _messages.ModelResponse([_messages.TextPart(text)]), [response]
+            return await self._handle_streamed_text_response(model_response)
         elif isinstance(model_response, models.StreamStructuredResponse):
-            if self._result_schema is not None:
-                # if there's a result schema, iterate over the stream until we find at least one tool
-                # NOTE: this means we ignore any other tools called here
-                structured_msg = model_response.get()
-                while not structured_msg.parts:
-                    try:
-                        await model_response.__anext__()
-                    except StopAsyncIteration:
-                        break
-                    structured_msg = model_response.get()
-
-                if match := self._result_schema.find_tool(structured_msg.parts):
-                    call, _ = match
-                    return _MarkFinalResult(model_response, call.tool_name)
-
-            # the model is calling a tool function, consume the response to get the next message
-            async for _ in model_response:
-                pass
-            model_response_msg = model_response.get()
-            if not model_response_msg.parts:
-                raise exceptions.UnexpectedModelBehavior('Received empty tool call message')
-
-            # we now run all tool functions in parallel
-            tasks: list[asyncio.Task[_messages.ModelRequestPart]] = []
-            parts: list[_messages.ModelRequestPart] = []
-            for item in model_response_msg.parts:
-                if isinstance(item, _messages.ToolCallPart):
-                    call = item
-                    if tool := self._function_tools.get(call.tool_name):
-                        tasks.append(asyncio.create_task(tool.run(deps, call, conv_messages), name=call.tool_name))
-                    else:
-                        parts.append(self._unknown_tool(call.tool_name))
-
-            with _logfire.span('running {tools=}', tools=[t.get_name() for t in tasks]):
-                task_results: Sequence[_messages.ModelRequestPart] = await asyncio.gather(*tasks)
-                parts.extend(task_results)
-            return model_response_msg, parts
+            return await self._handle_streamed_structured_response(model_response, deps, conv_messages)
         else:
             assert_never(model_response)
+
+    async def _handle_streamed_text_response(
+        self, model_response: models.StreamTextResponse
+    ) -> _MarkFinalResult[models.StreamTextResponse] | tuple[_messages.ModelResponse, list[ModelRequestPart]]:
+        if self._allow_text_result:
+            return _MarkFinalResult(model_response, None)
+        else:
+            self._incr_result_retry()
+            response = _messages.RetryPromptPart(
+                content='Plain text responses are not permitted, please call one of the functions instead.',
+            )
+            # stream the response, so cost is correct
+            async for _ in model_response:
+                pass
+
+            text = ''.join(model_response.get(final=True))
+            return _messages.ModelResponse([_messages.TextPart(text)]), [response]
+
+    async def _handle_streamed_structured_response(
+        self,
+        model_response: models.StreamStructuredResponse,
+        deps: AgentDeps,
+        conv_messages: list[_messages.ModelMessage],
+    ) -> _MarkFinalResult[models.StreamStructuredResponse] | tuple[_messages.ModelResponse, list[ModelRequestPart]]:
+        handled_any_parts = False
+        tasks: list[asyncio.Task[_messages.ModelRequestPart]] = []
+        parts: list[_messages.ModelRequestPart] = []
+
+        def handle_completed_part(p: ModelResponsePart | None) -> None:
+            if isinstance(p, _messages.ToolCallPart):
+                if tool := self._function_tools.get(p.tool_name):
+                    tasks.append(asyncio.create_task(tool.run(deps, p, conv_messages), name=p.tool_name))
+                else:
+                    parts.append(self._unknown_tool(p.tool_name))
+
+        last_part_index = 0
+        last_part: ModelResponsePart | None = None
+        async for part_index, part in _stream_structured_parts(model_response):
+            handled_any_parts = True
+            if self._result_schema and (match := self._result_schema.find_tool([part])):
+                call, _ = match
+                for task in tasks:
+                    # Abandon the execution of all tool calls and return the final result
+                    task.cancel()
+                return _MarkFinalResult(model_response, call.tool_name)
+
+            if part_index > last_part_index:
+                # Only process non-result parts when we've moved to a new part
+                handle_completed_part(last_part)
+
+            last_part_index = part_index
+            last_part = part
+
+        handle_completed_part(last_part)
+
+        if not handled_any_parts:
+            raise exceptions.UnexpectedModelBehavior('Received empty tool call message')
+
+        with _logfire.span('running {tools=}', tools=[t.get_name() for t in tasks]):
+            task_results: Sequence[_messages.ModelRequestPart] = await asyncio.gather(*tasks)
+            parts.extend(task_results)
+
+        return model_response.get(), parts
 
     async def _validate_result(
         self,
@@ -1107,7 +1123,7 @@ class Agent(Generic[AgentDeps, ResultData]):
 
 
 @dataclass
-class _MarkFinalResult(Generic[ResultData]):
+class _MarkFinalResult(Generic[ResultData_Co]):
     """Marker class to indicate that the result is the final result.
 
     This allows us to use `isinstance`, which wouldn't be possible if we were returning `ResultData` directly.
@@ -1115,7 +1131,45 @@ class _MarkFinalResult(Generic[ResultData]):
     It also avoids problems in the case where the result type is itself `None`, but is set.
     """
 
-    data: ResultData
+    data: ResultData_Co
     """The final result data."""
     tool_name: str | None
     """Name of the final result tool, None if the result is a string."""
+
+
+async def _stream_structured_parts(
+    model_response: StreamStructuredResponse,
+) -> AsyncIterator[tuple[int, ModelResponsePart]]:
+    """Yields a tuple of [index, part] for each part in the model response as it is received.
+
+    You can assume that when the index increases, the previous part is complete.
+
+    The reason we do not stream only "completed" parts here is because we only want to iterate over completed parts
+    for function tool calls. For the final result, we want to iterate over all deltas. At this level of API,
+    we aren't aware of whether a part is part of the final response or not.
+    """
+    last_part_index = 0
+    last_part: ModelResponsePart | None = None
+
+    def new_or_updated_parts() -> Iterator[tuple[int, ModelResponsePart]]:
+        nonlocal last_part_index, last_part
+
+        structured_msg = model_response.get()
+        new_last_part_index = last_part_index
+        for i, part in enumerate(structured_msg.parts[last_part_index:]):
+            if i == 0 and part == last_part:
+                continue  # this part was not updated
+            yield last_part_index + i, part
+            last_part = part
+            new_last_part_index = last_part_index + i
+        last_part_index = new_last_part_index
+
+    while True:
+        for p in new_or_updated_parts():
+            yield p
+        try:
+            await model_response.__anext__()
+        except StopAsyncIteration:
+            break
+    for p in new_or_updated_parts():
+        yield p

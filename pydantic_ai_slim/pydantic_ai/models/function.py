@@ -118,7 +118,7 @@ class DeltaToolCall:
     """Incremental change to the arguments as JSON"""
 
 
-DeltaToolCalls: TypeAlias = dict[int, DeltaToolCall]
+DeltaToolCalls: TypeAlias = dict[int | str, DeltaToolCall]
 """A mapping of tool call IDs to incremental changes."""
 
 FunctionDef: TypeAlias = Callable[[list[ModelMessage], AgentInfo], Union[ModelResponse, Awaitable[ModelResponse]]]
@@ -211,7 +211,7 @@ class FunctionStreamStructuredResponse(StreamStructuredResponse):
 
     _next: DeltaToolCalls | None
     _iter: AsyncIterator[DeltaToolCalls]
-    _delta_tool_calls: dict[int, DeltaToolCall] = field(default_factory=dict)
+    _delta_tool_calls: DeltaToolCalls = field(default_factory=dict)
     _timestamp: datetime = field(default_factory=_utils.now_utc)
 
     async def __anext__(self) -> None:

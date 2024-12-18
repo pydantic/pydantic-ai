@@ -4,9 +4,10 @@ from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Generic, TypeVar, cast
+from typing import Generic, cast
 
 import logfire_api
+from typing_extensions import TypeVar
 
 from . import _result, _utils, exceptions, messages as _messages, models
 from .tools import AgentDeps
@@ -21,6 +22,7 @@ __all__ = (
 
 ResultData = TypeVar('ResultData')
 """Type variable for the result data of a run."""
+ResultData_Co = TypeVar('ResultData_Co', covariant=True)
 
 _logfire = logfire_api.Logfire(otel_scope='pydantic-ai')
 
