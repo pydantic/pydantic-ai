@@ -550,10 +550,6 @@ class MistralStreamStructuredResponse(StreamStructuredResponse):
                 self._delta_content, allow_partial='trailing-strings'
             )
 
-            assert isinstance(
-                output_json, (dict, type(None))
-            ), f'Expected `pydantic_core.from_json` as type `dict` or `None`, invalid type: {type(output_json)}'
-
             if output_json:
                 for result_tool in self._result_tools.values():
                     # NOTE: Additional verification to prevent JSON validation to crash in `_result.py`
