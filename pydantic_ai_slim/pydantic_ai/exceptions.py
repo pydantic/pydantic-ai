@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 import json
 
-__all__ = 'ModelRetry', 'UserError', 'UnexpectedModelBehavior'
+__all__ = 'ModelRetry', 'UserError', 'AgentRunError', 'UnexpectedModelBehavior', 'UsageLimitExceeded'
 
 
 class ModelRetry(Exception):
@@ -30,7 +30,25 @@ class UserError(RuntimeError):
         super().__init__(message)
 
 
-class UnexpectedModelBehavior(RuntimeError):
+class AgentRunError(RuntimeError):
+    """Base class for errors occurring during an agent run."""
+
+    message: str
+    """The error message."""
+
+    def __init__(self, message: str):
+        self.message = message
+        super().__init__(message)
+
+    def __str__(self) -> str:
+        return self.message
+
+
+class UsageLimitExceeded(AgentRunError):
+    """Error raised when a Model's usage exceeds the specified limits."""
+
+
+class UnexpectedModelBehavior(AgentRunError):
     """Error caused by unexpected Model behavior, e.g. an unexpected response code."""
 
     message: str

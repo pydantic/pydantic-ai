@@ -213,6 +213,12 @@ text_responses: dict[str, str | ToolCallPart] = {
             }
         ),
     ),
+    'What is the capital of Italy? Answer with just the city.': 'Rome',
+    'What is the capital of Italy? Answer with a paragraph.': (
+        'The capital of Italy is Rome (Roma, in Italian), which has been a cultural and political center for centuries.'
+        'Rome is known for its rich history, stunning architecture, and delicious cuisine.'
+    ),
+    'Begin infinite retry loop!': ToolCallPart(tool_name='infinite_retry_tool', args=ArgsDict({})),
 }
 
 
@@ -241,6 +247,8 @@ async def model_logic(messages: list[ModelMessage], info: AgentInfo) -> ModelRes
         and m.content.startswith("No user found with name 'Joh")
     ):
         return ModelResponse(parts=[ToolCallPart(tool_name='get_user_by_name', args=ArgsDict({'name': 'John Doe'}))])
+    elif isinstance(m, RetryPromptPart) and m.tool_name == 'infinite_retry_tool':
+        return ModelResponse(parts=[ToolCallPart(tool_name='infinite_retry_tool', args=ArgsDict({}))])
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_user_by_name':
         args = {
             'message': 'Hello John, would you be free for coffee sometime next week? Let me know what works for you!',

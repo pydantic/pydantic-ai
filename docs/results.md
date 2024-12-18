@@ -19,7 +19,9 @@ result = agent.run_sync('Where were the olympics held in 2012?')
 print(result.data)
 #> city='London' country='United Kingdom'
 print(result.usage())
-#> Usage(request_tokens=57, response_tokens=8, total_tokens=65, details=None)
+"""
+Usage(requests=1, request_tokens=57, response_tokens=8, total_tokens=65, details=None)
+"""
 ```
 
 _(This example is complete, it can be run "as is")_

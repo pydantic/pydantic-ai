@@ -103,6 +103,90 @@ You can also pass messages from previous runs to continue a conversation or prov
 
 ### Additional Configuration
 
+#### Usage Limits
+
+PydanticAI offers a [`settings.UsageLimits`][pydantic_ai.settings.UsageLimits] structure to help you limit your
+usage (tokens and/or requests) on model runs.
+
+You can apply these settings by passing the `usage_limits` argument to the `run{_sync,_stream}` functions.
+
+Consider the following example, where we limit the number of response tokens:
+
+```py
+from pydantic_ai import Agent
+from pydantic_ai.exceptions import UsageLimitExceeded
+from pydantic_ai.settings import UsageLimits
+
+agent = Agent('claude-3-5-sonnet-latest')
+
+result_sync = agent.run_sync(
+    'What is the capital of Italy? Answer with just the city.',
+    usage_limits=UsageLimits(response_tokens_limit=10),
+)
+print(result_sync.data)
+#> Rome
+print(result_sync.usage())
+"""
+Usage(requests=1, request_tokens=62, response_tokens=1, total_tokens=63, details=None)
+"""
+
+try:
+    result_sync = agent.run_sync(
+        'What is the capital of Italy? Answer with a paragraph.',
+        usage_limits=UsageLimits(response_tokens_limit=10),
+    )
+except UsageLimitExceeded as e:
+    print(e)
+    #> Exceeded the response_tokens_limit of 10 (response_tokens=32)
+```
+
+Restricting the number of requests can be useful in preventing infinite loops or excessive tool calling:
+
+```py
+from typing_extensions import TypedDict
+
+from pydantic_ai import Agent, ModelRetry
+from pydantic_ai.exceptions import UsageLimitExceeded
+from pydantic_ai.settings import UsageLimits
+
+
+class NeverResultType(TypedDict):
+    """
+    Never ever coerce data to this type.
+    """
+
+    never_use_this: str
+
+
+agent = Agent(
+    'claude-3-5-sonnet-latest',
+    result_type=NeverResultType,
+    system_prompt='Any time you get a response, call the `infinite_retry_tool` to produce another response.',
+)
+
+
+@agent.tool_plain(retries=5)  # (1)!
+def infinite_retry_tool() -> int:
+    raise ModelRetry('Please try again.')
+
+
+try:
+    result_sync = agent.run_sync(
+        'Begin infinite retry loop!', usage_limits=UsageLimits(request_limit=3)  # (2)!
+    )
+except UsageLimitExceeded as e:
+    print(e)
+    #> The next request would exceed the request_limit of 3
+```
+
+1. This tool has the ability to retry 5 times before erroring, simulating a tool that might get stuck in a loop.
+2. This run will error after 3 requests, preventing the infinite tool calling.
+
+!!! note
+    This is especially relevant if you're registered a lot of tools, `request_limit` can be used to prevent the model from choosing to make too many of these calls.
+
+#### Model (Run) Settings
+
 PydanticAI offers a [`settings.ModelSettings`][pydantic_ai.settings.ModelSettings] structure to help you fine tune your requests.
 This structure allows you to configure common parameters that influence the model's behavior, such as `temperature`, `max_tokens`,
 `timeout`, and more.

@@ -55,10 +55,25 @@ async def test_streamed_text_response():
                 ),
             ]
         )
+        assert result.usage() == snapshot(
+            Usage(
+                requests=2,
+                request_tokens=103,
+                response_tokens=5,
+                total_tokens=108,
+            )
+        )
         response = await result.get_data()
         assert response == snapshot('{"ret_a":"a-apple"}')
         assert result.is_complete
-        assert result.usage() == snapshot(Usage())
+        assert result.usage() == snapshot(
+            Usage(
+                requests=2,
+                request_tokens=103,
+                response_tokens=11,
+                total_tokens=114,
+            )
+        )
         assert result.timestamp() == IsNow(tz=timezone.utc)
         assert result.all_messages() == snapshot(
             [
