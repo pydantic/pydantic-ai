@@ -21,7 +21,7 @@ from ..messages import (
     ToolCallPart,
     ToolReturnPart,
 )
-from ..result import Cost
+from ..result import Usage
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from . import (
@@ -131,15 +131,15 @@ class TestAgentModel(AgentModel):
 
     async def request(
         self, messages: list[ModelMessage], model_settings: ModelSettings | None
-    ) -> tuple[ModelResponse, Cost]:
-        return self._request(messages, model_settings), Cost()
+    ) -> tuple[ModelResponse, Usage]:
+        return self._request(messages, model_settings), Usage()
 
     @asynccontextmanager
     async def request_stream(
         self, messages: list[ModelMessage], model_settings: ModelSettings | None
     ) -> AsyncIterator[EitherStreamedResponse]:
         msg = self._request(messages, model_settings)
-        cost = Cost()
+        usage = Usage()
 
         # TODO: Rework this once we make StreamTextResponse more general
         texts: list[str] = []
@@ -153,9 +153,9 @@ class TestAgentModel(AgentModel):
                 assert_never(item)
 
         if texts:
-            yield TestStreamTextResponse('\n\n'.join(texts), cost)
+            yield TestStreamTextResponse('\n\n'.join(texts), usage)
         else:
-            yield TestStreamStructuredResponse(msg, cost)
+            yield TestStreamStructuredResponse(msg, usage)
 
     def gen_tool_args(self, tool_def: ToolDefinition) -> Any:
         return _JsonSchemaTestData(tool_def.parameters_json_schema, self.seed).generate()
@@ -213,7 +213,7 @@ class TestStreamTextResponse(StreamTextResponse):
     """A text response that streams test data."""
 
     _text: str
-    _cost: Cost
+    _usage: Usage
     _iter: Iterator[str] = field(init=False)
     _timestamp: datetime = field(default_factory=_utils.now_utc)
     _buffer: list[str] = field(default_factory=list, init=False)
@@ -234,8 +234,8 @@ class TestStreamTextResponse(StreamTextResponse):
         yield from self._buffer
         self._buffer.clear()
 
-    def cost(self) -> Cost:
-        return self._cost
+    def usage(self) -> Usage:
+        return self._usage
 
     def timestamp(self) -> datetime:
         return self._timestamp
@@ -246,7 +246,7 @@ class TestStreamStructuredResponse(StreamStructuredResponse):
     """A structured response that streams test data."""
 
     _structured_response: ModelResponse
-    _cost: Cost
+    _usage: Usage
     _iter: Iterator[None] = field(default_factory=lambda: iter([None]))
     _timestamp: datetime = field(default_factory=_utils.now_utc, init=False)
 
@@ -256,8 +256,8 @@ class TestStreamStructuredResponse(StreamStructuredResponse):
     def get(self, *, final: bool = False) -> ModelResponse:
         return self._structured_response
 
-    def cost(self) -> Cost:
-        return self._cost
+    def usage(self) -> Usage:
+        return self._usage
 
     def timestamp(self) -> datetime:
         return self._timestamp

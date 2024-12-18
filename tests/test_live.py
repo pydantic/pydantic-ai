@@ -90,9 +90,9 @@ async def test_text(http_client: httpx.AsyncClient, tmp_path: Path, get_model: G
     result = await agent.run('What is the capital of France?')
     print('Text response:', result.data)
     assert 'paris' in result.data.lower()
-    print('Text cost:', result.cost())
-    cost = result.cost()
-    assert cost.total_tokens is not None and cost.total_tokens > 0
+    print('Text usage:', result.usage())
+    usage = result.usage()
+    assert usage.total_tokens is not None and usage.total_tokens > 0
 
 
 stream_params = [p for p in params if p.id != 'anthropic']
@@ -105,10 +105,10 @@ async def test_stream(http_client: httpx.AsyncClient, tmp_path: Path, get_model:
         data = await result.get_data()
     print('Stream response:', data)
     assert 'paris' in data.lower()
-    print('Stream cost:', result.cost())
-    cost = result.cost()
+    print('Stream usage:', result.usage())
+    usage = result.usage()
     if get_model.__name__ != 'ollama':
-        assert cost.total_tokens is not None and cost.total_tokens > 0
+        assert usage.total_tokens is not None and usage.total_tokens > 0
 
 
 class MyModel(BaseModel):
@@ -124,6 +124,6 @@ async def test_structured(http_client: httpx.AsyncClient, tmp_path: Path, get_mo
     result = await agent.run('What is the capital of the UK?')
     print('Structured response:', result.data)
     assert result.data.city.lower() == 'london'
-    print('Structured cost:', result.cost())
-    cost = result.cost()
-    assert cost.total_tokens is not None and cost.total_tokens > 0
+    print('Structured usage:', result.usage())
+    usage = result.usage()
+    assert usage.total_tokens is not None and usage.total_tokens > 0

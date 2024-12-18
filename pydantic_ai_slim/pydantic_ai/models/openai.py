@@ -25,7 +25,7 @@ from ..messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from ..result import Cost
+from ..result import Usage
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from . import (
@@ -147,9 +147,9 @@ class OpenAIAgentModel(AgentModel):
 
     async def request(
         self, messages: list[ModelMessage], model_settings: ModelSettings | None
-    ) -> tuple[ModelResponse, result.Cost]:
+    ) -> tuple[ModelResponse, result.Usage]:
         response = await self._completions_create(messages, False, model_settings)
-        return self._process_response(response), _map_cost(response)
+        return self._process_response(response), _map_usage(response)
 
     @asynccontextmanager
     async def request_stream(
@@ -218,7 +218,7 @@ class OpenAIAgentModel(AgentModel):
     async def _process_streamed_response(response: AsyncStream[ChatCompletionChunk]) -> EitherStreamedResponse:
         """Process a streamed response, and prepare a streaming response to return."""
         timestamp: datetime | None = None
-        start_cost = Cost()
+        start_usage = Usage()
         # the first chunk may contain enough information so we iterate until we get either `tool_calls` or `content`
         while True:
             try:
@@ -227,19 +227,19 @@ class OpenAIAgentModel(AgentModel):
                 raise UnexpectedModelBehavior('Streamed response ended without content or tool calls') from e
 
             timestamp = timestamp or datetime.fromtimestamp(chunk.created, tz=timezone.utc)
-            start_cost += _map_cost(chunk)
+            start_usage += _map_usage(chunk)
 
             if chunk.choices:
                 delta = chunk.choices[0].delta
 
                 if delta.content is not None:
-                    return OpenAIStreamTextResponse(delta.content, response, timestamp, start_cost)
+                    return OpenAIStreamTextResponse(delta.content, response, timestamp, start_usage)
                 elif delta.tool_calls is not None:
                     return OpenAIStreamStructuredResponse(
                         response,
                         {c.index: c for c in delta.tool_calls},
                         timestamp,
-                        start_cost,
+                        start_usage,
                     )
                 # else continue until we get either delta.content or delta.tool_calls
 
@@ -302,7 +302,7 @@ class OpenAIStreamTextResponse(StreamTextResponse):
     _first: str | None
     _response: AsyncStream[ChatCompletionChunk]
     _timestamp: datetime
-    _cost: result.Cost
+    _usage: result.Usage
     _buffer: list[str] = field(default_factory=list, init=False)
 
     async def __anext__(self) -> None:
@@ -312,7 +312,7 @@ class OpenAIStreamTextResponse(StreamTextResponse):
             return None
 
         chunk = await self._response.__anext__()
-        self._cost += _map_cost(chunk)
+        self._usage += _map_usage(chunk)
         try:
             choice = chunk.choices[0]
         except IndexError:
@@ -328,8 +328,8 @@ class OpenAIStreamTextResponse(StreamTextResponse):
         yield from self._buffer
         self._buffer.clear()
 
-    def cost(self) -> Cost:
-        return self._cost
+    def usage(self) -> Usage:
+        return self._usage
 
     def timestamp(self) -> datetime:
         return self._timestamp
@@ -342,11 +342,11 @@ class OpenAIStreamStructuredResponse(StreamStructuredResponse):
     _response: AsyncStream[ChatCompletionChunk]
     _delta_tool_calls: dict[int, ChoiceDeltaToolCall]
     _timestamp: datetime
-    _cost: result.Cost
+    _usage: result.Usage
 
     async def __anext__(self) -> None:
         chunk = await self._response.__anext__()
-        self._cost += _map_cost(chunk)
+        self._usage += _map_usage(chunk)
         try:
             choice = chunk.choices[0]
         except IndexError:
@@ -376,8 +376,8 @@ class OpenAIStreamStructuredResponse(StreamStructuredResponse):
 
         return ModelResponse(items, timestamp=self._timestamp)
 
-    def cost(self) -> Cost:
-        return self._cost
+    def usage(self) -> Usage:
+        return self._usage
 
     def timestamp(self) -> datetime:
         return self._timestamp
@@ -392,17 +392,17 @@ def _map_tool_call(t: ToolCallPart) -> chat.ChatCompletionMessageToolCallParam:
     )
 
 
-def _map_cost(response: chat.ChatCompletion | ChatCompletionChunk) -> result.Cost:
+def _map_usage(response: chat.ChatCompletion | ChatCompletionChunk) -> result.Usage:
     usage = response.usage
     if usage is None:
-        return result.Cost()
+        return result.Usage()
     else:
         details: dict[str, int] = {}
         if usage.completion_tokens_details is not None:
             details.update(usage.completion_tokens_details.model_dump(exclude_none=True))
         if usage.prompt_tokens_details is not None:
             details.update(usage.prompt_tokens_details.model_dump(exclude_none=True))
-        return result.Cost(
+        return result.Usage(
             request_tokens=usage.prompt_tokens,
             response_tokens=usage.completion_tokens,
             total_tokens=usage.total_tokens,

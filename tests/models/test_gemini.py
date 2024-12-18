@@ -40,7 +40,7 @@ from pydantic_ai.models.gemini import (
     _GeminiTools,
     _GeminiUsageMetaData,
 )
-from pydantic_ai.result import Cost
+from pydantic_ai.result import Usage
 from pydantic_ai.tools import ToolDefinition
 
 from ..conftest import ClientWithHandler, IsNow, TestEnv
@@ -396,7 +396,7 @@ async def test_text_success(get_gemini_client: GetGeminiClient):
             ModelResponse.from_text(content='Hello world', timestamp=IsNow(tz=timezone.utc)),
         ]
     )
-    assert result.cost() == snapshot(Cost(request_tokens=1, response_tokens=2, total_tokens=3))
+    assert result.usage() == snapshot(Usage(request_tokens=1, response_tokens=2, total_tokens=3))
 
     result = await agent.run('Hello', message_history=result.new_messages())
     assert result.data == 'Hello world'
@@ -517,7 +517,7 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
             ModelResponse.from_text(content='final response', timestamp=IsNow(tz=timezone.utc)),
         ]
     )
-    assert result.cost() == snapshot(Cost(request_tokens=3, response_tokens=6, total_tokens=9))
+    assert result.usage() == snapshot(Usage(request_tokens=3, response_tokens=6, total_tokens=9))
 
 
 async def test_unexpected_response(client_with_handler: ClientWithHandler, env: TestEnv, allow_model_requests: None):
@@ -572,12 +572,12 @@ async def test_stream_text(get_gemini_client: GetGeminiClient):
     async with agent.run_stream('Hello') as result:
         chunks = [chunk async for chunk in result.stream(debounce_by=None)]
         assert chunks == snapshot(['Hello ', 'Hello world'])
-    assert result.cost() == snapshot(Cost(request_tokens=2, response_tokens=4, total_tokens=6))
+    assert result.usage() == snapshot(Usage(request_tokens=2, response_tokens=4, total_tokens=6))
 
     async with agent.run_stream('Hello') as result:
         chunks = [chunk async for chunk in result.stream_text(delta=True, debounce_by=None)]
         assert chunks == snapshot(['', 'Hello ', 'world'])
-    assert result.cost() == snapshot(Cost(request_tokens=2, response_tokens=4, total_tokens=6))
+    assert result.usage() == snapshot(Usage(request_tokens=2, response_tokens=4, total_tokens=6))
 
 
 async def test_stream_text_no_data(get_gemini_client: GetGeminiClient):
@@ -609,7 +609,7 @@ async def test_stream_structured(get_gemini_client: GetGeminiClient):
     async with agent.run_stream('Hello') as result:
         chunks = [chunk async for chunk in result.stream(debounce_by=None)]
         assert chunks == snapshot([(1, 2), (1, 2), (1, 2)])
-    assert result.cost() == snapshot(Cost(request_tokens=1, response_tokens=2, total_tokens=3))
+    assert result.usage() == snapshot(Usage(request_tokens=1, response_tokens=2, total_tokens=3))
 
 
 async def test_stream_structured_tool_calls(get_gemini_client: GetGeminiClient):
@@ -652,7 +652,7 @@ async def test_stream_structured_tool_calls(get_gemini_client: GetGeminiClient):
     async with agent.run_stream('Hello') as result:
         response = await result.get_data()
         assert response == snapshot((1, 2))
-    assert result.cost() == snapshot(Cost(request_tokens=3, response_tokens=6, total_tokens=9))
+    assert result.usage() == snapshot(Usage(request_tokens=3, response_tokens=6, total_tokens=9))
     assert result.all_messages() == snapshot(
         [
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),

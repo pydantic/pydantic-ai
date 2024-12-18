@@ -172,10 +172,10 @@ class GeminiAgentModel(AgentModel):
 
     async def request(
         self, messages: list[ModelMessage], model_settings: ModelSettings | None
-    ) -> tuple[ModelResponse, result.Cost]:
+    ) -> tuple[ModelResponse, result.Usage]:
         async with self._make_request(messages, False, model_settings) as http_response:
             response = _gemini_response_ta.validate_json(await http_response.aread())
-        return self._process_response(response), _metadata_as_cost(response)
+        return self._process_response(response), _metadata_as_usage(response)
 
     @asynccontextmanager
     async def request_stream(
@@ -301,7 +301,7 @@ class GeminiStreamTextResponse(StreamTextResponse):
     _stream: AsyncIterator[bytes]
     _position: int = 0
     _timestamp: datetime = field(default_factory=_utils.now_utc, init=False)
-    _cost: result.Cost = field(default_factory=result.Cost, init=False)
+    _usage: result.Usage = field(default_factory=result.Usage, init=False)
 
     async def __anext__(self) -> None:
         chunk = await self._stream.__anext__()
@@ -321,7 +321,7 @@ class GeminiStreamTextResponse(StreamTextResponse):
                 new_items, experimental_allow_partial='trailing-strings'
             )
         for r in new_responses:
-            self._cost += _metadata_as_cost(r)
+            self._usage += _metadata_as_usage(r)
             parts = r['candidates'][0]['content']['parts']
             if _all_text_parts(parts):
                 for part in parts:
@@ -331,8 +331,8 @@ class GeminiStreamTextResponse(StreamTextResponse):
                     'Streamed response with unexpected content, expected all parts to be text'
                 )
 
-    def cost(self) -> result.Cost:
-        return self._cost
+    def usage(self) -> result.Usage:
+        return self._usage
 
     def timestamp(self) -> datetime:
         return self._timestamp
@@ -345,7 +345,7 @@ class GeminiStreamStructuredResponse(StreamStructuredResponse):
     _content: bytearray
     _stream: AsyncIterator[bytes]
     _timestamp: datetime = field(default_factory=_utils.now_utc, init=False)
-    _cost: result.Cost = field(default_factory=result.Cost, init=False)
+    _usage: result.Usage = field(default_factory=result.Usage, init=False)
 
     async def __anext__(self) -> None:
         chunk = await self._stream.__anext__()
@@ -365,15 +365,15 @@ class GeminiStreamStructuredResponse(StreamStructuredResponse):
             experimental_allow_partial='off' if final else 'trailing-strings',
         )
         combined_parts: list[_GeminiPartUnion] = []
-        self._cost = result.Cost()
+        self._usage = result.Usage()
         for r in responses:
-            self._cost += _metadata_as_cost(r)
+            self._usage += _metadata_as_usage(r)
             candidate = r['candidates'][0]
             combined_parts.extend(candidate['content']['parts'])
         return _process_response_from_parts(combined_parts, timestamp=self._timestamp)
 
-    def cost(self) -> result.Cost:
-        return self._cost
+    def usage(self) -> result.Usage:
+        return self._usage
 
     def timestamp(self) -> datetime:
         return self._timestamp
@@ -640,14 +640,14 @@ class _GeminiUsageMetaData(TypedDict, total=False):
     cached_content_token_count: NotRequired[Annotated[int, pydantic.Field(alias='cachedContentTokenCount')]]
 
 
-def _metadata_as_cost(response: _GeminiResponse) -> result.Cost:
+def _metadata_as_usage(response: _GeminiResponse) -> result.Usage:
     metadata = response.get('usage_metadata')
     if metadata is None:
-        return result.Cost()
+        return result.Usage()
     details: dict[str, int] = {}
     if cached_content_token_count := metadata.get('cached_content_token_count'):
         details['cached_content_token_count'] = cached_content_token_count
-    return result.Cost(
+    return result.Usage(
         request_tokens=metadata.get('prompt_token_count', 0),
         response_tokens=metadata.get('candidates_token_count', 0),
         total_tokens=metadata.get('total_token_count', 0),

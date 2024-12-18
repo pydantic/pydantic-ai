@@ -237,7 +237,7 @@ class Agent(Generic[AgentDeps, ResultData]):
             for tool in self._function_tools.values():
                 tool.current_retry = 0
 
-            cost = result.Cost()
+            usage = result.Usage()
 
             model_settings = merge_model_settings(self.model_settings, model_settings)
 
@@ -248,12 +248,12 @@ class Agent(Generic[AgentDeps, ResultData]):
                     agent_model = await self._prepare_model(model_used, deps, messages)
 
                 with _logfire.span('model request', run_step=run_step) as model_req_span:
-                    model_response, request_cost = await agent_model.request(messages, model_settings)
+                    model_response, request_usage = await agent_model.request(messages, model_settings)
                     model_req_span.set_attribute('response', model_response)
-                    model_req_span.set_attribute('cost', request_cost)
+                    model_req_span.set_attribute('usage', request_usage)
 
                 messages.append(model_response)
-                cost += request_cost
+                usage += request_usage
 
                 with _logfire.span('handle model response', run_step=run_step) as handle_span:
                     final_result, tool_responses = await self._handle_model_response(model_response, deps, messages)
@@ -266,10 +266,10 @@ class Agent(Generic[AgentDeps, ResultData]):
                     if final_result is not None:
                         result_data = final_result.data
                         run_span.set_attribute('all_messages', messages)
-                        run_span.set_attribute('cost', cost)
+                        run_span.set_attribute('usage', usage)
                         handle_span.set_attribute('result', result_data)
                         handle_span.message = 'handle model response -> final result'
-                        return result.RunResult(messages, new_message_index, result_data, cost)
+                        return result.RunResult(messages, new_message_index, result_data, usage)
                     else:
                         # continue the conversation
                         handle_span.set_attribute('tool_responses', tool_responses)
@@ -385,7 +385,7 @@ class Agent(Generic[AgentDeps, ResultData]):
             for tool in self._function_tools.values():
                 tool.current_retry = 0
 
-            cost = result.Cost()
+            usage = result.Usage()
             model_settings = merge_model_settings(self.model_settings, model_settings)
 
             run_step = 0
@@ -434,7 +434,7 @@ class Agent(Generic[AgentDeps, ResultData]):
                                 yield result.StreamedRunResult(
                                     messages,
                                     new_message_index,
-                                    cost,
+                                    usage,
                                     result_stream,
                                     self._result_schema,
                                     deps,
@@ -455,8 +455,8 @@ class Agent(Generic[AgentDeps, ResultData]):
                                 handle_span.set_attribute('tool_responses', tool_responses)
                                 tool_responses_str = ' '.join(r.part_kind for r in tool_responses)
                                 handle_span.message = f'handle model response -> {tool_responses_str}'
-                                # the model_response should have been fully streamed by now, we can add it's cost
-                                cost += model_response.cost()
+                                # the model_response should have been fully streamed by now, we can add its usage
+                                usage += model_response.usage()
 
     @contextmanager
     def override(
@@ -988,7 +988,7 @@ class Agent(Generic[AgentDeps, ResultData]):
                 response = _messages.RetryPromptPart(
                     content='Plain text responses are not permitted, please call one of the functions instead.',
                 )
-                # stream the response, so cost is correct
+                # stream the response, so usage is correct
                 async for _ in model_response:
                     pass
 

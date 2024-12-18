@@ -23,7 +23,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.result import Cost
+from pydantic_ai.result import Usage
 
 from ..conftest import IsNow
 
@@ -399,7 +399,7 @@ async def test_stream_text():
                 ModelResponse.from_text(content='hello world', timestamp=IsNow(tz=timezone.utc)),
             ]
         )
-        assert result.cost() == snapshot(Cost())
+        assert result.usage() == snapshot(Usage())
 
 
 class Foo(BaseModel):
@@ -420,7 +420,7 @@ async def test_stream_structure():
     agent = Agent(FunctionModel(stream_function=stream_structured_function), result_type=Foo)
     async with agent.run_stream('') as result:
         assert await result.get_data() == snapshot(Foo(x=1))
-        assert result.cost() == snapshot(Cost())
+        assert result.usage() == snapshot(Usage())
 
 
 async def test_pass_neither():

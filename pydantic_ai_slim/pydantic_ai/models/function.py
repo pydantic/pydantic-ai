@@ -144,7 +144,7 @@ class FunctionAgentModel(AgentModel):
 
     async def request(
         self, messages: list[ModelMessage], model_settings: ModelSettings | None
-    ) -> tuple[ModelResponse, result.Cost]:
+    ) -> tuple[ModelResponse, result.Usage]:
         agent_info = replace(self.agent_info, model_settings=model_settings)
 
         assert self.function is not None, 'FunctionModel must receive a `function` to support non-streamed requests'
@@ -155,7 +155,7 @@ class FunctionAgentModel(AgentModel):
             assert isinstance(response_, ModelResponse), response_
             response = response_
         # TODO is `messages` right here? Should it just be new messages?
-        return response, _estimate_cost(chain(messages, [response]))
+        return response, _estimate_usage(chain(messages, [response]))
 
     @asynccontextmanager
     async def request_stream(
@@ -198,8 +198,8 @@ class FunctionStreamTextResponse(StreamTextResponse):
         yield from self._buffer
         self._buffer.clear()
 
-    def cost(self) -> result.Cost:
-        return result.Cost()
+    def usage(self) -> result.Usage:
+        return result.Usage()
 
     def timestamp(self) -> datetime:
         return self._timestamp
@@ -236,15 +236,15 @@ class FunctionStreamStructuredResponse(StreamStructuredResponse):
 
         return ModelResponse(calls, timestamp=self._timestamp)
 
-    def cost(self) -> result.Cost:
-        return result.Cost()
+    def usage(self) -> result.Usage:
+        return result.Usage()
 
     def timestamp(self) -> datetime:
         return self._timestamp
 
 
-def _estimate_cost(messages: Iterable[ModelMessage]) -> result.Cost:
-    """Very rough guesstimate of the number of tokens associate with a series of messages.
+def _estimate_usage(messages: Iterable[ModelMessage]) -> result.Usage:
+    """Very rough guesstimate of the token usage associated with a series of messages.
 
     This is designed to be used solely to give plausible numbers for testing!
     """
@@ -255,32 +255,32 @@ def _estimate_cost(messages: Iterable[ModelMessage]) -> result.Cost:
         if isinstance(message, ModelRequest):
             for part in message.parts:
                 if isinstance(part, (SystemPromptPart, UserPromptPart)):
-                    request_tokens += _string_cost(part.content)
+                    request_tokens += _string_usage(part.content)
                 elif isinstance(part, ToolReturnPart):
-                    request_tokens += _string_cost(part.model_response_str())
+                    request_tokens += _string_usage(part.model_response_str())
                 elif isinstance(part, RetryPromptPart):
-                    request_tokens += _string_cost(part.model_response())
+                    request_tokens += _string_usage(part.model_response())
                 else:
                     assert_never(part)
         elif isinstance(message, ModelResponse):
             for part in message.parts:
                 if isinstance(part, TextPart):
-                    response_tokens += _string_cost(part.content)
+                    response_tokens += _string_usage(part.content)
                 elif isinstance(part, ToolCallPart):
                     call = part
                     if isinstance(call.args, ArgsJson):
                         args_str = call.args.args_json
                     else:
                         args_str = pydantic_core.to_json(call.args.args_dict).decode()
-                    response_tokens += 1 + _string_cost(args_str)
+                    response_tokens += 1 + _string_usage(args_str)
                 else:
                     assert_never(part)
         else:
             assert_never(message)
-    return result.Cost(
+    return result.Usage(
         request_tokens=request_tokens, response_tokens=response_tokens, total_tokens=request_tokens + response_tokens
     )
 
 
-def _string_cost(content: str) -> int:
+def _string_usage(content: str) -> int:
     return len(re.split(r'[\s",.:]+', content))
