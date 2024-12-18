@@ -530,6 +530,8 @@ class JSONRepairer:
 
     def process_chunk(self, chunk: str) -> dict[str, Any] | None:
         """Process a JSON chunk, attempting to parse it into a valid JSON object by repairing issues."""
+        # Strip whitespace, newlines, backtick from the start and end
+        chunk = chunk.strip(' \n\r\t`')
         try:
             output_json: dict[str, Any] | None = json.loads(chunk)
             return output_json
