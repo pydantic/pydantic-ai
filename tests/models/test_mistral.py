@@ -1649,27 +1649,39 @@ def test_valid_json_parsing(repairer: JSONRepairer):
 
 
 def test_repair_malformed_json(repairer: JSONRepairer):
-    """Test that the JSONRepairer can repair malformed JSON."""
+    """Test that the JSONRepairer can repair various malformed JSON structures."""
 
-    # Case 1: Missing closing brace in the inner key-value structure
+    # Case 0: Missing closing array brace in the inner key-value structure
+    malformed_json = '{"key": "value", "nested": {"list": [1'
+    result = repairer.process_chunk(malformed_json)
+    expected = json.loads('{"key": "value", "nested": {"list": [1]}}')
+    assert result == expected
+
+    # Case 1: Missing closing and closing string in inter  key-value structure
+    malformed_json = '{"key": "value", "nested": {"list": [1, {"i'
+    result = repairer.process_chunk(malformed_json)
+    expected = json.loads('{"key": "value", "nested": {"list": [1, {}]}}')
+    assert result == expected
+
+    # Case 2: Missing closing brace in the inner key-value structure
     malformed_json = '{"key": "value", "nested": {"list": [1, {"inner_key": "inner_'
     result = repairer.process_chunk(malformed_json)
     expected = json.loads('{"key": "value", "nested": {"list": [1, {"inner_key": "inner_"}]}}')
     assert result == expected
 
-    # Case 2: Missing closing brace in the outer structure
+    # Case 3: Missing closing brace in the outer structure
     malformed_json = '{"key": "value", "nested": {"list": [1, {"inner_key": "inner_value"}, 3], "boolean": true'  # Missing closing brace
     result = repairer.process_chunk(malformed_json)
     expected = json.loads('{"key": "value", "nested": {"list": [1, {"inner_key": "inner_value"}, 3], "boolean": true}}')
     assert result == expected
 
-    # Case 3: Missing closing brace with additional key
+    # Case 4: Missing closing brace with additional key
     malformed_json = '{"key": "value", "nested": {"list": [1, {"inner_key": "inner_value"}, 3], "boolean": true, "test":'  # Missing closing brace
     result = repairer.process_chunk(malformed_json)
     expected = json.loads('{"key": "value", "nested": {"list": [1, {"inner_key": "inner_value"}, 3], "boolean": true}}')
     assert result == expected
 
-    # Case 4: Missing closing quote and brace in the "test" key
+    # Case 5: Missing closing quote and brace in the "test" key
     malformed_json = (
         '{"key": "value", "nested": {"list": [1, {"inner_key": "inner_value"}, 3], "boolean": true, "test":"ok'
     )

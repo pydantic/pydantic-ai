@@ -527,6 +527,7 @@ class JSONRepairer:
         self.stack: list[Any] = []
         self.is_inside_string = False
         self.escaped = False
+        self.closing_map = {'"': '"', '{': '}', '[': ']'}
 
     def process_chunk(self, chunk: str) -> dict[str, Any] | None:
         """Process a JSON chunk, attempting to parse it into a valid JSON object by repairing issues."""
@@ -571,7 +572,7 @@ class JSONRepairer:
             # Append the processed character to the new string
             self.new_chars.append(char)
 
-        closing_chars = self.stack.copy()  # 1
+        closing_chars = self.stack[::]  # 1
 
         # If we're still inside a string, close it
         if self.is_inside_string:
@@ -580,16 +581,18 @@ class JSONRepairer:
 
         closing_chars.reverse()  # 3
 
-        repaired_chars = self.new_chars.copy()
+        repaired_chars = self.new_chars[::]
 
         # Try to parse the modified string until we succeed or run out of characters
         while repaired_chars:
             try:
                 value = ''.join(repaired_chars + closing_chars)
-                return json.loads(value, strict=False)
+                return json.loads(value)
             except json.JSONDecodeError:
                 # Remove the last character and retry
-                repaired_chars.pop()
+                value = repaired_chars.pop()
+                if closing_chars and closing_chars[0] == self.closing_map.get(value):
+                    closing_chars.pop(0)
 
         # Return None if parsing fails after all attempts
         return None
@@ -636,7 +639,7 @@ class MistralStreamStructuredResponse(StreamStructuredResponse):
             # NOTE: Params set for the most efficient and fastest way.
             output_json: dict[str, Any] | None = self._json.process_chunk(self._delta_content)
 
-            if isinstance(output_json, dict) and output_json:
+            if output_json:
                 for result_tool in self._result_tools.values():
                     # NOTE: Additional verification to prevent JSON validation to crash in `_result.py`
                     # Ensures required parameters in the JSON schema are respected, especially for stream-based return types.
