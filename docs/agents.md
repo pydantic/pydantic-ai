@@ -180,7 +180,7 @@ except UsageLimitExceeded as e:
 ```
 
 !!! note
-    This is especially relevant if you're registered a lot of tools, `request_limit` can be used to prevent an abundance of these calls.
+    This is especially relevant if you're registered a lot of tools, `request_limit` can be used to prevent the model from choosing to make too many of these calls.
 
 #### Model (Run) Settings
 
