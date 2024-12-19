@@ -1,22 +1,17 @@
 from __future__ import annotations as _annotations
 
+import dataclasses
 import inspect
 from collections.abc import Awaitable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Callable, Generic, TypeVar, Union, cast
+from typing import Any, Callable, Generic, TypeVar, Union, cast
 
 from pydantic import ValidationError
 from pydantic_core import SchemaValidator
 from typing_extensions import Concatenate, ParamSpec, TypeAlias
 
-from . import _pydantic, _utils, messages as _messages
+from . import _pydantic, _utils, messages as _messages, models
 from .exceptions import ModelRetry, UnexpectedModelBehavior
-
-if TYPE_CHECKING:
-    from .result import ResultData
-else:
-    ResultData = Any
-
 
 __all__ = (
     'AgentDeps',
@@ -37,7 +32,7 @@ AgentDeps = TypeVar('AgentDeps')
 """Type variable for agent dependencies."""
 
 
-@dataclass
+@dataclasses.dataclass
 class RunContext(Generic[AgentDeps]):
     """Information about the current call."""
 
@@ -49,6 +44,19 @@ class RunContext(Generic[AgentDeps]):
     """Messages exchanged in the conversation so far."""
     tool_name: str | None
     """Name of the tool being called."""
+    model: models.Model
+    """The model used in this run."""
+
+    def replace_with(
+        self, retry: int | None = None, tool_name: str | None | _utils.Unset = _utils.UNSET
+    ) -> RunContext[AgentDeps]:
+        # Create a new `RunContext` a new `retry` value and `tool_name`.
+        kwargs = {}
+        if retry is not None:
+            kwargs['retry'] = retry
+        if tool_name is not _utils.UNSET:
+            kwargs['tool_name'] = tool_name
+        return dataclasses.replace(self, **kwargs)
 
 
 ToolParams = ParamSpec('ToolParams')
@@ -64,6 +72,8 @@ SystemPromptFunc = Union[
 
 Usage `SystemPromptFunc[AgentDeps]`.
 """
+
+ResultData = TypeVar('ResultData')
 
 ResultValidatorFunc = Union[
     Callable[[RunContext[AgentDeps], ResultData], ResultData],
@@ -238,7 +248,7 @@ class Tool(Generic[AgentDeps]):
             return tool_def
 
     async def run(
-        self, deps: AgentDeps, message: _messages.ToolCallPart, conv_messages: list[_messages.ModelMessage]
+        self, message: _messages.ToolCallPart, run_context: RunContext[AgentDeps]
     ) -> _messages.ModelRequestPart:
         """Run the tool function asynchronously."""
         try:
@@ -249,7 +259,7 @@ class Tool(Generic[AgentDeps]):
         except ValidationError as e:
             return self._on_error(e, message)
 
-        args, kwargs = self._call_args(deps, args_dict, message, conv_messages)
+        args, kwargs = self._call_args(args_dict, message, run_context)
         try:
             if self._is_async:
                 function = cast(Callable[[Any], Awaitable[str]], self.function)
@@ -269,15 +279,15 @@ class Tool(Generic[AgentDeps]):
 
     def _call_args(
         self,
-        deps: AgentDeps,
         args_dict: dict[str, Any],
         message: _messages.ToolCallPart,
-        conv_messages: list[_messages.ModelMessage],
+        run_context: RunContext[AgentDeps],
     ) -> tuple[list[Any], dict[str, Any]]:
         if self._single_arg_name:
             args_dict = {self._single_arg_name: args_dict}
 
-        args = [RunContext(deps, self.current_retry, conv_messages, message.tool_name)] if self.takes_ctx else []
+        ctx = dataclasses.replace(run_context, retry=self.current_retry, tool_name=message.tool_name)
+        args = [ctx] if self.takes_ctx else []
         for positional_field in self._positional_fields:
             args.append(args_dict.pop(positional_field))
         if self._var_positional_field:

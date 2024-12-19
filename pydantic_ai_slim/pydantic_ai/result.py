@@ -10,7 +10,7 @@ import logfire_api
 
 from . import _result, _utils, exceptions, messages as _messages, models
 from .settings import UsageLimits
-from .tools import AgentDeps
+from .tools import AgentDeps, RunContext
 
 __all__ = (
     'ResultData',
@@ -124,7 +124,7 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
     _usage_limits: UsageLimits | None
     _stream_response: models.EitherStreamedResponse
     _result_schema: _result.ResultSchema[ResultData] | None
-    _deps: AgentDeps
+    _run_ctx: RunContext[AgentDeps]
     _result_validators: list[_result.ResultValidator[AgentDeps, ResultData]]
     _result_tool_name: str | None
     _on_complete: Callable[[], Awaitable[None]]
@@ -311,17 +311,15 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
         result_data = result_tool.validate(call, allow_partial=allow_partial, wrap_validation_errors=False)
 
         for validator in self._result_validators:
-            result_data = await validator.validate(result_data, self._deps, 0, call, self._all_messages)
+            result_data = await validator.validate(result_data, call, self._run_ctx)
         return result_data
 
     async def _validate_text_result(self, text: str) -> str:
         for validator in self._result_validators:
             text = await validator.validate(  # pyright: ignore[reportAssignmentType]
                 text,  # pyright: ignore[reportArgumentType]
-                self._deps,
-                0,
                 None,
-                self._all_messages,
+                self._run_ctx,
             )
         return text
 
