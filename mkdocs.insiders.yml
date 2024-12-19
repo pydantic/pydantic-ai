@@ -36,6 +36,3 @@ markdown_extensions:
       targets:
         include:
           - '*'
-
-extra_css:
-  - 'extra/tweaks.css'
