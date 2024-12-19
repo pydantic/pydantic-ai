@@ -31,7 +31,7 @@ KnownModelName = Literal[
     'openai:gpt-4',
     'openai:o1-preview',
     'openai:o1-mini',
-    'openai:01',
+    'openai:o1',
     'openai:gpt-3.5-turbo',
     'groq:llama-3.3-70b-versatile',
     'groq:llama-3.1-70b-versatile',
