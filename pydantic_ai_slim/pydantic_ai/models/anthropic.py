@@ -220,7 +220,7 @@ class AnthropicAgentModel(AgentModel):
             else:
                 assert isinstance(item, ToolUseBlock), 'unexpected item type'
                 items.append(
-                    ToolCallPart.from_dict(
+                    ToolCallPart.from_raw_args(
                         item.name,
                         cast(dict[str, Any], item.input),
                         item.id,
@@ -311,7 +311,7 @@ def _map_tool_call(t: ToolCallPart) -> ToolUseBlockParam:
         id=_guard_tool_call_id(t=t, model_source='Anthropic'),
         type='tool_use',
         name=t.tool_name,
-        input=t.args.args_dict,
+        input=t.args_as_dict(),
     )
 
 

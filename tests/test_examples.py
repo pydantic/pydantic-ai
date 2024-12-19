@@ -11,7 +11,6 @@ from types import ModuleType
 from typing import Any
 
 import httpx
-import pydantic_core
 import pytest
 from devtools import debug
 from pytest_examples import CodeExample, EvalExample, find_examples
@@ -287,10 +286,7 @@ async def stream_model_logic(
                     yield ' '.join(chunk)
                 return
             else:
-                if isinstance(response.args, ArgsDict):
-                    json_text = pydantic_core.to_json(response.args.args_dict).decode()
-                else:
-                    json_text = response.args.args_json
+                json_text = response.args_as_json_str()
 
                 yield {1: DeltaToolCall(name=response.tool_name)}
                 for chunk_index in range(0, len(json_text), 15):

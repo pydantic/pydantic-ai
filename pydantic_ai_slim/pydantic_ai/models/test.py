@@ -167,7 +167,7 @@ class TestAgentModel(AgentModel):
         # if there are tools, the first thing we want to do is call all of them
         if self.tool_calls and not any(isinstance(m, ModelResponse) for m in messages):
             return ModelResponse(
-                parts=[ToolCallPart.from_dict(name, self.gen_tool_args(args)) for name, args in self.tool_calls]
+                parts=[ToolCallPart.from_raw_args(name, self.gen_tool_args(args)) for name, args in self.tool_calls]
             )
 
         if messages:
@@ -179,7 +179,7 @@ class TestAgentModel(AgentModel):
             if new_retry_names:
                 return ModelResponse(
                     parts=[
-                        ToolCallPart.from_dict(name, self.gen_tool_args(args))
+                        ToolCallPart.from_raw_args(name, self.gen_tool_args(args))
                         for name, args in self.tool_calls
                         if name in new_retry_names
                     ]
@@ -205,10 +205,10 @@ class TestAgentModel(AgentModel):
             custom_result_args = self.result.right
             result_tool = self.result_tools[self.seed % len(self.result_tools)]
             if custom_result_args is not None:
-                return ModelResponse(parts=[ToolCallPart.from_dict(result_tool.name, custom_result_args)])
+                return ModelResponse(parts=[ToolCallPart.from_raw_args(result_tool.name, custom_result_args)])
             else:
                 response_args = self.gen_tool_args(result_tool)
-                return ModelResponse(parts=[ToolCallPart.from_dict(result_tool.name, response_args)])
+                return ModelResponse(parts=[ToolCallPart.from_raw_args(result_tool.name, response_args)])
 
 
 @dataclass

@@ -2,11 +2,11 @@ from __future__ import annotations as _annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Annotated, Any, Literal, Union
+from typing import Annotated, Any, Literal, Union, cast
 
 import pydantic
 import pydantic_core
-from typing_extensions import Self
+from typing_extensions import Self, assert_never
 
 from ._utils import now_utc as _now_utc
 
@@ -190,12 +190,34 @@ class ToolCallPart:
     """Part type identifier, this is available on all parts as a discriminator."""
 
     @classmethod
-    def from_json(cls, tool_name: str, args_json: str, tool_call_id: str | None = None) -> Self:
-        return cls(tool_name, ArgsJson(args_json), tool_call_id)
+    def from_raw_args(cls, tool_name: str, args: str | dict[str, Any], tool_call_id: str | None = None) -> Self:
+        """Create a `ToolCallPart` from raw arguments."""
+        if isinstance(args, str):
+            return cls(tool_name, ArgsJson(args), tool_call_id)
+        elif isinstance(args, dict):
+            return cls(tool_name, ArgsDict(args), tool_call_id)
+        else:
+            assert_never(args)
 
-    @classmethod
-    def from_dict(cls, tool_name: str, args_dict: dict[str, Any], tool_call_id: str | None = None) -> Self:
-        return cls(tool_name, ArgsDict(args_dict), tool_call_id)
+    def args_as_dict(self) -> dict[str, Any]:
+        """Return the arguments as a Python dictionary.
+
+        This is just for convenience with models that require dicts as input.
+        """
+        if isinstance(self.args, ArgsDict):
+            return self.args.args_dict
+        args = pydantic_core.from_json(self.args.args_json)
+        assert isinstance(args, dict), 'args should be a dict'
+        return cast(dict[str, Any], args)
+
+    def args_as_json_str(self) -> str:
+        """Return the arguments as a JSON string.
+
+        This is just for convenience with models that require JSON strings as input.
+        """
+        if isinstance(self.args, ArgsJson):
+            return self.args.args_json
+        return pydantic_core.to_json(self.args.args_dict).decode()
 
     def has_content(self) -> bool:
         if isinstance(self.args, ArgsDict):
