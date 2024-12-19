@@ -544,7 +544,7 @@ async def test_request_result_type_with_arguments_str_response(allow_model_reque
 #####################
 
 
-async def test_stream_structured_with_all_typd(allow_model_requests: None):
+async def test_stream_structured_with_all_type(allow_model_requests: None):
     class MyTypedDict(TypedDict, total=False):
         first: str
         second: int
@@ -563,19 +563,19 @@ async def test_stream_structured_with_all_typd(allow_model_requests: None):
             '", "second": 2',
         ),
         text_chunk(
-            '", "bool_value": true',
+            ', "bool_value": true',
         ),
         text_chunk(
-            '", "nullable_value": null',
+            ', "nullable_value": null',
         ),
         text_chunk(
-            '", "array_value": ["A", "B", "C"]',
+            ', "array_value": ["A", "B", "C"]',
         ),
         text_chunk(
-            '", "dict_value": {"A": "A", "B":"B"}',
+            ', "dict_value": {"A": "A", "B":"B"}',
         ),
         text_chunk(
-            '", "dict_int_value": {"A": 1, "B":2}',
+            ', "dict_int_value": {"A": 1, "B":2}',
         ),
         text_chunk('}'),
         chunk([]),
@@ -721,8 +721,8 @@ async def test_stream_result_type_primitif_dict(allow_model_requests: None):
                 {'first': 'One'},
                 {'first': 'One'},
                 {'first': 'One'},
-                {'first': 'One', 'second': ''},
-                {'first': 'One', 'second': ''},
+                {'first': 'One'},
+                {'first': 'One'},
                 {'first': 'One', 'second': ''},
                 {'first': 'One', 'second': 'T'},
                 {'first': 'One', 'second': 'Tw'},
@@ -828,6 +828,7 @@ async def test_stream_result_type_primitif_array(allow_model_requests: None):
         v = [c async for c in result.stream(debounce_by=None)]
         assert v == snapshot(
             [
+                [''],
                 ['f'],
                 ['fi'],
                 ['fir'],
@@ -835,13 +836,13 @@ async def test_stream_result_type_primitif_array(allow_model_requests: None):
                 ['first'],
                 ['first'],
                 ['first'],
-                ['first'],
+                ['first', ''],
                 ['first', 'O'],
                 ['first', 'On'],
                 ['first', 'One'],
                 ['first', 'One'],
                 ['first', 'One'],
-                ['first', 'One'],
+                ['first', 'One', ''],
                 ['first', 'One', 's'],
                 ['first', 'One', 'se'],
                 ['first', 'One', 'sec'],
@@ -850,7 +851,7 @@ async def test_stream_result_type_primitif_array(allow_model_requests: None):
                 ['first', 'One', 'second'],
                 ['first', 'One', 'second'],
                 ['first', 'One', 'second'],
-                ['first', 'One', 'second'],
+                ['first', 'One', 'second', ''],
                 ['first', 'One', 'second', 'T'],
                 ['first', 'One', 'second', 'Tw'],
                 ['first', 'One', 'second', 'Two'],
@@ -869,10 +870,10 @@ async def test_stream_result_type_primitif_array(allow_model_requests: None):
         assert result.usage().response_tokens == len(stream)
 
 
-async def test_stream_result_type_basemodel(allow_model_requests: None):
+async def test_stream_result_type_basemodel_with_default_params(allow_model_requests: None):
     class MyTypedBaseModel(BaseModel):
-        first: str = ''  # Note: Don't forget to set default values
-        second: str = ''
+        first: str = ''  # Note: Default, set value.
+        second: str = ''  # Note: Default, set value.
 
     # Given
     stream = [
@@ -955,6 +956,79 @@ async def test_stream_result_type_basemodel(allow_model_requests: None):
         assert result.usage().total_tokens == 34
 
         # double check usage matches stream count
+        assert result.usage().response_tokens == len(stream)
+
+
+async def test_stream_result_type_basemodel_with_required_params(allow_model_requests: None):
+    class MyTypedBaseModel(BaseModel):
+        first: str  # Note: Required params
+        second: str  # Note: Required params
+
+    # Given
+    stream = [
+        text_chunk('{'),
+        text_chunk('"'),
+        text_chunk('f'),
+        text_chunk('i'),
+        text_chunk('r'),
+        text_chunk('s'),
+        text_chunk('t'),
+        text_chunk('"'),
+        text_chunk(':'),
+        text_chunk(' '),
+        text_chunk('"'),
+        text_chunk('O'),
+        text_chunk('n'),
+        text_chunk('e'),
+        text_chunk('"'),
+        text_chunk(','),
+        text_chunk(' '),
+        text_chunk('"'),
+        text_chunk('s'),
+        text_chunk('e'),
+        text_chunk('c'),
+        text_chunk('o'),
+        text_chunk('n'),
+        text_chunk('d'),
+        text_chunk('"'),
+        text_chunk(':'),
+        text_chunk(' '),
+        text_chunk('"'),
+        text_chunk('T'),
+        text_chunk('w'),
+        text_chunk('o'),
+        text_chunk('"'),
+        text_chunk('}'),
+        chunk([]),
+    ]
+
+    mock_client = MockMistralAI.create_stream_mock(stream)
+    model = MistralModel('mistral-large-latest', client=mock_client)
+    agent = Agent(model=model, result_type=MyTypedBaseModel)
+
+    # When
+    async with agent.run_stream('User prompt value') as result:
+        # Then
+        assert result.is_structured
+        assert not result.is_complete
+        v = [c async for c in result.stream(debounce_by=None)]
+        assert v == snapshot(
+            [
+                MyTypedBaseModel(first='One', second=''),
+                MyTypedBaseModel(first='One', second='T'),
+                MyTypedBaseModel(first='One', second='Tw'),
+                MyTypedBaseModel(first='One', second='Two'),
+                MyTypedBaseModel(first='One', second='Two'),
+                MyTypedBaseModel(first='One', second='Two'),
+                MyTypedBaseModel(first='One', second='Two'),
+            ]
+        )
+        assert result.is_complete
+        assert result.usage().request_tokens == 34
+        assert result.usage().response_tokens == 34
+        assert result.usage().total_tokens == 34
+
+        # double check cost matches stream count
         assert result.usage().response_tokens == len(stream)
 
 
@@ -1693,6 +1767,6 @@ def test_generate_user_output_format_multiple():
         ),
     ],
 )
-def test_validate_required_json_shema(desc: str, schema: dict[str, Any], data: dict[str, Any], expected: bool) -> None:
+def test_validate_required_json_schema(desc: str, schema: dict[str, Any], data: dict[str, Any], expected: bool) -> None:
     result = MistralStreamStructuredResponse._validate_required_json_schema(data, schema)  # pyright: ignore[reportPrivateUsage]
     assert result == expected, f'{desc} — expected {expected}, got {result}'
