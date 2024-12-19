@@ -9,7 +9,8 @@ from typing import Generic, TypeVar, cast
 import logfire_api
 
 from . import _result, _utils, exceptions, messages as _messages, models
-from .tools import AgentDeps
+from .settings import UsageLimits
+from .tools import AgentDeps, RunContext
 
 __all__ = (
     'ResultData',
@@ -34,6 +35,8 @@ class Usage:
     You'll need to look up the documentation of the model you're using to convert usage to monetary costs.
     """
 
+    requests: int = 0
+    """Number of requests made."""
     request_tokens: int | None = None
     """Tokens used in processing requests."""
     response_tokens: int | None = None
@@ -49,7 +52,7 @@ class Usage:
         This is provided so it's trivial to sum usage information from multiple requests and runs.
         """
         counts: dict[str, int] = {}
-        for f in 'request_tokens', 'response_tokens', 'total_tokens':
+        for f in 'requests', 'request_tokens', 'response_tokens', 'total_tokens':
             self_value = getattr(self, f)
             other_value = getattr(other, f)
             if self_value is not None or other_value is not None:
@@ -118,9 +121,10 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
 
     usage_so_far: Usage
     """Usage of the run up until the last request."""
+    _usage_limits: UsageLimits | None
     _stream_response: models.EitherStreamedResponse
     _result_schema: _result.ResultSchema[ResultData] | None
-    _deps: AgentDeps
+    _run_ctx: RunContext[AgentDeps]
     _result_validators: list[_result.ResultValidator[AgentDeps, ResultData]]
     _result_tool_name: str | None
     _on_complete: Callable[[], Awaitable[None]]
@@ -173,11 +177,15 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
                 Debouncing is particularly important for long structured responses to reduce the overhead of
                 performing validation as each token is received.
         """
+        usage_checking_stream = _get_usage_checking_stream_response(
+            self._stream_response, self._usage_limits, self.usage
+        )
+
         with _logfire.span('response stream text') as lf_span:
             if isinstance(self._stream_response, models.StreamStructuredResponse):
                 raise exceptions.UserError('stream_text() can only be used with text responses')
             if delta:
-                async with _utils.group_by_temporal(self._stream_response, debounce_by) as group_iter:
+                async with _utils.group_by_temporal(usage_checking_stream, debounce_by) as group_iter:
                     async for _ in group_iter:
                         yield ''.join(self._stream_response.get())
                 final_delta = ''.join(self._stream_response.get(final=True))
@@ -188,7 +196,7 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
                 # yielding at each step
                 chunks: list[str] = []
                 combined = ''
-                async with _utils.group_by_temporal(self._stream_response, debounce_by) as group_iter:
+                async with _utils.group_by_temporal(usage_checking_stream, debounce_by) as group_iter:
                     async for _ in group_iter:
                         new = False
                         for chunk in self._stream_response.get():
@@ -225,6 +233,10 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
         Returns:
             An async iterable of the structured response message and whether that is the last message.
         """
+        usage_checking_stream = _get_usage_checking_stream_response(
+            self._stream_response, self._usage_limits, self.usage
+        )
+
         with _logfire.span('response stream structured') as lf_span:
             if isinstance(self._stream_response, models.StreamTextResponse):
                 raise exceptions.UserError('stream_structured() can only be used with structured responses')
@@ -235,7 +247,7 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
                     if isinstance(item, _messages.ToolCallPart) and item.has_content():
                         yield msg, False
                         break
-                async with _utils.group_by_temporal(self._stream_response, debounce_by) as group_iter:
+                async with _utils.group_by_temporal(usage_checking_stream, debounce_by) as group_iter:
                     async for _ in group_iter:
                         msg = self._stream_response.get()
                         for item in msg.parts:
@@ -249,8 +261,13 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
 
     async def get_data(self) -> ResultData:
         """Stream the whole response, validate and return it."""
-        async for _ in self._stream_response:
+        usage_checking_stream = _get_usage_checking_stream_response(
+            self._stream_response, self._usage_limits, self.usage
+        )
+
+        async for _ in usage_checking_stream:
             pass
+
         if isinstance(self._stream_response, models.StreamTextResponse):
             text = ''.join(self._stream_response.get(final=True))
             text = await self._validate_text_result(text)
@@ -294,17 +311,15 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
         result_data = result_tool.validate(call, allow_partial=allow_partial, wrap_validation_errors=False)
 
         for validator in self._result_validators:
-            result_data = await validator.validate(result_data, self._deps, 0, call, self._all_messages)
+            result_data = await validator.validate(result_data, call, self._run_ctx)
         return result_data
 
     async def _validate_text_result(self, text: str) -> str:
         for validator in self._result_validators:
             text = await validator.validate(  # pyright: ignore[reportAssignmentType]
                 text,  # pyright: ignore[reportArgumentType]
-                self._deps,
-                0,
                 None,
-                self._all_messages,
+                self._run_ctx,
             )
         return text
 
@@ -312,3 +327,18 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
         self.is_complete = True
         self._all_messages.append(message)
         await self._on_complete()
+
+
+def _get_usage_checking_stream_response(
+    stream_response: AsyncIterator[ResultData], limits: UsageLimits | None, get_usage: Callable[[], Usage]
+) -> AsyncIterator[ResultData]:
+    if limits is not None and limits.has_token_limits():
+
+        async def _usage_checking_iterator():
+            async for item in stream_response:
+                limits.check_tokens(get_usage())
+                yield item
+
+        return _usage_checking_iterator()
+    else:
+        return stream_response

@@ -31,6 +31,7 @@ from . import (
     StreamStructuredResponse,
     StreamTextResponse,
 )
+from .function import _estimate_string_usage, _estimate_usage  # pyright: ignore[reportPrivateUsage]
 
 
 @dataclass
@@ -132,14 +133,16 @@ class TestAgentModel(AgentModel):
     async def request(
         self, messages: list[ModelMessage], model_settings: ModelSettings | None
     ) -> tuple[ModelResponse, Usage]:
-        return self._request(messages, model_settings), Usage()
+        model_response = self._request(messages, model_settings)
+        usage = _estimate_usage([*messages, model_response])
+        return model_response, usage
 
     @asynccontextmanager
     async def request_stream(
         self, messages: list[ModelMessage], model_settings: ModelSettings | None
     ) -> AsyncIterator[EitherStreamedResponse]:
         msg = self._request(messages, model_settings)
-        usage = Usage()
+        usage = _estimate_usage(messages)
 
         # TODO: Rework this once we make StreamTextResponse more general
         texts: list[str] = []
@@ -164,7 +167,7 @@ class TestAgentModel(AgentModel):
         # if there are tools, the first thing we want to do is call all of them
         if self.tool_calls and not any(isinstance(m, ModelResponse) for m in messages):
             return ModelResponse(
-                parts=[ToolCallPart.from_dict(name, self.gen_tool_args(args)) for name, args in self.tool_calls]
+                parts=[ToolCallPart.from_raw_args(name, self.gen_tool_args(args)) for name, args in self.tool_calls]
             )
 
         if messages:
@@ -176,7 +179,7 @@ class TestAgentModel(AgentModel):
             if new_retry_names:
                 return ModelResponse(
                     parts=[
-                        ToolCallPart.from_dict(name, self.gen_tool_args(args))
+                        ToolCallPart.from_raw_args(name, self.gen_tool_args(args))
                         for name, args in self.tool_calls
                         if name in new_retry_names
                     ]
@@ -202,10 +205,10 @@ class TestAgentModel(AgentModel):
             custom_result_args = self.result.right
             result_tool = self.result_tools[self.seed % len(self.result_tools)]
             if custom_result_args is not None:
-                return ModelResponse(parts=[ToolCallPart.from_dict(result_tool.name, custom_result_args)])
+                return ModelResponse(parts=[ToolCallPart.from_raw_args(result_tool.name, custom_result_args)])
             else:
                 response_args = self.gen_tool_args(result_tool)
-                return ModelResponse(parts=[ToolCallPart.from_dict(result_tool.name, response_args)])
+                return ModelResponse(parts=[ToolCallPart.from_raw_args(result_tool.name, response_args)])
 
 
 @dataclass
@@ -228,7 +231,10 @@ class TestStreamTextResponse(StreamTextResponse):
         self._iter = iter(words)
 
     async def __anext__(self) -> None:
-        self._buffer.append(_utils.sync_anext(self._iter))
+        next_str = _utils.sync_anext(self._iter)
+        response_tokens = _estimate_string_usage(next_str)
+        self._usage += Usage(response_tokens=response_tokens, total_tokens=response_tokens)
+        self._buffer.append(next_str)
 
     def get(self, *, final: bool = False) -> Iterable[str]:
         yield from self._buffer

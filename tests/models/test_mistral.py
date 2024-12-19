@@ -1767,6 +1767,6 @@ def test_generate_user_output_format_multiple():
         ),
     ],
 )
-def test_validate_required_json_shema(desc: str, schema: dict[str, Any], data: dict[str, Any], expected: bool) -> None:
-    result = MistralStreamStructuredResponse._validate_required_json_shema(data, schema)  # pyright: ignore[reportPrivateUsage]
+def test_validate_required_json_schema(desc: str, schema: dict[str, Any], data: dict[str, Any], expected: bool) -> None:
+    result = MistralStreamStructuredResponse._validate_required_json_schema(data, schema)  # pyright: ignore[reportPrivateUsage]
     assert result == expected, f'{desc} — expected {expected}, got {result}'

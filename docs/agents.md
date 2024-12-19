@@ -7,11 +7,14 @@ but multiple agents can also interact to embody more complex workflows.
 
 The [`Agent`][pydantic_ai.Agent] class has full API documentation, but conceptually you can think of an agent as a container for:
 
-* A [system prompt](#system-prompts) — a set of instructions for the LLM written by the developer
-* One or more [function tool](tools.md) — functions that the LLM may call to get information while generating a response
-* An optional structured [result type](results.md) — the structured datatype the LLM must return at the end of a run
-* A [dependency](dependencies.md) type constraint — system prompt functions, tools and result validators may all use dependencies when they're run
-* Agents may optionally also have a default [LLM model](api/models/base.md) associated with them; the model to use can also be specified when running the agent
+| **Component**                                   | **Description**                                                                                          |
+|-------------------------------------------------|----------------------------------------------------------------------------------------------------------|
+| [System prompt(s)](#system-prompts)             | A set of instructions for the LLM written by the developer.                                              |
+| [Function tool(s)](tools.md)                    | Functions that the LLM may call to get information while generating a response.                          |
+| [Structured result type](results.md)            | The structured datatype the LLM must return at the end of a run, if specified.                           |
+| [Dependency type constraint](dependencies.md)   | System prompt functions, tools, and result validators may all use dependencies when they're run.         |
+| [LLM model](api/models/base.md)                 | Optional default LLM model associated with the agent. Can also be specified when running the agent.      |
+| [Model Settings](#additional-configuration)     | Optional default model settings to help fine tune requests. Can also be specified when running the agent.|
 
 In typing terms, agents are generic in their dependency and result types, e.g., an agent which required dependencies of type `#!python Foobar` and returned results of type `#!python list[str]` would have type `cAgent[Foobar, list[str]]`. In practice, you shouldn't need to care about this, it should just mean your IDE can tell you when you have the right type, and if you choose to use [static type checking](#static-type-checking) it should work well with PydanticAI.
 
@@ -102,6 +105,90 @@ You can also pass messages from previous runs to continue a conversation or prov
     ```
 
 ### Additional Configuration
+
+#### Usage Limits
+
+PydanticAI offers a [`settings.UsageLimits`][pydantic_ai.settings.UsageLimits] structure to help you limit your
+usage (tokens and/or requests) on model runs.
+
+You can apply these settings by passing the `usage_limits` argument to the `run{_sync,_stream}` functions.
+
+Consider the following example, where we limit the number of response tokens:
+
+```py
+from pydantic_ai import Agent
+from pydantic_ai.exceptions import UsageLimitExceeded
+from pydantic_ai.settings import UsageLimits
+
+agent = Agent('claude-3-5-sonnet-latest')
+
+result_sync = agent.run_sync(
+    'What is the capital of Italy? Answer with just the city.',
+    usage_limits=UsageLimits(response_tokens_limit=10),
+)
+print(result_sync.data)
+#> Rome
+print(result_sync.usage())
+"""
+Usage(requests=1, request_tokens=62, response_tokens=1, total_tokens=63, details=None)
+"""
+
+try:
+    result_sync = agent.run_sync(
+        'What is the capital of Italy? Answer with a paragraph.',
+        usage_limits=UsageLimits(response_tokens_limit=10),
+    )
+except UsageLimitExceeded as e:
+    print(e)
+    #> Exceeded the response_tokens_limit of 10 (response_tokens=32)
+```
+
+Restricting the number of requests can be useful in preventing infinite loops or excessive tool calling:
+
+```py
+from typing_extensions import TypedDict
+
+from pydantic_ai import Agent, ModelRetry
+from pydantic_ai.exceptions import UsageLimitExceeded
+from pydantic_ai.settings import UsageLimits
+
+
+class NeverResultType(TypedDict):
+    """
+    Never ever coerce data to this type.
+    """
+
+    never_use_this: str
+
+
+agent = Agent(
+    'claude-3-5-sonnet-latest',
+    result_type=NeverResultType,
+    system_prompt='Any time you get a response, call the `infinite_retry_tool` to produce another response.',
+)
+
+
+@agent.tool_plain(retries=5)  # (1)!
+def infinite_retry_tool() -> int:
+    raise ModelRetry('Please try again.')
+
+
+try:
+    result_sync = agent.run_sync(
+        'Begin infinite retry loop!', usage_limits=UsageLimits(request_limit=3)  # (2)!
+    )
+except UsageLimitExceeded as e:
+    print(e)
+    #> The next request would exceed the request_limit of 3
+```
+
+1. This tool has the ability to retry 5 times before erroring, simulating a tool that might get stuck in a loop.
+2. This run will error after 3 requests, preventing the infinite tool calling.
+
+!!! note
+    This is especially relevant if you're registered a lot of tools, `request_limit` can be used to prevent the model from choosing to make too many of these calls.
+
+#### Model (Run) Settings
 
 PydanticAI offers a [`settings.ModelSettings`][pydantic_ai.settings.ModelSettings] structure to help you fine tune your requests.
 This structure allows you to configure common parameters that influence the model's behavior, such as `temperature`, `max_tokens`,

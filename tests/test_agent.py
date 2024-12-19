@@ -38,7 +38,7 @@ def test_result_tuple(set_event_loop: None):
     def return_tuple(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         assert info.result_tools is not None
         args_json = '{"response": ["foo", "bar"]}'
-        return ModelResponse(parts=[ToolCallPart.from_json(info.result_tools[0].name, args_json)])
+        return ModelResponse(parts=[ToolCallPart.from_raw_args(info.result_tools[0].name, args_json)])
 
     agent = Agent(FunctionModel(return_tuple), result_type=tuple[str, str])
 
@@ -55,7 +55,7 @@ def test_result_pydantic_model(set_event_loop: None):
     def return_model(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         assert info.result_tools is not None
         args_json = '{"a": 1, "b": "foo"}'
-        return ModelResponse(parts=[ToolCallPart.from_json(info.result_tools[0].name, args_json)])
+        return ModelResponse(parts=[ToolCallPart.from_raw_args(info.result_tools[0].name, args_json)])
 
     agent = Agent(FunctionModel(return_model), result_type=Foo)
 
@@ -71,7 +71,7 @@ def test_result_pydantic_model_retry(set_event_loop: None):
             args_json = '{"a": "wrong", "b": "foo"}'
         else:
             args_json = '{"a": 42, "b": "foo"}'
-        return ModelResponse(parts=[ToolCallPart.from_json(info.result_tools[0].name, args_json)])
+        return ModelResponse(parts=[ToolCallPart.from_raw_args(info.result_tools[0].name, args_json)])
 
     agent = Agent(FunctionModel(return_model), result_type=Foo)
 
@@ -85,7 +85,7 @@ def test_result_pydantic_model_retry(set_event_loop: None):
         [
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
-                parts=[ToolCallPart.from_json('final_result', '{"a": "wrong", "b": "foo"}')],
+                parts=[ToolCallPart.from_raw_args('final_result', '{"a": "wrong", "b": "foo"}')],
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
@@ -105,7 +105,7 @@ def test_result_pydantic_model_retry(set_event_loop: None):
                 ]
             ),
             ModelResponse(
-                parts=[ToolCallPart.from_json('final_result', '{"a": 42, "b": "foo"}')],
+                parts=[ToolCallPart.from_raw_args('final_result', '{"a": 42, "b": "foo"}')],
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
@@ -127,7 +127,7 @@ def test_result_pydantic_model_validation_error(set_event_loop: None):
             args_json = '{"a": 1, "b": "foo"}'
         else:
             args_json = '{"a": 1, "b": "bar"}'
-        return ModelResponse(parts=[ToolCallPart.from_json(info.result_tools[0].name, args_json)])
+        return ModelResponse(parts=[ToolCallPart.from_raw_args(info.result_tools[0].name, args_json)])
 
     class Bar(BaseModel):
         a: int
@@ -181,7 +181,7 @@ def test_result_validator(set_event_loop: None):
             args_json = '{"a": 41, "b": "foo"}'
         else:
             args_json = '{"a": 42, "b": "foo"}'
-        return ModelResponse(parts=[ToolCallPart.from_json(info.result_tools[0].name, args_json)])
+        return ModelResponse(parts=[ToolCallPart.from_raw_args(info.result_tools[0].name, args_json)])
 
     agent = Agent(FunctionModel(return_model), result_type=Foo)
 
@@ -200,7 +200,7 @@ def test_result_validator(set_event_loop: None):
         [
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
-                parts=[ToolCallPart.from_json('final_result', '{"a": 41, "b": "foo"}')],
+                parts=[ToolCallPart.from_raw_args('final_result', '{"a": 41, "b": "foo"}')],
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
@@ -211,7 +211,7 @@ def test_result_validator(set_event_loop: None):
                 ]
             ),
             ModelResponse(
-                parts=[ToolCallPart.from_json('final_result', '{"a": 42, "b": "foo"}')],
+                parts=[ToolCallPart.from_raw_args('final_result', '{"a": 42, "b": "foo"}')],
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
@@ -237,7 +237,7 @@ def test_plain_response(set_event_loop: None):
             return ModelResponse.from_text('hello')
         else:
             args_json = '{"response": ["foo", "bar"]}'
-            return ModelResponse(parts=[ToolCallPart.from_json(info.result_tools[0].name, args_json)])
+            return ModelResponse(parts=[ToolCallPart.from_raw_args(info.result_tools[0].name, args_json)])
 
     agent = Agent(FunctionModel(return_tuple), result_type=tuple[str, str])
 
@@ -505,7 +505,7 @@ def test_run_with_history_new(set_event_loop: None):
             ],
             _new_message_index=4,
             data='{"ret_a":"a-apple"}',
-            _usage=Usage(),
+            _usage=Usage(requests=1, request_tokens=55, response_tokens=13, total_tokens=68, details=None),
         )
     )
     new_msg_part_kinds = [(m.kind, [p.part_kind for p in m.parts]) for m in result2.all_messages()]
@@ -547,7 +547,7 @@ def test_run_with_history_new(set_event_loop: None):
             ],
             _new_message_index=4,
             data='{"ret_a":"a-apple"}',
-            _usage=Usage(),
+            _usage=Usage(requests=1, request_tokens=55, response_tokens=13, total_tokens=68, details=None),
         )
     )
 
@@ -646,7 +646,7 @@ def test_run_with_history_new_structured(set_event_loop: None):
                 ),
             ],
             _new_message_index=5,
-            _usage=Usage(),
+            _usage=Usage(requests=1, request_tokens=59, response_tokens=13, total_tokens=72, details=None),
         )
     )
     new_msg_part_kinds = [(m.kind, [p.part_kind for p in m.parts]) for m in result2.all_messages()]
@@ -677,7 +677,7 @@ def test_empty_tool_calls(set_event_loop: None):
 
 def test_unknown_tool(set_event_loop: None):
     def empty(_: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
-        return ModelResponse(parts=[ToolCallPart.from_json('foobar', '{}')])
+        return ModelResponse(parts=[ToolCallPart.from_raw_args('foobar', '{}')])
 
     agent = Agent(FunctionModel(empty))
 
@@ -710,7 +710,7 @@ def test_unknown_tool_fix(set_event_loop: None):
         if len(m) > 1:
             return ModelResponse.from_text(content='success')
         else:
-            return ModelResponse(parts=[ToolCallPart.from_json('foobar', '{}')])
+            return ModelResponse(parts=[ToolCallPart.from_raw_args('foobar', '{}')])
 
     agent = Agent(FunctionModel(empty))
 
@@ -850,9 +850,9 @@ class TestMultipleToolCalls:
             assert info.result_tools is not None
             return ModelResponse(
                 parts=[
-                    ToolCallPart.from_dict('final_result', {'value': 'final'}),
-                    ToolCallPart.from_dict('regular_tool', {'x': 1}),
-                    ToolCallPart.from_dict('another_tool', {'y': 2}),
+                    ToolCallPart.from_raw_args('final_result', {'value': 'final'}),
+                    ToolCallPart.from_raw_args('regular_tool', {'x': 1}),
+                    ToolCallPart.from_raw_args('another_tool', {'y': 2}),
                 ]
             )
 
@@ -902,8 +902,8 @@ class TestMultipleToolCalls:
             assert info.result_tools is not None
             return ModelResponse(
                 parts=[
-                    ToolCallPart.from_dict('final_result', {'value': 'first'}),
-                    ToolCallPart.from_dict('final_result', {'value': 'second'}),
+                    ToolCallPart.from_raw_args('final_result', {'value': 'first'}),
+                    ToolCallPart.from_raw_args('final_result', {'value': 'second'}),
                 ]
             )
 
@@ -935,11 +935,11 @@ class TestMultipleToolCalls:
             assert info.result_tools is not None
             return ModelResponse(
                 parts=[
-                    ToolCallPart.from_dict('regular_tool', {'x': 42}),
-                    ToolCallPart.from_dict('final_result', {'value': 'first'}),
-                    ToolCallPart.from_dict('another_tool', {'y': 2}),
-                    ToolCallPart.from_dict('final_result', {'value': 'second'}),
-                    ToolCallPart.from_dict('unknown_tool', {'value': '???'}),
+                    ToolCallPart.from_raw_args('regular_tool', {'x': 42}),
+                    ToolCallPart.from_raw_args('final_result', {'value': 'first'}),
+                    ToolCallPart.from_raw_args('another_tool', {'y': 2}),
+                    ToolCallPart.from_raw_args('final_result', {'value': 'second'}),
+                    ToolCallPart.from_raw_args('unknown_tool', {'value': '???'}),
                 ]
             )
 
@@ -1012,10 +1012,10 @@ class TestMultipleToolCalls:
             assert info.result_tools is not None
             return ModelResponse(
                 parts=[
-                    ToolCallPart.from_dict('regular_tool', {'x': 1}),
-                    ToolCallPart.from_dict('final_result', {'value': 'final'}),
-                    ToolCallPart.from_dict('another_tool', {'y': 2}),
-                    ToolCallPart.from_dict('unknown_tool', {'value': '???'}),
+                    ToolCallPart.from_raw_args('regular_tool', {'x': 1}),
+                    ToolCallPart.from_raw_args('final_result', {'value': 'final'}),
+                    ToolCallPart.from_raw_args('another_tool', {'y': 2}),
+                    ToolCallPart.from_raw_args('unknown_tool', {'value': '???'}),
                 ]
             )
 
@@ -1118,7 +1118,7 @@ async def test_empty_text_part():
     def return_empty_text(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         assert info.result_tools is not None
         args_json = '{"response": ["foo", "bar"]}'
-        return ModelResponse(parts=[TextPart(''), ToolCallPart.from_json(info.result_tools[0].name, args_json)])
+        return ModelResponse(parts=[TextPart(''), ToolCallPart.from_raw_args(info.result_tools[0].name, args_json)])
 
     agent = Agent(FunctionModel(return_empty_text), result_type=tuple[str, str])
 
