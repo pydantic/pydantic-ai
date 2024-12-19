@@ -132,6 +132,7 @@ venvPath = ".venv"
 executionEnvironments = [
   { root = "tests", reportUnusedFunction = false },
 ]
+exclude = ["pydantic_ai_examples/weather_agent_gradio.py"]
 
 [tool.pytest.ini_options]
 testpaths = "tests"
