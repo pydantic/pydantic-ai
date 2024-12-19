@@ -864,11 +864,12 @@ class Agent(Generic[AgentDeps, ResultData]):
             else:
                 tool_calls.append(part)
 
-        if texts:
+        # TODO: right now, this basically just means we ignore the text part if tool calls are present...
+        if tool_calls:
+            return await self._handle_structured_response(tool_calls, run_context)
+        elif texts:
             text = '\n\n'.join(texts)
             return await self._handle_text_response(text, run_context)
-        elif tool_calls:
-            return await self._handle_structured_response(tool_calls, run_context)
         else:
             raise exceptions.UnexpectedModelBehavior('Received empty model response')
 
