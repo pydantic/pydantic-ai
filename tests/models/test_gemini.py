@@ -413,7 +413,7 @@ async def test_text_success(get_gemini_client: GetGeminiClient):
 async def test_request_structured_response(get_gemini_client: GetGeminiClient):
     response = gemini_response(
         _content_model_response(
-            ModelResponse(parts=[ToolCallPart.from_dict('final_result', {'response': [1, 2, 123]})])
+            ModelResponse(parts=[ToolCallPart.from_raw_args('final_result', {'response': [1, 2, 123]})])
         )
     )
     gemini_client = get_gemini_client(response)
@@ -449,12 +449,12 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
     responses = [
         gemini_response(
             _content_model_response(
-                ModelResponse(parts=[ToolCallPart.from_dict('get_location', {'loc_name': 'San Fransisco'})])
+                ModelResponse(parts=[ToolCallPart.from_raw_args('get_location', {'loc_name': 'San Fransisco'})])
             )
         ),
         gemini_response(
             _content_model_response(
-                ModelResponse(parts=[ToolCallPart.from_dict('get_location', {'loc_name': 'London'})])
+                ModelResponse(parts=[ToolCallPart.from_raw_args('get_location', {'loc_name': 'London'})])
             )
         ),
         gemini_response(_content_model_response(ModelResponse.from_text('final response'))),
@@ -596,7 +596,7 @@ async def test_stream_structured(get_gemini_client: GetGeminiClient):
     responses = [
         gemini_response(
             _content_model_response(
-                ModelResponse(parts=[ToolCallPart.from_dict('final_result', {'response': [1, 2]})])
+                ModelResponse(parts=[ToolCallPart.from_raw_args('final_result', {'response': [1, 2]})])
             ),
         ),
     ]
@@ -615,10 +615,10 @@ async def test_stream_structured(get_gemini_client: GetGeminiClient):
 async def test_stream_structured_tool_calls(get_gemini_client: GetGeminiClient):
     first_responses = [
         gemini_response(
-            _content_model_response(ModelResponse(parts=[ToolCallPart.from_dict('foo', {'x': 'a'})])),
+            _content_model_response(ModelResponse(parts=[ToolCallPart.from_raw_args('foo', {'x': 'a'})])),
         ),
         gemini_response(
-            _content_model_response(ModelResponse(parts=[ToolCallPart.from_dict('bar', {'y': 'b'})])),
+            _content_model_response(ModelResponse(parts=[ToolCallPart.from_raw_args('bar', {'y': 'b'})])),
         ),
     ]
     d1 = _gemini_streamed_response_ta.dump_json(first_responses, by_alias=True)
@@ -627,7 +627,7 @@ async def test_stream_structured_tool_calls(get_gemini_client: GetGeminiClient):
     second_responses = [
         gemini_response(
             _content_model_response(
-                ModelResponse(parts=[ToolCallPart.from_dict('final_result', {'response': [1, 2]})])
+                ModelResponse(parts=[ToolCallPart.from_raw_args('final_result', {'response': [1, 2]})])
             ),
         ),
     ]

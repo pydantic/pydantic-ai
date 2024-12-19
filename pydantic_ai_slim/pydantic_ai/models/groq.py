@@ -13,7 +13,6 @@ from typing_extensions import assert_never
 from .. import UnexpectedModelBehavior, _utils, result
 from .._utils import guard_tool_call_id as _guard_tool_call_id
 from ..messages import (
-    ArgsJson,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -221,7 +220,7 @@ class GroqAgentModel(AgentModel):
             items.append(TextPart(choice.message.content))
         if choice.message.tool_calls is not None:
             for c in choice.message.tool_calls:
-                items.append(ToolCallPart.from_json(c.function.name, c.function.arguments, c.id))
+                items.append(ToolCallPart.from_raw_args(c.function.name, c.function.arguments, c.id))
         return ModelResponse(items, timestamp=timestamp)
 
     @staticmethod
@@ -380,7 +379,7 @@ class GroqStreamStructuredResponse(StreamStructuredResponse):
         for c in self._delta_tool_calls.values():
             if f := c.function:
                 if f.name is not None and f.arguments is not None:
-                    items.append(ToolCallPart.from_json(f.name, f.arguments, c.id))
+                    items.append(ToolCallPart.from_raw_args(f.name, f.arguments, c.id))
 
         return ModelResponse(items, timestamp=self._timestamp)
 
@@ -392,11 +391,10 @@ class GroqStreamStructuredResponse(StreamStructuredResponse):
 
 
 def _map_tool_call(t: ToolCallPart) -> chat.ChatCompletionMessageToolCallParam:
-    assert isinstance(t.args, ArgsJson), f'Expected ArgsJson, got {t.args}'
     return chat.ChatCompletionMessageToolCallParam(
         id=_guard_tool_call_id(t=t, model_source='Groq'),
         type='function',
-        function={'name': t.tool_name, 'arguments': t.args.args_json},
+        function={'name': t.tool_name, 'arguments': t.args_as_json_str()},
     )
 
 
