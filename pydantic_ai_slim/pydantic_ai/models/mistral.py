@@ -560,13 +560,10 @@ class MistralStreamStructuredResponse(StreamStructuredResponse):
                     # when `{"response":` then `repair_json` sets `{"response": ""}` (type not found default str)
                     # when `{"response": {` then `repair_json` sets `{"response": {}}` (type found)
                     # This ensures it's corrected to `{"response": {}}` and other required parameters and type.
-                    if not self._validate_required_json_shema(output_json, result_tool.parameters_json_schema):
+                    if not self._validate_required_json_schema(output_json, result_tool.parameters_json_schema):
                         continue
 
-                    tool = ToolCallPart.from_dict(
-                        tool_name=result_tool.name,
-                        args_dict=output_json,
-                    )
+                    tool = ToolCallPart.from_raw_args(result_tool.name, output_json)
                     calls.append(tool)
 
         return ModelResponse(calls, timestamp=self._timestamp)
@@ -578,7 +575,7 @@ class MistralStreamStructuredResponse(StreamStructuredResponse):
         return self._timestamp
 
     @staticmethod
-    def _validate_required_json_shema(json_dict: dict[str, Any], json_schema: dict[str, Any]) -> bool:
+    def _validate_required_json_schema(json_dict: dict[str, Any], json_schema: dict[str, Any]) -> bool:
         """Validate that all required parameters in the JSON schema are present in the JSON dictionary."""
         required_params = json_schema.get('required', [])
         properties = json_schema.get('properties', {})
@@ -602,7 +599,7 @@ class MistralStreamStructuredResponse(StreamStructuredResponse):
 
             if isinstance(json_dict[param], dict) and 'properties' in param_schema:
                 nested_schema = param_schema
-                if not MistralStreamStructuredResponse._validate_required_json_shema(json_dict[param], nested_schema):
+                if not MistralStreamStructuredResponse._validate_required_json_schema(json_dict[param], nested_schema):
                     return False
 
         return True
@@ -633,16 +630,7 @@ def _map_mistral_to_pydantic_tool_call(tool_call: MistralToolCall) -> ToolCallPa
     tool_call_id = tool_call.id or None
     func_call = tool_call.function
 
-    if isinstance(func_call.arguments, str):
-        return ToolCallPart.from_json(
-            tool_name=func_call.name,
-            args_json=func_call.arguments,
-            tool_call_id=tool_call_id,
-        )
-    else:
-        return ToolCallPart.from_dict(
-            tool_name=func_call.name, args_dict=func_call.arguments, tool_call_id=tool_call_id
-        )
+    return ToolCallPart.from_raw_args(func_call.name, func_call.arguments, tool_call_id)
 
 
 def _map_usage(response: MistralChatCompletionResponse | MistralCompletionChunk) -> Usage:
