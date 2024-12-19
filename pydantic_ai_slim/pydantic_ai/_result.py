@@ -30,20 +30,20 @@ class ResultValidator(Generic[AgentDeps, ResultData]):
         self,
         result: ResultData,
         tool_call: _messages.ToolCallPart | None,
-        run_ctx: RunContext[AgentDeps],
+        run_context: RunContext[AgentDeps],
     ) -> ResultData:
         """Validate a result but calling the function.
 
         Args:
             result: The result data after Pydantic validation the message content.
             tool_call: The original tool call message, `None` if there was no tool call.
-            run_ctx: The current run context.
+            run_context: The current run context.
 
         Returns:
             Result of either the validated result data (ok) or a retry message (Err).
         """
         if self._takes_ctx:
-            ctx = run_ctx.replace_with(tool_name=tool_call.tool_name if tool_call else None)
+            ctx = run_context.replace_with(tool_name=tool_call.tool_name if tool_call else None)
             args = ctx, result
         else:
             args = (result,)

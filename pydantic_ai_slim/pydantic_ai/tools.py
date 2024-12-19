@@ -247,7 +247,9 @@ class Tool(Generic[AgentDeps]):
         else:
             return tool_def
 
-    async def run(self, message: _messages.ToolCallPart, run_ctx: RunContext[AgentDeps]) -> _messages.ModelRequestPart:
+    async def run(
+        self, message: _messages.ToolCallPart, run_context: RunContext[AgentDeps]
+    ) -> _messages.ModelRequestPart:
         """Run the tool function asynchronously."""
         try:
             if isinstance(message.args, _messages.ArgsJson):
@@ -257,7 +259,7 @@ class Tool(Generic[AgentDeps]):
         except ValidationError as e:
             return self._on_error(e, message)
 
-        args, kwargs = self._call_args(args_dict, message, run_ctx)
+        args, kwargs = self._call_args(args_dict, message, run_context)
         try:
             if self._is_async:
                 function = cast(Callable[[Any], Awaitable[str]], self.function)
@@ -279,12 +281,12 @@ class Tool(Generic[AgentDeps]):
         self,
         args_dict: dict[str, Any],
         message: _messages.ToolCallPart,
-        run_ctx: RunContext[AgentDeps],
+        run_context: RunContext[AgentDeps],
     ) -> tuple[list[Any], dict[str, Any]]:
         if self._single_arg_name:
             args_dict = {self._single_arg_name: args_dict}
 
-        ctx = dataclasses.replace(run_ctx, retry=self.current_retry, tool_name=message.tool_name)
+        ctx = dataclasses.replace(run_context, retry=self.current_retry, tool_name=message.tool_name)
         args = [ctx] if self.takes_ctx else []
         for positional_field in self._positional_fields:
             args.append(args_dict.pop(positional_field))
