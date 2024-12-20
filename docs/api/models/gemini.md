@@ -1,7 +1,7 @@
 # `pydantic_ai.models.gemini`
 
 Custom interface to the `generativelanguage.googleapis.com` API using
-[HTTPX](https://www.python-httpx.org/) and [Pydantic](https://docs.pydantic.dev/latest/.
+[HTTPX](https://www.python-httpx.org/) and [Pydantic](https://docs.pydantic.dev/latest/).
 
 The Google SDK for interacting with the `generativelanguage.googleapis.com` API
 [`google-generativeai`](https://ai.google.dev/gemini-api/docs/quickstart?lang=python) reads like it was written by a
