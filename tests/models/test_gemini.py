@@ -19,7 +19,6 @@ from pydantic_ai.messages import (
     ModelResponse,
     RetryPromptPart,
     SystemPromptPart,
-    TextPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
@@ -535,61 +534,6 @@ async def test_unexpected_response(client_with_handler: ClientWithHandler, env: 
         await agent.run('Hello')
 
     assert str(exc_info.value) == snapshot('Unexpected response from gemini 401, body:\ninvalid request')
-
-
-async def test_heterogeneous_responses(get_gemini_client: GetGeminiClient):
-    """Indicates that tool calls are prioritized over text in heterogeneous responses."""
-    responses = [
-        gemini_response(
-            _content_model_response(
-                ModelResponse(
-                    parts=[TextPart(content='foo'), ToolCallPart.from_raw_args('get_location', {'loc_name': 'London'})]
-                )
-            )
-        ),
-        gemini_response(_content_model_response(ModelResponse.from_text('final response'))),
-    ]
-
-    gemini_client = get_gemini_client(responses)
-    m = GeminiModel('gemini-1.5-flash', http_client=gemini_client)
-    agent = Agent(m)
-
-    @agent.tool_plain
-    async def get_location(loc_name: str) -> str:
-        if loc_name == 'London':
-            return json.dumps({'lat': 51, 'lng': 0})
-        else:
-            raise ModelRetry('Wrong location, please try again')
-
-    result = await agent.run('Hello')
-    assert result.data == 'final response'
-    assert result.all_messages() == snapshot(
-        [
-            ModelRequest(
-                parts=[
-                    UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc)),
-                ]
-            ),
-            ModelResponse(
-                parts=[
-                    TextPart(content='foo'),
-                    ToolCallPart(
-                        tool_name='get_location',
-                        args=ArgsDict(args_dict={'loc_name': 'London'}),
-                    ),
-                ],
-                timestamp=IsNow(tz=timezone.utc),
-            ),
-            ModelRequest(
-                parts=[
-                    ToolReturnPart(
-                        tool_name='get_location', content='{"lat": 51, "lng": 0}', timestamp=IsNow(tz=timezone.utc)
-                    )
-                ]
-            ),
-            ModelResponse.from_text(content='final response', timestamp=IsNow(tz=timezone.utc)),
-        ]
-    )
 
 
 async def test_stream_text(get_gemini_client: GetGeminiClient):

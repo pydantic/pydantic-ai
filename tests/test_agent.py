@@ -1,3 +1,4 @@
+import json
 import sys
 from datetime import timezone
 from typing import Any, Callable, Union
@@ -1124,3 +1125,55 @@ async def test_empty_text_part():
 
     result = await agent.run('Hello')
     assert result.data == ('foo', 'bar')
+
+
+def test_heterogenous_reponses_non_streaming(set_event_loop: None) -> None:
+    """Indicates that tool calls are prioritized over text in heterogeneous responses."""
+
+    def return_model(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.result_tools is not None
+        return ModelResponse(
+            parts=[
+                TextPart(content='foo'),
+                ToolCallPart.from_raw_args('get_location', {'loc_name': 'London'}),
+            ]
+        )
+
+    agent = Agent(FunctionModel(return_model))
+
+    @agent.tool_plain
+    async def get_location(loc_name: str) -> str:
+        if loc_name == 'London':
+            return json.dumps({'lat': 51, 'lng': 0})
+        else:
+            raise ModelRetry('Wrong location, please try again')
+
+    result = agent.run_sync('Hello')
+    assert result.data == 'final response'
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc)),
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(content='foo'),
+                    ToolCallPart(
+                        tool_name='get_location',
+                        args=ArgsDict(args_dict={'loc_name': 'London'}),
+                    ),
+                ],
+                timestamp=IsNow(tz=timezone.utc),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='get_location', content='{"lat": 51, "lng": 0}', timestamp=IsNow(tz=timezone.utc)
+                    )
+                ]
+            ),
+            ModelResponse.from_text(content='final response', timestamp=IsNow(tz=timezone.utc)),
+        ]
+    )
