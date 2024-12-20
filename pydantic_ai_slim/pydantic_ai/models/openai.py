@@ -133,7 +133,11 @@ class OpenAIModel(Model):
     def _map_response_format(f: ToolDefinition) -> ResponseFormatJSONSchema:
         return {
             'type': 'json_schema',
-            'json_schema': {'name': f.name, 'description': f.description, 'schema': f.parameters_json_schema}
+            'json_schema': {
+                'name': f.name, 
+                'description': f.description, 
+                'schema': f.parameters_json_schema
+            },
         }
 
 
