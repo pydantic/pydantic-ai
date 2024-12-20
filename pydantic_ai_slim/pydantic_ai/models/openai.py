@@ -10,6 +10,8 @@ from typing import Literal, Union, overload
 from httpx import AsyncClient as AsyncHTTPClient
 from typing_extensions import assert_never
 
+from openai.types import ResponseFormatJSONSchema
+
 from .. import UnexpectedModelBehavior, _utils, result
 from .._utils import guard_tool_call_id as _guard_tool_call_id
 from ..messages import (
@@ -111,13 +113,12 @@ class OpenAIModel(Model):
     ) -> AgentModel:
         check_allow_model_requests()
         tools = [self._map_tool_definition(r) for r in function_tools]
-        if result_tools:
-            tools += [self._map_tool_definition(r) for r in result_tools]
+        response_format = self._map_response_format(result_tools[0]) if result_tools else None
         return OpenAIAgentModel(
             self.client,
             self.model_name,
-            allow_text_result,
             tools,
+            response_format
         )
 
     def name(self) -> str:
@@ -134,6 +135,17 @@ class OpenAIModel(Model):
             },
         }
 
+    @staticmethod
+    def _map_response_format(f: ToolDefinition) -> dict:
+        return {
+            'type': 'json_schema',
+            'json_schema': {
+                'name': f.name,
+                'description': f.description,
+                'schema': f.parameters_json_schema,
+            },
+        }
+
 
 @dataclass
 class OpenAIAgentModel(AgentModel):
@@ -141,8 +153,8 @@ class OpenAIAgentModel(AgentModel):
 
     client: AsyncOpenAI
     model_name: OpenAIModelName
-    allow_text_result: bool
     tools: list[chat.ChatCompletionToolParam]
+    response_format: ResponseFormatJSONSchema | None
 
     async def request(
         self, messages: list[ModelMessage], model_settings: ModelSettings | None
@@ -174,13 +186,7 @@ class OpenAIAgentModel(AgentModel):
         self, messages: list[ModelMessage], stream: bool, model_settings: ModelSettings | None
     ) -> chat.ChatCompletion | AsyncStream[ChatCompletionChunk]:
         # standalone function to make it easier to override
-        if not self.tools:
-            tool_choice: Literal['none', 'required', 'auto'] | None = None
-        elif not self.allow_text_result:
-            tool_choice = 'required'
-        else:
-            tool_choice = 'auto'
-
+        tool_choice = 'auto' if self.tools else None
         openai_messages = list(chain(*(self._map_message(m) for m in messages)))
 
         model_settings = model_settings or {}
@@ -188,6 +194,7 @@ class OpenAIAgentModel(AgentModel):
         return await self.client.chat.completions.create(
             model=self.model_name,
             messages=openai_messages,
+            response_format=self.response_format or NOT_GIVEN,
             n=1,
             parallel_tool_calls=True if self.tools else NOT_GIVEN,
             tools=self.tools or NOT_GIVEN,
@@ -200,14 +207,17 @@ class OpenAIAgentModel(AgentModel):
             timeout=model_settings.get('timeout', NOT_GIVEN),
         )
 
-    @staticmethod
-    def _process_response(response: chat.ChatCompletion) -> ModelResponse:
+    def _process_response(self, response: chat.ChatCompletion) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
         timestamp = datetime.fromtimestamp(response.created, tz=timezone.utc)
         choice = response.choices[0]
         items: list[ModelResponsePart] = []
         if choice.message.content is not None:
-            items.append(TextPart(choice.message.content))
+            if self.response_format:
+                name = self.response_format['json_schema']['name']
+                items.append(ToolCallPart.from_raw_args(name, choice.message.content))
+            else:
+                items.append(TextPart(choice.message.content))
         if choice.message.tool_calls is not None:
             for c in choice.message.tool_calls:
                 items.append(ToolCallPart.from_raw_args(c.function.name, c.function.arguments, c.id))
