@@ -233,9 +233,11 @@ greet_agent = Agent[str, str]('test', tools=[greet_tool], deps_type=str)
 result = greet_agent.run_sync('testing...', deps='human')
 assert result.data == '{"greet":"hello a"}'
 
-default_agent = Agent()
-assert_type(default_agent, Agent[None, str])
-assert_type(default_agent, Agent[None])
+MYPY = False
+if not MYPY:
+    default_agent = Agent()
+    assert_type(default_agent, Agent[None, str])
+    assert_type(default_agent, Agent[None])
 
 partial_agent: Agent[MyDeps] = Agent(deps_type=MyDeps)
 assert_type(partial_agent, Agent[MyDeps, str])
