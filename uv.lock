@@ -1583,7 +1583,10 @@ name = "pydantic-ai"
 version = "0.0.14"
 source = { editable = "." }
 dependencies = [
+    { name = "mkdocs-material" },
     { name = "pydantic-ai-slim", extra = ["anthropic", "groq", "mistral", "openai", "vertexai"] },
+    { name = "pyright" },
+    { name = "ruff" },
 ]
 
 [package.optional-dependencies]
@@ -1611,8 +1614,11 @@ lint = [
 [package.metadata]
 requires-dist = [
     { name = "logfire", marker = "extra == 'logfire'", specifier = ">=2.3" },
+    { name = "mkdocs-material", specifier = ">=9.5.45" },
     { name = "pydantic-ai-examples", marker = "extra == 'examples'", editable = "pydantic_ai_examples" },
     { name = "pydantic-ai-slim", extras = ["openai", "vertexai", "groq", "anthropic", "mistral"], editable = "pydantic_ai_slim" },
+    { name = "pyright", specifier = ">=1.1.389" },
+    { name = "ruff", specifier = ">=0.8.3" },
 ]
 
 [package.metadata.requires-dev]
