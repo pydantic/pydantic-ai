@@ -9,7 +9,6 @@ from typing import Literal, Union, overload
 
 from httpx import AsyncClient as AsyncHTTPClient
 from typing_extensions import assert_never
-
 from openai.types import ResponseFormatJSONSchema
 
 from .. import UnexpectedModelBehavior, _utils, result
