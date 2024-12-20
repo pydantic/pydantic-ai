@@ -864,7 +864,10 @@ class Agent(Generic[AgentDeps, ResultData]):
             else:
                 tool_calls.append(part)
 
-        # TODO: right now, this basically just means we ignore the text part if tool calls are present...
+        # at the moment, we prioritize at least executing tool calls if they are present
+        # in the future, we'd consider making this configurable at the agent or run level
+        # this accounts for cases like anthropic returns that might contain a text response
+        # and a tool call response, where the text response just indicates the tool call
         if tool_calls:
             return await self._handle_structured_response(tool_calls, run_context)
         elif texts:
