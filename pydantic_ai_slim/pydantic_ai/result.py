@@ -32,10 +32,10 @@ ResultValidatorFunc = Union[
     Callable[[ResultData], Awaitable[ResultData]],
 ]
 """
-A function that always takes `ResultData` and returns `ResultData` but:
+A function that always takes `ResultData` and returns `ResultData` and:
 
-* may or maybe not take [`RunContext`][pydantic_ai.tools.RunContext] as a first argument
-* and, may or may not be async
+* may or may not take [`RunContext`][pydantic_ai.tools.RunContext] as a first argument
+* may or may not be async
 
 Usage `ResultValidatorFunc[AgentDeps, ResultData]`.
 """
