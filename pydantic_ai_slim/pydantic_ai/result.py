@@ -4,9 +4,10 @@ from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Generic, TypeVar, cast
+from typing import Generic, Union, cast
 
 import logfire_api
+from typing_extensions import TypeVar
 
 from . import _result, _utils, exceptions, messages as _messages, models
 from .settings import UsageLimits
@@ -14,21 +15,37 @@ from .tools import AgentDeps, RunContext
 
 __all__ = (
     'ResultData',
+    'ResultValidatorFunc',
     'Usage',
     'RunResult',
     'StreamedRunResult',
 )
 
 
-ResultData = TypeVar('ResultData')
+ResultData = TypeVar('ResultData', default=str)
 """Type variable for the result data of a run."""
+
+ResultValidatorFunc = Union[
+    Callable[[RunContext[AgentDeps], ResultData], ResultData],
+    Callable[[RunContext[AgentDeps], ResultData], Awaitable[ResultData]],
+    Callable[[ResultData], ResultData],
+    Callable[[ResultData], Awaitable[ResultData]],
+]
+"""
+A function that always takes `ResultData` and returns `ResultData` but:
+
+* may or maybe not take [`RunContext`][pydantic_ai.tools.RunContext] as a first argument
+* and, may or may not be async
+
+Usage `ResultValidatorFunc[AgentDeps, ResultData]`.
+"""
 
 _logfire = logfire_api.Logfire(otel_scope='pydantic-ai')
 
 
 @dataclass
 class Usage:
-    """LLM usage associated to a request or run.
+    """LLM usage associated with a request or run.
 
     Responsibility for calculating usage is on the model; PydanticAI simply sums the usage information across requests.
 
@@ -36,7 +53,7 @@ class Usage:
     """
 
     requests: int = 0
-    """Number of requests made."""
+    """Number of requests made to the LLM API."""
     request_tokens: int | None = None
     """Tokens used in processing requests."""
     response_tokens: int | None = None
