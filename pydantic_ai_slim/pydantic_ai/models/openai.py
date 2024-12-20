@@ -5,7 +5,6 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from itertools import chain
-from openai.types import ResponseFormatJSONSchema
 from typing import Literal, Union, overload
 
 from httpx import AsyncClient as AsyncHTTPClient
@@ -43,6 +42,7 @@ try:
     from openai.types import ChatModel, chat
     from openai.types.chat import ChatCompletionChunk
     from openai.types.chat.chat_completion_chunk import ChoiceDeltaToolCall
+    from openai.types.shared_params.response_format_json_schema import ResponseFormatJSONSchema
 except ImportError as _import_error:
     raise ImportError(
         'Please install `openai` to use the OpenAI model, '
@@ -130,14 +130,14 @@ class OpenAIModel(Model):
         }
 
     @staticmethod
-    def _map_response_format(f: ToolDefinition) -> dict:
+    def _map_response_format(f: ToolDefinition) -> ResponseFormatJSONSchema:
         return {
             'type': 'json_schema',
             'json_schema': {
                 'name': f.name,
                 'description': f.description,
-                'schema': f.parameters_json_schema,
-            },
+                'schema': f.parameters_json_schema
+            }
         }
 
 
@@ -185,7 +185,7 @@ class OpenAIAgentModel(AgentModel):
 
         model_settings = model_settings or {}
 
-        return await self.client.chat.completions.create(
+        response = await self.client.chat.completions.create(
             model=self.model_name,
             messages=openai_messages,
             response_format=self.response_format or NOT_GIVEN,
@@ -200,6 +200,8 @@ class OpenAIAgentModel(AgentModel):
             top_p=model_settings.get('top_p', NOT_GIVEN),
             timeout=model_settings.get('timeout', NOT_GIVEN),
         )
+
+        return response
 
     def _process_response(self, response: chat.ChatCompletion) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
