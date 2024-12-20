@@ -23,9 +23,9 @@
 
 ---
 
-PydanticAI is a Python agent framework designed to make it less painful to build production grade applications with Generative AI.
+PydanticAI is a Python agent framework designed to make it less painful to build production-grade applications with Generative AI.
 
-FastAPI revolutionized web development by offering an innovative and ergonomic design, built on the foundation of [Pydantic](https://docs.pydantic.dev).
+FastAPI revolutionized web development with its innovative, ergonomic design, built on the foundation of [Pydantic](https://docs.pydantic.dev).
 
 Similarly, virtually every agent framework and LLM library in Python uses Pydantic, yet when we began to use LLMs in [Pydantic Logfire](https://pydantic.dev/logfire), we couldn't find anything that gave us the same feeling.
 
@@ -90,7 +90,7 @@ The first known use of "hello, world" was in a 1974 textbook about the C program
 
 _(This example is complete, it can be run "as is")_
 
-Not very interesting yet, but we can easily add "tools", dynamic system prompts, and structured responses to build more powerful agents.
+Not only is it straightforward to use, but PydanticAI also empowers you to seamlessly integrate tools, dynamic system prompts, and structured responses—unlocking the potential to build more sophisticated and robust agents effortlessly.
 
 ## Tools & Dependency Injection Example
 
