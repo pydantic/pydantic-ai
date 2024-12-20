@@ -5,11 +5,11 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from itertools import chain
+from openai.types import ResponseFormatJSONSchema
 from typing import Literal, Union, overload
 
 from httpx import AsyncClient as AsyncHTTPClient
 from typing_extensions import assert_never
-from openai.types import ResponseFormatJSONSchema
 
 from .. import UnexpectedModelBehavior, _utils, result
 from .._utils import guard_tool_call_id as _guard_tool_call_id
