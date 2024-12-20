@@ -114,12 +114,7 @@ class OpenAIModel(Model):
         check_allow_model_requests()
         tools = [self._map_tool_definition(r) for r in function_tools]
         response_format = self._map_response_format(result_tools[0]) if result_tools else None
-        return OpenAIAgentModel(
-            self.client,
-            self.model_name,
-            tools,
-            response_format
-        )
+        return OpenAIAgentModel(self.client, self.model_name, tools, response_format)
 
     def name(self) -> str:
         return f'openai:{self.model_name}'
