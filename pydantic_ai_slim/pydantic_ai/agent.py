@@ -864,11 +864,15 @@ class Agent(Generic[AgentDeps, ResultData]):
             else:
                 tool_calls.append(part)
 
-        if texts:
+        # At the moment, we prioritize at least executing tool calls if they are present.
+        # In the future, we'd consider making this configurable at the agent or run level.
+        # This accounts for cases like anthropic returns that might contain a text response
+        # and a tool call response, where the text response just indicates the tool call will happen.
+        if tool_calls:
+            return await self._handle_structured_response(tool_calls, run_context)
+        elif texts:
             text = '\n\n'.join(texts)
             return await self._handle_text_response(text, run_context)
-        elif tool_calls:
-            return await self._handle_structured_response(tool_calls, run_context)
         else:
             raise exceptions.UnexpectedModelBehavior('Received empty model response')
 
