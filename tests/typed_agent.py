@@ -182,7 +182,7 @@ MyUnion: TypeAlias = 'Foo | Bar'
 union_agent2: Agent[None, MyUnion] = Agent(
     result_type=MyUnion,  # type: ignore[arg-type]
 )
-assert_type(union_agent, Agent[None, MyUnion])
+assert_type(union_agent2, Agent[None, MyUnion])
 
 
 def foobar_ctx(ctx: RunContext[int], x: str, y: int) -> str:
@@ -239,3 +239,4 @@ assert_type(default_agent, Agent[None])
 
 partial_agent: Agent[MyDeps] = Agent(deps_type=MyDeps)
 assert_type(partial_agent, Agent[MyDeps, str])
+assert_type(partial_agent, Agent[MyDeps])
