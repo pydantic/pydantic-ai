@@ -3,7 +3,7 @@
 from collections.abc import Awaitable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Callable, Union, assert_type
+from typing import Callable, TypeAlias, Union, assert_type
 
 from pydantic_ai import Agent, ModelRetry, RunContext, Tool
 from pydantic_ai.result import RunResult
@@ -178,6 +178,13 @@ def run_sync3() -> None:
     assert_type(result.data, Union[Foo, Bar])
 
 
+MyUnion: TypeAlias = 'Foo | Bar'
+union_agent2: Agent[None, MyUnion] = Agent(
+    result_type=MyUnion,  # type: ignore[arg-type]
+)
+assert_type(union_agent2, Agent[None, MyUnion])
+
+
 def foobar_ctx(ctx: RunContext[int], x: str, y: int) -> str:
     return f'{x} {y}'
 
@@ -225,3 +232,13 @@ greet_agent = Agent[str, str]('test', tools=[greet_tool], deps_type=str)
 
 result = greet_agent.run_sync('testing...', deps='human')
 assert result.data == '{"greet":"hello a"}'
+
+MYPY = False
+if not MYPY:
+    default_agent = Agent()
+    assert_type(default_agent, Agent[None, str])
+    assert_type(default_agent, Agent[None])
+
+partial_agent: Agent[MyDeps] = Agent(deps_type=MyDeps)
+assert_type(partial_agent, Agent[MyDeps, str])
+assert_type(partial_agent, Agent[MyDeps])
