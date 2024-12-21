@@ -17,6 +17,7 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    ModelResponsePart,
     RetryPromptPart,
     SystemPromptPart,
     TextPart,
@@ -1130,14 +1131,17 @@ async def test_empty_text_part():
 def test_heterogenous_reponses_non_streaming(set_event_loop: None) -> None:
     """Indicates that tool calls are prioritized over text in heterogeneous responses."""
 
-    def return_model(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         assert info.result_tools is not None
-        return ModelResponse(
-            parts=[
+        parts: list[ModelResponsePart] = []
+        if len(messages) == 1:
+            parts = [
                 TextPart(content='foo'),
                 ToolCallPart.from_raw_args('get_location', {'loc_name': 'London'}),
             ]
-        )
+        else:
+            parts = [TextPart(content='final response')]
+        return ModelResponse(parts=parts)
 
     agent = Agent(FunctionModel(return_model))
 
