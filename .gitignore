@@ -13,3 +13,4 @@ env*/
 /pydantic_ai_examples/.chat_app_messages.sqlite
 .cache/
 .vscode/
+*.ipynb
