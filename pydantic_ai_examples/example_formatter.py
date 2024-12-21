@@ -3,9 +3,11 @@ from dataclasses import dataclass
 from typing import cast
 
 import logfire
+from devtools import debug
 from pydantic import BaseModel
 
-from pydantic_ai import Agent, RunContext, format_examples
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.format_examples import format_examples
 from pydantic_ai.models import KnownModelName
 
 # 'if-token-present' means nothing will be sent (and the example will work) if you don't have logfire configured
@@ -57,10 +59,12 @@ if __name__ == '__main__':
 
     @agent.system_prompt
     def get_sentiment(ctx: RunContext[SupportDependencies]) -> str:
-        return f'Take these examples to asses sentiment of the text:{format_examples(examples)}'
+        return f'Take these examples to asses sentiment of the text:\n{format_examples(examples, dialect='xml')}'
 
     user_text: str = 'The interior is spacious and feels luxurious, but the mileage is disappointing.'
+
     result = agent.run_sync(
         'what is the sentiment?', deps=SupportDependencies(text=user_text)
     )
-    print(result)
+    debug(result)
+    print(result.data)

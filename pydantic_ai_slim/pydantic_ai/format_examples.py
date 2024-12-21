@@ -1,71 +1,71 @@
 from __future__ import annotations as _annotations
 
 import xml.etree.ElementTree as ET
-from collections.abc import Sequence
-from dataclasses import asdict, dataclass, is_dataclass
-from typing import Any
+from collections.abc import Iterable
+from dataclasses import asdict, is_dataclass
+from typing import Any, Literal
 
 from pydantic import BaseModel
 
+__all__ = [
+    'format_examples',
+]
 
-def format_examples(examples: Sequence[Any], dialect: str = 'xml') -> str:
+
+def _to_xml_element(example: dict[str, Any]) -> ET.Element:
+    """Convert example to an xml element."""
+    element = ET.Element('example')
+    for sub_key, sub_value in example.items():
+        sub_element = ET.Element(sub_key)
+        sub_element.text = str(sub_value)
+        element.append(sub_element)
+    return element
+
+
+def _convert_to_dict(data: BaseModel | dict[str, str] | Any) -> dict[str, Any]:
+    """Convert Pydantic model or dataclass data into a dictionary."""
+    if isinstance(data, BaseModel):
+        return data.model_dump(mode='python')
+    elif is_dataclass(data):
+        return asdict(data)  # type: ignore
+    elif isinstance(data, dict):
+        return data  # type: ignore
+    else:
+        raise TypeError(f'example:{data} of {type(data)} type not allowed for xml conversion')
+
+
+def _to_xml(data: Iterable[dict[str, str] | BaseModel | Any]) -> str:
+    """Converts a list of dictionaries, Pydantic models, or a dataclasses to XML.
+
+    Args:
+        data (Iterable[Union[dict[str, str], BaseModel, Any]]):
+            The input data to be converted to XML.
+
+    Returns:
+        str: The indented XML string representation of the input data.
+    """
+    examples_string: list[str] = []
+    for item in data:
+        dict_item = _convert_to_dict(item)
+        example_element = _to_xml_element(dict_item)
+        ET.indent(example_element)
+        indented_string = ET.tostring(example_element, encoding='unicode')
+        examples_string.append(indented_string)
+    return '\n'.join(examples_string)
+
+
+def format_examples(examples: Iterable[dict[str, str] | BaseModel | Any], dialect: Literal['xml'] = 'xml') -> str:
     """Format a sequence of examples into the specified dialect (e.g., XML).
 
     Args:
-        examples (Sequence[Any]): A sequence of data items to format.
+        examples (Iterable[Union[dict[str, str], BaseModel, Any]]):
+          A sequence of data items to format.
         dialect (str): The format to use. Currently supports "xml".
 
     Returns:
         str: The formatted examples.
     """
     if dialect == 'xml':
-        return XMLConverter.to_xml(examples)
+        return _to_xml(examples)
     else:
         raise ValueError(f'Unsupported dialect: {dialect}')
-
-
-@dataclass
-class XMLConverter:
-    """Convert the examples to LLM friendly XML format."""
-
-    @classmethod
-    def to_xml(cls, data: Sequence[dict[str, str] | BaseModel | Any]) -> str:
-        """Converts a list of dictionaries, Pydantic models, or a dataclasses to XML.
-
-        Args:
-            data (Sequence[Union[dict[str, str], BaseModel, Any]]):
-                The input data to be converted to XML.
-
-        Returns:
-            str: The indented XML string representation of the input data.
-        """
-
-        def convert_to_element(key: str, value: dict[str, str]) -> ET.Element:
-            element = ET.Element(key)
-            for sub_key, sub_value in value.items():
-                sub_element = ET.Element(sub_key)
-                sub_element.text = str(sub_value)
-                element.append(sub_element)
-            return element
-
-        ## Convert to python dictionaries
-        def handle_data(data: BaseModel | dict[str, str] | Any) -> dict[str, str]:
-            if isinstance(data, BaseModel):
-                return data.model_dump(mode='python')
-            elif is_dataclass(data):
-                return asdict(data)  # type: ignore
-            elif isinstance(data, dict):
-                return data  # type: ignore
-            else:
-                raise ValueError(f'{type(data)} type not allowed as an example')
-
-        root = ET.Element('examples')
-        if isinstance(data, list):
-            for idx, item in enumerate(data):
-                processed_item = handle_data(item)
-                root.append(convert_to_element(f'example{idx}', processed_item))
-        else:
-            raise ValueError(f'Unsupported examples input data type {type(data)} for XML conversion.')
-
-        ET.indent(root)
-        return ET.tostring(root, encoding='unicode')
