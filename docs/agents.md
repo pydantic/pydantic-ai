@@ -16,7 +16,7 @@ The [`Agent`][pydantic_ai.Agent] class has full API documentation, but conceptua
 | [LLM model](api/models/base.md)                 | Optional default LLM model associated with the agent. Can also be specified when running the agent.      |
 | [Model Settings](#additional-configuration)     | Optional default model settings to help fine tune requests. Can also be specified when running the agent.|
 
-In typing terms, agents are generic in their dependency and result types, e.g., an agent which required dependencies of type `#!python Foobar` and returned results of type `#!python list[str]` would have type `cAgent[Foobar, list[str]]`. In practice, you shouldn't need to care about this, it should just mean your IDE can tell you when you have the right type, and if you choose to use [static type checking](#static-type-checking) it should work well with PydanticAI.
+In typing terms, agents are generic in their dependency and result types, e.g., an agent which required dependencies of type `#!python Foobar` and returned results of type `#!python list[str]` would have type `Agent[Foobar, list[str]]`. In practice, you shouldn't need to care about this, it should just mean your IDE can tell you when you have the right type, and if you choose to use [static type checking](#static-type-checking) it should work well with PydanticAI.
 
 Here's a toy example of an agent that simulates a roulette wheel:
 
