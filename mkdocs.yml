@@ -145,7 +145,7 @@ markdown_extensions:
 
 watch:
   - pydantic_ai_slim
-  - pydantic_ai_examples
+  - examples
 
 plugins:
   - search

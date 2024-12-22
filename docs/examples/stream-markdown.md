@@ -17,5 +17,5 @@ python/uv-run -m pydantic_ai_examples.stream_markdown
 ## Example Code
 
 ```python
-#! pydantic_ai_examples/stream_markdown.py
+#! examples/pydantic_ai_examples/stream_markdown.py
 ```

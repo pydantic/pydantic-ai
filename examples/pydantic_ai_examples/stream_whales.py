@@ -8,14 +8,14 @@ Run with:
     uv run -m pydantic_ai_examples.whales
 """
 
-from typing import Annotated, NotRequired, TypedDict
+from typing import Annotated
 
-import devtools
 import logfire
 from pydantic import Field, ValidationError
 from rich.console import Console
 from rich.live import Live
 from rich.table import Table
+from typing_extensions import NotRequired, TypedDict
 
 from pydantic_ai import Agent
 
@@ -39,11 +39,6 @@ class Whale(TypedDict):
 
 
 agent = Agent('openai:gpt-4', result_type=list[Whale])
-
-
-def check_validation_error(e: ValidationError) -> bool:
-    devtools.debug(e.errors())
-    return False
 
 
 async def main():
