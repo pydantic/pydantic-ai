@@ -1,10 +1,6 @@
 export default {
   async fetch(request, env) {
     const url = new URL(request.url)
-    // if (url.pathname === '/env.json') {
-    //   const headers = new Headers({'Content-Type': 'application/json'})
-    //   return new Response(JSON.stringify(env), { headers })
-    // }
     if (url.pathname === '/ahead-warning.html') {
       try {
         const html = await aheadOfRelease(env)
@@ -22,16 +18,20 @@ export default {
   },
 }
 
+// env looks like
+// {"ASSETS":{},"CF_PAGES":"1","CF_PAGES_BRANCH":"ahead-warning","CF_PAGES_COMMIT_SHA":"...","CF_PAGES_URL":"https://..."}
 async function aheadOfRelease(env) {
   const r1 = await fetch('https://api.github.com/repos/pydantic/pydantic-ai/releases/latest')
   if (!r1.ok) {
-    throw new Error(`Failed to fetch latest release, response status ${r.status}`)
+    const text = await r1.text()
+    throw new Error(`Failed to fetch latest release, response status ${r1.status}:\n${text}`)
   }
   const {tag_name} = await r1.json()
   const head = env.CF_PAGES_COMMIT_SHA
   const r2 = await fetch(`https://api.github.com/repos/pydantic/pydantic-ai/compare/${tag_name}...${head}`)
   if (!r2.ok) {
-    throw new Error(`Failed to fetch compare, response status ${r.status}`)
+    const text = await r2.text()
+    throw new Error(`Failed to fetch compare, response status ${r2.status}:\n${text}`)
   }
   const {ahead_by} = await r2.json()
 
