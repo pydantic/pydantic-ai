@@ -1,6 +1,8 @@
 from __future__ import annotations as _annotations
 
 import base64
+import inspect
+import types
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Generic
@@ -39,10 +41,11 @@ class Graph(Generic[GraphInputT, GraphOutputT, DepsT, StateT]):
         deps_type: type[DepsT] | None = None,
         state_type: type[StateT] | None = None,
     ):
-        self.first_node = first_node.get_node_def()
+        parent_namespace = get_parent_namespace(inspect.currentframe())
+        self.first_node = first_node.get_node_def(parent_namespace)
         self.nodes = nodes = {self.first_node.node_id: self.first_node}
         for node in other_nodes:
-            node_def = node.get_node_def()
+            node_def = node.get_node_def(parent_namespace)
             nodes[node_def.node_id] = node_def
 
         self._check()
@@ -126,3 +129,17 @@ class Graph(Generic[GraphInputT, GraphOutputT, DepsT, StateT]):
             else:
                 b = '\n'.join(f' {be}' for be in bad_edges_list)
                 raise ValueError(f'Nodes are referenced in the graph but not included in the graph:\n{b}')
+
+
+def get_parent_namespace(frame: types.FrameType | None) -> dict[str, Any] | None:
+    """Attempt to get the namespace where the graph was defined.
+
+    If the graph is defined with generics `Graph[a, b]` then another frame is inserted, and we have to skip that
+    to get the correct namespace.
+    """
+    if frame is not None:
+        if back := frame.f_back:
+            if back.f_code.co_filename.endswith('/typing.py'):
+                return get_parent_namespace(back)
+            else:
+                return back.f_locals

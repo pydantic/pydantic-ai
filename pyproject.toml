@@ -135,6 +135,10 @@ executionEnvironments = [
 ]
 exclude = ["examples/pydantic_ai_examples/weather_agent_gradio.py"]
 
+[tool.mypy]
+files = "tests/typed_agent.py,tests/typed_graph.py"
+strict = true
+
 [tool.pytest.ini_options]
 testpaths = "tests"
 xfail_strict = true
