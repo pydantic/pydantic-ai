@@ -76,8 +76,8 @@ class BaseNode(Generic[NodeInputT, GraphOutputT, DepsT, StateT], metaclass=_Base
         return cls.node_id or cls.__qualname__
 
     @classmethod
-    def get_node_def(cls) -> NodeDef[Any, Any, DepsT, StateT]:
-        type_hints = get_type_hints(cls.run)
+    def get_node_def(cls, local_ns: dict[str, Any] | None) -> NodeDef[Any, Any, DepsT, StateT]:
+        type_hints = get_type_hints(cls.run, localns=local_ns)
         next_node_ids: set[str] = set()
         can_end: bool = False
         dest_any: bool = False
