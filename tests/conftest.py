@@ -20,7 +20,7 @@ from typing_extensions import TypeAlias
 
 import pydantic_ai.models
 
-__all__ = 'IsNow', 'TestEnv', 'ClientWithHandler', 'try_import'
+__all__ = 'IsNow', 'IsFloat', 'TestEnv', 'ClientWithHandler', 'try_import'
 
 
 pydantic_ai.models.ALLOW_MODEL_REQUESTS = False
@@ -28,8 +28,9 @@ pydantic_ai.models.ALLOW_MODEL_REQUESTS = False
 if TYPE_CHECKING:
 
     def IsNow(*args: Any, **kwargs: Any) -> datetime: ...
+    def IsFloat(*args: Any, **kwargs: Any) -> float: ...
 else:
-    from dirty_equals import IsNow
+    from dirty_equals import IsFloat, IsNow
 
 try:
     from logfire.testing import CaptureLogfire
