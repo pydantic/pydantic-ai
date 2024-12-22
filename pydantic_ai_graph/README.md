@@ -6,7 +6,7 @@
 [![versions](https://img.shields.io/pypi/pyversions/pydantic-ai-graph.svg)](https://github.com/pydantic/pydantic-ai)
 [![license](https://img.shields.io/github/license/pydantic/pydantic-ai-graph.svg?v)](https://github.com/pydantic/pydantic-ai/blob/main/LICENSE)
 
-Graph and State Machine library.
+Graph and state machine library.
 
 This library is developed as part of the [PydanticAI](https://ai.pydantic.dev), however it has no dependency
 on `pydantic-ai` or related packages and can be considered as a pure graph library.

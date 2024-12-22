@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "pydantic-ai-graph"
 version = "0.0.1"
-description = "Graph and State Machine library"
+description = "Graph and state machine library"
 authors = [
     { name = "Samuel Colvin", email = "samuel@pydantic.dev" },
 ]
