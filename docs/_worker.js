@@ -21,14 +21,18 @@ export default {
 // env looks like
 // {"ASSETS":{},"CF_PAGES":"1","CF_PAGES_BRANCH":"ahead-warning","CF_PAGES_COMMIT_SHA":"...","CF_PAGES_URL":"https://..."}
 async function aheadOfRelease(env) {
-  const r1 = await fetch('https://api.github.com/repos/pydantic/pydantic-ai/releases/latest')
+  const headers = new Headers({
+    'User-Agent': 'pydantic-ai-docs',
+    'Accept': 'application/vnd.github.v3+json',
+  })
+  const r1 = await fetch('https://api.github.com/repos/pydantic/pydantic-ai/releases/latest', {headers})
   if (!r1.ok) {
     const text = await r1.text()
     throw new Error(`Failed to fetch latest release, response status ${r1.status}:\n${text}`)
   }
   const {tag_name} = await r1.json()
   const head = env.CF_PAGES_COMMIT_SHA
-  const r2 = await fetch(`https://api.github.com/repos/pydantic/pydantic-ai/compare/${tag_name}...${head}`)
+  const r2 = await fetch(`https://api.github.com/repos/pydantic/pydantic-ai/compare/${tag_name}...${head}`, {headers})
   if (!r2.ok) {
     const text = await r2.text()
     throw new Error(`Failed to fetch compare, response status ${r2.status}:\n${text}`)

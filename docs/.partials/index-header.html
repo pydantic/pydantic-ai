@@ -27,8 +27,12 @@
 
 <div id="ahead-warning"></div>
 <script>
-  fetch('/ahead-warning.html').then(r => r.text()).then(text => {
-    document.getElementById('ahead-warning').innerHTML = text
+  fetch('/ahead-warning.html').then(r => {
+    if (r.ok) {
+      r.text().then(text => { document.getElementById('ahead-warning').innerHTML = text })
+  } else {
+      r.text().then(text => { console.error('failed to fetch ahead-warning.html:', {r, text})})
+    }
   })
 </script>
 
