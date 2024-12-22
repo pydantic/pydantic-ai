@@ -54,7 +54,7 @@ pydantic-ai-slim = { workspace = true }
 pydantic-ai-examples = { workspace = true }
 
 [tool.uv.workspace]
-members = ["pydantic_ai_slim", "examples"]
+members = ["pydantic_ai_slim", "pydantic_ai_graph", "examples"]
 
 [dependency-groups]
 # dev dependencies are defined in `pydantic-ai-slim/pyproject.toml` to allow for minimal testing
@@ -85,6 +85,7 @@ line-length = 120
 target-version = "py39"
 include = [
     "pydantic_ai_slim/**/*.py",
+    "pydantic_ai_graph/**/*.py",
     "examples/**/*.py",
     "tests/**/*.py",
     "docs/**/*.py",
@@ -128,7 +129,7 @@ typeCheckingMode = "strict"
 reportMissingTypeStubs = false
 reportUnnecessaryIsInstance = false
 reportUnnecessaryTypeIgnoreComment = true
-include = ["pydantic_ai_slim", "tests", "examples"]
+include = ["pydantic_ai_slim", "pydantic_ai_graph", "tests", "examples"]
 venvPath = ".venv"
 # see https://github.com/microsoft/pyright/issues/7771 - we don't want to error on decorated functions in tests
 # which are not otherwise used
@@ -147,7 +148,7 @@ filterwarnings = [
 # https://coverage.readthedocs.io/en/latest/config.html#run
 [tool.coverage.run]
 # required to avoid warnings about files created by create_module fixture
-include = ["pydantic_ai_slim/**/*.py", "tests/**/*.py"]
+include = ["pydantic_ai_slim/**/*.py", "pydantic_ai_graph/**/*.py","tests/**/*.py"]
 omit = ["tests/test_live.py", "tests/example_modules/*.py"]
 branch = true
 
