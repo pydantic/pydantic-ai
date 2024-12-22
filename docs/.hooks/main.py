@@ -48,11 +48,11 @@ def sub_run(m: re.Match[str]) -> str:
     ```"""
 
 
-EXAMPLES_DIR = Path(__file__).parent.parent.parent / 'pydantic_ai_examples'
+EXAMPLES_DIR = Path(__file__).parent.parent.parent / 'examples'
 
 
 def render_examples(markdown: str) -> str:
-    return re.sub(r'^#! *pydantic_ai_examples/(.+)', sub_example, markdown, flags=re.M)
+    return re.sub(r'^#! *examples/(.+)', sub_example, markdown, flags=re.M)
 
 
 def sub_example(m: re.Match[str]) -> str:
