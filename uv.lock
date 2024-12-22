@@ -2542,7 +2542,7 @@ requires-dist = [
 
 [[package]]
 name = "pydantic-ai-graph"
-version = "0.0.1"
+version = "0.0.14"
 source = { editable = "pydantic_ai_graph" }
 dependencies = [
     { name = "httpx" },

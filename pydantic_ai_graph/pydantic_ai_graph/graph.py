@@ -4,9 +4,12 @@ import base64
 import inspect
 import types
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
+from time import perf_counter
 from typing import TYPE_CHECKING, Any, Generic
 
+import logfire_api
 from typing_extensions import TypeVar, assert_never
 
 from . import _utils
@@ -18,9 +21,11 @@ from .nodes import (
     GraphOutputT,
     NodeDef,
 )
-from .state import StateT
+from .state import Snapshot, StateT
 
 __all__ = ('Graph',)
+
+_logfire = logfire_api.Logfire(otel_scope='pydantic-ai-graph')
 GraphInputT = TypeVar('GraphInputT', default=Any)
 
 
@@ -31,15 +36,13 @@ class Graph(Generic[GraphInputT, GraphOutputT, DepsT, StateT]):
 
     first_node: NodeDef[Any, Any, DepsT, StateT]
     nodes: dict[str, NodeDef[Any, Any, DepsT, StateT]]
-    state_type: type[StateT] | None
+    name: str | None
 
-    # noinspection PyUnusedLocal
     def __init__(
         self,
         first_node: type[BaseNode[GraphInputT, Any, DepsT, StateT]],
         *other_nodes: type[BaseNode[Any, GraphOutputT, DepsT, StateT]],
-        deps_type: type[DepsT] | None = None,
-        state_type: type[StateT] | None = None,
+        name: str | None = None,
     ):
         parent_namespace = get_parent_namespace(inspect.currentframe())
         self.first_node = first_node.get_node_def(parent_namespace)
@@ -49,44 +52,71 @@ class Graph(Generic[GraphInputT, GraphOutputT, DepsT, StateT]):
             nodes[node_def.node_id] = node_def
 
         self._check()
-        self.state_type = state_type
+        self.name = name
 
     async def run(
-        self, input_data: GraphInputT, deps: DepsT = None, state: StateT = None
-    ) -> tuple[GraphOutputT, StateT]:
+        self,
+        input_data: GraphInputT,
+        deps: DepsT = None,
+        state: StateT = None,
+        history: list[Snapshot] | None = None,
+    ) -> tuple[GraphOutputT, list[Snapshot]]:
         current_node_def = self.first_node
         current_node = current_node_def.node(input_data)
         ctx = GraphContext(deps, state)
-        while True:
-            # noinspection PyUnresolvedReferences
-            next_node = await current_node.run(ctx)
-            if isinstance(next_node, End):
-                if current_node_def.can_end:
-                    return next_node.data, ctx.state
-                else:
-                    raise ValueError(f'Node {current_node_def.node_id} cannot end the graph')
-            elif isinstance(next_node, BaseNode):
-                next_node_id = next_node.get_id()
-                try:
-                    next_node_def = self.nodes[next_node_id]
-                except KeyError as e:
-                    raise ValueError(
-                        f'Node {current_node_def.node_id} cannot go to {next_node_id} which is not in the Graph'
-                    ) from e
+        if history:
+            run_history = history[:]
+        else:
+            run_history = []
 
-                if not current_node_def.dest_any and next_node_id not in current_node_def.next_node_ids:
-                    raise ValueError(
-                        f'Node {current_node_def.node_id} cannot go to {next_node_id} which is not in its '
-                        f'list of allowed next nodes'
+        with _logfire.span(
+            '{graph_name} run {input=}',
+            graph_name=self.name or 'graph',
+            input=input_data,
+            graph=self,
+        ) as run_span:
+            while True:
+                with _logfire.span('run node {node_id}', node_id=current_node_def.node_id):
+                    start_ts = datetime.now(tz=timezone.utc)
+                    start = perf_counter()
+                    # noinspection PyUnresolvedReferences
+                    next_node = await current_node.run(ctx)
+                    duration = perf_counter() - start
+
+                if isinstance(next_node, End):
+                    if current_node_def.can_end:
+                        run_history.append(
+                            Snapshot.from_state(current_node_def.node_id, None, start_ts, duration, ctx.state)
+                        )
+                        run_span.set_attribute('history', run_history)
+                        return next_node.data, run_history
+                    else:
+                        raise ValueError(f'Node {current_node_def.node_id} cannot end the graph')
+                elif isinstance(next_node, BaseNode):
+                    next_node_id = next_node.get_id()
+                    run_history.append(
+                        Snapshot.from_state(current_node_def.node_id, next_node_id, start_ts, duration, ctx.state)
                     )
+                    try:
+                        next_node_def = self.nodes[next_node_id]
+                    except KeyError as e:
+                        raise ValueError(
+                            f'Node {current_node_def.node_id} cannot go to {next_node_id} which is not in the Graph'
+                        ) from e
 
-                current_node_def = next_node_def
-                current_node = next_node
-            else:
-                if TYPE_CHECKING:
-                    assert_never(next_node)
+                    if not current_node_def.dest_any and next_node_id not in current_node_def.next_node_ids:
+                        raise ValueError(
+                            f'Node {current_node_def.node_id} cannot go to {next_node_id} which is not in its '
+                            f'list of allowed next nodes'
+                        )
+
+                    current_node_def = next_node_def
+                    current_node = next_node
                 else:
-                    raise TypeError(f'Invalid node type: {type(next_node)} expected BaseNode or End')
+                    if TYPE_CHECKING:
+                        assert_never(next_node)
+                    else:
+                        raise TypeError(f'Invalid node type: {type(next_node)} expected BaseNode or End')
 
     def mermaid_code(self) -> str:
         lines = ['graph TD']

@@ -73,7 +73,7 @@ class BaseNode(Generic[NodeInputT, GraphOutputT, DepsT, StateT], metaclass=_Base
     @classmethod
     @cache
     def get_id(cls) -> str:
-        return cls.node_id or cls.__qualname__
+        return cls.node_id or cls.__name__
 
     @classmethod
     def get_node_def(cls, local_ns: dict[str, Any] | None) -> NodeDef[Any, Any, DepsT, StateT]:
