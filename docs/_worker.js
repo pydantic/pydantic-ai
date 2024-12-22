@@ -7,7 +7,11 @@ export default {
     if (url.pathname === '/version-warning.html') {
       try {
         const html = await versionWarning(request, env)
-        return new Response(html, { headers: {'Content-Type': 'text/html', 'Cache-Control': 'max-age=1800'} })
+        const headers = {
+          'Content-Type': 'text/plain',
+          'Cache-Control': 'max-age=2592000', // 30 days
+        }
+        return new Response(html, { headers })
       } catch (e) {
         console.error(e)
         return new Response(
@@ -24,10 +28,10 @@ export default {
 // env looks like
 // {"CF_PAGES":"1","CF_PAGES_BRANCH":"ahead-warning","CF_PAGES_COMMIT_SHA":"...","CF_PAGES_URL":"https://..."}
 async function versionWarning(request, env) {
-  const headers = new Headers({
+  const headers = {
     'User-Agent': request.headers.get('User-Agent') || 'pydantic-ai-docs',
     'Accept': 'application/vnd.github.v3+json',
-  })
+  }
   const r1 = await fetch('https://api.github.com/repos/pydantic/pydantic-ai/releases/latest', {headers})
   if (!r1.ok) {
     const text = await r1.text()
@@ -55,7 +59,7 @@ async function versionWarning(request, env) {
   <p class="admonition-title">Version Notice</p>
   <p>
     ${env.CF_PAGES_BRANCH === 'main' ? '' : `(<b>${env.CF_PAGES_BRANCH}</b> preview)`}
-    This documentation is ahead of the latest release by <b>${ahead_by}</b> commit${ahead_by === 1 ? '' : 's'}.
+    This documentation is ahead of the last release by <b>${ahead_by}</b> commit${ahead_by === 1 ? '' : 's'}.
     You may see documentation for features not yet supported in the latest release <a href="${html_url}">${name}</a>.
   </p>
 </div>`
