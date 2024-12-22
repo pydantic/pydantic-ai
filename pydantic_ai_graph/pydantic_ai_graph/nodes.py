@@ -13,7 +13,6 @@ from .state import StateT
 __all__ = (
     'NodeInputT',
     'GraphOutputT',
-    'DepsT',
     'GraphContext',
     'End',
     'BaseNode',
@@ -22,15 +21,13 @@ __all__ = (
 
 NodeInputT = TypeVar('NodeInputT', default=Any)
 GraphOutputT = TypeVar('GraphOutputT', default=Any)
-DepsT = TypeVar('DepsT', default=None)
 
 
 # noinspection PyTypeHints
 @dataclass
-class GraphContext(Generic[DepsT, StateT]):
+class GraphContext(Generic[StateT]):
     """Context for a graph."""
 
-    deps: DepsT
     state: StateT
 
 
@@ -48,17 +45,17 @@ class _BaseNodeMeta(ABCMeta):
     def __repr__(cls):
         base: Any = cls.__orig_bases__[0]  # type: ignore
         args = get_args(base)
-        if len(args) == 4 and args[3] is None:
-            if args[2] is None:
-                args = args[:2]
+        if len(args) == 3 and args[2] is Any:
+            if args[1] is Any:
+                args = args[:1]
             else:
-                args = args[:3]
-        args = ', '.join(a.__name__ for a in args)
+                args = args[:2]
+        args = ', '.join(_utils.type_arg_name(a) for a in args)
         return f'{cls.__name__}({base.__name__}[{args}])'
 
 
 # noinspection PyTypeHints
-class BaseNode(Generic[NodeInputT, GraphOutputT, DepsT, StateT], metaclass=_BaseNodeMeta):
+class BaseNode(Generic[StateT, NodeInputT, GraphOutputT], metaclass=_BaseNodeMeta):
     """Base class for a node."""
 
     node_id: ClassVar[str | None] = None
@@ -68,7 +65,7 @@ class BaseNode(Generic[NodeInputT, GraphOutputT, DepsT, StateT], metaclass=_Base
         self.input_data = input_data
 
     @abstractmethod
-    async def run(self, ctx: GraphContext[DepsT, StateT]) -> BaseNode[Any, Any, DepsT, StateT] | End[GraphOutputT]: ...
+    async def run(self, ctx: GraphContext[StateT]) -> BaseNode[StateT, Any, Any] | End[GraphOutputT]: ...
 
     @classmethod
     @cache
@@ -76,7 +73,7 @@ class BaseNode(Generic[NodeInputT, GraphOutputT, DepsT, StateT], metaclass=_Base
         return cls.node_id or cls.__name__
 
     @classmethod
-    def get_node_def(cls, local_ns: dict[str, Any] | None) -> NodeDef[Any, Any, DepsT, StateT]:
+    def get_node_def(cls, local_ns: dict[str, Any] | None) -> NodeDef[StateT, Any, Any]:
         type_hints = get_type_hints(cls.run, localns=local_ns)
         next_node_ids: set[str] = set()
         can_end: bool = False
@@ -103,13 +100,13 @@ class BaseNode(Generic[NodeInputT, GraphOutputT, DepsT, StateT], metaclass=_Base
 
 # noinspection PyTypeHints
 @dataclass
-class NodeDef(ABC, Generic[NodeInputT, GraphOutputT, DepsT, StateT]):
+class NodeDef(ABC, Generic[StateT, NodeInputT, GraphOutputT]):
     """Definition of a node.
 
     Used by [`Graph`][pydantic_ai_graph.graph.Graph] store information about a node.
     """
 
-    node: type[BaseNode[NodeInputT, GraphOutputT, DepsT, StateT]]
+    node: type[BaseNode[StateT, NodeInputT, GraphOutputT]]
     node_id: str
     next_node_ids: set[str]
     can_end: bool

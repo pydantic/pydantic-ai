@@ -13,14 +13,7 @@ import logfire_api
 from typing_extensions import TypeVar, assert_never
 
 from . import _utils
-from .nodes import (
-    BaseNode,
-    DepsT,
-    End,
-    GraphContext,
-    GraphOutputT,
-    NodeDef,
-)
+from .nodes import BaseNode, End, GraphContext, GraphOutputT, NodeDef
 from .state import Snapshot, StateT
 
 __all__ = ('Graph',)
@@ -31,18 +24,19 @@ GraphInputT = TypeVar('GraphInputT', default=Any)
 
 # noinspection PyTypeHints
 @dataclass(init=False)
-class Graph(Generic[GraphInputT, GraphOutputT, DepsT, StateT]):
+class Graph(Generic[StateT, GraphInputT, GraphOutputT]):
     """Definition of a graph."""
 
-    first_node: NodeDef[Any, Any, DepsT, StateT]
-    nodes: dict[str, NodeDef[Any, Any, DepsT, StateT]]
+    first_node: NodeDef[StateT, Any, Any]
+    nodes: dict[str, NodeDef[StateT, Any, Any]]
     name: str | None
 
     def __init__(
         self,
-        first_node: type[BaseNode[GraphInputT, Any, DepsT, StateT]],
-        *other_nodes: type[BaseNode[Any, GraphOutputT, DepsT, StateT]],
+        first_node: type[BaseNode[StateT, GraphInputT, GraphOutputT]],
+        *other_nodes: type[BaseNode[StateT, Any, GraphOutputT]],
         name: str | None = None,
+        state_type: type[StateT] | None = None,
     ):
         parent_namespace = get_parent_namespace(inspect.currentframe())
         self.first_node = first_node.get_node_def(parent_namespace)
@@ -57,13 +51,12 @@ class Graph(Generic[GraphInputT, GraphOutputT, DepsT, StateT]):
     async def run(
         self,
         input_data: GraphInputT,
-        deps: DepsT = None,
         state: StateT = None,
         history: list[Snapshot] | None = None,
     ) -> tuple[GraphOutputT, list[Snapshot]]:
         current_node_def = self.first_node
         current_node = current_node_def.node(input_data)
-        ctx = GraphContext(deps, state)
+        ctx = GraphContext(state)
         if history:
             run_history = history[:]
         else:
@@ -123,6 +116,8 @@ class Graph(Generic[GraphInputT, GraphOutputT, DepsT, StateT]):
         # order of destination nodes should match their order in `self.nodes`
         node_order = {nid: index for index, nid in enumerate(self.nodes.keys())}
         for node_id, node in self.nodes.items():
+            if node_id == self.first_node.node_id:
+                lines.append(f'  START --> {node_id}')
             if node.dest_any:
                 for next_node_id in self.nodes:
                     lines.append(f'  {node_id} --> {next_node_id}')
@@ -141,9 +136,9 @@ class Graph(Generic[GraphInputT, GraphOutputT, DepsT, StateT]):
         response.raise_for_status()
         return response.content
 
-    def mermaid_save(self, path: Path, mermaid_ink_params: dict[str, str | int] | None = None) -> None:
+    def mermaid_save(self, path: Path | str, mermaid_ink_params: dict[str, str | int] | None = None) -> None:
         image_data = self.mermaid_image(mermaid_ink_params)
-        path.write_bytes(image_data)
+        Path(path).write_bytes(image_data)
 
     def _check(self):
         bad_edges: dict[str, list[str]] = {}

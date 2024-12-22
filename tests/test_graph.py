@@ -13,22 +13,22 @@ pytestmark = pytest.mark.anyio
 
 
 async def test_graph():
-    class Float2String(BaseNode[float]):
+    class Float2String(BaseNode[None, float]):
         async def run(self, ctx: GraphContext) -> String2Length:
             return String2Length(str(self.input_data))
 
-    class String2Length(BaseNode[str]):
+    class String2Length(BaseNode[None, str]):
         async def run(self, ctx: GraphContext) -> Double:
             return Double(len(self.input_data))
 
-    class Double(BaseNode[int, int]):
+    class Double(BaseNode[None, int, int]):
         async def run(self, ctx: GraphContext) -> String2Length | End[int]:
             if self.input_data == 7:
                 return String2Length('x' * 21)
             else:
                 return End(self.input_data * 2)
 
-    g = Graph[float, int](
+    g = Graph[None, float, int](
         Float2String,
         String2Length,
         Double,

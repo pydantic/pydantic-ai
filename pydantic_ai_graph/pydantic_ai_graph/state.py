@@ -3,6 +3,7 @@ from __future__ import annotations as _annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Union
 
 from typing_extensions import TypeVar
 
@@ -18,7 +19,7 @@ class AbstractState(ABC):
         raise NotImplementedError
 
 
-StateT = TypeVar('StateT', None, AbstractState, default=None)
+StateT = TypeVar('StateT', bound=Union[None, AbstractState], default=None)
 
 
 @dataclass

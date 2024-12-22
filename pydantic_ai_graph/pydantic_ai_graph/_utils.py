@@ -35,3 +35,13 @@ def comma_and(items: list[str]) -> str:
     else:
         # oxford comma ¯\_(ツ)_/¯
         return ', '.join(items[:-1]) + ', and ' + items[-1]
+
+
+_NoneType = type(None)
+
+
+def type_arg_name(arg: Any) -> str:
+    if arg is _NoneType:
+        return 'None'
+    else:
+        return arg.__name__
