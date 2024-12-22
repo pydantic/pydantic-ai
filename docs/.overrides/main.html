@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block content %}
-  <div id="version-warning"></div>
+  <div id="version-warning" style="min-height: 120px"></div>
   <script>
     fetch('/version-warning.html').then(r => {
       if (r.ok) {

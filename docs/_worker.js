@@ -1,3 +1,6 @@
+// cloudflare worker to building warning if the docs are ahead of the latest release
+// see https://developers.cloudflare.com/pages/functions/advanced-mode/
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url)
@@ -42,10 +45,13 @@ async function versionWarning(request, env) {
   const {ahead_by} = await r2.json()
 
   if (ahead_by === 0) {
-    return ''
+    return `<div class="admonition success" style="margin: 0">
+  <p class="admonition-title">Version</p>
+  <p>Showing documentation for the latest release <a href="${html_url}">${name}</a>.</p>
+</div>`
   }
 
-  return `<div class="admonition info">
+  return `<div class="admonition info" style="margin: 0">
   <p class="admonition-title">Version Notice</p>
   <p>
     ${env.CF_PAGES_BRANCH === 'main' ? '' : `(<b>${env.CF_PAGES_BRANCH}</b> preview)`}
