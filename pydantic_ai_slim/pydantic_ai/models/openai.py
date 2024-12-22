@@ -15,6 +15,7 @@ from .._utils import guard_tool_call_id as _guard_tool_call_id
 from ..messages import (
     ModelMessage,
     ModelRequest,
+    ModelRequestPart,
     ModelResponse,
     ModelResponsePart,
     RetryPromptPart,
@@ -113,12 +114,7 @@ class OpenAIModel(Model):
         tools = [self._map_tool_definition(r) for r in function_tools]
         if result_tools:
             tools += [self._map_tool_definition(r) for r in result_tools]
-        return OpenAIAgentModel(
-            self.client,
-            self.model_name,
-            allow_text_result,
-            tools,
-        )
+        return OpenAIAgentModel(self.client, self.model_name, allow_text_result, tools)
 
     def name(self) -> str:
         return f'openai:{self.model_name}'
@@ -271,27 +267,32 @@ class OpenAIAgentModel(AgentModel):
     @classmethod
     def _map_user_message(cls, message: ModelRequest) -> Iterable[chat.ChatCompletionMessageParam]:
         for part in message.parts:
-            if isinstance(part, SystemPromptPart):
-                yield chat.ChatCompletionSystemMessageParam(role='system', content=part.content)
-            elif isinstance(part, UserPromptPart):
-                yield chat.ChatCompletionUserMessageParam(role='user', content=part.content)
-            elif isinstance(part, ToolReturnPart):
-                yield chat.ChatCompletionToolMessageParam(
+            if part := cls._map_model_request_part(part):
+                yield part
+
+    @classmethod
+    def _map_model_request_part(cls, part: ModelRequestPart) -> chat.ChatCompletionMessageParam | None:
+        if isinstance(part, SystemPromptPart):
+            return chat.ChatCompletionDeveloperMessageParam(role='developer', content=part.content)
+        elif isinstance(part, UserPromptPart):
+            return chat.ChatCompletionUserMessageParam(role='user', content=part.content)
+        elif isinstance(part, ToolReturnPart):
+            return chat.ChatCompletionToolMessageParam(
+                role='tool',
+                tool_call_id=_guard_tool_call_id(t=part, model_source='OpenAI'),
+                content=part.model_response_str(),
+            )
+        elif isinstance(part, RetryPromptPart):
+            if part.tool_name is None:
+                return chat.ChatCompletionUserMessageParam(role='user', content=part.model_response())
+            else:
+                return chat.ChatCompletionToolMessageParam(
                     role='tool',
                     tool_call_id=_guard_tool_call_id(t=part, model_source='OpenAI'),
-                    content=part.model_response_str(),
+                    content=part.model_response(),
                 )
-            elif isinstance(part, RetryPromptPart):
-                if part.tool_name is None:
-                    yield chat.ChatCompletionUserMessageParam(role='user', content=part.model_response())
-                else:
-                    yield chat.ChatCompletionToolMessageParam(
-                        role='tool',
-                        tool_call_id=_guard_tool_call_id(t=part, model_source='OpenAI'),
-                        content=part.model_response(),
-                    )
-            else:
-                assert_never(part)
+        else:
+            assert_never(part)
 
 
 @dataclass

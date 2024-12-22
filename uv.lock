@@ -1198,8 +1198,8 @@ wheels = [
 
 [[package]]
 name = "openai"
-version = "1.55.0"
-source = { registry = "https://pypi.org/simple" }
+version = "1.59.0"
+source = { git = "https://github.com/openai/openai-python#89d49335a02ac231925e5a514659c93322f29526" }
 dependencies = [
     { name = "anyio" },
     { name = "distro" },
@@ -1209,10 +1209,6 @@ dependencies = [
     { name = "sniffio" },
     { name = "tqdm" },
     { name = "typing-extensions" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/f8/7b/b1a3b6fa17dc523c603121dd23615bcd895a9fc3ab23be92307b9347bc50/openai-1.55.0.tar.gz", hash = "sha256:6c0975ac8540fe639d12b4ff5a8e0bf1424c844c4a4251148f59f06c4b2bd5db", size = 313963 }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/81/b2/9d8939c9ef73e6a2d5cb3366ef3fabd728a8de4729210d9af785c0edc6ec/openai-1.55.0-py3-none-any.whl", hash = "sha256:446e08918f8dd70d8723274be860404c8c7cc46b91b93bbc0ef051f57eb503c1", size = 389528 },
 ]
 
 [[package]]
@@ -1713,7 +1709,7 @@ requires-dist = [
     { name = "logfire", marker = "extra == 'logfire'", specifier = ">=2.3" },
     { name = "logfire-api", specifier = ">=1.2.0" },
     { name = "mistralai", marker = "extra == 'mistral'", specifier = ">=1.2.5" },
-    { name = "openai", marker = "extra == 'openai'", specifier = ">=1.54.3" },
+    { name = "openai", marker = "extra == 'openai'", git = "https://github.com/openai/openai-python" },
     { name = "pydantic", specifier = ">=2.10" },
     { name = "requests", marker = "extra == 'vertexai'", specifier = ">=2.32.3" },
 ]
