@@ -1,8 +1,8 @@
 {% extends "base.html" %}
 {% block content %}
-  <div id="version-warning" style="min-height: 120px"></div>
+  <div id="version-warning"></div>
   <script>
-    fetch('/version-warning.html').then(r => {
+    fetch('/version-warning.html?v={{ build_timestamp }}').then(r => {
       if (r.ok) {
         r.text().then(text => { document.getElementById('version-warning').innerHTML = text })
     } else {

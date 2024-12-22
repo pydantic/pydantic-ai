@@ -1,9 +1,11 @@
 from __future__ import annotations as _annotations
 
 import re
+import time
 import urllib.parse
 from pathlib import Path
 
+from jinja2 import Environment
 from mkdocs.config import Config
 from mkdocs.structure.files import Files
 from mkdocs.structure.pages import Page
@@ -15,6 +17,11 @@ def on_page_markdown(markdown: str, page: Page, config: Config, files: Files) ->
     markdown = render_examples(markdown)
     markdown = render_video(markdown)
     return markdown
+
+
+def on_env(env: Environment, config: Config, files: Files) -> Environment:
+    env.globals['build_timestamp'] = str(int(time.time()))
+    return env
 
 
 def replace_uv_python_run(markdown: str) -> str:
