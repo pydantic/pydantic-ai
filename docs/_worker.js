@@ -3,8 +3,8 @@ export default {
     const url = new URL(request.url)
     if (url.pathname === '/version-warning.html') {
       try {
-        const html = await versionWarning(env)
-        return new Response(html, { headers: {'Content-Type': 'text/html'} })
+        const html = await versionWarning(request, env)
+        return new Response(html, { headers: {'Content-Type': 'text/html', 'Cache-Control': 'max-age=1800'} })
       } catch (e) {
         console.error(e)
         return new Response(
@@ -20,9 +20,9 @@ export default {
 
 // env looks like
 // {"ASSETS":{},"CF_PAGES":"1","CF_PAGES_BRANCH":"ahead-warning","CF_PAGES_COMMIT_SHA":"...","CF_PAGES_URL":"https://..."}
-async function versionWarning(env) {
+async function versionWarning(request, env) {
   const headers = new Headers({
-    'User-Agent': 'pydantic-ai-docs',
+    'User-Agent': request.headers.get('User-Agent') || 'pydantic-ai-docs',
     'Accept': 'application/vnd.github.v3+json',
   })
   const r1 = await fetch('https://api.github.com/repos/pydantic/pydantic-ai/releases/latest', {headers})
@@ -48,18 +48,11 @@ async function versionWarning(env) {
 </div>`
   }
 
-  const commits_plural = ahead_by === 1 ? 'commit' : 'commits'
-  let msg
-  if (env.CF_PAGES_BRANCH === 'main') {
-    msg = `These docs are ahead of the latest release by <b>${ahead_by}</b> ${commits_plural}.`
-  } else {
-    msg = `These preview for <b>${env.CF_PAGES_BRANCH}</b> docs are ahead of the latest release by <b>${ahead_by}</b> ${commits_plural}.`
-  }
-
   return `<div class="admonition note">
   <p class="admonition-title">Notice</p>
-  <p>${msg}</p>
   <p>
+    ${env.CF_PAGES_BRANCH === 'main' ? '' : `(<b>${env.CF_PAGES_BRANCH}</b> preview)`}
+    This documentation is ahead of the latest release by <b>${ahead_by}</b> commit${ahead_by === 1 ? '' : 's'}.
     You may see documentation for features not yet supported in the latest release <a href="${html_url}">${name}</a>.
   </p>
 </div>`
