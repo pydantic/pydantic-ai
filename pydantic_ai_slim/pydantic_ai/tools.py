@@ -16,7 +16,6 @@ from .exceptions import ModelRetry, UnexpectedModelBehavior
 __all__ = (
     'AgentDeps',
     'RunContext',
-    'ResultValidatorFunc',
     'SystemPromptFunc',
     'ToolFuncContext',
     'ToolFuncPlain',
@@ -71,21 +70,6 @@ SystemPromptFunc = Union[
 """A function that may or maybe not take `RunContext` as an argument, and may or may not be async.
 
 Usage `SystemPromptFunc[AgentDeps]`.
-"""
-
-ResultData = TypeVar('ResultData')
-
-ResultValidatorFunc = Union[
-    Callable[[RunContext[AgentDeps], ResultData], ResultData],
-    Callable[[RunContext[AgentDeps], ResultData], Awaitable[ResultData]],
-    Callable[[ResultData], ResultData],
-    Callable[[ResultData], Awaitable[ResultData]],
-]
-"""
-A function that always takes `ResultData` and returns `ResultData`,
-but may or maybe not take `CallInfo` as a first argument, and may or may not be async.
-
-Usage `ResultValidator[AgentDeps, ResultData]`.
 """
 
 ToolFuncContext = Callable[Concatenate[RunContext[AgentDeps], ToolParams], Any]

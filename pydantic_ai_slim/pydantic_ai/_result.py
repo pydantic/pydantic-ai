@@ -12,8 +12,8 @@ from typing_extensions import Self, TypeAliasType, TypedDict
 
 from . import _utils, messages as _messages
 from .exceptions import ModelRetry
-from .result import ResultData
-from .tools import AgentDeps, ResultValidatorFunc, RunContext, ToolDefinition
+from .result import ResultData, ResultValidatorFunc
+from .tools import AgentDeps, RunContext, ToolDefinition
 
 
 @dataclass

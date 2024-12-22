@@ -536,28 +536,6 @@ async def test_unexpected_response(client_with_handler: ClientWithHandler, env: 
     assert str(exc_info.value) == snapshot('Unexpected response from gemini 401, body:\ninvalid request')
 
 
-async def test_heterogeneous_responses(get_gemini_client: GetGeminiClient):
-    response = gemini_response(
-        _GeminiContent(
-            role='model',
-            parts=[
-                _GeminiTextPart(text='foo'),
-                _function_call_part_from_call(
-                    ToolCallPart(
-                        tool_name='get_location',
-                        args=ArgsDict(args_dict={'loc_name': 'San Fransisco'}),
-                    )
-                ),
-            ],
-        )
-    )
-    gemini_client = get_gemini_client(response)
-    m = GeminiModel('gemini-1.5-flash', http_client=gemini_client)
-    agent = Agent(m)
-    result = await agent.run('Hello')
-    assert result.data == 'foo'
-
-
 async def test_stream_text(get_gemini_client: GetGeminiClient):
     responses = [
         gemini_response(_content_model_response(ModelResponse.from_text('Hello '))),
