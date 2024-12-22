@@ -25,11 +25,11 @@
   </a>
 </p>
 
-<div id="ahead-warning"></div>
+<div id="version-warning"></div>
 <script>
-  fetch('/ahead-warning.html').then(r => {
+  fetch('/version-warning.html').then(r => {
     if (r.ok) {
-      r.text().then(text => { document.getElementById('ahead-warning').innerHTML = text })
+      r.text().then(text => { document.getElementById('version-warning').innerHTML = text })
   } else {
       r.text().then(text => { console.error('failed to fetch ahead-warning.html:', {r, text})})
     }
