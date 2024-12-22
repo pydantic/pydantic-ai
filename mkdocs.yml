@@ -57,7 +57,7 @@ extra:
 
 theme:
   name: "material"
-  custom_dir: docs/overrides
+  custom_dir: docs/.overrides
   palette:
     - media: "(prefers-color-scheme)"
       scheme: default
@@ -105,7 +105,7 @@ validation:
   anchors: warn
 
 extra_css:
-  - 'extra/tweaks.css'
+  - "extra/tweaks.css"
 # used for analytics
 extra_javascript:
   - "/flarelytics/client.js"
