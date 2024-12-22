@@ -25,6 +25,13 @@
   </a>
 </p>
 
+<div id="ahead-warning"></div>
+<script>
+  fetch('/ahead-warning.html').then(r => r.text()).then(text => {
+    document.getElementById('ahead-warning').innerHTML = text
+  })
+</script>
+
 <p class="text-emphasis">
   PydanticAI is a Python agent framework designed to make it less painful to
   build production grade applications with Generative AI.
