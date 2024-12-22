@@ -19,7 +19,7 @@ export default {
 }
 
 // env looks like
-// {"ASSETS":{},"CF_PAGES":"1","CF_PAGES_BRANCH":"ahead-warning","CF_PAGES_COMMIT_SHA":"...","CF_PAGES_URL":"https://..."}
+// {"CF_PAGES":"1","CF_PAGES_BRANCH":"ahead-warning","CF_PAGES_COMMIT_SHA":"...","CF_PAGES_URL":"https://..."}
 async function versionWarning(request, env) {
   const headers = new Headers({
     'User-Agent': request.headers.get('User-Agent') || 'pydantic-ai-docs',
@@ -45,8 +45,8 @@ async function versionWarning(request, env) {
     return ''
   }
 
-  return `<div class="admonition note">
-  <p class="admonition-title">Notice</p>
+  return `<div class="admonition info">
+  <p class="admonition-title">Version Notice</p>
   <p>
     ${env.CF_PAGES_BRANCH === 'main' ? '' : `(<b>${env.CF_PAGES_BRANCH}</b> preview)`}
     This documentation is ahead of the latest release by <b>${ahead_by}</b> commit${ahead_by === 1 ? '' : 's'}.
