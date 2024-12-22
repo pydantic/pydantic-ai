@@ -1,5 +1,5 @@
 from .graph import Graph
 from .nodes import BaseNode, End, GraphContext
-from .state import Snapshot
+from .state import AbstractState, Snapshot
 
-__all__ = 'BaseNode', 'End', 'GraphContext', 'Graph', 'Snapshot'
+__all__ = 'BaseNode', 'End', 'GraphContext', 'Graph', 'Snapshot', 'AbstractState'
