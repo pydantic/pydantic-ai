@@ -25,17 +25,6 @@
   </a>
 </p>
 
-<div id="version-warning"></div>
-<script>
-  fetch('/version-warning.html').then(r => {
-    if (r.ok) {
-      r.text().then(text => { document.getElementById('version-warning').innerHTML = text })
-  } else {
-      r.text().then(text => { console.error('failed to fetch ahead-warning.html:', {r, text})})
-    }
-  })
-</script>
-
 <p class="text-emphasis">
   PydanticAI is a Python agent framework designed to make it less painful to
   build production grade applications with Generative AI.

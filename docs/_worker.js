@@ -42,10 +42,7 @@ async function versionWarning(request, env) {
   const {ahead_by} = await r2.json()
 
   if (ahead_by === 0) {
-    return `<div class="admonition note">
-  <p class="admonition-title">Version</p>
-  <p>Showing documentation for the latest release <a href="${html_url}">${name}</a>.</p>
-</div>`
+    return ''
   }
 
   return `<div class="admonition note">
