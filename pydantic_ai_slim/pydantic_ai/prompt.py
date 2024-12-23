@@ -4,7 +4,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Iterable
 from dataclasses import asdict, is_dataclass
 from functools import partial
-from typing import Any, Literal, cast, final
+from typing import Any, Literal, Union, cast, final
 
 from pydantic import BaseModel
 
@@ -17,7 +17,7 @@ __all__ = (
 )
 
 Dialect = Literal['xml']
-BasicType = str | int | float | bool
+BasicType = Union[str, int, float, bool]
 
 
 def format_tag(content: Any, tag: str, dialect: Dialect = 'xml') -> str:
