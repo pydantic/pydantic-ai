@@ -4,8 +4,15 @@ from datetime import timezone
 import pytest
 from inline_snapshot import snapshot
 
-from pydantic_ai import Agent, UsageLimitExceeded
-from pydantic_ai.messages import ArgsDict, ModelRequest, ModelResponse, ToolCallPart, ToolReturnPart, UserPromptPart
+from pydantic_ai import Agent, RunContext, UsageLimitExceeded
+from pydantic_ai.messages import (
+    ArgsDict,
+    ModelRequest,
+    ModelResponse,
+    ToolCallPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.result import Usage
 from pydantic_ai.settings import UsageLimits
@@ -97,3 +104,32 @@ async def test_streamed_text_limits() -> None:
             UsageLimitExceeded, match=re.escape('Exceeded the response_tokens_limit of 10 (response_tokens=11)')
         ):
             await result.get_data()
+
+
+def test_usage_so_far(set_event_loop: None) -> None:
+    test_agent = Agent(TestModel())
+
+    with pytest.raises(
+        UsageLimitExceeded, match=re.escape('Exceeded the total_tokens_limit of 105 (total_tokens=163)')
+    ):
+        test_agent.run_sync(
+            'Hello, this prompt exceeds the request tokens limit.',
+            usage_limits=UsageLimits(total_tokens_limit=105),
+            usage=Usage(total_tokens=100),
+        )
+
+
+async def test_multi_agent_usage():
+    controller_agent = Agent(TestModel())
+
+    delegate_agent = Agent(TestModel(), result_type=int)
+
+    @controller_agent.tool
+    async def delegate_to_other_agent(ctx: RunContext[None], sentence: str) -> int:
+        delegate_result = await delegate_agent.run(sentence, usage=ctx.usage)
+        ctx.usage += delegate_result.usage()
+        return delegate_result.data
+
+    result = await controller_agent.run('foobar')
+    assert result.data == snapshot('{"delegate_to_other_agent":0}')
+    assert result.usage().requests == 3

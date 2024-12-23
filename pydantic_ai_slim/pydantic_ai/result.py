@@ -136,8 +136,6 @@ class RunResult(_BaseRunResult[ResultData]):
 class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultData]):
     """Result of a streamed run that returns structured data via a tool call."""
 
-    usage_so_far: Usage
-    """Usage of the run up until the last request."""
     _usage_limits: UsageLimits | None
     _stream_response: models.EitherStreamedResponse
     _result_schema: _result.ResultSchema[ResultData] | None
@@ -306,7 +304,7 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
         !!! note
             This won't return the full usage until the stream is finished.
         """
-        return self.usage_so_far + self._stream_response.usage()
+        return self._run_ctx.usage + self._stream_response.usage()
 
     def timestamp(self) -> datetime:
         """Get the timestamp of the response."""

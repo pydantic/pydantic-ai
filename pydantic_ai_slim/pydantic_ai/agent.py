@@ -184,6 +184,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         deps: AgentDeps = None,
         model_settings: ModelSettings | None = None,
         usage_limits: UsageLimits | None = None,
+        usage: result.Usage | None = None,
         infer_name: bool = True,
     ) -> result.RunResult[ResultData]:
         """Run the agent with a user prompt in async mode.
@@ -206,6 +207,7 @@ class Agent(Generic[AgentDeps, ResultData]):
             deps: Optional dependencies to use for this run.
             model_settings: Optional settings to use for this model's request.
             usage_limits: Optional limits on model request count or token usage.
+            usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
 
         Returns:
@@ -226,20 +228,19 @@ class Agent(Generic[AgentDeps, ResultData]):
             model_name=model_used.name(),
             agent_name=self.name or 'agent',
         ) as run_span:
-            run_context = RunContext(deps, 0, [], None, model_used)
+            run_context = RunContext(deps, 0, [], None, model_used, usage or result.Usage())
             messages = await self._prepare_messages(user_prompt, message_history, run_context)
             run_context.messages = messages
 
             for tool in self._function_tools.values():
                 tool.current_retry = 0
 
-            usage = result.Usage(requests=0)
             model_settings = merge_model_settings(self.model_settings, model_settings)
             usage_limits = usage_limits or UsageLimits()
 
             run_step = 0
             while True:
-                usage_limits.check_before_request(usage)
+                usage_limits.check_before_request(run_context.usage)
 
                 run_step += 1
                 with _logfire.span('preparing model and tools {run_step=}', run_step=run_step):
@@ -251,9 +252,9 @@ class Agent(Generic[AgentDeps, ResultData]):
                     model_req_span.set_attribute('usage', request_usage)
 
                 messages.append(model_response)
-                usage += request_usage
-                usage.requests += 1
-                usage_limits.check_tokens(request_usage)
+                run_context.usage += request_usage
+                run_context.usage.requests += 1
+                usage_limits.check_tokens(run_context.usage)
 
                 with _logfire.span('handle model response', run_step=run_step) as handle_span:
                     final_result, tool_responses = await self._handle_model_response(model_response, run_context)
@@ -266,10 +267,10 @@ class Agent(Generic[AgentDeps, ResultData]):
                     if final_result is not None:
                         result_data = final_result.data
                         run_span.set_attribute('all_messages', messages)
-                        run_span.set_attribute('usage', usage)
+                        run_span.set_attribute('usage', run_context.usage)
                         handle_span.set_attribute('result', result_data)
                         handle_span.message = 'handle model response -> final result'
-                        return result.RunResult(messages, new_message_index, result_data, usage)
+                        return result.RunResult(messages, new_message_index, result_data, run_context.usage)
                     else:
                         # continue the conversation
                         handle_span.set_attribute('tool_responses', tool_responses)
@@ -285,6 +286,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         deps: AgentDeps = None,
         model_settings: ModelSettings | None = None,
         usage_limits: UsageLimits | None = None,
+        usage: result.Usage | None = None,
         infer_name: bool = True,
     ) -> result.RunResult[ResultData]:
         """Run the agent with a user prompt synchronously.
@@ -311,6 +313,7 @@ class Agent(Generic[AgentDeps, ResultData]):
             deps: Optional dependencies to use for this run.
             model_settings: Optional settings to use for this model's request.
             usage_limits: Optional limits on model request count or token usage.
+            usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
 
         Returns:
@@ -326,6 +329,7 @@ class Agent(Generic[AgentDeps, ResultData]):
                 deps=deps,
                 model_settings=model_settings,
                 usage_limits=usage_limits,
+                usage=usage,
                 infer_name=False,
             )
         )
@@ -340,6 +344,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         deps: AgentDeps = None,
         model_settings: ModelSettings | None = None,
         usage_limits: UsageLimits | None = None,
+        usage: result.Usage | None = None,
         infer_name: bool = True,
     ) -> AsyncIterator[result.StreamedRunResult[AgentDeps, ResultData]]:
         """Run the agent with a user prompt in async mode, returning a streamed response.
@@ -363,6 +368,7 @@ class Agent(Generic[AgentDeps, ResultData]):
             deps: Optional dependencies to use for this run.
             model_settings: Optional settings to use for this model's request.
             usage_limits: Optional limits on model request count or token usage.
+            usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
 
         Returns:
@@ -385,28 +391,27 @@ class Agent(Generic[AgentDeps, ResultData]):
             model_name=model_used.name(),
             agent_name=self.name or 'agent',
         ) as run_span:
-            run_context = RunContext(deps, 0, [], None, model_used)
+            run_context = RunContext(deps, 0, [], None, model_used, usage or result.Usage())
             messages = await self._prepare_messages(user_prompt, message_history, run_context)
             run_context.messages = messages
 
             for tool in self._function_tools.values():
                 tool.current_retry = 0
 
-            usage = result.Usage()
             model_settings = merge_model_settings(self.model_settings, model_settings)
             usage_limits = usage_limits or UsageLimits()
 
             run_step = 0
             while True:
                 run_step += 1
-                usage_limits.check_before_request(usage)
+                usage_limits.check_before_request(run_context.usage)
 
                 with _logfire.span('preparing model and tools {run_step=}', run_step=run_step):
                     agent_model = await self._prepare_model(run_context)
 
                 with _logfire.span('model request {run_step=}', run_step=run_step) as model_req_span:
                     async with agent_model.request_stream(messages, model_settings) as model_response:
-                        usage.requests += 1
+                        run_context.usage.requests += 1
                         model_req_span.set_attribute('response_type', model_response.__class__.__name__)
                         # We want to end the "model request" span here, but we can't exit the context manager
                         # in the traditional way
@@ -442,7 +447,6 @@ class Agent(Generic[AgentDeps, ResultData]):
                                 yield result.StreamedRunResult(
                                     messages,
                                     new_message_index,
-                                    usage,
                                     usage_limits,
                                     result_stream,
                                     self._result_schema,
@@ -466,8 +470,8 @@ class Agent(Generic[AgentDeps, ResultData]):
                                 handle_span.message = f'handle model response -> {tool_responses_str}'
                                 # the model_response should have been fully streamed by now, we can add its usage
                                 model_response_usage = model_response.usage()
-                                usage += model_response_usage
-                                usage_limits.check_tokens(usage)
+                                run_context.usage += model_response_usage
+                                usage_limits.check_tokens(run_context.usage)
 
     @contextmanager
     def override(
