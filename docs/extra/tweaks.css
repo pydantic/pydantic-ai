@@ -50,3 +50,8 @@ img.index-header {
   font-weight: 300;
   font-style: italic;
 }
+
+#version-warning {
+  min-height: 120px;
+  margin-bottom: 10px;
+}
