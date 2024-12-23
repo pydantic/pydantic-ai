@@ -1,6 +1,10 @@
+from __future__ import annotations as _annotations
+
 import sys
 import types
-from typing import Any, TypeAliasType, Union, get_args, get_origin
+from typing import Any, Union, get_args, get_origin
+
+from typing_extensions import TypeAliasType
 
 
 def get_union_args(tp: Any) -> tuple[Any, ...]:
