@@ -5,12 +5,13 @@ import dataclasses
 import inspect
 from collections.abc import AsyncIterator, Awaitable, Iterator, Sequence
 from contextlib import asynccontextmanager, contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from types import FrameType
 from typing import Any, Callable, Generic, Literal, cast, final, overload
 
 import logfire_api
-from typing_extensions import assert_never
+from typing_extensions import assert_never, deprecated
 
 from . import (
     _result,
@@ -35,7 +36,7 @@ from .tools import (
     ToolPrepareFunc,
 )
 
-__all__ = ('Agent',)
+__all__ = 'Agent', 'capture_run_messages', 'EndStrategy'
 
 _logfire = logfire_api.Logfire(otel_scope='pydantic-ai')
 
@@ -87,12 +88,6 @@ class Agent(Generic[AgentDeps, ResultData]):
 
     Note, if `model_settings` is provided by `run`, `run_sync`, or `run_stream`, those settings will
     be merged with this value, with the runtime argument taking priority.
-    """
-
-    last_run_messages: list[_messages.ModelMessage] | None
-    """The messages from the last run, useful when a run raised an exception.
-
-    Note: these are not used by the agent, e.g. in future runs, they are just stored for developers' convenience.
     """
 
     _result_schema: _result.ResultSchema[ResultData] | None = field(repr=False)
@@ -161,7 +156,6 @@ class Agent(Generic[AgentDeps, ResultData]):
         self.end_strategy = end_strategy
         self.name = name
         self.model_settings = model_settings
-        self.last_run_messages = None
         self._result_schema = _result.ResultSchema[result_type].build(
             result_type, result_tool_name, result_tool_description
         )
@@ -234,7 +228,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         ) as run_span:
             run_context = RunContext(deps, 0, [], None, model_used)
             messages = await self._prepare_messages(user_prompt, message_history, run_context)
-            self.last_run_messages = run_context.messages = messages
+            run_context.messages = messages
 
             for tool in self._function_tools.values():
                 tool.current_retry = 0
@@ -393,7 +387,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         ) as run_span:
             run_context = RunContext(deps, 0, [], None, model_used)
             messages = await self._prepare_messages(user_prompt, message_history, run_context)
-            self.last_run_messages = run_context.messages = messages
+            run_context.messages = messages
 
             for tool in self._function_tools.values():
                 tool.current_retry = 0
@@ -614,7 +608,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         #> success (no tool calls)
         ```
         """
-        self._result_validators.append(_result.ResultValidator(func))
+        self._result_validators.append(_result.ResultValidator[AgentDeps, Any](func))
         return func
 
     @overload
@@ -835,14 +829,25 @@ class Agent(Generic[AgentDeps, ResultData]):
     async def _prepare_messages(
         self, user_prompt: str, message_history: list[_messages.ModelMessage] | None, run_context: RunContext[AgentDeps]
     ) -> list[_messages.ModelMessage]:
+        try:
+            messages = _messages_ctx_var.get()
+        except LookupError:
+            messages = []
+        else:
+            if messages:
+                raise exceptions.UserError(
+                    'The capture_run_messages() context manager may only be used to wrap '
+                    'one call to run(), run_sync(), or run_stream().'
+                )
+
         if message_history:
             # shallow copy messages
-            messages = message_history.copy()
+            messages.extend(message_history)
             messages.append(_messages.ModelRequest([_messages.UserPromptPart(user_prompt)]))
         else:
             parts = await self._sys_parts(run_context)
             parts.append(_messages.UserPromptPart(user_prompt))
-            messages: list[_messages.ModelMessage] = [_messages.ModelRequest(parts)]
+            messages.append(_messages.ModelRequest(parts))
 
         return messages
 
@@ -1118,6 +1123,51 @@ class Agent(Generic[AgentDeps, ResultData]):
                         if item is self:
                             self.name = name
                             return
+
+    @property
+    @deprecated(
+        'The `last_run_messages` attribute has been removed, use `capture_run_messages` instead.', category=None
+    )
+    def last_run_messages(self) -> list[_messages.ModelMessage]:
+        raise AttributeError('The `last_run_messages` attribute has been removed, use `capture_run_messages` instead.')
+
+
+_messages_ctx_var: ContextVar[list[_messages.ModelMessage]] = ContextVar('var')
+
+
+@contextmanager
+def capture_run_messages() -> Iterator[list[_messages.ModelMessage]]:
+    """Context manager to access the messages used in a [`run`][pydantic_ai.Agent.run], [`run_sync`][pydantic_ai.Agent.run_sync], or [`run_stream`][pydantic_ai.Agent.run_stream] call.
+
+    Useful when a run may raise an exception, see [model errors](../agents.md#model-errors) for more information.
+
+    Examples:
+    ```python
+    from pydantic_ai import Agent, capture_run_messages
+
+    agent = Agent('test')
+
+    with capture_run_messages() as messages:
+        try:
+            result = agent.run_sync('foobar')
+        except Exception:
+            print(messages)
+            raise
+    ```
+
+    !!! note
+        You may not call `run`, `run_sync`, or `run_stream` more than once within a single `capture_run_messages` context.
+        If you try to do so, a [`UserError`][pydantic_ai.exceptions.UserError] will be raised.
+    """
+    try:
+        yield _messages_ctx_var.get()
+    except LookupError:
+        messages: list[_messages.ModelMessage] = []
+        token = _messages_ctx_var.set(messages)
+        try:
+            yield messages
+        finally:
+            _messages_ctx_var.reset(token)
 
 
 @dataclass

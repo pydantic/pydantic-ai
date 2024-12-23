@@ -408,10 +408,10 @@ user_id=123 message='Hello John, would you be free for coffee sometime next week
 
 If models behave unexpectedly (e.g., the retry limit is exceeded, or their API returns `503`), agent runs will raise [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior].
 
-In these cases, [`agent.last_run_messages`][pydantic_ai.Agent.last_run_messages] can be used to access the messages exchanged during the run to help diagnose the issue.
+In these cases, [`capture_run_messages`][pydantic_ai.capture_run_messages] can be used to access the messages exchanged during the run to help diagnose the issue.
 
 ```python
-from pydantic_ai import Agent, ModelRetry, UnexpectedModelBehavior
+from pydantic_ai import Agent, ModelRetry, UnexpectedModelBehavior, capture_run_messages
 
 agent = Agent('openai:gpt-4o')
 
@@ -424,68 +424,76 @@ def calc_volume(size: int) -> int:  # (1)!
         raise ModelRetry('Please try again.')
 
 
-try:
-    result = agent.run_sync('Please get me the volume of a box with size 6.')
-except UnexpectedModelBehavior as e:
-    print('An error occurred:', e)
-    #> An error occurred: Tool exceeded max retries count of 1
-    print('cause:', repr(e.__cause__))
-    #> cause: ModelRetry('Please try again.')
-    print('messages:', agent.last_run_messages)
-    """
-    messages:
-    [
-        ModelRequest(
-            parts=[
-                UserPromptPart(
-                    content='Please get me the volume of a box with size 6.',
-                    timestamp=datetime.datetime(...),
-                    part_kind='user-prompt',
-                )
-            ],
-            kind='request',
-        ),
-        ModelResponse(
-            parts=[
-                ToolCallPart(
-                    tool_name='calc_volume',
-                    args=ArgsDict(args_dict={'size': 6}),
-                    tool_call_id=None,
-                    part_kind='tool-call',
-                )
-            ],
-            timestamp=datetime.datetime(...),
-            kind='response',
-        ),
-        ModelRequest(
-            parts=[
-                RetryPromptPart(
-                    content='Please try again.',
-                    tool_name='calc_volume',
-                    tool_call_id=None,
-                    timestamp=datetime.datetime(...),
-                    part_kind='retry-prompt',
-                )
-            ],
-            kind='request',
-        ),
-        ModelResponse(
-            parts=[
-                ToolCallPart(
-                    tool_name='calc_volume',
-                    args=ArgsDict(args_dict={'size': 6}),
-                    tool_call_id=None,
-                    part_kind='tool-call',
-                )
-            ],
-            timestamp=datetime.datetime(...),
-            kind='response',
-        ),
-    ]
-    """
-else:
-    print(result.data)
+with capture_run_messages() as messages:  # (2)!
+    try:
+        result = agent.run_sync('Please get me the volume of a box with size 6.')
+    except UnexpectedModelBehavior as e:
+        print('An error occurred:', e)
+        #> An error occurred: Tool exceeded max retries count of 1
+        print('cause:', repr(e.__cause__))
+        #> cause: ModelRetry('Please try again.')
+        print('messages:', messages)
+        """
+        messages:
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Please get me the volume of a box with size 6.',
+                        timestamp=datetime.datetime(...),
+                        part_kind='user-prompt',
+                    )
+                ],
+                kind='request',
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='calc_volume',
+                        args=ArgsDict(args_dict={'size': 6}),
+                        tool_call_id=None,
+                        part_kind='tool-call',
+                    )
+                ],
+                timestamp=datetime.datetime(...),
+                kind='response',
+            ),
+            ModelRequest(
+                parts=[
+                    RetryPromptPart(
+                        content='Please try again.',
+                        tool_name='calc_volume',
+                        tool_call_id=None,
+                        timestamp=datetime.datetime(...),
+                        part_kind='retry-prompt',
+                    )
+                ],
+                kind='request',
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='calc_volume',
+                        args=ArgsDict(args_dict={'size': 6}),
+                        tool_call_id=None,
+                        part_kind='tool-call',
+                    )
+                ],
+                timestamp=datetime.datetime(...),
+                kind='response',
+            ),
+        ]
+        """
+    else:
+        print(result.data)
 ```
+
 1. Define a tool that will raise `ModelRetry` repeatedly in this case.
+2. [`capture_run_messages`][pydantic_ai.capture_run_messages] is used to capture the messages exchanged during the run.
 
 _(This example is complete, it can be run "as is")_
+
+!!! note
+    You may not call [`run`][pydantic_ai.Agent.run], [`run_sync`][pydantic_ai.Agent.run_sync], or [`run_stream`][pydantic_ai.Agent.run_stream] more than once within a single `capture_run_messages` context.
+
+    If you try to do so, a [`UserError`][pydantic_ai.exceptions.UserError] will be raised.
