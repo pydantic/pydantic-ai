@@ -1191,10 +1191,31 @@ def test_last_run_messages() -> None:
         agent.last_run_messages  # pyright: ignore[reportDeprecated]
 
 
+def test_nested_capture_run_messages(set_event_loop: None) -> None:
+    agent = Agent('test')
+
+    with capture_run_messages() as messages1:
+        assert messages1 == []
+        with capture_run_messages() as messages2:
+            assert messages2 == []
+            assert messages1 is messages2
+            result = agent.run_sync('Hello')
+            assert result.data == 'success (no tool calls)'
+
+    assert messages1 == snapshot(
+        [
+            ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
+            ModelResponse(parts=[TextPart(content='success (no tool calls)')], timestamp=IsNow(tz=timezone.utc)),
+        ]
+    )
+    assert messages1 == messages2
+
+
 def test_double_capture_run_messages(set_event_loop: None) -> None:
     agent = Agent('test')
 
     with capture_run_messages() as messages:
+        assert messages == []
         result = agent.run_sync('Hello')
         assert result.data == 'success (no tool calls)'
         with pytest.raises(UserError) as exc_info:

@@ -1159,12 +1159,15 @@ def capture_run_messages() -> Iterator[list[_messages.ModelMessage]]:
         You may not call `run`, `run_sync`, or `run_stream` more than once within a single `capture_run_messages` context.
         If you try to do so, a [`UserError`][pydantic_ai.exceptions.UserError] will be raised.
     """
-    messages: list[_messages.ModelMessage] = []
-    token = _messages_ctx_var.set(messages)
     try:
-        yield messages
-    finally:
-        _messages_ctx_var.reset(token)
+        yield _messages_ctx_var.get()
+    except LookupError:
+        messages: list[_messages.ModelMessage] = []
+        token = _messages_ctx_var.set(messages)
+        try:
+            yield messages
+        finally:
+            _messages_ctx_var.reset(token)
 
 
 @dataclass
