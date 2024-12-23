@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 from datetime import timezone
+from typing import Union
 
 import pytest
 from inline_snapshot import snapshot
@@ -22,7 +23,7 @@ async def test_graph():
             return Double(len(self.input_data))
 
     class Double(BaseNode[None, int, int]):
-        async def run(self, ctx: GraphContext) -> String2Length | End[int]:
+        async def run(self, ctx: GraphContext) -> Union[String2Length, End[int]]:  # noqa: UP007
             if self.input_data == 7:
                 return String2Length('x' * 21)
             else:
