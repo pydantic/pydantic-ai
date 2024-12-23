@@ -70,21 +70,16 @@ format_context = partial(format_tag, tag='context')
 
 
 def _normalize_type(content: Any) -> dict[str, Any] | list[Any] | BasicType:
-    match content:
-        case BaseModel():
-            return content.model_dump()
-
-        case _ if is_dataclass(content):
-            return asdict(cast(Any, content))
-
-        case _ if isinstance(content, Iterable) and not isinstance(content, (str, dict)):
-            return list(cast(Iterable[Any], content))
-
-        case str() | int() | float() | bool() | dict():
-            return cast(BasicType | dict[str, Any], content)
-
-        case _:
-            raise TypeError(f'Unsupported content type: {type(content)}')
+    if isinstance(content, BaseModel):
+        return content.model_dump()
+    elif is_dataclass(content):
+        return asdict(cast(Any, content))
+    elif isinstance(content, Iterable) and not isinstance(content, (str, dict)):
+        return list(cast(Iterable[Any], content))
+    elif isinstance(content, (str, int, float, bool, dict)):
+        return cast(BasicType | dict[str, Any], content)
+    else:
+        raise TypeError(f'Unsupported content type: {type(content)}')
 
 
 class TagBuilder(ABC):
@@ -120,19 +115,15 @@ class TagBuilder(ABC):
         root: dict[str, Any] = {}
         normalized = _normalize_type(content)
 
-        match normalized:
-            case dict():
-                root[tag] = {}
-
-                for key, value in normalized.items():
-                    root[tag][key] = self._format_content(key, value)[key]
-
-            case list():
-                assert isinstance(normalized, list)
-                root[tag] = [self._format_content(tag, item)[tag] for item in normalized]
-
-            case _:
-                root[tag] = normalized
+        if isinstance(normalized, dict):
+            root[tag] = {}
+            for key, value in normalized.items():
+                root[tag][key] = self._format_content(key, value)[key]
+        elif isinstance(normalized, list):
+            assert isinstance(normalized, list)
+            root[tag] = [self._format_content(tag, item)[tag] for item in normalized]
+        else:
+            root[tag] = normalized
 
         return root
 
@@ -165,36 +156,29 @@ class XMLTagBuilder(TagBuilder):
         result: list[str] = []
 
         for tag, value in content.items():
-            match value:
-                case dict():
-                    nested_content = ''
+            if isinstance(value, dict):
+                nested_content = ''
 
-                    for k, v in cast(dict[str, Any], value).items():
-                        nested_content += self._build_element({k: v})
+                for k, v in cast(dict[str, Any], value).items():
+                    nested_content += self._build_element({k: v})
 
-                    result.append(f'<{tag}>{nested_content}</{tag}>')
-
-                case list():
-                    nested_content = ''.join(
-                        f'<{tag}>{self._format_value(item)}</{tag}>' for item in cast(list[str], value)
-                    )
-                    result.append(nested_content)
-
-                case _:
-                    result.append(f'<{tag}>{self._format_value(value)}</{tag}>')
+                result.append(f'<{tag}>{nested_content}</{tag}>')
+            elif isinstance(value, list):
+                nested_content = ''.join(
+                    f'<{tag}>{self._format_value(item)}</{tag}>' for item in cast(list[str], value)
+                )
+                result.append(nested_content)
+            else:
+                result.append(f'<{tag}>{self._format_value(value)}</{tag}>')
 
         return ''.join(result)
 
     def _format_value(self, value: Any) -> str:
-        match value:
-            case bool():
-                return str(value).lower()
-
-            case dict():
-                return self._build_element(cast(dict[str, Any], value))
-
-            case list():
-                return ''.join(f'{self._format_value(item)}' for item in cast(list[Any], value))
-
-            case _:
-                return str(value)
+        if isinstance(value, bool):
+            return str(value).lower()
+        elif isinstance(value, dict):
+            return self._build_element(cast(dict[str, Any], value))
+        elif isinstance(value, list):
+            return ''.join(f'{self._format_value(item)}' for item in cast(list[Any], value))
+        else:
+            return str(value)
