@@ -10,6 +10,7 @@ resolution-markers = [
 members = [
     "pydantic-ai",
     "pydantic-ai-examples",
+    "pydantic-ai-graph",
     "pydantic-ai-slim",
 ]
 
@@ -1574,7 +1575,7 @@ name = "pydantic-ai"
 version = "0.0.14"
 source = { editable = "." }
 dependencies = [
-    { name = "pydantic-ai-slim", extra = ["anthropic", "groq", "mistral", "openai", "vertexai"] },
+    { name = "pydantic-ai-slim", extra = ["anthropic", "graph", "groq", "mistral", "openai", "vertexai"] },
 ]
 
 [package.optional-dependencies]
@@ -1603,7 +1604,7 @@ lint = [
 requires-dist = [
     { name = "logfire", marker = "extra == 'logfire'", specifier = ">=2.3" },
     { name = "pydantic-ai-examples", marker = "extra == 'examples'", editable = "examples" },
-    { name = "pydantic-ai-slim", extras = ["openai", "vertexai", "groq", "anthropic", "mistral"], editable = "pydantic_ai_slim" },
+    { name = "pydantic-ai-slim", extras = ["graph", "openai", "vertexai", "groq", "anthropic", "mistral"], editable = "pydantic_ai_slim" },
 ]
 
 [package.metadata.requires-dev]
@@ -1646,6 +1647,23 @@ requires-dist = [
 ]
 
 [[package]]
+name = "pydantic-ai-graph"
+version = "0.0.14"
+source = { editable = "pydantic_ai_graph" }
+dependencies = [
+    { name = "httpx" },
+    { name = "logfire-api" },
+    { name = "pydantic" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "httpx", specifier = ">=0.27.2" },
+    { name = "logfire-api", specifier = ">=1.2.0" },
+    { name = "pydantic", specifier = ">=2.10" },
+]
+
+[[package]]
 name = "pydantic-ai-slim"
 version = "0.0.14"
 source = { editable = "pydantic_ai_slim" }
@@ -1660,6 +1678,9 @@ dependencies = [
 [package.optional-dependencies]
 anthropic = [
     { name = "anthropic" },
+]
+graph = [
+    { name = "pydantic-ai-graph" },
 ]
 groq = [
     { name = "groq" },
@@ -1704,6 +1725,7 @@ requires-dist = [
     { name = "mistralai", marker = "extra == 'mistral'", specifier = ">=1.2.5" },
     { name = "openai", marker = "extra == 'openai'", specifier = ">=1.54.3" },
     { name = "pydantic", specifier = ">=2.10" },
+    { name = "pydantic-ai-graph", marker = "extra == 'graph'", editable = "pydantic_ai_graph" },
     { name = "requests", marker = "extra == 'vertexai'", specifier = ">=2.32.3" },
 ]
 

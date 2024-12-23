@@ -34,7 +34,7 @@ typecheck-pyright:
 
 .PHONY: typecheck-mypy
 typecheck-mypy:
-	uv run mypy --strict tests/typed_agent.py
+	uv run mypy
 
 .PHONY: typecheck
 typecheck: typecheck-pyright ## Run static type checking
