@@ -5,9 +5,9 @@ import os
 
 import gradio as gr
 from httpx import AsyncClient
-from pydantic_ai_examples.weather_agent import Deps, weather_agent
 
-from pydantic_ai.messages import ModelStructuredResponse, ModelTextResponse, ToolReturn
+from pydantic_ai.messages import ToolCallPart, ToolReturnPart
+from pydantic_ai_examples.weather_agent import Deps, weather_agent
 
 TOOL_TO_DISPLAY_NAME = {'get_lat_lng': 'Geocoding API', 'get_weather': 'Weather API'}
 
@@ -25,32 +25,38 @@ async def stream_from_agent(prompt: str, chatbot: list[dict], past_messages: lis
         prompt, deps=deps, message_history=past_messages
     ) as result:
         for message in result.new_messages():
-            past_messages.append(message)
-            if isinstance(message, ModelStructuredResponse):
-                for call in message.calls:
+            for call in message.parts:
+                if isinstance(call, ToolCallPart):
+                    call_args = (
+                        call.args.args_json
+                        if hasattr(call.args, 'args_json')
+                        else json.dumps(call.args.args_dict)
+                    )
                     gr_message = {
                         'role': 'assistant',
-                        'content': '',
+                        'content': 'Parameters: ' + call_args,
                         'metadata': {
                             'title': f'🛠️ Using {TOOL_TO_DISPLAY_NAME[call.tool_name]}',
                             'id': call.tool_call_id,
                         },
                     }
                     chatbot.append(gr_message)
-            if isinstance(message, ToolReturn):
-                for gr_message in chatbot:
-                    if (
-                        gr_message.get('metadata', {}).get('id', '')
-                        == message.tool_call_id
-                    ):
-                        gr_message['content'] = f'Output: {json.dumps(message.content)}'
-            yield gr.skip(), chatbot, gr.skip()
+                if isinstance(call, ToolReturnPart):
+                    for gr_message in chatbot:
+                        if (
+                            gr_message.get('metadata', {}).get('id', '')
+                            == call.tool_call_id
+                        ):
+                            gr_message['content'] += (
+                                f'\nOutput: {json.dumps(call.content)}'
+                            )
+                yield gr.skip(), chatbot, gr.skip()
         chatbot.append({'role': 'assistant', 'content': ''})
         async for message in result.stream_text():
             chatbot[-1]['content'] = message
             yield gr.skip(), chatbot, gr.skip()
-        data = await result.get_data()
-        past_messages.append(ModelTextResponse(content=data))
+        past_messages = result.all_messages()
+
         yield gr.Textbox(interactive=True), gr.skip(), past_messages
 
 
