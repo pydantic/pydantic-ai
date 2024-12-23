@@ -4,7 +4,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Iterable
 from dataclasses import asdict, is_dataclass
 from functools import partial
-from typing import Any, Literal, cast, final, override
+from typing import Any, Literal, cast, final
 
 from pydantic import BaseModel
 
@@ -158,7 +158,6 @@ class XMLTagBuilder(TagBuilder):
         '<nested><user><details><active>true</active></details></user></nested>'
     """
 
-    @override
     def build(self) -> str:
         return self._build_element(self._content)
 

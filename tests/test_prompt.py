@@ -1,7 +1,7 @@
 import json
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
-from typing import Any, final, override
+from typing import Any, final
 
 import pytest
 from pydantic import BaseModel
@@ -11,7 +11,6 @@ from pydantic_ai.prompt import TagBuilder, XMLTagBuilder, format_context, format
 
 @final
 class DummyTagBuilder(TagBuilder):
-    @override
     def build(self) -> str:
         return json.dumps(self._content)
 
