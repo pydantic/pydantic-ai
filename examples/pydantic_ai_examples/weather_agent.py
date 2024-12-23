@@ -35,6 +35,8 @@ class Deps:
 
 weather_agent = Agent(
     'openai:gpt-4o',
+    # 'Be concise, reply with one sentence.' is enough for some models (like openai) to use
+    # the below tools appropriately, but others like anthropic and gemini require a bit more direction.
     system_prompt=(
         'Be concise, reply with one sentence.'
         'Use the `get_lat_lng` tool to get the latitude and longitude of the locations, '

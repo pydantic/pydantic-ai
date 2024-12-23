@@ -59,7 +59,7 @@ def replace_deps_version(text: str) -> tuple[str, int]:
 
 root_pp_text, count_root = replace_deps_version(root_pp_text)
 
-examples_pp = ROOT_DIR / 'pydantic_ai_examples' / 'pyproject.toml'
+examples_pp = ROOT_DIR / 'examples' / 'pyproject.toml'
 examples_pp_text = examples_pp.read_text()
 examples_pp_text, count_ex = replace_deps_version(examples_pp_text)
 
