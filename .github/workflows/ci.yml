@@ -129,8 +129,8 @@ jobs:
 
       - run: mkdir coverage
 
-      # run tests with just `pydantic-ai-slim` dependencies
-      - run: uv run --package pydantic-ai-slim coverage run -m pytest
+      # run tests with just `pydantic-ai-slim` and `pydantic-ai-graph` dependencies
+      - run: uv run --package pydantic-ai-slim --package pydantic-ai-graph coverage run -m pytest
         env:
           COVERAGE_FILE: coverage/.coverage.${{ runner.os }}-py${{ matrix.python-version }}-slim
 

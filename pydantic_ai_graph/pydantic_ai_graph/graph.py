@@ -79,7 +79,7 @@ class Graph(Generic[StateT, GraphInputT, GraphOutputT]):
                 if isinstance(next_node, End):
                     if current_node_def.can_end:
                         run_history.append(
-                            Snapshot.from_state(current_node_def.node_id, None, start_ts, duration, ctx.state)
+                            Snapshot.from_state(current_node_def.node_id, 'END', start_ts, duration, ctx.state)
                         )
                         run_span.set_attribute('history', run_history)
                         return next_node.data, run_history

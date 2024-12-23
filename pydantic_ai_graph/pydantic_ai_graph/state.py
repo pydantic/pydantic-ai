@@ -27,14 +27,14 @@ class Snapshot:
     """Snapshot of a graph."""
 
     last_node_id: str
-    next_node_id: str | None
+    next_node_id: str
     start_ts: datetime
     duration: float
     state: bytes | None = None
 
     @classmethod
     def from_state(
-        cls, last_node_id: str, next_node_id: str | None, start_ts: datetime, duration: float, state: StateT
+        cls, last_node_id: str, next_node_id: str, start_ts: datetime, duration: float, state: StateT
     ) -> Snapshot:
         return cls(
             last_node_id=last_node_id,
@@ -43,3 +43,9 @@ class Snapshot:
             duration=duration,
             state=state.serialize() if state is not None else None,
         )
+
+    def summary(self) -> str:
+        s = f'{self.last_node_id} -> {self.next_node_id}'
+        if self.duration > 1e-5:
+            s += f' ({self.duration:.6f}s)'
+        return s
