@@ -52,7 +52,7 @@ async def test_graph():
             ),
             Snapshot(
                 last_node_id='Double',
-                next_node_id=None,
+                next_node_id='END',
                 start_ts=IsNow(tz=timezone.utc),
                 duration=IsFloat(gt=0, lt=1e-5),
             ),
@@ -89,7 +89,7 @@ async def test_graph():
             ),
             Snapshot(
                 last_node_id='Double',
-                next_node_id=None,
+                next_node_id='END',
                 start_ts=IsNow(tz=timezone.utc),
                 duration=IsFloat(gt=0, lt=1e-5),
             ),

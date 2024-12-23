@@ -37,7 +37,7 @@ classifiers = [
 ]
 requires-python = ">=3.9"
 
-dependencies = ["pydantic-ai-slim[openai,vertexai,groq,anthropic,mistral]==0.0.18"]
+dependencies = ["pydantic-ai-slim[graph,openai,vertexai,groq,anthropic,mistral]==0.0.18"]
 
 [project.urls]
 Homepage = "https://ai.pydantic.dev"
@@ -51,6 +51,7 @@ logfire = ["logfire>=2.3"]
 
 [tool.uv.sources]
 pydantic-ai-slim = { workspace = true }
+pydantic-ai-graph = { workspace = true }
 pydantic-ai-examples = { workspace = true }
 
 [tool.uv.workspace]

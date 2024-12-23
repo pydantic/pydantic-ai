@@ -42,6 +42,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+graph = ["pydantic-ai-graph==0.0.14"]
 openai = ["openai>=1.54.3"]
 vertexai = ["google-auth>=2.36.0", "requests>=2.32.3"]
 anthropic = ["anthropic>=0.40.0"]
@@ -65,3 +66,6 @@ dev = [
 
 [tool.hatch.build.targets.wheel]
 packages = ["pydantic_ai"]
+
+[tool.uv.sources]
+pydantic-ai-graph = { workspace = true }
