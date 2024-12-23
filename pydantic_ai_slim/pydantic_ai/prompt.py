@@ -77,7 +77,7 @@ def _normalize_type(content: Any) -> dict[str, Any] | list[Any] | BasicType:
     elif isinstance(content, Iterable) and not isinstance(content, (str, dict)):
         return list(cast(Iterable[Any], content))
     elif isinstance(content, (str, int, float, bool, dict)):
-        return cast(BasicType | dict[str, Any], content)
+        return cast(Union[BasicType, dict[str, Any]], content)
     else:
         raise TypeError(f'Unsupported content type: {type(content)}')
 
