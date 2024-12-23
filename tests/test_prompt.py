@@ -1,7 +1,7 @@
-from collections.abc import Iterable
 import json
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import final, override
+from typing import Any, final, override
 
 import pytest
 from pydantic import BaseModel
@@ -84,5 +84,115 @@ class TestSimpleContentFormatting:
             DummyTagBuilder('test', DummyClass())
 
 
-# class TestXMLEncoder:
-#     pass
+class Location(BaseModel):
+    country: str
+    city: str
+
+
+class UserInfo(BaseModel):
+    age: int
+    location: Location
+
+
+class UserContext(BaseModel):
+    user_name: str
+    user_info: UserInfo
+
+
+@dataclass
+class LocationDataclass:
+    country: str
+    city: str
+
+
+@dataclass
+class UserInfoDataclass:
+    age: int
+    location: LocationDataclass
+
+
+@dataclass
+class UserContextDataclass:
+    user_name: str
+    user_info: UserInfoDataclass
+
+
+class TestComplexContentFormatting:
+    @pytest.mark.parametrize(
+        'content',
+        (
+            {
+                'user_name': 'John',
+                'user_info': {
+                    'age': 42,
+                    'location': {
+                        'country': 'UK',
+                        'city': 'London',
+                    },
+                },
+            },
+            UserContext(
+                user_name='John',
+                user_info=UserInfo(age=42, location=Location(country='UK', city='London')),
+            ),
+            UserContextDataclass(
+                user_name='John',
+                user_info=UserInfoDataclass(age=42, location=LocationDataclass(country='UK', city='London')),
+            ),
+        ),
+    )
+    def test_nested_dict(self, content: Any) -> None:
+        builder = DummyTagBuilder('context', content)
+        got = json.loads(builder.build())
+
+        assert got['context']['user_name'] == 'John'
+        assert got['context']['user_info']['age'] == 42
+        assert got['context']['user_info']['location']['country'] == 'UK'
+
+    def test_iterable_with_dict(self) -> None:
+        builder = DummyTagBuilder(
+            'rules',
+            {
+                'general': ['rule #1', 'rule #2'],
+                'specific': [
+                    {'name': 'rule #3', 'description': 'Some description'},
+                    {'name': 'rule #4', 'description': 'Another description'},
+                ],
+            },
+        )
+        got = json.loads(builder.build())
+
+        assert got['rules']['general'][0] == 'rule #1'
+        assert got['rules']['specific'][0]['name'] == 'rule #3'
+
+    @pytest.mark.parametrize(
+        'content',
+        (
+            (
+                UserContext(
+                    user_name='John',
+                    user_info=UserInfo(age=42, location=Location(country='UK', city='London')),
+                ),
+                UserContext(
+                    user_name='Jane',
+                    user_info=UserInfo(age=24, location=Location(country='USA', city='New York')),
+                ),
+            ),
+            [
+                UserContextDataclass(
+                    user_name='John',
+                    user_info=UserInfoDataclass(age=42, location=LocationDataclass(country='UK', city='London')),
+                ),
+                UserContextDataclass(
+                    user_name='Jane',
+                    user_info=UserInfoDataclass(age=24, location=LocationDataclass(country='USA', city='New York')),
+                ),
+            ],
+        ),
+    )
+    def test_iterable_with_models(self, content: Any) -> None:
+        builder = DummyTagBuilder('context', content)
+        got = json.loads(builder.build())
+
+        assert got['context'][0]['user_name'] == 'John'
+        assert got['context'][1]['user_info']['location']['country'] == 'USA'
