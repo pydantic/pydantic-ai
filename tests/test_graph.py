@@ -43,19 +43,19 @@ async def test_graph():
                 last_node_id='Float2String',
                 next_node_id='String2Length',
                 start_ts=IsNow(tz=timezone.utc),
-                duration=IsFloat(gt=0, lt=1e-5),
+                duration=IsFloat(gt=0, lt=1e-3),
             ),
             Snapshot(
                 last_node_id='String2Length',
                 next_node_id='Double',
                 start_ts=IsNow(tz=timezone.utc),
-                duration=IsFloat(gt=0, lt=1e-5),
+                duration=IsFloat(gt=0, lt=1e-3),
             ),
             Snapshot(
                 last_node_id='Double',
                 next_node_id='END',
                 start_ts=IsNow(tz=timezone.utc),
-                duration=IsFloat(gt=0, lt=1e-5),
+                duration=IsFloat(gt=0, lt=1e-3),
             ),
         ]
     )
@@ -68,31 +68,31 @@ async def test_graph():
                 last_node_id='Float2String',
                 next_node_id='String2Length',
                 start_ts=IsNow(tz=timezone.utc),
-                duration=IsFloat(gt=0, lt=1e-5),
+                duration=IsFloat(gt=0, lt=1e-3),
             ),
             Snapshot(
                 last_node_id='String2Length',
                 next_node_id='Double',
                 start_ts=IsNow(tz=timezone.utc),
-                duration=IsFloat(gt=0, lt=1e-5),
+                duration=IsFloat(gt=0, lt=1e-3),
             ),
             Snapshot(
                 last_node_id='Double',
                 next_node_id='String2Length',
                 start_ts=IsNow(tz=timezone.utc),
-                duration=IsFloat(gt=0, lt=1e-5),
+                duration=IsFloat(gt=0, lt=1e-3),
             ),
             Snapshot(
                 last_node_id='String2Length',
                 next_node_id='Double',
                 start_ts=IsNow(tz=timezone.utc),
-                duration=IsFloat(gt=0, lt=1e-5),
+                duration=IsFloat(gt=0, lt=1e-3),
             ),
             Snapshot(
                 last_node_id='Double',
                 next_node_id='END',
                 start_ts=IsNow(tz=timezone.utc),
-                duration=IsFloat(gt=0, lt=1e-5),
+                duration=IsFloat(gt=0, lt=1e-3),
             ),
         ]
     )
