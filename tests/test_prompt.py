@@ -6,7 +6,7 @@ from typing import Any, final, override
 import pytest
 from pydantic import BaseModel
 
-from pydantic_ai.prompt import TagBuilder
+from pydantic_ai.prompt import TagBuilder, XMLTagBuilder
 
 
 @final
@@ -196,3 +196,75 @@ class TestComplexContentFormatting:
 
         assert got['context'][0]['user_name'] == 'John'
         assert got['context'][1]['user_info']['location']['country'] == 'USA'
+
+
+class Example(BaseModel):
+    text: str
+    decision: bool
+
+
+@dataclass
+class ExampleDataclass:
+    text: str
+    decision: bool
+
+
+class TestXMLContentFormatting:
+    @pytest.mark.parametrize(
+        'content',
+        (
+            {
+                'age': 42,
+                'location': {
+                    'country': 'UK',
+                    'city': 'London',
+                },
+            },
+            UserInfo(
+                age=42,
+                location=Location(country='UK', city='London'),
+            ),
+            UserInfoDataclass(
+                age=42,
+                location=LocationDataclass(country='UK', city='London'),
+            ),
+        ),
+    )
+    def test_simple_schema(self, content: Any) -> None:
+        builder = XMLTagBuilder('context', content)
+        got = builder.build()
+
+        assert got == '<context><age>42</age><location><country>UK</country><city>London</city></location></context>'
+
+    @pytest.mark.parametrize(
+        'content',
+        (
+            [
+                {'text': 'Example #1', 'decision': True},
+                {'text': 'Example #2', 'decision': False},
+            ],
+            [
+                Example(text='Example #1', decision=True),
+                Example(text='Example #2', decision=False),
+            ],
+            [
+                ExampleDataclass(text='Example #1', decision=True),
+                ExampleDataclass(text='Example #2', decision=False),
+            ],
+        ),
+    )
+    def test_list(self, content: Any) -> None:
+        builder = XMLTagBuilder('examples', content)
+        got = builder.build()
+
+        assert (
+            got
+            == '<examples><text>Example #1</text><decision>true</decision></examples><examples><text>Example #2</text><decision>false</decision></examples>'
+        )
+
+    def test_str(self) -> None:
+        rules = ['Rule #1', 'Rule #2']
+        builder = XMLTagBuilder('rules', '\n'.join(f'- {rule}' for rule in rules))
+        got = builder.build()
+
+        assert got == '<rules>- Rule #1\n- Rule #2</rules>'
