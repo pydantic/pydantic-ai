@@ -11,7 +11,7 @@ from types import FrameType
 from typing import Any, Callable, Generic, Literal, cast, final, overload
 
 import logfire_api
-from typing_extensions import assert_never
+from typing_extensions import assert_never, deprecated
 
 from . import (
     _result,
@@ -1123,6 +1123,13 @@ class Agent(Generic[AgentDeps, ResultData]):
                         if item is self:
                             self.name = name
                             return
+
+    @property
+    @deprecated(
+        'The `last_run_messages` attribute has been removed, use `capture_run_messages` instead.', category=None
+    )
+    def last_run_messages(self) -> list[_messages.ModelMessage]:
+        raise AttributeError('The `last_run_messages` attribute has been removed, use `capture_run_messages` instead.')
 
 
 _messages_ctx_var: ContextVar[list[_messages.ModelMessage]] = ContextVar('var')

@@ -1129,7 +1129,7 @@ async def test_empty_text_part():
     assert result.data == ('foo', 'bar')
 
 
-def test_heterogenous_reponses_non_streaming(set_event_loop: None) -> None:
+def test_heterogeneous_responses_non_streaming(set_event_loop: None) -> None:
     """Indicates that tool calls are prioritized over text in heterogeneous responses."""
 
     def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -1180,5 +1180,32 @@ def test_heterogenous_reponses_non_streaming(set_event_loop: None) -> None:
                 ]
             ),
             ModelResponse.from_text(content='final response', timestamp=IsNow(tz=timezone.utc)),
+        ]
+    )
+
+
+def test_last_run_messages() -> None:
+    agent = Agent('test')
+
+    with pytest.raises(AttributeError, match='The `last_run_messages` attribute has been removed,'):
+        agent.last_run_messages  # pyright: ignore[reportDeprecated]
+
+
+def test_double_capture_run_messages(set_event_loop: None) -> None:
+    agent = Agent('test')
+
+    with capture_run_messages() as messages:
+        result = agent.run_sync('Hello')
+        assert result.data == 'success (no tool calls)'
+        with pytest.raises(UserError) as exc_info:
+            agent.run_sync('Hello')
+        assert (
+            str(exc_info.value)
+            == 'The capture_run_messages() context manager may only be used to wrap one call to run(), run_sync(), or run_stream().'
+        )
+    assert messages == snapshot(
+        [
+            ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
+            ModelResponse(parts=[TextPart(content='success (no tool calls)')], timestamp=IsNow(tz=timezone.utc)),
         ]
     )
