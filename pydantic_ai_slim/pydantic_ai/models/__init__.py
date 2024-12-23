@@ -90,6 +90,8 @@ KnownModelName = Literal[
 class Model(ABC):
     """Abstract class for a model."""
 
+    fallback_models: list[Model | KnownModelName] | None = None
+
     @abstractmethod
     async def agent_model(
         self,
@@ -119,6 +121,8 @@ class Model(ABC):
 
 class AgentModel(ABC):
     """Model configured for each step of an Agent run."""
+
+    fallback_models: list[Model | KnownModelName] | None = None
 
     @abstractmethod
     async def request(

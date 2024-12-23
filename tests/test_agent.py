@@ -1181,3 +1181,47 @@ def test_heterogenous_reponses_non_streaming(set_event_loop: None) -> None:
             ModelResponse.from_text(content='final response', timestamp=IsNow(tz=timezone.utc)),
         ]
     )
+
+
+def test_fallback_models(set_event_loop: None):
+    def return_model(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        raise RuntimeError("Primary model failed")
+
+    primary_model = FunctionModel(return_model)
+    fallback_model = TestModel()
+
+    agent = Agent(primary_model, fallback_models=[fallback_model], result_type=tuple[str, str])
+
+    result = agent.run_sync('Hello')
+    assert result.data == snapshot(('a', 'a'))
+    assert agent.model == primary_model
+    assert agent.fallback_models == []
+
+    assert fallback_model.agent_model_function_tools == snapshot([])
+    assert fallback_model.agent_model_allow_text_result is False
+
+    assert fallback_model.agent_model_result_tools is not None
+    assert len(fallback_model.agent_model_result_tools) == 1
+
+    assert fallback_model.agent_model_result_tools == snapshot(
+        [
+            ToolDefinition(
+                name='final_result',
+                description='The final response which ends this conversation',
+                parameters_json_schema={
+                    'properties': {
+                        'response': {
+                            'maxItems': 2,
+                            'minItems': 2,
+                            'prefixItems': [{'type': 'string'}, {'type': 'string'}],
+                            'title': 'Response',
+                            'type': 'array',
+                        }
+                    },
+                    'required': ['response'],
+                    'type': 'object',
+                },
+                outer_typed_dict_key='response',
+            )
+        ]
+    )
