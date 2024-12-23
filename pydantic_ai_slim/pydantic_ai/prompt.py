@@ -3,12 +3,16 @@ from __future__ import annotations as _annotations
 from abc import ABC, abstractmethod
 from collections.abc import Iterable
 from dataclasses import asdict, is_dataclass
+from functools import partial
 from typing import Any, Literal, cast, final, override
 
 from pydantic import BaseModel
 
 __all__ = (
     'format_tag',
+    'format_context',
+    'format_examples',
+    'format_rules',
     'Dialect',
 )
 
@@ -16,7 +20,7 @@ Dialect = Literal['xml']
 BasicType = str | int | float | bool
 
 
-def format_tag(tag: str, content: Any, dialect: Dialect = 'xml') -> str:
+def format_tag(content: Any, tag: str, dialect: Dialect = 'xml') -> str:
     """Format content into a tagged string representation using the specified dialect.
 
     Args:
@@ -38,7 +42,7 @@ def format_tag(tag: str, content: Any, dialect: Dialect = 'xml') -> str:
         TypeError: If content is of an unsupported type.
 
     Examples:
-        >>> format_tag('user', {'name': 'John', 'age': 30})
+        >>> format_tag({'name': 'John', 'age': 30}, tag='user')
         '<user><name>John</name><age>30</age></user>'
 
         >>> from dataclasses import dataclass
@@ -58,6 +62,11 @@ def format_tag(tag: str, content: Any, dialect: Dialect = 'xml') -> str:
         raise ValueError(f'Unsupported dialect: {dialect}')
 
     return builder.build()
+
+
+format_examples = partial(format_tag, tag='examples')
+format_rules = partial(format_tag, tag='rules')
+format_context = partial(format_tag, tag='context')
 
 
 def _normalize_type(content: Any) -> dict[str, Any] | list[Any] | BasicType:
@@ -130,7 +139,7 @@ class TagBuilder(ABC):
 
 @final
 class XMLTagBuilder(TagBuilder):
-    """Concrete implementation of TagBuilder that produces XML formatted output.
+    """Concrete implementation of TagBuilder that produces XML-like formatted output.
 
     This class converts the normalized content into valid XML string representation.
     It handles nested structures, lists, and basic types while ensuring proper XML formatting.

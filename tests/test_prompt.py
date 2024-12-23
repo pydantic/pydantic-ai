@@ -1,12 +1,12 @@
 import json
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from typing import Any, final, override
 
 import pytest
 from pydantic import BaseModel
 
-from pydantic_ai.prompt import TagBuilder, XMLTagBuilder
+from pydantic_ai.prompt import TagBuilder, XMLTagBuilder, format_context, format_examples, format_rules
 
 
 @final
@@ -268,3 +268,17 @@ class TestXMLContentFormatting:
         got = builder.build()
 
         assert got == '<rules>- Rule #1\n- Rule #2</rules>'
+
+
+@pytest.mark.parametrize(
+    ['tag', 'function'],
+    (
+        ('context', format_context),
+        ('examples', format_examples),
+        ('rules', format_rules),
+    ),
+)
+def test_aliases(tag: str, function: Callable[[Any], str]) -> None:
+    result = function('Hello, world!')
+
+    assert result == f'<{tag}>Hello, world!</{tag}>'
