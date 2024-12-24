@@ -119,17 +119,52 @@ def test_usage_so_far(set_event_loop: None) -> None:
         )
 
 
-async def test_multi_agent_usage():
+async def test_multi_agent_usage_no_incr():
     controller_agent = Agent(TestModel())
 
     delegate_agent = Agent(TestModel(), result_type=int)
 
     @controller_agent.tool
     async def delegate_to_other_agent(ctx: RunContext[None], sentence: str) -> int:
-        delegate_result = await delegate_agent.run(sentence, usage=ctx.usage)
-        ctx.usage += delegate_result.usage()
+        delegate_result = await delegate_agent.run(sentence)
+        delegate_usage = delegate_result.usage()
+        assert delegate_usage == snapshot(Usage(requests=1, request_tokens=51, response_tokens=4, total_tokens=55))
         return delegate_result.data
 
     result = await controller_agent.run('foobar')
     assert result.data == snapshot('{"delegate_to_other_agent":0}')
-    assert result.usage().requests == 3
+    assert result.usage() == snapshot(Usage(requests=2, request_tokens=103, response_tokens=13, total_tokens=116))
+
+
+async def test_multi_agent_usage_async():
+    controller_agent = Agent(TestModel())
+
+    delegate_agent = Agent(TestModel(), result_type=int)
+
+    @controller_agent.tool
+    async def delegate_to_other_agent(ctx: RunContext[None], sentence: str) -> int:
+        delegate_result = await delegate_agent.run(sentence)
+        delegate_usage = delegate_result.usage()
+        assert delegate_usage == snapshot(Usage(requests=1, request_tokens=51, response_tokens=4, total_tokens=55))
+        ctx.usage.incr(delegate_usage)
+        return delegate_result.data
+
+    result = await controller_agent.run('foobar')
+    assert result.data == snapshot('{"delegate_to_other_agent":0}')
+    # this is the sum of the usages in `test_multi_agent_usage_no_incr`
+    assert result.usage() == snapshot(Usage(requests=3, request_tokens=154, response_tokens=17, total_tokens=171))
+
+
+async def test_multi_agent_usage_sync():
+    """As in `test_multi_agent_usage_async`, with a sync tool."""
+    controller_agent = Agent(TestModel())
+
+    @controller_agent.tool
+    def delegate_to_other_agent(ctx: RunContext[None], sentence: str) -> int:
+        new_usage = Usage(requests=5, request_tokens=2, response_tokens=3, total_tokens=4)
+        ctx.usage.incr(new_usage)
+        return 0
+
+    result = await controller_agent.run('foobar')
+    assert result.data == snapshot('{"delegate_to_other_agent":0}')
+    assert result.usage() == snapshot(Usage(requests=7, request_tokens=105, response_tokens=16, total_tokens=120))

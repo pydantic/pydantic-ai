@@ -252,8 +252,7 @@ class Agent(Generic[AgentDeps, ResultData]):
                     model_req_span.set_attribute('usage', request_usage)
 
                 messages.append(model_response)
-                run_context.usage += request_usage
-                run_context.usage.requests += 1
+                run_context.usage.incr(request_usage, requests=1)
                 usage_limits.check_tokens(run_context.usage)
 
                 with _logfire.span('handle model response', run_step=run_step) as handle_span:
@@ -470,7 +469,7 @@ class Agent(Generic[AgentDeps, ResultData]):
                                 handle_span.message = f'handle model response -> {tool_responses_str}'
                                 # the model_response should have been fully streamed by now, we can add its usage
                                 model_response_usage = model_response.usage()
-                                run_context.usage += model_response_usage
+                                run_context.usage.incr(model_response_usage)
                                 usage_limits.check_tokens(run_context.usage)
 
     @contextmanager
