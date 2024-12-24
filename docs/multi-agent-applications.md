@@ -182,7 +182,7 @@ Here agents don't need to use the same deps.
 Here we should two agents used in succession, the first to find a flight and the second to extract the user's seat preference.
 
 ```python {title="programmatic_handoff.py"}
-from typing import Literal
+from typing import Literal, Union
 
 from pydantic import BaseModel, Field
 from rich.prompt import Prompt
@@ -200,9 +200,9 @@ class Failed(BaseModel):
     """Unable to find a satisfactory choice."""
 
 
-flight_search_agent = Agent[None, FlightDetails | Failed](  # (1)!
+flight_search_agent = Agent[None, Union[FlightDetails, Failed]](  # (1)!
     'openai:gpt-4o',
-    result_type=FlightDetails | Failed,  # type: ignore
+    result_type=Union[FlightDetails, Failed],  # type: ignore
     system_prompt=(
         'Use the "flight_search" tool to find a flight '
         'from the given origin to the given destination.'
@@ -213,7 +213,7 @@ flight_search_agent = Agent[None, FlightDetails | Failed](  # (1)!
 @flight_search_agent.tool  # (2)!
 async def flight_search(
     ctx: RunContext[None], origin: str, destination: str
-) -> FlightDetails | None:
+) -> Union[FlightDetails, None]:
     # in reality, this would call a flight search API or
     # use a browser to scrape a flight search website
     return FlightDetails(flight_number='AK456')
@@ -222,8 +222,8 @@ async def flight_search(
 usage_limit = UsageLimits(request_limit=15)  # (3)!
 
 
-async def find_flight(usage: Usage) -> FlightDetails | None:  # (4)!
-    message_history: list[ModelMessage] | None = None
+async def find_flight(usage: Usage) -> Union[FlightDetails, None]:  # (4)!
+    message_history: Union[list[ModelMessage], None] = None
     for _ in range(3):
         prompt = Prompt.ask(
             'Where would you like to fly from and to?',
@@ -247,9 +247,9 @@ class SeatPreference(BaseModel):
 
 
 # This agent is responsible for extracting the user's seat selection
-seat_preference_agent = Agent[None, SeatPreference | Failed](  # (5)!
+seat_preference_agent = Agent[None, Union[SeatPreference, Failed]](  # (5)!
     'openai:gpt-4o',
-    result_type=SeatPreference | Failed,  # type: ignore
+    result_type=Union[SeatPreference, Failed],  # type: ignore
     system_prompt=(
         "Extract the user's seat preference. "
         'Seats A and F are window seats. '
@@ -260,7 +260,7 @@ seat_preference_agent = Agent[None, SeatPreference | Failed](  # (5)!
 
 
 async def find_seat(usage: Usage) -> SeatPreference:  # (6)!
-    message_history: list[ModelMessage] | None = None
+    message_history: Union[list[ModelMessage], None] = None
     while True:
         answer = Prompt.ask('What seat would you like?')
 
