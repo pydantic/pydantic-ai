@@ -64,6 +64,54 @@ format_rules = partial(format_tag, tag='rules')
 format_context = partial(format_tag, tag='context')
 
 
+def _format_content(tag: str, content: Any) -> dict[str, Any]:
+    """Format content into a structured dictionary representation.
+
+    This internal function processes the input content and creates a hierarchical dictionary
+    structure where each level represents a tagged element. It handles nested structures
+    and different types of content recursively.
+
+    Args:
+        tag: The tag name to use as the key in the resulting dictionary.
+        content: The content to format. Can be:
+            - Basic types (str, int, float, bool)
+            - Dictionaries (processed recursively)
+            - Lists (each item processed separately)
+            - Complex objects (dataclasses or pydantic models)
+
+    Returns:
+        A dictionary with a single key (the tag) and a structured value that represents
+        the formatted content. The structure depends on the input type:
+            - For basic types: {tag: value}
+            - For dicts: {tag: {key1: formatted1, key2: formatted2, ...}}
+            - For lists: {tag: [formatted1, formatted2, ...]}
+
+    Examples:
+        >>> _format_content('user', 'John')
+        {'user': 'John'}
+
+        >>> _format_content('user', {'name': 'John', 'age': 30})
+        {'user': {'name': 'John', 'age': 30}}
+
+        >>> _format_content('items', [1, 2, 3])
+        {'items': [{'items': 1}, {'items': 2}, {'items': 3}]}
+    """
+    root: dict[str, Any] = {}
+    normalized = _normalize_type(content)
+
+    if isinstance(normalized, dict):
+        root[tag] = {}
+        for key, value in normalized.items():
+            root[tag][key] = _format_content(key, value)[key]
+    elif isinstance(normalized, list):
+        assert isinstance(normalized, list)
+        root[tag] = [_format_content(tag, item)[tag] for item in normalized]
+    else:
+        root[tag] = normalized
+
+    return root
+
+
 def _normalize_type(content: Any) -> dict[str, Any] | list[Any] | str | int | float | bool:
     """Normalize various Python types into a consistent format for tag building.
 
@@ -123,86 +171,8 @@ def _normalize_type(content: Any) -> dict[str, Any] | list[Any] | str | int | fl
         raise TypeError(f'Unsupported content type: {type(content)}')
 
 
-class TagBuilder(ABC):
-    """Abstract base class for building tagged string representations of content.
-
-    This class provides the base functionality for converting various Python data types
-    into a tagged string format. It handles normalization and formatting of content
-    while leaving the specific string building implementation to subclasses.
-
-    Args:
-        tag: The root tag name to wrap the content with.
-        content: The content to be formatted. Supported types include:
-            - Basic types (str, int, float, bool)
-            - Dictionaries
-            - Lists, tuples, or other iterables
-            - Pydantic models
-            - Dataclasses
-
-    Attributes:
-        _content: Normalized and formatted content as a dictionary structure.
-
-    Raises:
-        TypeError: If content is of an unsupported type.
-    """
-
-    def __init__(self, tag: str, content: Any) -> None:
-        self._content: dict[str, Any] = self._format_content(tag, content)
-
-    @abstractmethod
-    def build(self) -> str: ...
-
-    def _format_content(self, tag: str, content: Any) -> dict[str, Any]:
-        """Format content into a structured dictionary representation.
-
-        This internal method processes the input content and creates a hierarchical dictionary
-        structure where each level represents a tagged element. It handles nested structures
-        and different types of content recursively.
-
-        Args:
-            tag: The tag name to use as the key in the resulting dictionary.
-            content: The content to format. Can be:
-                - Basic types (str, int, float, bool)
-                - Dictionaries (processed recursively)
-                - Lists (each item processed separately)
-                - Complex objects (dataclasses or pydantic models)
-
-        Returns:
-            A dictionary with a single key (the tag) and a structured value that represents
-            the formatted content. The structure depends on the input type:
-                - For basic types: {tag: value}
-                - For dicts: {tag: {key1: formatted1, key2: formatted2, ...}}
-                - For lists: {tag: [formatted1, formatted2, ...]}
-
-        Examples:
-            >>> builder = TagBuilder(...)
-            >>> builder._format_content('user', 'John')
-            {'user': 'John'}
-
-            >>> builder._format_content('user', {'name': 'John', 'age': 30})
-            {'user': {'name': 'John', 'age': 30}}
-
-            >>> builder._format_content('items', [1, 2, 3])
-            {'items': [{'items': 1}, {'items': 2}, {'items': 3}]}
-        """
-        root: dict[str, Any] = {}
-        normalized = _normalize_type(content)
-
-        if isinstance(normalized, dict):
-            root[tag] = {}
-            for key, value in normalized.items():
-                root[tag][key] = self._format_content(key, value)[key]
-        elif isinstance(normalized, list):
-            assert isinstance(normalized, list)
-            root[tag] = [self._format_content(tag, item)[tag] for item in normalized]
-        else:
-            root[tag] = normalized
-
-        return root
-
-
 @final
-class XMLTagBuilder(TagBuilder):
+class XMLTagBuilder:
     """Concrete implementation of TagBuilder that produces XML-like formatted output.
 
     This class converts the normalized content into valid XML string representation.
@@ -221,6 +191,9 @@ class XMLTagBuilder(TagBuilder):
         >>> builder.build()
         '<nested><user><details><active>true</active></details></user></nested>'
     """
+
+    def __init__(self, tag: str, content: Any):
+        self._content = _format_content(tag, content)
 
     def build(self) -> str:
         return self._build_element(self._content)
