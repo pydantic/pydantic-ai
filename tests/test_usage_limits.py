@@ -1,3 +1,5 @@
+import functools
+import operator
 import re
 from datetime import timezone
 
@@ -120,39 +122,39 @@ def test_usage_so_far(set_event_loop: None) -> None:
 
 
 async def test_multi_agent_usage_no_incr():
-    controller_agent = Agent(TestModel())
-
     delegate_agent = Agent(TestModel(), result_type=int)
 
-    @controller_agent.tool
-    async def delegate_to_other_agent(ctx: RunContext[None], sentence: str) -> int:
+    controller_agent1 = Agent(TestModel())
+    run_1_usages: list[Usage] = []
+
+    @controller_agent1.tool
+    async def delegate_to_other_agent1(ctx: RunContext[None], sentence: str) -> int:
         delegate_result = await delegate_agent.run(sentence)
         delegate_usage = delegate_result.usage()
+        run_1_usages.append(delegate_usage)
         assert delegate_usage == snapshot(Usage(requests=1, request_tokens=51, response_tokens=4, total_tokens=55))
         return delegate_result.data
 
-    result = await controller_agent.run('foobar')
-    assert result.data == snapshot('{"delegate_to_other_agent":0}')
-    assert result.usage() == snapshot(Usage(requests=2, request_tokens=103, response_tokens=13, total_tokens=116))
+    result1 = await controller_agent1.run('foobar')
+    assert result1.data == snapshot('{"delegate_to_other_agent1":0}')
+    run_1_usages.append(result1.usage())
+    assert result1.usage() == snapshot(Usage(requests=2, request_tokens=103, response_tokens=13, total_tokens=116))
 
+    controller_agent2 = Agent(TestModel())
 
-async def test_multi_agent_usage_async():
-    controller_agent = Agent(TestModel())
-
-    delegate_agent = Agent(TestModel(), result_type=int)
-
-    @controller_agent.tool
-    async def delegate_to_other_agent(ctx: RunContext[None], sentence: str) -> int:
-        delegate_result = await delegate_agent.run(sentence)
+    @controller_agent2.tool
+    async def delegate_to_other_agent2(ctx: RunContext[None], sentence: str) -> int:
+        delegate_result = await delegate_agent.run(sentence, usage=ctx.usage)
         delegate_usage = delegate_result.usage()
-        assert delegate_usage == snapshot(Usage(requests=1, request_tokens=51, response_tokens=4, total_tokens=55))
-        ctx.usage.incr(delegate_usage)
+        assert delegate_usage == snapshot(Usage(requests=2, request_tokens=102, response_tokens=9, total_tokens=111))
         return delegate_result.data
 
-    result = await controller_agent.run('foobar')
-    assert result.data == snapshot('{"delegate_to_other_agent":0}')
-    # this is the sum of the usages in `test_multi_agent_usage_no_incr`
-    assert result.usage() == snapshot(Usage(requests=3, request_tokens=154, response_tokens=17, total_tokens=171))
+    result2 = await controller_agent2.run('foobar')
+    assert result2.data == snapshot('{"delegate_to_other_agent2":0}')
+    assert result2.usage() == snapshot(Usage(requests=3, request_tokens=154, response_tokens=17, total_tokens=171))
+
+    # confirm the usage from result2 is the sum of the usage from result1
+    assert result2.usage() == functools.reduce(operator.add, run_1_usages)
 
 
 async def test_multi_agent_usage_sync():
