@@ -46,8 +46,7 @@ async function versionWarning(request, env) {
     const text = await r2.text()
     throw new Error(`Failed to fetch compare, response status ${r2.status}:\n${text}`)
   }
-  const r2_data = await r2.json()
-  const {ahead_by} = r2_data
+  const {ahead_by} = await r2.json()
 
   if (ahead_by === 0) {
     return `<div class="admonition success" style="margin: 0">
@@ -56,12 +55,14 @@ async function versionWarning(request, env) {
 </div>`
   }
 
+  const branch = env.CF_PAGES_BRANCH
+  const diff_html_url = `https://github.com/pydantic/pydantic-ai/compare/${tag_name}...${branch}`
   return `<div class="admonition info" style="margin: 0">
   <p class="admonition-title">Version Notice</p>
   <p>
-    ${env.CF_PAGES_BRANCH === 'main' ? '' : `(<b>${env.CF_PAGES_BRANCH}</b> preview)`}
+    ${branch === 'main' ? '' : `(<b>${branch}</b> preview)`}
     This documentation is ahead of the last release by
-    <a href="${r2_data.html_url}">${ahead_by} commit${ahead_by === 1 ? '' : 's'}</a>.
+    <a href="${diff_html_url}">${ahead_by} commit${ahead_by === 1 ? '' : 's'}</a>.
     You may see documentation for features not yet supported in the latest release <a href="${html_url}">${name}</a>.
   </p>
 </div>`
