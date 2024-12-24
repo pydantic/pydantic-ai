@@ -16,7 +16,7 @@ __all__ = (
 )
 
 Content = Union[str, int, float, bool, dict[str, 'Content'], list['Content']]
-XMLContent = Union[ET.Element | list['XMLContent']]
+XMLContent = Union[ET.Element, list['XMLContent']]
 Dialect = Literal['xml']
 
 
