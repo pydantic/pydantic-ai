@@ -136,6 +136,6 @@ class UsageLimits:
                 f'Exceeded the response_tokens_limit of {self.response_tokens_limit} ({response_tokens=})'
             )
 
-        total_tokens = request_tokens + response_tokens
+        total_tokens = usage.total_tokens or 0
         if self.total_tokens_limit is not None and total_tokens > self.total_tokens_limit:
             raise UsageLimitExceeded(f'Exceeded the total_tokens_limit of {self.total_tokens_limit} ({total_tokens=})')

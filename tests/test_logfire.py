@@ -108,7 +108,6 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary], set_event_lo
                     },
                     'name': 'my_agent',
                     'end_strategy': 'early',
-                    'last_run_messages': None,
                     'model_settings': None,
                 }
             ),

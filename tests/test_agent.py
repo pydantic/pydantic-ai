@@ -10,7 +10,7 @@ from inline_snapshot import snapshot
 from pydantic import BaseModel, field_validator
 from pydantic_core import to_json
 
-from pydantic_ai import Agent, ModelRetry, RunContext, UnexpectedModelBehavior, UserError
+from pydantic_ai import Agent, ModelRetry, RunContext, UnexpectedModelBehavior, UserError, capture_run_messages
 from pydantic_ai.messages import (
     ArgsDict,
     ArgsJson,
@@ -683,9 +683,10 @@ def test_unknown_tool(set_event_loop: None):
 
     agent = Agent(FunctionModel(empty))
 
-    with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum retries \(1\) for result validation'):
-        agent.run_sync('Hello')
-    assert agent.last_run_messages == snapshot(
+    with capture_run_messages() as messages:
+        with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum retries \(1\) for result validation'):
+            agent.run_sync('Hello')
+    assert messages == snapshot(
         [
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
@@ -1128,7 +1129,7 @@ async def test_empty_text_part():
     assert result.data == ('foo', 'bar')
 
 
-def test_heterogenous_reponses_non_streaming(set_event_loop: None) -> None:
+def test_heterogeneous_responses_non_streaming(set_event_loop: None) -> None:
     """Indicates that tool calls are prioritized over text in heterogeneous responses."""
 
     def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -1179,5 +1180,53 @@ def test_heterogenous_reponses_non_streaming(set_event_loop: None) -> None:
                 ]
             ),
             ModelResponse.from_text(content='final response', timestamp=IsNow(tz=timezone.utc)),
+        ]
+    )
+
+
+def test_last_run_messages() -> None:
+    agent = Agent('test')
+
+    with pytest.raises(AttributeError, match='The `last_run_messages` attribute has been removed,'):
+        agent.last_run_messages  # pyright: ignore[reportDeprecated]
+
+
+def test_nested_capture_run_messages(set_event_loop: None) -> None:
+    agent = Agent('test')
+
+    with capture_run_messages() as messages1:
+        assert messages1 == []
+        with capture_run_messages() as messages2:
+            assert messages2 == []
+            assert messages1 is messages2
+            result = agent.run_sync('Hello')
+            assert result.data == 'success (no tool calls)'
+
+    assert messages1 == snapshot(
+        [
+            ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
+            ModelResponse(parts=[TextPart(content='success (no tool calls)')], timestamp=IsNow(tz=timezone.utc)),
+        ]
+    )
+    assert messages1 == messages2
+
+
+def test_double_capture_run_messages(set_event_loop: None) -> None:
+    agent = Agent('test')
+
+    with capture_run_messages() as messages:
+        assert messages == []
+        result = agent.run_sync('Hello')
+        assert result.data == 'success (no tool calls)'
+        with pytest.raises(UserError) as exc_info:
+            agent.run_sync('Hello')
+        assert (
+            str(exc_info.value)
+            == 'The capture_run_messages() context manager may only be used to wrap one call to run(), run_sync(), or run_stream().'
+        )
+    assert messages == snapshot(
+        [
+            ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
+            ModelResponse(parts=[TextPart(content='success (no tool calls)')], timestamp=IsNow(tz=timezone.utc)),
         ]
     )
