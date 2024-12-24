@@ -4,7 +4,7 @@ import dataclasses
 import inspect
 from collections.abc import Awaitable
 from dataclasses import dataclass, field
-from typing import Any, Callable, Generic, TypeVar, Union, cast
+from typing import TYPE_CHECKING, Any, Callable, Generic, TypeVar, Union, cast
 
 from pydantic import ValidationError
 from pydantic_core import SchemaValidator
@@ -12,6 +12,9 @@ from typing_extensions import Concatenate, ParamSpec, TypeAlias
 
 from . import _pydantic, _utils, messages as _messages, models
 from .exceptions import ModelRetry, UnexpectedModelBehavior
+
+if TYPE_CHECKING:
+    from .result import Usage
 
 __all__ = (
     'AgentDeps',
@@ -45,6 +48,8 @@ class RunContext(Generic[AgentDeps]):
     """Name of the tool being called."""
     model: models.Model
     """The model used in this run."""
+    usage: Usage
+    """LLM usage associated with the run."""
 
     def replace_with(
         self, retry: int | None = None, tool_name: str | None | _utils.Unset = _utils.UNSET
