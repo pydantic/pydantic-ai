@@ -46,7 +46,8 @@ async function versionWarning(request, env) {
     const text = await r2.text()
     throw new Error(`Failed to fetch compare, response status ${r2.status}:\n${text}`)
   }
-  const {ahead_by} = await r2.json()
+  const r2_data = await r2.json()
+  const {ahead_by} = r2_data
 
   if (ahead_by === 0) {
     return `<div class="admonition success" style="margin: 0">
@@ -59,7 +60,8 @@ async function versionWarning(request, env) {
   <p class="admonition-title">Version Notice</p>
   <p>
     ${env.CF_PAGES_BRANCH === 'main' ? '' : `(<b>${env.CF_PAGES_BRANCH}</b> preview)`}
-    This documentation is ahead of the last release by <b>${ahead_by}</b> commit${ahead_by === 1 ? '' : 's'}.
+    This documentation is ahead of the last release by <a href="${r2.html_url}">${ahead_by}</a>
+    commit${ahead_by === 1 ? '' : 's'}.
     You may see documentation for features not yet supported in the latest release <a href="${html_url}">${name}</a>.
   </p>
 </div>`
