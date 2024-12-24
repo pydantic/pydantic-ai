@@ -233,7 +233,7 @@ class TestXMLContentFormatting:
     )
     def test_simple_schema(self, content: Any) -> None:
         builder = XMLTagBuilder('context', content)
-        got = builder.build()
+        got = builder.build(indent=False)
 
         assert got == '<context><age>42</age><location><country>UK</country><city>London</city></location></context>'
 
@@ -256,7 +256,7 @@ class TestXMLContentFormatting:
     )
     def test_list(self, content: Any) -> None:
         builder = XMLTagBuilder('examples', content)
-        got = builder.build()
+        got = builder.build(indent=False)
 
         assert (
             got
@@ -268,22 +268,53 @@ class TestXMLContentFormatting:
             'context',
             {'users': ['John', 'Jane']},
         )
-        got = builder.build()
+        got = builder.build(indent=False)
 
         assert got == '<context><users>John</users><users>Jane</users></context>'
 
     def test_str(self) -> None:
         rules = ['Rule #1', 'Rule #2']
         builder = XMLTagBuilder('rules', '\n'.join(f'- {rule}' for rule in rules))
-        got = builder.build()
+        got = builder.build(indent=False)
 
         assert got == '<rules>- Rule #1\n- Rule #2</rules>'
 
     def test_escaping(self) -> None:
         builder = XMLTagBuilder('user', {'name': '</name>John & Jane', 'age': 30})
-        got = builder.build()
+        got = builder.build(indent=False)
 
         assert got == '<user><name>&lt;/name&gt;John &amp; Jane</name><age>30</age></user>'
+
+    def test_indent(self) -> None:
+        builder = XMLTagBuilder('user', {'name': 'John', 'age': 30})
+        got = builder.build(indent=True)
+
+        assert got == '\n'.join(
+            line
+            for line in (
+                '<user>',
+                '  <name>John</name>',
+                '  <age>30</age>',
+                '</user>',
+            )
+        )
+
+    def test_indent_list(self) -> None:
+        builder = XMLTagBuilder(
+            'context',
+            {'users': ['John', 'Jane']},
+        )
+        got = builder.build(indent=True)
+
+        assert got == '\n'.join(
+            line
+            for line in (
+                '<context>',
+                '  <users>John</users>',
+                '  <users>Jane</users>',
+                '</context>',
+            )
+        )
 
 
 @pytest.mark.parametrize(

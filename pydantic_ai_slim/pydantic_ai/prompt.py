@@ -189,8 +189,12 @@ class XMLTagBuilder:
         self._tag = tag
         self._content = prepare_content(content)
 
-    def build(self) -> str:
+    def build(self, indent: bool = True) -> str:
         """Build the XML string representation of the content.
+
+        Args:
+            indent: If True, format the output with 2-space indentation.
+                   Default is True.
 
         Returns:
             A string containing the XML representation of the content.
@@ -198,20 +202,33 @@ class XMLTagBuilder:
             converted to lowercase 'true'/'false'.
 
         Examples:
-            >>> XMLTagBuilder('user', {'name': 'John'}).build()
-            '<user><name>John</name></user>'
+            >>> print(XMLTagBuilder('user', {'name': 'John'}).build(indent=False))
+            <user><name>John</name></user>
 
-            >>> XMLTagBuilder('items', [1, 2]).build()
-            '<items>1</items><items>2</items>'
+            >>> print(XMLTagBuilder('user', {'name': 'John'}).build())
+            <user>
+              <name>John</name>
+            </user>
+
+            >>> print(XMLTagBuilder('items', [1, 2]).build())
+            <items>1</items>
+            <items>2</items>
         """
         elements = self._build_element(self._tag, self._content)
 
         if isinstance(elements, list):
+            if indent:
+                return '\n'.join(
+                    ET.indent(element, space='  ') or ET.tostring(element, encoding='unicode', method='xml').strip()
+                    for element in cast(list[ET.Element], elements)
+                )
             return ''.join(
                 ET.tostring(element, encoding='unicode', method='xml').strip()
                 for element in cast(list[ET.Element], elements)
             )
 
+        if indent:
+            ET.indent(elements, space='  ')
         return ET.tostring(elements, encoding='unicode', method='xml').strip()
 
     def _build_element(self, tag: str, content: Content) -> XMLContent:
