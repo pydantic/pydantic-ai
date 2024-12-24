@@ -1,18 +1,11 @@
-import json
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
-from typing import Any, final
+from typing import Any
 
 import pytest
 from pydantic import BaseModel
 
-from pydantic_ai.prompt import TagBuilder, XMLTagBuilder, format_context, format_examples, format_rules
-
-
-@final
-class DummyTagBuilder(TagBuilder):
-    def build(self) -> str:
-        return json.dumps(self._content)
+from pydantic_ai.prompt import XMLTagBuilder, _format_content, format_context, format_examples, format_rules
 
 
 class DummyModel(BaseModel):
@@ -32,37 +25,32 @@ class DummyClass:
 
 class TestSimpleContentFormatting:
     def test_str(self) -> None:
-        builder = DummyTagBuilder('test', 'Hello, world!')
-        content = json.loads(builder.build())
+        content = _format_content('Hello, world!')
 
-        assert content['test'] == 'Hello, world!'
+        assert content == 'Hello, world!'
 
     def test_dict(self) -> None:
-        builder = DummyTagBuilder(
-            'test',
+        content = _format_content(
             {
                 'key01': 'value',
                 'key02': 42,
             },
         )
-        content = json.loads(builder.build())
 
-        assert content['test']['key01'] == 'value'
-        assert content['test']['key02'] == 42
+        assert content['key01'] == 'value'
+        assert content['key02'] == 42
 
     def test_base_model(self) -> None:
-        builder = DummyTagBuilder('test', DummyModel(key01='value', key02=42))
-        content = json.loads(builder.build())
+        content = _format_content(DummyModel(key01='value', key02=42))
 
-        assert content['test']['key01'] == 'value'
-        assert content['test']['key02'] == 42
+        assert content['key01'] == 'value'
+        assert content['key02'] == 42
 
     def test_dataclass(self) -> None:
-        builder = DummyTagBuilder('test', DummyDataclass(key01='value', key02=42))
-        content = json.loads(builder.build())
+        content = _format_content(DummyDataclass(key01='value', key02=42))
 
-        assert content['test']['key01'] == 'value'
-        assert content['test']['key02'] == 42
+        assert content['key01'] == 'value'
+        assert content['key02'] == 42
 
     @pytest.mark.parametrize(
         'iterable_content',
@@ -73,14 +61,13 @@ class TestSimpleContentFormatting:
         ],
     )
     def test_iterable(self, iterable_content: Iterable[str]) -> None:
-        builder = DummyTagBuilder('test', iterable_content)
-        content = json.loads(builder.build())
+        content = _format_content(iterable_content)
 
-        assert len(content['test']) == 3
+        assert len(content) == 3
 
     def test_unsupported_content(self) -> None:
         with pytest.raises(TypeError, match='Unsupported content type'):
-            DummyTagBuilder('test', DummyClass())
+            _format_content(DummyClass())
 
 
 class Location(BaseModel):
@@ -141,16 +128,14 @@ class TestComplexContentFormatting:
         ),
     )
     def test_nested_dict(self, content: Any) -> None:
-        builder = DummyTagBuilder('context', content)
-        got = json.loads(builder.build())
+        got = _format_content(content)
 
-        assert got['context']['user_name'] == 'John'
-        assert got['context']['user_info']['age'] == 42
-        assert got['context']['user_info']['location']['country'] == 'UK'
+        assert got['user_name'] == 'John'
+        assert got['user_info']['age'] == 42
+        assert got['user_info']['location']['country'] == 'UK'
 
     def test_iterable_with_dict(self) -> None:
-        builder = DummyTagBuilder(
-            'rules',
+        got = _format_content(
             {
                 'general': ['rule #1', 'rule #2'],
                 'specific': [
@@ -159,10 +144,9 @@ class TestComplexContentFormatting:
                 ],
             },
         )
-        got = json.loads(builder.build())
 
-        assert got['rules']['general'][0] == 'rule #1'
-        assert got['rules']['specific'][0]['name'] == 'rule #3'
+        assert got['general'][0] == 'rule #1'
+        assert got['specific'][0]['name'] == 'rule #3'
 
     @pytest.mark.parametrize(
         'content',
@@ -190,11 +174,10 @@ class TestComplexContentFormatting:
         ),
     )
     def test_iterable_with_models(self, content: Any) -> None:
-        builder = DummyTagBuilder('context', content)
-        got = json.loads(builder.build())
+        got = _format_content(content)
 
-        assert got['context'][0]['user_name'] == 'John'
-        assert got['context'][1]['user_info']['location']['country'] == 'USA'
+        assert got[0]['user_name'] == 'John'
+        assert got[1]['user_info']['location']['country'] == 'USA'
 
 
 class Example(BaseModel):

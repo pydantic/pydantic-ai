@@ -1,10 +1,10 @@
 from __future__ import annotations as _annotations
 
-from abc import ABC, abstractmethod
 from collections.abc import Iterable
 from dataclasses import asdict, is_dataclass
 from functools import partial
 from typing import Any, Literal, Union, cast, final
+from xml.etree import ElementTree as ET
 
 from pydantic import BaseModel
 
@@ -13,9 +13,9 @@ __all__ = (
     'format_context',
     'format_examples',
     'format_rules',
-    'Dialect',
 )
 
+Content = Union[str, int, float, bool, dict[str, 'Content'], list['Content']]
 Dialect = Literal['xml']
 
 
@@ -64,7 +64,7 @@ format_rules = partial(format_tag, tag='rules')
 format_context = partial(format_tag, tag='context')
 
 
-def _format_content(tag: str, content: Any) -> dict[str, Any]:
+def _format_content(content: Any) -> Content:
     """Format content into a structured dictionary representation.
 
     This internal function processes the input content and creates a hierarchical dictionary
@@ -96,23 +96,18 @@ def _format_content(tag: str, content: Any) -> dict[str, Any]:
         >>> _format_content('items', [1, 2, 3])
         {'items': [{'items': 1}, {'items': 2}, {'items': 3}]}
     """
-    root: dict[str, Any] = {}
     normalized = _normalize_type(content)
 
     if isinstance(normalized, dict):
-        root[tag] = {}
-        for key, value in normalized.items():
-            root[tag][key] = _format_content(key, value)[key]
+        return {key: _format_content(value) for key, value in normalized.items()}
     elif isinstance(normalized, list):
         assert isinstance(normalized, list)
-        root[tag] = [_format_content(tag, item)[tag] for item in normalized]
+        return [_format_content(item) for item in normalized]
     else:
-        root[tag] = normalized
-
-    return root
+        return normalized
 
 
-def _normalize_type(content: Any) -> dict[str, Any] | list[Any] | str | int | float | bool:
+def _normalize_type(content: Any) -> Content:
     """Normalize various Python types into a consistent format for tag building.
 
     This internal function converts complex Python objects into basic types that can be
@@ -175,13 +170,13 @@ def _normalize_type(content: Any) -> dict[str, Any] | list[Any] | str | int | fl
 class XMLTagBuilder:
     """Concrete implementation of TagBuilder that produces XML-like formatted output.
 
-    This class converts the normalized content into valid XML string representation.
-    It handles nested structures, lists, and basic types while ensuring proper XML formatting.
+    This class converts the normalized content into valid XML string representation
+    using xml.etree.ElementTree for proper XML handling and escaping.
 
     Examples:
-        >>> builder = XMLTagBuilder('user', {'name': 'John', 'age': 30})
+        >>> builder = XMLTagBuilder('user', {'name': 'John & Jane', 'age': 30})
         >>> builder.build()
-        '<user><name>John</name><age>30</age></user>'
+        '<user><name>John &amp; Jane</name><age>30</age></user>'
 
         >>> builder = XMLTagBuilder('flags', [True, False])
         >>> builder.build()
@@ -193,38 +188,31 @@ class XMLTagBuilder:
     """
 
     def __init__(self, tag: str, content: Any):
-        self._content = _format_content(tag, content)
+        self._tag = tag
+        self._content = _format_content(content)
 
     def build(self) -> str:
-        return self._build_element(self._content)
+        root = self._build_element(self._tag, self._content)
 
-    def _build_element(self, content: dict[str, Any]) -> str:
-        result: list[str] = []
+        return ET.tostring(root, encoding='unicode', method='xml').strip()
 
-        for tag, value in content.items():
-            if isinstance(value, dict):
-                nested_content = ''
+    def _build_element(self, tag: str, content: Content) -> ET.Element:
+        element = ET.Element(tag)
 
-                for k, v in cast(dict[str, Any], value).items():
-                    nested_content += self._build_element({k: v})
+        if isinstance(content, dict):
+            for key, value in content.items():
+                element.append(self._build_element(key, value))
+        elif isinstance(content, list):
+            parent = ET.Element('')
+            for item in content:
+                parent.append(self._build_element(tag, item))
+            return parent
+        else:
+            element.text = self._format_value(content)
 
-                result.append(f'<{tag}>{nested_content}</{tag}>')
-            elif isinstance(value, list):
-                nested_content = ''.join(
-                    f'<{tag}>{self._format_value(item)}</{tag}>' for item in cast(list[str], value)
-                )
-                result.append(nested_content)
-            else:
-                result.append(f'<{tag}>{self._format_value(value)}</{tag}>')
+        return element
 
-        return ''.join(result)
-
-    def _format_value(self, value: Any) -> str:
+    def _format_value(self, value: Content) -> str:
         if isinstance(value, bool):
             return str(value).lower()
-        elif isinstance(value, dict):
-            return self._build_element(cast(dict[str, Any], value))
-        elif isinstance(value, list):
-            return ''.join(f'{self._format_value(item)}' for item in cast(list[Any], value))
-        else:
-            return str(value)
+        return str(value)
