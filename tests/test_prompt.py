@@ -5,7 +5,7 @@ from typing import Any
 import pytest
 from pydantic import BaseModel
 
-from pydantic_ai.prompt import XMLTagBuilder, prepare_content, format_context, format_examples, format_rules
+from pydantic_ai.prompt import XMLTagBuilder, format_context, format_examples, format_rules, prepare_content
 
 
 class DummyModel(BaseModel):
