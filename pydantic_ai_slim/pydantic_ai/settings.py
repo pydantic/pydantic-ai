@@ -1,15 +1,12 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from httpx import Timeout
 from typing_extensions import TypedDict
 
-from .exceptions import UsageLimitExceeded
-
 if TYPE_CHECKING:
-    from .result import Usage
+    pass
 
 
 class ModelSettings(TypedDict, total=False):
@@ -82,60 +79,3 @@ def merge_model_settings(base: ModelSettings | None, overrides: ModelSettings | 
         return base | overrides
     else:
         return base or overrides
-
-
-@dataclass
-class UsageLimits:
-    """Limits on model usage.
-
-    The request count is tracked by pydantic_ai, and the request limit is checked before each request to the model.
-    Token counts are provided in responses from the model, and the token limits are checked after each response.
-
-    Each of the limits can be set to `None` to disable that limit.
-    """
-
-    request_limit: int | None = 50
-    """The maximum number of requests allowed to the model."""
-    request_tokens_limit: int | None = None
-    """The maximum number of tokens allowed in requests to the model."""
-    response_tokens_limit: int | None = None
-    """The maximum number of tokens allowed in responses from the model."""
-    total_tokens_limit: int | None = None
-    """The maximum number of tokens allowed in requests and responses combined."""
-
-    def has_token_limits(self) -> bool:
-        """Returns `True` if this instance places any limits on token counts.
-
-        If this returns `False`, the `check_tokens` method will never raise an error.
-
-        This is useful because if we have token limits, we need to check them after receiving each streamed message.
-        If there are no limits, we can skip that processing in the streaming response iterator.
-        """
-        return any(
-            limit is not None
-            for limit in (self.request_tokens_limit, self.response_tokens_limit, self.total_tokens_limit)
-        )
-
-    def check_before_request(self, usage: Usage) -> None:
-        """Raises a `UsageLimitExceeded` exception if the next request would exceed the request_limit."""
-        request_limit = self.request_limit
-        if request_limit is not None and usage.requests >= request_limit:
-            raise UsageLimitExceeded(f'The next request would exceed the request_limit of {request_limit}')
-
-    def check_tokens(self, usage: Usage) -> None:
-        """Raises a `UsageLimitExceeded` exception if the usage exceeds any of the token limits."""
-        request_tokens = usage.request_tokens or 0
-        if self.request_tokens_limit is not None and request_tokens > self.request_tokens_limit:
-            raise UsageLimitExceeded(
-                f'Exceeded the request_tokens_limit of {self.request_tokens_limit} ({request_tokens=})'
-            )
-
-        response_tokens = usage.response_tokens or 0
-        if self.response_tokens_limit is not None and response_tokens > self.response_tokens_limit:
-            raise UsageLimitExceeded(
-                f'Exceeded the response_tokens_limit of {self.response_tokens_limit} ({response_tokens=})'
-            )
-
-        total_tokens = usage.total_tokens or 0
-        if self.total_tokens_limit is not None and total_tokens > self.total_tokens_limit:
-            raise UsageLimitExceeded(f'Exceeded the total_tokens_limit of {self.total_tokens_limit} ({total_tokens=})')

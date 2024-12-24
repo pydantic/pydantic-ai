@@ -218,20 +218,27 @@ text_responses: dict[str, str | ToolCallPart] = {
         'Rome is known for its rich history, stunning architecture, and delicious cuisine.'
     ),
     'Begin infinite retry loop!': ToolCallPart(tool_name='infinite_retry_tool', args=ArgsDict({})),
+    'Please generate 5 jokes.': ToolCallPart(
+        tool_name='final_result',
+        args=ArgsDict({'response': []}),
+    ),
 }
 
 
-async def model_logic(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:  # pragma: no cover
+async def model_logic(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:  # pragma: no cover  # noqa: C901
     m = messages[-1].parts[-1]
     if isinstance(m, UserPromptPart):
-        if response := text_responses.get(m.content):
+        if m.content == 'Tell me a joke.' and any(t.name == 'joke_factory' for t in info.function_tools):
+            return ModelResponse(parts=[ToolCallPart(tool_name='joke_factory', args=ArgsDict({'count': 5}))])
+        elif m.content == 'Please generate 5 jokes.' and any(t.name == 'get_jokes' for t in info.function_tools):
+            return ModelResponse(parts=[ToolCallPart(tool_name='get_jokes', args=ArgsDict({'count': 5}))])
+        elif re.fullmatch(r'sql prompt \d+', m.content):
+            return ModelResponse.from_text(content='SELECT 1')
+        elif response := text_responses.get(m.content):
             if isinstance(response, str):
                 return ModelResponse.from_text(content=response)
             else:
                 return ModelResponse(parts=[response])
-
-        if re.fullmatch(r'sql prompt \d+', m.content):
-            return ModelResponse.from_text(content='SELECT 1')
 
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'roulette_wheel':
         win = m.content == 'winner'
@@ -249,7 +256,7 @@ async def model_logic(messages: list[ModelMessage], info: AgentInfo) -> ModelRes
     elif isinstance(m, RetryPromptPart) and m.tool_name == 'infinite_retry_tool':
         return ModelResponse(parts=[ToolCallPart(tool_name='infinite_retry_tool', args=ArgsDict({}))])
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_user_by_name':
-        args = {
+        args: dict[str, Any] = {
             'message': 'Hello John, would you be free for coffee sometime next week? Let me know what works for you!',
             'user_id': 123,
         }
@@ -262,6 +269,11 @@ async def model_logic(messages: list[ModelMessage], info: AgentInfo) -> ModelRes
             'block_card': False,
             'risk': 1,
         }
+        return ModelResponse(parts=[ToolCallPart(tool_name='final_result', args=ArgsDict(args))])
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'joke_factory':
+        return ModelResponse.from_text(content='Did you hear about the toothpaste scandal? They called it Colgate.')
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_jokes':
+        args = {'response': []}
         return ModelResponse(parts=[ToolCallPart(tool_name='final_result', args=ArgsDict(args))])
     else:
         sys.stdout.write(str(debug.format(messages, info)))

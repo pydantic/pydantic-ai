@@ -275,6 +275,8 @@ async def application_code(prompt: str) -> str:  # (3)!
 3. Application code that calls the agent, in a real application this might be an API endpoint.
 4. Call the agent from within the application code, in a real application this call might be deep within a call stack. Note `app_deps` here will NOT be used when deps are overridden.
 
+_(This example is complete, it can be run "as is")_
+
 ```python {title="test_joke_app.py" hl_lines="10-12" call_name="test_application_code"}
 from joke_app import MyDeps, application_code, joke_agent
 
@@ -295,44 +297,6 @@ async def test_application_code():
 2. Create an instance of the test dependency, we don't need to pass an `http_client` here as it's not used.
 3. Override the dependencies of the agent for the duration of the `with` block, `test_deps` will be used when the agent is run.
 4. Now we can safely call our application code, the agent will use the overridden dependencies.
-
-## Agents as dependencies of other Agents
-
-Since dependencies can be any python type, and agents are just python objects, agents can be dependencies of other agents.
-
-```python {title="agents_as_dependencies.py"}
-from dataclasses import dataclass
-
-from pydantic_ai import Agent, RunContext
-
-
-@dataclass
-class MyDeps:
-    factory_agent: Agent[None, list[str]]
-
-
-joke_agent = Agent(
-    'openai:gpt-4o',
-    deps_type=MyDeps,
-    system_prompt=(
-        'Use the "joke_factory" to generate some jokes, then choose the best. '
-        'You must return just a single joke.'
-    ),
-)
-
-factory_agent = Agent('gemini-1.5-pro', result_type=list[str])
-
-
-@joke_agent.tool
-async def joke_factory(ctx: RunContext[MyDeps], count: int) -> str:
-    r = await ctx.deps.factory_agent.run(f'Please generate {count} jokes.')
-    return '\n'.join(r.data)
-
-
-result = joke_agent.run_sync('Tell me a joke.', deps=MyDeps(factory_agent))
-print(result.data)
-#> Did you hear about the toothpaste scandal? They called it Colgate.
-```
 
 ## Examples
 

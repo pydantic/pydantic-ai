@@ -2,7 +2,6 @@ from __future__ import annotations as _annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Awaitable, Callable
-from copy import copy
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Generic, Union, cast
@@ -11,16 +10,10 @@ import logfire_api
 from typing_extensions import TypeVar
 
 from . import _result, _utils, exceptions, messages as _messages, models
-from .settings import UsageLimits
 from .tools import AgentDeps, RunContext
+from .usage import Usage, UsageLimits
 
-__all__ = (
-    'ResultData',
-    'ResultValidatorFunc',
-    'Usage',
-    'RunResult',
-    'StreamedRunResult',
-)
+__all__ = 'ResultData', 'ResultValidatorFunc', 'RunResult', 'StreamedRunResult'
 
 
 ResultData = TypeVar('ResultData', default=str)
@@ -42,55 +35,6 @@ Usage `ResultValidatorFunc[AgentDeps, ResultData]`.
 """
 
 _logfire = logfire_api.Logfire(otel_scope='pydantic-ai')
-
-
-@dataclass
-class Usage:
-    """LLM usage associated with a request or run.
-
-    Responsibility for calculating usage is on the model; PydanticAI simply sums the usage information across requests.
-
-    You'll need to look up the documentation of the model you're using to convert usage to monetary costs.
-    """
-
-    requests: int = 0
-    """Number of requests made to the LLM API."""
-    request_tokens: int | None = None
-    """Tokens used in processing requests."""
-    response_tokens: int | None = None
-    """Tokens used in generating responses."""
-    total_tokens: int | None = None
-    """Total tokens used in the whole run, should generally be equal to `request_tokens + response_tokens`."""
-    details: dict[str, int] | None = None
-    """Any extra details returned by the model."""
-
-    def incr(self, incr_usage: Usage, *, requests: int = 0) -> None:
-        """Increment the usage in place.
-
-        Args:
-            incr_usage: The usage to increment by.
-            requests: The number of requests to increment by in addition to `incr_usage.requests`.
-        """
-        self.requests += requests
-        for f in 'requests', 'request_tokens', 'response_tokens', 'total_tokens':
-            self_value = getattr(self, f)
-            other_value = getattr(incr_usage, f)
-            if self_value is not None or other_value is not None:
-                setattr(self, f, (self_value or 0) + (other_value or 0))
-
-        if incr_usage.details:
-            self.details = self.details or {}
-            for key, value in incr_usage.details.items():
-                self.details[key] = self.details.get(key, 0) + value
-
-    def __add__(self, other: Usage) -> Usage:
-        """Add two Usages together.
-
-        This is provided so it's trivial to sum usage information from multiple requests and runs.
-        """
-        new_usage = copy(self)
-        new_usage.incr(other)
-        return new_usage
 
 
 @dataclass

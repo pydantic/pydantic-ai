@@ -5,14 +5,15 @@ In this scenario, a group of agents work together to find flights for a user.
 
 import datetime
 from dataclasses import dataclass
+from typing import Literal
 
 import logfire
 from pydantic import BaseModel, Field
+from rich.prompt import Prompt
 
 from pydantic_ai import Agent, ModelRetry, RunContext
 from pydantic_ai.messages import ModelMessage
-from pydantic_ai.result import Usage
-from pydantic_ai.settings import UsageLimits
+from pydantic_ai.usage import Usage, UsageLimits
 
 # 'if-token-present' means nothing will be sent (and the example will work) if you don't have logfire configured
 logfire.configure(send_to_logfire='if-token-present')
@@ -41,9 +42,8 @@ class Deps:
 
 
 # This agent is responsible for controlling the flow of the conversation.
-flights_agent = Agent[Deps, FlightDetails | NoFlightFound](
+search_agent = Agent[Deps, FlightDetails | NoFlightFound](
     'openai:gpt-4o',
-    deps_type=Deps,
     result_type=FlightDetails | NoFlightFound,  # type: ignore
     retries=4,
     system_prompt=(
@@ -52,23 +52,23 @@ flights_agent = Agent[Deps, FlightDetails | NoFlightFound](
 )
 
 
-# This agent is responsible for extracting flight details from text.
-search_agent = Agent(
+# This agent is responsible for extracting flight details from web page text.
+extraction_agent = Agent(
     'openai:gpt-4o',
     result_type=list[FlightDetails],
-    system_prompt=('Extract all the flight details from the given text.'),
+    system_prompt='Extract all the flight details from the given text.',
 )
 
 
-@flights_agent.tool
+@search_agent.tool
 async def extract_flights(ctx: RunContext[Deps]) -> list[FlightDetails]:
     """Get details of all flights."""
     # we pass the usage to the search agent so requests within this agent are counted
-    result = await search_agent.run(ctx.deps.web_page_text, usage=ctx.usage)
+    result = await extraction_agent.run(ctx.deps.web_page_text, usage=ctx.usage)
     return result.data
 
 
-@flights_agent.result_validator
+@search_agent.result_validator
 async def validate_result(
     ctx: RunContext[Deps], result: FlightDetails | NoFlightFound
 ) -> FlightDetails | NoFlightFound:
@@ -94,6 +94,32 @@ async def validate_result(
         return result
 
 
+class SeatPreference(BaseModel):
+    row: int = Field(ge=1, le=30)
+    seat: Literal['A', 'B', 'C', 'D', 'E', 'F']
+
+
+class Failed(BaseModel):
+    """Unable to extract a seat selection."""
+
+
+# This agent is responsible for extracting the user's seat selection
+seat_preference_agent = Agent[
+    None, FlightDetails | NoFlightFound
+](
+    'openai:gpt-4o',
+    result_type=SeatPreference | Failed,  # type: ignore
+    system_prompt=(
+        "Extract the user's seat preference. "
+        'Seats A and F are window seats. '
+        'Row 1 is the front row and has extra leg room. '
+        'Rows 14, and 20 also have extra leg room. '
+    ),
+)
+
+
+# in reality this would be downloaded from a booking site,
+# potentially using another agent to navigate the site
 flights_web_page = """
 1. Flight SFO-AK123
 - Price: $350
@@ -144,6 +170,9 @@ flights_web_page = """
 - Date: January 10, 2025
 """
 
+# restrict how many requests this app can make to the LLM
+usage_limit = UsageLimits(request_limit=15)
+
 
 async def main():
     deps = Deps(
@@ -155,26 +184,53 @@ async def main():
     message_history: list[ModelMessage] | None = None
     usage: Usage = Usage()
     while True:
-        result = await flights_agent.run(
+        result = await search_agent.run(
             'Find me a flight',
             deps=deps,
             usage=usage,
             message_history=message_history,
-            usage_limits=UsageLimits(request_limit=15),
+            usage_limits=usage_limit,
         )
         if isinstance(result.data, NoFlightFound):
             print('No flight found')
             break
         else:
-            print(f'Flight found: {result.data}')
-            answer = input(
-                'Do you want to buy this flight, or keep searching? (buy/no): '
+            flight = result.data
+            print(f'Flight found: {flight}')
+            answer = Prompt.ask(
+                'Do you want to buy this flight, or keep searching? (buy/*search)',
+                choices=['buy', 'search', ''],
+                show_choices=False,
             )
             if answer == 'buy':
-                print('Purchasing flight...')
+                seat = await find_seat(usage)
+                await buy_tickets(flight, seat)
                 break
-            result.set_result_tool_return('Please suggest another flight')
+            else:
+                result.set_result_tool_return('Please suggest another flight')
+                message_history = result.all_messages()
+
+
+async def find_seat(usage: Usage) -> SeatPreference:
+    message_history: list[ModelMessage] | None = None
+    while True:
+        answer = Prompt.ask('What seat would you like?', show_choices=False)
+
+        result = await seat_preference_agent.run(
+            answer,
+            message_history=message_history,
+            usage=usage,
+            usage_limits=usage_limit,
+        )
+        if isinstance(result.data, SeatPreference):
+            return result.data
+        else:
+            print('Could not understand seat preference. Please try again.')
             message_history = result.all_messages()
+
+
+async def buy_tickets(flight_details: FlightDetails, seat: SeatPreference):
+    print(f'Purchasing flight {flight_details=!r} {seat=!r}...')
 
 
 if __name__ == '__main__':

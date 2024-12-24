@@ -16,8 +16,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.result import Usage
-from pydantic_ai.settings import UsageLimits
+from pydantic_ai.usage import Usage, UsageLimits
 
 from .conftest import IsNow
 
