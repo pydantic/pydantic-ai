@@ -5,7 +5,7 @@ from typing import Any
 import pytest
 from pydantic import BaseModel
 
-from pydantic_ai.prompt import XMLTagBuilder, _format_content, format_context, format_examples, format_rules
+from pydantic_ai.prompt import XMLTagBuilder, prepare_content, format_context, format_examples, format_rules
 
 
 class DummyModel(BaseModel):
@@ -25,30 +25,33 @@ class DummyClass:
 
 class TestSimpleContentFormatting:
     def test_str(self) -> None:
-        content = _format_content('Hello, world!')
+        content = prepare_content('Hello, world!')
 
         assert content == 'Hello, world!'
 
     def test_dict(self) -> None:
-        content = _format_content(
+        content = prepare_content(
             {
                 'key01': 'value',
                 'key02': 42,
             },
         )
 
+        assert isinstance(content, dict)
         assert content['key01'] == 'value'
         assert content['key02'] == 42
 
     def test_base_model(self) -> None:
-        content = _format_content(DummyModel(key01='value', key02=42))
+        content = prepare_content(DummyModel(key01='value', key02=42))
 
+        assert isinstance(content, dict)
         assert content['key01'] == 'value'
         assert content['key02'] == 42
 
     def test_dataclass(self) -> None:
-        content = _format_content(DummyDataclass(key01='value', key02=42))
+        content = prepare_content(DummyDataclass(key01='value', key02=42))
 
+        assert isinstance(content, dict)
         assert content['key01'] == 'value'
         assert content['key02'] == 42
 
@@ -61,13 +64,14 @@ class TestSimpleContentFormatting:
         ],
     )
     def test_iterable(self, iterable_content: Iterable[str]) -> None:
-        content = _format_content(iterable_content)
+        content = prepare_content(iterable_content)
 
+        assert isinstance(content, list)
         assert len(content) == 3
 
     def test_unsupported_content(self) -> None:
         with pytest.raises(TypeError, match='Unsupported content type'):
-            _format_content(DummyClass())
+            prepare_content(DummyClass())
 
 
 class Location(BaseModel):
@@ -128,14 +132,18 @@ class TestComplexContentFormatting:
         ),
     )
     def test_nested_dict(self, content: Any) -> None:
-        got = _format_content(content)
+        got = prepare_content(content)
+
+        assert isinstance(got, dict)
+        assert isinstance(got['user_info'], dict)
+        assert isinstance(got['user_info']['location'], dict)
 
         assert got['user_name'] == 'John'
         assert got['user_info']['age'] == 42
         assert got['user_info']['location']['country'] == 'UK'
 
     def test_iterable_with_dict(self) -> None:
-        got = _format_content(
+        got = prepare_content(
             {
                 'general': ['rule #1', 'rule #2'],
                 'specific': [
@@ -144,6 +152,11 @@ class TestComplexContentFormatting:
                 ],
             },
         )
+
+        assert isinstance(got, dict)
+        assert isinstance(got['general'], list)
+        assert isinstance(got['specific'], list)
+        assert isinstance(got['specific'][0], dict)
 
         assert got['general'][0] == 'rule #1'
         assert got['specific'][0]['name'] == 'rule #3'
@@ -174,7 +187,13 @@ class TestComplexContentFormatting:
         ),
     )
     def test_iterable_with_models(self, content: Any) -> None:
-        got = _format_content(content)
+        got = prepare_content(content)
+
+        assert isinstance(got, list)
+        assert isinstance(got[0], dict)
+        assert isinstance(got[1], dict)
+        assert isinstance(got[1]['user_info'], dict)
+        assert isinstance(got[1]['user_info']['location'], dict)
 
         assert got[0]['user_name'] == 'John'
         assert got[1]['user_info']['location']['country'] == 'USA'
@@ -243,6 +262,9 @@ class TestXMLContentFormatting:
             got
             == '<examples><text>Example #1</text><decision>true</decision></examples><examples><text>Example #2</text><decision>false</decision></examples>'
         )
+
+    def test_dict_with_list(self) -> None:
+        raise NotImplementedError
 
     def test_str(self) -> None:
         rules = ['Rule #1', 'Rule #2']

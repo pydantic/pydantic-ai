@@ -16,6 +16,7 @@ __all__ = (
 )
 
 Content = Union[str, int, float, bool, dict[str, 'Content'], list['Content']]
+XMLContent = Union[ET.Element | list['XMLContent']]
 Dialect = Literal['xml']
 
 
@@ -64,7 +65,7 @@ format_rules = partial(format_tag, tag='rules')
 format_context = partial(format_tag, tag='context')
 
 
-def _format_content(content: Any) -> Content:
+def prepare_content(content: Any) -> Content:
     """Format content into a structured dictionary representation.
 
     This internal function processes the input content and creates a hierarchical dictionary
@@ -99,10 +100,10 @@ def _format_content(content: Any) -> Content:
     normalized = _normalize_type(content)
 
     if isinstance(normalized, dict):
-        return {key: _format_content(value) for key, value in normalized.items()}
+        return {key: prepare_content(value) for key, value in normalized.items()}
     elif isinstance(normalized, list):
         assert isinstance(normalized, list)
-        return [_format_content(item) for item in normalized]
+        return [prepare_content(item) for item in normalized]
     else:
         return normalized
 
@@ -189,24 +190,33 @@ class XMLTagBuilder:
 
     def __init__(self, tag: str, content: Any):
         self._tag = tag
-        self._content = _format_content(content)
+        self._content = prepare_content(content)
 
     def build(self) -> str:
-        root = self._build_element(self._tag, self._content)
+        elements = self._build_element(self._tag, self._content)
 
-        return ET.tostring(root, encoding='unicode', method='xml').strip()
+        if isinstance(elements, list):
+            return ''.join(
+                ET.tostring(element, encoding='unicode', method='xml').strip()
+                for element in cast(list[ET.Element], elements)
+            )
 
-    def _build_element(self, tag: str, content: Content) -> ET.Element:
+        return ET.tostring(elements, encoding='unicode', method='xml').strip()
+
+    def _build_element(self, tag: str, content: Content) -> XMLContent:
+        if isinstance(content, list):
+            return [self._build_element(tag, item) for item in content]
+
         element = ET.Element(tag)
-
         if isinstance(content, dict):
             for key, value in content.items():
-                element.append(self._build_element(key, value))
-        elif isinstance(content, list):
-            parent = ET.Element('')
-            for item in content:
-                parent.append(self._build_element(tag, item))
-            return parent
+                sub_elements = self._build_element(key, value)
+
+                if isinstance(sub_elements, list):
+                    for sub_element in cast(list[ET.Element], sub_elements):
+                        element.append(sub_element)
+                else:
+                    element.append(sub_elements)
         else:
             element.text = self._format_value(content)
 
