@@ -174,15 +174,25 @@ class XMLTagBuilder:
     Examples:
         >>> builder = XMLTagBuilder('user', {'name': 'John & Jane', 'age': 30})
         >>> builder.build()
-        '<user><name>John &amp; Jane</name><age>30</age></user>'
+        <user>
+          <name>John &amp; Jane</name>
+          <age>30</age>
+        </user>
 
         >>> builder = XMLTagBuilder('flags', [True, False])
         >>> builder.build()
-        '<flags>true</flags><flags>false</flags>'
+        <flags>true</flags>
+        <flags>false</flags>
 
         >>> builder = XMLTagBuilder('nested', {'user': {'details': {'active': True}}})
         >>> builder.build()
-        '<nested><user><details><active>true</active></details></user></nested>'
+        <nested>
+          <user>
+            <details>
+              <active>true</active>
+            </details>
+          </user>
+        </nested>
     """
 
     def __init__(self, tag: str, content: Any):

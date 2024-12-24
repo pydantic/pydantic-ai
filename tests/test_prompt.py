@@ -301,18 +301,16 @@ class TestXMLContentFormatting:
 
     def test_indent_list(self) -> None:
         builder = XMLTagBuilder(
-            'context',
-            {'users': ['John', 'Jane']},
+            'users',
+            ['John', 'Jane'],
         )
         got = builder.build(indent=True)
 
         assert got == '\n'.join(
             line
             for line in (
-                '<context>',
-                '  <users>John</users>',
-                '  <users>Jane</users>',
-                '</context>',
+                '<users>John</users>',
+                '<users>Jane</users>',
             )
         )
 
