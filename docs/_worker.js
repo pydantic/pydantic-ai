@@ -61,7 +61,7 @@ async function versionWarning(request, env) {
   <p>
     ${env.CF_PAGES_BRANCH === 'main' ? '' : `(<b>${env.CF_PAGES_BRANCH}</b> preview)`}
     This documentation is ahead of the last release by
-    <a href="${r2.html_url}">
+    <a href="${r2_data.html_url}">
       ${ahead_by} commit${ahead_by === 1 ? '' : 's'}
     </a>.
     You may see documentation for features not yet supported in the latest release <a href="${html_url}">${name}</a>.
