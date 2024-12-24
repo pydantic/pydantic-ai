@@ -60,8 +60,10 @@ async function versionWarning(request, env) {
   <p class="admonition-title">Version Notice</p>
   <p>
     ${env.CF_PAGES_BRANCH === 'main' ? '' : `(<b>${env.CF_PAGES_BRANCH}</b> preview)`}
-    This documentation is ahead of the last release by <a href="${r2.html_url}">${ahead_by}</a>
-    commit${ahead_by === 1 ? '' : 's'}.
+    This documentation is ahead of the last release by
+    <a href="${r2.html_url}">
+      ${ahead_by} commit${ahead_by === 1 ? '' : 's'}
+    </a>.
     You may see documentation for features not yet supported in the latest release <a href="${html_url}">${name}</a>.
   </p>
 </div>`
