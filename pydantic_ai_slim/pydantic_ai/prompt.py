@@ -17,7 +17,6 @@ __all__ = (
 )
 
 Dialect = Literal['xml']
-BasicType = Union[str, int, float, bool]
 
 
 def format_tag(content: Any, tag: str, dialect: Dialect = 'xml') -> str:
@@ -54,14 +53,10 @@ def format_tag(content: Any, tag: str, dialect: Dialect = 'xml') -> str:
         >>> format_tag('user', user)
         '<user><name>John</name><age>30</age></user>'
     """
-    try:
-        builder = {
-            'xml': XMLTagBuilder,
-        }[dialect](tag, content)
-    except KeyError:
+    if dialect != 'xml':
         raise ValueError(f'Unsupported dialect: {dialect}')
 
-    return builder.build()
+    return XMLTagBuilder(tag, content).build()
 
 
 format_examples = partial(format_tag, tag='examples')
@@ -69,15 +64,61 @@ format_rules = partial(format_tag, tag='rules')
 format_context = partial(format_tag, tag='context')
 
 
-def _normalize_type(content: Any) -> dict[str, Any] | list[Any] | BasicType:
+def _normalize_type(content: Any) -> dict[str, Any] | list[Any] | str | int | float | bool:
+    """Normalize various Python types into a consistent format for tag building.
+
+    This internal function converts complex Python objects into basic types that can be
+    easily formatted into tagged strings. It handles special cases like Pydantic models,
+    dataclasses, and iterables.
+
+    Args:
+        content: The content to normalize. Can be:
+            - Pydantic BaseModel (converted to dict)
+            - Dataclass (converted to dict)
+            - Iterable (converted to list, except str and dict)
+            - Basic types (str, int, float, bool, dict)
+
+    Returns:
+        The normalized content as one of:
+            - dict[str, Any]: For mapping types (dict, BaseModel, dataclass)
+            - list[Any]: For iterable types
+            - str: For string values
+            - int: For integer values
+            - float: For float values
+            - bool: For boolean values
+
+    Raises:
+        TypeError: If the content type is not supported for normalization.
+
+    Examples:
+        >>> from pydantic import BaseModel
+        >>> class User(BaseModel):
+        ...     name: str
+        >>> _normalize_type(User(name='John'))
+        {'name': 'John'}
+
+        >>> from dataclasses import dataclass
+        >>> @dataclass
+        >>> class Point:
+        ...     x: int
+        ...     y: int
+        >>> _normalize_type(Point(1, 2))
+        {'x': 1, 'y': 2}
+
+        >>> _normalize_type(['a', 'b', 'c'])
+        ['a', 'b', 'c']
+
+        >>> _normalize_type(42)
+        42
+    """
     if isinstance(content, BaseModel):
         return content.model_dump()
     elif is_dataclass(content):
         return asdict(cast(Any, content))
-    elif isinstance(content, Iterable) and not isinstance(content, (str, dict)):
-        return list(cast(Iterable[Any], content))
     elif isinstance(content, (str, int, float, bool, dict)):
-        return cast(Union[BasicType, dict[str, Any]], content)
+        return cast(Union[str, int, float, bool, dict[str, Any]], content)
+    elif isinstance(content, Iterable):
+        return list(cast(Iterable[Any], content))
     else:
         raise TypeError(f'Unsupported content type: {type(content)}')
 
@@ -112,6 +153,38 @@ class TagBuilder(ABC):
     def build(self) -> str: ...
 
     def _format_content(self, tag: str, content: Any) -> dict[str, Any]:
+        """Format content into a structured dictionary representation.
+
+        This internal method processes the input content and creates a hierarchical dictionary
+        structure where each level represents a tagged element. It handles nested structures
+        and different types of content recursively.
+
+        Args:
+            tag: The tag name to use as the key in the resulting dictionary.
+            content: The content to format. Can be:
+                - Basic types (str, int, float, bool)
+                - Dictionaries (processed recursively)
+                - Lists (each item processed separately)
+                - Complex objects (dataclasses or pydantic models)
+
+        Returns:
+            A dictionary with a single key (the tag) and a structured value that represents
+            the formatted content. The structure depends on the input type:
+                - For basic types: {tag: value}
+                - For dicts: {tag: {key1: formatted1, key2: formatted2, ...}}
+                - For lists: {tag: [formatted1, formatted2, ...]}
+
+        Examples:
+            >>> builder = TagBuilder(...)
+            >>> builder._format_content('user', 'John')
+            {'user': 'John'}
+
+            >>> builder._format_content('user', {'name': 'John', 'age': 30})
+            {'user': {'name': 'John', 'age': 30}}
+
+            >>> builder._format_content('items', [1, 2, 3])
+            {'items': [{'items': 1}, {'items': 2}, {'items': 3}]}
+        """
         root: dict[str, Any] = {}
         normalized = _normalize_type(content)
 
