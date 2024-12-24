@@ -134,11 +134,26 @@ class RunResult(_BaseRunResult[ResultData]):
 
     data: ResultData
     """Data from the final response in the run."""
+    _result_tool_name: str | None
     _usage: Usage
 
     def usage(self) -> Usage:
         """Return the usage of the whole run."""
         return self._usage
+
+    def set_result_tool_return(self, return_content: str) -> None:
+        """Set return content for the result tool.
+
+        Useful if you want to continue the conversation and want to set the response to the result tool call.
+        """
+        if not self._all_messages:
+            raise ValueError('Cannot set result tool return content when the return type is `str`.')
+        last_message = self._all_messages[-1]
+        for part in last_message.parts:
+            if isinstance(part, _messages.ToolReturnPart) and part.tool_name == self._result_tool_name:
+                part.content = return_content
+                return
+        raise LookupError(f'No tool call found with tool name {self._result_tool_name}')
 
 
 @dataclass

@@ -271,6 +271,13 @@ def test_plain_response(set_event_loop: None):
             ),
         ]
     )
+    assert result._result_tool_name == 'final_result'  # pyright: ignore[reportPrivateUsage]
+    result.set_result_tool_return('foobar')
+    assert result.all_messages()[-1] == snapshot(
+        ModelRequest(
+            parts=[ToolReturnPart(tool_name='final_result', content='foobar', timestamp=IsNow(tz=timezone.utc))]
+        )
+    )
 
 
 def test_response_tuple(set_event_loop: None):
@@ -507,6 +514,7 @@ def test_run_with_history_new(set_event_loop: None):
             ],
             _new_message_index=4,
             data='{"ret_a":"a-apple"}',
+            _result_tool_name=None,
             _usage=Usage(requests=1, request_tokens=55, response_tokens=13, total_tokens=68, details=None),
         )
     )
@@ -549,6 +557,7 @@ def test_run_with_history_new(set_event_loop: None):
             ],
             _new_message_index=4,
             data='{"ret_a":"a-apple"}',
+            _result_tool_name=None,
             _usage=Usage(requests=1, request_tokens=55, response_tokens=13, total_tokens=68, details=None),
         )
     )
@@ -648,6 +657,7 @@ def test_run_with_history_new_structured(set_event_loop: None):
                 ),
             ],
             _new_message_index=5,
+            _result_tool_name='final_result',
             _usage=Usage(requests=1, request_tokens=59, response_tokens=13, total_tokens=72, details=None),
         )
     )

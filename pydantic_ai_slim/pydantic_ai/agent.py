@@ -272,11 +272,14 @@ class Agent(Generic[AgentDeps, ResultData]):
                     # Check if we got a final result
                     if final_result is not None:
                         result_data = final_result.data
+                        result_tool_name = final_result.tool_name
                         run_span.set_attribute('all_messages', messages)
                         run_span.set_attribute('usage', run_context.usage)
                         handle_span.set_attribute('result', result_data)
                         handle_span.message = 'handle model response -> final result'
-                        return result.RunResult(messages, new_message_index, result_data, run_context.usage)
+                        return result.RunResult(
+                            messages, new_message_index, result_data, result_tool_name, run_context.usage
+                        )
                     else:
                         # continue the conversation
                         handle_span.set_attribute('tool_responses', tool_responses)
