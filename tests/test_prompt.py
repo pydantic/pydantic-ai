@@ -264,7 +264,13 @@ class TestXMLContentFormatting:
         )
 
     def test_dict_with_list(self) -> None:
-        raise NotImplementedError
+        builder = XMLTagBuilder(
+            'context',
+            {'users': ['John', 'Jane']},
+        )
+        got = builder.build()
+
+        assert got == '<context><users>John</users><users>Jane</users></context>'
 
     def test_str(self) -> None:
         rules = ['Rule #1', 'Rule #2']
@@ -272,6 +278,12 @@ class TestXMLContentFormatting:
         got = builder.build()
 
         assert got == '<rules>- Rule #1\n- Rule #2</rules>'
+
+    def test_escaping(self) -> None:
+        builder = XMLTagBuilder('user', {'name': '</name>John & Jane', 'age': 30})
+        got = builder.build()
+
+        assert got == '<user><name>&lt;/name&gt;John &amp; Jane</name><age>30</age></user>'
 
 
 @pytest.mark.parametrize(

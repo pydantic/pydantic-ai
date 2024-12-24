@@ -169,10 +169,7 @@ def _normalize_type(content: Any) -> Content:
 
 @final
 class XMLTagBuilder:
-    """Concrete implementation of TagBuilder that produces XML-like formatted output.
-
-    This class converts the normalized content into valid XML string representation
-    using xml.etree.ElementTree for proper XML handling and escaping.
+    """This class converts the content into valid XML string representation.
 
     Examples:
         >>> builder = XMLTagBuilder('user', {'name': 'John & Jane', 'age': 30})
@@ -193,6 +190,20 @@ class XMLTagBuilder:
         self._content = prepare_content(content)
 
     def build(self) -> str:
+        """Build the XML string representation of the content.
+
+        Returns:
+            A string containing the XML representation of the content.
+            Special characters are properly escaped, and boolean values are
+            converted to lowercase 'true'/'false'.
+
+        Examples:
+            >>> XMLTagBuilder('user', {'name': 'John'}).build()
+            '<user><name>John</name></user>'
+
+            >>> XMLTagBuilder('items', [1, 2]).build()
+            '<items>1</items><items>2</items>'
+        """
         elements = self._build_element(self._tag, self._content)
 
         if isinstance(elements, list):
