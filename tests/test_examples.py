@@ -72,6 +72,7 @@ def test_docs_examples(
     mocker.patch('httpx.AsyncClient.get', side_effect=async_http_request)
     mocker.patch('httpx.AsyncClient.post', side_effect=async_http_request)
     mocker.patch('random.randint', return_value=4)
+    mocker.patch('rich.prompt.Prompt.ask', side_effect=rich_prompt_ask)
 
     env.set('OPENAI_API_KEY', 'testing')
     env.set('GEMINI_API_KEY', 'testing')
@@ -143,6 +144,14 @@ def http_request(url: str, **kwargs: Any) -> httpx.Response:
 
 async def async_http_request(url: str, **kwargs: Any) -> httpx.Response:
     return http_request(url, **kwargs)
+
+
+def rich_prompt_ask(prompt: str, *_args: Any, **_kwargs: Any) -> str:
+    if prompt == 'Where would you like to fly from and to?':
+        return 'SFO to ANC'
+    else:
+        assert prompt == 'What seat would you like?', prompt
+        return 'window seat with leg room'
 
 
 text_responses: dict[str, str | ToolCallPart] = {
@@ -222,6 +231,14 @@ text_responses: dict[str, str | ToolCallPart] = {
         tool_name='final_result',
         args=ArgsDict({'response': []}),
     ),
+    'SFO to ANC': ToolCallPart(
+        tool_name='flight_search',
+        args=ArgsDict({'origin': 'SFO', 'destination': 'ANC'}),
+    ),
+    'window seat with leg room': ToolCallPart(
+        tool_name='final_result_SeatPreference',
+        args=ArgsDict({'row': 1, 'seat': 'A'}),
+    ),
 }
 
 
@@ -275,6 +292,9 @@ async def model_logic(messages: list[ModelMessage], info: AgentInfo) -> ModelRes
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_jokes':
         args = {'response': []}
         return ModelResponse(parts=[ToolCallPart(tool_name='final_result', args=ArgsDict(args))])
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'flight_search':
+        args = {'flight_number': m.content.flight_number}  # type: ignore
+        return ModelResponse(parts=[ToolCallPart(tool_name='final_result_FlightDetails', args=ArgsDict(args))])
     else:
         sys.stdout.write(str(debug.format(messages, info)))
         raise RuntimeError(f'Unexpected message: {m}')

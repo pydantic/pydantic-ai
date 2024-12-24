@@ -22,7 +22,7 @@ logfire.configure(send_to_logfire='if-token-present')
 class FlightDetails(BaseModel):
     """Details of the most suitable flight."""
 
-    flight_number: str | None = None
+    flight_number: str
     price: int
     origin: str = Field(description='Three-letter airport code')
     destination: str = Field(description='Three-letter airport code')
@@ -214,7 +214,7 @@ async def main():
 async def find_seat(usage: Usage) -> SeatPreference:
     message_history: list[ModelMessage] | None = None
     while True:
-        answer = Prompt.ask('What seat would you like?', show_choices=False)
+        answer = Prompt.ask('What seat would you like?')
 
         result = await seat_preference_agent.run(
             answer,
