@@ -261,14 +261,12 @@ async def test_json_def_replaced_any_of(allow_model_requests: None):
                     parameters={
                         'properties': {
                             'op_location': {
-                                'anyOf': [
-                                    {
-                                        'properties': {'lat': {'type': 'number'}, 'lng': {'type': 'number'}},
-                                        'required': ['lat', 'lng'],
-                                        'type': 'object',
-                                    },
-                                    {'type': 'null'},
-                                ]
+                                'properties': {
+                                    'lat': {'type': 'number'},
+                                    'lng': {'type': 'number'},
+                                },
+                                'required': ['lat', 'lng'],
+                                'type': 'object',
                             }
                         },
                         'type': 'object',
