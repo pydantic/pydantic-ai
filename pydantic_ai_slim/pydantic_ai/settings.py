@@ -27,6 +27,7 @@ class ModelSettings(TypedDict, total=False):
     * Anthropic
     * OpenAI
     * Groq
+    * Cohere
     """
 
     temperature: float
@@ -43,6 +44,7 @@ class ModelSettings(TypedDict, total=False):
     * Anthropic
     * OpenAI
     * Groq
+    * Cohere
     """
 
     top_p: float
@@ -58,6 +60,7 @@ class ModelSettings(TypedDict, total=False):
     * Anthropic
     * OpenAI
     * Groq
+    * Cohere
     """
 
     timeout: float | Timeout

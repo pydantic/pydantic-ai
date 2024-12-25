@@ -43,6 +43,7 @@ dependencies = [
 
 [project.optional-dependencies]
 openai = ["openai>=1.54.3"]
+cohere = ["cohere>=5.13.4"]
 vertexai = ["google-auth>=2.36.0", "requests>=2.32.3"]
 anthropic = ["anthropic>=0.40.0"]
 groq = ["groq>=0.12.0"]
