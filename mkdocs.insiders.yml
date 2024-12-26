@@ -26,7 +26,7 @@ markdown_extensions:
       emoji_generator: !!python/name:material.extensions.emoji.to_svg
       options:
         custom_icons:
-            - docs/overrides/.icons
+            - docs/.overrides/.icons
   - pymdownx.tabbed:
       alternate_style: true
   - pymdownx.tasklist:
