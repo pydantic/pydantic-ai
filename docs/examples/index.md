@@ -38,8 +38,7 @@ TL;DR: in most cases you'll need to set one of the following environment variabl
 
 ### Running Examples
 
-To run the examples (this will work whether you installed `pydantic_ai`, or cloned the repo. 
-If you cloned the repo don't forget to `cd examples`), run:
+To run the examples (this will work whether you installed `pydantic_ai`, or cloned the repo. If you cloned the repo don't forget to `cd examples`), run:
 
 ```bash
 python/uv-run -m pydantic_ai_examples.<example_module_name>
