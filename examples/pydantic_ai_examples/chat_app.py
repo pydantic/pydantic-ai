@@ -22,8 +22,7 @@ from typing import Annotated, Any, Callable, Literal, TypeVar
 import fastapi
 import logfire
 from fastapi import Depends, Request
-from fastapi.responses import HTMLResponse, Response, StreamingResponse
-from pydantic import Field, TypeAdapter
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from typing_extensions import LiteralString, ParamSpec, TypedDict
 
 from pydantic_ai import Agent
@@ -55,14 +54,14 @@ logfire.instrument_fastapi(app)
 
 
 @app.get('/')
-async def index() -> HTMLResponse:
-    return HTMLResponse((THIS_DIR / 'chat_app.html').read_bytes())
+async def index() -> FileResponse:
+    return FileResponse((THIS_DIR / 'chat_app.html'), media_type='text/html')
 
 
 @app.get('/chat_app.ts')
-async def main_ts() -> Response:
+async def main_ts() -> FileResponse:
     """Get the raw typescript code, it's compiled in the browser, forgive me."""
-    return Response((THIS_DIR / 'chat_app.ts').read_bytes(), media_type='text/plain')
+    return FileResponse((THIS_DIR / 'chat_app.ts'), media_type='text/plain')
 
 
 async def get_db(request: Request) -> Database:
@@ -138,9 +137,6 @@ async def post_chat(
     return StreamingResponse(stream_messages(), media_type='text/plain')
 
 
-MessageTypeAdapter: TypeAdapter[ModelMessage] = TypeAdapter(
-    Annotated[ModelMessage, Field(discriminator='kind')]
-)
 P = ParamSpec('P')
 R = TypeVar('R')
 
