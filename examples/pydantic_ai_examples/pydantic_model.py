@@ -1,8 +1,19 @@
+# /// script
+# requires-python = ">=3.12"
+# dependencies = [
+#     "logfire",
+#     "pydantic-ai",
+# ]
+# ///
 """Simple example of using PydanticAI to construct a Pydantic model from a text input.
 
 Run with:
 
     uv run -m pydantic_ai_examples.pydantic_model
+
+or:
+
+    uv run https://github.com/pydantic/pydantic-ai/blob/main/examples/pydantic_ai_examples/pydantic_model.py
 """
 
 import os
