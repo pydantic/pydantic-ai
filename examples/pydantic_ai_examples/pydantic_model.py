@@ -13,7 +13,7 @@ Run with:
 
 or:
 
-    uv run https://github.com/pydantic/pydantic-ai/blob/main/examples/pydantic_ai_examples/pydantic_model.py
+    uv run https://raw.githubusercontent.com/pydantic/pydantic-ai/refs/heads/main/examples/pydantic_ai_examples/pydantic_model.py
 """
 
 import os
