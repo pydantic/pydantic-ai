@@ -12,6 +12,7 @@ from .tools import AgentDeps, RunContext, SystemPromptFunc
 @dataclass
 class SystemPromptRunner(Generic[AgentDeps]):
     function: SystemPromptFunc[AgentDeps]
+    dynamic: bool = False
     _takes_ctx: bool = field(init=False)
     _is_async: bool = field(init=False)
 

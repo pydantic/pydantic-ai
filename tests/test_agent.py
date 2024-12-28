@@ -1230,3 +1230,233 @@ def test_double_capture_run_messages(set_event_loop: None) -> None:
             ModelResponse(parts=[TextPart(content='success (no tool calls)')], timestamp=IsNow(tz=timezone.utc)),
         ]
     )
+
+
+def test_messages_history_reevaluate_system_prompt_clean(set_event_loop: None):
+    agent = Agent('test', system_prompt='Foobar')
+    
+    dynamic_value = "A"
+
+    @agent.system_prompt
+    async def func(ctx):
+        return dynamic_value
+
+    res = agent.run_sync('Hello')
+
+    assert res.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(
+                        content='Foobar', 
+                        part_kind='system-prompt'),
+                    SystemPromptPart(
+                        content=dynamic_value,
+                        part_kind='system-prompt'),
+                    UserPromptPart(
+                        content='Hello',
+                        timestamp=IsNow(tz=timezone.utc), part_kind='user-prompt')
+                ], kind='request'), 
+            ModelResponse(
+                parts=[
+                    TextPart(content='success (no tool calls)', part_kind='text')
+                ], 
+                timestamp=IsNow(tz=timezone.utc), kind='response')
+        ]
+    )
+
+    dynamic_value = "B"
+
+    @agent.system_prompt
+    async def func_two(ctx):
+        return dynamic_value + "!"
+
+    res_two = agent.run_sync('World', message_history=res.all_messages())
+
+    assert res_two.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(
+                        content='Foobar', 
+                        part_kind='system-prompt'),
+                    SystemPromptPart(
+                        content="A", #Remains the same
+                        part_kind='system-prompt'),
+                    UserPromptPart(
+                        content='Hello',
+                        timestamp=IsNow(tz=timezone.utc), part_kind='user-prompt')
+                ], kind='request'), 
+            ModelResponse(
+                parts=[
+                    TextPart(content='success (no tool calls)', part_kind='text')
+                ], 
+                timestamp=IsNow(tz=timezone.utc), kind='response'),
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='World',
+                        timestamp=IsNow(tz=timezone.utc), part_kind='user-prompt')
+                ], kind='request'), 
+            ModelResponse(
+                parts=[
+                    TextPart(content='success (no tool calls)', part_kind='text')
+                ], 
+                timestamp=IsNow(tz=timezone.utc), kind='response')
+        ]
+    )
+
+def test_messages_history_reevaluate_system_prompt_dirty(set_event_loop: None):
+    agent = Agent('test', system_prompt='Foobar')
+    
+    dynamic_value = "A"
+
+    @agent.system_prompt(dynamic=True)
+    async def func(ctx):
+        return dynamic_value
+
+    res = agent.run_sync('Hello')
+
+    assert res.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(
+                        content='Foobar', 
+                        part_kind='system-prompt'),
+                    SystemPromptPart(
+                        content=dynamic_value,
+                        part_kind='system-prompt'),
+                    UserPromptPart(
+                        content='Hello',
+                        timestamp=IsNow(tz=timezone.utc), part_kind='user-prompt')
+                ], kind='request'), 
+            ModelResponse(
+                parts=[
+                    TextPart(content='success (no tool calls)', part_kind='text')
+                ], 
+                timestamp=IsNow(tz=timezone.utc), kind='response')
+        ]
+    )
+
+    dynamic_value = "B"
+
+    @agent.system_prompt
+    async def func_two(ctx):
+        return "This is a new prompt, but it wont reach the model"
+
+    res_two = agent.run_sync('World', message_history=res.all_messages())
+
+    assert res_two.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(
+                        content='Foobar', 
+                        part_kind='system-prompt'),
+                    SystemPromptPart(
+                        content="B", # Updated value since dirty
+                        part_kind='system-prompt'),
+                    UserPromptPart(
+                        content='Hello',
+                        timestamp=IsNow(tz=timezone.utc), part_kind='user-prompt')
+                ], kind='request'), 
+            ModelResponse(
+                parts=[
+                    TextPart(content='success (no tool calls)', part_kind='text')
+                ], 
+                timestamp=IsNow(tz=timezone.utc), kind='response'),
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='World',
+                        timestamp=IsNow(tz=timezone.utc), part_kind='user-prompt')
+                ], kind='request'), 
+            ModelResponse(
+                parts=[
+                    TextPart(content='success (no tool calls)', part_kind='text')
+                ], 
+                timestamp=IsNow(tz=timezone.utc), kind='response')
+        ]
+    )
+
+
+
+def test_messages_history_reevaluate_system_prompt_dirty(set_event_loop: None):
+    agent = Agent('test', system_prompt='Foobar')
+    
+    dynamic_value = "A"
+
+    @agent.system_prompt(dynamic=True)
+    async def func(ctx):
+        return dynamic_value
+
+    res = agent.run_sync('Hello')
+
+    assert res.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(
+                        content='Foobar', 
+                        part_kind='system-prompt'),
+                    SystemPromptPart(
+                        content=dynamic_value,
+                        part_kind='system-prompt'),
+                    UserPromptPart(
+                        content='Hello',
+                        timestamp=IsNow(tz=timezone.utc), part_kind='user-prompt')
+                ], kind='request'), 
+            ModelResponse(
+                parts=[
+                    TextPart(content='success (no tool calls)', part_kind='text')
+                ], 
+                timestamp=IsNow(tz=timezone.utc), kind='response')
+        ]
+    )
+
+    dynamic_value = "B"
+
+    @agent.system_prompt(dynamic=True)
+    async def func_two(ctx):
+        return "This is a new prompt, and model will know"
+
+    res_two = agent.run_sync('World', message_history=res.all_messages())
+
+    assert res_two.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(
+                        content='Foobar', 
+                        part_kind='system-prompt'),
+                    SystemPromptPart(
+                        content="B", # Updated value since dirty
+                        part_kind='system-prompt'),
+                    SystemPromptPart(
+                        content="This is a new prompt, and model will know",
+                        part_kind='system-prompt'),
+                    UserPromptPart(
+                        content='Hello',
+                        timestamp=IsNow(tz=timezone.utc), part_kind='user-prompt')
+                ], kind='request'), 
+            ModelResponse(
+                parts=[
+                    TextPart(content='success (no tool calls)', part_kind='text')
+                ], 
+                timestamp=IsNow(tz=timezone.utc), kind='response'),
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='World',
+                        timestamp=IsNow(tz=timezone.utc), part_kind='user-prompt')
+                ], kind='request'), 
+            ModelResponse(
+                parts=[
+                    TextPart(content='success (no tool calls)', part_kind='text')
+                ], 
+                timestamp=IsNow(tz=timezone.utc), kind='response')
+        ]
+    )
+
+
