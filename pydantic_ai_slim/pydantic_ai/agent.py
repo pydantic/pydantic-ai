@@ -556,7 +556,7 @@ class Agent(Generic[AgentDeps, ResultData]):
 
         Args:
             func: The function to decorate
-            dynamic: If True, the system prompt will be reevaluated when messages_history is present.
+            dynamic: If True, the system prompt will be reevaluated even when `messages_history` is provided.
 
         Example:
         ```python
