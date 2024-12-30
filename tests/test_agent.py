@@ -1243,7 +1243,7 @@ def test_dynamic_false_no_reevaluate(set_event_loop: None):
     dynamic_value = 'A'
 
     @agent.system_prompt
-    async def func(ctx):
+    async def func() -> str:
         return dynamic_value
 
     res = agent.run_sync('Hello')
@@ -1269,7 +1269,7 @@ def test_dynamic_false_no_reevaluate(set_event_loop: None):
     dynamic_value = 'B'
 
     @agent.system_prompt
-    async def func_two(ctx):
+    async def func_two():
         return dynamic_value + '!'
 
     res_two = agent.run_sync('World', message_history=res.all_messages())
@@ -1316,7 +1316,7 @@ def test_dynamic_true_reevaluate_system_prompt(set_event_loop: None):
     dynamic_value = 'A'
 
     @agent.system_prompt(dynamic=True)
-    async def func(ctx):
+    async def func():
         return dynamic_value
 
     res = agent.run_sync('Hello')
@@ -1342,7 +1342,7 @@ def test_dynamic_true_reevaluate_system_prompt(set_event_loop: None):
     dynamic_value = 'B'
 
     @agent.system_prompt
-    async def func_two(ctx):
+    async def func_two():
         return 'This is a new prompt, but it wont reach the model'
 
     res_two = agent.run_sync('World', message_history=res.all_messages())
@@ -1385,7 +1385,7 @@ def test_dynamic_true_evaluate_new_system_prompt(set_event_loop: None):
     dynamic_value = 'A'
 
     @agent.system_prompt(dynamic=True)
-    async def func(ctx):
+    async def func():
         return dynamic_value
 
     res = agent.run_sync('Hello')
@@ -1411,7 +1411,7 @@ def test_dynamic_true_evaluate_new_system_prompt(set_event_loop: None):
     dynamic_value = 'B'
 
     @agent.system_prompt(dynamic=True)
-    async def func_two(ctx):
+    async def func_two():
         return 'This is a new prompt, and model will know'
 
     res_two = agent.run_sync('World', message_history=res.all_messages())
