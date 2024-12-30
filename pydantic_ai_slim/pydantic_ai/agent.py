@@ -854,9 +854,7 @@ class Agent(Generic[AgentDeps, ResultData]):
             result_tools=self._result_schema.tool_defs() if self._result_schema is not None else [],
         )
 
-    async def _prepare_messages(
-    self, user_prompt: str, message_history: list[_messages.ModelMessage] | None, run_context: RunContext[AgentDeps]
-) -> list[_messages.ModelMessage]:
+    async def _prepare_messages(self, user_prompt: str, message_history: list[_messages.ModelMessage] | None, run_context: RunContext[AgentDeps]) -> list[_messages.ModelMessage]:
         try:
             messages = _messages_ctx_var.get()
         except LookupError:
