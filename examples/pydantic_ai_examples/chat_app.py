@@ -190,7 +190,7 @@ class Database:
 
     async def get_messages(self) -> list[ModelMessage]:
         c = await self._asyncify(
-            self._execute, 'SELECT message_list FROM messages order by id desc'
+            self._execute, 'SELECT message_list FROM messages order by id'
         )
         rows = await self._asyncify(c.fetchall)
         messages: list[ModelMessage] = []
