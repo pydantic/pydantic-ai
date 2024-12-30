@@ -1,4 +1,4 @@
-Example of multi-agent flow where one agent delegates work to another, then hands off control to a third agent.
+Example of a multi-agent flow where one agent delegates work to another, then hands off control to a third agent.
 
 Demonstrates:
 

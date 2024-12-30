@@ -4,22 +4,22 @@ from pydantic_ai_examples.sql_gen import system_prompt
 
 There are roughly four levels of complexity when building applications with PydanticAI:
 
-1. Single agent workflows — what most of this documentation covers
+1. Single agent workflows — what most of the `pydantic_ai` documentation covers
 2. [Agent delegation](#agent-delegation) — agents using another agent via tools
 3. [Programmatic agent hand-off](#programmatic-agent-hand-off) — one agent runs, then application code calls another agent
-4. [Graph based control flow](#pydanticai-graphs) — for the most complex cases, graph and a state machine can be used to control the execution of multiple agents
+4. [Graph based control flow](#pydanticai-graphs) — for the most complex cases, a graph-based state machine can be used to control the execution of multiple agents
 
 Of course, you can combine multiple strategies in a single application.
 
-## Agent Delegation
+## Agent delegation
 
-The agent delegates work to another agent, but then takes back control when that agent finishes.
+"Agent delegation" refers to the scenario where an agent delegates work to another agent, but then takes back control when that agent finishes.
 
 Since agents are stateless and designed to be global, you do not need to include the agent itself in agent [dependencies](dependencies.md).
 
-When doing so, you'll generally want to pass [`ctx.usage`][pydantic_ai.RunContext.usage] to the [`usage`][pydantic_ai.Agent.run] keyword argument of delegate agent (the agent called from within a tool) run so usage within that run counts towards the total usage of a parent agent run.
+When doing so, you'll generally want to pass [`ctx.usage`][pydantic_ai.RunContext.usage] to the [`usage`][pydantic_ai.Agent.run] keyword argument of the delegate agent (the agent called from within a tool) run so usage within that run counts towards the total usage of the parent agent run.
 
-!!! Multiple models
+!!! note "Multiple models"
     Agent delegation doesn't need to use the same model for each agent. If you choose to use different models within a run, calculating the monetary cost from the final [`result.usage()`][pydantic_ai.result.RunResult.usage] of the run will not be possible, but you can still use [`UsageLimits`][pydantic_ai.usage.UsageLimits] to avoid unexpected costs.
 
 ```python {title="agent_delegation_simple.py"}
@@ -29,7 +29,7 @@ from pydantic_ai.usage import UsageLimits
 joke_agent = Agent(
     'openai:gpt-4o',
     system_prompt=(
-        'Use the "joke_factory" to generate some jokes, then choose the best. '
+        'Use the `joke_factory` to generate some jokes, then choose the best. '
         'You must return just a single joke.'
     ),
 )
@@ -70,7 +70,7 @@ graph TD
   joke_agent --> END
 ```
 
-### Agent Delegation and dependencies.
+### Agent delegation and dependencies
 
 The delegate agent needs to either have the same [dependencies](dependencies.md) as the calling agent, or dependencies which are a subset of the calling agent's dependencies.
 
@@ -92,7 +92,7 @@ joke_agent = Agent(
     'openai:gpt-4o',
     deps_type=ClientAndKey,  # (2)!
     system_prompt=(
-        'Use the "joke_factory" tool to generate some jokes on the given subject, '
+        'Use the `joke_factory` tool to generate some jokes on the given subject, '
         'then choose the best. You must return just a single joke.'
     ),
 )
@@ -157,7 +157,7 @@ async def main():
 
 _(This example is complete, it can be run "as is")_
 
-The control flow for this example shows how even a fairly simple agent delegation leads to a fairly complex flow:
+This example shows how even a fairly simple agent delegation can lead to a complex control flow:
 
 ```mermaid
 graph TD
@@ -175,11 +175,11 @@ graph TD
 
 ## Programmatic agent hand-off
 
-Multiple agents are called in succession, with application code and/or human in the loop responsible for deciding which agent to call next.
+"Programmatic agent hand-off" refers to the scenario where multiple agents are called in succession, with application code and/or a human in the loop responsible for deciding which agent to call next.
 
 Here agents don't need to use the same deps.
 
-Here we should two agents used in succession, the first to find a flight and the second to extract the user's seat preference.
+Here we show two agents used in succession, the first to find a flight and the second to extract the user's seat preference.
 
 ```python {title="programmatic_handoff.py"}
 from typing import Literal, Union
@@ -289,13 +289,13 @@ async def main():  # (7)!
         #> Seat preference: row=1 seat='A'
 ```
 
-1. Define the first agent, which finds a flight. We use an explicit type annotation until PEP 747 lands, see [structure results](results.md#structured-result-validation). We a union as the result type so the model can communicate that it's unable to find a satisfactory choice, internally each member of the union will be registered as a separate tool.
-2. Define a tool on the agent to find a flight, in this simple case we could dispense with the tool and just define the agent to return structured data, then search for a flight, but in more complex scenarios the tool would be necessary.
+1. Define the first agent, which finds a flight. We use an explicit type annotation until PEP 747 lands, see [structured results](results.md#structured-result-validation). We use a union as the result type so the model can communicate if it's unable to find a satisfactory choice; internally, each member of the union will be registered as a separate tool.
+2. Define a tool on the agent to find a flight. In this simple case we could dispense with the tool and just define the agent to return structured data, then search for a flight, but in more complex scenarios the tool would be necessary.
 3. Define usage limits for the entire app.
-4. Define a function to find a flight, which ask the user for their preferences and then calls the agent to find a flight.
+4. Define a function to find a flight, which asks the user for their preferences and then calls the agent to find a flight.
 5. As with `flight_search_agent` above, we use an explicit type annotation to define the agent.
 6. Define a function to find the user's seat preference, which asks the user for their seat preference and then calls the agent to extract the seat preference.
-7. Now we've put our logic for running each agent into separate functions, our main app becomes very simple.
+7. Now that we've put our logic for running each agent into separate functions, our main app becomes very simple.
 
 _(This example is complete, it can be run "as is")_
 

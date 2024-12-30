@@ -1,4 +1,4 @@
-"""Example of multi-agent flow where one agent delegates work to another.
+"""Example of a multi-agent flow where one agent delegates work to another.
 
 In this scenario, a group of agents work together to find flights for a user.
 """
