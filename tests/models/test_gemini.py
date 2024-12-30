@@ -19,6 +19,7 @@ from pydantic_ai.messages import (
     ModelResponse,
     RetryPromptPart,
     SystemPromptPart,
+    TextPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
@@ -694,3 +695,40 @@ async def test_stream_text_heterogeneous(get_gemini_client: GetGeminiClient):
     async with agent.run_stream('Hello') as result:
         with pytest.raises(UnexpectedModelBehavior, match=msg):
             await result.get_data()
+
+
+async def test_empty_text_ignored():
+    content = _content_model_response(
+        ModelResponse(
+            parts=[
+                ToolCallPart.from_raw_args('final_result', {'response': [1, 2, 123]}),
+                TextPart(content='xxx'),
+            ]
+        )
+    )
+    # text included
+    assert content == snapshot(
+        {
+            'role': 'model',
+            'parts': [
+                {'function_call': {'name': 'final_result', 'args': {'response': [1, 2, 123]}}},
+                {'text': 'xxx'},
+            ],
+        }
+    )
+
+    content = _content_model_response(
+        ModelResponse(
+            parts=[
+                ToolCallPart.from_raw_args('final_result', {'response': [1, 2, 123]}),
+                TextPart(content=''),
+            ]
+        )
+    )
+    # text skipped
+    assert content == snapshot(
+        {
+            'role': 'model',
+            'parts': [{'function_call': {'name': 'final_result', 'args': {'response': [1, 2, 123]}}}],
+        }
+    )
