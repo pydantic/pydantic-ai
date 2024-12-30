@@ -1232,7 +1232,12 @@ def test_double_capture_run_messages(set_event_loop: None) -> None:
     )
 
 
-def test_messages_history_reevaluate_system_prompt_clean(set_event_loop: None):
+def test_dynamic_false_no_reevaluate(set_event_loop: None):
+    """ When dynamic is false (default), the system prompt is not reevaluated 
+    i.e: SystemPromptPart(
+            content="A",       <--- Remains the same when `message_history` is passed.
+        part_kind='system-prompt')
+    """
     agent = Agent('test', system_prompt='Foobar')
     
     dynamic_value = "A"
@@ -1306,7 +1311,12 @@ def test_messages_history_reevaluate_system_prompt_clean(set_event_loop: None):
         ]
     )
 
-def test_messages_history_reevaluate_system_prompt_dirty(set_event_loop: None):
+def test_dynamic_true_reevaluate_system_prompt(set_event_loop: None):
+    """ When dynamic is true, the system prompt is reevaluated
+    i.e: SystemPromptPart(
+            content="B",       <--- Updated value
+        part_kind='system-prompt')
+    """
     agent = Agent('test', system_prompt='Foobar')
     
     dynamic_value = "A"
@@ -1355,7 +1365,7 @@ def test_messages_history_reevaluate_system_prompt_dirty(set_event_loop: None):
                         content='Foobar', 
                         part_kind='system-prompt'),
                     SystemPromptPart(
-                        content="B", # Updated value since dirty
+                        content="B", # Updated value
                         part_kind='system-prompt'),
                     UserPromptPart(
                         content='Hello',
@@ -1382,7 +1392,8 @@ def test_messages_history_reevaluate_system_prompt_dirty(set_event_loop: None):
 
 
 
-def test_messages_history_reevaluate_system_prompt_dirty(set_event_loop: None):
+def test_dynamic_true_evaluate_new_system_prompt(set_event_loop: None):
+    """ When new system prompt added with `dynamic` = True, they will be evaluated and added to the system parts, (besides the reevaluated ones)."""
     agent = Agent('test', system_prompt='Foobar')
     
     dynamic_value = "A"
