@@ -1167,8 +1167,8 @@ def capture_run_messages() -> Iterator[list[_messages.ModelMessage]]:
     ```
 
     !!! note
-        You may not call `run`, `run_sync`, or `run_stream` more than once within a single `capture_run_messages` context.
-        If you try to do so, a [`UserError`][pydantic_ai.exceptions.UserError] will be raised.
+        If you call `run`, `run_sync`, or `run_stream` more than once within a single `capture_run_messages` context,
+        `messages` will represent the messages exchanged during the first call only.
     """
     try:
         yield _messages_ctx_var.get().messages
