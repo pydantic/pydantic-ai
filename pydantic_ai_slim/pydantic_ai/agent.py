@@ -558,11 +558,13 @@ class Agent(Generic[AgentDeps, ResultData]):
         ```
         """
         if func is None:
+
             def decorator(
                 func_: _system_prompt.SystemPromptFunc[AgentDeps],
             ) -> _system_prompt.SystemPromptFunc[AgentDeps]:
                 self._system_prompt_functions.append(_system_prompt.SystemPromptRunner(func_, dynamic=dynamic))
                 return func_
+
             return decorator
         else:
             self._system_prompt_functions.append(_system_prompt.SystemPromptRunner(func, dynamic=dynamic))
@@ -838,7 +840,9 @@ class Agent(Generic[AgentDeps, ResultData]):
             result_tools=self._result_schema.tool_defs() if self._result_schema is not None else [],
         )
 
-    async def _prepare_messages(self, user_prompt: str, message_history: list[_messages.ModelMessage] | None, run_context: RunContext[AgentDeps]) -> list[_messages.ModelMessage]:
+    async def _prepare_messages(
+        self, user_prompt: str, message_history: list[_messages.ModelMessage] | None, run_context: RunContext[AgentDeps]
+    ) -> list[_messages.ModelMessage]:
         try:
             messages = _messages_ctx_var.get()
         except LookupError:
@@ -853,22 +857,21 @@ class Agent(Generic[AgentDeps, ResultData]):
         if message_history:
             # shallow copy messages
             messages.extend(message_history)
-            
+
             # If there are any dynamic system prompts, we need to reevaluate them
             if any(runner.dynamic for runner in self._system_prompt_functions):
                 # Get fresh system prompts
                 new_sys_parts = await self._sys_parts(run_context)
-                
+
                 # Replace the system prompts in the existing messages
                 for msg in messages:
                     if isinstance(msg, _messages.ModelRequest):
                         # Keep non-system parts and add new system parts
                         non_system_parts = [
-                            part for part in msg.parts 
-                            if not isinstance(part, _messages.SystemPromptPart)
+                            part for part in msg.parts if not isinstance(part, _messages.SystemPromptPart)
                         ]
                         msg.parts = new_sys_parts + non_system_parts
-            
+
             messages.append(_messages.ModelRequest([_messages.UserPromptPart(user_prompt)]))
         else:
             parts = await self._sys_parts(run_context)

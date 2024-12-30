@@ -1233,14 +1233,14 @@ def test_double_capture_run_messages(set_event_loop: None) -> None:
 
 
 def test_dynamic_false_no_reevaluate(set_event_loop: None):
-    """ When dynamic is false (default), the system prompt is not reevaluated 
+    """When dynamic is false (default), the system prompt is not reevaluated
     i.e: SystemPromptPart(
             content="A",       <--- Remains the same when `message_history` is passed.
         part_kind='system-prompt')
     """
     agent = Agent('test', system_prompt='Foobar')
-    
-    dynamic_value = "A"
+
+    dynamic_value = 'A'
 
     @agent.system_prompt
     async def func(ctx):
@@ -1252,29 +1252,25 @@ def test_dynamic_false_no_reevaluate(set_event_loop: None):
         [
             ModelRequest(
                 parts=[
-                    SystemPromptPart(
-                        content='Foobar', 
-                        part_kind='system-prompt'),
-                    SystemPromptPart(
-                        content=dynamic_value,
-                        part_kind='system-prompt'),
-                    UserPromptPart(
-                        content='Hello',
-                        timestamp=IsNow(tz=timezone.utc), part_kind='user-prompt')
-                ], kind='request'), 
+                    SystemPromptPart(content='Foobar', part_kind='system-prompt'),
+                    SystemPromptPart(content=dynamic_value, part_kind='system-prompt'),
+                    UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc), part_kind='user-prompt'),
+                ],
+                kind='request',
+            ),
             ModelResponse(
-                parts=[
-                    TextPart(content='success (no tool calls)', part_kind='text')
-                ], 
-                timestamp=IsNow(tz=timezone.utc), kind='response')
+                parts=[TextPart(content='success (no tool calls)', part_kind='text')],
+                timestamp=IsNow(tz=timezone.utc),
+                kind='response',
+            ),
         ]
     )
 
-    dynamic_value = "B"
+    dynamic_value = 'B'
 
     @agent.system_prompt
     async def func_two(ctx):
-        return dynamic_value + "!"
+        return dynamic_value + '!'
 
     res_two = agent.run_sync('World', message_history=res.all_messages())
 
@@ -1282,44 +1278,42 @@ def test_dynamic_false_no_reevaluate(set_event_loop: None):
         [
             ModelRequest(
                 parts=[
+                    SystemPromptPart(content='Foobar', part_kind='system-prompt'),
                     SystemPromptPart(
-                        content='Foobar', 
-                        part_kind='system-prompt'),
-                    SystemPromptPart(
-                        content="A", #Remains the same
-                        part_kind='system-prompt'),
-                    UserPromptPart(
-                        content='Hello',
-                        timestamp=IsNow(tz=timezone.utc), part_kind='user-prompt')
-                ], kind='request'), 
+                        content='A',  # Remains the same
+                        part_kind='system-prompt',
+                    ),
+                    UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc), part_kind='user-prompt'),
+                ],
+                kind='request',
+            ),
             ModelResponse(
-                parts=[
-                    TextPart(content='success (no tool calls)', part_kind='text')
-                ], 
-                timestamp=IsNow(tz=timezone.utc), kind='response'),
+                parts=[TextPart(content='success (no tool calls)', part_kind='text')],
+                timestamp=IsNow(tz=timezone.utc),
+                kind='response',
+            ),
             ModelRequest(
-                parts=[
-                    UserPromptPart(
-                        content='World',
-                        timestamp=IsNow(tz=timezone.utc), part_kind='user-prompt')
-                ], kind='request'), 
+                parts=[UserPromptPart(content='World', timestamp=IsNow(tz=timezone.utc), part_kind='user-prompt')],
+                kind='request',
+            ),
             ModelResponse(
-                parts=[
-                    TextPart(content='success (no tool calls)', part_kind='text')
-                ], 
-                timestamp=IsNow(tz=timezone.utc), kind='response')
+                parts=[TextPart(content='success (no tool calls)', part_kind='text')],
+                timestamp=IsNow(tz=timezone.utc),
+                kind='response',
+            ),
         ]
     )
 
+
 def test_dynamic_true_reevaluate_system_prompt(set_event_loop: None):
-    """ When dynamic is true, the system prompt is reevaluated
+    """When dynamic is true, the system prompt is reevaluated
     i.e: SystemPromptPart(
             content="B",       <--- Updated value
         part_kind='system-prompt')
     """
     agent = Agent('test', system_prompt='Foobar')
-    
-    dynamic_value = "A"
+
+    dynamic_value = 'A'
 
     @agent.system_prompt(dynamic=True)
     async def func(ctx):
@@ -1331,29 +1325,25 @@ def test_dynamic_true_reevaluate_system_prompt(set_event_loop: None):
         [
             ModelRequest(
                 parts=[
-                    SystemPromptPart(
-                        content='Foobar', 
-                        part_kind='system-prompt'),
-                    SystemPromptPart(
-                        content=dynamic_value,
-                        part_kind='system-prompt'),
-                    UserPromptPart(
-                        content='Hello',
-                        timestamp=IsNow(tz=timezone.utc), part_kind='user-prompt')
-                ], kind='request'), 
+                    SystemPromptPart(content='Foobar', part_kind='system-prompt'),
+                    SystemPromptPart(content=dynamic_value, part_kind='system-prompt'),
+                    UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc), part_kind='user-prompt'),
+                ],
+                kind='request',
+            ),
             ModelResponse(
-                parts=[
-                    TextPart(content='success (no tool calls)', part_kind='text')
-                ], 
-                timestamp=IsNow(tz=timezone.utc), kind='response')
+                parts=[TextPart(content='success (no tool calls)', part_kind='text')],
+                timestamp=IsNow(tz=timezone.utc),
+                kind='response',
+            ),
         ]
     )
 
-    dynamic_value = "B"
+    dynamic_value = 'B'
 
     @agent.system_prompt
     async def func_two(ctx):
-        return "This is a new prompt, but it wont reach the model"
+        return 'This is a new prompt, but it wont reach the model'
 
     res_two = agent.run_sync('World', message_history=res.all_messages())
 
@@ -1361,42 +1351,38 @@ def test_dynamic_true_reevaluate_system_prompt(set_event_loop: None):
         [
             ModelRequest(
                 parts=[
+                    SystemPromptPart(content='Foobar', part_kind='system-prompt'),
                     SystemPromptPart(
-                        content='Foobar', 
-                        part_kind='system-prompt'),
-                    SystemPromptPart(
-                        content="B", # Updated value
-                        part_kind='system-prompt'),
-                    UserPromptPart(
-                        content='Hello',
-                        timestamp=IsNow(tz=timezone.utc), part_kind='user-prompt')
-                ], kind='request'), 
+                        content='B',  # Updated value
+                        part_kind='system-prompt',
+                    ),
+                    UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc), part_kind='user-prompt'),
+                ],
+                kind='request',
+            ),
             ModelResponse(
-                parts=[
-                    TextPart(content='success (no tool calls)', part_kind='text')
-                ], 
-                timestamp=IsNow(tz=timezone.utc), kind='response'),
+                parts=[TextPart(content='success (no tool calls)', part_kind='text')],
+                timestamp=IsNow(tz=timezone.utc),
+                kind='response',
+            ),
             ModelRequest(
-                parts=[
-                    UserPromptPart(
-                        content='World',
-                        timestamp=IsNow(tz=timezone.utc), part_kind='user-prompt')
-                ], kind='request'), 
+                parts=[UserPromptPart(content='World', timestamp=IsNow(tz=timezone.utc), part_kind='user-prompt')],
+                kind='request',
+            ),
             ModelResponse(
-                parts=[
-                    TextPart(content='success (no tool calls)', part_kind='text')
-                ], 
-                timestamp=IsNow(tz=timezone.utc), kind='response')
+                parts=[TextPart(content='success (no tool calls)', part_kind='text')],
+                timestamp=IsNow(tz=timezone.utc),
+                kind='response',
+            ),
         ]
     )
 
 
-
 def test_dynamic_true_evaluate_new_system_prompt(set_event_loop: None):
-    """ When new system prompt added with `dynamic` = True, they will be evaluated and added to the system parts, (besides the reevaluated ones)."""
+    """When new system prompt added with `dynamic` = True, they will be evaluated and added to the system parts, (besides the reevaluated ones)."""
     agent = Agent('test', system_prompt='Foobar')
-    
-    dynamic_value = "A"
+
+    dynamic_value = 'A'
 
     @agent.system_prompt(dynamic=True)
     async def func(ctx):
@@ -1408,29 +1394,25 @@ def test_dynamic_true_evaluate_new_system_prompt(set_event_loop: None):
         [
             ModelRequest(
                 parts=[
-                    SystemPromptPart(
-                        content='Foobar', 
-                        part_kind='system-prompt'),
-                    SystemPromptPart(
-                        content=dynamic_value,
-                        part_kind='system-prompt'),
-                    UserPromptPart(
-                        content='Hello',
-                        timestamp=IsNow(tz=timezone.utc), part_kind='user-prompt')
-                ], kind='request'), 
+                    SystemPromptPart(content='Foobar', part_kind='system-prompt'),
+                    SystemPromptPart(content=dynamic_value, part_kind='system-prompt'),
+                    UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc), part_kind='user-prompt'),
+                ],
+                kind='request',
+            ),
             ModelResponse(
-                parts=[
-                    TextPart(content='success (no tool calls)', part_kind='text')
-                ], 
-                timestamp=IsNow(tz=timezone.utc), kind='response')
+                parts=[TextPart(content='success (no tool calls)', part_kind='text')],
+                timestamp=IsNow(tz=timezone.utc),
+                kind='response',
+            ),
         ]
     )
 
-    dynamic_value = "B"
+    dynamic_value = 'B'
 
     @agent.system_prompt(dynamic=True)
     async def func_two(ctx):
-        return "This is a new prompt, and model will know"
+        return 'This is a new prompt, and model will know'
 
     res_two = agent.run_sync('World', message_history=res.all_messages())
 
@@ -1438,36 +1420,29 @@ def test_dynamic_true_evaluate_new_system_prompt(set_event_loop: None):
         [
             ModelRequest(
                 parts=[
+                    SystemPromptPart(content='Foobar', part_kind='system-prompt'),
                     SystemPromptPart(
-                        content='Foobar', 
-                        part_kind='system-prompt'),
-                    SystemPromptPart(
-                        content="B", # Updated value since dirty
-                        part_kind='system-prompt'),
-                    SystemPromptPart(
-                        content="This is a new prompt, and model will know",
-                        part_kind='system-prompt'),
-                    UserPromptPart(
-                        content='Hello',
-                        timestamp=IsNow(tz=timezone.utc), part_kind='user-prompt')
-                ], kind='request'), 
+                        content='B',  # Updated value since dirty
+                        part_kind='system-prompt',
+                    ),
+                    SystemPromptPart(content='This is a new prompt, and model will know', part_kind='system-prompt'),
+                    UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc), part_kind='user-prompt'),
+                ],
+                kind='request',
+            ),
             ModelResponse(
-                parts=[
-                    TextPart(content='success (no tool calls)', part_kind='text')
-                ], 
-                timestamp=IsNow(tz=timezone.utc), kind='response'),
+                parts=[TextPart(content='success (no tool calls)', part_kind='text')],
+                timestamp=IsNow(tz=timezone.utc),
+                kind='response',
+            ),
             ModelRequest(
-                parts=[
-                    UserPromptPart(
-                        content='World',
-                        timestamp=IsNow(tz=timezone.utc), part_kind='user-prompt')
-                ], kind='request'), 
+                parts=[UserPromptPart(content='World', timestamp=IsNow(tz=timezone.utc), part_kind='user-prompt')],
+                kind='request',
+            ),
             ModelResponse(
-                parts=[
-                    TextPart(content='success (no tool calls)', part_kind='text')
-                ], 
-                timestamp=IsNow(tz=timezone.utc), kind='response')
+                parts=[TextPart(content='success (no tool calls)', part_kind='text')],
+                timestamp=IsNow(tz=timezone.utc),
+                kind='response',
+            ),
         ]
     )
-
-
