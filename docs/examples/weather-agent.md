@@ -5,6 +5,7 @@ Demonstrates:
 * [tools](../tools.md)
 * [agent dependencies](../dependencies.md)
 * [streaming text responses](../results.md#streaming-text)
+* Building a Gradio UI for the agent
 
 In this case the idea is a "weather" agent — the user can ask for the weather in multiple locations,
 the agent will use the `get_lat_lng` tool to get the latitude and longitude of the locations, then use
@@ -27,4 +28,19 @@ python/uv-run -m pydantic_ai_examples.weather_agent
 
 ```python {title="pydantic_ai_examples/weather_agent.py"}
 #! examples/pydantic_ai_examples/weather_agent.py
+```
+
+## Running the UI
+
+You can build multi-turn chat applications for your agent with Gradio
+
+```bash
+pip install gradio>=5.8.0
+python/uv-run -m pydantic_ai_examples.weather_agent_gradio
+```
+
+## UI Code
+
+```python {title="pydantic_ai_examples/weather_agent_gradio.py"}
+#! pydantic_ai_examples/weather_agent_gradio.py
 ```
