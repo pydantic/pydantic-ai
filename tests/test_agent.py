@@ -1218,15 +1218,44 @@ def test_double_capture_run_messages(set_event_loop: None) -> None:
         assert messages == []
         result = agent.run_sync('Hello')
         assert result.data == 'success (no tool calls)'
-        with pytest.raises(UserError) as exc_info:
-            agent.run_sync('Hello')
-        assert (
-            str(exc_info.value)
-            == 'The capture_run_messages() context manager may only be used to wrap one call to run(), run_sync(), or run_stream().'
-        )
+        result2 = agent.run_sync('Hello 2')
+        assert result2.data == 'success (no tool calls)'
+
     assert messages == snapshot(
         [
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(parts=[TextPart(content='success (no tool calls)')], timestamp=IsNow(tz=timezone.utc)),
+        ]
+    )
+
+
+def test_capture_run_messages_tool_agent(set_event_loop: None) -> None:
+    agent_outer = Agent('test')
+    agent_inner = Agent(TestModel(custom_result_text='inner agent result'))
+
+    @agent_outer.tool_plain
+    async def foobar(x: str) -> str:
+        result_ = await agent_inner.run(x)
+        return result_.data
+
+    with capture_run_messages() as messages:
+        result = agent_outer.run_sync('foobar')
+
+    assert result.data == snapshot('{"foobar":"inner agent result"}')
+    assert messages == snapshot(
+        [
+            ModelRequest(parts=[UserPromptPart(content='foobar', timestamp=IsNow(tz=timezone.utc))]),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='foobar', args=ArgsDict(args_dict={'x': 'a'}))],
+                timestamp=IsNow(tz=timezone.utc),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(tool_name='foobar', content='inner agent result', timestamp=IsNow(tz=timezone.utc))
+                ]
+            ),
+            ModelResponse(
+                parts=[TextPart(content='{"foobar":"inner agent result"}')], timestamp=IsNow(tz=timezone.utc)
+            ),
         ]
     )
