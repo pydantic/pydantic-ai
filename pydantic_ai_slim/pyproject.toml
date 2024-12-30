@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "pydantic-ai-slim"
-version = "0.0.15"
+version = "0.0.16"
 description = "Agent Framework / shim to use Pydantic with LLMs, slim package"
 authors = [
     { name = "Samuel Colvin", email = "samuel@pydantic.dev" },
