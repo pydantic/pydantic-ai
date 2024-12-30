@@ -40,6 +40,16 @@ __all__ = 'Agent', 'capture_run_messages', 'EndStrategy'
 
 _logfire = logfire_api.Logfire(otel_scope='pydantic-ai')
 
+# while waiting for https://github.com/pydantic/logfire/issues/745
+try:
+    import logfire._internal.stack_info
+except ImportError:
+    pass
+else:
+    from pathlib import Path
+
+    logfire._internal.stack_info.NON_USER_CODE_PREFIXES += (str(Path(__file__).parent.absolute()),)
+
 NoneType = type(None)
 EndStrategy = Literal['early', 'exhaustive']
 """The strategy for handling multiple tool calls when a final result is found.
@@ -215,7 +225,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         """
         if infer_name and self.name is None:
             self._infer_name(inspect.currentframe())
-        model_used, mode_selection = await self._get_model(model)
+        model_used = await self._get_model(model)
 
         deps = self._get_deps(deps)
         new_message_index = len(message_history) if message_history else 0
@@ -224,11 +234,10 @@ class Agent(Generic[AgentDeps, ResultData]):
             '{agent_name} run {prompt=}',
             prompt=user_prompt,
             agent=self,
-            mode_selection=mode_selection,
             model_name=model_used.name(),
             agent_name=self.name or 'agent',
         ) as run_span:
-            run_context = RunContext(deps, 0, [], None, model_used, usage or result.Usage())
+            run_context = RunContext(deps, model_used, usage or result.Usage(), user_prompt)
             messages = await self._prepare_messages(user_prompt, message_history, run_context)
             run_context.messages = messages
 
@@ -238,15 +247,14 @@ class Agent(Generic[AgentDeps, ResultData]):
             model_settings = merge_model_settings(self.model_settings, model_settings)
             usage_limits = usage_limits or UsageLimits()
 
-            run_step = 0
             while True:
                 usage_limits.check_before_request(run_context.usage)
 
-                run_step += 1
-                with _logfire.span('preparing model and tools {run_step=}', run_step=run_step):
+                run_context.run_step += 1
+                with _logfire.span('preparing model and tools {run_step=}', run_step=run_context.run_step):
                     agent_model = await self._prepare_model(run_context)
 
-                with _logfire.span('model request', run_step=run_step) as model_req_span:
+                with _logfire.span('model request', run_step=run_context.run_step) as model_req_span:
                     model_response, request_usage = await agent_model.request(messages, model_settings)
                     model_req_span.set_attribute('response', model_response)
                     model_req_span.set_attribute('usage', request_usage)
@@ -255,7 +263,7 @@ class Agent(Generic[AgentDeps, ResultData]):
                 run_context.usage.incr(request_usage, requests=1)
                 usage_limits.check_tokens(run_context.usage)
 
-                with _logfire.span('handle model response', run_step=run_step) as handle_span:
+                with _logfire.span('handle model response', run_step=run_context.run_step) as handle_span:
                     final_result, tool_responses = await self._handle_model_response(model_response, run_context)
 
                     if tool_responses:
@@ -377,7 +385,7 @@ class Agent(Generic[AgentDeps, ResultData]):
             # f_back because `asynccontextmanager` adds one frame
             if frame := inspect.currentframe():  # pragma: no branch
                 self._infer_name(frame.f_back)
-        model_used, mode_selection = await self._get_model(model)
+        model_used = await self._get_model(model)
 
         deps = self._get_deps(deps)
         new_message_index = len(message_history) if message_history else 0
@@ -386,11 +394,10 @@ class Agent(Generic[AgentDeps, ResultData]):
             '{agent_name} run stream {prompt=}',
             prompt=user_prompt,
             agent=self,
-            mode_selection=mode_selection,
             model_name=model_used.name(),
             agent_name=self.name or 'agent',
         ) as run_span:
-            run_context = RunContext(deps, 0, [], None, model_used, usage or result.Usage())
+            run_context = RunContext(deps, model_used, usage or result.Usage(), user_prompt)
             messages = await self._prepare_messages(user_prompt, message_history, run_context)
             run_context.messages = messages
 
@@ -400,15 +407,14 @@ class Agent(Generic[AgentDeps, ResultData]):
             model_settings = merge_model_settings(self.model_settings, model_settings)
             usage_limits = usage_limits or UsageLimits()
 
-            run_step = 0
             while True:
-                run_step += 1
+                run_context.run_step += 1
                 usage_limits.check_before_request(run_context.usage)
 
-                with _logfire.span('preparing model and tools {run_step=}', run_step=run_step):
+                with _logfire.span('preparing model and tools {run_step=}', run_step=run_context.run_step):
                     agent_model = await self._prepare_model(run_context)
 
-                with _logfire.span('model request {run_step=}', run_step=run_step) as model_req_span:
+                with _logfire.span('model request {run_step=}', run_step=run_context.run_step) as model_req_span:
                     async with agent_model.request_stream(messages, model_settings) as model_response:
                         run_context.usage.requests += 1
                         model_req_span.set_attribute('response_type', model_response.__class__.__name__)
@@ -781,14 +787,14 @@ class Agent(Generic[AgentDeps, ResultData]):
 
         self._function_tools[tool.name] = tool
 
-    async def _get_model(self, model: models.Model | models.KnownModelName | None) -> tuple[models.Model, str]:
+    async def _get_model(self, model: models.Model | models.KnownModelName | None) -> models.Model:
         """Create a model configured for this agent.
 
         Args:
             model: model to use for this run, required if `model` was not set when creating the agent.
 
         Returns:
-            a tuple of `(model used, how the model was selected)`
+            The model used
         """
         model_: models.Model
         if some_model := self._override_model:
@@ -799,18 +805,15 @@ class Agent(Generic[AgentDeps, ResultData]):
                     '(Even when `override(model=...)` is customizing the model that will actually be called)'
                 )
             model_ = some_model.value
-            mode_selection = 'override-model'
         elif model is not None:
             model_ = models.infer_model(model)
-            mode_selection = 'custom'
         elif self.model is not None:
             # noinspection PyTypeChecker
             model_ = self.model = models.infer_model(self.model)
-            mode_selection = 'from-agent'
         else:
             raise exceptions.UserError('`model` must be set either when creating the agent or when calling it.')
 
-        return model_, mode_selection
+        return model_
 
     async def _prepare_model(self, run_context: RunContext[AgentDeps]) -> models.AgentModel:
         """Build tools and create an agent model."""
