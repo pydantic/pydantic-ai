@@ -47,14 +47,32 @@ class _BaseRunResult(ABC, Generic[ResultData]):
     _all_messages: list[_messages.ModelMessage]
     _new_message_index: int
 
-    def all_messages(self) -> list[_messages.ModelMessage]:
-        """Return the history of _messages."""
+    def all_messages(self, *, result_tool_return_content: str | None = None) -> list[_messages.ModelMessage]:
+        """Return the history of _messages.
+
+        Args:
+            result_tool_return_content: The return content of the tool call to set in the last message.
+                This provides a convenient way to modify the content of the result tool call if you want to continue
+                the conversation and want to set the response to the result tool call. If `None`, the last message will
+                not be modified.
+        """
         # this is a method to be consistent with the other methods
+        if result_tool_return_content is not None:
+            raise NotImplementedError('Setting result tool return content is not supported for this result type.')
         return self._all_messages
 
-    def all_messages_json(self) -> bytes:
-        """Return all messages from [`all_messages`][pydantic_ai.result._BaseRunResult.all_messages] as JSON bytes."""
-        return _messages.ModelMessagesTypeAdapter.dump_json(self.all_messages())
+    def all_messages_json(self, result_tool_return_content: str | None = None) -> bytes:
+        """Return all messages from [`all_messages`][pydantic_ai.result._BaseRunResult.all_messages] as JSON bytes.
+
+        Args:
+            result_tool_return_content: The return content of the tool call to set in the last message.
+                This provides a convenient way to modify the content of the result tool call if you want to continue
+                the conversation and want to set the response to the result tool call. If `None`, the last message will
+                not be modified.
+        """
+        return _messages.ModelMessagesTypeAdapter.dump_json(
+            self.all_messages(result_tool_return_content=result_tool_return_content)
+        )
 
     def new_messages(self) -> list[_messages.ModelMessage]:
         """Return new messages associated with this run.
@@ -85,7 +103,20 @@ class RunResult(_BaseRunResult[ResultData]):
         """Return the usage of the whole run."""
         return self._usage
 
-    def set_result_tool_return(self, return_content: str) -> None:
+    def all_messages(self, *, result_tool_return_content: str | None = None) -> list[_messages.ModelMessage]:
+        """Return the history of _messages.
+
+        Args:
+            result_tool_return_content: The return content of the tool call to set in the last message.
+                This provides a convenient way to modify the content of the result tool call if you want to continue
+                the conversation and want to set the response to the result tool call. If `None`, the last message will
+                not be modified.
+        """
+        if result_tool_return_content is not None:
+            self._set_result_tool_return(result_tool_return_content)
+        return self._all_messages
+
+    def _set_result_tool_return(self, return_content: str) -> None:
         """Set return content for the result tool.
 
         Useful if you want to continue the conversation and want to set the response to the result tool call.

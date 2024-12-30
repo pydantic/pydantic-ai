@@ -237,8 +237,9 @@ async def find_flight(usage: Usage) -> Union[FlightDetails, None]:  # (4)!
         if isinstance(result.data, FlightDetails):
             return result.data
         else:
-            result.set_result_tool_return('Please try again.')
-            message_history = result.all_messages()
+            message_history = result.all_messages(
+                result_tool_return_content='Please try again.'
+            )
 
 
 class SeatPreference(BaseModel):

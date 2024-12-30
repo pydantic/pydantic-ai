@@ -209,8 +209,9 @@ async def main():
                 await buy_tickets(flight, seat)
                 break
             else:
-                result.set_result_tool_return('Please suggest another flight')
-                message_history = result.all_messages()
+                message_history = result.all_messages(
+                    result_tool_return_content='Please suggest another flight'
+                )
 
 
 async def find_seat(usage: Usage) -> SeatPreference:

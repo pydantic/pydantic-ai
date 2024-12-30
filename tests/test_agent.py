@@ -272,8 +272,7 @@ def test_plain_response(set_event_loop: None):
         ]
     )
     assert result._result_tool_name == 'final_result'  # pyright: ignore[reportPrivateUsage]
-    result.set_result_tool_return('foobar')
-    assert result.all_messages()[-1] == snapshot(
+    assert result.all_messages(result_tool_return_content='foobar')[-1] == snapshot(
         ModelRequest(
             parts=[ToolReturnPart(tool_name='final_result', content='foobar', timestamp=IsNow(tz=timezone.utc))]
         )
