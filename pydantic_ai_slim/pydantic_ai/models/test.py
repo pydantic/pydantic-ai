@@ -16,6 +16,7 @@ from ..messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    ModelResponsePart,
     RetryPromptPart,
     TextPart,
     ToolCallPart,
@@ -177,13 +178,26 @@ class TestAgentModel(AgentModel):
             # check if there are any retry prompts, if so retry them
             new_retry_names = {p.tool_name for p in last_message.parts if isinstance(p, RetryPromptPart)}
             if new_retry_names:
-                return ModelResponse(
-                    parts=[
+                # Handle retries for both function tools and result tools
+                retry_parts: list[ModelResponsePart] = []
+                # Check function tools
+                retry_parts.extend(
+                    [
                         ToolCallPart.from_raw_args(name, self.gen_tool_args(args))
                         for name, args in self.tool_calls
                         if name in new_retry_names
                     ]
                 )
+                # Check result tools
+                if self.result_tools:
+                    retry_parts.extend(
+                        [
+                            ToolCallPart.from_raw_args(tool.name, self.gen_tool_args(tool))
+                            for tool in self.result_tools
+                            if tool.name in new_retry_names
+                        ]
+                    )
+                return ModelResponse(parts=retry_parts)
 
         if response_text := self.result.left:
             if response_text.value is None:
