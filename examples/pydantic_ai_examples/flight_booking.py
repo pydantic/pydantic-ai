@@ -65,6 +65,7 @@ async def extract_flights(ctx: RunContext[Deps]) -> list[FlightDetails]:
     """Get details of all flights."""
     # we pass the usage to the search agent so requests within this agent are counted
     result = await extraction_agent.run(ctx.deps.web_page_text, usage=ctx.usage)
+    logfire.info('found {flight_count} flights', flight_count=len(result.data))
     return result.data
 
 
@@ -105,7 +106,7 @@ class Failed(BaseModel):
 
 # This agent is responsible for extracting the user's seat selection
 seat_preference_agent = Agent[
-    None, FlightDetails | NoFlightFound
+    None, SeatPreference | Failed
 ](
     'openai:gpt-4o',
     result_type=SeatPreference | Failed,  # type: ignore
@@ -183,9 +184,10 @@ async def main():
     )
     message_history: list[ModelMessage] | None = None
     usage: Usage = Usage()
+    # run the agent until a satisfactory flight is found
     while True:
         result = await search_agent.run(
-            'Find me a flight',
+            f'Find me a flight from {deps.req_origin} to {deps.req_destination} on {deps.req_date}',
             deps=deps,
             usage=usage,
             message_history=message_history,
