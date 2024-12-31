@@ -13,11 +13,11 @@ Of course, you can combine multiple strategies in a single application.
 
 ## Agent delegation
 
-"Agent delegation" refers to the scenario where an agent delegates work to another agent, but then takes back control when that agent finishes.
+"Agent delegation" refers to the scenario where an agent delegates work to another agent, then takes back control when the delegate agent (the agent called from within a tool) finishes.
 
 Since agents are stateless and designed to be global, you do not need to include the agent itself in agent [dependencies](dependencies.md).
 
-When doing so, you'll generally want to pass [`ctx.usage`][pydantic_ai.RunContext.usage] to the [`usage`][pydantic_ai.Agent.run] keyword argument of the delegate agent (the agent called from within a tool) run so usage within that run counts towards the total usage of the parent agent run.
+You'll generally want to pass [`ctx.usage`][pydantic_ai.RunContext.usage] to the [`usage`][pydantic_ai.Agent.run] keyword argument of the delegate agent run so usage within that run counts towards the total usage of the parent agent run.
 
 !!! note "Multiple models"
     Agent delegation doesn't need to use the same model for each agent. If you choose to use different models within a run, calculating the monetary cost from the final [`result.usage()`][pydantic_ai.result.RunResult.usage] of the run will not be possible, but you can still use [`UsageLimits`][pydantic_ai.usage.UsageLimits] to avoid unexpected costs.
@@ -26,25 +26,28 @@ When doing so, you'll generally want to pass [`ctx.usage`][pydantic_ai.RunContex
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.usage import UsageLimits
 
-joke_agent = Agent(
+joke_selection_agent = Agent(  # (1)!
     'openai:gpt-4o',
     system_prompt=(
         'Use the `joke_factory` to generate some jokes, then choose the best. '
         'You must return just a single joke.'
     ),
 )
+joke_generation_agent = Agent('gemini-1.5-flash', result_type=list[str])  # (2)!
 
 
-@joke_agent.tool
+@joke_selection_agent.tool
 async def joke_factory(ctx: RunContext[None], count: int) -> list[str]:
-    r = await delegate_agent.run(f'Please generate {count} jokes.', usage=ctx.usage)
-    return r.data
+    r = await joke_generation_agent.run(  # (3)!
+        f'Please generate {count} jokes.',
+        usage=ctx.usage,  # (4)!
+    )
+    return r.data  # (5)!
 
 
-delegate_agent = Agent('gemini-1.5-flash', result_type=list[str])
-
-result = joke_agent.run_sync(
-    'Tell me a joke.', usage_limits=UsageLimits(request_limit=5, total_tokens_limit=300)
+result = joke_selection_agent.run_sync(
+    'Tell me a joke.',
+    usage_limits=UsageLimits(request_limit=5, total_tokens_limit=300),
 )
 print(result.data)
 #> Did you hear about the toothpaste scandal? They called it Colgate.
@@ -56,18 +59,24 @@ Usage(
 """
 ```
 
+1. The "parent" or controlling agent.
+2. The "delegate" agent, which is called from within a tool of the parent agent.
+3. Call the delegate agent from within a tool of the parent agent.
+4. Pass the usage from the parent agent to the delegate agent so the final [`result.usage()`][pydantic_ai.result.RunResult.usage] includes the usage from both agents.
+5. Since the function returns `#!python list[str]`, and the `result_type` of `joke_generation_agent` is also `#!python list[str]`, we can simply return `#!python r.data` from the tool.
+
 _(This example is complete, it can be run "as is")_
 
 The control flow for this example is pretty simple and can be summarised as follows:
 
 ```mermaid
 graph TD
-  START --> joke_agent
-  joke_agent --> joke_factory["joke_factory (tool)"]
-  joke_factory --> delegate_agent
-  delegate_agent --> joke_factory
-  joke_factory --> joke_agent
-  joke_agent --> END
+  START --> joke_selection_agent
+  joke_selection_agent --> joke_factory["joke_factory (tool)"]
+  joke_factory --> joke_generation_agent
+  joke_generation_agent --> joke_factory
+  joke_factory --> joke_selection_agent
+  joke_selection_agent --> END
 ```
 
 ### Agent delegation and dependencies
@@ -88,7 +97,7 @@ class ClientAndKey:  # (1)!
     api_key: str
 
 
-joke_agent = Agent(
+joke_selection_agent = Agent(
     'openai:gpt-4o',
     deps_type=ClientAndKey,  # (2)!
     system_prompt=(
@@ -96,19 +105,7 @@ joke_agent = Agent(
         'then choose the best. You must return just a single joke.'
     ),
 )
-
-
-@joke_agent.tool
-async def joke_factory(ctx: RunContext[ClientAndKey], count: int) -> list[str]:
-    r = await delegate_agent.run(
-        f'Please generate {count} jokes.',
-        deps=ctx.deps,  # (3)!
-        usage=ctx.usage,
-    )
-    return r.data
-
-
-delegate_agent = Agent(
+joke_generation_agent = Agent(
     'gemini-1.5-flash',
     deps_type=ClientAndKey,  # (4)!
     result_type=list[str],
@@ -119,7 +116,17 @@ delegate_agent = Agent(
 )
 
 
-@delegate_agent.tool  # (5)!
+@joke_selection_agent.tool
+async def joke_factory(ctx: RunContext[ClientAndKey], count: int) -> list[str]:
+    r = await joke_generation_agent.run(
+        f'Please generate {count} jokes.',
+        deps=ctx.deps,  # (3)!
+        usage=ctx.usage,
+    )
+    return r.data
+
+
+@joke_generation_agent.tool  # (5)!
 async def get_jokes(ctx: RunContext[ClientAndKey], count: int) -> str:
     response = await ctx.deps.http_client.get(
         'https://example.com',
@@ -133,7 +140,7 @@ async def get_jokes(ctx: RunContext[ClientAndKey], count: int) -> str:
 async def main():
     async with httpx.AsyncClient() as client:
         deps = ClientAndKey(client, 'foobar')
-        result = await joke_agent.run('Tell me a joke.', deps=deps)
+        result = await joke_selection_agent.run('Tell me a joke.', deps=deps)
         print(result.data)
         #> Did you hear about the toothpaste scandal? They called it Colgate.
         print(result.usage())  # (6)!
@@ -149,9 +156,9 @@ async def main():
 ```
 
 1. Define a dataclass to hold the client and API key dependencies.
-2. Set the `deps_type` of the calling agent.
+2. Set the `deps_type` of the calling agent — `joke_selection_agent` here.
 3. Pass the dependencies to the delegate agent's run method within the tool call.
-4. Also set the `deps_type` of the delegate agent.
+4. Also set the `deps_type` of the delegate agent — `joke_generation_agent` here.
 5. Define a tool on the delegate agent that uses the dependencies to make an HTTP request.
 6. Usage now includes 4 requests — 2 from the calling agent and 2 from the delegate agent.
 
@@ -161,16 +168,16 @@ This example shows how even a fairly simple agent delegation can lead to a compl
 
 ```mermaid
 graph TD
-  START --> joke_agent
-  joke_agent --> joke_factory["joke_factory (tool)"]
-  joke_factory --> delegate_agent
-  delegate_agent --> get_jokes["get_jokes (tool)"]
+  START --> joke_selection_agent
+  joke_selection_agent --> joke_factory["joke_factory (tool)"]
+  joke_factory --> joke_generation_agent
+  joke_generation_agent --> get_jokes["get_jokes (tool)"]
   get_jokes --> http_request["HTTP request"]
   http_request --> get_jokes
-  get_jokes --> delegate_agent
-  delegate_agent --> joke_factory
-  joke_factory --> joke_agent
-  joke_agent --> END
+  get_jokes --> joke_generation_agent
+  joke_generation_agent --> joke_factory
+  joke_factory --> joke_selection_agent
+  joke_selection_agent --> END
 ```
 
 ## Programmatic agent hand-off
@@ -219,7 +226,7 @@ async def flight_search(
     return FlightDetails(flight_number='AK456')
 
 
-usage_limit = UsageLimits(request_limit=15)  # (3)!
+usage_limits = UsageLimits(request_limit=15)  # (3)!
 
 
 async def find_flight(usage: Usage) -> Union[FlightDetails, None]:  # (4)!
@@ -232,7 +239,7 @@ async def find_flight(usage: Usage) -> Union[FlightDetails, None]:  # (4)!
             prompt,
             message_history=message_history,
             usage=usage,
-            usage_limits=usage_limit,
+            usage_limits=usage_limits,
         )
         if isinstance(result.data, FlightDetails):
             return result.data
@@ -269,7 +276,7 @@ async def find_seat(usage: Usage) -> SeatPreference:  # (6)!
             answer,
             message_history=message_history,
             usage=usage,
-            usage_limits=usage_limit,
+            usage_limits=usage_limits,
         )
         if isinstance(result.data, SeatPreference):
             return result.data
@@ -290,7 +297,7 @@ async def main():  # (7)!
         #> Seat preference: row=1 seat='A'
 ```
 
-1. Define the first agent, which finds a flight. We use an explicit type annotation until PEP 747 lands, see [structured results](results.md#structured-result-validation). We use a union as the result type so the model can communicate if it's unable to find a satisfactory choice; internally, each member of the union will be registered as a separate tool.
+1. Define the first agent, which finds a flight. We use an explicit type annotation until [PEP-747](https://peps.python.org/pep-0747/) lands, see [structured results](results.md#structured-result-validation). We use a union as the result type so the model can communicate if it's unable to find a satisfactory choice; internally, each member of the union will be registered as a separate tool.
 2. Define a tool on the agent to find a flight. In this simple case we could dispense with the tool and just define the agent to return structured data, then search for a flight, but in more complex scenarios the tool would be necessary.
 3. Define usage limits for the entire app.
 4. Define a function to find a flight, which asks the user for their preferences and then calls the agent to find a flight.

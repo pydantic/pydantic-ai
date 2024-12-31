@@ -172,7 +172,7 @@ flights_web_page = """
 """
 
 # restrict how many requests this app can make to the LLM
-usage_limit = UsageLimits(request_limit=15)
+usage_limits = UsageLimits(request_limit=15)
 
 
 async def main():
@@ -191,7 +191,7 @@ async def main():
             deps=deps,
             usage=usage,
             message_history=message_history,
-            usage_limits=usage_limit,
+            usage_limits=usage_limits,
         )
         if isinstance(result.data, NoFlightFound):
             print('No flight found')
@@ -223,7 +223,7 @@ async def find_seat(usage: Usage) -> SeatPreference:
             answer,
             message_history=message_history,
             usage=usage,
-            usage_limits=usage_limit,
+            usage_limits=usage_limits,
         )
         if isinstance(result.data, SeatPreference):
             return result.data
