@@ -72,6 +72,7 @@ def test_docs_examples(
     mocker.patch('httpx.AsyncClient.get', side_effect=async_http_request)
     mocker.patch('httpx.AsyncClient.post', side_effect=async_http_request)
     mocker.patch('random.randint', return_value=4)
+    mocker.patch('rich.prompt.Prompt.ask', side_effect=rich_prompt_ask)
 
     env.set('OPENAI_API_KEY', 'testing')
     env.set('GEMINI_API_KEY', 'testing')
@@ -143,6 +144,14 @@ def http_request(url: str, **kwargs: Any) -> httpx.Response:
 
 async def async_http_request(url: str, **kwargs: Any) -> httpx.Response:
     return http_request(url, **kwargs)
+
+
+def rich_prompt_ask(prompt: str, *_args: Any, **_kwargs: Any) -> str:
+    if prompt == 'Where would you like to fly from and to?':
+        return 'SFO to ANC'
+    else:
+        assert prompt == 'What seat would you like?', prompt
+        return 'window seat with leg room'
 
 
 text_responses: dict[str, str | ToolCallPart] = {
@@ -218,20 +227,35 @@ text_responses: dict[str, str | ToolCallPart] = {
         'Rome is known for its rich history, stunning architecture, and delicious cuisine.'
     ),
     'Begin infinite retry loop!': ToolCallPart(tool_name='infinite_retry_tool', args=ArgsDict({})),
+    'Please generate 5 jokes.': ToolCallPart(
+        tool_name='final_result',
+        args=ArgsDict({'response': []}),
+    ),
+    'SFO to ANC': ToolCallPart(
+        tool_name='flight_search',
+        args=ArgsDict({'origin': 'SFO', 'destination': 'ANC'}),
+    ),
+    'window seat with leg room': ToolCallPart(
+        tool_name='final_result_SeatPreference',
+        args=ArgsDict({'row': 1, 'seat': 'A'}),
+    ),
 }
 
 
-async def model_logic(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:  # pragma: no cover
+async def model_logic(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:  # pragma: no cover  # noqa: C901
     m = messages[-1].parts[-1]
     if isinstance(m, UserPromptPart):
-        if response := text_responses.get(m.content):
+        if m.content == 'Tell me a joke.' and any(t.name == 'joke_factory' for t in info.function_tools):
+            return ModelResponse(parts=[ToolCallPart(tool_name='joke_factory', args=ArgsDict({'count': 5}))])
+        elif m.content == 'Please generate 5 jokes.' and any(t.name == 'get_jokes' for t in info.function_tools):
+            return ModelResponse(parts=[ToolCallPart(tool_name='get_jokes', args=ArgsDict({'count': 5}))])
+        elif re.fullmatch(r'sql prompt \d+', m.content):
+            return ModelResponse.from_text(content='SELECT 1')
+        elif response := text_responses.get(m.content):
             if isinstance(response, str):
                 return ModelResponse.from_text(content=response)
             else:
                 return ModelResponse(parts=[response])
-
-        if re.fullmatch(r'sql prompt \d+', m.content):
-            return ModelResponse.from_text(content='SELECT 1')
 
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'roulette_wheel':
         win = m.content == 'winner'
@@ -249,7 +273,7 @@ async def model_logic(messages: list[ModelMessage], info: AgentInfo) -> ModelRes
     elif isinstance(m, RetryPromptPart) and m.tool_name == 'infinite_retry_tool':
         return ModelResponse(parts=[ToolCallPart(tool_name='infinite_retry_tool', args=ArgsDict({}))])
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_user_by_name':
-        args = {
+        args: dict[str, Any] = {
             'message': 'Hello John, would you be free for coffee sometime next week? Let me know what works for you!',
             'user_id': 123,
         }
@@ -263,6 +287,14 @@ async def model_logic(messages: list[ModelMessage], info: AgentInfo) -> ModelRes
             'risk': 1,
         }
         return ModelResponse(parts=[ToolCallPart(tool_name='final_result', args=ArgsDict(args))])
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'joke_factory':
+        return ModelResponse.from_text(content='Did you hear about the toothpaste scandal? They called it Colgate.')
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_jokes':
+        args = {'response': []}
+        return ModelResponse(parts=[ToolCallPart(tool_name='final_result', args=ArgsDict(args))])
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'flight_search':
+        args = {'flight_number': m.content.flight_number}  # type: ignore
+        return ModelResponse(parts=[ToolCallPart(tool_name='final_result_FlightDetails', args=ArgsDict(args))])
     else:
         sys.stdout.write(str(debug.format(messages, info)))
         raise RuntimeError(f'Unexpected message: {m}')

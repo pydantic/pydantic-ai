@@ -55,3 +55,7 @@ img.index-header {
   min-height: 120px;
   margin-bottom: 10px;
 }
+
+.mermaid {
+  text-align: center;
+}

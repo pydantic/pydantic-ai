@@ -1,4 +1,5 @@
 import json
+import re
 import sys
 from datetime import timezone
 from typing import Any, Callable, Union
@@ -227,7 +228,7 @@ def test_result_validator(set_event_loop: None):
     )
 
 
-def test_plain_response(set_event_loop: None):
+def test_plain_response_then_tuple(set_event_loop: None):
     call_index = 0
 
     def return_tuple(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -271,6 +272,42 @@ def test_plain_response(set_event_loop: None):
             ),
         ]
     )
+    assert result._result_tool_name == 'final_result'  # pyright: ignore[reportPrivateUsage]
+    assert result.all_messages(result_tool_return_content='foobar')[-1] == snapshot(
+        ModelRequest(
+            parts=[ToolReturnPart(tool_name='final_result', content='foobar', timestamp=IsNow(tz=timezone.utc))]
+        )
+    )
+    assert result.all_messages()[-1] == snapshot(
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='final_result', content='Final result processed.', timestamp=IsNow(tz=timezone.utc)
+                )
+            ]
+        )
+    )
+
+
+def test_result_tool_return_content_str_return(set_event_loop: None):
+    agent = Agent('test')
+
+    result = agent.run_sync('Hello')
+    assert result.data == 'success (no tool calls)'
+
+    msg = re.escape('Cannot set result tool return content when the return type is `str`.')
+    with pytest.raises(ValueError, match=msg):
+        result.all_messages(result_tool_return_content='foobar')
+
+
+def test_result_tool_return_content_no_tool(set_event_loop: None):
+    agent = Agent('test', result_type=int)
+
+    result = agent.run_sync('Hello')
+    assert result.data == 0
+    result._result_tool_name = 'wrong'  # pyright: ignore[reportPrivateUsage]
+    with pytest.raises(LookupError, match=re.escape("No tool call found with tool name 'wrong'.")):
+        result.all_messages(result_tool_return_content='foobar')
 
 
 def test_response_tuple(set_event_loop: None):
@@ -507,6 +544,7 @@ def test_run_with_history_new(set_event_loop: None):
             ],
             _new_message_index=4,
             data='{"ret_a":"a-apple"}',
+            _result_tool_name=None,
             _usage=Usage(requests=1, request_tokens=55, response_tokens=13, total_tokens=68, details=None),
         )
     )
@@ -549,6 +587,7 @@ def test_run_with_history_new(set_event_loop: None):
             ],
             _new_message_index=4,
             data='{"ret_a":"a-apple"}',
+            _result_tool_name=None,
             _usage=Usage(requests=1, request_tokens=55, response_tokens=13, total_tokens=68, details=None),
         )
     )
@@ -648,6 +687,7 @@ def test_run_with_history_new_structured(set_event_loop: None):
                 ),
             ],
             _new_message_index=5,
+            _result_tool_name='final_result',
             _usage=Usage(requests=1, request_tokens=59, response_tokens=13, total_tokens=72, details=None),
         )
     )
