@@ -2,7 +2,6 @@ from __future__ import annotations as _annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from os import getenv
 from pathlib import Path
 from typing import Literal
 
@@ -142,12 +141,6 @@ class VertexAIModel(Model):
         else:
             creds, creds_project_id = await _async_google_auth()
             creds_source = '`google.auth.default()`'
-            if hasattr(creds, 'service_account_email') and getenv('GOOGLE_APPLICATION_CREDENTIALS') is not None:
-                service_account_file_path = getenv('GOOGLE_APPLICATION_CREDENTIALS')
-                if isinstance(service_account_file_path, str):
-                    self.service_account_file = service_account_file_path
-                    creds = _creds_from_file(service_account_file=service_account_file_path)
-                    creds_source = 'service account file'
 
         if self.project_id is None:
             if creds_project_id is None:
