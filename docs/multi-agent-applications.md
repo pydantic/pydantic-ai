@@ -81,7 +81,10 @@ graph TD
 
 ### Agent delegation and dependencies
 
-The delegate agent needs to either have the same [dependencies](dependencies.md) as the calling agent, or dependencies which are a subset of the calling agent's dependencies.
+Generally the delegate agent needs to either have the same [dependencies](dependencies.md) as the calling agent, or dependencies which are a subset of the calling agent's dependencies.
+
+!!! info "Initializing dependencies"
+    We say "generally" above since there's nothing to stop you initializing dependencies within a tool call and therefore using interdependencies in a delegate agent that are not available on the parent, this should often be avoided since it can be significantly slower than reusing connections etc. from the parent agent.
 
 ```python {title="agent_delegation_deps.py"}
 from dataclasses import dataclass
