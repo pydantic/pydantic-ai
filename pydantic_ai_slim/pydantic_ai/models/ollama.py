@@ -70,7 +70,7 @@ class OllamaModel(Model):
         self,
         model_name: OllamaModelName,
         *,
-        base_url: str | None = 'http://localhost:11434/v1/',
+        base_url: str | None = 'http://localhost:11434/api/',
         api_key: str = 'ollama',
         openai_client: AsyncOpenAI | None = None,
         http_client: AsyncHTTPClient | None = None,
