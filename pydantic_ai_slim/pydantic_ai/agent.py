@@ -857,6 +857,25 @@ class Agent(Generic[AgentDeps, ResultData]):
             result_tools=self._result_schema.tool_defs() if self._result_schema is not None else [],
         )
 
+    async def _reevaluate_dynamic_prompts(
+        self, messages: list[_messages.ModelMessage], run_context: RunContext[AgentDeps]
+    ) -> None:
+        """Reevaluate any DynamicSystemPromptPart in the provided messages by running the associated runner function."""
+        # Pre-map runner IDs to runners for efficient lookups (instead of re-looping each time).
+        runner_map = {id(runner): runner for runner in self._system_prompt_functions}
+
+        # Only proceed if there's at least one dynamic runner.
+        if any(runner.dynamic for runner in self._system_prompt_functions):
+            for msg in messages:
+                if isinstance(msg, _messages.ModelRequest):
+                    for i, part in enumerate(msg.parts):
+                        if isinstance(part, _messages.DynamicSystemPromptPart):
+                            # Look up the runner by its ID (default 0 in case part.ref is None).
+                            matching_runner = runner_map.get(part.ref or 0)
+                            if matching_runner is not None:
+                                updated_part_content = await matching_runner.run(run_context)
+                                msg.parts[i] = _messages.DynamicSystemPromptPart(updated_part_content, ref=part.ref)
+
     async def _prepare_messages(
         self, user_prompt: str, message_history: list[_messages.ModelMessage] | None, run_context: RunContext[AgentDeps]
     ) -> list[_messages.ModelMessage]:
@@ -872,23 +891,13 @@ class Agent(Generic[AgentDeps, ResultData]):
                 )
 
         if message_history:
-            # shallow copy messages
+            # Shallow copy messages
             messages.extend(message_history)
 
-            # If there are any dynamic system prompts, we need to reevaluate them
-            if any(runner.dynamic for runner in self._system_prompt_functions):
-                # Get fresh system prompts
-                new_sys_parts = await self._sys_parts(run_context)
+            # Reevaluate any dynamic system prompt parts (now done by our extracted method)
+            await self._reevaluate_dynamic_prompts(messages, run_context)
 
-                # Replace the system prompts in the existing messages
-                for msg in messages:
-                    if isinstance(msg, _messages.ModelRequest):
-                        # Keep non-system parts and add new system parts
-                        non_system_parts = [
-                            part for part in msg.parts if not isinstance(part, _messages.SystemPromptPart)
-                        ]
-                        msg.parts = new_sys_parts + non_system_parts
-
+            # Finally, append the new user prompt
             messages.append(_messages.ModelRequest([_messages.UserPromptPart(user_prompt)]))
         else:
             parts = await self._sys_parts(run_context)
@@ -1125,7 +1134,10 @@ class Agent(Generic[AgentDeps, ResultData]):
         messages: list[_messages.ModelRequestPart] = [_messages.SystemPromptPart(p) for p in self._system_prompts]
         for sys_prompt_runner in self._system_prompt_functions:
             prompt = await sys_prompt_runner.run(run_context)
-            messages.append(_messages.SystemPromptPart(prompt))
+            if sys_prompt_runner.dynamic:
+                messages.append(_messages.DynamicSystemPromptPart(prompt, ref=id(sys_prompt_runner)))
+            else:
+                messages.append(_messages.SystemPromptPart(prompt))
         return messages
 
     def _unknown_tool(self, tool_name: str, run_context: RunContext[AgentDeps]) -> _messages.RetryPromptPart:

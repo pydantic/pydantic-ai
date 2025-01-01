@@ -14,6 +14,7 @@ from pydantic_ai import Agent, ModelRetry, RunContext, UnexpectedModelBehavior, 
 from pydantic_ai.messages import (
     ArgsDict,
     ArgsJson,
+    DynamicSystemPromptPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -1270,7 +1271,7 @@ def test_dynamic_false_no_reevaluate(set_event_loop: None):
 
     @agent.system_prompt
     async def func_two():
-        return dynamic_value + '!'
+        return 'This is not added'
 
     res_two = agent.run_sync('World', message_history=res.all_messages())
 
@@ -1326,7 +1327,11 @@ def test_dynamic_true_reevaluate_system_prompt(set_event_loop: None):
             ModelRequest(
                 parts=[
                     SystemPromptPart(content='Foobar', part_kind='system-prompt'),
-                    SystemPromptPart(content=dynamic_value, part_kind='system-prompt'),
+                    DynamicSystemPromptPart(
+                        content=dynamic_value,
+                        part_kind='system-prompt',
+                        ref=id(agent._system_prompt_functions[0]),  # type: ignore
+                    ),
                     UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc), part_kind='user-prompt'),
                 ],
                 kind='request',
@@ -1345,74 +1350,9 @@ def test_dynamic_true_reevaluate_system_prompt(set_event_loop: None):
     async def func_two():
         return 'This is a new prompt, but it wont reach the model'
 
-    res_two = agent.run_sync('World', message_history=res.all_messages())
-
-    assert res_two.all_messages() == snapshot(
-        [
-            ModelRequest(
-                parts=[
-                    SystemPromptPart(content='Foobar', part_kind='system-prompt'),
-                    SystemPromptPart(
-                        content='B',  # Updated value
-                        part_kind='system-prompt',
-                    ),
-                    UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc), part_kind='user-prompt'),
-                ],
-                kind='request',
-            ),
-            ModelResponse(
-                parts=[TextPart(content='success (no tool calls)', part_kind='text')],
-                timestamp=IsNow(tz=timezone.utc),
-                kind='response',
-            ),
-            ModelRequest(
-                parts=[UserPromptPart(content='World', timestamp=IsNow(tz=timezone.utc), part_kind='user-prompt')],
-                kind='request',
-            ),
-            ModelResponse(
-                parts=[TextPart(content='success (no tool calls)', part_kind='text')],
-                timestamp=IsNow(tz=timezone.utc),
-                kind='response',
-            ),
-        ]
-    )
-
-
-def test_dynamic_true_evaluate_new_system_prompt(set_event_loop: None):
-    """When new system prompt added with `dynamic` = True, they will be evaluated and added to the system parts, (besides the reevaluated ones)."""
-    agent = Agent('test', system_prompt='Foobar')
-
-    dynamic_value = 'A'
-
     @agent.system_prompt(dynamic=True)
-    async def func():
-        return dynamic_value
-
-    res = agent.run_sync('Hello')
-
-    assert res.all_messages() == snapshot(
-        [
-            ModelRequest(
-                parts=[
-                    SystemPromptPart(content='Foobar', part_kind='system-prompt'),
-                    SystemPromptPart(content=dynamic_value, part_kind='system-prompt'),
-                    UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc), part_kind='user-prompt'),
-                ],
-                kind='request',
-            ),
-            ModelResponse(
-                parts=[TextPart(content='success (no tool calls)', part_kind='text')],
-                timestamp=IsNow(tz=timezone.utc),
-                kind='response',
-            ),
-        ]
-    )
-
-    dynamic_value = 'B'
-
-    @agent.system_prompt(dynamic=True)
-    async def func_two():
-        return 'This is a new prompt, and model will know'
+    async def func_two_dynamic():
+        return 'This is a new prompt, but it wont reach the model, even though is dynamic'
 
     res_two = agent.run_sync('World', message_history=res.all_messages())
 
@@ -1421,11 +1361,11 @@ def test_dynamic_true_evaluate_new_system_prompt(set_event_loop: None):
             ModelRequest(
                 parts=[
                     SystemPromptPart(content='Foobar', part_kind='system-prompt'),
-                    SystemPromptPart(
-                        content='B',  # Updated value since dirty
+                    DynamicSystemPromptPart(
+                        content='B',
                         part_kind='system-prompt',
+                        ref=id(agent._system_prompt_functions[0]),  # type: ignore
                     ),
-                    SystemPromptPart(content='This is a new prompt, and model will know', part_kind='system-prompt'),
                     UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc), part_kind='user-prompt'),
                 ],
                 kind='request',

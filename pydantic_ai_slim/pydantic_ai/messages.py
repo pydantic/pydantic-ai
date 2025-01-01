@@ -26,6 +26,17 @@ class SystemPromptPart:
 
 
 @dataclass
+class DynamicSystemPromptPart(SystemPromptPart):
+    """A system prompt that is generated dynamically.
+
+    Same as SystemPromptPart, but its content is regenerated on each run.
+    """
+
+    ref: int | None = None
+    """The ref ID of the system prompt function that generated this part."""
+
+
+@dataclass
 class UserPromptPart:
     """A user prompt, generally written by the end user.
 
