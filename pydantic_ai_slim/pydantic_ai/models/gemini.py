@@ -444,7 +444,8 @@ def _content_model_response(m: ModelResponse) -> _GeminiContent:
         if isinstance(item, ToolCallPart):
             parts.append(_function_call_part_from_call(item))
         elif isinstance(item, TextPart):
-            parts.append(_GeminiTextPart(text=item.content))
+            if item.content:
+                parts.append(_GeminiTextPart(text=item.content))
         else:
             assert_never(item)
     return _GeminiContent(role='model', parts=parts)

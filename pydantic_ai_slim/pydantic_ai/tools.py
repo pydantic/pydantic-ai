@@ -40,16 +40,20 @@ class RunContext(Generic[AgentDeps]):
 
     deps: AgentDeps
     """Dependencies for the agent."""
-    retry: int
-    """Number of retries so far."""
-    messages: list[_messages.ModelMessage]
-    """Messages exchanged in the conversation so far."""
-    tool_name: str | None
-    """Name of the tool being called."""
     model: models.Model
     """The model used in this run."""
     usage: Usage
     """LLM usage associated with the run."""
+    prompt: str
+    """The original user prompt passed to the run."""
+    messages: list[_messages.ModelMessage] = field(default_factory=list)
+    """Messages exchanged in the conversation so far."""
+    tool_name: str | None = None
+    """Name of the tool being called."""
+    retry: int = 0
+    """Number of retries so far."""
+    run_step: int = 0
+    """The current step in the run."""
 
     def replace_with(
         self, retry: int | None = None, tool_name: str | None | _utils.Unset = _utils.UNSET

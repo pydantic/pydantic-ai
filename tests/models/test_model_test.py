@@ -10,7 +10,8 @@ from annotated_types import Ge, Gt, Le, Lt, MaxLen, MinLen
 from inline_snapshot import snapshot
 from pydantic import BaseModel, Field
 
-from pydantic_ai import Agent, ModelRetry
+from pydantic_ai import Agent, ModelRetry, RunContext
+from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
@@ -107,6 +108,27 @@ def test_tool_retry(set_event_loop: None):
             ModelResponse.from_text(content='{"my_ret":"1"}', timestamp=IsNow(tz=timezone.utc)),
         ]
     )
+
+
+def test_result_tool_retry_error_handled(set_event_loop: None):
+    class ResultModel(BaseModel):
+        x: int
+        y: str
+
+    agent = Agent('test', result_type=ResultModel, retries=2)
+
+    call_count = 0
+
+    @agent.result_validator
+    def validate_result(ctx: RunContext[None], result: ResultModel) -> ResultModel:
+        nonlocal call_count
+        call_count += 1
+        raise ModelRetry('Fail')
+
+    with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum retries'):
+        agent.run_sync('Hello', model=TestModel())
+
+    assert call_count == 3
 
 
 def test_json_schema_test_data():

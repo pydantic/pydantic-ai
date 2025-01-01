@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Awaitable, Callable
-from copy import copy
+from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Generic, Union, cast
@@ -11,16 +11,10 @@ import logfire_api
 from typing_extensions import TypeVar
 
 from . import _result, _utils, exceptions, messages as _messages, models
-from .settings import UsageLimits
 from .tools import AgentDeps, RunContext
+from .usage import Usage, UsageLimits
 
-__all__ = (
-    'ResultData',
-    'ResultValidatorFunc',
-    'Usage',
-    'RunResult',
-    'StreamedRunResult',
-)
+__all__ = 'ResultData', 'ResultValidatorFunc', 'RunResult', 'StreamedRunResult'
 
 
 ResultData = TypeVar('ResultData', default=str)
@@ -45,55 +39,6 @@ _logfire = logfire_api.Logfire(otel_scope='pydantic-ai')
 
 
 @dataclass
-class Usage:
-    """LLM usage associated with a request or run.
-
-    Responsibility for calculating usage is on the model; PydanticAI simply sums the usage information across requests.
-
-    You'll need to look up the documentation of the model you're using to convert usage to monetary costs.
-    """
-
-    requests: int = 0
-    """Number of requests made to the LLM API."""
-    request_tokens: int | None = None
-    """Tokens used in processing requests."""
-    response_tokens: int | None = None
-    """Tokens used in generating responses."""
-    total_tokens: int | None = None
-    """Total tokens used in the whole run, should generally be equal to `request_tokens + response_tokens`."""
-    details: dict[str, int] | None = None
-    """Any extra details returned by the model."""
-
-    def incr(self, incr_usage: Usage, *, requests: int = 0) -> None:
-        """Increment the usage in place.
-
-        Args:
-            incr_usage: The usage to increment by.
-            requests: The number of requests to increment by in addition to `incr_usage.requests`.
-        """
-        self.requests += requests
-        for f in 'requests', 'request_tokens', 'response_tokens', 'total_tokens':
-            self_value = getattr(self, f)
-            other_value = getattr(incr_usage, f)
-            if self_value is not None or other_value is not None:
-                setattr(self, f, (self_value or 0) + (other_value or 0))
-
-        if incr_usage.details:
-            self.details = self.details or {}
-            for key, value in incr_usage.details.items():
-                self.details[key] = self.details.get(key, 0) + value
-
-    def __add__(self, other: Usage) -> Usage:
-        """Add two Usages together.
-
-        This is provided so it's trivial to sum usage information from multiple requests and runs.
-        """
-        new_usage = copy(self)
-        new_usage.incr(other)
-        return new_usage
-
-
-@dataclass
 class _BaseRunResult(ABC, Generic[ResultData]):
     """Base type for results.
 
@@ -103,25 +48,70 @@ class _BaseRunResult(ABC, Generic[ResultData]):
     _all_messages: list[_messages.ModelMessage]
     _new_message_index: int
 
-    def all_messages(self) -> list[_messages.ModelMessage]:
-        """Return the history of _messages."""
+    def all_messages(self, *, result_tool_return_content: str | None = None) -> list[_messages.ModelMessage]:
+        """Return the history of _messages.
+
+        Args:
+            result_tool_return_content: The return content of the tool call to set in the last message.
+                This provides a convenient way to modify the content of the result tool call if you want to continue
+                the conversation and want to set the response to the result tool call. If `None`, the last message will
+                not be modified.
+
+        Returns:
+            List of messages.
+        """
         # this is a method to be consistent with the other methods
+        if result_tool_return_content is not None:
+            raise NotImplementedError('Setting result tool return content is not supported for this result type.')
         return self._all_messages
 
-    def all_messages_json(self) -> bytes:
-        """Return all messages from [`all_messages`][pydantic_ai.result._BaseRunResult.all_messages] as JSON bytes."""
-        return _messages.ModelMessagesTypeAdapter.dump_json(self.all_messages())
+    def all_messages_json(self, *, result_tool_return_content: str | None = None) -> bytes:
+        """Return all messages from [`all_messages`][pydantic_ai.result._BaseRunResult.all_messages] as JSON bytes.
 
-    def new_messages(self) -> list[_messages.ModelMessage]:
+        Args:
+            result_tool_return_content: The return content of the tool call to set in the last message.
+                This provides a convenient way to modify the content of the result tool call if you want to continue
+                the conversation and want to set the response to the result tool call. If `None`, the last message will
+                not be modified.
+
+        Returns:
+            JSON bytes representing the messages.
+        """
+        return _messages.ModelMessagesTypeAdapter.dump_json(
+            self.all_messages(result_tool_return_content=result_tool_return_content)
+        )
+
+    def new_messages(self, *, result_tool_return_content: str | None = None) -> list[_messages.ModelMessage]:
         """Return new messages associated with this run.
 
-        System prompts and any messages from older runs are excluded.
-        """
-        return self.all_messages()[self._new_message_index :]
+        Messages from older runs are excluded.
 
-    def new_messages_json(self) -> bytes:
-        """Return new messages from [`new_messages`][pydantic_ai.result._BaseRunResult.new_messages] as JSON bytes."""
-        return _messages.ModelMessagesTypeAdapter.dump_json(self.new_messages())
+        Args:
+            result_tool_return_content: The return content of the tool call to set in the last message.
+                This provides a convenient way to modify the content of the result tool call if you want to continue
+                the conversation and want to set the response to the result tool call. If `None`, the last message will
+                not be modified.
+
+        Returns:
+            List of new messages.
+        """
+        return self.all_messages(result_tool_return_content=result_tool_return_content)[self._new_message_index :]
+
+    def new_messages_json(self, *, result_tool_return_content: str | None = None) -> bytes:
+        """Return new messages from [`new_messages`][pydantic_ai.result._BaseRunResult.new_messages] as JSON bytes.
+
+        Args:
+            result_tool_return_content: The return content of the tool call to set in the last message.
+                This provides a convenient way to modify the content of the result tool call if you want to continue
+                the conversation and want to set the response to the result tool call. If `None`, the last message will
+                not be modified.
+
+        Returns:
+            JSON bytes representing the new messages.
+        """
+        return _messages.ModelMessagesTypeAdapter.dump_json(
+            self.new_messages(result_tool_return_content=result_tool_return_content)
+        )
 
     @abstractmethod
     def usage(self) -> Usage:
@@ -134,11 +124,44 @@ class RunResult(_BaseRunResult[ResultData]):
 
     data: ResultData
     """Data from the final response in the run."""
+    _result_tool_name: str | None
     _usage: Usage
 
     def usage(self) -> Usage:
         """Return the usage of the whole run."""
         return self._usage
+
+    def all_messages(self, *, result_tool_return_content: str | None = None) -> list[_messages.ModelMessage]:
+        """Return the history of _messages.
+
+        Args:
+            result_tool_return_content: The return content of the tool call to set in the last message.
+                This provides a convenient way to modify the content of the result tool call if you want to continue
+                the conversation and want to set the response to the result tool call. If `None`, the last message will
+                not be modified.
+
+        Returns:
+            List of messages.
+        """
+        if result_tool_return_content is not None:
+            return self._set_result_tool_return(result_tool_return_content)
+        else:
+            return self._all_messages
+
+    def _set_result_tool_return(self, return_content: str) -> list[_messages.ModelMessage]:
+        """Set return content for the result tool.
+
+        Useful if you want to continue the conversation and want to set the response to the result tool call.
+        """
+        if not self._result_tool_name:
+            raise ValueError('Cannot set result tool return content when the return type is `str`.')
+        messages = deepcopy(self._all_messages)
+        last_message = messages[-1]
+        for part in last_message.parts:
+            if isinstance(part, _messages.ToolReturnPart) and part.tool_name == self._result_tool_name:
+                part.content = return_content
+                return messages
+        raise LookupError(f'No tool call found with tool name {self._result_tool_name!r}.')
 
 
 @dataclass

@@ -6,7 +6,6 @@ import inspect
 from collections.abc import AsyncIterator, Awaitable, Iterator, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
-from dataclasses import dataclass, field
 from types import FrameType
 from typing import Any, Callable, Generic, Literal, cast, final, overload
 
@@ -21,9 +20,10 @@ from . import (
     messages as _messages,
     models,
     result,
+    usage as _usage,
 )
 from .result import ResultData
-from .settings import ModelSettings, UsageLimits, merge_model_settings
+from .settings import ModelSettings, merge_model_settings
 from .tools import (
     AgentDeps,
     RunContext,
@@ -40,6 +40,16 @@ __all__ = 'Agent', 'capture_run_messages', 'EndStrategy'
 
 _logfire = logfire_api.Logfire(otel_scope='pydantic-ai')
 
+# while waiting for https://github.com/pydantic/logfire/issues/745
+try:
+    import logfire._internal.stack_info
+except ImportError:
+    pass
+else:
+    from pathlib import Path
+
+    logfire._internal.stack_info.NON_USER_CODE_PREFIXES += (str(Path(__file__).parent.absolute()),)
+
 NoneType = type(None)
 EndStrategy = Literal['early', 'exhaustive']
 """The strategy for handling multiple tool calls when a final result is found.
@@ -50,7 +60,7 @@ EndStrategy = Literal['early', 'exhaustive']
 
 
 @final
-@dataclass(init=False)
+@dataclasses.dataclass(init=False)
 class Agent(Generic[AgentDeps, ResultData]):
     """Class for defining "agents" - a way to have a specific type of "conversation" with an LLM.
 
@@ -90,17 +100,17 @@ class Agent(Generic[AgentDeps, ResultData]):
     be merged with this value, with the runtime argument taking priority.
     """
 
-    _result_schema: _result.ResultSchema[ResultData] | None = field(repr=False)
-    _result_validators: list[_result.ResultValidator[AgentDeps, ResultData]] = field(repr=False)
-    _allow_text_result: bool = field(repr=False)
-    _system_prompts: tuple[str, ...] = field(repr=False)
-    _function_tools: dict[str, Tool[AgentDeps]] = field(repr=False)
-    _default_retries: int = field(repr=False)
-    _system_prompt_functions: list[_system_prompt.SystemPromptRunner[AgentDeps]] = field(repr=False)
-    _deps_type: type[AgentDeps] = field(repr=False)
-    _max_result_retries: int = field(repr=False)
-    _override_deps: _utils.Option[AgentDeps] = field(default=None, repr=False)
-    _override_model: _utils.Option[models.Model] = field(default=None, repr=False)
+    _result_schema: _result.ResultSchema[ResultData] | None = dataclasses.field(repr=False)
+    _result_validators: list[_result.ResultValidator[AgentDeps, ResultData]] = dataclasses.field(repr=False)
+    _allow_text_result: bool = dataclasses.field(repr=False)
+    _system_prompts: tuple[str, ...] = dataclasses.field(repr=False)
+    _function_tools: dict[str, Tool[AgentDeps]] = dataclasses.field(repr=False)
+    _default_retries: int = dataclasses.field(repr=False)
+    _system_prompt_functions: list[_system_prompt.SystemPromptRunner[AgentDeps]] = dataclasses.field(repr=False)
+    _deps_type: type[AgentDeps] = dataclasses.field(repr=False)
+    _max_result_retries: int = dataclasses.field(repr=False)
+    _override_deps: _utils.Option[AgentDeps] = dataclasses.field(default=None, repr=False)
+    _override_model: _utils.Option[models.Model] = dataclasses.field(default=None, repr=False)
 
     def __init__(
         self,
@@ -183,8 +193,8 @@ class Agent(Generic[AgentDeps, ResultData]):
         model: models.Model | models.KnownModelName | None = None,
         deps: AgentDeps = None,
         model_settings: ModelSettings | None = None,
-        usage_limits: UsageLimits | None = None,
-        usage: result.Usage | None = None,
+        usage_limits: _usage.UsageLimits | None = None,
+        usage: _usage.Usage | None = None,
         infer_name: bool = True,
     ) -> result.RunResult[ResultData]:
         """Run the agent with a user prompt in async mode.
@@ -215,7 +225,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         """
         if infer_name and self.name is None:
             self._infer_name(inspect.currentframe())
-        model_used, mode_selection = await self._get_model(model)
+        model_used = await self._get_model(model)
 
         deps = self._get_deps(deps)
         new_message_index = len(message_history) if message_history else 0
@@ -224,11 +234,10 @@ class Agent(Generic[AgentDeps, ResultData]):
             '{agent_name} run {prompt=}',
             prompt=user_prompt,
             agent=self,
-            mode_selection=mode_selection,
             model_name=model_used.name(),
             agent_name=self.name or 'agent',
         ) as run_span:
-            run_context = RunContext(deps, 0, [], None, model_used, usage or result.Usage())
+            run_context = RunContext(deps, model_used, usage or _usage.Usage(), user_prompt)
             messages = await self._prepare_messages(user_prompt, message_history, run_context)
             run_context.messages = messages
 
@@ -236,17 +245,16 @@ class Agent(Generic[AgentDeps, ResultData]):
                 tool.current_retry = 0
 
             model_settings = merge_model_settings(self.model_settings, model_settings)
-            usage_limits = usage_limits or UsageLimits()
+            usage_limits = usage_limits or _usage.UsageLimits()
 
-            run_step = 0
             while True:
                 usage_limits.check_before_request(run_context.usage)
 
-                run_step += 1
-                with _logfire.span('preparing model and tools {run_step=}', run_step=run_step):
+                run_context.run_step += 1
+                with _logfire.span('preparing model and tools {run_step=}', run_step=run_context.run_step):
                     agent_model = await self._prepare_model(run_context)
 
-                with _logfire.span('model request', run_step=run_step) as model_req_span:
+                with _logfire.span('model request', run_step=run_context.run_step) as model_req_span:
                     model_response, request_usage = await agent_model.request(messages, model_settings)
                     model_req_span.set_attribute('response', model_response)
                     model_req_span.set_attribute('usage', request_usage)
@@ -255,7 +263,7 @@ class Agent(Generic[AgentDeps, ResultData]):
                 run_context.usage.incr(request_usage, requests=1)
                 usage_limits.check_tokens(run_context.usage)
 
-                with _logfire.span('handle model response', run_step=run_step) as handle_span:
+                with _logfire.span('handle model response', run_step=run_context.run_step) as handle_span:
                     final_result, tool_responses = await self._handle_model_response(model_response, run_context)
 
                     if tool_responses:
@@ -265,11 +273,14 @@ class Agent(Generic[AgentDeps, ResultData]):
                     # Check if we got a final result
                     if final_result is not None:
                         result_data = final_result.data
+                        result_tool_name = final_result.tool_name
                         run_span.set_attribute('all_messages', messages)
                         run_span.set_attribute('usage', run_context.usage)
                         handle_span.set_attribute('result', result_data)
                         handle_span.message = 'handle model response -> final result'
-                        return result.RunResult(messages, new_message_index, result_data, run_context.usage)
+                        return result.RunResult(
+                            messages, new_message_index, result_data, result_tool_name, run_context.usage
+                        )
                     else:
                         # continue the conversation
                         handle_span.set_attribute('tool_responses', tool_responses)
@@ -284,8 +295,8 @@ class Agent(Generic[AgentDeps, ResultData]):
         model: models.Model | models.KnownModelName | None = None,
         deps: AgentDeps = None,
         model_settings: ModelSettings | None = None,
-        usage_limits: UsageLimits | None = None,
-        usage: result.Usage | None = None,
+        usage_limits: _usage.UsageLimits | None = None,
+        usage: _usage.Usage | None = None,
         infer_name: bool = True,
     ) -> result.RunResult[ResultData]:
         """Run the agent with a user prompt synchronously.
@@ -342,8 +353,8 @@ class Agent(Generic[AgentDeps, ResultData]):
         model: models.Model | models.KnownModelName | None = None,
         deps: AgentDeps = None,
         model_settings: ModelSettings | None = None,
-        usage_limits: UsageLimits | None = None,
-        usage: result.Usage | None = None,
+        usage_limits: _usage.UsageLimits | None = None,
+        usage: _usage.Usage | None = None,
         infer_name: bool = True,
     ) -> AsyncIterator[result.StreamedRunResult[AgentDeps, ResultData]]:
         """Run the agent with a user prompt in async mode, returning a streamed response.
@@ -377,7 +388,7 @@ class Agent(Generic[AgentDeps, ResultData]):
             # f_back because `asynccontextmanager` adds one frame
             if frame := inspect.currentframe():  # pragma: no branch
                 self._infer_name(frame.f_back)
-        model_used, mode_selection = await self._get_model(model)
+        model_used = await self._get_model(model)
 
         deps = self._get_deps(deps)
         new_message_index = len(message_history) if message_history else 0
@@ -386,11 +397,10 @@ class Agent(Generic[AgentDeps, ResultData]):
             '{agent_name} run stream {prompt=}',
             prompt=user_prompt,
             agent=self,
-            mode_selection=mode_selection,
             model_name=model_used.name(),
             agent_name=self.name or 'agent',
         ) as run_span:
-            run_context = RunContext(deps, 0, [], None, model_used, usage or result.Usage())
+            run_context = RunContext(deps, model_used, usage or _usage.Usage(), user_prompt)
             messages = await self._prepare_messages(user_prompt, message_history, run_context)
             run_context.messages = messages
 
@@ -398,17 +408,16 @@ class Agent(Generic[AgentDeps, ResultData]):
                 tool.current_retry = 0
 
             model_settings = merge_model_settings(self.model_settings, model_settings)
-            usage_limits = usage_limits or UsageLimits()
+            usage_limits = usage_limits or _usage.UsageLimits()
 
-            run_step = 0
             while True:
-                run_step += 1
+                run_context.run_step += 1
                 usage_limits.check_before_request(run_context.usage)
 
-                with _logfire.span('preparing model and tools {run_step=}', run_step=run_step):
+                with _logfire.span('preparing model and tools {run_step=}', run_step=run_context.run_step):
                     agent_model = await self._prepare_model(run_context)
 
-                with _logfire.span('model request {run_step=}', run_step=run_step) as model_req_span:
+                with _logfire.span('model request {run_step=}', run_step=run_context.run_step) as model_req_span:
                     async with agent_model.request_stream(messages, model_settings) as model_response:
                         run_context.usage.requests += 1
                         model_req_span.set_attribute('response_type', model_response.__class__.__name__)
@@ -809,14 +818,14 @@ class Agent(Generic[AgentDeps, ResultData]):
 
         self._function_tools[tool.name] = tool
 
-    async def _get_model(self, model: models.Model | models.KnownModelName | None) -> tuple[models.Model, str]:
+    async def _get_model(self, model: models.Model | models.KnownModelName | None) -> models.Model:
         """Create a model configured for this agent.
 
         Args:
             model: model to use for this run, required if `model` was not set when creating the agent.
 
         Returns:
-            a tuple of `(model used, how the model was selected)`
+            The model used
         """
         model_: models.Model
         if some_model := self._override_model:
@@ -827,18 +836,15 @@ class Agent(Generic[AgentDeps, ResultData]):
                     '(Even when `override(model=...)` is customizing the model that will actually be called)'
                 )
             model_ = some_model.value
-            mode_selection = 'override-model'
         elif model is not None:
             model_ = models.infer_model(model)
-            mode_selection = 'custom'
         elif self.model is not None:
             # noinspection PyTypeChecker
             model_ = self.model = models.infer_model(self.model)
-            mode_selection = 'from-agent'
         else:
             raise exceptions.UserError('`model` must be set either when creating the agent or when calling it.')
 
-        return model_, mode_selection
+        return model_
 
     async def _prepare_model(self, run_context: RunContext[AgentDeps]) -> models.AgentModel:
         """Build tools and create an agent model."""
@@ -880,15 +886,15 @@ class Agent(Generic[AgentDeps, ResultData]):
         self, user_prompt: str, message_history: list[_messages.ModelMessage] | None, run_context: RunContext[AgentDeps]
     ) -> list[_messages.ModelMessage]:
         try:
-            messages = _messages_ctx_var.get()
+            ctx_messages = _messages_ctx_var.get()
         except LookupError:
-            messages = []
+            messages: list[_messages.ModelMessage] = []
         else:
-            if messages:
-                raise exceptions.UserError(
-                    'The capture_run_messages() context manager may only be used to wrap '
-                    'one call to run(), run_sync(), or run_stream().'
-                )
+            if ctx_messages.used:
+                messages = []
+            else:
+                messages = ctx_messages.messages
+                ctx_messages.used = True
 
         if message_history:
             # Shallow copy messages
@@ -1190,7 +1196,13 @@ class Agent(Generic[AgentDeps, ResultData]):
         raise AttributeError('The `last_run_messages` attribute has been removed, use `capture_run_messages` instead.')
 
 
-_messages_ctx_var: ContextVar[list[_messages.ModelMessage]] = ContextVar('var')
+@dataclasses.dataclass
+class _RunMessages:
+    messages: list[_messages.ModelMessage]
+    used: bool = False
+
+
+_messages_ctx_var: ContextVar[_RunMessages] = ContextVar('var')
 
 
 @contextmanager
@@ -1214,21 +1226,21 @@ def capture_run_messages() -> Iterator[list[_messages.ModelMessage]]:
     ```
 
     !!! note
-        You may not call `run`, `run_sync`, or `run_stream` more than once within a single `capture_run_messages` context.
-        If you try to do so, a [`UserError`][pydantic_ai.exceptions.UserError] will be raised.
+        If you call `run`, `run_sync`, or `run_stream` more than once within a single `capture_run_messages` context,
+        `messages` will represent the messages exchanged during the first call only.
     """
     try:
-        yield _messages_ctx_var.get()
+        yield _messages_ctx_var.get().messages
     except LookupError:
         messages: list[_messages.ModelMessage] = []
-        token = _messages_ctx_var.set(messages)
+        token = _messages_ctx_var.set(_RunMessages(messages))
         try:
             yield messages
         finally:
             _messages_ctx_var.reset(token)
 
 
-@dataclass
+@dataclasses.dataclass
 class _MarkFinalResult(Generic[ResultData]):
     """Marker class to indicate that the result is the final result.
 

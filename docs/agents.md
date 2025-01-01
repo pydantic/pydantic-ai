@@ -108,7 +108,7 @@ You can also pass messages from previous runs to continue a conversation or prov
 
 #### Usage Limits
 
-PydanticAI offers a [`settings.UsageLimits`][pydantic_ai.settings.UsageLimits] structure to help you limit your
+PydanticAI offers a [`UsageLimits`][pydantic_ai.usage.UsageLimits] structure to help you limit your
 usage (tokens and/or requests) on model runs.
 
 You can apply these settings by passing the `usage_limits` argument to the `run{_sync,_stream}` functions.
@@ -118,7 +118,7 @@ Consider the following example, where we limit the number of response tokens:
 ```py
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import UsageLimitExceeded
-from pydantic_ai.settings import UsageLimits
+from pydantic_ai.usage import UsageLimits
 
 agent = Agent('claude-3-5-sonnet-latest')
 
@@ -150,7 +150,7 @@ from typing_extensions import TypedDict
 
 from pydantic_ai import Agent, ModelRetry
 from pydantic_ai.exceptions import UsageLimitExceeded
-from pydantic_ai.settings import UsageLimits
+from pydantic_ai.usage import UsageLimits
 
 
 class NeverResultType(TypedDict):
@@ -494,6 +494,4 @@ with capture_run_messages() as messages:  # (2)!
 _(This example is complete, it can be run "as is")_
 
 !!! note
-    You may not call [`run`][pydantic_ai.Agent.run], [`run_sync`][pydantic_ai.Agent.run_sync], or [`run_stream`][pydantic_ai.Agent.run_stream] more than once within a single `capture_run_messages` context.
-
-    If you try to do so, a [`UserError`][pydantic_ai.exceptions.UserError] will be raised.
+    If you call [`run`][pydantic_ai.Agent.run], [`run_sync`][pydantic_ai.Agent.run_sync], or [`run_stream`][pydantic_ai.Agent.run_stream] more than once within a single `capture_run_messages` context, `messages` will represent the messages exchanged during the first call only.

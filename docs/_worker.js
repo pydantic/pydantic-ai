@@ -55,11 +55,14 @@ async function versionWarning(request, env) {
 </div>`
   }
 
+  const branch = env.CF_PAGES_BRANCH
+  const diff_html_url = `https://github.com/pydantic/pydantic-ai/compare/${tag_name}...${branch}`
   return `<div class="admonition info" style="margin: 0">
   <p class="admonition-title">Version Notice</p>
   <p>
-    ${env.CF_PAGES_BRANCH === 'main' ? '' : `(<b>${env.CF_PAGES_BRANCH}</b> preview)`}
-    This documentation is ahead of the last release by <b>${ahead_by}</b> commit${ahead_by === 1 ? '' : 's'}.
+    ${branch === 'main' ? '' : `(<b>${branch}</b> preview)`}
+    This documentation is ahead of the last release by
+    <a href="${diff_html_url}">${ahead_by} commit${ahead_by === 1 ? '' : 's'}</a>.
     You may see documentation for features not yet supported in the latest release <a href="${html_url}">${name}</a>.
   </p>
 </div>`
