@@ -1415,7 +1415,6 @@ def test_capture_run_messages_tool_agent(set_event_loop: None) -> None:
             ),
             ModelResponse(
                 parts=[TextPart(content='{"foobar":"inner agent result"}')], timestamp=IsNow(tz=timezone.utc)
-
             ),
         ]
     )
