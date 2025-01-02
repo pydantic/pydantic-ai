@@ -434,7 +434,6 @@ def _content_tool_return(messages: list[ToolReturnPart]) -> _GeminiContent:
     return _GeminiContent(role='user', parts=parts)
 
 
-
 def _content_retry_prompt(m: RetryPromptPart) -> _GeminiContent:
     if m.tool_name is None:
         part = _GeminiTextPart(text=m.model_response())

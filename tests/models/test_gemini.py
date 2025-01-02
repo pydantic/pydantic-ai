@@ -8,6 +8,7 @@ from datetime import timezone
 
 import httpx
 import pytest
+from httpx import AsyncClient
 from inline_snapshot import snapshot
 from pydantic import BaseModel
 from typing_extensions import Literal, TypeAlias
@@ -26,6 +27,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.gemini import (
     ApiKeyAuth,
+    GeminiAgentModel,
     GeminiModel,
     _content_model_response,
     _function_call_part_from_call,
@@ -733,41 +735,33 @@ async def test_empty_text_ignored():
         }
     )
 
-async def test_group_multiple_tool_responses(allow_model_requests: None):
-    from pydantic_ai.messages import ToolReturnPart, ModelRequest
-    from pydantic_ai.models.gemini import GeminiAgentModel, ApiKeyAuth
-    from httpx import AsyncClient
 
+async def test_group_multiple_tool_responses(allow_model_requests: None):
     # Mock dependencies
     mock_http_client = AsyncClient()
-    mock_auth = ApiKeyAuth(api_key="mock-api-key")
+    mock_auth = ApiKeyAuth(api_key='mock-api-key')
 
     # Create mock ToolReturnPart objects
     tool_responses = [
         ToolReturnPart(
-            tool_name="solve_math",
-            content={"result": "x^3/3 + C"}  # Pass content as a dictionary
+            tool_name='solve_math',
+            content={'result': 'x^3/3 + C'},  # Pass content as a dictionary
         ),
-        ToolReturnPart(
-            tool_name="summarize_text",
-            content={"summary": "A fluffy cat met a dog."}
-        ),
+        ToolReturnPart(tool_name='summarize_text', content={'summary': 'A fluffy cat met a dog.'}),
     ]
 
     # Wrap ToolReturnPart objects in ModelRequest
-    model_requests = [
-        ModelRequest(parts=[tr]) for tr in tool_responses
-    ]
+    model_requests = [ModelRequest(parts=[tr]) for tr in tool_responses]
 
     # Create a mock GeminiAgentModel
     agent_model = GeminiAgentModel(
         http_client=mock_http_client,
-        model_name="gemini-1.5-flash",
+        model_name='gemini-1.5-flash',
         auth=mock_auth,
-        url="mock-url",
+        url='mock-url',
         function_tools=[],
         allow_text_result=True,
-        result_tools=[]
+        result_tools=[],
     )
 
     # Generate contents using _message_to_gemini_content
@@ -776,16 +770,13 @@ async def test_group_multiple_tool_responses(allow_model_requests: None):
     # Assertions
     assert len(contents) == 1  # Only one content object should be created
     user_content = contents[0]
-    assert user_content["role"] == "user"  # The role should be user
-    assert len(user_content["parts"]) == 2  # Both tool responses should be grouped
+    assert user_content['role'] == 'user'  # The role should be user
+    assert len(user_content['parts']) == 2  # Both tool responses should be grouped
 
     # Validate the first tool response
-    assert user_content["parts"][0]["function_response"]["name"] == "solve_math"
-    assert user_content["parts"][0]["function_response"]["response"]["result"] == "x^3/3 + C"
+    assert user_content['parts'][0]['function_response']['name'] == 'solve_math'
+    assert user_content['parts'][0]['function_response']['response']['result'] == 'x^3/3 + C'
 
     # Validate the second tool response
-    assert user_content["parts"][1]["function_response"]["name"] == "summarize_text"
-    assert user_content["parts"][1]["function_response"]["response"]["summary"] == "A fluffy cat met a dog."
-
-
-
+    assert user_content['parts'][1]['function_response']['name'] == 'summarize_text'
+    assert user_content['parts'][1]['function_response']['response']['summary'] == 'A fluffy cat met a dog.'
