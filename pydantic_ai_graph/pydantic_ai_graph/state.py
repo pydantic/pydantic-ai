@@ -1,13 +1,18 @@
 from __future__ import annotations as _annotations
 
+import copy
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
-from datetime import datetime
-from typing import Union
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from typing import TYPE_CHECKING, Generic, Literal, Union
 
-from typing_extensions import TypeVar
+from typing_extensions import Never, TypeVar
 
-__all__ = 'AbstractState', 'StateT', 'Snapshot'
+__all__ = 'AbstractState', 'StateT', 'Step', 'EndEvent', 'StepOrEnd'
+
+if TYPE_CHECKING:
+    from pydantic_ai_graph import BaseNode
+    from pydantic_ai_graph.nodes import End
 
 
 class AbstractState(ABC):
@@ -19,33 +24,40 @@ class AbstractState(ABC):
         raise NotImplementedError
 
 
+RunEndT = TypeVar('RunEndT', default=None)
+NodeRunEndT = TypeVar('NodeRunEndT', covariant=True, default=Never)
 StateT = TypeVar('StateT', bound=Union[None, AbstractState], default=None)
 
 
 @dataclass
-class Snapshot:
-    """Snapshot of a graph."""
+class Step(Generic[StateT, RunEndT]):
+    """History item describing the execution of a step of a graph."""
 
-    last_node_id: str
-    next_node_id: str
-    start_ts: datetime
-    duration: float
-    state: bytes | None = None
+    state: StateT
+    node: BaseNode[StateT, RunEndT]
+    start_ts: datetime = field(default_factory=lambda: datetime.now(tz=timezone.utc))
+    duration: float | None = None
 
-    @classmethod
-    def from_state(
-        cls, last_node_id: str, next_node_id: str, start_ts: datetime, duration: float, state: StateT
-    ) -> Snapshot:
-        return cls(
-            last_node_id=last_node_id,
-            next_node_id=next_node_id,
-            start_ts=start_ts,
-            duration=duration,
-            state=state.serialize() if state is not None else None,
-        )
+    kind: Literal['start_step'] = 'start_step'
 
-    def summary(self) -> str:
-        s = f'{self.last_node_id} -> {self.next_node_id}'
-        if self.duration > 1e-5:
-            s += f' ({self.duration:.6f}s)'
-        return s
+    def __post_init__(self):
+        # Copy the state to prevent it from being modified by other code
+        self.state = copy.deepcopy(self.state)
+
+
+@dataclass
+class EndEvent(Generic[StateT, RunEndT]):
+    """History item describing the end of a graph run."""
+
+    state: StateT
+    result: End[RunEndT]
+    ts: datetime = field(default_factory=lambda: datetime.now(tz=timezone.utc))
+
+    kind: Literal['end'] = 'end'
+
+    def __post_init__(self):
+        # Copy the state to prevent it from being modified by other code
+        self.state = copy.deepcopy(self.state)
+
+
+StepOrEnd = Union[Step[StateT, RunEndT], EndEvent[StateT, RunEndT]]
