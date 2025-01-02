@@ -860,17 +860,19 @@ class Agent(Generic[AgentDeps, ResultData]):
     async def _reevaluate_dynamic_prompts(
         self, messages: list[_messages.ModelMessage], run_context: RunContext[AgentDeps]
     ) -> None:
-        """Reevaluate any `DynamicSystemPromptPart` in the provided messages by running the associated runner function."""
+        """Reevaluate any `SystemPromptPart` with dynamic_ref in the provided messages by running the associated runner function."""
         # Only proceed if there's at least one dynamic runner.
         if self._system_prompt_dynamic_functions:
             for msg in messages:
                 if isinstance(msg, _messages.ModelRequest):
                     for i, part in enumerate(msg.parts):
-                        if isinstance(part, _messages.DynamicSystemPromptPart):
+                        if isinstance(part, _messages.SystemPromptPart) and part.dynamic_ref:
                             # Look up the runner by its ID (default 0 in case part.ref is None).
-                            if runner := self._system_prompt_dynamic_functions.get(part.ref):
+                            if runner := self._system_prompt_dynamic_functions.get(part.dynamic_ref):
                                 updated_part_content = await runner.run(run_context)
-                                msg.parts[i] = _messages.DynamicSystemPromptPart(updated_part_content, ref=part.ref)
+                                msg.parts[i] = _messages.SystemPromptPart(
+                                    updated_part_content, dynamic_ref=part.dynamic_ref
+                                )
 
     async def _prepare_messages(
         self, user_prompt: str, message_history: list[_messages.ModelMessage] | None, run_context: RunContext[AgentDeps]
@@ -1128,7 +1130,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         for sys_prompt_runner in self._system_prompt_functions:
             prompt = await sys_prompt_runner.run(run_context)
             if sys_prompt_runner.dynamic:
-                messages.append(_messages.DynamicSystemPromptPart(prompt, ref=sys_prompt_runner.function.__qualname__))
+                messages.append(_messages.SystemPromptPart(prompt, dynamic_ref=sys_prompt_runner.function.__qualname__))
             else:
                 messages.append(_messages.SystemPromptPart(prompt))
         return messages

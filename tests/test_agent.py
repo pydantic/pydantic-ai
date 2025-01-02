@@ -15,7 +15,6 @@ from pydantic_ai import Agent, ModelRetry, RunContext, UnexpectedModelBehavior, 
 from pydantic_ai.messages import (
     ArgsDict,
     ArgsJson,
-    DynamicSystemPromptPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -1359,10 +1358,10 @@ def test_dynamic_true_reevaluate_system_prompt(set_event_loop: None):
             ModelRequest(
                 parts=[
                     SystemPromptPart(content='Foobar', part_kind='system-prompt'),
-                    DynamicSystemPromptPart(
+                    SystemPromptPart(
                         content=dynamic_value,
                         part_kind='system-prompt',
-                        ref=func.__qualname__,
+                        dynamic_ref=func.__qualname__,
                     ),
                     UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc), part_kind='user-prompt'),
                 ],
@@ -1385,10 +1384,10 @@ def test_dynamic_true_reevaluate_system_prompt(set_event_loop: None):
             ModelRequest(
                 parts=[
                     SystemPromptPart(content='Foobar', part_kind='system-prompt'),
-                    DynamicSystemPromptPart(
+                    SystemPromptPart(
                         content='B',
                         part_kind='system-prompt',
-                        ref=func.__qualname__,
+                        dynamic_ref=func.__qualname__,
                     ),
                     UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc), part_kind='user-prompt'),
                 ],

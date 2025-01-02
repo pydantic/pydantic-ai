@@ -21,19 +21,11 @@ class SystemPromptPart:
     content: str
     """The content of the prompt."""
 
+    dynamic_ref: str | None = None
+    """The ref of the dynamic system prompt function that generated this part, if any."""
+
     part_kind: Literal['system-prompt'] = 'system-prompt'
     """Part type identifier, this is available on all parts as a discriminator."""
-
-
-@dataclass
-class DynamicSystemPromptPart(SystemPromptPart):
-    """A system prompt that is generated dynamically.
-
-    Same as `SystemPromptPart`, but its content is regenerated on each run.
-    """
-
-    ref: str = ''
-    """The ref of the system prompt function that generated this part."""
 
 
 @dataclass
