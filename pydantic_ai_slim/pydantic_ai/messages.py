@@ -33,7 +33,7 @@ class DynamicSystemPromptPart(SystemPromptPart):
     """
 
     ref: str
-    """The ref ID of the system prompt function that generated this part."""
+    """The ref of the system prompt function that generated this part."""
 
 
 @dataclass

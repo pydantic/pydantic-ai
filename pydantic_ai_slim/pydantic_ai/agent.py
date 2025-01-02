@@ -107,6 +107,7 @@ class Agent(Generic[AgentDeps, ResultData]):
     _function_tools: dict[str, Tool[AgentDeps]] = dataclasses.field(repr=False)
     _default_retries: int = dataclasses.field(repr=False)
     _system_prompt_functions: list[_system_prompt.SystemPromptRunner[AgentDeps]] = dataclasses.field(repr=False)
+    _system_prompt_dynamic_functions: dict[str, _system_prompt.SystemPromptRunner[AgentDeps]] = dataclasses.field(repr=False)
     _deps_type: type[AgentDeps] = dataclasses.field(repr=False)
     _max_result_retries: int = dataclasses.field(repr=False)
     _override_deps: _utils.Option[AgentDeps] = dataclasses.field(default=None, repr=False)
@@ -182,6 +183,7 @@ class Agent(Generic[AgentDeps, ResultData]):
                 self._register_tool(Tool(tool))
         self._deps_type = deps_type
         self._system_prompt_functions = []
+        self._system_prompt_dynamic_functions = {}
         self._max_result_retries = result_retries if result_retries is not None else retries
         self._result_validators = []
 
@@ -574,12 +576,18 @@ class Agent(Generic[AgentDeps, ResultData]):
             def decorator(
                 func_: _system_prompt.SystemPromptFunc[AgentDeps],
             ) -> _system_prompt.SystemPromptFunc[AgentDeps]:
-                self._system_prompt_functions.append(_system_prompt.SystemPromptRunner(func_, dynamic=dynamic))
+                runner = _system_prompt.SystemPromptRunner(func_, dynamic=dynamic)
+                self._system_prompt_functions.append(runner)
+                if dynamic:
+                    self._system_prompt_dynamic_functions[func_.__qualname__] = runner
                 return func_
 
             return decorator
         else:
-            self._system_prompt_functions.append(_system_prompt.SystemPromptRunner(func, dynamic=dynamic))
+            runner = _system_prompt.SystemPromptRunner(func, dynamic=dynamic)
+            self._system_prompt_functions.append(runner)
+            if dynamic:
+                self._system_prompt_dynamic_functions[func.__qualname__] = runner
             return func
 
     @overload
@@ -853,18 +861,15 @@ class Agent(Generic[AgentDeps, ResultData]):
         self, messages: list[_messages.ModelMessage], run_context: RunContext[AgentDeps]
     ) -> None:
         """Reevaluate any DynamicSystemPromptPart in the provided messages by running the associated runner function."""
-        # Pre-map runner IDs to runners for efficient lookups (instead of re-looping each time).
-        runner_map = {id(runner): runner for runner in self._system_prompt_functions}
-
         # Only proceed if there's at least one dynamic runner.
-        if any(runner.dynamic for runner in self._system_prompt_functions):
+        if any(self._system_prompt_dynamic_functions.values()):
             for msg in messages:
                 if isinstance(msg, _messages.ModelRequest):
                     for i, part in enumerate(msg.parts):
                         if isinstance(part, _messages.DynamicSystemPromptPart):
                             # Look up the runner by its ID (default 0 in case part.ref is None).
-                            if runner := runner_map.get(part.ref):
-                                updated_part_content = await matching_runner.run(run_context)
+                            if runner := self._system_prompt_dynamic_functions.get(part.ref):
+                                updated_part_content = await runner.run(run_context)
                                 msg.parts[i] = _messages.DynamicSystemPromptPart(updated_part_content, ref=part.ref)
 
     async def _prepare_messages(
@@ -884,11 +889,8 @@ class Agent(Generic[AgentDeps, ResultData]):
         if message_history:
             # Shallow copy messages
             messages.extend(message_history)
-
             # Reevaluate any dynamic system prompt parts
             await self._reevaluate_dynamic_prompts(messages, run_context)
-
-            # Finally, append the new user prompt
             messages.append(_messages.ModelRequest([_messages.UserPromptPart(user_prompt)]))
         else:
             parts = await self._sys_parts(run_context)
@@ -1126,7 +1128,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         for sys_prompt_runner in self._system_prompt_functions:
             prompt = await sys_prompt_runner.run(run_context)
             if sys_prompt_runner.dynamic:
-                messages.append(_messages.DynamicSystemPromptPart(prompt, ref=id(sys_prompt_runner)))
+                messages.append(_messages.DynamicSystemPromptPart(prompt, ref=sys_prompt_runner.function.__qualname__))
             else:
                 messages.append(_messages.SystemPromptPart(prompt))
         return messages
