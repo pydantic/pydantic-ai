@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import asyncio
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 import logfire
@@ -48,7 +49,8 @@ def extract_system_prompt(ctx: RunContext[list[str]]):
     return prompt
 
 
-class ExtractEvent(BaseNode[State, None]):
+@dataclass
+class ExtractEvent(BaseNode[State]):
     async def run(self, ctx: GraphContext[State]) -> CleanEvent:
         event = await extract_agent.run(
             ctx.state.email_content, deps=ctx.state.skip_events
@@ -73,7 +75,10 @@ duration_agent = Agent(
 )
 
 
-class CleanEvent(BaseNode[State, RawEventDetails]):
+@dataclass
+class CleanEvent(BaseNode[State]):
+    input_data: RawEventDetails
+
     async def run(self, ctx: GraphContext[State]) -> InspectEvent:
         start_ts, duration = await asyncio.gather(
             timestamp_agent.run(self.input_data.start_ts),
@@ -89,7 +94,10 @@ class CleanEvent(BaseNode[State, RawEventDetails]):
         )
 
 
-class InspectEvent(BaseNode[State, EventDetails, EventDetails | None]):
+@dataclass
+class InspectEvent(BaseNode[State, EventDetails | None]):
+    input_data: EventDetails
+
     async def run(
         self, ctx: GraphContext[State]
     ) -> ExtractEvent | End[EventDetails | None]:
@@ -104,15 +112,18 @@ class InspectEvent(BaseNode[State, EventDetails, EventDetails | None]):
             return End(None)
         else:
             ctx.state.skip_events.append(self.input_data.title)
-            return ExtractEvent(None)
+            return ExtractEvent()
 
 
-graph = Graph[State, None, EventDetails | None](
-    ExtractEvent,
-    CleanEvent,
-    InspectEvent,
+graph = Graph[State, EventDetails | None](
+    nodes=(
+        ExtractEvent,
+        CleanEvent,
+        InspectEvent,
+    )
 )
-print(graph.mermaid_code())
+graph_runner = graph.get_runner(ExtractEvent)
+print(graph_runner.mermaid_code())
 
 email = """
 Hi Samuel,
@@ -137,7 +148,7 @@ Best regards,
 
 async def main():
     state = State(email_content=email)
-    result, history = await graph.run(None, state)
+    result, history = await graph_runner.run(state, None)
     debug(result, history)
 
 

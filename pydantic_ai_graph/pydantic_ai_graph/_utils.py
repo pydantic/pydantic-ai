@@ -49,3 +49,17 @@ def type_arg_name(arg: Any) -> str:
         return 'None'
     else:
         return arg.__name__
+
+
+def get_parent_namespace(frame: types.FrameType | None) -> dict[str, Any] | None:
+    """Attempt to get the namespace where the graph was defined.
+
+    If the graph is defined with generics `Graph[a, b]` then another frame is inserted, and we have to skip that
+    to get the correct namespace.
+    """
+    if frame is not None:
+        if back := frame.f_back:
+            if back.f_code.co_filename.endswith('/typing.py'):
+                return get_parent_namespace(back)
+            else:
+                return back.f_locals

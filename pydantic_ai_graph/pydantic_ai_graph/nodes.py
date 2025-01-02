@@ -1,29 +1,21 @@
 from __future__ import annotations as _annotations
 
-from abc import ABC, ABCMeta, abstractmethod
+from abc import abstractmethod
 from dataclasses import dataclass
 from functools import cache
-from typing import Any, ClassVar, Generic, get_args, get_origin, get_type_hints
+from typing import Any, Generic, get_origin, get_type_hints
 
-from typing_extensions import TypeVar
+from typing_extensions import Never, TypeVar
 
 from . import _utils
 from .state import StateT
 
-__all__ = (
-    'NodeInputT',
-    'GraphOutputT',
-    'GraphContext',
-    'End',
-    'BaseNode',
-    'NodeDef',
-)
+__all__ = ('GraphContext', 'End', 'BaseNode', 'NodeDef')
 
-NodeInputT = TypeVar('NodeInputT', default=Any)
-GraphOutputT = TypeVar('GraphOutputT', default=Any)
+RunEndT = TypeVar('RunEndT', default=None)
+NodeRunEndT = TypeVar('NodeRunEndT', covariant=True, default=Never)
 
 
-# noinspection PyTypeHints
 @dataclass
 class GraphContext(Generic[StateT]):
     """Context for a graph."""
@@ -31,61 +23,44 @@ class GraphContext(Generic[StateT]):
     state: StateT
 
 
-# noinspection PyTypeHints
-class End(ABC, Generic[NodeInputT]):
+@dataclass
+class End(Generic[RunEndT]):
     """Type to return from a node to signal the end of the graph."""
 
-    __slots__ = ('data',)
-
-    def __init__(self, input_data: NodeInputT) -> None:
-        self.data = input_data
+    data: RunEndT
 
 
-class _BaseNodeMeta(ABCMeta):
-    def __repr__(cls):
-        base: Any = cls.__orig_bases__[0]  # type: ignore
-        args = get_args(base)
-        if len(args) == 3 and args[2] is Any:
-            if args[1] is Any:
-                args = args[:1]
-            else:
-                args = args[:2]
-        args = ', '.join(_utils.type_arg_name(a) for a in args)
-        return f'{cls.__name__}({base.__name__}[{args}])'
-
-
-# noinspection PyTypeHints
-class BaseNode(Generic[StateT, NodeInputT, GraphOutputT], metaclass=_BaseNodeMeta):
+class BaseNode(Generic[StateT, NodeRunEndT]):
     """Base class for a node."""
 
-    node_id: ClassVar[str | None] = None
-    __slots__ = ('input_data',)
-
-    def __init__(self, input_data: NodeInputT) -> None:
-        self.input_data = input_data
-
     @abstractmethod
-    async def run(self, ctx: GraphContext[StateT]) -> BaseNode[StateT, Any, Any] | End[GraphOutputT]: ...
+    async def run(self, ctx: GraphContext[StateT]) -> BaseNode[StateT, Any] | End[NodeRunEndT]: ...
 
     @classmethod
     @cache
     def get_id(cls) -> str:
-        return cls.node_id or cls.__name__
+        return cls.__name__
 
     @classmethod
-    def get_node_def(cls, local_ns: dict[str, Any] | None) -> NodeDef[StateT, Any, Any]:
+    def get_node_def(cls, local_ns: dict[str, Any] | None) -> NodeDef[StateT, NodeRunEndT]:
         type_hints = get_type_hints(cls.run, localns=local_ns)
         next_node_ids: set[str] = set()
-        can_end: bool = False
-        dest_any: bool = False
-        for return_type in _utils.get_union_args(type_hints['return']):
+        returns_end: bool = False
+        returns_base_node: bool = False
+        try:
+            return_hint = type_hints['return']
+        except KeyError:
+            raise TypeError(f'Node {cls} is missing a return type hint on its `run` method')
+
+        for return_type in _utils.get_union_args(return_hint):
             return_type_origin = get_origin(return_type) or return_type
-            if return_type_origin is BaseNode:
-                dest_any = True
+            if return_type_origin is End:
+                returns_end = True
+            elif return_type_origin is BaseNode:
+                # TODO: Should we disallow this? More generally, what do we do about sub-subclasses?
+                returns_base_node = True
             elif issubclass(return_type_origin, BaseNode):
                 next_node_ids.add(return_type.get_id())
-            elif return_type_origin is End:
-                can_end = True
             else:
                 raise TypeError(f'Invalid return type: {return_type}')
 
@@ -93,21 +68,20 @@ class BaseNode(Generic[StateT, NodeInputT, GraphOutputT], metaclass=_BaseNodeMet
             cls,
             cls.get_id(),
             next_node_ids,
-            can_end,
-            dest_any,
+            returns_end,
+            returns_base_node,
         )
 
 
-# noinspection PyTypeHints
 @dataclass
-class NodeDef(ABC, Generic[StateT, NodeInputT, GraphOutputT]):
+class NodeDef(Generic[StateT, NodeRunEndT]):
     """Definition of a node.
 
     Used by [`Graph`][pydantic_ai_graph.graph.Graph] store information about a node.
     """
 
-    node: type[BaseNode[StateT, NodeInputT, GraphOutputT]]
+    node: type[BaseNode[StateT, NodeRunEndT]]
     node_id: str
     next_node_ids: set[str]
-    can_end: bool
-    dest_any: bool
+    returns_end: bool
+    returns_base_node: bool

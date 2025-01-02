@@ -3,7 +3,9 @@
 from collections.abc import Awaitable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Callable, TypeAlias, Union, assert_type
+from typing import Callable, TypeAlias, Union
+
+from typing_extensions import assert_type
 
 from pydantic_ai import Agent, ModelRetry, RunContext, Tool
 from pydantic_ai.result import RunResult
