@@ -22,7 +22,7 @@ from . import (
     result,
     usage as _usage,
 )
-from .result import ResultData
+from .result import NewResultData, ResultData
 from .settings import ModelSettings, merge_model_settings
 from .tools import (
     AgentDeps,
@@ -61,7 +61,7 @@ EndStrategy = Literal['early', 'exhaustive']
 
 @final
 @dataclasses.dataclass(init=False)
-class Agent(Generic[AgentDeps, ResultData]):
+class Agent(Generic[AgentDeps, ResultData, NewResultData]):
     """Class for defining "agents" - a way to have a specific type of "conversation" with an LLM.
 
     Agents are generic in the dependency type they take [`AgentDeps`][pydantic_ai.tools.AgentDeps]
@@ -570,25 +570,27 @@ class Agent(Generic[AgentDeps, ResultData]):
 
     @overload
     def result_validator(
-        self, func: Callable[[RunContext[AgentDeps], ResultData], ResultData], /
-    ) -> Callable[[RunContext[AgentDeps], ResultData], ResultData]: ...
+        self, func: Callable[[RunContext[AgentDeps], ResultData], ResultData | NewResultData], /
+    ) -> Callable[[RunContext[AgentDeps], ResultData], ResultData | NewResultData]: ...
 
     @overload
     def result_validator(
-        self, func: Callable[[RunContext[AgentDeps], ResultData], Awaitable[ResultData]], /
-    ) -> Callable[[RunContext[AgentDeps], ResultData], Awaitable[ResultData]]: ...
-
-    @overload
-    def result_validator(self, func: Callable[[ResultData], ResultData], /) -> Callable[[ResultData], ResultData]: ...
+        self, func: Callable[[RunContext[AgentDeps], ResultData], Awaitable[ResultData | NewResultData]], /
+    ) -> Callable[[RunContext[AgentDeps], ResultData], Awaitable[ResultData | NewResultData]]: ...
 
     @overload
     def result_validator(
-        self, func: Callable[[ResultData], Awaitable[ResultData]], /
-    ) -> Callable[[ResultData], Awaitable[ResultData]]: ...
+        self, func: Callable[[ResultData], ResultData | NewResultData], /
+    ) -> Callable[[ResultData], ResultData | NewResultData]: ...
+
+    @overload
+    def result_validator(
+        self, func: Callable[[ResultData], Awaitable[ResultData | NewResultData]], /
+    ) -> Callable[[ResultData], Awaitable[ResultData | NewResultData]]: ...
 
     def result_validator(
-        self, func: _result.ResultValidatorFunc[AgentDeps, ResultData], /
-    ) -> _result.ResultValidatorFunc[AgentDeps, ResultData]:
+        self, func: _result.ResultValidatorFunc[AgentDeps, ResultData, NewResultData], /
+    ) -> _result.ResultValidatorFunc[AgentDeps, ResultData, NewResultData]:
         """Decorator to register a result validator function.
 
         Optionally takes [`RunContext`][pydantic_ai.tools.RunContext] as its first argument.

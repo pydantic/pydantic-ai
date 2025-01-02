@@ -14,32 +14,34 @@ from . import _result, _utils, exceptions, messages as _messages, models
 from .tools import AgentDeps, RunContext
 from .usage import Usage, UsageLimits
 
-__all__ = 'ResultData', 'ResultValidatorFunc', 'RunResult', 'StreamedRunResult'
+__all__ = 'ResultData', 'NewResultData', 'ResultValidatorFunc', 'RunResult', 'StreamedRunResult'
 
 
 ResultData = TypeVar('ResultData', default=str)
+NewResultData = TypeVar('NewResultData', default=str)
+
 """Type variable for the result data of a run."""
 
 ResultValidatorFunc = Union[
-    Callable[[RunContext[AgentDeps], ResultData], ResultData],
-    Callable[[RunContext[AgentDeps], ResultData], Awaitable[ResultData]],
-    Callable[[ResultData], ResultData],
-    Callable[[ResultData], Awaitable[ResultData]],
+    Callable[[RunContext[AgentDeps], ResultData | NewResultData], ResultData | NewResultData],
+    Callable[[RunContext[AgentDeps], ResultData | NewResultData], Awaitable[ResultData | NewResultData]],
+    Callable[[ResultData | NewResultData], ResultData | NewResultData],
+    Callable[[ResultData | NewResultData], Awaitable[ResultData | NewResultData]],
 ]
 """
-A function that always takes `ResultData` and returns `ResultData` and:
+A function that always takes `ResultData` or `NewResultData` and returns `ResultData` or `NewResultData` and:
 
 * may or may not take [`RunContext`][pydantic_ai.tools.RunContext] as a first argument
 * may or may not be async
 
-Usage `ResultValidatorFunc[AgentDeps, ResultData]`.
+Usage `ResultValidatorFunc[AgentDeps, ResultData, NewResultData]`.
 """
 
 _logfire = logfire_api.Logfire(otel_scope='pydantic-ai')
 
 
 @dataclass
-class _BaseRunResult(ABC, Generic[ResultData]):
+class _BaseRunResult(ABC, Generic[ResultData, NewResultData]):
     """Base type for results.
 
     You should not import or use this type directly, instead use its subclasses `RunResult` and `StreamedRunResult`.
@@ -119,10 +121,10 @@ class _BaseRunResult(ABC, Generic[ResultData]):
 
 
 @dataclass
-class RunResult(_BaseRunResult[ResultData]):
+class RunResult(_BaseRunResult[ResultData, NewResultData]):
     """Result of a non-streamed run."""
 
-    data: ResultData
+    data: ResultData | NewResultData
     """Data from the final response in the run."""
     _result_tool_name: str | None
     _usage: Usage
@@ -165,14 +167,14 @@ class RunResult(_BaseRunResult[ResultData]):
 
 
 @dataclass
-class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultData]):
+class StreamedRunResult(_BaseRunResult[ResultData, NewResultData], Generic[AgentDeps, ResultData, NewResultData]):
     """Result of a streamed run that returns structured data via a tool call."""
 
     _usage_limits: UsageLimits | None
     _stream_response: models.EitherStreamedResponse
-    _result_schema: _result.ResultSchema[ResultData] | None
+    _result_schema: _result.ResultSchema[ResultData | NewResultData] | None
     _run_ctx: RunContext[AgentDeps]
-    _result_validators: list[_result.ResultValidator[AgentDeps, ResultData]]
+    _result_validators: list[_result.ResultValidator[AgentDeps, ResultData | NewResultData]]
     _result_tool_name: str | None
     _on_complete: Callable[[], Awaitable[None]]
     is_complete: bool = field(default=False, init=False)
@@ -185,7 +187,7 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
     [`get_data`][pydantic_ai.result.StreamedRunResult.get_data] completes.
     """
 
-    async def stream(self, *, debounce_by: float | None = 0.1) -> AsyncIterator[ResultData]:
+    async def stream(self, *, debounce_by: float | None = 0.1) -> AsyncIterator[ResultData | NewResultData]:
         """Stream the response as an async iterable.
 
         The pydantic validator for structured data will be called in
@@ -202,7 +204,7 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
         """
         if isinstance(self._stream_response, models.StreamTextResponse):
             async for text in self.stream_text(debounce_by=debounce_by):
-                yield cast(ResultData, text)
+                yield cast(ResultData | NewResultData, text)
         else:
             async for structured_message, is_last in self.stream_structured(debounce_by=debounce_by):
                 yield await self.validate_structured_result(structured_message, allow_partial=not is_last)
@@ -306,7 +308,7 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
                 lf_span.set_attribute('structured_response', msg)
                 await self._marked_completed(msg)
 
-    async def get_data(self) -> ResultData:
+    async def get_data(self) -> ResultData | NewResultData:
         """Stream the whole response, validate and return it."""
         usage_checking_stream = _get_usage_checking_stream_response(
             self._stream_response, self._usage_limits, self.usage
@@ -319,7 +321,7 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
             text = ''.join(self._stream_response.get(final=True))
             text = await self._validate_text_result(text)
             await self._marked_completed(_messages.ModelResponse.from_text(text))
-            return cast(ResultData, text)
+            return cast(ResultData | NewResultData, text)
         else:
             message = self._stream_response.get(final=True)
             await self._marked_completed(message)
@@ -344,7 +346,7 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
 
     async def validate_structured_result(
         self, message: _messages.ModelResponse, *, allow_partial: bool = False
-    ) -> ResultData:
+    ) -> ResultData | NewResultData:
         """Validate a structured result message."""
         assert self._result_schema is not None, 'Expected _result_schema to not be None'
         assert self._result_tool_name is not None, 'Expected _result_tool_name to not be None'
@@ -377,8 +379,10 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
 
 
 def _get_usage_checking_stream_response(
-    stream_response: AsyncIterator[ResultData], limits: UsageLimits | None, get_usage: Callable[[], Usage]
-) -> AsyncIterator[ResultData]:
+    stream_response: AsyncIterator[ResultData | NewResultData],
+    limits: UsageLimits | None,
+    get_usage: Callable[[], Usage],
+) -> AsyncIterator[ResultData | NewResultData]:
     if limits is not None and limits.has_token_limits():
 
         async def _usage_checking_iterator():
