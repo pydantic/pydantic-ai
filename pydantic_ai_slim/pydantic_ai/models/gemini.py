@@ -271,7 +271,7 @@ class GeminiAgentModel(AgentModel):
     ) -> tuple[list[_GeminiTextPart], list[_GeminiContent]]:
         sys_prompt_parts: list[_GeminiTextPart] = []
         contents: list[_GeminiContent] = []
-        grouped_tool_responses = []
+        grouped_tool_responses: list[ToolReturnPart] = []
         for m in messages:
             if isinstance(m, ModelRequest):
                 for part in m.parts:
