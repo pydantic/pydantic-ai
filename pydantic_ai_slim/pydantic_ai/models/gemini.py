@@ -279,11 +279,15 @@ class GeminiAgentModel(AgentModel):
                     if isinstance(part, SystemPromptPart):
                         sys_prompt_parts.append(_GeminiTextPart(text=part.content))
                     elif isinstance(part, UserPromptPart):
-                        message_parts.append(_part_user_prompt(part))
+                        message_parts.append(_GeminiTextPart(text=part.content))
                     elif isinstance(part, ToolReturnPart):
-                        message_parts.append(_part_tool_return(part))
+                        message_parts.append(_response_part_from_response(part.tool_name, part.model_response_object()))
                     elif isinstance(part, RetryPromptPart):
-                        message_parts.append(_part_retry_prompt(part))
+                        if part.tool_name is None:
+                            message_parts.append(_GeminiTextPart(text=part.model_response()))
+                        else:
+                            response = {'call_error': part.model_response()}
+                            message_parts.append(_response_part_from_response(part.tool_name, response))
                     else:
                         assert_never(part)
 
@@ -423,22 +427,6 @@ class _GeminiGenerationConfig(TypedDict, total=False):
 class _GeminiContent(TypedDict):
     role: Literal['user', 'model']
     parts: list[_GeminiPartUnion]
-
-
-def _part_user_prompt(m: UserPromptPart) -> _GeminiPartUnion:
-    return _GeminiTextPart(text=m.content)
-
-
-def _part_tool_return(m: ToolReturnPart) -> _GeminiPartUnion:
-    return _response_part_from_response(m.tool_name, m.model_response_object())
-
-
-def _part_retry_prompt(m: RetryPromptPart) -> _GeminiPartUnion:
-    if m.tool_name is None:
-        return _GeminiTextPart(text=m.model_response())
-    else:
-        response = {'call_error': m.model_response()}
-        return _response_part_from_response(m.tool_name, response)
 
 
 def _content_model_response(m: ModelResponse) -> _GeminiContent:
