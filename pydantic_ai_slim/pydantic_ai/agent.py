@@ -107,7 +107,9 @@ class Agent(Generic[AgentDeps, ResultData]):
     _function_tools: dict[str, Tool[AgentDeps]] = dataclasses.field(repr=False)
     _default_retries: int = dataclasses.field(repr=False)
     _system_prompt_functions: list[_system_prompt.SystemPromptRunner[AgentDeps]] = dataclasses.field(repr=False)
-    _system_prompt_dynamic_functions: dict[str, _system_prompt.SystemPromptRunner[AgentDeps]] = dataclasses.field(repr=False)
+    _system_prompt_dynamic_functions: dict[str, _system_prompt.SystemPromptRunner[AgentDeps]] = dataclasses.field(
+        repr=False
+    )
     _deps_type: type[AgentDeps] = dataclasses.field(repr=False)
     _max_result_retries: int = dataclasses.field(repr=False)
     _override_deps: _utils.Option[AgentDeps] = dataclasses.field(default=None, repr=False)
