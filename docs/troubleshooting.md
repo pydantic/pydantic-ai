@@ -1,18 +1,13 @@
 # Troubleshooting
 
-Below are suggestions on how to fix some common errors you might encounter while using PydanticAI. If the issue you're experiencing is not listed below or addressed in the documentation, please feel free to make a post in the Pydantic Slack or on the PydanticAI GitHub Issues page (visit [Getting Help](help.md) for more details).
-
-Some common errors addressed on this page:
-
-1. [Jupyter Notebook Errors](#jupyter-notebook-errors)
-2. [API Key Configuration](#api-key-configuration)
+Below are suggestions on how to fix some common errors you might encounter while using PydanticAI. If the issue you're experiencing is not listed below or addressed in the documentation, please feel free to ask in the [Pydantic Slack](help.md) or create an issue on [GitHub](https://github.com/pydantic/pydantic-ai/issues).
 
 ## Jupyter Notebook Errors
 
 ### `RuntimeError: This event loop is already running`
 
 This error is caused by conflicts between the event loops in Jupyter notebook and `pydantic-ai`'s agent. One way to manage these conflicts is by using [`nest-asyncio`](https://pypi.org/project/nest-asyncio/). Namely, before you execute any agent runs, do the following:
-```python {test="skip" lint="skip"}
+```python {test="skip"}
 import nest_asyncio
 
 nest_asyncio.apply()
