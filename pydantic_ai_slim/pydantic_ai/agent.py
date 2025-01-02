@@ -540,7 +540,7 @@ class Agent(Generic[AgentDeps, ResultData]):
     def system_prompt(self, func: Callable[[], Awaitable[str]], /) -> Callable[[], Awaitable[str]]: ...
 
     @overload
-    def system_prompt(self, /, *, dynamic: bool = False): ...
+    def system_prompt(self, /, *, dynamic: bool = False) -> Callable[..., Any]: ...
 
     def system_prompt(
         self,
@@ -578,10 +578,8 @@ class Agent(Generic[AgentDeps, ResultData]):
             def decorator(
                 func_: _system_prompt.SystemPromptFunc[AgentDeps],
             ) -> _system_prompt.SystemPromptFunc[AgentDeps]:
-                runner = _system_prompt.SystemPromptRunner(func_, dynamic=dynamic)
-                self._system_prompt_functions.append(runner)
-                if dynamic:
-                    self._system_prompt_dynamic_functions[func_.__qualname__] = runner
+                assert not dynamic, "dynamic can't be True in this case"
+                self._system_prompt_functions.append(_system_prompt.SystemPromptRunner(func_, dynamic=dynamic))
                 return func_
 
             return decorator
