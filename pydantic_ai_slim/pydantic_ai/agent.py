@@ -125,7 +125,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         result_tool_name: str = 'final_result',
         result_tool_description: str | None = None,
         result_retries: int | None = None,
-        tools: Sequence[Tool[AgentDeps] | ToolFuncEither[AgentDeps, ...]] = (),
+        tools: Sequence[Tool[AgentDeps] | ToolFuncEither[..., AgentDeps]] = (),
         defer_model_check: bool = False,
         end_strategy: EndStrategy = 'early',
     ):
@@ -624,7 +624,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         return func
 
     @overload
-    def tool(self, func: ToolFuncContext[AgentDeps, ToolParams], /) -> ToolFuncContext[AgentDeps, ToolParams]: ...
+    def tool(self, func: ToolFuncContext[ToolParams, AgentDeps], /) -> ToolFuncContext[ToolParams, AgentDeps]: ...
 
     @overload
     def tool(
@@ -633,11 +633,11 @@ class Agent(Generic[AgentDeps, ResultData]):
         *,
         retries: int | None = None,
         prepare: ToolPrepareFunc[AgentDeps] | None = None,
-    ) -> Callable[[ToolFuncContext[AgentDeps, ToolParams]], ToolFuncContext[AgentDeps, ToolParams]]: ...
+    ) -> Callable[[ToolFuncContext[ToolParams, AgentDeps]], ToolFuncContext[ToolParams, AgentDeps]]: ...
 
     def tool(
         self,
-        func: ToolFuncContext[AgentDeps, ToolParams] | None = None,
+        func: ToolFuncContext[ToolParams, AgentDeps] | None = None,
         /,
         *,
         retries: int | None = None,
@@ -683,8 +683,8 @@ class Agent(Generic[AgentDeps, ResultData]):
         if func is None:
 
             def tool_decorator(
-                func_: ToolFuncContext[AgentDeps, ToolParams],
-            ) -> ToolFuncContext[AgentDeps, ToolParams]:
+                func_: ToolFuncContext[ToolParams, AgentDeps],
+            ) -> ToolFuncContext[ToolParams, AgentDeps]:
                 # noinspection PyTypeChecker
                 self._register_function(func_, True, retries, prepare)
                 return func_
@@ -766,7 +766,7 @@ class Agent(Generic[AgentDeps, ResultData]):
 
     def _register_function(
         self,
-        func: ToolFuncEither[AgentDeps, ToolParams],
+        func: ToolFuncEither[ToolParams, AgentDeps],
         takes_ctx: bool,
         retries: int | None,
         prepare: ToolPrepareFunc[AgentDeps] | None,
