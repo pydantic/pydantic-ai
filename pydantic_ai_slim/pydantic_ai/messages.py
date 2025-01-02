@@ -29,7 +29,7 @@ class SystemPromptPart:
 class DynamicSystemPromptPart(SystemPromptPart):
     """A system prompt that is generated dynamically.
 
-    Same as SystemPromptPart, but its content is regenerated on each run.
+    Same as `SystemPromptPart`, but its content is regenerated on each run.
     """
 
     ref: int | None = None
