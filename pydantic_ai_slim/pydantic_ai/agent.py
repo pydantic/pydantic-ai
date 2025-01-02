@@ -862,7 +862,7 @@ class Agent(Generic[AgentDeps, ResultData]):
     async def _reevaluate_dynamic_prompts(
         self, messages: list[_messages.ModelMessage], run_context: RunContext[AgentDeps]
     ) -> None:
-        """Reevaluate any DynamicSystemPromptPart in the provided messages by running the associated runner function."""
+        """Reevaluate any `DynamicSystemPromptPart` in the provided messages by running the associated runner function."""
         # Only proceed if there's at least one dynamic runner.
         if any(self._system_prompt_dynamic_functions.values()):
             for msg in messages:
