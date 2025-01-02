@@ -9,15 +9,15 @@ from pydantic import BaseModel
 from pydantic_ai.format_as_xml import format_as_xml
 
 
-class ExamplePydanticModel(BaseModel):
-    key01: str
-    key02: int
-
-
 @dataclass
 class ExampleDataclass:
-    key01: str
-    key02: int
+    name: str
+    age: int
+
+
+class ExamplePydanticModel(BaseModel):
+    name: str
+    age: int
 
 
 @pytest.mark.parametrize(
@@ -25,6 +25,51 @@ class ExampleDataclass:
     [
         pytest.param('a string', snapshot('<examples>a string</examples>'), id='string'),
         pytest.param(42, snapshot('<examples>42</examples>'), id='int'),
+        pytest.param(None, snapshot('<examples>null</examples>'), id='null'),
+        pytest.param(
+            ExampleDataclass(name='John', age=42),
+            snapshot("""\
+<examples>
+  <name>John</name>
+  <age>42</age>
+</examples>\
+"""),
+            id='dataclass',
+        ),
+        pytest.param(
+            ExamplePydanticModel(name='John', age=42),
+            snapshot("""\
+<examples>
+  <name>John</name>
+  <age>42</age>
+</examples>\
+"""),
+            id='pydantic model',
+        ),
+        pytest.param(
+            [ExampleDataclass(name='John', age=42)],
+            snapshot("""\
+<examples>
+  <ExampleDataclass>
+    <name>John</name>
+    <age>42</age>
+  </ExampleDataclass>
+</examples>\
+"""),
+            id='list[dataclass]',
+        ),
+        pytest.param(
+            [ExamplePydanticModel(name='John', age=42)],
+            snapshot("""\
+<examples>
+  <ExamplePydanticModel>
+    <name>John</name>
+    <age>42</age>
+  </ExamplePydanticModel>
+</examples>\
+"""),
+            id='list[pydantic model]',
+        ),
         pytest.param(
             [1, 2, 3],
             snapshot("""\
@@ -35,6 +80,16 @@ class ExampleDataclass:
 </examples>\
 """),
             id='list[int]',
+        ),
+        pytest.param(
+            (1, 'x'),
+            snapshot("""\
+<examples>
+  <example>1</example>
+  <example>x</example>
+</examples>\
+"""),
+            id='tuple[int,str]',
         ),
         pytest.param(
             [[1, 2], [3]],
@@ -68,7 +123,7 @@ class ExampleDataclass:
         ),
     ],
 )
-def test_format_xml(input_obj: Any, output: str):
+def test(input_obj: Any, output: str):
     assert format_as_xml(input_obj) == output
 
 
@@ -118,5 +173,32 @@ def test_format_xml(input_obj: Any, output: str):
         ),
     ],
 )
-def test_format_xml_no_root(input_obj: Any, output: str):
+def test_no_root(input_obj: Any, output: str):
     assert format_as_xml(input_obj, include_root_tag=False) == output
+
+
+def test_no_indent():
+    assert format_as_xml([1, 2, 3], indent=None) == snapshot(
+        '<examples><example>1</example><example>2</example><example>3</example></examples>'
+    )
+    assert format_as_xml([1, 2, 3], indent=None, include_root_tag=False) == snapshot(
+        '<example>1</example><example>2</example><example>3</example>'
+    )
+
+
+def test_invalid_value():
+    with pytest.raises(TypeError, match='Unsupported type'):
+        format_as_xml(object())
+
+
+def test_invalid_key():
+    with pytest.raises(TypeError, match='Unsupported key type for XML formatting'):
+        format_as_xml({(1, 2): 42})
+
+
+def test_set():
+    assert '<example>1</example>' in format_as_xml({1, 2, 3})
+
+
+def test_custom_null():
+    assert format_as_xml(None, none_str='nil') == snapshot('<examples>nil</examples>')
