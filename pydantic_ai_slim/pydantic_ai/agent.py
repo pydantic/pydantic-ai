@@ -100,9 +100,8 @@ class Agent(Generic[AgentDeps, ResultData, NewResultData]):
     be merged with this value, with the runtime argument taking priority.
     """
 
-    _result_schema: _result.ResultSchema[ResultData] | None = dataclasses.field(repr=False)
+    _default_result_schema: _result.ResultSchema[ResultData] | None = dataclasses.field(repr=False)
     _result_validators: list[_result.ResultValidator[AgentDeps, ResultData]] = dataclasses.field(repr=False)
-    _allow_text_result: bool = dataclasses.field(repr=False)
     _system_prompts: tuple[str, ...] = dataclasses.field(repr=False)
     _function_tools: dict[str, Tool[AgentDeps]] = dataclasses.field(repr=False)
     _default_retries: int = dataclasses.field(repr=False)
@@ -116,12 +115,12 @@ class Agent(Generic[AgentDeps, ResultData, NewResultData]):
         self,
         model: models.Model | models.KnownModelName | None = None,
         *,
-        result_type: type[ResultData] = str,
         system_prompt: str | Sequence[str] = (),
         deps_type: type[AgentDeps] = NoneType,
         name: str | None = None,
         model_settings: ModelSettings | None = None,
         retries: int = 1,
+        result_type: type[ResultData] = str,
         result_tool_name: str = 'final_result',
         result_tool_description: str | None = None,
         result_retries: int | None = None,
@@ -134,7 +133,6 @@ class Agent(Generic[AgentDeps, ResultData, NewResultData]):
         Args:
             model: The default model to use for this agent, if not provide,
                 you must provide the model when calling it.
-            result_type: The type of the result data, used to validate the result data, defaults to `str`.
             system_prompt: Static system prompts to use for this agent, you can also register system
                 prompts via a function with [`system_prompt`][pydantic_ai.Agent.system_prompt].
             deps_type: The type used for dependency injection, this parameter exists solely to allow you to fully
@@ -145,6 +143,7 @@ class Agent(Generic[AgentDeps, ResultData, NewResultData]):
                 when the agent is first run.
             model_settings: Optional model request settings to use for this agent's runs, by default.
             retries: The default number of retries to allow before raising an error.
+            result_type: The type of the result data, used to validate the result data, defaults to `str`.
             result_tool_name: The name of the tool to use for the final result.
             result_tool_description: The description of the final result tool.
             result_retries: The maximum number of retries to allow for result validation, defaults to `retries`.
@@ -166,11 +165,11 @@ class Agent(Generic[AgentDeps, ResultData, NewResultData]):
         self.end_strategy = end_strategy
         self.name = name
         self.model_settings = model_settings
-        self._result_schema = _result.ResultSchema[result_type].build(
-            result_type, result_tool_name, result_tool_description
+        self._default_result_schema = _result.ResultSchema[result_type].build(
+            result_type,
+            result_tool_name,
+            result_tool_description,
         )
-        # if the result tool is None, or its schema allows `str`, we allow plain text results
-        self._allow_text_result = self._result_schema is None or self._result_schema.allow_text_result
 
         self._system_prompts = (system_prompt,) if isinstance(system_prompt, str) else tuple(system_prompt)
         self._function_tools = {}
@@ -196,7 +195,10 @@ class Agent(Generic[AgentDeps, ResultData, NewResultData]):
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.Usage | None = None,
         infer_name: bool = True,
-    ) -> result.RunResult[ResultData]:
+        result_type: type[NewResultData] | None = None,
+        result_tool_name: str = 'final_result',
+        result_tool_description: str | None = None,
+    ) -> result.RunResult[ResultData | NewResultData]:
         """Run the agent with a user prompt in async mode.
 
         Example:
@@ -219,10 +221,20 @@ class Agent(Generic[AgentDeps, ResultData, NewResultData]):
             usage_limits: Optional limits on model request count or token usage.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
+            result_type: The type of the result data, used to validate the result data, defaults to `str`.
+            result_tool_name: The name of the tool to use for the final result.
+            result_tool_description: The description of the final result tool.
 
         Returns:
             The result of the run.
         """
+        if result_tool_name in self._function_tools:
+            raise exceptions.UserError(
+                f'Result tool name conflicts with existing registered tools: {result_tool_name!r}'
+            )
+
+        result_schema = self._get_result_schema(result_type, result_tool_name, result_tool_description)
+
         if infer_name and self.name is None:
             self._infer_name(inspect.currentframe())
         model_used = await self._get_model(model)
@@ -252,7 +264,7 @@ class Agent(Generic[AgentDeps, ResultData, NewResultData]):
 
                 run_context.run_step += 1
                 with _logfire.span('preparing model and tools {run_step=}', run_step=run_context.run_step):
-                    agent_model = await self._prepare_model(run_context)
+                    agent_model = await self._prepare_model(run_context, result_schema)
 
                 with _logfire.span('model request', run_step=run_context.run_step) as model_req_span:
                     model_response, request_usage = await agent_model.request(messages, model_settings)
@@ -264,7 +276,9 @@ class Agent(Generic[AgentDeps, ResultData, NewResultData]):
                 usage_limits.check_tokens(run_context.usage)
 
                 with _logfire.span('handle model response', run_step=run_context.run_step) as handle_span:
-                    final_result, tool_responses = await self._handle_model_response(model_response, run_context)
+                    final_result, tool_responses = await self._handle_model_response(
+                        model_response, run_context, result_schema
+                    )
 
                     if tool_responses:
                         # Add parts to the conversation as a new message
@@ -298,7 +312,10 @@ class Agent(Generic[AgentDeps, ResultData, NewResultData]):
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.Usage | None = None,
         infer_name: bool = True,
-    ) -> result.RunResult[ResultData]:
+        result_type: type[NewResultData] | None = None,
+        result_tool_name: str = 'final_result',
+        result_tool_description: str | None = None,
+    ) -> result.RunResult[ResultData | NewResultData]:
         """Run the agent with a user prompt synchronously.
 
         This is a convenience method that wraps [`self.run`][pydantic_ai.Agent.run] with `loop.run_until_complete(...)`.
@@ -325,6 +342,9 @@ class Agent(Generic[AgentDeps, ResultData, NewResultData]):
             usage_limits: Optional limits on model request count or token usage.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
+            result_type: The type of the result data, used to validate the result data, defaults to `str`.
+            result_tool_name: The name of the tool to use for the final result.
+            result_tool_description: The description of the final result tool.
 
         Returns:
             The result of the run.
@@ -341,6 +361,9 @@ class Agent(Generic[AgentDeps, ResultData, NewResultData]):
                 usage_limits=usage_limits,
                 usage=usage,
                 infer_name=False,
+                result_type=result_type,
+                result_tool_name=result_tool_name,
+                result_tool_description=result_tool_description,
             )
         )
 
@@ -348,6 +371,7 @@ class Agent(Generic[AgentDeps, ResultData, NewResultData]):
     async def run_stream(
         self,
         user_prompt: str,
+        result_type: type[ResultData] | None = None,
         *,
         message_history: list[_messages.ModelMessage] | None = None,
         model: models.Model | models.KnownModelName | None = None,
@@ -356,6 +380,8 @@ class Agent(Generic[AgentDeps, ResultData, NewResultData]):
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.Usage | None = None,
         infer_name: bool = True,
+        result_tool_name: str = 'final_result',
+        result_tool_description: str | None = None,
     ) -> AsyncIterator[result.StreamedRunResult[AgentDeps, ResultData]]:
         """Run the agent with a user prompt in async mode, returning a streamed response.
 
@@ -380,10 +406,20 @@ class Agent(Generic[AgentDeps, ResultData, NewResultData]):
             usage_limits: Optional limits on model request count or token usage.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
+            result_type: The type of the result data, used to validate the result data, defaults to `str`.
+            result_tool_name: The name of the tool to use for the final result.
+            result_tool_description: The description of the final result tool.
 
         Returns:
             The result of the run.
         """
+        if result_tool_name in self._function_tools:
+            raise exceptions.UserError(
+                f'Result tool name conflicts with existing registered tools: {result_tool_name!r}'
+            )
+
+        result_schema = self._get_result_schema(result_type, result_tool_name, result_tool_description)
+
         if infer_name and self.name is None:
             # f_back because `asynccontextmanager` adds one frame
             if frame := inspect.currentframe():  # pragma: no branch
@@ -415,7 +451,7 @@ class Agent(Generic[AgentDeps, ResultData, NewResultData]):
                 usage_limits.check_before_request(run_context.usage)
 
                 with _logfire.span('preparing model and tools {run_step=}', run_step=run_context.run_step):
-                    agent_model = await self._prepare_model(run_context)
+                    agent_model = await self._prepare_model(run_context, result_schema)
 
                 with _logfire.span('model request {run_step=}', run_step=run_context.run_step) as model_req_span:
                     async with agent_model.request_stream(messages, model_settings) as model_response:
@@ -426,7 +462,9 @@ class Agent(Generic[AgentDeps, ResultData, NewResultData]):
                         model_req_span.__exit__(None, None, None)
 
                         with _logfire.span('handle model response') as handle_span:
-                            maybe_final_result = await self._handle_streamed_model_response(model_response, run_context)
+                            maybe_final_result = await self._handle_streamed_model_response(
+                                model_response, run_context, result_schema
+                            )
 
                             # Check if we got a final result
                             if isinstance(maybe_final_result, _MarkFinalResult):
@@ -446,7 +484,7 @@ class Agent(Generic[AgentDeps, ResultData, NewResultData]):
                                         part for part in last_message.parts if isinstance(part, _messages.ToolCallPart)
                                     ]
                                     parts = await self._process_function_tools(
-                                        tool_calls, result_tool_name, run_context
+                                        tool_calls, result_tool_name, run_context, result_schema
                                     )
                                     if parts:
                                         messages.append(_messages.ModelRequest(parts))
@@ -457,7 +495,7 @@ class Agent(Generic[AgentDeps, ResultData, NewResultData]):
                                     new_message_index,
                                     usage_limits,
                                     result_stream,
-                                    self._result_schema,
+                                    result_schema,
                                     run_context,
                                     self._result_validators,
                                     result_tool_name,
@@ -787,7 +825,7 @@ class Agent(Generic[AgentDeps, ResultData, NewResultData]):
         if tool.name in self._function_tools:
             raise exceptions.UserError(f'Tool name conflicts with existing tool: {tool.name!r}')
 
-        if self._result_schema and tool.name in self._result_schema.tools:
+        if self._default_result_schema and tool.name in self._default_result_schema.tools:
             raise exceptions.UserError(f'Tool name conflicts with result schema name: {tool.name!r}')
 
         self._function_tools[tool.name] = tool
@@ -820,7 +858,9 @@ class Agent(Generic[AgentDeps, ResultData, NewResultData]):
 
         return model_
 
-    async def _prepare_model(self, run_context: RunContext[AgentDeps]) -> models.AgentModel:
+    async def _prepare_model(
+        self, run_context: RunContext[AgentDeps], result_schema: _result.ResultSchema[ResultData] | None
+    ) -> models.AgentModel:
         """Build tools and create an agent model."""
         function_tools: list[ToolDefinition] = []
 
@@ -833,8 +873,8 @@ class Agent(Generic[AgentDeps, ResultData, NewResultData]):
 
         return await run_context.model.agent_model(
             function_tools=function_tools,
-            allow_text_result=self._allow_text_result,
-            result_tools=self._result_schema.tool_defs() if self._result_schema is not None else [],
+            allow_text_result=self._allow_text_result(result_schema),
+            result_tools=result_schema.tool_defs() if result_schema is not None else [],
         )
 
     async def _prepare_messages(
@@ -863,7 +903,10 @@ class Agent(Generic[AgentDeps, ResultData, NewResultData]):
         return messages
 
     async def _handle_model_response(
-        self, model_response: _messages.ModelResponse, run_context: RunContext[AgentDeps]
+        self,
+        model_response: _messages.ModelResponse,
+        run_context: RunContext[AgentDeps],
+        result_schema: _result.ResultSchema[ResultData] | None = None,
     ) -> tuple[_MarkFinalResult[ResultData] | None, list[_messages.ModelRequestPart]]:
         """Process a non-streamed response from the model.
 
@@ -885,18 +928,19 @@ class Agent(Generic[AgentDeps, ResultData, NewResultData]):
         # This accounts for cases like anthropic returns that might contain a text response
         # and a tool call response, where the text response just indicates the tool call will happen.
         if tool_calls:
-            return await self._handle_structured_response(tool_calls, run_context)
+            return await self._handle_structured_response(tool_calls, run_context, result_schema)
         elif texts:
             text = '\n\n'.join(texts)
-            return await self._handle_text_response(text, run_context)
+            allow_text_result = self._allow_text_result(result_schema)
+            return await self._handle_text_response(text, run_context, allow_text_result)
         else:
             raise exceptions.UnexpectedModelBehavior('Received empty model response')
 
     async def _handle_text_response(
-        self, text: str, run_context: RunContext[AgentDeps]
+        self, text: str, run_context: RunContext[AgentDeps], allow_text_result: bool
     ) -> tuple[_MarkFinalResult[ResultData] | None, list[_messages.ModelRequestPart]]:
         """Handle a plain text response from the model for non-streaming responses."""
-        if self._allow_text_result:
+        if allow_text_result:
             result_data_input = cast(ResultData, text)
             try:
                 result_data = await self._validate_result(result_data_input, run_context, None)
@@ -913,7 +957,10 @@ class Agent(Generic[AgentDeps, ResultData, NewResultData]):
             return None, [response]
 
     async def _handle_structured_response(
-        self, tool_calls: list[_messages.ToolCallPart], run_context: RunContext[AgentDeps]
+        self,
+        tool_calls: list[_messages.ToolCallPart],
+        run_context: RunContext[AgentDeps],
+        result_schema: _result.ResultSchema[ResultData] | None,
     ) -> tuple[_MarkFinalResult[ResultData] | None, list[_messages.ModelRequestPart]]:
         """Handle a structured response containing tool calls from the model for non-streaming responses."""
         assert tool_calls, 'Expected at least one tool call'
@@ -922,7 +969,7 @@ class Agent(Generic[AgentDeps, ResultData, NewResultData]):
         final_result: _MarkFinalResult[ResultData] | None = None
 
         parts: list[_messages.ModelRequestPart] = []
-        if result_schema := self._result_schema:
+        if result_schema := result_schema:
             if match := result_schema.find_tool(tool_calls):
                 call, result_tool = match
                 try:
@@ -935,7 +982,9 @@ class Agent(Generic[AgentDeps, ResultData, NewResultData]):
                     final_result = _MarkFinalResult(result_data, call.tool_name)
 
         # Then build the other request parts based on end strategy
-        parts += await self._process_function_tools(tool_calls, final_result and final_result.tool_name, run_context)
+        parts += await self._process_function_tools(
+            tool_calls, final_result and final_result.tool_name, run_context, result_schema
+        )
 
         return final_result, parts
 
@@ -944,6 +993,7 @@ class Agent(Generic[AgentDeps, ResultData, NewResultData]):
         tool_calls: list[_messages.ToolCallPart],
         result_tool_name: str | None,
         run_context: RunContext[AgentDeps],
+        result_schema: _result.ResultSchema[ResultData] | None,
     ) -> list[_messages.ModelRequestPart]:
         """Process function (non-result) tool calls in parallel.
 
@@ -977,8 +1027,8 @@ class Agent(Generic[AgentDeps, ResultData, NewResultData]):
                     )
                 else:
                     tasks.append(asyncio.create_task(tool.run(call, run_context), name=call.tool_name))
-            elif self._result_schema is not None and call.tool_name in self._result_schema.tools:
-                # if tool_name is in _result_schema, it means we found a result tool but an error occurred in
+            elif result_schema is not None and call.tool_name in result_schema.tools:
+                # if tool_name is in result_schema, it means we found a result tool but an error occurred in
                 # validation, we don't add another part here
                 if result_tool_name is not None:
                     parts.append(
@@ -989,7 +1039,7 @@ class Agent(Generic[AgentDeps, ResultData, NewResultData]):
                         )
                     )
             else:
-                parts.append(self._unknown_tool(call.tool_name, run_context))
+                parts.append(self._unknown_tool(call.tool_name, run_context, result_schema))
 
         # Run all tool tasks in parallel
         if tasks:
@@ -1002,6 +1052,7 @@ class Agent(Generic[AgentDeps, ResultData, NewResultData]):
         self,
         model_response: models.EitherStreamedResponse,
         run_context: RunContext[AgentDeps],
+        result_schema: _result.ResultSchema[ResultData] | None,
     ) -> (
         _MarkFinalResult[models.EitherStreamedResponse]
         | tuple[_messages.ModelResponse, list[_messages.ModelRequestPart]]
@@ -1014,7 +1065,7 @@ class Agent(Generic[AgentDeps, ResultData, NewResultData]):
         """
         if isinstance(model_response, models.StreamTextResponse):
             # plain string response
-            if self._allow_text_result:
+            if self._allow_text_result(result_schema):
                 return _MarkFinalResult(model_response, None)
             else:
                 self._incr_result_retry(run_context)
@@ -1028,7 +1079,7 @@ class Agent(Generic[AgentDeps, ResultData, NewResultData]):
                 text = ''.join(model_response.get(final=True))
                 return _messages.ModelResponse([_messages.TextPart(text)]), [response]
         elif isinstance(model_response, models.StreamStructuredResponse):
-            if self._result_schema is not None:
+            if result_schema is not None:
                 # if there's a result schema, iterate over the stream until we find at least one tool
                 # NOTE: this means we ignore any other tools called here
                 structured_msg = model_response.get()
@@ -1039,7 +1090,7 @@ class Agent(Generic[AgentDeps, ResultData, NewResultData]):
                         break
                     structured_msg = model_response.get()
 
-                if match := self._result_schema.find_tool(structured_msg.parts):
+                if match := result_schema.find_tool(structured_msg.parts):
                     call, _ = match
                     return _MarkFinalResult(model_response, call.tool_name)
 
@@ -1059,7 +1110,7 @@ class Agent(Generic[AgentDeps, ResultData, NewResultData]):
                     if tool := self._function_tools.get(call.tool_name):
                         tasks.append(asyncio.create_task(tool.run(call, run_context), name=call.tool_name))
                     else:
-                        parts.append(self._unknown_tool(call.tool_name, run_context))
+                        parts.append(self._unknown_tool(call.tool_name, run_context, result_schema))
 
             with _logfire.span('running {tools=}', tools=[t.get_name() for t in tasks]):
                 task_results: Sequence[_messages.ModelRequestPart] = await asyncio.gather(*tasks)
@@ -1067,6 +1118,21 @@ class Agent(Generic[AgentDeps, ResultData, NewResultData]):
             return model_response_msg, parts
         else:
             assert_never(model_response)
+
+    def _get_result_schema(
+        self,
+        result_type: type[ResultData | NewResultData] | None,
+        result_tool_name: str,
+        result_tool_description: str | None,
+    ) -> _result.ResultSchema[ResultData | NewResultData] | None:
+        if result_type is None:
+            return self._default_result_schema
+        else:
+            return _result.ResultSchema[result_type].build(
+                result_type,
+                result_tool_name,
+                result_tool_description,
+            )
 
     async def _validate_result(
         self,
@@ -1093,11 +1159,13 @@ class Agent(Generic[AgentDeps, ResultData, NewResultData]):
             messages.append(_messages.SystemPromptPart(prompt))
         return messages
 
-    def _unknown_tool(self, tool_name: str, run_context: RunContext[AgentDeps]) -> _messages.RetryPromptPart:
+    def _unknown_tool(
+        self, tool_name: str, run_context: RunContext[AgentDeps], result_schema: _result.ResultSchema[ResultData] | None
+    ) -> _messages.RetryPromptPart:
         self._incr_result_retry(run_context)
         names = list(self._function_tools.keys())
-        if self._result_schema:
-            names.extend(self._result_schema.tool_names())
+        if result_schema:
+            names.extend(result_schema.tool_names())
         if names:
             msg = f'Available tools: {", ".join(names)}'
         else:
@@ -1134,6 +1202,10 @@ class Agent(Generic[AgentDeps, ResultData, NewResultData]):
                         if item is self:
                             self.name = name
                             return
+
+    def _allow_text_result(self, result_schema: _result.ResultSchema[ResultData] | None) -> bool:
+        """Check if the result schema allows plain text results."""
+        return result_schema is None or result_schema.allow_text_result
 
     @property
     @deprecated(
