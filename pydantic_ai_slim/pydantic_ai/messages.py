@@ -32,7 +32,7 @@ class DynamicSystemPromptPart(SystemPromptPart):
     Same as `SystemPromptPart`, but its content is regenerated on each run.
     """
 
-    ref: int | None = None
+    ref: str
     """The ref ID of the system prompt function that generated this part."""
 
 
