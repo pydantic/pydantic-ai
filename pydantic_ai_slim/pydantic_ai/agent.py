@@ -863,8 +863,7 @@ class Agent(Generic[AgentDeps, ResultData]):
                     for i, part in enumerate(msg.parts):
                         if isinstance(part, _messages.DynamicSystemPromptPart):
                             # Look up the runner by its ID (default 0 in case part.ref is None).
-                            matching_runner = runner_map.get(part.ref or 0)
-                            if matching_runner is not None:
+                            if runner := runner_map.get(part.ref):
                                 updated_part_content = await matching_runner.run(run_context)
                                 msg.parts[i] = _messages.DynamicSystemPromptPart(updated_part_content, ref=part.ref)
 
