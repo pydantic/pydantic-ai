@@ -4,11 +4,11 @@ import dataclasses
 import inspect
 from collections.abc import Awaitable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Callable, Generic, TypeVar, Union, cast
+from typing import TYPE_CHECKING, Any, Callable, Generic, Union, cast
 
 from pydantic import ValidationError
 from pydantic_core import SchemaValidator
-from typing_extensions import Concatenate, ParamSpec, TypeAlias
+from typing_extensions import Concatenate, ParamSpec, TypeAlias, TypeVar
 
 from . import _pydantic, _utils, messages as _messages, models
 from .exceptions import ModelRetry, UnexpectedModelBehavior
@@ -30,7 +30,7 @@ __all__ = (
     'ToolDefinition',
 )
 
-AgentDeps = TypeVar('AgentDeps')
+AgentDeps = TypeVar('AgentDeps', default=None)
 """Type variable for agent dependencies."""
 
 
@@ -67,7 +67,7 @@ class RunContext(Generic[AgentDeps]):
         return dataclasses.replace(self, **kwargs)
 
 
-ToolParams = ParamSpec('ToolParams')
+ToolParams = ParamSpec('ToolParams', default=...)
 """Retrieval function param spec."""
 
 SystemPromptFunc = Union[
@@ -92,7 +92,7 @@ ToolFuncPlain = Callable[ToolParams, Any]
 Usage `ToolPlainFunc[ToolParams]`.
 """
 ToolFuncEither = Union[ToolFuncContext[AgentDeps, ToolParams], ToolFuncPlain[ToolParams]]
-"""Either part_kind of tool function.
+"""Either kind of tool function.
 
 This is just a union of [`ToolFuncContext`][pydantic_ai.tools.ToolFuncContext] and
 [`ToolFuncPlain`][pydantic_ai.tools.ToolFuncPlain].
@@ -134,7 +134,7 @@ A = TypeVar('A')
 class Tool(Generic[AgentDeps]):
     """A tool function for an agent."""
 
-    function: ToolFuncEither[AgentDeps, ...]
+    function: ToolFuncEither[AgentDeps]
     takes_ctx: bool
     max_retries: int | None
     name: str
@@ -150,7 +150,7 @@ class Tool(Generic[AgentDeps]):
 
     def __init__(
         self,
-        function: ToolFuncEither[AgentDeps, ...],
+        function: ToolFuncEither[AgentDeps],
         *,
         takes_ctx: bool | None = None,
         max_retries: int | None = None,
