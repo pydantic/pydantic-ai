@@ -14,6 +14,7 @@ nav:
   - install.md
   - help.md
   - contributing.md
+  - troubleshooting.md
   - Documentation:
     - agents.md
     - models.md
@@ -23,12 +24,14 @@ nav:
     - message-history.md
     - testing-evals.md
     - logfire.md
+    - multi-agent-applications.md
   - Examples:
     - examples/index.md
     - examples/pydantic-model.md
     - examples/weather-agent.md
     - examples/bank-support.md
     - examples/sql-gen.md
+    - examples/flight-booking.md
     - examples/rag.md
     - examples/stream-markdown.md
     - examples/stream-whales.md
@@ -40,6 +43,7 @@ nav:
     - api/messages.md
     - api/exceptions.md
     - api/settings.md
+    - api/usage.md
     - api/format_as_xml.md
     - api/models/base.md
     - api/models/openai.md
