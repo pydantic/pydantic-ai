@@ -886,7 +886,7 @@ class Agent(Generic[AgentDeps, ResultData]):
             # Shallow copy messages
             messages.extend(message_history)
 
-            # Reevaluate any dynamic system prompt parts (now done by our extracted method)
+            # Reevaluate any dynamic system prompt parts
             await self._reevaluate_dynamic_prompts(messages, run_context)
 
             # Finally, append the new user prompt
