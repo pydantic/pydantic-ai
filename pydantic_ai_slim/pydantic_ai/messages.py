@@ -142,6 +142,9 @@ class ModelRequest:
     kind: Literal['request'] = 'request'
     """Message type identifier, this is available on all parts as a discriminator."""
 
+    timestamp: datetime = field(default_factory=_now_utc)
+    """The timestamp of the request."""
+
 
 @dataclass
 class TextPart:
