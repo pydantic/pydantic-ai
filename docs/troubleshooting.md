@@ -6,14 +6,13 @@ Below are suggestions on how to fix some common errors you might encounter while
 
 ### `RuntimeError: This event loop is already running`
 
-This error is caused by conflicts between the event loops in Jupyter notebook and `pydantic-ai`'s agent. One way to manage these conflicts is by using [`nest-asyncio`](https://pypi.org/project/nest-asyncio/). Namely, before you execute any agent runs, do the following:
+This error is caused by conflicts between the event loops in Jupyter notebook and PydanticAI's. One way to manage these conflicts is by using [`nest-asyncio`](https://pypi.org/project/nest-asyncio/). Namely, before you execute any agent runs, do the following:
 ```python {test="skip"}
 import nest_asyncio
 
 nest_asyncio.apply()
 ```
 Note: This fix also applies to Google Colab.
-
 
 ## API Key Configuration
 
