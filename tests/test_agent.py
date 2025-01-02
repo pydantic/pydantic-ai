@@ -1362,7 +1362,7 @@ def test_dynamic_true_reevaluate_system_prompt(set_event_loop: None):
                     DynamicSystemPromptPart(
                         content=dynamic_value,
                         part_kind='system-prompt',
-                        ref=id(agent._system_prompt_functions[0]),  # type: ignore
+                        ref=func.__qualname__,
                     ),
                     UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc), part_kind='user-prompt'),
                 ],
@@ -1388,7 +1388,7 @@ def test_dynamic_true_reevaluate_system_prompt(set_event_loop: None):
                     DynamicSystemPromptPart(
                         content='B',
                         part_kind='system-prompt',
-                        ref=id(agent._system_prompt_functions[0]),  # type: ignore
+                        ref=func.__qualname__,
                     ),
                     UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc), part_kind='user-prompt'),
                 ],
