@@ -1305,10 +1305,6 @@ def test_dynamic_false_no_reevaluate(set_event_loop: None):
 
     dynamic_value = 'B'
 
-    @agent.system_prompt
-    async def func_two():
-        return 'This is not added'
-
     res_two = agent.run_sync('World', message_history=res.all_messages())
 
     assert res_two.all_messages() == snapshot(
@@ -1381,14 +1377,6 @@ def test_dynamic_true_reevaluate_system_prompt(set_event_loop: None):
     )
 
     dynamic_value = 'B'
-
-    @agent.system_prompt
-    async def func_two():
-        return 'This is a new prompt, but it wont reach the model'
-
-    @agent.system_prompt(dynamic=True)
-    async def func_two_dynamic():
-        return 'This is a new prompt, but it wont reach the model, even though is dynamic'
 
     res_two = agent.run_sync('World', message_history=res.all_messages())
 
