@@ -271,6 +271,7 @@ class GeminiAgentModel(AgentModel):
     ) -> tuple[list[_GeminiTextPart], list[_GeminiContent]]:
         sys_prompt_parts: list[_GeminiTextPart] = []
         contents: list[_GeminiContent] = []
+        grouped_tool_responses = []
         for m in messages:
             if isinstance(m, ModelRequest):
                 for part in m.parts:
@@ -279,7 +280,7 @@ class GeminiAgentModel(AgentModel):
                     elif isinstance(part, UserPromptPart):
                         contents.append(_content_user_prompt(part))
                     elif isinstance(part, ToolReturnPart):
-                        contents.append(_content_tool_return(part))
+                        grouped_tool_responses.append(part)
                     elif isinstance(part, RetryPromptPart):
                         contents.append(_content_retry_prompt(part))
                     else:
@@ -288,6 +289,9 @@ class GeminiAgentModel(AgentModel):
                 contents.append(_content_model_response(m))
             else:
                 assert_never(m)
+
+        if grouped_tool_responses:
+            contents.append(_content_tool_return(grouped_tool_responses))
 
         return sys_prompt_parts, contents
 
@@ -424,9 +428,11 @@ def _content_user_prompt(m: UserPromptPart) -> _GeminiContent:
     return _GeminiContent(role='user', parts=[_GeminiTextPart(text=m.content)])
 
 
-def _content_tool_return(m: ToolReturnPart) -> _GeminiContent:
-    f_response = _response_part_from_response(m.tool_name, m.model_response_object())
-    return _GeminiContent(role='user', parts=[f_response])
+def _content_tool_return(messages: list[ToolReturnPart]) -> _GeminiContent:
+    # Group all tool responses into a single `user` role content
+    parts = [_response_part_from_response(m.tool_name, m.model_response_object()) for m in messages]
+    return _GeminiContent(role='user', parts=parts)
+
 
 
 def _content_retry_prompt(m: RetryPromptPart) -> _GeminiContent:
