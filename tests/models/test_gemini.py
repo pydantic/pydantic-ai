@@ -453,7 +453,12 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
         ),
         gemini_response(
             _content_model_response(
-                ModelResponse(parts=[ToolCallPart.from_raw_args('get_location', {'loc_name': 'London'})])
+                ModelResponse(
+                    parts=[
+                        ToolCallPart.from_raw_args('get_location', {'loc_name': 'London'}),
+                        ToolCallPart.from_raw_args('get_location', {'loc_name': 'New York'}),
+                    ]
+                )
             )
         ),
         gemini_response(_content_model_response(ModelResponse.from_text('final response'))),
@@ -466,6 +471,8 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
     async def get_location(loc_name: str) -> str:
         if loc_name == 'London':
             return json.dumps({'lat': 51, 'lng': 0})
+        elif loc_name == 'New York':
+            return json.dumps({'lat': 41, 'lng': -74})
         else:
             raise ModelRetry('Wrong location, please try again')
 
@@ -502,7 +509,11 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
                     ToolCallPart(
                         tool_name='get_location',
                         args=ArgsDict(args_dict={'loc_name': 'London'}),
-                    )
+                    ),
+                    ToolCallPart(
+                        tool_name='get_location',
+                        args=ArgsDict(args_dict={'loc_name': 'New York'}),
+                    ),
                 ],
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -510,7 +521,10 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
                 parts=[
                     ToolReturnPart(
                         tool_name='get_location', content='{"lat": 51, "lng": 0}', timestamp=IsNow(tz=timezone.utc)
-                    )
+                    ),
+                    ToolReturnPart(
+                        tool_name='get_location', content='{"lat": 41, "lng": -74}', timestamp=IsNow(tz=timezone.utc)
+                    ),
                 ]
             ),
             ModelResponse.from_text(content='final response', timestamp=IsNow(tz=timezone.utc)),
