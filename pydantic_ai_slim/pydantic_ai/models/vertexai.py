@@ -178,7 +178,7 @@ def _creds_from_file(service_account_file: str | Path) -> ServiceAccountCredenti
 # pyright: reportUnknownVariableType=false
 # pyright: reportUnknownArgumentType=false
 async def _async_google_auth() -> tuple[BaseCredentials, str | None]:
-    return await run_in_executor(google.auth.default)
+    return await run_in_executor(google.auth.default, scopes=['https://www.googleapis.com/auth/cloud-platform'])
 
 
 # default expiry is 3600 seconds
