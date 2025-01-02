@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any, Callable, Generic, Union, cast
 
 from pydantic import ValidationError
 from pydantic_core import SchemaValidator
-from typing_extensions import Concatenate, ParamSpec, TypeAlias, TypeAliasType, TypeVar
+from typing_extensions import Concatenate, ParamSpec, TypeAlias, TypeVar
 
 from . import _pydantic, _utils, messages as _messages, models
 from .exceptions import ModelRetry, UnexpectedModelBehavior
@@ -67,7 +67,7 @@ class RunContext(Generic[AgentDeps]):
         return dataclasses.replace(self, **kwargs)
 
 
-ToolParams = ParamSpec('ToolParams')
+ToolParams = ParamSpec('ToolParams', default=...)
 """Retrieval function param spec."""
 
 SystemPromptFunc = Union[
@@ -81,31 +81,23 @@ SystemPromptFunc = Union[
 Usage `SystemPromptFunc[AgentDeps]`.
 """
 
-ToolFuncContext = TypeAliasType(
-    'ToolFuncContext',
-    Callable[Concatenate[RunContext[AgentDeps], ToolParams], Any],
-    type_params=(ToolParams, AgentDeps),
-)
+ToolFuncContext = Callable[Concatenate[RunContext[AgentDeps], ToolParams], Any]
 """A tool function that takes `RunContext` as the first argument.
 
-Usage `ToolFuncContext[ToolParams, AgentDeps]`.
+Usage `ToolContextFunc[AgentDeps, ToolParams]`.
 """
 ToolFuncPlain = Callable[ToolParams, Any]
 """A tool function that does not take `RunContext` as the first argument.
 
 Usage `ToolPlainFunc[ToolParams]`.
 """
-ToolFuncEither = TypeAliasType(
-    'ToolFuncEither',
-    Union[ToolFuncContext[ToolParams, AgentDeps], ToolFuncPlain[ToolParams]],
-    type_params=(ToolParams, AgentDeps),
-)
+ToolFuncEither = Union[ToolFuncContext[AgentDeps, ToolParams], ToolFuncPlain[ToolParams]]
 """Either kind of tool function.
 
 This is just a union of [`ToolFuncContext`][pydantic_ai.tools.ToolFuncContext] and
 [`ToolFuncPlain`][pydantic_ai.tools.ToolFuncPlain].
 
-Usage `ToolFuncEither[ToolParams, AgentDeps]`.
+Usage `ToolFuncEither[AgentDeps, ToolParams]`.
 """
 ToolPrepareFunc: TypeAlias = 'Callable[[RunContext[AgentDeps], ToolDefinition], Awaitable[ToolDefinition | None]]'
 """Definition of a function that can prepare a tool definition at call time.
@@ -142,7 +134,7 @@ A = TypeVar('A')
 class Tool(Generic[AgentDeps]):
     """A tool function for an agent."""
 
-    function: ToolFuncEither[..., AgentDeps]
+    function: ToolFuncEither[AgentDeps]
     takes_ctx: bool
     max_retries: int | None
     name: str
@@ -158,7 +150,7 @@ class Tool(Generic[AgentDeps]):
 
     def __init__(
         self,
-        function: ToolFuncEither[..., AgentDeps],
+        function: ToolFuncEither[AgentDeps],
         *,
         takes_ctx: bool | None = None,
         max_retries: int | None = None,
