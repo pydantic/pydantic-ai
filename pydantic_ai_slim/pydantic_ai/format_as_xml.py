@@ -26,8 +26,18 @@ def format_as_xml(
     Supports: `str`, `bytes`, `bytearray`, `bool`, `int`, `float`, `date`, `datetime`, `Mapping`,
     `Iterable`, `dataclass`, and `BaseModel`.
 
+    Args:
+        obj: Python Object to serialize to XML.
+        root_tag: Outer tag to wrap the XML in, use `None` to omit the outer tag.
+        item_tag: Tag to use for each item in an iterable.
+        include_root_tag: Whether to include the root tag in the output
+            (The root tag is always included if it includes a body - e.g. when the input is a simple value).
+        indent: Indentation string to use for pretty printing.
+
+    Returns: XML representation of the object.
+
     Example:
-    ```python
+    ```python {title="format_as_xml_example.py"}
     from pydantic_ai.format_as_xml import format_as_xml
 
     print(format_as_xml({'name': 'John', 'height': 6, 'weight': 200}, root_tag='user'))
@@ -39,16 +49,6 @@ def format_as_xml(
     </user>
     '''
     ```
-
-    Args:
-        obj: Python Object to serialize to XML.
-        root_tag: Outer tag to wrap the XML in, use `None` to omit the outer tag.
-        item_tag: Tag to use for each item in an iterable.
-        include_root_tag: Whether to include the root tag in the output
-            (The root tag is always included if it includes a body - e.g. when the input is a simple value).
-        indent: Indentation string to use for pretty printing.
-
-    Returns: XML representation of the object.
     """
     el = _to_xml(obj, root_tag, item_tag)
     if not include_root_tag and el.text is None:
