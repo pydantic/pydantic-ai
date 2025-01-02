@@ -1,5 +1,3 @@
-from pydantic_ai_examples.sql_gen import system_prompt
-
 # Multi-agent Applications
 
 There are roughly four levels of complexity when building applications with PydanticAI:
