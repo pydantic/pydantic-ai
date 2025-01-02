@@ -37,7 +37,7 @@ def format_as_xml(
     Returns: XML representation of the object.
 
     Example:
-    ```python {title="format_as_xml_example.py"}
+    ```python {title="format_as_xml_example.py" lint="skip"}
     from pydantic_ai.format_as_xml import format_as_xml
 
     print(format_as_xml({'name': 'John', 'height': 6, 'weight': 200}, root_tag='user'))
