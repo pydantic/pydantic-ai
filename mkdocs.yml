@@ -25,6 +25,7 @@ nav:
     - testing-evals.md
     - logfire.md
     - multi-agent-applications.md
+    - troubleshooting.md
   - Examples:
     - examples/index.md
     - examples/pydantic-model.md
