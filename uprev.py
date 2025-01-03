@@ -73,6 +73,8 @@ if count_root == 2 and count_ex == 2 and count_slim == 1:
     slim_pp.write_text(slim_pp_text)
     print('running `make sync`...')
     subprocess.run(['make', 'sync'], check=True)
+    print(f'running `git switch -c uprev-{version}`...')
+    subprocess.run(['git', 'switch', '-c', f'uprev-{version}'], check=True)
     print(
         f'SUCCESS: replaced version in\n'
         f'  {root_pp}\n'

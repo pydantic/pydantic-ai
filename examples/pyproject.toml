@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "pydantic-ai-examples"
-version = "0.0.16"
+version = "0.0.17"
 description = "Examples of how to use PydanticAI and what it can do."
 authors = [
     { name = "Samuel Colvin", email = "samuel@pydantic.dev" },
@@ -34,13 +34,14 @@ classifiers = [
 ]
 requires-python = ">=3.9"
 dependencies = [
-    "pydantic-ai-slim[openai,vertexai,groq,anthropic]==0.0.16",
+    "pydantic-ai-slim[openai,vertexai,groq,anthropic]==0.0.17",
     "asyncpg>=0.30.0",
     "fastapi>=0.115.4",
     "logfire[asyncpg,fastapi,sqlite3]>=2.6",
     "python-multipart>=0.0.17",
     "rich>=13.9.2",
     "uvicorn>=0.32.0",
+    "devtools>=0.12.2",
 ]
 
 [tool.hatch.build.targets.wheel]

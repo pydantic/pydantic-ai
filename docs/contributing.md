@@ -44,6 +44,14 @@ To run code formatting, linting, static type checks, and tests with coverage rep
 make
 ```
 
+## Documentation Changes
+
+To run the documentation page locally, run:
+
+```bash
+uv run mkdocs serve
+```
+
 ## Rules for adding new models to PydanticAI {#new-model-rules}
 
 To avoid an excessive workload for the maintainers of PydanticAI, we can't accept all model contributions, so we're setting the following rules for when we'll accept new models and when we won't. This should hopefully reduce the chances of disappointment and wasted work.

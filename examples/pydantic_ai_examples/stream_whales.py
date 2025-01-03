@@ -5,7 +5,7 @@ and displays it as a dynamic table using Rich as the data is received.
 
 Run with:
 
-    uv run -m pydantic_ai_examples.whales
+    uv run -m pydantic_ai_examples.stream_whales
 """
 
 from typing import Annotated
