@@ -19,15 +19,3 @@ Note: This fix also applies to Google Colab.
 ### `UserError: API key must be provided or set in the [MODEL]_API_KEY environment variable`
 
 If you're running into issues with setting the API key for your model, visit the [Models](models.md) page to learn more about how to set an environment variable and/or pass in an `api_key` argument.
-
-
-## Documentation Editing - Cairo Library Not Found
-
-```text
-ERROR - "cairosvg" Python module is installed, but it crashed with:
-        no library called "cairo-2" was found
-        no library called "cairo" was found
-        no library called "libcairo-2" was found
-```
-
-This is a known issue that's addressed in the [Material documentation](https://squidfunk.github.io/mkdocs-material/plugins/requirements/image-processing/#troubleshooting) and seems to come up for Mac users. See a workaround in the aforementioned link.
