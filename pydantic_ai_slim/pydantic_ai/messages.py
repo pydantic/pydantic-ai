@@ -153,6 +153,9 @@ class TextPart:
     part_kind: Literal['text'] = 'text'
     """Part type identifier, this is available on all parts as a discriminator."""
 
+    def has_content(self) -> bool:
+        return bool(self.content)
+
 
 @dataclass
 class ArgsJson:
@@ -293,7 +296,7 @@ ModelResponsePartDelta = Annotated[Union[TextPartDelta, ToolCallPartDelta], pyda
 class PartStartEvent:
     """If multiple PartStartEvents are received with the same index, the new one should fully replace the old one."""
 
-    index: int
+    index: int  # TODO: Consider replacing index here and below with part_id
     part: ModelResponsePart
     event_kind: Literal['part_start'] = 'part_start'
 

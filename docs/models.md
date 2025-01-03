@@ -455,7 +455,6 @@ To implement support for models not already supported, you will need to subclass
 This in turn will require you to implement the following other abstract base classes:
 
 * [`AgentModel`][pydantic_ai.models.AgentModel]
-* [`StreamTextResponse`][pydantic_ai.models.StreamTextResponse]
 * [`StreamedResponse`][pydantic_ai.models.StreamedResponse]
 
 The best place to start is to review the source code for existing implementations, e.g. [`OpenAIModel`](https://github.com/pydantic/pydantic-ai/blob/main/pydantic_ai_slim/pydantic_ai/models/openai.py).

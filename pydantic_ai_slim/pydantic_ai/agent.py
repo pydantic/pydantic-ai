@@ -427,7 +427,7 @@ class Agent(Generic[AgentDeps, ResultData]):
                         model_req_span.__exit__(None, None, None)
 
                         with _logfire.span('handle model response') as handle_span:
-                            maybe_final_result = await self._handle_streamed_model_response(model_response, run_context)
+                            maybe_final_result = await self._handle_streamed_response(model_response, run_context)
 
                             # Check if we got a final result
                             if isinstance(maybe_final_result, _MarkFinalResult):
@@ -997,7 +997,7 @@ class Agent(Generic[AgentDeps, ResultData]):
                 parts.extend(task_results)
         return parts
 
-    async def _handle_streamed_model_response(
+    async def _handle_streamed_response(
         self,
         streamed_response: models.StreamedResponse,
         run_context: RunContext[AgentDeps],

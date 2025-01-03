@@ -18,10 +18,14 @@ from ..messages import (
     ModelResponse,
     ModelResponsePart,
     ModelResponseStreamEvent,
+    PartDeltaEvent,
+    PartStartEvent,
     RetryPromptPart,
     SystemPromptPart,
     TextPart,
+    TextPartDelta,
     ToolCallPart,
+    ToolCallPartDelta,
     ToolReturnPart,
     UserPromptPart,
 )
@@ -167,24 +171,61 @@ class FunctionAgentModel(AgentModel):
         yield FunctionStreamedResponse(response_stream)
 
 
+_CONTENT_PART_INDEX = -1
+
+
 @dataclass
 class FunctionStreamedResponse(StreamedResponse):
     """Implementation of `StreamedResponse` for [FunctionModel][pydantic_ai.models.function.FunctionModel]."""
 
     _iter: AsyncIterator[str | DeltaToolCalls]
-    _delta_tool_calls: dict[int, DeltaToolCall] = field(default_factory=dict)
     _timestamp: datetime = field(default_factory=_utils.now_utc)
 
+    _parts: dict[int, ModelResponsePart] = field(default_factory=dict, init=False)
+    _event_iterator: AsyncIterator[ModelResponseStreamEvent | None] | None = field(default=None, init=False)
+
     async def __anext__(self) -> ModelResponseStreamEvent | None:
-        raise NotImplementedError  # TODO: Need to implement this...
+        if self._event_iterator is None:
+            self._event_iterator = self._get_event_iterator()
+        return await self._event_iterator.__anext__()
+
+    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent | None]:
+        async for item in self._iter:
+            if isinstance(item, str):
+                text = item
+                content_part = self._parts.get(_CONTENT_PART_INDEX)
+                if content_part is None:
+                    content_part = TextPart(content=text)
+                    self._parts[_CONTENT_PART_INDEX] = content_part
+                    yield PartStartEvent(index=_CONTENT_PART_INDEX, part=content_part)
+                else:
+                    assert isinstance(content_part, TextPart), 'Cannot switch to text part mid-stream'
+                    delta = TextPartDelta(content_delta=text)
+                    self._parts[_CONTENT_PART_INDEX] = delta.apply(content_part)
+                    yield PartDeltaEvent(index=_CONTENT_PART_INDEX, delta=delta)
+            else:
+                delta_tool_calls = item
+                for index, delta_tool_call in delta_tool_calls.items():
+                    existing_part = self._parts.get(index)
+                    if existing_part is None:
+                        assert (
+                            delta_tool_call.name is not None
+                        ), 'The first delta_tool_call with a given index must include a tool name'
+                        part = ToolCallPart.from_raw_args(
+                            tool_name=delta_tool_call.name, args=delta_tool_call.json_args or ''
+                        )
+                        self._parts[index] = part
+                        yield PartStartEvent(index=index, part=part)
+                    else:
+                        assert isinstance(existing_part, ToolCallPart), 'Cannot switch to tool call part mid-stream'
+                        if delta_tool_call.json_args is not None:
+                            delta = ToolCallPartDelta(delta_tool_call.json_args)
+                            self._parts[index] = delta.apply(existing_part)
+                            yield PartDeltaEvent(index=index, delta=delta)
 
     def get(self, *, final: bool = False) -> ModelResponse:
-        calls: list[ModelResponsePart] = []
-        for c in self._delta_tool_calls.values():
-            if c.name is not None and c.json_args is not None:
-                calls.append(ToolCallPart.from_raw_args(c.name, c.json_args))
-
-        return ModelResponse(calls, timestamp=self._timestamp)
+        parts = [self._parts[index] for index in sorted(self._parts)]
+        return ModelResponse(parts, timestamp=self._timestamp)
 
     def usage(self) -> result.Usage:
         return _estimate_usage([self.get()])
@@ -229,4 +270,6 @@ def _estimate_usage(messages: Iterable[ModelMessage]) -> result.Usage:
 
 
 def _estimate_string_usage(content: str) -> int:
+    if not content:
+        return 0
     return len(re.split(r'[\s",.:]+', content))

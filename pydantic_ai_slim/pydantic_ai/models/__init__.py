@@ -132,6 +132,7 @@ class AgentModel(ABC):
         self, messages: list[ModelMessage], model_settings: ModelSettings | None
     ) -> AsyncIterator[StreamedResponse]:
         """Make a request to the model and return a streaming response."""
+        # This method is not required, but you need to implement it if you want to support streamed responses
         raise NotImplementedError(f'Streamed requests not supported by this {self.__class__.__name__}')
         # yield is required to make this a generator for type checking
         # noinspection PyUnreachableCode
@@ -141,17 +142,17 @@ class AgentModel(ABC):
 class StreamedResponse(ABC):
     """Streamed response from an LLM when calling a tool."""
 
-    def __aiter__(self) -> AsyncIterator[ModelResponseStreamEvent | None]:  # TODO: Should we drop the None? I think so
-        """Stream the response as an async iterable, building up the tool call as it goes.
+    def __aiter__(self) -> AsyncIterator[ModelResponseStreamEvent | None]:
+        """Stream the response as an async iterable of (optional) `ModelResponseStreamEvent`s.
 
-        This is an async iterator that yields `None` to avoid doing the work of building the final tool call when
-        it will often be thrown away.
+        This is an async iterator that yields events as they are received. It may yield `None` when raw data is received
+        from the model but there is not enough information to produce a meaningful ModelResponseStreamEvent.
         """
         return self
 
     @abstractmethod
-    async def __anext__(self) -> ModelResponseStreamEvent | None:  # TODO: Should we drop the None? I think so
-        """Process the next chunk of the response, see above for why this returns `None`."""
+    async def __anext__(self) -> ModelResponseStreamEvent | None:
+        """Process the next chunk of the response, see above for why this may return `None`."""
         raise NotImplementedError()
 
     @abstractmethod

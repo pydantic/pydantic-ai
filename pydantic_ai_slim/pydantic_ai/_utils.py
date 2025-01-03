@@ -137,7 +137,7 @@ class Either(Generic[Left, Right]):
 @asynccontextmanager
 async def group_by_temporal(
     aiter: AsyncIterator[T], soft_max_interval: float | None
-) -> AsyncIterator[AsyncIterable[list[T]]]:
+) -> AsyncIterator[AsyncIterable[tuple[list[T], bool]]]:
     """Group items from an async iterable into lists based on time interval between them.
 
     Effectively debouncing the iterator.
@@ -160,13 +160,15 @@ async def group_by_temporal(
             as soon as `aiter.__anext__()` returns. If `None`, no grouping/debouncing is performed
 
     Returns:
-        A context manager usable as an iterator async iterable of lists of items from the input async iterable.
+        A context manager usable as an iterator async iterable of pairs of lists of items from the input async iterable,
+        and a boolean indicating whether the item was final coming out of the iterator.
     """
     if soft_max_interval is None:
 
-        async def async_iter_groups_noop() -> AsyncIterator[list[T]]:
+        async def async_iter_groups_noop() -> AsyncIterator[tuple[list[T], bool]]:
             async for item in aiter:
-                yield [item]
+                yield [item], False
+            yield [], True
 
         yield async_iter_groups_noop()
         return
@@ -174,7 +176,7 @@ async def group_by_temporal(
     # we might wait for the next item more than once, so we store the task to await next time
     task: asyncio.Task[T] | None = None
 
-    async def async_iter_groups() -> AsyncIterator[list[T]]:
+    async def async_iter_groups() -> AsyncIterator[tuple[list[T], bool]]:
         nonlocal task
 
         assert soft_max_interval is not None and soft_max_interval >= 0, 'soft_max_interval must be a positive number'
@@ -204,8 +206,7 @@ async def group_by_temporal(
                     item = done.pop().result()
                 except StopAsyncIteration:
                     # if the task raised StopAsyncIteration, we're done iterating
-                    if buffer:
-                        yield buffer
+                    yield buffer, True
                     task = None
                     break
                 else:
@@ -217,7 +218,7 @@ async def group_by_temporal(
                         group_start_time = time.monotonic()
             elif buffer:
                 # otherwise if the task timeout expired and we have items in the buffer, yield the buffer
-                yield buffer
+                yield buffer, False
                 # clear the buffer and reset the group start time ready for the next group
                 buffer = []
                 group_start_time = None
