@@ -15,9 +15,7 @@ As with PydanticAI, this library prioritizes type safety and use of common Pytho
 
 `pydantic-ai-graph` allows you to define graphs using simple Python syntax. In particular, edges are defined using the return type hint of nodes. 
 
-When designing your graph and state machine, you need to identify the data types for the overall graph input, the final graph output, 
-as well as the data types for graph dependency object and graph state. Then for each specific node in the graph, you have to identify 
-the specific data type each node is expected to receive as the input type from the prior node in the graph during transitions.
+When designing your graph and state machine, you need to identify the data types for the overall graph input, the final graph output, the graph dependency object and graph state. Then for each specific node in the graph, you have to identify the specific data type each node is expected to receive as the input type from the prior node in the graph during transitions.
 
 Once the nodes in the graph are defined, you can use certain built-in methods on the Graph object to visualize the nodes 
 and state transitions on the graph as mermaid diagrams.
