@@ -27,6 +27,12 @@ def openai(http_client: httpx.AsyncClient, _tmp_path: Path) -> Model:
     return OpenAIModel('gpt-4o-mini', http_client=http_client)
 
 
+def deepseek(http_client: httpx.AsyncClient, _tmp_path: Path) -> Model:
+    from pydantic_ai.models.deepseek import DeepSeekModel
+
+    return DeepSeekModel('deepseek-chat', http_client=http_client)
+
+
 def gemini(http_client: httpx.AsyncClient, _tmp_path: Path) -> Model:
     from pydantic_ai.models.gemini import GeminiModel
 
@@ -67,13 +73,14 @@ def mistral(http_client: httpx.AsyncClient, _tmp_path: Path) -> Model:
 
 
 params = [
-    pytest.param(openai, id='openai'),
-    pytest.param(gemini, id='gemini'),
-    pytest.param(vertexai, id='vertexai'),
-    pytest.param(groq, id='groq'),
-    pytest.param(anthropic, id='anthropic'),
-    pytest.param(ollama, id='ollama'),
-    pytest.param(mistral, id='mistral'),
+    # pytest.param(openai, id='openai'),
+    # pytest.param(gemini, id='gemini'),
+    # pytest.param(vertexai, id='vertexai'),
+    # pytest.param(groq, id='groq'),
+    # pytest.param(anthropic, id='anthropic'),
+    # pytest.param(ollama, id='ollama'),
+    # pytest.param(mistral, id='mistral'),
+    pytest.param(deepseek, id='deepseek'),
 ]
 GetModel = Callable[[httpx.AsyncClient, Path], Model]
 

@@ -6,6 +6,7 @@ PydanticAI is Model-agnostic and has built in support for the following model pr
 * [Ollama](#ollama)
 * [Groq](#groq)
 * [Mistral](#mistral)
+* [DeepSeek](#deepseek)
 
 You can also [add support for other models](#implementing-custom-models).
 
@@ -107,6 +108,48 @@ client = AsyncAzureOpenAI(
 model = OpenAIModel('gpt-4o', openai_client=client)
 agent = Agent(model)
 ...
+```
+
+## DeepSeek
+
+### Install
+
+To use DeepSeek models, you need to either install [`pydantic-ai`](install.md), or install [`pydantic-ai-slim`](install.md#slim-install) with the `openai` optional group (since DeepSeek uses the OpenAI API format):
+
+```bash
+pip/uv-add 'pydantic-ai-slim[openai]'
+```
+
+### Configuration
+
+To use [`DeepSeekModel`][pydantic_ai.models.deepseek.DeepSeekModel], go to [platform.deepseek.com](https://platform.deepseek.com/api_keys) to generate an API key.
+
+### Environment variable
+
+Once you have the API key, you can set it as an environment variable:
+
+```bash
+export DEEPSEEK_API_KEY='your-api-key'
+```
+
+You can then initialize the model with just the model name:
+
+```python {title="deepseek_model_init.py"}
+from pydantic_ai import Agent
+from pydantic_ai.models.deepseek import DeepSeekModel
+
+model = DeepSeekModel('deepseek-chat')
+agent = Agent(model)
+```
+
+Or provide the API key explicitly:
+
+```python {title="deepseek_model_with_key.py"}
+from pydantic_ai import Agent
+from pydantic_ai.models.deepseek import DeepSeekModel
+
+model = DeepSeekModel('deepseek-chat', api_key='your-api-key')
+agent = Agent(model)
 ```
 
 ## Anthropic
