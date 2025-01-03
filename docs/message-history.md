@@ -43,7 +43,9 @@ print(result.all_messages())
     ModelRequest(
         parts=[
             SystemPromptPart(
-                content='Be a helpful assistant.', part_kind='system-prompt'
+                content='Be a helpful assistant.',
+                dynamic_ref=None,
+                part_kind='system-prompt',
             ),
             UserPromptPart(
                 content='Tell me a joke.',
@@ -85,7 +87,9 @@ async def main():
             ModelRequest(
                 parts=[
                     SystemPromptPart(
-                        content='Be a helpful assistant.', part_kind='system-prompt'
+                        content='Be a helpful assistant.',
+                        dynamic_ref=None,
+                        part_kind='system-prompt',
                     ),
                     UserPromptPart(
                         content='Tell me a joke.',
@@ -112,7 +116,9 @@ async def main():
             ModelRequest(
                 parts=[
                     SystemPromptPart(
-                        content='Be a helpful assistant.', part_kind='system-prompt'
+                        content='Be a helpful assistant.',
+                        dynamic_ref=None,
+                        part_kind='system-prompt',
                     ),
                     UserPromptPart(
                         content='Tell me a joke.',
@@ -166,7 +172,9 @@ print(result2.all_messages())
     ModelRequest(
         parts=[
             SystemPromptPart(
-                content='Be a helpful assistant.', part_kind='system-prompt'
+                content='Be a helpful assistant.',
+                dynamic_ref=None,
+                part_kind='system-prompt',
             ),
             UserPromptPart(
                 content='Tell me a joke.',
@@ -238,7 +246,9 @@ print(result2.all_messages())
     ModelRequest(
         parts=[
             SystemPromptPart(
-                content='Be a helpful assistant.', part_kind='system-prompt'
+                content='Be a helpful assistant.',
+                dynamic_ref=None,
+                part_kind='system-prompt',
             ),
             UserPromptPart(
                 content='Tell me a joke.',

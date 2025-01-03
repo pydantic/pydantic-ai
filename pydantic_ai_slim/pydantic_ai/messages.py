@@ -21,6 +21,9 @@ class SystemPromptPart:
     content: str
     """The content of the prompt."""
 
+    dynamic_ref: str | None = None
+    """The ref of the dynamic system prompt function that generated this part, if any."""
+
     part_kind: Literal['system-prompt'] = 'system-prompt'
     """Part type identifier, this is available on all parts as a discriminator."""
 
