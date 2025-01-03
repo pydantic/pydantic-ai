@@ -53,6 +53,7 @@ nav:
     - api/models/groq.md
     - api/models/mistral.md
     - api/models/ollama.md
+    - api/models/deepseek.md
     - api/models/test.md
     - api/models/function.md
 

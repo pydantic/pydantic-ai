@@ -79,6 +79,7 @@ KnownModelName = Literal[
     'claude-3-5-haiku-latest',
     'claude-3-5-sonnet-latest',
     'claude-3-opus-latest',
+    'deepseek:deepseek-chat',
     'test',
 ]
 """Known model names that can be used with the `model` parameter of [`Agent`][pydantic_ai.Agent].
@@ -295,6 +296,10 @@ def infer_model(model: Model | KnownModelName) -> Model:
         from .ollama import OllamaModel
 
         return OllamaModel(model[7:])
+    elif model.startswith('deepseek:'):
+        from .deepseek import DeepSeekModel
+
+        return DeepSeekModel(model[9:])  # pyright: ignore[reportArgumentType]
     elif model.startswith('claude'):
         from .anthropic import AnthropicModel
 
