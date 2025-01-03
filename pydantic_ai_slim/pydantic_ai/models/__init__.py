@@ -20,7 +20,7 @@ from ..messages import ModelMessage, ModelResponse, ModelResponseStreamEvent
 from ..settings import ModelSettings
 
 if TYPE_CHECKING:
-    from ..result import Cost
+    from ..result import Usage
     from ..tools import ToolDefinition
 
 
@@ -31,6 +31,7 @@ KnownModelName = Literal[
     'openai:gpt-4',
     'openai:o1-preview',
     'openai:o1-mini',
+    'openai:o1',
     'openai:gpt-3.5-turbo',
     'groq:llama-3.3-70b-versatile',
     'groq:llama-3.1-70b-versatile',
@@ -122,7 +123,7 @@ class AgentModel(ABC):
     @abstractmethod
     async def request(
         self, messages: list[ModelMessage], model_settings: ModelSettings | None
-    ) -> tuple[ModelResponse, Cost]:
+    ) -> tuple[ModelResponse, Usage]:
         """Make a request to the model."""
         raise NotImplementedError()
 
@@ -165,10 +166,10 @@ class StreamedResponse(ABC):
         raise NotImplementedError()
 
     @abstractmethod
-    def cost(self) -> Cost:
-        """Get the cost of the request.
+    def usage(self) -> Usage:
+        """Get the usage of the request.
 
-        NOTE: this won't return the full cost until the stream is finished.
+        NOTE: this won't return the full usage until the stream is finished.
         """
         raise NotImplementedError()
 
@@ -192,7 +193,7 @@ The testing models [`TestModel`][pydantic_ai.models.test.TestModel] and
 def check_allow_model_requests() -> None:
     """Check if model requests are allowed.
 
-    If you're defining your own models that have cost or latency associated with their use, you should call this in
+    If you're defining your own models that have costs or latency associated with their use, you should call this in
     [`Model.agent_model`][pydantic_ai.models.Model.agent_model].
 
     Raises:

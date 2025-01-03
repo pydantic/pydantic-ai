@@ -5,7 +5,7 @@ We'd love you to contribute to PydanticAI!
 Clone your fork and cd into the repo directory
 
 ```bash
-git clone git@github.com:<your username>/pydantic.git
+git clone git@github.com:<your username>/pydantic-ai.git
 cd pydantic-ai
 ```
 

@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 import os
 import re
-from collections.abc import AsyncIterator, Iterable, Sequence
+from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from copy import deepcopy
 from dataclasses import dataclass, field
@@ -10,13 +10,11 @@ from datetime import datetime
 from typing import Annotated, Any, Literal, Protocol, Union
 
 import pydantic
-import pydantic_core
 from httpx import USE_CLIENT_DEFAULT, AsyncClient as AsyncHTTPClient, Response as HTTPResponse
 from typing_extensions import NotRequired, TypedDict, TypeGuard, assert_never
 
 from .. import UnexpectedModelBehavior, _utils, exceptions, result
 from ..messages import (
-    ArgsDict,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -34,7 +32,6 @@ from . import (
     AgentModel,
     Model,
     StreamedResponse,
-    StreamTextResponse,
     cached_async_http_client,
     check_allow_model_requests,
     get_user_agent,
@@ -171,10 +168,10 @@ class GeminiAgentModel(AgentModel):
 
     async def request(
         self, messages: list[ModelMessage], model_settings: ModelSettings | None
-    ) -> tuple[ModelResponse, result.Cost]:
+    ) -> tuple[ModelResponse, result.Usage]:
         async with self._make_request(messages, False, model_settings) as http_response:
             response = _gemini_response_ta.validate_json(await http_response.aread())
-        return self._process_response(response), _metadata_as_cost(response)
+        return self._process_response(response), _metadata_as_usage(response)
 
     @asynccontextmanager
     async def request_stream(
@@ -263,7 +260,7 @@ class GeminiAgentModel(AgentModel):
         if _extract_response_parts(start_response).is_left():
             return GeminiStreamedResponse(_content=content, _stream=aiter_bytes)
         else:
-            return GeminiStreamTextResponse(_json_content=content, _stream=aiter_bytes)
+            raise NotImplementedError('TODO: delete this branch')
 
     @classmethod
     def _message_to_gemini_content(
@@ -273,17 +270,26 @@ class GeminiAgentModel(AgentModel):
         contents: list[_GeminiContent] = []
         for m in messages:
             if isinstance(m, ModelRequest):
+                message_parts: list[_GeminiPartUnion] = []
+
                 for part in m.parts:
                     if isinstance(part, SystemPromptPart):
                         sys_prompt_parts.append(_GeminiTextPart(text=part.content))
                     elif isinstance(part, UserPromptPart):
-                        contents.append(_content_user_prompt(part))
+                        message_parts.append(_GeminiTextPart(text=part.content))
                     elif isinstance(part, ToolReturnPart):
-                        contents.append(_content_tool_return(part))
+                        message_parts.append(_response_part_from_response(part.tool_name, part.model_response_object()))
                     elif isinstance(part, RetryPromptPart):
-                        contents.append(_content_retry_prompt(part))
+                        if part.tool_name is None:
+                            message_parts.append(_GeminiTextPart(text=part.model_response()))
+                        else:
+                            response = {'call_error': part.model_response()}
+                            message_parts.append(_response_part_from_response(part.tool_name, response))
                     else:
                         assert_never(part)
+
+                if message_parts:
+                    contents.append(_GeminiContent(role='user', parts=message_parts))
             elif isinstance(m, ModelResponse):
                 contents.append(_content_model_response(m))
             else:
@@ -293,58 +299,13 @@ class GeminiAgentModel(AgentModel):
 
 
 @dataclass
-class GeminiStreamTextResponse(StreamTextResponse):
-    """Implementation of `StreamTextResponse` for the Gemini model."""
-
-    _json_content: bytearray
-    _stream: AsyncIterator[bytes]
-    _position: int = 0
-    _timestamp: datetime = field(default_factory=_utils.now_utc, init=False)
-    _cost: result.Cost = field(default_factory=result.Cost, init=False)
-
-    async def __anext__(self) -> None:
-        chunk = await self._stream.__anext__()
-        self._json_content.extend(chunk)
-
-    def get(self, *, final: bool = False) -> Iterable[str]:
-        if final:
-            all_items = pydantic_core.from_json(self._json_content)
-            new_items = all_items[self._position :]
-            self._position = len(all_items)
-            new_responses = _gemini_streamed_response_ta.validate_python(new_items)
-        else:
-            all_items = pydantic_core.from_json(self._json_content, allow_partial=True)
-            new_items = all_items[self._position : -1]
-            self._position = len(all_items) - 1
-            new_responses = _gemini_streamed_response_ta.validate_python(
-                new_items, experimental_allow_partial='trailing-strings'
-            )
-        for r in new_responses:
-            self._cost += _metadata_as_cost(r)
-            parts = r['candidates'][0]['content']['parts']
-            if _all_text_parts(parts):
-                for part in parts:
-                    yield part['text']
-            else:
-                raise UnexpectedModelBehavior(
-                    'Streamed response with unexpected content, expected all parts to be text'
-                )
-
-    def cost(self) -> result.Cost:
-        return self._cost
-
-    def timestamp(self) -> datetime:
-        return self._timestamp
-
-
-@dataclass
 class GeminiStreamedResponse(StreamedResponse):
     """Implementation of `StreamedResponse` for the Gemini model."""
 
     _content: bytearray
     _stream: AsyncIterator[bytes]
     _timestamp: datetime = field(default_factory=_utils.now_utc, init=False)
-    _cost: result.Cost = field(default_factory=result.Cost, init=False)
+    _usage: result.Usage = field(default_factory=result.Usage, init=False)
 
     async def __anext__(self) -> None:
         chunk = await self._stream.__anext__()
@@ -364,15 +325,15 @@ class GeminiStreamedResponse(StreamedResponse):
             experimental_allow_partial='off' if final else 'trailing-strings',
         )
         combined_parts: list[_GeminiPartUnion] = []
-        self._cost = result.Cost()
+        self._usage = result.Usage()
         for r in responses:
-            self._cost += _metadata_as_cost(r)
+            self._usage += _metadata_as_usage(r)
             candidate = r['candidates'][0]
             combined_parts.extend(candidate['content']['parts'])
         return _process_response_from_parts(combined_parts, timestamp=self._timestamp)
 
-    def cost(self) -> result.Cost:
-        return self._cost
+    def usage(self) -> result.Usage:
+        return self._usage
 
     def timestamp(self) -> datetime:
         return self._timestamp
@@ -420,31 +381,14 @@ class _GeminiContent(TypedDict):
     parts: list[_GeminiPartUnion]
 
 
-def _content_user_prompt(m: UserPromptPart) -> _GeminiContent:
-    return _GeminiContent(role='user', parts=[_GeminiTextPart(text=m.content)])
-
-
-def _content_tool_return(m: ToolReturnPart) -> _GeminiContent:
-    f_response = _response_part_from_response(m.tool_name, m.model_response_object())
-    return _GeminiContent(role='user', parts=[f_response])
-
-
-def _content_retry_prompt(m: RetryPromptPart) -> _GeminiContent:
-    if m.tool_name is None:
-        part = _GeminiTextPart(text=m.model_response())
-    else:
-        response = {'call_error': m.model_response()}
-        part = _response_part_from_response(m.tool_name, response)
-    return _GeminiContent(role='user', parts=[part])
-
-
 def _content_model_response(m: ModelResponse) -> _GeminiContent:
     parts: list[_GeminiPartUnion] = []
     for item in m.parts:
         if isinstance(item, ToolCallPart):
             parts.append(_function_call_part_from_call(item))
         elif isinstance(item, TextPart):
-            parts.append(_GeminiTextPart(text=item.content))
+            if item.content:
+                parts.append(_GeminiTextPart(text=item.content))
         else:
             assert_never(item)
     return _GeminiContent(role='model', parts=parts)
@@ -459,8 +403,7 @@ class _GeminiFunctionCallPart(TypedDict):
 
 
 def _function_call_part_from_call(tool: ToolCallPart) -> _GeminiFunctionCallPart:
-    assert isinstance(tool.args, ArgsDict), f'Expected ArgsObject, got {tool.args}'
-    return _GeminiFunctionCallPart(function_call=_GeminiFunctionCall(name=tool.tool_name, args=tool.args.args_dict))
+    return _GeminiFunctionCallPart(function_call=_GeminiFunctionCall(name=tool.tool_name, args=tool.args_as_dict()))
 
 
 def _process_response_from_parts(parts: Sequence[_GeminiPartUnion], timestamp: datetime | None = None) -> ModelResponse:
@@ -469,7 +412,7 @@ def _process_response_from_parts(parts: Sequence[_GeminiPartUnion], timestamp: d
         if 'text' in part:
             items.append(TextPart(part['text']))
         elif 'function_call' in part:
-            items.append(ToolCallPart.from_dict(part['function_call']['name'], part['function_call']['args']))
+            items.append(ToolCallPart.from_raw_args(part['function_call']['name'], part['function_call']['args']))
         elif 'function_response' in part:
             raise exceptions.UnexpectedModelBehavior(
                 f'Unsupported response from Gemini, expected all parts to be function calls or text, got: {part!r}'
@@ -584,7 +527,7 @@ class _GeminiResponse(TypedDict):
     prompt_feedback: NotRequired[Annotated[_GeminiPromptFeedback, pydantic.Field(alias='promptFeedback')]]
 
 
-# TODO: Delete the next three functions once we've reworked streams to be more flexible
+# TODO: Delete the next three functions as part of this PR
 def _extract_response_parts(
     response: _GeminiResponse,
 ) -> _utils.Either[list[_GeminiFunctionCallPart], list[_GeminiTextPart]]:
@@ -639,14 +582,14 @@ class _GeminiUsageMetaData(TypedDict, total=False):
     cached_content_token_count: NotRequired[Annotated[int, pydantic.Field(alias='cachedContentTokenCount')]]
 
 
-def _metadata_as_cost(response: _GeminiResponse) -> result.Cost:
+def _metadata_as_usage(response: _GeminiResponse) -> result.Usage:
     metadata = response.get('usage_metadata')
     if metadata is None:
-        return result.Cost()
+        return result.Usage()
     details: dict[str, int] = {}
     if cached_content_token_count := metadata.get('cached_content_token_count'):
         details['cached_content_token_count'] = cached_content_token_count
-    return result.Cost(
+    return result.Usage(
         request_tokens=metadata.get('prompt_token_count', 0),
         response_tokens=metadata.get('candidates_token_count', 0),
         total_tokens=metadata.get('total_token_count', 0),
@@ -702,7 +645,7 @@ class _GeminiJsonSchema:
 
     def _simplify(self, schema: dict[str, Any], refs_stack: tuple[str, ...]) -> None:
         schema.pop('title', None)
-        schema.pop('default', None)
+        default = schema.pop('default', _utils.UNSET)
         if ref := schema.pop('$ref', None):
             # noinspection PyTypeChecker
             key = re.sub(r'^#/\$defs/', '', ref)
@@ -715,8 +658,14 @@ class _GeminiJsonSchema:
             return
 
         if any_of := schema.get('anyOf'):
-            for schema in any_of:
-                self._simplify(schema, refs_stack)
+            for item_schema in any_of:
+                self._simplify(item_schema, refs_stack)
+            if len(any_of) == 2 and {'type': 'null'} in any_of and default is None:
+                for item_schema in any_of:
+                    if item_schema != {'type': 'null'}:
+                        schema.clear()
+                        schema.update(item_schema)
+                        return
 
         type_ = schema.get('type')
 

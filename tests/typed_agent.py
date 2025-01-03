@@ -3,7 +3,7 @@
 from collections.abc import Awaitable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Callable, Union, assert_type
+from typing import Callable, TypeAlias, Union, assert_type
 
 from pydantic_ai import Agent, ModelRetry, RunContext, Tool
 from pydantic_ai.result import RunResult
@@ -178,6 +178,13 @@ def run_sync3() -> None:
     assert_type(result.data, Union[Foo, Bar])
 
 
+MyUnion: TypeAlias = 'Foo | Bar'
+union_agent2: Agent[None, MyUnion] = Agent(
+    result_type=MyUnion,  # type: ignore[arg-type]
+)
+assert_type(union_agent2, Agent[None, MyUnion])
+
+
 def foobar_ctx(ctx: RunContext[int], x: str, y: int) -> str:
     return f'{x} {y}'
 
@@ -189,7 +196,8 @@ def foobar_plain(x: str, y: int) -> str:
 Tool(foobar_ctx, takes_ctx=True)
 Tool(foobar_ctx)
 Tool(foobar_plain, takes_ctx=False)
-Tool(foobar_plain)
+assert_type(Tool(foobar_plain), Tool[None])
+assert_type(Tool(foobar_plain), Tool)
 
 # unfortunately we can't type check these cases, since from a typing perspect `foobar_ctx` is valid as a plain tool
 Tool(foobar_ctx, takes_ctx=False)
@@ -199,12 +207,15 @@ Agent('test', tools=[foobar_ctx], deps_type=int)
 Agent('test', tools=[foobar_plain], deps_type=int)
 Agent('test', tools=[foobar_plain])
 Agent('test', tools=[Tool(foobar_ctx)], deps_type=int)
-Agent('test', tools=[Tool(foobar_plain)], deps_type=int)
 Agent('test', tools=[Tool(foobar_ctx), foobar_ctx, foobar_plain], deps_type=int)
+Agent('test', tools=[Tool(foobar_ctx), foobar_ctx, Tool(foobar_plain)], deps_type=int)
 
 Agent('test', tools=[foobar_ctx], deps_type=str)  # pyright: ignore[reportArgumentType]
+Agent('test', tools=[Tool(foobar_ctx), Tool(foobar_plain)], deps_type=str)  # pyright: ignore[reportArgumentType]
 Agent('test', tools=[foobar_ctx])  # pyright: ignore[reportArgumentType]
 Agent('test', tools=[Tool(foobar_ctx)])  # pyright: ignore[reportArgumentType]
+# since deps are not set, they default to `None`, so can't be `int`
+Agent('test', tools=[Tool(foobar_plain)], deps_type=int)  # pyright: ignore[reportArgumentType]
 
 # prepare example from docs:
 
@@ -225,3 +236,14 @@ greet_agent = Agent[str, str]('test', tools=[greet_tool], deps_type=str)
 
 result = greet_agent.run_sync('testing...', deps='human')
 assert result.data == '{"greet":"hello a"}'
+
+MYPY = False
+if not MYPY:
+    default_agent = Agent()
+    assert_type(default_agent, Agent[None, str])
+    assert_type(default_agent, Agent[None])
+    assert_type(default_agent, Agent)
+
+partial_agent: Agent[MyDeps] = Agent(deps_type=MyDeps)
+assert_type(partial_agent, Agent[MyDeps, str])
+assert_type(partial_agent, Agent[MyDeps])

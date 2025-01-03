@@ -10,6 +10,6 @@ env*/
 /TODO.md
 /postgres-data/
 .DS_Store
-/pydantic_ai_examples/.chat_app_messages.sqlite
+examples/pydantic_ai_examples/.chat_app_messages.sqlite
 .cache/
 .vscode/

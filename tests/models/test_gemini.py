@@ -19,6 +19,7 @@ from pydantic_ai.messages import (
     ModelResponse,
     RetryPromptPart,
     SystemPromptPart,
+    TextPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
@@ -40,7 +41,7 @@ from pydantic_ai.models.gemini import (
     _GeminiTools,
     _GeminiUsageMetaData,
 )
-from pydantic_ai.result import Cost
+from pydantic_ai.result import Usage
 from pydantic_ai.tools import ToolDefinition
 
 from ..conftest import ClientWithHandler, IsNow, TestEnv
@@ -261,14 +262,12 @@ async def test_json_def_replaced_any_of(allow_model_requests: None):
                     parameters={
                         'properties': {
                             'op_location': {
-                                'anyOf': [
-                                    {
-                                        'properties': {'lat': {'type': 'number'}, 'lng': {'type': 'number'}},
-                                        'required': ['lat', 'lng'],
-                                        'type': 'object',
-                                    },
-                                    {'type': 'null'},
-                                ]
+                                'properties': {
+                                    'lat': {'type': 'number'},
+                                    'lng': {'type': 'number'},
+                                },
+                                'required': ['lat', 'lng'],
+                                'type': 'object',
                             }
                         },
                         'type': 'object',
@@ -396,7 +395,7 @@ async def test_text_success(get_gemini_client: GetGeminiClient):
             ModelResponse.from_text(content='Hello world', timestamp=IsNow(tz=timezone.utc)),
         ]
     )
-    assert result.cost() == snapshot(Cost(request_tokens=1, response_tokens=2, total_tokens=3))
+    assert result.usage() == snapshot(Usage(requests=1, request_tokens=1, response_tokens=2, total_tokens=3))
 
     result = await agent.run('Hello', message_history=result.new_messages())
     assert result.data == 'Hello world'
@@ -413,7 +412,7 @@ async def test_text_success(get_gemini_client: GetGeminiClient):
 async def test_request_structured_response(get_gemini_client: GetGeminiClient):
     response = gemini_response(
         _content_model_response(
-            ModelResponse(parts=[ToolCallPart.from_dict('final_result', {'response': [1, 2, 123]})])
+            ModelResponse(parts=[ToolCallPart.from_raw_args('final_result', {'response': [1, 2, 123]})])
         )
     )
     gemini_client = get_gemini_client(response)
@@ -449,12 +448,17 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
     responses = [
         gemini_response(
             _content_model_response(
-                ModelResponse(parts=[ToolCallPart.from_dict('get_location', {'loc_name': 'San Fransisco'})])
+                ModelResponse(parts=[ToolCallPart.from_raw_args('get_location', {'loc_name': 'San Fransisco'})])
             )
         ),
         gemini_response(
             _content_model_response(
-                ModelResponse(parts=[ToolCallPart.from_dict('get_location', {'loc_name': 'London'})])
+                ModelResponse(
+                    parts=[
+                        ToolCallPart.from_raw_args('get_location', {'loc_name': 'London'}),
+                        ToolCallPart.from_raw_args('get_location', {'loc_name': 'New York'}),
+                    ]
+                )
             )
         ),
         gemini_response(_content_model_response(ModelResponse.from_text('final response'))),
@@ -467,6 +471,8 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
     async def get_location(loc_name: str) -> str:
         if loc_name == 'London':
             return json.dumps({'lat': 51, 'lng': 0})
+        elif loc_name == 'New York':
+            return json.dumps({'lat': 41, 'lng': -74})
         else:
             raise ModelRetry('Wrong location, please try again')
 
@@ -503,7 +509,11 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
                     ToolCallPart(
                         tool_name='get_location',
                         args=ArgsDict(args_dict={'loc_name': 'London'}),
-                    )
+                    ),
+                    ToolCallPart(
+                        tool_name='get_location',
+                        args=ArgsDict(args_dict={'loc_name': 'New York'}),
+                    ),
                 ],
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -511,13 +521,16 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
                 parts=[
                     ToolReturnPart(
                         tool_name='get_location', content='{"lat": 51, "lng": 0}', timestamp=IsNow(tz=timezone.utc)
-                    )
+                    ),
+                    ToolReturnPart(
+                        tool_name='get_location', content='{"lat": 41, "lng": -74}', timestamp=IsNow(tz=timezone.utc)
+                    ),
                 ]
             ),
             ModelResponse.from_text(content='final response', timestamp=IsNow(tz=timezone.utc)),
         ]
     )
-    assert result.cost() == snapshot(Cost(request_tokens=3, response_tokens=6, total_tokens=9))
+    assert result.usage() == snapshot(Usage(requests=3, request_tokens=3, response_tokens=6, total_tokens=9))
 
 
 async def test_unexpected_response(client_with_handler: ClientWithHandler, env: TestEnv, allow_model_requests: None):
@@ -536,28 +549,6 @@ async def test_unexpected_response(client_with_handler: ClientWithHandler, env: 
     assert str(exc_info.value) == snapshot('Unexpected response from gemini 401, body:\ninvalid request')
 
 
-async def test_heterogeneous_responses(get_gemini_client: GetGeminiClient):
-    response = gemini_response(
-        _GeminiContent(
-            role='model',
-            parts=[
-                _GeminiTextPart(text='foo'),
-                _function_call_part_from_call(
-                    ToolCallPart(
-                        tool_name='get_location',
-                        args=ArgsDict(args_dict={'loc_name': 'San Fransisco'}),
-                    )
-                ),
-            ],
-        )
-    )
-    gemini_client = get_gemini_client(response)
-    m = GeminiModel('gemini-1.5-flash', http_client=gemini_client)
-    agent = Agent(m)
-    result = await agent.run('Hello')
-    assert result.data == 'foo'
-
-
 async def test_stream_text(get_gemini_client: GetGeminiClient):
     responses = [
         gemini_response(_content_model_response(ModelResponse.from_text('Hello '))),
@@ -572,12 +563,12 @@ async def test_stream_text(get_gemini_client: GetGeminiClient):
     async with agent.run_stream('Hello') as result:
         chunks = [chunk async for chunk in result.stream(debounce_by=None)]
         assert chunks == snapshot(['Hello ', 'Hello world'])
-    assert result.cost() == snapshot(Cost(request_tokens=2, response_tokens=4, total_tokens=6))
+    assert result.usage() == snapshot(Usage(requests=1, request_tokens=2, response_tokens=4, total_tokens=6))
 
     async with agent.run_stream('Hello') as result:
         chunks = [chunk async for chunk in result.stream_text(delta=True, debounce_by=None)]
         assert chunks == snapshot(['', 'Hello ', 'world'])
-    assert result.cost() == snapshot(Cost(request_tokens=2, response_tokens=4, total_tokens=6))
+    assert result.usage() == snapshot(Usage(requests=1, request_tokens=2, response_tokens=4, total_tokens=6))
 
 
 async def test_stream_text_no_data(get_gemini_client: GetGeminiClient):
@@ -596,7 +587,7 @@ async def test_stream_structured(get_gemini_client: GetGeminiClient):
     responses = [
         gemini_response(
             _content_model_response(
-                ModelResponse(parts=[ToolCallPart.from_dict('final_result', {'response': [1, 2]})])
+                ModelResponse(parts=[ToolCallPart.from_raw_args('final_result', {'response': [1, 2]})])
             ),
         ),
     ]
@@ -609,16 +600,16 @@ async def test_stream_structured(get_gemini_client: GetGeminiClient):
     async with agent.run_stream('Hello') as result:
         chunks = [chunk async for chunk in result.stream(debounce_by=None)]
         assert chunks == snapshot([(1, 2), (1, 2), (1, 2)])
-    assert result.cost() == snapshot(Cost(request_tokens=1, response_tokens=2, total_tokens=3))
+    assert result.usage() == snapshot(Usage(requests=1, request_tokens=1, response_tokens=2, total_tokens=3))
 
 
 async def test_stream_structured_tool_calls(get_gemini_client: GetGeminiClient):
     first_responses = [
         gemini_response(
-            _content_model_response(ModelResponse(parts=[ToolCallPart.from_dict('foo', {'x': 'a'})])),
+            _content_model_response(ModelResponse(parts=[ToolCallPart.from_raw_args('foo', {'x': 'a'})])),
         ),
         gemini_response(
-            _content_model_response(ModelResponse(parts=[ToolCallPart.from_dict('bar', {'y': 'b'})])),
+            _content_model_response(ModelResponse(parts=[ToolCallPart.from_raw_args('bar', {'y': 'b'})])),
         ),
     ]
     d1 = _gemini_streamed_response_ta.dump_json(first_responses, by_alias=True)
@@ -627,7 +618,7 @@ async def test_stream_structured_tool_calls(get_gemini_client: GetGeminiClient):
     second_responses = [
         gemini_response(
             _content_model_response(
-                ModelResponse(parts=[ToolCallPart.from_dict('final_result', {'response': [1, 2]})])
+                ModelResponse(parts=[ToolCallPart.from_raw_args('final_result', {'response': [1, 2]})])
             ),
         ),
     ]
@@ -652,7 +643,7 @@ async def test_stream_structured_tool_calls(get_gemini_client: GetGeminiClient):
     async with agent.run_stream('Hello') as result:
         response = await result.get_data()
         assert response == snapshot((1, 2))
-    assert result.cost() == snapshot(Cost(request_tokens=3, response_tokens=6, total_tokens=9))
+    assert result.usage() == snapshot(Usage(requests=2, request_tokens=3, response_tokens=6, total_tokens=9))
     assert result.all_messages() == snapshot(
         [
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
@@ -718,3 +709,40 @@ async def test_stream_text_heterogeneous(get_gemini_client: GetGeminiClient):
     async with agent.run_stream('Hello') as result:
         with pytest.raises(UnexpectedModelBehavior, match=msg):
             await result.get_data()
+
+
+async def test_empty_text_ignored():
+    content = _content_model_response(
+        ModelResponse(
+            parts=[
+                ToolCallPart.from_raw_args('final_result', {'response': [1, 2, 123]}),
+                TextPart(content='xxx'),
+            ]
+        )
+    )
+    # text included
+    assert content == snapshot(
+        {
+            'role': 'model',
+            'parts': [
+                {'function_call': {'name': 'final_result', 'args': {'response': [1, 2, 123]}}},
+                {'text': 'xxx'},
+            ],
+        }
+    )
+
+    content = _content_model_response(
+        ModelResponse(
+            parts=[
+                ToolCallPart.from_raw_args('final_result', {'response': [1, 2, 123]}),
+                TextPart(content=''),
+            ]
+        )
+    )
+    # text skipped
+    assert content == snapshot(
+        {
+            'role': 'model',
+            'parts': [{'function_call': {'name': 'final_result', 'args': {'response': [1, 2, 123]}}}],
+        }
+    )

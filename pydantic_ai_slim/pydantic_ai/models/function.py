@@ -7,18 +7,17 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from itertools import chain
-from typing import Callable, Union, cast
+from typing import Callable, Union
 
-import pydantic_core
 from typing_extensions import TypeAlias, assert_never, overload
 
 from .. import _utils, result
 from ..messages import (
-    ArgsJson,
     ModelMessage,
     ModelRequest,
     ModelResponse,
     ModelResponsePart,
+    ModelResponseStreamEvent,
     RetryPromptPart,
     SystemPromptPart,
     TextPart,
@@ -144,7 +143,7 @@ class FunctionAgentModel(AgentModel):
 
     async def request(
         self, messages: list[ModelMessage], model_settings: ModelSettings | None
-    ) -> tuple[ModelResponse, result.Cost]:
+    ) -> tuple[ModelResponse, result.Usage]:
         agent_info = replace(self.agent_info, model_settings=model_settings)
 
         assert self.function is not None, 'FunctionModel must receive a `function` to support non-streamed requests'
@@ -155,7 +154,7 @@ class FunctionAgentModel(AgentModel):
             assert isinstance(response_, ModelResponse), response_
             response = response_
         # TODO is `messages` right here? Should it just be new messages?
-        return response, _estimate_cost(chain(messages, [response]))
+        return response, _estimate_usage(chain(messages, [response]))
 
     @asynccontextmanager
     async def request_stream(
@@ -176,37 +175,26 @@ class FunctionStreamedResponse(StreamedResponse):
     _delta_tool_calls: dict[int, DeltaToolCall] = field(default_factory=dict)
     _timestamp: datetime = field(default_factory=_utils.now_utc)
 
-    async def __anext__(self) -> None:
-        if self._next is not None:
-            tool_call = self._next
-            self._next = None
-        else:
-            tool_call = await self._iter.__anext__()
-
-        for key, new in tool_call.items():
-            if current := self._delta_tool_calls.get(key):
-                current.name = _utils.add_optional(current.name, new.name)
-                current.json_args = _utils.add_optional(current.json_args, new.json_args)
-            else:
-                self._delta_tool_calls[key] = new
+    async def __anext__(self) -> ModelResponseStreamEvent | None:
+        raise NotImplementedError  # TODO: Need to implement this...
 
     def get(self, *, final: bool = False) -> ModelResponse:
         calls: list[ModelResponsePart] = []
         for c in self._delta_tool_calls.values():
             if c.name is not None and c.json_args is not None:
-                calls.append(ToolCallPart.from_json(c.name, c.json_args))
+                calls.append(ToolCallPart.from_raw_args(c.name, c.json_args))
 
         return ModelResponse(calls, timestamp=self._timestamp)
 
-    def cost(self) -> result.Cost:
-        return result.Cost()
+    def usage(self) -> result.Usage:
+        return _estimate_usage([self.get()])
 
     def timestamp(self) -> datetime:
         return self._timestamp
 
 
-def _estimate_cost(messages: Iterable[ModelMessage]) -> result.Cost:
-    """Very rough guesstimate of the number of tokens associate with a series of messages.
+def _estimate_usage(messages: Iterable[ModelMessage]) -> result.Usage:
+    """Very rough guesstimate of the token usage associated with a series of messages.
 
     This is designed to be used solely to give plausible numbers for testing!
     """
@@ -217,32 +205,28 @@ def _estimate_cost(messages: Iterable[ModelMessage]) -> result.Cost:
         if isinstance(message, ModelRequest):
             for part in message.parts:
                 if isinstance(part, (SystemPromptPart, UserPromptPart)):
-                    request_tokens += _string_cost(part.content)
+                    request_tokens += _estimate_string_usage(part.content)
                 elif isinstance(part, ToolReturnPart):
-                    request_tokens += _string_cost(part.model_response_str())
+                    request_tokens += _estimate_string_usage(part.model_response_str())
                 elif isinstance(part, RetryPromptPart):
-                    request_tokens += _string_cost(part.model_response())
+                    request_tokens += _estimate_string_usage(part.model_response())
                 else:
                     assert_never(part)
         elif isinstance(message, ModelResponse):
             for part in message.parts:
                 if isinstance(part, TextPart):
-                    response_tokens += _string_cost(part.content)
+                    response_tokens += _estimate_string_usage(part.content)
                 elif isinstance(part, ToolCallPart):
                     call = part
-                    if isinstance(call.args, ArgsJson):
-                        args_str = call.args.args_json
-                    else:
-                        args_str = pydantic_core.to_json(call.args.args_dict).decode()
-                    response_tokens += 1 + _string_cost(args_str)
+                    response_tokens += 1 + _estimate_string_usage(call.args_as_json_str())
                 else:
                     assert_never(part)
         else:
             assert_never(message)
-    return result.Cost(
+    return result.Usage(
         request_tokens=request_tokens, response_tokens=response_tokens, total_tokens=request_tokens + response_tokens
     )
 
 
-def _string_cost(content: str) -> int:
+def _estimate_string_usage(content: str) -> int:
     return len(re.split(r'[\s",.:]+', content))

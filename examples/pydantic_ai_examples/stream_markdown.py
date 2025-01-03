@@ -43,7 +43,7 @@ async def main():
                 async with agent.run_stream(prompt, model=model) as result:
                     async for message in result.stream():
                         live.update(Markdown(message))
-            console.log(result.cost())
+            console.log(result.usage())
         else:
             console.log(f'{model} requires {env_var} to be set.')
 

@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block content %}
+  <div id="version-warning"></div>
+  <script>
+    fetch('/version-warning.html?v={{ build_timestamp }}').then(r => {
+      if (r.ok) {
+        r.text().then(text => { document.getElementById('version-warning').innerHTML = text })
+    } else {
+        r.text().then(text => { console.error('failed to fetch ahead-warning.html:', {r, text})})
+      }
+    })
+  </script>
+  {{ super() }}
+{% endblock %}

@@ -22,7 +22,7 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.result import Cost
+from pydantic_ai.result import Usage
 
 from ..conftest import IsNow, try_import
 
@@ -137,14 +137,14 @@ async def test_request_simple_success(allow_model_requests: None):
 
     result = await agent.run('hello')
     assert result.data == 'world'
-    assert result.cost() == snapshot(Cost())
+    assert result.usage() == snapshot(Usage(requests=1))
 
     # reset the index so we get the same response again
     mock_client.index = 0  # type: ignore
 
     result = await agent.run('hello', message_history=result.new_messages())
     assert result.data == 'world'
-    assert result.cost() == snapshot(Cost())
+    assert result.usage() == snapshot(Usage(requests=1))
     assert result.all_messages() == snapshot(
         [
             ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
@@ -166,7 +166,7 @@ async def test_request_simple_usage(allow_model_requests: None):
 
     result = await agent.run('Hello')
     assert result.data == 'world'
-    assert result.cost() == snapshot(Cost(request_tokens=2, response_tokens=1, total_tokens=3))
+    assert result.usage() == snapshot(Usage(requests=1, request_tokens=2, response_tokens=1, total_tokens=3))
 
 
 async def test_request_structured_response(allow_model_requests: None):
@@ -322,8 +322,14 @@ async def test_request_tool_call(allow_model_requests: None):
             ModelResponse.from_text(content='final response', timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc)),
         ]
     )
-    assert result.cost() == snapshot(
-        Cost(request_tokens=5, response_tokens=3, total_tokens=9, details={'cached_tokens': 3})
+    assert result.usage() == snapshot(
+        Usage(
+            requests=3,
+            request_tokens=5,
+            response_tokens=3,
+            total_tokens=9,
+            details={'cached_tokens': 3},
+        )
     )
 
 
@@ -358,7 +364,7 @@ async def test_stream_text(allow_model_requests: None):
         assert not result.is_complete
         assert [c async for c in result.stream(debounce_by=None)] == snapshot(['hello ', 'hello world'])
         assert result.is_complete
-        assert result.cost() == snapshot(Cost(request_tokens=6, response_tokens=3, total_tokens=9))
+        assert result.usage() == snapshot(Usage(requests=1, request_tokens=6, response_tokens=3, total_tokens=9))
 
 
 async def test_stream_text_finish_reason(allow_model_requests: None):
@@ -425,9 +431,9 @@ async def test_stream_structured(allow_model_requests: None):
             ]
         )
         assert result.is_complete
-        assert result.cost() == snapshot(Cost(request_tokens=20, response_tokens=10, total_tokens=30))
-        # double check cost matches stream count
-        assert result.cost().response_tokens == len(stream)
+        assert result.usage() == snapshot(Usage(requests=1, request_tokens=20, response_tokens=10, total_tokens=30))
+        # double check usage matches stream count
+        assert result.usage().response_tokens == len(stream)
 
 
 async def test_stream_structured_finish_reason(allow_model_requests: None):
@@ -482,4 +488,4 @@ async def test_no_delta(allow_model_requests: None):
         assert not result.is_complete
         assert [c async for c in result.stream(debounce_by=None)] == snapshot(['hello ', 'hello world'])
         assert result.is_complete
-        assert result.cost() == snapshot(Cost(request_tokens=6, response_tokens=3, total_tokens=9))
+        assert result.usage() == snapshot(Usage(requests=1, request_tokens=6, response_tokens=3, total_tokens=9))

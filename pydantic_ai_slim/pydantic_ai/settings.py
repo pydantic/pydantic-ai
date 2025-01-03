@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from httpx import Timeout
 from typing_extensions import TypedDict
+
+if TYPE_CHECKING:
+    pass
 
 
 class ModelSettings(TypedDict, total=False):
@@ -14,6 +19,7 @@ class ModelSettings(TypedDict, total=False):
     """The maximum number of tokens to generate before stopping.
 
     Supported by:
+
     * Gemini
     * Anthropic
     * OpenAI
@@ -29,6 +35,7 @@ class ModelSettings(TypedDict, total=False):
     Note that even with `temperature` of `0.0`, the results will not be fully deterministic.
 
     Supported by:
+
     * Gemini
     * Anthropic
     * OpenAI
@@ -43,6 +50,7 @@ class ModelSettings(TypedDict, total=False):
     You should either alter `temperature` or `top_p`, but not both.
 
     Supported by:
+
     * Gemini
     * Anthropic
     * OpenAI
@@ -53,6 +61,7 @@ class ModelSettings(TypedDict, total=False):
     """Override the client-level default timeout for a request, in seconds.
 
     Supported by:
+
     * Gemini
     * Anthropic
     * OpenAI

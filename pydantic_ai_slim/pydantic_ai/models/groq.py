@@ -13,7 +13,6 @@ from typing_extensions import assert_never
 from .. import UnexpectedModelBehavior, _utils, result
 from .._utils import guard_tool_call_id as _guard_tool_call_id
 from ..messages import (
-    ArgsJson,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -25,14 +24,13 @@ from ..messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from ..result import Cost
+from ..result import Usage
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from . import (
     AgentModel,
     Model,
     StreamedResponse,
-    StreamTextResponse,
     cached_async_http_client,
     check_allow_model_requests,
 )
@@ -157,9 +155,9 @@ class GroqAgentModel(AgentModel):
 
     async def request(
         self, messages: list[ModelMessage], model_settings: ModelSettings | None
-    ) -> tuple[ModelResponse, result.Cost]:
+    ) -> tuple[ModelResponse, result.Usage]:
         response = await self._completions_create(messages, False, model_settings)
-        return self._process_response(response), _map_cost(response)
+        return self._process_response(response), _map_usage(response)
 
     @asynccontextmanager
     async def request_stream(
@@ -220,14 +218,14 @@ class GroqAgentModel(AgentModel):
             items.append(TextPart(choice.message.content))
         if choice.message.tool_calls is not None:
             for c in choice.message.tool_calls:
-                items.append(ToolCallPart.from_json(c.function.name, c.function.arguments, c.id))
+                items.append(ToolCallPart.from_raw_args(c.function.name, c.function.arguments, c.id))
         return ModelResponse(items, timestamp=timestamp)
 
     @staticmethod
     async def _process_streamed_response(response: AsyncStream[ChatCompletionChunk]) -> StreamedResponse:
         """Process a streamed response, and prepare a streaming response to return."""
         timestamp: datetime | None = None
-        start_cost = Cost()
+        start_usage = Usage()
         # the first chunk may contain enough information so we iterate until we get either `tool_calls` or `content`
         while True:
             try:
@@ -235,19 +233,20 @@ class GroqAgentModel(AgentModel):
             except StopAsyncIteration as e:
                 raise UnexpectedModelBehavior('Streamed response ended without content or tool calls') from e
             timestamp = timestamp or datetime.fromtimestamp(chunk.created, tz=timezone.utc)
-            start_cost += _map_cost(chunk)
+            start_usage += _map_usage(chunk)
 
             if chunk.choices:
                 delta = chunk.choices[0].delta
 
                 if delta.content is not None:
-                    return GroqStreamTextResponse(delta.content, response, timestamp, start_cost)
+                    # return GroqStreamTextResponse(delta.content, response, timestamp, start_usage)
+                    raise NotImplementedError('Fix this branch')
                 elif delta.tool_calls is not None:
                     return GroqStreamedResponse(
                         response,
                         {c.index: c for c in delta.tool_calls},
                         timestamp,
-                        start_cost,
+                        start_usage,
                     )
 
     @classmethod
@@ -301,58 +300,17 @@ class GroqAgentModel(AgentModel):
 
 
 @dataclass
-class GroqStreamTextResponse(StreamTextResponse):
-    """Implementation of `StreamTextResponse` for Groq models."""
-
-    _first: str | None
-    _response: AsyncStream[ChatCompletionChunk]
-    _timestamp: datetime
-    _cost: result.Cost
-    _buffer: list[str] = field(default_factory=list, init=False)
-
-    async def __anext__(self) -> None:
-        if self._first is not None:
-            self._buffer.append(self._first)
-            self._first = None
-            return None
-
-        chunk = await self._response.__anext__()
-        self._cost = _map_cost(chunk)
-
-        try:
-            choice = chunk.choices[0]
-        except IndexError:
-            raise StopAsyncIteration()
-
-        # we don't raise StopAsyncIteration on the last chunk because usage comes after this
-        if choice.finish_reason is None:
-            assert choice.delta.content is not None, f'Expected delta with content, invalid chunk: {chunk!r}'
-        if choice.delta.content is not None:
-            self._buffer.append(choice.delta.content)
-
-    def get(self, *, final: bool = False) -> Iterable[str]:
-        yield from self._buffer
-        self._buffer.clear()
-
-    def cost(self) -> Cost:
-        return self._cost
-
-    def timestamp(self) -> datetime:
-        return self._timestamp
-
-
-@dataclass
 class GroqStreamedResponse(StreamedResponse):
     """Implementation of `StreamedResponse` for Groq models."""
 
     _response: AsyncStream[ChatCompletionChunk]
     _delta_tool_calls: dict[int, ChoiceDeltaToolCall]
     _timestamp: datetime
-    _cost: result.Cost
+    _usage: result.Usage
 
     async def __anext__(self) -> None:
         chunk = await self._response.__anext__()
-        self._cost = _map_cost(chunk)
+        self._usage = _map_usage(chunk)
 
         try:
             choice = chunk.choices[0]
@@ -379,27 +337,26 @@ class GroqStreamedResponse(StreamedResponse):
         for c in self._delta_tool_calls.values():
             if f := c.function:
                 if f.name is not None and f.arguments is not None:
-                    items.append(ToolCallPart.from_json(f.name, f.arguments, c.id))
+                    items.append(ToolCallPart.from_raw_args(f.name, f.arguments, c.id))
 
         return ModelResponse(items, timestamp=self._timestamp)
 
-    def cost(self) -> Cost:
-        return self._cost
+    def usage(self) -> Usage:
+        return self._usage
 
     def timestamp(self) -> datetime:
         return self._timestamp
 
 
 def _map_tool_call(t: ToolCallPart) -> chat.ChatCompletionMessageToolCallParam:
-    assert isinstance(t.args, ArgsJson), f'Expected ArgsJson, got {t.args}'
     return chat.ChatCompletionMessageToolCallParam(
         id=_guard_tool_call_id(t=t, model_source='Groq'),
         type='function',
-        function={'name': t.tool_name, 'arguments': t.args.args_json},
+        function={'name': t.tool_name, 'arguments': t.args_as_json_str()},
     )
 
 
-def _map_cost(completion: ChatCompletionChunk | ChatCompletion) -> result.Cost:
+def _map_usage(completion: ChatCompletionChunk | ChatCompletion) -> result.Usage:
     usage = None
     if isinstance(completion, ChatCompletion):
         usage = completion.usage
@@ -407,9 +364,9 @@ def _map_cost(completion: ChatCompletionChunk | ChatCompletion) -> result.Cost:
         usage = completion.x_groq.usage
 
     if usage is None:
-        return result.Cost()
+        return result.Usage()
 
-    return result.Cost(
+    return result.Usage(
         request_tokens=usage.prompt_tokens,
         response_tokens=usage.completion_tokens,
         total_tokens=usage.total_tokens,

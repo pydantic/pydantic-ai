@@ -1,27 +1,24 @@
 from __future__ import annotations as _annotations
 
+import dataclasses
 import inspect
 from collections.abc import Awaitable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Callable, Generic, TypeVar, Union, cast
+from typing import TYPE_CHECKING, Any, Callable, Generic, Union, cast
 
 from pydantic import ValidationError
 from pydantic_core import SchemaValidator
-from typing_extensions import Concatenate, ParamSpec, TypeAlias
+from typing_extensions import Concatenate, ParamSpec, TypeAlias, TypeVar
 
-from . import _pydantic, _utils, messages as _messages
+from . import _pydantic, _utils, messages as _messages, models
 from .exceptions import ModelRetry, UnexpectedModelBehavior
 
 if TYPE_CHECKING:
-    from .result import ResultData
-else:
-    ResultData = Any
-
+    from .result import Usage
 
 __all__ = (
     'AgentDeps',
     'RunContext',
-    'ResultValidatorFunc',
     'SystemPromptFunc',
     'ToolFuncContext',
     'ToolFuncPlain',
@@ -33,25 +30,44 @@ __all__ = (
     'ToolDefinition',
 )
 
-AgentDeps = TypeVar('AgentDeps')
+AgentDeps = TypeVar('AgentDeps', default=None)
 """Type variable for agent dependencies."""
 
 
-@dataclass
+@dataclasses.dataclass
 class RunContext(Generic[AgentDeps]):
     """Information about the current call."""
 
     deps: AgentDeps
     """Dependencies for the agent."""
-    retry: int
-    """Number of retries so far."""
-    messages: list[_messages.ModelMessage]
+    model: models.Model
+    """The model used in this run."""
+    usage: Usage
+    """LLM usage associated with the run."""
+    prompt: str
+    """The original user prompt passed to the run."""
+    messages: list[_messages.ModelMessage] = field(default_factory=list)
     """Messages exchanged in the conversation so far."""
-    tool_name: str | None
+    tool_name: str | None = None
     """Name of the tool being called."""
+    retry: int = 0
+    """Number of retries so far."""
+    run_step: int = 0
+    """The current step in the run."""
+
+    def replace_with(
+        self, retry: int | None = None, tool_name: str | None | _utils.Unset = _utils.UNSET
+    ) -> RunContext[AgentDeps]:
+        # Create a new `RunContext` a new `retry` value and `tool_name`.
+        kwargs = {}
+        if retry is not None:
+            kwargs['retry'] = retry
+        if tool_name is not _utils.UNSET:
+            kwargs['tool_name'] = tool_name
+        return dataclasses.replace(self, **kwargs)
 
 
-ToolParams = ParamSpec('ToolParams')
+ToolParams = ParamSpec('ToolParams', default=...)
 """Retrieval function param spec."""
 
 SystemPromptFunc = Union[
@@ -65,19 +81,6 @@ SystemPromptFunc = Union[
 Usage `SystemPromptFunc[AgentDeps]`.
 """
 
-ResultValidatorFunc = Union[
-    Callable[[RunContext[AgentDeps], ResultData], ResultData],
-    Callable[[RunContext[AgentDeps], ResultData], Awaitable[ResultData]],
-    Callable[[ResultData], ResultData],
-    Callable[[ResultData], Awaitable[ResultData]],
-]
-"""
-A function that always takes `ResultData` and returns `ResultData`,
-but may or maybe not take `CallInfo` as a first argument, and may or may not be async.
-
-Usage `ResultValidator[AgentDeps, ResultData]`.
-"""
-
 ToolFuncContext = Callable[Concatenate[RunContext[AgentDeps], ToolParams], Any]
 """A tool function that takes `RunContext` as the first argument.
 
@@ -89,7 +92,7 @@ ToolFuncPlain = Callable[ToolParams, Any]
 Usage `ToolPlainFunc[ToolParams]`.
 """
 ToolFuncEither = Union[ToolFuncContext[AgentDeps, ToolParams], ToolFuncPlain[ToolParams]]
-"""Either part_kind of tool function.
+"""Either kind of tool function.
 
 This is just a union of [`ToolFuncContext`][pydantic_ai.tools.ToolFuncContext] and
 [`ToolFuncPlain`][pydantic_ai.tools.ToolFuncPlain].
@@ -131,7 +134,7 @@ A = TypeVar('A')
 class Tool(Generic[AgentDeps]):
     """A tool function for an agent."""
 
-    function: ToolFuncEither[AgentDeps, ...]
+    function: ToolFuncEither[AgentDeps]
     takes_ctx: bool
     max_retries: int | None
     name: str
@@ -147,7 +150,7 @@ class Tool(Generic[AgentDeps]):
 
     def __init__(
         self,
-        function: ToolFuncEither[AgentDeps, ...],
+        function: ToolFuncEither[AgentDeps],
         *,
         takes_ctx: bool | None = None,
         max_retries: int | None = None,
@@ -238,7 +241,7 @@ class Tool(Generic[AgentDeps]):
             return tool_def
 
     async def run(
-        self, deps: AgentDeps, message: _messages.ToolCallPart, conv_messages: list[_messages.ModelMessage]
+        self, message: _messages.ToolCallPart, run_context: RunContext[AgentDeps]
     ) -> _messages.ModelRequestPart:
         """Run the tool function asynchronously."""
         try:
@@ -249,7 +252,7 @@ class Tool(Generic[AgentDeps]):
         except ValidationError as e:
             return self._on_error(e, message)
 
-        args, kwargs = self._call_args(deps, args_dict, message, conv_messages)
+        args, kwargs = self._call_args(args_dict, message, run_context)
         try:
             if self._is_async:
                 function = cast(Callable[[Any], Awaitable[str]], self.function)
@@ -269,15 +272,15 @@ class Tool(Generic[AgentDeps]):
 
     def _call_args(
         self,
-        deps: AgentDeps,
         args_dict: dict[str, Any],
         message: _messages.ToolCallPart,
-        conv_messages: list[_messages.ModelMessage],
+        run_context: RunContext[AgentDeps],
     ) -> tuple[list[Any], dict[str, Any]]:
         if self._single_arg_name:
             args_dict = {self._single_arg_name: args_dict}
 
-        args = [RunContext(deps, self.current_retry, conv_messages, message.tool_name)] if self.takes_ctx else []
+        ctx = dataclasses.replace(run_context, retry=self.current_retry, tool_name=message.tool_name)
+        args = [ctx] if self.takes_ctx else []
         for positional_field in self._positional_fields:
             args.append(args_dict.pop(positional_field))
         if self._var_positional_field:

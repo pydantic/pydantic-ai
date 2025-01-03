@@ -13,7 +13,6 @@ from typing_extensions import assert_never
 from .. import _utils, result
 from .._utils import guard_tool_call_id as _guard_tool_call_id, now_utc as _now_utc
 from ..messages import (
-    ArgsJson,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -30,7 +29,7 @@ from ..messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from ..result import Cost
+from ..result import Usage
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from . import (
@@ -150,20 +149,12 @@ class OpenAIAgentModel(AgentModel):
 
     async def request(
         self, messages: list[ModelMessage], model_settings: ModelSettings | None
-    ) -> tuple[ModelResponse, result.Cost]:
+    ) -> tuple[ModelResponse, result.Usage]:
         response = await self._completions_create(messages, False, model_settings)
-        return self._process_response(response), _map_cost(response)
+        return self._process_response(response), _map_usage(response)
 
     @asynccontextmanager
-    async def request_stream_text(
-        self, messages: list[ModelMessage], model_settings: ModelSettings | None
-    ) -> AsyncIterator[StreamTextResponse]:
-        response = await self._completions_create(messages, True, model_settings)
-        async with response:
-            yield OpenAIStreamTextResponse(response)
-
-    @asynccontextmanager
-    async def request_stream_structured(
+    async def request_stream(
         self, messages: list[ModelMessage], model_settings: ModelSettings | None
     ) -> AsyncIterator[StreamedResponse]:
         response = await self._completions_create(messages, True, model_settings)
@@ -222,7 +213,7 @@ class OpenAIAgentModel(AgentModel):
             items.append(TextPart(choice.message.content))
         if choice.message.tool_calls is not None:
             for c in choice.message.tool_calls:
-                items.append(ToolCallPart.from_json(c.function.name, c.function.arguments, c.id))
+                items.append(ToolCallPart.from_raw_args(c.function.name, c.function.arguments, c.id))
         return ModelResponse(items, timestamp=timestamp)
 
     @classmethod
@@ -277,44 +268,6 @@ class OpenAIAgentModel(AgentModel):
                 assert_never(part)
 
 
-@dataclass
-class OpenAIStreamTextResponse(StreamTextResponse):
-    """Implementation of `StreamTextResponse` for OpenAI models."""
-
-    _response: AsyncStream[ChatCompletionChunk]
-    _timestamp: datetime | None = field(default=None, init=False)
-    _cost: result.Cost = field(default_factory=result.Cost, init=False)
-    _buffer: list[str] = field(default_factory=list, init=False)
-
-    async def __anext__(self) -> None:
-        chunk = await self._response.__anext__()
-        if self._timestamp is None:
-            self._timestamp = datetime.fromtimestamp(chunk.created, tz=timezone.utc)
-
-        self._cost += _map_cost(chunk)
-        try:
-            choice = chunk.choices[0]
-        except IndexError:
-            raise StopAsyncIteration()
-
-        # we don't raise StopAsyncIteration on the last chunk because usage comes after this
-        if choice.finish_reason is None:
-            assert choice.delta.content is not None, f'Expected delta with content, invalid chunk: {chunk!r}'
-        if choice.delta.content is not None:
-            self._buffer.append(choice.delta.content)
-
-    def get(self, *, final: bool = False) -> Iterable[str]:
-        yield from self._buffer
-        self._buffer.clear()
-
-    def cost(self) -> Cost:
-        return self._cost
-
-    def timestamp(self) -> datetime:
-        # TODO: the following seems problematic
-        return self._timestamp or datetime.now(tz=timezone.utc)
-
-
 _CONTENT_INDEX = 0
 
 
@@ -325,7 +278,7 @@ class OpenAIStreamedResponse(StreamedResponse):
     _response: AsyncStream[ChatCompletionChunk]
 
     _timestamp: datetime | None = field(default=None, init=False)
-    _cost: result.Cost = field(default_factory=result.Cost, init=False)
+    _usage: result.Usage = field(default_factory=result.Usage, init=False)
     _delta_tool_calls: dict[int, ChoiceDeltaToolCall] = field(default_factory=dict, init=False)
 
     _content_part: TextPart | None = field(default=None, init=False)
@@ -347,7 +300,7 @@ class OpenAIStreamedResponse(StreamedResponse):
             if self._timestamp is None:
                 self._timestamp = datetime.fromtimestamp(chunk.created, tz=timezone.utc)
 
-            self._cost += _map_cost(chunk)
+            self._usage += _map_usage(chunk)
             try:
                 choice = chunk.choices[0]
             except IndexError:
@@ -383,8 +336,8 @@ class OpenAIStreamedResponse(StreamedResponse):
         items.extend([self._tool_call_parts[k] for k in sorted(self._tool_call_parts.keys())])
         return ModelResponse(items, timestamp=self.timestamp())
 
-    def cost(self) -> Cost:
-        return self._cost
+    def usage(self) -> Usage:
+        return self._usage
 
     def timestamp(self) -> datetime:
         return self._timestamp or _now_utc()
@@ -411,7 +364,7 @@ class OpenAIStreamedResponse(StreamedResponse):
 
         if replace:
             assert tc.function.name is not None
-            new_part = ToolCallPart.from_json(tc.function.name, tc.function.arguments or '', tc.id)
+            new_part = ToolCallPart.from_raw_args(tc.function.name, tc.function.arguments or '', tc.id)
             self._tool_call_parts[tc.index] = new_part
             yield PartStartEvent(index=tc.index, part=new_part)
         else:
@@ -422,25 +375,24 @@ class OpenAIStreamedResponse(StreamedResponse):
 
 
 def _map_tool_call(t: ToolCallPart) -> chat.ChatCompletionMessageToolCallParam:
-    assert isinstance(t.args, ArgsJson), f'Expected ArgsJson, got {t.args}'
     return chat.ChatCompletionMessageToolCallParam(
         id=_guard_tool_call_id(t=t, model_source='OpenAI'),
         type='function',
-        function={'name': t.tool_name, 'arguments': t.args.args_json},
+        function={'name': t.tool_name, 'arguments': t.args_as_json_str()},
     )
 
 
-def _map_cost(response: chat.ChatCompletion | ChatCompletionChunk) -> result.Cost:
+def _map_usage(response: chat.ChatCompletion | ChatCompletionChunk) -> result.Usage:
     usage = response.usage
     if usage is None:
-        return result.Cost()
+        return result.Usage()
     else:
         details: dict[str, int] = {}
         if usage.completion_tokens_details is not None:
             details.update(usage.completion_tokens_details.model_dump(exclude_none=True))
         if usage.prompt_tokens_details is not None:
             details.update(usage.prompt_tokens_details.model_dump(exclude_none=True))
-        return result.Cost(
+        return result.Usage(
             request_tokens=usage.prompt_tokens,
             response_tokens=usage.completion_tokens,
             total_tokens=usage.total_tokens,

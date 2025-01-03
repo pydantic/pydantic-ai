@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 import re
 import string
-from collections.abc import AsyncIterator, Iterable, Iterator
+from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
@@ -16,20 +16,21 @@ from ..messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    ModelResponsePart,
     RetryPromptPart,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
 )
-from ..result import Cost
+from ..result import Usage
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from . import (
     AgentModel,
     Model,
     StreamedResponse,
-    StreamTextResponse,
 )
+from .function import _estimate_usage  # pyright: ignore[reportPrivateUsage]
 
 
 @dataclass
@@ -130,15 +131,17 @@ class TestAgentModel(AgentModel):
 
     async def request(
         self, messages: list[ModelMessage], model_settings: ModelSettings | None
-    ) -> tuple[ModelResponse, Cost]:
-        return self._request(messages, model_settings), Cost()
+    ) -> tuple[ModelResponse, Usage]:
+        model_response = self._request(messages, model_settings)
+        usage = _estimate_usage([*messages, model_response])
+        return model_response, usage
 
     @asynccontextmanager
     async def request_stream(
         self, messages: list[ModelMessage], model_settings: ModelSettings | None
     ) -> AsyncIterator[StreamedResponse]:
         msg = self._request(messages, model_settings)
-        cost = Cost()
+        usage = _estimate_usage(messages)
 
         # TODO: Rework this once we make StreamTextResponse more general
         texts: list[str] = []
@@ -152,9 +155,10 @@ class TestAgentModel(AgentModel):
                 assert_never(item)
 
         if texts:
-            yield TestStreamTextResponse('\n\n'.join(texts), cost)
+            # yield TestStreamTextResponse('\n\n'.join(texts), usage)
+            raise NotImplementedError('TODO: Fix this branch')
         else:
-            yield TestStreamedResponse(msg, cost)
+            yield TestStreamedResponse(msg, usage)
 
     def gen_tool_args(self, tool_def: ToolDefinition) -> Any:
         return _JsonSchemaTestData(tool_def.parameters_json_schema, self.seed).generate()
@@ -163,7 +167,7 @@ class TestAgentModel(AgentModel):
         # if there are tools, the first thing we want to do is call all of them
         if self.tool_calls and not any(isinstance(m, ModelResponse) for m in messages):
             return ModelResponse(
-                parts=[ToolCallPart.from_dict(name, self.gen_tool_args(args)) for name, args in self.tool_calls]
+                parts=[ToolCallPart.from_raw_args(name, self.gen_tool_args(args)) for name, args in self.tool_calls]
             )
 
         if messages:
@@ -173,13 +177,23 @@ class TestAgentModel(AgentModel):
             # check if there are any retry prompts, if so retry them
             new_retry_names = {p.tool_name for p in last_message.parts if isinstance(p, RetryPromptPart)}
             if new_retry_names:
-                return ModelResponse(
-                    parts=[
-                        ToolCallPart.from_dict(name, self.gen_tool_args(args))
-                        for name, args in self.tool_calls
-                        if name in new_retry_names
-                    ]
-                )
+                # Handle retries for both function tools and result tools
+                # Check function tools first
+                retry_parts: list[ModelResponsePart] = [
+                    ToolCallPart.from_raw_args(name, self.gen_tool_args(args))
+                    for name, args in self.tool_calls
+                    if name in new_retry_names
+                ]
+                # Check result tools
+                if self.result_tools:
+                    retry_parts.extend(
+                        [
+                            ToolCallPart.from_raw_args(tool.name, self.gen_tool_args(tool))
+                            for tool in self.result_tools
+                            if tool.name in new_retry_names
+                        ]
+                    )
+                return ModelResponse(parts=retry_parts)
 
         if response_text := self.result.left:
             if response_text.value is None:
@@ -201,43 +215,10 @@ class TestAgentModel(AgentModel):
             custom_result_args = self.result.right
             result_tool = self.result_tools[self.seed % len(self.result_tools)]
             if custom_result_args is not None:
-                return ModelResponse(parts=[ToolCallPart.from_dict(result_tool.name, custom_result_args)])
+                return ModelResponse(parts=[ToolCallPart.from_raw_args(result_tool.name, custom_result_args)])
             else:
                 response_args = self.gen_tool_args(result_tool)
-                return ModelResponse(parts=[ToolCallPart.from_dict(result_tool.name, response_args)])
-
-
-@dataclass
-class TestStreamTextResponse(StreamTextResponse):
-    """A text response that streams test data."""
-
-    _text: str
-    _cost: Cost
-    _iter: Iterator[str] = field(init=False)
-    _timestamp: datetime = field(default_factory=_utils.now_utc)
-    _buffer: list[str] = field(default_factory=list, init=False)
-
-    def __post_init__(self):
-        *words, last_word = self._text.split(' ')
-        words = [f'{word} ' for word in words]
-        words.append(last_word)
-        if len(words) == 1 and len(self._text) > 2:
-            mid = len(self._text) // 2
-            words = [self._text[:mid], self._text[mid:]]
-        self._iter = iter(words)
-
-    async def __anext__(self) -> None:
-        self._buffer.append(_utils.sync_anext(self._iter))
-
-    def get(self, *, final: bool = False) -> Iterable[str]:
-        yield from self._buffer
-        self._buffer.clear()
-
-    def cost(self) -> Cost:
-        return self._cost
-
-    def timestamp(self) -> datetime:
-        return self._timestamp
+                return ModelResponse(parts=[ToolCallPart.from_raw_args(result_tool.name, response_args)])
 
 
 @dataclass
@@ -245,7 +226,7 @@ class TestStreamedResponse(StreamedResponse):
     """A structured response that streams test data."""
 
     _structured_response: ModelResponse
-    _cost: Cost
+    _usage: Usage
     _iter: Iterator[None] = field(default_factory=lambda: iter([None]))
     _timestamp: datetime = field(default_factory=_utils.now_utc, init=False)
 
@@ -255,8 +236,8 @@ class TestStreamedResponse(StreamedResponse):
     def get(self, *, final: bool = False) -> ModelResponse:
         return self._structured_response
 
-    def cost(self) -> Cost:
-        return self._cost
+    def usage(self) -> Usage:
+        return self._usage
 
     def timestamp(self) -> datetime:
         return self._timestamp

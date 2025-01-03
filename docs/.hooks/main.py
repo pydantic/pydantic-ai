@@ -1,9 +1,11 @@
 from __future__ import annotations as _annotations
 
 import re
+import time
 import urllib.parse
 from pathlib import Path
 
+from jinja2 import Environment
 from mkdocs.config import Config
 from mkdocs.structure.files import Files
 from mkdocs.structure.pages import Page
@@ -15,6 +17,11 @@ def on_page_markdown(markdown: str, page: Page, config: Config, files: Files) ->
     markdown = render_examples(markdown)
     markdown = render_video(markdown)
     return markdown
+
+
+def on_env(env: Environment, config: Config, files: Files) -> Environment:
+    env.globals['build_timestamp'] = str(int(time.time()))
+    return env
 
 
 def replace_uv_python_run(markdown: str) -> str:
@@ -48,11 +55,11 @@ def sub_run(m: re.Match[str]) -> str:
     ```"""
 
 
-EXAMPLES_DIR = Path(__file__).parent.parent.parent / 'pydantic_ai_examples'
+EXAMPLES_DIR = Path(__file__).parent.parent.parent / 'examples'
 
 
 def render_examples(markdown: str) -> str:
-    return re.sub(r'^#! *pydantic_ai_examples/(.+)', sub_example, markdown, flags=re.M)
+    return re.sub(r'^#! *examples/(.+)', sub_example, markdown, flags=re.M)
 
 
 def sub_example(m: re.Match[str]) -> str:

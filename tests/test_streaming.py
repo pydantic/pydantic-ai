@@ -8,7 +8,7 @@ import pytest
 from inline_snapshot import snapshot
 from pydantic import BaseModel
 
-from pydantic_ai import Agent, UnexpectedModelBehavior, UserError
+from pydantic_ai import Agent, UnexpectedModelBehavior, UserError, capture_run_messages
 from pydantic_ai.messages import (
     ArgsDict,
     ArgsJson,
@@ -22,7 +22,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.result import Cost
+from pydantic_ai.result import Usage
 
 from .conftest import IsNow
 
@@ -55,10 +55,25 @@ async def test_streamed_text_response():
                 ),
             ]
         )
+        assert result.usage() == snapshot(
+            Usage(
+                requests=2,
+                request_tokens=103,
+                response_tokens=5,
+                total_tokens=108,
+            )
+        )
         response = await result.get_data()
         assert response == snapshot('{"ret_a":"a-apple"}')
         assert result.is_complete
-        assert result.cost() == snapshot(Cost())
+        assert result.usage() == snapshot(
+            Usage(
+                requests=2,
+                request_tokens=103,
+                response_tokens=11,
+                total_tokens=114,
+            )
+        )
         assert result.timestamp() == IsNow(tz=timezone.utc)
         assert result.all_messages() == snapshot(
             [
@@ -271,10 +286,11 @@ async def test_call_tool_wrong_name():
     async def ret_a(x: str) -> str:  # pragma: no cover
         return x
 
-    with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum retries \(1\) for result validation'):
-        async with agent.run_stream('hello'):
-            pass
-    assert agent.last_run_messages == snapshot(
+    with capture_run_messages() as messages:
+        with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum retries \(1\) for result validation'):
+            async with agent.run_stream('hello'):
+                pass
+    assert messages == snapshot(
         [
             ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(

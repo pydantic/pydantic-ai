@@ -91,8 +91,8 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary], set_event_lo
     )
     assert summary.attributes[0] == snapshot(
         {
-            'code.filepath': 'agent.py',
-            'code.function': 'run',
+            'code.filepath': 'test_logfire.py',
+            'code.function': 'test_logfire',
             'code.lineno': 123,
             'prompt': 'Hello',
             'agent': IsJson(
@@ -108,11 +108,9 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary], set_event_lo
                     },
                     'name': 'my_agent',
                     'end_strategy': 'early',
-                    'last_run_messages': None,
                     'model_settings': None,
                 }
             ),
-            'mode_selection': 'from-agent',
             'model_name': 'test-model',
             'agent_name': 'my_agent',
             'logfire.msg_template': '{agent_name} run {prompt=}',
@@ -161,7 +159,9 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary], set_event_lo
                     },
                 ]
             ),
-            'cost': IsJson({'request_tokens': None, 'response_tokens': None, 'total_tokens': None, 'details': None}),
+            'usage': IsJson(
+                {'requests': 2, 'request_tokens': 103, 'response_tokens': 12, 'total_tokens': 115, 'details': None}
+            ),
             'logfire.json_schema': IsJson(
                 {
                     'type': 'object',
@@ -175,7 +175,6 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary], set_event_lo
                                 'model': {'type': 'object', 'title': 'TestModel', 'x-python-datatype': 'dataclass'}
                             },
                         },
-                        'mode_selection': {},
                         'model_name': {},
                         'agent_name': {},
                         'all_messages': {
@@ -254,7 +253,7 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary], set_event_lo
                                 },
                             ],
                         },
-                        'cost': {'type': 'object', 'title': 'Cost', 'x-python-datatype': 'dataclass'},
+                        'usage': {'type': 'object', 'title': 'Usage', 'x-python-datatype': 'dataclass'},
                     },
                 }
             ),
@@ -262,8 +261,8 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary], set_event_lo
     )
     assert summary.attributes[1] == snapshot(
         {
-            'code.filepath': 'agent.py',
-            'code.function': 'run',
+            'code.filepath': 'test_logfire.py',
+            'code.function': 'test_logfire',
             'code.lineno': IsInt(),
             'run_step': 1,
             'logfire.msg_template': 'preparing model and tools {run_step=}',

@@ -18,7 +18,7 @@ Unless you're really sure you know better, you'll probably want to follow roughl
 * Use [`pytest`](https://docs.pytest.org/en/stable/) as your test harness
 * If you find yourself typing out long assertions, use [inline-snapshot](https://15r10nk.github.io/inline-snapshot/latest/)
 * Similarly, [dirty-equals](https://dirty-equals.helpmanual.io/latest/) can be useful for comparing large data structures
-* Use [`TestModel`][pydantic_ai.models.test.TestModel] or [`FunctionModel`][pydantic_ai.models.function.FunctionModel] in place of your actual model to avoid the cost, latency and variability of real LLM calls
+* Use [`TestModel`][pydantic_ai.models.test.TestModel] or [`FunctionModel`][pydantic_ai.models.function.FunctionModel] in place of your actual model to avoid the usage, latency and variability of real LLM calls
 * Use [`Agent.override`][pydantic_ai.agent.Agent.override] to replace your model inside your application logic
 * Set [`ALLOW_MODEL_REQUESTS=False`][pydantic_ai.models.ALLOW_MODEL_REQUESTS] globally to block any requests from being made to non-test models accidentally
 
@@ -95,7 +95,7 @@ import pytest
 
 from dirty_equals import IsNow
 
-from pydantic_ai import models
+from pydantic_ai import models, capture_run_messages
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.messages import (
     ArgsDict,
@@ -118,14 +118,15 @@ models.ALLOW_MODEL_REQUESTS = False  # (2)!
 async def test_forecast():
     conn = DatabaseConn()
     user_id = 1
-    with weather_agent.override(model=TestModel()):  # (3)!
-        prompt = 'What will the weather be like in London on 2024-11-28?'
-        await run_weather_forecast([(prompt, user_id)], conn)  # (4)!
+    with capture_run_messages() as messages:
+        with weather_agent.override(model=TestModel()):  # (3)!
+            prompt = 'What will the weather be like in London on 2024-11-28?'
+            await run_weather_forecast([(prompt, user_id)], conn)  # (4)!
 
     forecast = await conn.get_forecast(user_id)
     assert forecast == '{"weather_forecast":"Sunny with a chance of rain"}'  # (5)!
 
-    assert weather_agent.last_run_messages == [  # (6)!
+    assert messages == [  # (6)!
         ModelRequest(
             parts=[
                 SystemPromptPart(
@@ -178,7 +179,7 @@ async def test_forecast():
 3. We're using [`Agent.override`][pydantic_ai.agent.Agent.override] to replace the agent's model with [`TestModel`][pydantic_ai.models.test.TestModel], the nice thing about `override` is that we can replace the model inside agent without needing access to the agent `run*` methods call site.
 4. Now we call the function we want to test inside the `override` context manager.
 5. But default, `TestModel` will return a JSON string summarising the tools calls made, and what was returned. If you wanted to customise the response to something more closely aligned with the domain, you could add [`custom_result_text='Sunny'`][pydantic_ai.models.test.TestModel.custom_result_text] when defining `TestModel`.
-6. So far we don't actually know which tools were called and with which values, we can use the [`last_run_messages`][pydantic_ai.agent.Agent.last_run_messages] attribute to inspect messages from the most recent run and assert the exchange between the agent and the model occurred as expected.
+6. So far we don't actually know which tools were called and with which values, we can use [`capture_run_messages`][pydantic_ai.capture_run_messages] to inspect messages from the most recent run and assert the exchange between the agent and the model occurred as expected.
 7. The [`IsNow`][dirty_equals.IsNow] helper allows us to use declarative asserts even with data which will contain timestamps that change over time.
 8. `TestModel` isn't doing anything clever to extract values from the prompt, so these values are hardcoded.
 
@@ -219,7 +220,9 @@ def call_weather_forecast(  # (1)!
         m = re.search(r'\d{4}-\d{2}-\d{2}', user_prompt.content)
         assert m is not None
         args = {'location': 'London', 'forecast_date': m.group()}  # (2)!
-        return ModelResponse(parts=[ToolCallPart.from_dict('weather_forecast', args)])
+        return ModelResponse(
+            parts=[ToolCallPart.from_raw_args('weather_forecast', args)]
+        )
     else:
         # second call, return the forecast
         msg = messages[-1].parts[0]

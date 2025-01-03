@@ -26,6 +26,7 @@ from pydantic import BaseModel, Field
 from typing_extensions import TypeAlias
 
 from pydantic_ai import Agent, ModelRetry, RunContext
+from pydantic_ai.format_as_xml import format_as_xml
 
 # 'if-token-present' means nothing will be sent (and the example will work) if you don't have logfire configured
 logfire.configure(send_to_logfire='if-token-present')
@@ -50,6 +51,24 @@ CREATE TABLE records (
     service_name text
 );
 """
+SQL_EXAMPLES = [
+    {
+        'request': 'show me records where foobar is false',
+        'response': "SELECT * FROM records WHERE attributes->>'foobar' = false",
+    },
+    {
+        'request': 'show me records where attributes include the key "foobar"',
+        'response': "SELECT * FROM records WHERE attributes ? 'foobar'",
+    },
+    {
+        'request': 'show me records from yesterday',
+        'response': "SELECT * FROM records WHERE start_timestamp::date > CURRENT_TIMESTAMP - INTERVAL '1 day'",
+    },
+    {
+        'request': 'show me error records with the tag "foobar"',
+        'response': "SELECT * FROM records WHERE level = 'error' and 'foobar' = ANY(tags)",
+    },
+]
 
 
 @dataclass
@@ -73,7 +92,7 @@ class InvalidRequest(BaseModel):
 
 
 Response: TypeAlias = Union[Success, InvalidRequest]
-agent = Agent(
+agent: Agent[Deps, Response] = Agent(
     'gemini-1.5-flash',
     # Type ignore while we wait for PEP-0747, nonetheless unions will work fine everywhere else
     result_type=Response,  # type: ignore
@@ -93,18 +112,7 @@ Database schema:
 
 today's date = {date.today()}
 
-Example
-    request: show me records where foobar is false
-    response: SELECT * FROM records WHERE attributes->>'foobar' = false
-Example
-    request: show me records where attributes include the key "foobar"
-    response: SELECT * FROM records WHERE attributes ? 'foobar'
-Example
-    request: show me records from yesterday
-    response: SELECT * FROM records WHERE start_timestamp::date > CURRENT_TIMESTAMP - INTERVAL '1 day'
-Example
-    request: show me error records with the tag "foobar"
-    response: SELECT * FROM records WHERE level = 'error' and 'foobar' = ANY(tags)
+{format_as_xml(SQL_EXAMPLES)}
 """
 
 
