@@ -27,8 +27,8 @@ from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from . import (
     AgentModel,
-    EitherStreamedResponse,
     Model,
+    StreamedResponse,
     cached_async_http_client,
     check_allow_model_requests,
 )
@@ -165,7 +165,7 @@ class AnthropicAgentModel(AgentModel):
     @asynccontextmanager
     async def request_stream(
         self, messages: list[ModelMessage], model_settings: ModelSettings | None
-    ) -> AsyncIterator[EitherStreamedResponse]:
+    ) -> AsyncIterator[StreamedResponse]:
         response = await self._messages_create(messages, True, model_settings)
         async with response:
             yield await self._process_streamed_response(response)
@@ -230,14 +230,14 @@ class AnthropicAgentModel(AgentModel):
         return ModelResponse(items)
 
     @staticmethod
-    async def _process_streamed_response(response: AsyncStream[RawMessageStreamEvent]) -> EitherStreamedResponse:
+    async def _process_streamed_response(response: AsyncStream[RawMessageStreamEvent]) -> StreamedResponse:
         """TODO: Process a streamed response, and prepare a streaming response to return."""
         # We don't yet support streamed responses from Anthropic, so we raise an error here for now.
         # Streamed responses will be supported in a future release.
 
         raise RuntimeError('Streamed responses are not yet supported for Anthropic models.')
 
-        # Should be returning some sort of AnthropicStreamTextResponse or AnthropicStreamStructuredResponse
+        # Should be returning some sort of AnthropicStreamTextResponse or AnthropicStreamedResponse
         # depending on the type of chunk we get, but we need to establish how we handle (and when we get) the following:
         # RawMessageStartEvent
         # RawMessageDeltaEvent

@@ -1,6 +1,6 @@
 from __future__ import annotations as _annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Annotated, Any, Literal, Union, cast
 
@@ -153,6 +153,9 @@ class TextPart:
     part_kind: Literal['text'] = 'text'
     """Part type identifier, this is available on all parts as a discriminator."""
 
+    def has_content(self) -> bool:
+        return bool(self.content)
+
 
 @dataclass
 class ArgsJson:
@@ -255,10 +258,67 @@ class ModelResponse:
         return cls([tool_call])
 
 
-ModelMessage = Union[ModelRequest, ModelResponse]
+ModelMessage = Annotated[Union[ModelRequest, ModelResponse], pydantic.Discriminator('kind')]
 """Any message send to or returned by a model."""
 
-ModelMessagesTypeAdapter = pydantic.TypeAdapter(
-    list[Annotated[ModelMessage, pydantic.Discriminator('kind')]], config=pydantic.ConfigDict(defer_build=True)
-)
+ModelMessagesTypeAdapter = pydantic.TypeAdapter(list[ModelMessage], config=pydantic.ConfigDict(defer_build=True))
 """Pydantic [`TypeAdapter`][pydantic.type_adapter.TypeAdapter] for (de)serializing messages."""
+
+
+@dataclass
+class TextPartDelta:
+    """A text part delta."""
+
+    content_delta: str
+    part_delta_kind: Literal['text'] = 'text'
+
+    def apply(self, part: TextPart) -> TextPart:
+        return replace(part, content=part.content + self.content_delta)
+
+
+@dataclass
+class ToolCallPartDelta:
+    """A tool call part delta."""
+
+    args_json_delta: str
+    part_delta_kind: Literal['tool_call'] = 'tool_call'
+
+    def apply(self, part: ToolCallPart) -> ToolCallPart:
+        assert isinstance(part.args, ArgsJson), 'Cannot apply deltas to non-JSON tool arguments'
+        updated_json = part.args.args_json + self.args_json_delta
+        return replace(part, args=ArgsJson(updated_json))
+
+
+ModelResponsePartDelta = Annotated[Union[TextPartDelta, ToolCallPartDelta], pydantic.Discriminator('part_delta_kind')]
+
+
+@dataclass
+class PartStartEvent:
+    """If multiple PartStartEvents are received with the same index, the new one should fully replace the old one."""
+
+    index: int  # TODO: Consider replacing index here and below with part_id
+    part: ModelResponsePart
+    event_kind: Literal['part_start'] = 'part_start'
+
+
+@dataclass
+class PartDeltaEvent:
+    """A part delta event."""
+
+    index: int
+    delta: ModelResponsePartDelta
+    event_kind: Literal['part_delta'] = 'part_delta'
+
+
+@dataclass
+class PartStopEvent:
+    """A part stop event."""
+
+    index: int
+    part: ModelResponsePart
+    event_kind: Literal['part_stop'] = 'part_stop'
+
+
+ModelResponseStreamEvent = Annotated[
+    Union[PartStartEvent, PartDeltaEvent, PartStopEvent], pydantic.Discriminator('event_kind')
+]

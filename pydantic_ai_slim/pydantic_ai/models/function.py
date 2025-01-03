@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from itertools import chain
-from typing import Callable, Union, cast
+from typing import Callable, Union
 
 from typing_extensions import TypeAlias, assert_never, overload
 
@@ -17,16 +17,21 @@ from ..messages import (
     ModelRequest,
     ModelResponse,
     ModelResponsePart,
+    ModelResponseStreamEvent,
+    PartDeltaEvent,
+    PartStartEvent,
     RetryPromptPart,
     SystemPromptPart,
     TextPart,
+    TextPartDelta,
     ToolCallPart,
+    ToolCallPartDelta,
     ToolReturnPart,
     UserPromptPart,
 )
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
-from . import AgentModel, EitherStreamedResponse, Model, StreamStructuredResponse, StreamTextResponse
+from . import AgentModel, Model, StreamedResponse
 
 
 @dataclass(init=False)
@@ -158,81 +163,69 @@ class FunctionAgentModel(AgentModel):
     @asynccontextmanager
     async def request_stream(
         self, messages: list[ModelMessage], model_settings: ModelSettings | None
-    ) -> AsyncIterator[EitherStreamedResponse]:
+    ) -> AsyncIterator[StreamedResponse]:
         assert (
             self.stream_function is not None
         ), 'FunctionModel must receive a `stream_function` to support streamed requests'
         response_stream = self.stream_function(messages, self.agent_info)
-        try:
-            first = await response_stream.__anext__()
-        except StopAsyncIteration as e:
-            raise ValueError('Stream function must return at least one item') from e
+        yield FunctionStreamedResponse(response_stream)
 
-        if isinstance(first, str):
-            text_stream = cast(AsyncIterator[str], response_stream)
-            yield FunctionStreamTextResponse(first, text_stream)
-        else:
-            structured_stream = cast(AsyncIterator[DeltaToolCalls], response_stream)
-            yield FunctionStreamStructuredResponse(first, structured_stream)
+
+_CONTENT_PART_INDEX = -1
 
 
 @dataclass
-class FunctionStreamTextResponse(StreamTextResponse):
-    """Implementation of `StreamTextResponse` for [FunctionModel][pydantic_ai.models.function.FunctionModel]."""
+class FunctionStreamedResponse(StreamedResponse):
+    """Implementation of `StreamedResponse` for [FunctionModel][pydantic_ai.models.function.FunctionModel]."""
 
-    _next: str | None
-    _iter: AsyncIterator[str]
-    _timestamp: datetime = field(default_factory=_utils.now_utc, init=False)
-    _buffer: list[str] = field(default_factory=list, init=False)
-
-    async def __anext__(self) -> None:
-        if self._next is not None:
-            self._buffer.append(self._next)
-            self._next = None
-        else:
-            self._buffer.append(await self._iter.__anext__())
-
-    def get(self, *, final: bool = False) -> Iterable[str]:
-        yield from self._buffer
-        self._buffer.clear()
-
-    def usage(self) -> result.Usage:
-        return result.Usage()
-
-    def timestamp(self) -> datetime:
-        return self._timestamp
-
-
-@dataclass
-class FunctionStreamStructuredResponse(StreamStructuredResponse):
-    """Implementation of `StreamStructuredResponse` for [FunctionModel][pydantic_ai.models.function.FunctionModel]."""
-
-    _next: DeltaToolCalls | None
-    _iter: AsyncIterator[DeltaToolCalls]
-    _delta_tool_calls: dict[int, DeltaToolCall] = field(default_factory=dict)
+    _iter: AsyncIterator[str | DeltaToolCalls]
     _timestamp: datetime = field(default_factory=_utils.now_utc)
 
-    async def __anext__(self) -> None:
-        if self._next is not None:
-            tool_call = self._next
-            self._next = None
-        else:
-            tool_call = await self._iter.__anext__()
+    _parts: dict[int, ModelResponsePart] = field(default_factory=dict, init=False)
+    _event_iterator: AsyncIterator[ModelResponseStreamEvent | None] | None = field(default=None, init=False)
 
-        for key, new in tool_call.items():
-            if current := self._delta_tool_calls.get(key):
-                current.name = _utils.add_optional(current.name, new.name)
-                current.json_args = _utils.add_optional(current.json_args, new.json_args)
+    async def __anext__(self) -> ModelResponseStreamEvent | None:
+        if self._event_iterator is None:
+            self._event_iterator = self._get_event_iterator()
+        return await self._event_iterator.__anext__()
+
+    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent | None]:
+        async for item in self._iter:
+            if isinstance(item, str):
+                text = item
+                content_part = self._parts.get(_CONTENT_PART_INDEX)
+                if content_part is None:
+                    content_part = TextPart(content=text)
+                    self._parts[_CONTENT_PART_INDEX] = content_part
+                    yield PartStartEvent(index=_CONTENT_PART_INDEX, part=content_part)
+                else:
+                    assert isinstance(content_part, TextPart), 'Cannot switch to text part mid-stream'
+                    delta = TextPartDelta(content_delta=text)
+                    self._parts[_CONTENT_PART_INDEX] = delta.apply(content_part)
+                    yield PartDeltaEvent(index=_CONTENT_PART_INDEX, delta=delta)
             else:
-                self._delta_tool_calls[key] = new
+                delta_tool_calls = item
+                for index, delta_tool_call in delta_tool_calls.items():
+                    existing_part = self._parts.get(index)
+                    if existing_part is None:
+                        assert (
+                            delta_tool_call.name is not None
+                        ), 'The first delta_tool_call with a given index must include a tool name'
+                        part = ToolCallPart.from_raw_args(
+                            tool_name=delta_tool_call.name, args=delta_tool_call.json_args or ''
+                        )
+                        self._parts[index] = part
+                        yield PartStartEvent(index=index, part=part)
+                    else:
+                        assert isinstance(existing_part, ToolCallPart), 'Cannot switch to tool call part mid-stream'
+                        if delta_tool_call.json_args is not None:
+                            delta = ToolCallPartDelta(delta_tool_call.json_args)
+                            self._parts[index] = delta.apply(existing_part)
+                            yield PartDeltaEvent(index=index, delta=delta)
 
     def get(self, *, final: bool = False) -> ModelResponse:
-        calls: list[ModelResponsePart] = []
-        for c in self._delta_tool_calls.values():
-            if c.name is not None and c.json_args is not None:
-                calls.append(ToolCallPart.from_raw_args(c.name, c.json_args))
-
-        return ModelResponse(calls, timestamp=self._timestamp)
+        parts = [self._parts[index] for index in sorted(self._parts)]
+        return ModelResponse(parts, timestamp=self._timestamp)
 
     def usage(self) -> result.Usage:
         return _estimate_usage([self.get()])
@@ -277,4 +270,6 @@ def _estimate_usage(messages: Iterable[ModelMessage]) -> result.Usage:
 
 
 def _estimate_string_usage(content: str) -> int:
+    if not content:
+        return 0
     return len(re.split(r'[\s",.:]+', content))

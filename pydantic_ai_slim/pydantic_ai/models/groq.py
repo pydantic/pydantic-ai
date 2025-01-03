@@ -29,10 +29,8 @@ from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from . import (
     AgentModel,
-    EitherStreamedResponse,
     Model,
-    StreamStructuredResponse,
-    StreamTextResponse,
+    StreamedResponse,
     cached_async_http_client,
     check_allow_model_requests,
 )
@@ -164,7 +162,7 @@ class GroqAgentModel(AgentModel):
     @asynccontextmanager
     async def request_stream(
         self, messages: list[ModelMessage], model_settings: ModelSettings | None
-    ) -> AsyncIterator[EitherStreamedResponse]:
+    ) -> AsyncIterator[StreamedResponse]:
         response = await self._completions_create(messages, True, model_settings)
         async with response:
             yield await self._process_streamed_response(response)
@@ -224,7 +222,7 @@ class GroqAgentModel(AgentModel):
         return ModelResponse(items, timestamp=timestamp)
 
     @staticmethod
-    async def _process_streamed_response(response: AsyncStream[ChatCompletionChunk]) -> EitherStreamedResponse:
+    async def _process_streamed_response(response: AsyncStream[ChatCompletionChunk]) -> StreamedResponse:
         """Process a streamed response, and prepare a streaming response to return."""
         timestamp: datetime | None = None
         start_usage = Usage()
@@ -241,9 +239,10 @@ class GroqAgentModel(AgentModel):
                 delta = chunk.choices[0].delta
 
                 if delta.content is not None:
-                    return GroqStreamTextResponse(delta.content, response, timestamp, start_usage)
+                    # return GroqStreamTextResponse(delta.content, response, timestamp, start_usage)
+                    raise NotImplementedError('Fix this branch')
                 elif delta.tool_calls is not None:
-                    return GroqStreamStructuredResponse(
+                    return GroqStreamedResponse(
                         response,
                         {c.index: c for c in delta.tool_calls},
                         timestamp,
@@ -301,49 +300,8 @@ class GroqAgentModel(AgentModel):
 
 
 @dataclass
-class GroqStreamTextResponse(StreamTextResponse):
-    """Implementation of `StreamTextResponse` for Groq models."""
-
-    _first: str | None
-    _response: AsyncStream[ChatCompletionChunk]
-    _timestamp: datetime
-    _usage: result.Usage
-    _buffer: list[str] = field(default_factory=list, init=False)
-
-    async def __anext__(self) -> None:
-        if self._first is not None:
-            self._buffer.append(self._first)
-            self._first = None
-            return None
-
-        chunk = await self._response.__anext__()
-        self._usage = _map_usage(chunk)
-
-        try:
-            choice = chunk.choices[0]
-        except IndexError:
-            raise StopAsyncIteration()
-
-        # we don't raise StopAsyncIteration on the last chunk because usage comes after this
-        if choice.finish_reason is None:
-            assert choice.delta.content is not None, f'Expected delta with content, invalid chunk: {chunk!r}'
-        if choice.delta.content is not None:
-            self._buffer.append(choice.delta.content)
-
-    def get(self, *, final: bool = False) -> Iterable[str]:
-        yield from self._buffer
-        self._buffer.clear()
-
-    def usage(self) -> Usage:
-        return self._usage
-
-    def timestamp(self) -> datetime:
-        return self._timestamp
-
-
-@dataclass
-class GroqStreamStructuredResponse(StreamStructuredResponse):
-    """Implementation of `StreamStructuredResponse` for Groq models."""
+class GroqStreamedResponse(StreamedResponse):
+    """Implementation of `StreamedResponse` for Groq models."""
 
     _response: AsyncStream[ChatCompletionChunk]
     _delta_tool_calls: dict[int, ChoiceDeltaToolCall]

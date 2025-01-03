@@ -2,14 +2,13 @@ from __future__ import annotations as _annotations
 
 import re
 import string
-from collections.abc import AsyncIterator, Iterable, Iterator
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from typing import Any, Literal
 
 import pydantic_core
-from typing_extensions import assert_never
 
 from .. import _utils
 from ..messages import (
@@ -17,8 +16,12 @@ from ..messages import (
     ModelRequest,
     ModelResponse,
     ModelResponsePart,
+    ModelResponseStreamEvent,
+    PartDeltaEvent,
+    PartStartEvent,
     RetryPromptPart,
     TextPart,
+    TextPartDelta,
     ToolCallPart,
     ToolReturnPart,
 )
@@ -27,10 +30,8 @@ from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from . import (
     AgentModel,
-    EitherStreamedResponse,
     Model,
-    StreamStructuredResponse,
-    StreamTextResponse,
+    StreamedResponse,
 )
 from .function import _estimate_string_usage, _estimate_usage  # pyright: ignore[reportPrivateUsage]
 
@@ -141,25 +142,10 @@ class TestAgentModel(AgentModel):
     @asynccontextmanager
     async def request_stream(
         self, messages: list[ModelMessage], model_settings: ModelSettings | None
-    ) -> AsyncIterator[EitherStreamedResponse]:
+    ) -> AsyncIterator[StreamedResponse]:
         msg = self._request(messages, model_settings)
         usage = _estimate_usage(messages)
-
-        # TODO: Rework this once we make StreamTextResponse more general
-        texts: list[str] = []
-        tool_calls: list[ToolCallPart] = []
-        for item in msg.parts:
-            if isinstance(item, TextPart):
-                texts.append(item.content)
-            elif isinstance(item, ToolCallPart):
-                tool_calls.append(item)
-            else:
-                assert_never(item)
-
-        if texts:
-            yield TestStreamTextResponse('\n\n'.join(texts), usage)
-        else:
-            yield TestStreamStructuredResponse(msg, usage)
+        yield TestStreamedResponse(msg, usage)
 
     def gen_tool_args(self, tool_def: ToolDefinition) -> Any:
         return _JsonSchemaTestData(tool_def.parameters_json_schema, self.seed).generate()
@@ -223,55 +209,53 @@ class TestAgentModel(AgentModel):
 
 
 @dataclass
-class TestStreamTextResponse(StreamTextResponse):
-    """A text response that streams test data."""
-
-    _text: str
-    _usage: Usage
-    _iter: Iterator[str] = field(init=False)
-    _timestamp: datetime = field(default_factory=_utils.now_utc)
-    _buffer: list[str] = field(default_factory=list, init=False)
-
-    def __post_init__(self):
-        *words, last_word = self._text.split(' ')
-        words = [f'{word} ' for word in words]
-        words.append(last_word)
-        if len(words) == 1 and len(self._text) > 2:
-            mid = len(self._text) // 2
-            words = [self._text[:mid], self._text[mid:]]
-        self._iter = iter(words)
-
-    async def __anext__(self) -> None:
-        next_str = _utils.sync_anext(self._iter)
-        response_tokens = _estimate_string_usage(next_str)
-        self._usage += Usage(response_tokens=response_tokens, total_tokens=response_tokens)
-        self._buffer.append(next_str)
-
-    def get(self, *, final: bool = False) -> Iterable[str]:
-        yield from self._buffer
-        self._buffer.clear()
-
-    def usage(self) -> Usage:
-        return self._usage
-
-    def timestamp(self) -> datetime:
-        return self._timestamp
-
-
-@dataclass
-class TestStreamStructuredResponse(StreamStructuredResponse):
+class TestStreamedResponse(StreamedResponse):
     """A structured response that streams test data."""
 
     _structured_response: ModelResponse
     _usage: Usage
-    _iter: Iterator[None] = field(default_factory=lambda: iter([None]))
     _timestamp: datetime = field(default_factory=_utils.now_utc, init=False)
 
-    async def __anext__(self) -> None:
-        return _utils.sync_anext(self._iter)
+    _parts: dict[int, ModelResponsePart] = field(default_factory=dict, init=False)
+    _event_iterator: AsyncIterator[ModelResponseStreamEvent | None] | None = field(default=None, init=False)
+
+    async def __anext__(self) -> ModelResponseStreamEvent | None:
+        if not self._parts:
+            print('---')
+        if self._event_iterator is None:
+            self._event_iterator = self._get_event_iterator()
+        next_event = await self._event_iterator.__anext__()
+        existing_part = self._parts.get(next_event.index)
+        if isinstance(next_event, PartDeltaEvent):
+            assert existing_part is not None, 'PartDeltaEvent without existing part'
+            self._parts[next_event.index] = next_event.delta.apply(existing_part)
+        else:
+            self._parts[next_event.index] = next_event.part
+
+        self._usage += _estimate_event_usage(next_event)
+        return next_event
+
+    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent | None]:
+        for i, part in enumerate(self._structured_response.parts):
+            if isinstance(part, TextPart):
+                text = part.content
+                *words, last_word = text.split(' ')
+                words = [f'{word} ' for word in words]
+                words.append(last_word)
+                if len(words) == 1 and len(text) > 2:
+                    mid = len(text) // 2
+                    words = [text[:mid], text[mid:]]
+                yield PartStartEvent(index=i, part=TextPart(content=''))
+                for word in words:
+                    yield PartDeltaEvent(index=i, delta=TextPartDelta(content_delta=word))
+                # yield PartStopEvent(index=i, part=part)
+            else:
+                yield PartStartEvent(index=i, part=part)
+                # yield PartStopEvent(index=i, part=part)
 
     def get(self, *, final: bool = False) -> ModelResponse:
-        return self._structured_response
+        parts = [self._parts[index] for index in sorted(self._parts)]
+        return ModelResponse(parts, timestamp=self._timestamp)
 
     def usage(self) -> Usage:
         return self._usage
@@ -434,3 +418,12 @@ class _JsonSchemaTestData:
             rem //= chars
         s += _chars[self.seed % chars]
         return s
+
+
+def _estimate_event_usage(event: ModelResponseStreamEvent | None) -> Usage:
+    response_tokens = 0
+    if isinstance(event, PartStartEvent) and isinstance(event.part, TextPart):
+        response_tokens = _estimate_string_usage(event.part.content)
+    elif isinstance(event, PartDeltaEvent) and isinstance(event.delta, TextPartDelta):
+        response_tokens = _estimate_string_usage(event.delta.content_delta)
+    return Usage(response_tokens=response_tokens, total_tokens=response_tokens)

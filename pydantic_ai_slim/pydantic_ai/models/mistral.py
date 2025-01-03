@@ -32,10 +32,8 @@ from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from . import (
     AgentModel,
-    EitherStreamedResponse,
     Model,
-    StreamStructuredResponse,
-    StreamTextResponse,
+    StreamedResponse,
     cached_async_http_client,
 )
 
@@ -164,7 +162,7 @@ class MistralAgentModel(AgentModel):
     @asynccontextmanager
     async def request_stream(
         self, messages: list[ModelMessage], model_settings: ModelSettings | None
-    ) -> AsyncIterator[EitherStreamedResponse]:
+    ) -> AsyncIterator[StreamedResponse]:
         """Make a streaming request to the model from Pydantic AI call."""
         response = await self._stream_completions_create(messages, model_settings)
         async with response:
@@ -295,7 +293,7 @@ class MistralAgentModel(AgentModel):
     async def _process_streamed_response(
         result_tools: list[ToolDefinition],
         response: MistralEventStreamAsync[MistralCompletionEvent],
-    ) -> EitherStreamedResponse:
+    ) -> StreamedResponse:
         """Process a streamed response, and prepare a streaming response to return."""
         start_usage = Usage()
 
@@ -323,7 +321,7 @@ class MistralAgentModel(AgentModel):
                     tool_calls = delta.tool_calls
 
                 if tool_calls or content and result_tools:
-                    return MistralStreamStructuredResponse(
+                    return MistralStreamedResponse(
                         {c.id if c.id else 'null': c for c in tool_calls or []},
                         {c.name: c for c in result_tools},
                         response,
@@ -333,7 +331,8 @@ class MistralAgentModel(AgentModel):
                     )
 
                 elif content:
-                    return MistralStreamTextResponse(content, response, timestamp, start_usage)
+                    # return MistralStreamTextResponse(content, response, timestamp, start_usage)
+                    raise NotImplementedError('TODO: Fix this branch')
 
     @staticmethod
     def _map_to_mistral_tool_call(t: ToolCallPart) -> MistralToolCall:
@@ -468,50 +467,8 @@ class MistralAgentModel(AgentModel):
 
 
 @dataclass
-class MistralStreamTextResponse(StreamTextResponse):
-    """Implementation of `StreamTextResponse` for Mistral models."""
-
-    _first: str | None
-    _response: MistralEventStreamAsync[MistralCompletionEvent]
-    _timestamp: datetime
-    _usage: Usage
-    _buffer: list[str] = field(default_factory=list, init=False)
-
-    async def __anext__(self) -> None:
-        if self._first is not None and len(self._first) > 0:
-            self._buffer.append(self._first)
-            self._first = None
-            return None
-
-        chunk = await self._response.__anext__()
-        self._usage += _map_usage(chunk.data)
-
-        try:
-            choice = chunk.data.choices[0]
-        except IndexError:
-            raise StopAsyncIteration()
-
-        content = choice.delta.content
-        if choice.finish_reason is None:
-            assert content is not None, f'Expected delta with content, invalid chunk: {chunk!r}'
-
-        if text := _map_content(content):
-            self._buffer.append(text)
-
-    def get(self, *, final: bool = False) -> Iterable[str]:
-        yield from self._buffer
-        self._buffer.clear()
-
-    def usage(self) -> Usage:
-        return self._usage
-
-    def timestamp(self) -> datetime:
-        return self._timestamp
-
-
-@dataclass
-class MistralStreamStructuredResponse(StreamStructuredResponse):
-    """Implementation of `StreamStructuredResponse` for Mistral models."""
+class MistralStreamedResponse(StreamedResponse):
+    """Implementation of `StreamedResponse` for Mistral models."""
 
     _function_tools: dict[str, MistralToolCall]
     _result_tools: dict[str, ToolDefinition]
@@ -594,7 +551,7 @@ class MistralStreamStructuredResponse(StreamStructuredResponse):
 
             if isinstance(json_dict[param], dict) and 'properties' in param_schema:
                 nested_schema = param_schema
-                if not MistralStreamStructuredResponse._validate_required_json_schema(json_dict[param], nested_schema):
+                if not MistralStreamedResponse._validate_required_json_schema(json_dict[param], nested_schema):
                     return False
 
         return True
