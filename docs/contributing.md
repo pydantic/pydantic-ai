@@ -44,6 +44,16 @@ To run code formatting, linting, static type checks, and tests with coverage rep
 make
 ```
 
+## Documentation Changes
+
+Documentation is generated using [Material](https://squidfunk.github.io/mkdocs-material/) (which is built on top of [Mkdocs](https://www.mkdocs.org)). Most changes will involve editing or creating markdown files in the [/docs](https://github.com/pydantic/pydantic-ai/tree/main/docs) directory and adjusting the docs page structure in [mkdocs.yml](https://github.com/pydantic/pydantic-ai/blob/main/mkdocs.yml).
+
+To run the documentation page locally, run:
+
+```bash
+uv run mkdocs serve
+```
+
 ## Rules for adding new models to PydanticAI {#new-model-rules}
 
 To avoid an excessive workload for the maintainers of PydanticAI, we can't accept all model contributions, so we're setting the following rules for when we'll accept new models and when we won't. This should hopefully reduce the chances of disappointment and wasted work.
