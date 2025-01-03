@@ -267,6 +267,7 @@ async def test_json_def_replaced_any_of(allow_model_requests: None):
                                     'lng': {'type': 'number'},
                                 },
                                 'required': ['lat', 'lng'],
+                                'nullable': True,
                                 'type': 'object',
                             }
                         },
