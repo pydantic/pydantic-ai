@@ -473,6 +473,17 @@ async def test_no_content(allow_model_requests: None):
             pass
 
 
+async def test_no_sync_content(allow_model_requests: None):
+    mock_client = MockOpenAI.create_mock(
+        chat.ChatCompletion(id='', choices=[], created=0, model='', object='chat.completion')
+    )
+    m = OpenAIModel('gpt-4', openai_client=mock_client)
+    agent = Agent(m, result_type=MyTypedDict)
+
+    with pytest.raises(UnexpectedModelBehavior, match='Response has no timestamp'):
+        await agent.run('')
+
+
 async def test_no_delta(allow_model_requests: None):
     stream = (
         chunk([]),

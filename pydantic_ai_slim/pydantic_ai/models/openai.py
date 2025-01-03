@@ -203,6 +203,8 @@ class OpenAIAgentModel(AgentModel):
     @staticmethod
     def _process_response(response: chat.ChatCompletion) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
+        if not response.created:
+            raise UnexpectedModelBehavior('Response has no timestamp', body=response.to_json())
         timestamp = datetime.fromtimestamp(response.created, tz=timezone.utc)
         choice = response.choices[0]
         items: list[ModelResponsePart] = []
