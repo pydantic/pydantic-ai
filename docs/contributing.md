@@ -46,8 +46,6 @@ make
 
 ## Documentation Changes
 
-Documentation is generated using [Material](https://squidfunk.github.io/mkdocs-material/) (which is built on top of [Mkdocs](https://www.mkdocs.org)). Most changes will involve editing or creating markdown files in the [/docs](https://github.com/pydantic/pydantic-ai/tree/main/docs) directory and adjusting the docs page structure in [mkdocs.yml](https://github.com/pydantic/pydantic-ai/blob/main/mkdocs.yml).
-
 To run the documentation page locally, run:
 
 ```bash
