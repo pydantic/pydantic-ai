@@ -164,7 +164,7 @@ class VertexAIModel(Model):
         return url, auth
 
     def name(self) -> str:
-        return f'vertexai:{self.model_name}'
+        return f'google-vertex:{self.model_name}'
 
 
 # pyright: reportUnknownMemberType=false

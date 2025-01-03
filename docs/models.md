@@ -199,9 +199,13 @@ You can then use [`GeminiModel`][pydantic_ai.models.gemini.GeminiModel] by name:
 ```python {title="gemini_model_by_name.py"}
 from pydantic_ai import Agent
 
-agent = Agent('gemini-1.5-flash')
+agent = Agent('google-gla:gemini-1.5-flash')
 ...
 ```
+
+!!! note
+    The `google-gla` provider prefix represents the "google generative language api" for `GeminiModel`s.
+    `google-vertex` is used with `VertexAIModel`s.
 
 Or initialise the model directly with just the model name:
 

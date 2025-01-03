@@ -780,7 +780,7 @@ def test_unknown_tool_fix(set_event_loop: None):
 
 def test_model_requests_blocked(env: TestEnv, set_event_loop: None):
     env.set('GEMINI_API_KEY', 'foobar')
-    agent = Agent('gemini-1.5-flash', result_type=tuple[str, str], defer_model_check=True)
+    agent = Agent('google-gla:gemini-1.5-flash', result_type=tuple[str, str], defer_model_check=True)
 
     with pytest.raises(RuntimeError, match='Model requests are not allowed, since ALLOW_MODEL_REQUESTS is False'):
         agent.run_sync('Hello')
@@ -788,7 +788,7 @@ def test_model_requests_blocked(env: TestEnv, set_event_loop: None):
 
 def test_override_model(env: TestEnv, set_event_loop: None):
     env.set('GEMINI_API_KEY', 'foobar')
-    agent = Agent('gemini-1.5-flash', result_type=tuple[int, str], defer_model_check=True)
+    agent = Agent('google-gla:gemini-1.5-flash', result_type=tuple[int, str], defer_model_check=True)
 
     with agent.override(model='test'):
         result = agent.run_sync('Hello')
