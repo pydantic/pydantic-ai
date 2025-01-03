@@ -71,6 +71,7 @@ There are three ways to run an agent:
 Here's a simple example demonstrating all three:
 
 ```python {title="run_agent.py"}
+import asyncio
 from pydantic_ai import Agent
 
 agent = Agent('openai:gpt-4o')
@@ -88,6 +89,8 @@ async def main():
     async with agent.run_stream('What is the capital of the UK?') as response:
         print(await response.get_data())
         #> London
+
+asyncio.run(main())
 ```
 _(This example is complete, it can be run "as is")_
 
