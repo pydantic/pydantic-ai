@@ -3,6 +3,7 @@ from importlib.metadata import version
 from .agent import Agent, capture_run_messages
 from .exceptions import AgentRunError, ModelRetry, UnexpectedModelBehavior, UsageLimitExceeded, UserError
 from .tools import RunContext, Tool
+from .usage import Usage, UsageLimits
 
 __all__ = (
     'Agent',
@@ -13,7 +14,10 @@ __all__ = (
     'ModelRetry',
     'UnexpectedModelBehavior',
     'UsageLimitExceeded',
+    'Usage',
+    'UsageLimits',
     'UserError',
     '__version__',
 )
+
 __version__ = version('pydantic_ai_slim')
