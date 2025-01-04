@@ -468,6 +468,7 @@ Follow the [xAI API Documentation](https://docs.x.ai/docs/overview), and set the
 
 ```python {title="grok_model_init.py"}
 import os
+
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIModel
 
@@ -493,6 +494,7 @@ Follow the [DeepSeek API Documentation](https://platform.deepseek.com/docs/api/o
 
 ```python {title="deepseek_model_init.py"}
 import os
+
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIModel
 
