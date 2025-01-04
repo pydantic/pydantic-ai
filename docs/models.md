@@ -450,8 +450,9 @@ agent = Agent(model)
 ...
 ```
 
-## OpenAI-compatible models
+## OpenAI-compatible Models
 
+Many of the models are compatible with OpenAI SDK, and thus can be used with [`OpenAIModel`][pydantic_ai.models.openai.OpenAIModel] in PydanticAI.
 Before getting started, check the [OpenAI](#openai) section for installation and configuration instructions.
 
 ### Grok (xAI)
