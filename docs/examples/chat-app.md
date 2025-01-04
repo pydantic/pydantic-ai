@@ -23,7 +23,7 @@ python/uv-run -m pydantic_ai_examples.chat_app
 
 Then open the app at [localhost:8000](http://localhost:8000).
 
-TODO screenshot.
+![Example conversation](../img/chat-app-example.png)
 
 ## Example Code
 
