@@ -77,6 +77,7 @@ def test_docs_examples(
     env.set('OPENAI_API_KEY', 'testing')
     env.set('GEMINI_API_KEY', 'testing')
     env.set('GROQ_API_KEY', 'testing')
+    env.set('DEEPSEEK_API_KEY', 'testing')
 
     sys.path.append('tests/example_modules')
 

@@ -22,7 +22,7 @@ from .openai import OpenAIModel
 
 DeepSeekModelName = Literal['deepseek-chat']
 """
-DeepSeek follows the OpenAI chat completions API. 
+DeepSeek follows the OpenAI chat completions API.
 For details see [DeepSeek API documentation](https://api-docs.deepseek.com).
 """
 

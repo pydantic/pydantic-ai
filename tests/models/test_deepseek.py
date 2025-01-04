@@ -8,7 +8,6 @@ from datetime import datetime, timezone
 import pytest
 from httpx import AsyncClient as AsyncHTTPClient
 from inline_snapshot import snapshot
-from openai import AsyncOpenAI, OpenAIError
 
 from pydantic_ai import Agent
 from pydantic_ai.messages import (
@@ -21,6 +20,7 @@ from pydantic_ai.result import Usage
 from ..conftest import IsNow, try_import
 
 with try_import() as imports_successful:
+    from openai import AsyncOpenAI, OpenAIError
     from openai.types.chat.chat_completion_message import ChatCompletionMessage
 
     from pydantic_ai.models.deepseek import DeepSeekModel
