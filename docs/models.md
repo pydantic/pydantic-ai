@@ -7,6 +7,8 @@ PydanticAI is Model-agnostic and has built in support for the following model pr
 * [Groq](#groq)
 * [Mistral](#mistral)
 
+See [OpenAI-compatible models](#openai-compatible-models) for more examples on how to use models such as [Grok (xAI)](#grok-xai) and [DeepSeek](#deepseek) that support the OpenAI SDK.
+
 You can also [add support for other models](#implementing-custom-models).
 
 PydanticAI also comes with [`TestModel`](api/models/test.md) and [`FunctionModel`](api/models/function.md) for testing and development.
@@ -444,6 +446,60 @@ from pydantic_ai import Agent
 from pydantic_ai.models.mistral import MistralModel
 
 model = MistralModel('mistral-small-latest', api_key='your-api-key')
+agent = Agent(model)
+...
+```
+
+## OpenAI-compatible models
+
+Before getting started, check the [OpenAI](#openai) section for installation and configuration instructions.
+
+### Grok (xAI)
+
+Go to [xAI API Console](https://console.x.ai/) and create an API key.
+Once you have the API key, you can set it as an environment variable:
+
+```bash
+export XAI_API_KEY='your-api-key'
+```
+
+Follow the [xAI API Documentation](https://docs.x.ai/docs/overview), and set the `base_url` and `api_key` arguments appropriately.
+
+```python {title="grok_model_init.py"}
+import os
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIModel
+
+model = OpenAIModel(
+    'grok-2-1212',
+    base_url='https://api.x.ai/v1',
+    api_key=os.getenv('XAI_API_KEY'),
+)
+agent = Agent(model)
+...
+```
+
+### DeepSeek
+
+Go to [DeepSeek API Platform](https://platform.deepseek.com/api_keys) and create an API key.
+Once you have the API key, you can set it as an environment variable:
+
+```bash
+export DEEPSEEK_API_KEY='your-api-key'
+```
+
+Follow the [DeepSeek API Documentation](https://platform.deepseek.com/docs/api/overview), and set the `base_url` and `api_key` arguments appropriately.
+
+```python {title="deepseek_model_init.py"}
+import os
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIModel
+
+model = OpenAIModel(
+    'deepseek-chat',
+    base_url='https://api.deepseek.com',
+    api_key=os.getenv('DEEPSEEK_API_KEY'),
+)
 agent = Agent(model)
 ...
 ```
