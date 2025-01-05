@@ -229,7 +229,7 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
             for i, part in enumerate(msg.parts):
                 # TODO: Probably need to replace this usage of index with a (tracked) part ID or similar
                 #  (It's not guaranteed that this index `i` matches what comes out of the maybe_event.index below)
-                if isinstance(part, TextPart):
+                if isinstance(part, TextPart) and part.content:
                     yield part.content, i
 
             async with _utils.group_by_temporal(usage_checking_stream, debounce_by) as group_iter:

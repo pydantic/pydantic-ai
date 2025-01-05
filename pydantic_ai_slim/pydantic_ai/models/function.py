@@ -168,7 +168,19 @@ class FunctionAgentModel(AgentModel):
             self.stream_function is not None
         ), 'FunctionModel must receive a `stream_function` to support streamed requests'
         response_stream = self.stream_function(messages, self.agent_info)
-        yield FunctionStreamedResponse(response_stream)
+
+        # Explicitly check that we get at least one value, so we can produce a nicer error message for misuse
+        try:
+            first = await response_stream.__anext__()
+        except StopAsyncIteration as e:
+            raise ValueError('Stream function must return at least one item') from e
+
+        async def peeked_stream():
+            yield first
+            async for item in response_stream:
+                yield item
+
+        yield FunctionStreamedResponse(peeked_stream())
 
 
 _CONTENT_PART_INDEX = -1
