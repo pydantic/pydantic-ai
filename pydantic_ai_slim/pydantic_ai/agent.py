@@ -540,7 +540,9 @@ class Agent(Generic[AgentDeps, ResultData]):
     def system_prompt(self, func: Callable[[], Awaitable[str]], /) -> Callable[[], Awaitable[str]]: ...
 
     @overload
-    def system_prompt(self, /, *, dynamic: bool = False) -> Callable[..., Any]: ...
+    def system_prompt(
+        self, /, *, dynamic: bool = False
+    ) -> Callable[[_system_prompt.SystemPromptFunc[AgentDeps]], _system_prompt.SystemPromptFunc[AgentDeps]]: ...
 
     def system_prompt(
         self,
