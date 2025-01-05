@@ -150,7 +150,7 @@ async def test_streamed_text_stream():
                 'The cat sat on ',
                 'The cat sat on the ',
                 'The cat sat on the mat.',
-                # This last value is handled twice due to the debounce_by=None combined with the need to emit
+                # This last value is repeated due to the debounce_by=None combined with the need to emit
                 # a final empty chunk to signal the end of the stream
                 'The cat sat on the mat.',
             ]

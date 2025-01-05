@@ -209,10 +209,6 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
         """Stream the text result as an async iterable.
 
         !!! note
-            This method will fail if the response is structured,
-            e.g. if [`is_structured`][pydantic_ai.result.StreamedRunResult.is_structured] returns `True`.
-
-        !!! note
             Result validators will NOT be called on the text result if `delta=True`.
 
         Args:
@@ -227,9 +223,18 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
         )
 
         async def _stream_text_deltas() -> AsyncIterator[tuple[str, int]]:
+            # if the response currently has any parts with content, yield those before streaming
+            # TODO: This needs to be rolled into the group_by_temporal below
+            msg = self._stream_response.get()
+            for i, part in enumerate(msg.parts):
+                # TODO: Probably need to replace this usage of index with a (tracked) part ID or similar
+                #  (It's not guaranteed that this index `i` matches what comes out of the maybe_event.index below)
+                if isinstance(part, TextPart):
+                    yield part.content, i
+
             async with _utils.group_by_temporal(usage_checking_stream, debounce_by) as group_iter:
-                async for group, _is_final in group_iter:
-                    for maybe_event in group:
+                async for events, _is_final in group_iter:
+                    for maybe_event in events:
                         if (
                             isinstance(maybe_event, _messages.PartStartEvent)
                             and isinstance(maybe_event.part, _messages.TextPart)
@@ -254,7 +259,7 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
                 combined_validated_text = ''
                 async for text, index in _stream_text_deltas():
                     chunks[index] += text
-                    combined_text = ''.join([chunks[k] for k in sorted(chunks)])
+                    combined_text = '\n\n'.join([chunks[k] for k in sorted(chunks)])
                     combined_validated_text = await self._validate_text_result(combined_text)
                     yield combined_validated_text
 
@@ -280,6 +285,7 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
 
         with _logfire.span('response stream structured') as lf_span:
             # if the message currently has any parts with content, yield before streaming
+            # TODO: This needs to be rolled into the group_by_temporal below...
             msg = self._stream_response.get()
             for part in msg.parts:
                 if part.has_content():

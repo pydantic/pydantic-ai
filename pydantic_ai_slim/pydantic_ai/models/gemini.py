@@ -20,10 +20,12 @@ from ..messages import (
     ModelResponse,
     ModelResponsePart,
     ModelResponseStreamEvent,
+    PartDeltaEvent,
     PartStartEvent,
     RetryPromptPart,
     SystemPromptPart,
     TextPart,
+    TextPartDelta,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
@@ -305,63 +307,92 @@ class GeminiStreamedResponse(StreamedResponse):
     _timestamp: datetime = field(default_factory=_utils.now_utc, init=False)
     _usage: result.Usage = field(default_factory=result.Usage, init=False)
 
+    _parts: dict[int, ModelResponsePart] = field(default_factory=dict, init=False)
     _event_iterator: AsyncIterator[ModelResponseStreamEvent | None] | None = field(default=None, init=False)
 
     async def __anext__(self) -> ModelResponseStreamEvent | None:
         if self._event_iterator is None:
             self._event_iterator = self._get_event_iterator()
         next_event = await self._event_iterator.__anext__()
+
+        # Update the `_parts` so the `get` method can return the correct value
+        if isinstance(next_event, PartStartEvent):
+            self._parts[next_event.index] = next_event.part
+        elif isinstance(next_event, PartDeltaEvent):
+            self._parts[next_event.index] = next_event.delta.apply(self._parts[next_event.index])
+
         return next_event
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent | None]:
-        chunk_index = -1
-        current_gemini_response_index = -1
-        current_gemini_response_part_index = -1
-        last_gemini_part_data: tuple[int, int, _GeminiPartUnion] | None = None
+        current_part_index: int | None = None
+        current_tool_call_name: str | None = None  # None means we are in a text part or have no parts at all
 
+        async for gemini_response in self._get_gemini_responses():
+            candidate = gemini_response['candidates'][0]
+            gemini_part: _GeminiPartUnion
+            for gemini_part in candidate['content']['parts']:
+                if 'text' in gemini_part:
+                    # The following condition holds if and only if we are not already in a text part:
+                    if current_part_index is None or current_tool_call_name is not None:
+                        current_tool_call_name = None
+                        if current_part_index is None:
+                            current_part_index = 0
+                        else:
+                            # yield PartStopEvent(index=current_part_index)  # TODO: Not sure if we want to keep these events..
+                            current_part_index += 1
+
+                        part = TextPart(gemini_part['text'])
+                        yield PartStartEvent(index=current_part_index, part=part)
+                    else:
+                        delta = TextPartDelta(gemini_part['text'])
+                        yield PartDeltaEvent(index=current_part_index, delta=TextPartDelta(gemini_part['text']))
+                elif 'function_call' in gemini_part:
+                    # Here, we assume all function_call parts are complete and don't have deltas.
+                    # We need to confirm whether this is actually true, but if it isn't, we can still handle it properly
+                    # it would just be a bit more complicated. And we'd need to confirm the intended semantics.
+                    current_tool_call_name = gemini_part['function_call']['name']
+                    if current_part_index is None:
+                        current_part_index = 0
+                    else:
+                        # yield PartStopEvent(index=current_part_index)  # TODO: Not sure if we want to keep these events..
+                        current_part_index += 1
+                    yield PartStartEvent(
+                        index=current_part_index,
+                        part=ToolCallPart.from_raw_args(current_tool_call_name, gemini_part['function_call']['args']),
+                    )
+                else:
+                    assert 'function_response' in gemini_part, f'Unexpected part: {gemini_part}'
+
+    async def _get_gemini_responses(self) -> AsyncIterator[_GeminiResponse]:
+        # This method exists to ensure we only yield completed items, so we don't need to worry about
+        # partial gemini responses, which would make everything more complicated
+
+        gemini_responses: list[_GeminiResponse] = []
+        current_gemini_response_index = 0
+        # Right now, there are some circumstances where we will have information that could be yielded sooner than it is
+        # But changing that would make things a lot more complicated.
         async for chunk in self._stream:
-            chunk_index += 1
-            next_part_index = -1
             self._content.extend(chunk)
 
-            responses = _gemini_streamed_response_ta.validate_json(
+            gemini_responses = _gemini_streamed_response_ta.validate_json(
                 self._content,
                 experimental_allow_partial='trailing-strings',
             )
 
-            r: _GeminiResponse
-            for response_index, r in enumerate(responses):
-                candidate = r['candidates'][0]
-                if response_index < current_gemini_response_index:
-                    next_part_index += len(candidate['content']['parts'])
-                    continue
+            # The idea: yield only up to the latest response, which might still be partial.
+            # Note that if the latest response is complete, we could yield it immediately, but there's not a good
+            # allow_partial API to determine if the last item in the list is complete.
+            responses_to_yield = gemini_responses[:-1]
+            for r in responses_to_yield[current_gemini_response_index:]:
+                current_gemini_response_index += 1
+                self._usage += _metadata_as_usage(r)
+                yield r
 
-                if response_index > current_gemini_response_index:
-                    current_gemini_response_index = response_index
-                    current_gemini_response_part_index = -1
-
-                for response_part_index, gemini_part in enumerate(candidate['content']['parts']):
-                    next_part_index += 1
-                    if response_part_index < current_gemini_response_part_index:
-                        continue
-                    current_gemini_response_part_index = response_part_index
-
-                    # Don't yield the same part twice
-                    gemini_part_data = (response_index, response_part_index, gemini_part)
-                    if gemini_part_data == last_gemini_part_data:
-                        yield None  # TODO: Should be able to safely drop this if we drop yielding None
-                        continue
-                    last_gemini_part_data = gemini_part_data
-
-                    if 'text' in gemini_part:
-                        part = TextPart(gemini_part['text'])
-                        yield PartStartEvent(index=next_part_index, part=part)
-                    elif 'function_call' in gemini_part:
-                        part = ToolCallPart.from_raw_args(gemini_part['name'], gemini_part['args'])
-                        yield PartStartEvent(index=next_part_index, part=part)
-                    else:  # pragma: no branch
-                        # We don't currently do anything with function_response parts
-                        assert 'function_response' in gemini_part, f'Unhandled part: {gemini_part}'
+        # Now yield the final response, which should be complete
+        if gemini_responses:
+            r = gemini_responses[-1]
+            print(r)
+            yield r
 
     def get(self, *, final: bool = False) -> ModelResponse:
         """Get the `ModelResponse` at this point.
@@ -372,17 +403,7 @@ class GeminiStreamedResponse(StreamedResponse):
         I'm therefore assuming that each part contains a complete tool call, and not trying to combine data from
         separate parts.
         """
-        responses = _gemini_streamed_response_ta.validate_json(
-            self._content,
-            experimental_allow_partial='off' if final else 'trailing-strings',
-        )
-        combined_parts: list[_GeminiPartUnion] = []
-        self._usage = result.Usage()
-        for r in responses:
-            self._usage += _metadata_as_usage(r)
-            candidate = r['candidates'][0]
-            combined_parts.extend(candidate['content']['parts'])
-        return _process_response_from_parts(combined_parts, timestamp=self._timestamp)
+        return ModelResponse(parts=[self._parts[k] for k in sorted(self._parts)], timestamp=self._timestamp)
 
     def usage(self) -> result.Usage:
         return self._usage

@@ -315,7 +315,6 @@ class PartStopEvent:
     """A part stop event."""
 
     index: int
-    part: ModelResponsePart
     event_kind: Literal['part_stop'] = 'part_stop'
 
 

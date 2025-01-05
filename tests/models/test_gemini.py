@@ -562,13 +562,21 @@ async def test_stream_text(get_gemini_client: GetGeminiClient):
 
     async with agent.run_stream('Hello') as result:
         chunks = [chunk async for chunk in result.stream(debounce_by=None)]
-        assert chunks == snapshot(['Hello ', 'Hello world'])
-    assert result.usage() == snapshot(Usage(requests=1, request_tokens=2, response_tokens=4, total_tokens=6))
+        assert chunks == snapshot(
+            [
+                'Hello ',
+                'Hello world',
+                # This last value is repeated due to the debounce_by=None combined with the need to emit
+                # a final empty chunk to signal the end of the stream
+                'Hello world',
+            ]
+        )
+    assert result.usage() == snapshot(Usage(requests=1, request_tokens=1, response_tokens=2, total_tokens=3))
 
     async with agent.run_stream('Hello') as result:
         chunks = [chunk async for chunk in result.stream_text(delta=True, debounce_by=None)]
-        assert chunks == snapshot(['', 'Hello ', 'world'])
-    assert result.usage() == snapshot(Usage(requests=1, request_tokens=2, response_tokens=4, total_tokens=6))
+        assert chunks == snapshot(['Hello ', 'world'])
+    assert result.usage() == snapshot(Usage(requests=1, request_tokens=1, response_tokens=2, total_tokens=3))
 
 
 async def test_stream_text_no_data(get_gemini_client: GetGeminiClient):
