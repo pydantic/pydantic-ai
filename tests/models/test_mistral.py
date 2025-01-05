@@ -308,7 +308,6 @@ async def test_stream_text(allow_model_requests: None):
     # When
     async with agent.run_stream('') as result:
         # Then
-        assert not result.is_structured
         assert not result.is_complete
         assert [c async for c in result.stream(debounce_by=None)] == snapshot(
             ['hello ', 'hello world ', 'hello world welcome ', 'hello world welcome mistral']
@@ -329,7 +328,6 @@ async def test_stream_text_finish_reason(allow_model_requests: None):
     # When
     async with agent.run_stream('') as result:
         # Then
-        assert not result.is_structured
         assert not result.is_complete
         assert [c async for c in result.stream(debounce_by=None)] == snapshot(['hello ', 'hello world', 'hello world.'])
         assert result.is_complete
@@ -345,7 +343,6 @@ async def test_no_delta(allow_model_requests: None):
     # When
     async with agent.run_stream('') as result:
         # Then
-        assert not result.is_structured
         assert not result.is_complete
         assert [c async for c in result.stream(debounce_by=None)] == snapshot(['hello ', 'hello world'])
         assert result.is_complete
@@ -588,7 +585,6 @@ async def test_stream_structured_with_all_type(allow_model_requests: None):
     # When
     async with agent.run_stream('User prompt value') as result:
         # Then
-        assert result.is_structured
         assert not result.is_complete
         v = [dict(c) async for c in result.stream(debounce_by=None)]
         assert v == snapshot(
@@ -702,7 +698,6 @@ async def test_stream_result_type_primitif_dict(allow_model_requests: None):
     # When
     async with agent.run_stream('User prompt value') as result:
         # Then
-        assert result.is_structured
         assert not result.is_complete
         v = [c async for c in result.stream(debounce_by=None)]
         assert v == snapshot(
@@ -761,7 +756,6 @@ async def test_stream_result_type_primitif_int(allow_model_requests: None):
     # When
     async with agent.run_stream('User prompt value') as result:
         # Then
-        assert result.is_structured
         assert not result.is_complete
         v = [c async for c in result.stream(debounce_by=None)]
         assert v == snapshot([1, 1, 1])
@@ -823,7 +817,6 @@ async def test_stream_result_type_primitif_array(allow_model_requests: None):
     # When
     async with agent.run_stream('User prompt value') as result:
         # Then
-        assert result.is_structured
         assert not result.is_complete
         v = [c async for c in result.stream(debounce_by=None)]
         assert v == snapshot(
@@ -920,7 +913,6 @@ async def test_stream_result_type_basemodel_with_default_params(allow_model_requ
     # When
     async with agent.run_stream('User prompt value') as result:
         # Then
-        assert result.is_structured
         assert not result.is_complete
         v = [c async for c in result.stream(debounce_by=None)]
         assert v == snapshot(
@@ -1009,7 +1001,6 @@ async def test_stream_result_type_basemodel_with_required_params(allow_model_req
     # When
     async with agent.run_stream('User prompt value') as result:
         # Then
-        assert result.is_structured
         assert not result.is_complete
         v = [c async for c in result.stream(debounce_by=None)]
         assert v == snapshot(

@@ -220,17 +220,19 @@ class TestStreamedResponse(StreamedResponse):
     _event_iterator: AsyncIterator[ModelResponseStreamEvent | None] | None = field(default=None, init=False)
 
     async def __anext__(self) -> ModelResponseStreamEvent | None:
-        if not self._parts:
-            print('---')
         if self._event_iterator is None:
             self._event_iterator = self._get_event_iterator()
+
         next_event = await self._event_iterator.__anext__()
-        existing_part = self._parts.get(next_event.index)
-        if isinstance(next_event, PartDeltaEvent):
+        if next_event is None:
+            return None
+
+        if isinstance(next_event, PartStartEvent):
+            self._parts[next_event.index] = next_event.part
+        elif isinstance(next_event, PartDeltaEvent):
+            existing_part = self._parts.get(next_event.index)
             assert existing_part is not None, 'PartDeltaEvent without existing part'
             self._parts[next_event.index] = next_event.delta.apply(existing_part)
-        else:
-            self._parts[next_event.index] = next_event.part
 
         self._usage += _estimate_event_usage(next_event)
         return next_event

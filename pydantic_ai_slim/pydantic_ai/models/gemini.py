@@ -11,7 +11,7 @@ from typing import Annotated, Any, Literal, Protocol, Union
 
 import pydantic
 from httpx import USE_CLIENT_DEFAULT, AsyncClient as AsyncHTTPClient, Response as HTTPResponse
-from typing_extensions import NotRequired, TypedDict, TypeGuard, assert_never
+from typing_extensions import NotRequired, TypedDict, assert_never
 
 from .. import UnexpectedModelBehavior, _utils, exceptions, result
 from ..messages import (
@@ -313,12 +313,16 @@ class GeminiStreamedResponse(StreamedResponse):
     async def __anext__(self) -> ModelResponseStreamEvent | None:
         if self._event_iterator is None:
             self._event_iterator = self._get_event_iterator()
-        next_event = await self._event_iterator.__anext__()
 
-        # Update the `_parts` so the `get` method can return the correct value
+        next_event = await self._event_iterator.__anext__()
+        if next_event is None:
+            return None
+
         if isinstance(next_event, PartStartEvent):
             self._parts[next_event.index] = next_event.part
         elif isinstance(next_event, PartDeltaEvent):
+            existing_part = self._parts.get(next_event.index)
+            assert existing_part is not None, 'PartDeltaEvent without existing part'
             self._parts[next_event.index] = next_event.delta.apply(self._parts[next_event.index])
 
         return next_event
@@ -344,7 +348,6 @@ class GeminiStreamedResponse(StreamedResponse):
                         part = TextPart(gemini_part['text'])
                         yield PartStartEvent(index=current_part_index, part=part)
                     else:
-                        delta = TextPartDelta(gemini_part['text'])
                         yield PartDeltaEvent(index=current_part_index, delta=TextPartDelta(gemini_part['text']))
                 elif 'function_call' in gemini_part:
                     # Here, we assume all function_call parts are complete and don't have deltas.
@@ -598,35 +601,6 @@ class _GeminiResponse(TypedDict):
     # usageMetadata appears to be required by both APIs but is omitted when streaming responses until the last response
     usage_metadata: NotRequired[Annotated[_GeminiUsageMetaData, pydantic.Field(alias='usageMetadata')]]
     prompt_feedback: NotRequired[Annotated[_GeminiPromptFeedback, pydantic.Field(alias='promptFeedback')]]
-
-
-# TODO: Delete the next three functions as part of this PR
-def _extract_response_parts(
-    response: _GeminiResponse,
-) -> _utils.Either[list[_GeminiFunctionCallPart], list[_GeminiTextPart]]:
-    """Extract the parts of the response from the Gemini API.
-
-    Returns Either a list of function calls (Either.left) or a list of text parts (Either.right).
-    """
-    if len(response['candidates']) != 1:
-        raise UnexpectedModelBehavior('Expected exactly one candidate in Gemini response')
-    parts = response['candidates'][0]['content']['parts']
-    if _all_function_call_parts(parts):
-        return _utils.Either(left=parts)
-    elif _all_text_parts(parts):
-        return _utils.Either(right=parts)
-    else:
-        raise exceptions.UnexpectedModelBehavior(
-            f'Unsupported response from Gemini, expected all parts to be function calls or text, got: {parts!r}'
-        )
-
-
-def _all_function_call_parts(parts: list[_GeminiPartUnion]) -> TypeGuard[list[_GeminiFunctionCallPart]]:
-    return all('function_call' in part for part in parts)
-
-
-def _all_text_parts(parts: list[_GeminiPartUnion]) -> TypeGuard[list[_GeminiTextPart]]:
-    return all('text' in part for part in parts)
 
 
 class _GeminiCandidates(TypedDict):

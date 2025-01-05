@@ -340,7 +340,6 @@ async def test_stream_text(allow_model_requests: None):
     agent = Agent(m)
 
     async with agent.run_stream('') as result:
-        assert not result.is_structured
         assert not result.is_complete
         assert [c async for c in result.stream(debounce_by=None)] == snapshot(['hello ', 'hello world'])
         assert result.is_complete
@@ -353,7 +352,6 @@ async def test_stream_text_finish_reason(allow_model_requests: None):
     agent = Agent(m)
 
     async with agent.run_stream('') as result:
-        assert not result.is_structured
         assert not result.is_complete
         assert [c async for c in result.stream(debounce_by=None)] == snapshot(['hello ', 'hello world', 'hello world.'])
         assert result.is_complete
@@ -399,7 +397,6 @@ async def test_stream_structured(allow_model_requests: None):
     agent = Agent(m, result_type=MyTypedDict)
 
     async with agent.run_stream('') as result:
-        assert result.is_structured
         assert not result.is_complete
         assert [dict(c) async for c in result.stream(debounce_by=None)] == snapshot(
             [
@@ -447,7 +444,6 @@ async def test_stream_structured_finish_reason(allow_model_requests: None):
     agent = Agent(m, result_type=MyTypedDict)
 
     async with agent.run_stream('') as result:
-        assert result.is_structured
         assert not result.is_complete
         assert [dict(c) async for c in result.stream(debounce_by=None)] == snapshot(
             [
@@ -478,7 +474,6 @@ async def test_no_delta(allow_model_requests: None):
     agent = Agent(m)
 
     async with agent.run_stream('') as result:
-        assert not result.is_structured
         assert not result.is_complete
         assert [c async for c in result.stream(debounce_by=None)] == snapshot(['hello ', 'hello world'])
         assert result.is_complete

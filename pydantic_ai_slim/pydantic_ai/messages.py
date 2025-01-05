@@ -272,7 +272,9 @@ class TextPartDelta:
     content_delta: str
     part_delta_kind: Literal['text'] = 'text'
 
-    def apply(self, part: TextPart) -> TextPart:
+    def apply(self, part: ModelResponsePart) -> TextPart:
+        if not isinstance(part, TextPart):
+            raise ValueError('Cannot apply TextPartDeltas to non-TextParts')
         return replace(part, content=part.content + self.content_delta)
 
 
@@ -283,8 +285,11 @@ class ToolCallPartDelta:
     args_json_delta: str
     part_delta_kind: Literal['tool_call'] = 'tool_call'
 
-    def apply(self, part: ToolCallPart) -> ToolCallPart:
-        assert isinstance(part.args, ArgsJson), 'Cannot apply deltas to non-JSON tool arguments'
+    def apply(self, part: ModelResponsePart) -> ToolCallPart:
+        if not isinstance(part, ToolCallPart):
+            raise ValueError('Cannot apply ToolCallPartDeltas to non-ToolCallParts')
+        if not isinstance(part.args, ArgsJson):
+            raise ValueError('Cannot apply deltas to non-JSON tool arguments')
         updated_json = part.args.args_json + self.args_json_delta
         return replace(part, args=ArgsJson(updated_json))
 

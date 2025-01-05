@@ -293,7 +293,7 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
                     break
 
             async with _utils.group_by_temporal(usage_checking_stream, debounce_by) as group_iter:
-                async for events, is_final in group_iter:
+                async for _events, is_final in group_iter:
                     msg = self._stream_response.get(final=is_final)
                     yield msg, is_final
                     if is_final:
