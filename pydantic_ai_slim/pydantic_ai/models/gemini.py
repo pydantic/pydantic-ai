@@ -19,6 +19,8 @@ from ..messages import (
     ModelRequest,
     ModelResponse,
     ModelResponsePart,
+    ModelResponseStreamEvent,
+    PartStartEvent,
     RetryPromptPart,
     SystemPromptPart,
     TextPart,
@@ -256,11 +258,7 @@ class GeminiAgentModel(AgentModel):
         if start_response is None:
             raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')
 
-        # TODO: Update this once we rework stream responses to be more flexible
-        if _extract_response_parts(start_response).is_left():
-            return GeminiStreamedResponse(_content=content, _stream=aiter_bytes)
-        else:
-            raise NotImplementedError('TODO: delete this branch')
+        return GeminiStreamedResponse(_content=content, _stream=aiter_bytes)
 
     @classmethod
     def _message_to_gemini_content(
@@ -307,9 +305,63 @@ class GeminiStreamedResponse(StreamedResponse):
     _timestamp: datetime = field(default_factory=_utils.now_utc, init=False)
     _usage: result.Usage = field(default_factory=result.Usage, init=False)
 
-    async def __anext__(self) -> None:
-        chunk = await self._stream.__anext__()
-        self._content.extend(chunk)
+    _event_iterator: AsyncIterator[ModelResponseStreamEvent | None] | None = field(default=None, init=False)
+
+    async def __anext__(self) -> ModelResponseStreamEvent | None:
+        if self._event_iterator is None:
+            self._event_iterator = self._get_event_iterator()
+        next_event = await self._event_iterator.__anext__()
+        return next_event
+
+    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent | None]:
+        chunk_index = -1
+        current_gemini_response_index = -1
+        current_gemini_response_part_index = -1
+        last_gemini_part_data: tuple[int, int, _GeminiPartUnion] | None = None
+
+        async for chunk in self._stream:
+            chunk_index += 1
+            next_part_index = -1
+            self._content.extend(chunk)
+
+            responses = _gemini_streamed_response_ta.validate_json(
+                self._content,
+                experimental_allow_partial='trailing-strings',
+            )
+
+            r: _GeminiResponse
+            for response_index, r in enumerate(responses):
+                candidate = r['candidates'][0]
+                if response_index < current_gemini_response_index:
+                    next_part_index += len(candidate['content']['parts'])
+                    continue
+
+                if response_index > current_gemini_response_index:
+                    current_gemini_response_index = response_index
+                    current_gemini_response_part_index = -1
+
+                for response_part_index, gemini_part in enumerate(candidate['content']['parts']):
+                    next_part_index += 1
+                    if response_part_index < current_gemini_response_part_index:
+                        continue
+                    current_gemini_response_part_index = response_part_index
+
+                    # Don't yield the same part twice
+                    gemini_part_data = (response_index, response_part_index, gemini_part)
+                    if gemini_part_data == last_gemini_part_data:
+                        yield None  # TODO: Should be able to safely drop this if we drop yielding None
+                        continue
+                    last_gemini_part_data = gemini_part_data
+
+                    if 'text' in gemini_part:
+                        part = TextPart(gemini_part['text'])
+                        yield PartStartEvent(index=next_part_index, part=part)
+                    elif 'function_call' in gemini_part:
+                        part = ToolCallPart.from_raw_args(gemini_part['name'], gemini_part['args'])
+                        yield PartStartEvent(index=next_part_index, part=part)
+                    else:  # pragma: no branch
+                        # We don't currently do anything with function_response parts
+                        assert 'function_response' in gemini_part, f'Unhandled part: {gemini_part}'
 
     def get(self, *, final: bool = False) -> ModelResponse:
         """Get the `ModelResponse` at this point.

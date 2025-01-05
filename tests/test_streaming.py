@@ -273,7 +273,7 @@ async def test_call_tool_empty():
 
     agent = Agent(FunctionModel(stream_function=stream_structured_function), result_type=tuple[str, int])
 
-    with pytest.raises(UnexpectedModelBehavior, match='Received empty tool call message'):
+    with pytest.raises(UnexpectedModelBehavior, match='Received empty model response'):
         async with agent.run_stream('hello'):
             pass
 

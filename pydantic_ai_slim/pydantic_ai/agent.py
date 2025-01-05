@@ -1029,6 +1029,8 @@ class Agent(Generic[AgentDeps, ResultData]):
         tasks: list[asyncio.Task[_messages.ModelRequestPart]] = []
         parts: list[_messages.ModelRequestPart] = []
         model_response = streamed_response.get()
+        if not model_response.parts:
+            raise exceptions.UnexpectedModelBehavior('Received empty model response')
         for p in model_response.parts:
             if isinstance(p, ToolCallPart):
                 if tool := self._function_tools.get(p.tool_name):
