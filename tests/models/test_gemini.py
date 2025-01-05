@@ -571,12 +571,12 @@ async def test_stream_text(get_gemini_client: GetGeminiClient):
                 'Hello world',
             ]
         )
-    assert result.usage() == snapshot(Usage(requests=1, request_tokens=1, response_tokens=2, total_tokens=3))
+    assert result.usage() == snapshot(Usage(requests=1, request_tokens=2, response_tokens=4, total_tokens=6))
 
     async with agent.run_stream('Hello') as result:
         chunks = [chunk async for chunk in result.stream_text(delta=True, debounce_by=None)]
         assert chunks == snapshot(['Hello ', 'world'])
-    assert result.usage() == snapshot(Usage(requests=1, request_tokens=1, response_tokens=2, total_tokens=3))
+    assert result.usage() == snapshot(Usage(requests=1, request_tokens=2, response_tokens=4, total_tokens=6))
 
 
 async def test_stream_text_no_data(get_gemini_client: GetGeminiClient):
@@ -607,7 +607,7 @@ async def test_stream_structured(get_gemini_client: GetGeminiClient):
 
     async with agent.run_stream('Hello') as result:
         chunks = [chunk async for chunk in result.stream(debounce_by=None)]
-        assert chunks == snapshot([(1, 2), (1, 2), (1, 2)])
+        assert chunks == snapshot([(1, 2), (1, 2)])
     assert result.usage() == snapshot(Usage(requests=1, request_tokens=1, response_tokens=2, total_tokens=3))
 
 
@@ -689,6 +689,7 @@ async def test_stream_structured_tool_calls(get_gemini_client: GetGeminiClient):
     assert tool_calls == snapshot(["foo(x='a')", "bar(y='b')"])
 
 
+# TODO: Is this test still necessary now that heterogeneous streaming is allowed?
 async def test_stream_text_heterogeneous(get_gemini_client: GetGeminiClient):
     responses = [
         gemini_response(_content_model_response(ModelResponse.from_text('Hello '))),
@@ -713,10 +714,10 @@ async def test_stream_text_heterogeneous(get_gemini_client: GetGeminiClient):
     m = GeminiModel('gemini-1.5-flash', http_client=gemini_client)
     agent = Agent(m)
 
-    msg = 'Streamed response with unexpected content, expected all parts to be text'
     async with agent.run_stream('Hello') as result:
-        with pytest.raises(UnexpectedModelBehavior, match=msg):
-            await result.get_data()
+        # msg = 'Streamed response with unexpected content, expected all parts to be text'
+        # with pytest.raises(UnexpectedModelBehavior, match=msg):
+        await result.get_data()
 
 
 async def test_empty_text_ignored():

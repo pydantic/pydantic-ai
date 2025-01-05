@@ -122,7 +122,7 @@ async def test_structured_response_iter():
 
     assert chunks == snapshot([[1], [1, 2, 3, 4], [1, 2, 3, 4]])
 
-    # TODO: Is the following check still relevant? I'm not sure what it's trying to do...
+    # TODO: Can we remove the following check now?
     # async with agent.run_stream('Hello') as result:
     #     with pytest.raises(UserError, match=r'stream_text\(\) can only be used with text responses'):
     #         async for _ in result.stream_text():
@@ -161,7 +161,7 @@ async def test_streamed_text_stream():
             ['The ', 'cat ', 'sat ', 'on ', 'the ', 'mat.']
         )
 
-    # TODO: Is the following check still relevant? I'm not sure what it's trying to do...
+    # TODO: Can we remove the following check now?
     # async with agent.run_stream('Hello') as result:
     #     with pytest.raises(UserError, match=r'stream_structured\(\) can only be used with structured responses'):
     #         async for _ in result.stream_structured():

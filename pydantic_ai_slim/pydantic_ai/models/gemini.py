@@ -394,7 +394,7 @@ class GeminiStreamedResponse(StreamedResponse):
         # Now yield the final response, which should be complete
         if gemini_responses:
             r = gemini_responses[-1]
-            print(r)
+            self._usage += _metadata_as_usage(r)
             yield r
 
     def get(self, *, final: bool = False) -> ModelResponse:
