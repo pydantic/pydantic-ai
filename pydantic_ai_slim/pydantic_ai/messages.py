@@ -315,14 +315,4 @@ class PartDeltaEvent:
     event_kind: Literal['part_delta'] = 'part_delta'
 
 
-@dataclass
-class PartStopEvent:
-    """A part stop event."""
-
-    index: int
-    event_kind: Literal['part_stop'] = 'part_stop'
-
-
-ModelResponseStreamEvent = Annotated[
-    Union[PartStartEvent, PartDeltaEvent, PartStopEvent], pydantic.Discriminator('event_kind')
-]
+ModelResponseStreamEvent = Annotated[Union[PartStartEvent, PartDeltaEvent], pydantic.Discriminator('event_kind')]

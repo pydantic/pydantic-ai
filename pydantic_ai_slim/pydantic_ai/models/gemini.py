@@ -337,12 +337,7 @@ class GeminiStreamedResponse(StreamedResponse):
                     # The following condition holds if and only if we are not already in a text part:
                     if current_part_index is None or current_tool_call_name is not None:
                         current_tool_call_name = None
-                        if current_part_index is None:
-                            current_part_index = 0
-                        else:
-                            # yield PartStopEvent(index=current_part_index)  # TODO: Not sure if we want to keep these events..
-                            current_part_index += 1
-
+                        current_part_index = 0 if current_part_index is None else current_part_index + 1
                         part = TextPart(gemini_part['text'])
                         yield PartStartEvent(index=current_part_index, part=part)
                     else:
@@ -352,11 +347,7 @@ class GeminiStreamedResponse(StreamedResponse):
                     # We need to confirm whether this is actually true, but if it isn't, we can still handle it properly
                     # it would just be a bit more complicated. And we'd need to confirm the intended semantics.
                     current_tool_call_name = gemini_part['function_call']['name']
-                    if current_part_index is None:
-                        current_part_index = 0
-                    else:
-                        # yield PartStopEvent(index=current_part_index)  # TODO: Not sure if we want to keep these events..
-                        current_part_index += 1
+                    current_part_index = 0 if current_part_index is None else current_part_index + 1
                     yield PartStartEvent(
                         index=current_part_index,
                         part=ToolCallPart.from_raw_args(current_tool_call_name, gemini_part['function_call']['args']),

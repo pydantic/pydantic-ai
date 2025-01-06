@@ -504,11 +504,7 @@ class MistralStreamedResponse(StreamedResponse):
                     maybe_tool_call_part = self._try_get_result_tool_from_text(self._delta_content, self._result_tools)
                     if maybe_tool_call_part:
                         if self._result_part_index is None:
-                            if current_part_index is None:
-                                current_part_index = 0
-                            else:
-                                # yield PartStopEvent(index=current_part_index)  # TODO: Not sure if we want to keep these events..
-                                current_part_index += 1
+                            current_part_index = 0 if current_part_index is None else current_part_index + 1
                             self._result_part_index = current_part_index
 
                         yield PartStartEvent(
@@ -519,12 +515,7 @@ class MistralStreamedResponse(StreamedResponse):
                     if self._content_part_index is not None:
                         yield PartDeltaEvent(index=self._content_part_index, delta=TextPartDelta(text))
                     else:
-                        if current_part_index is None:
-                            current_part_index = 0
-                        else:
-                            # yield PartStopEvent(index=current_part_index)  # TODO: Not sure if we want to keep these events..
-                            current_part_index += 1
-
+                        current_part_index = 0 if current_part_index is None else current_part_index + 1
                         self._content_part_index = current_part_index
                         part = TextPart(text)
                         yield PartStartEvent(index=current_part_index, part=part)
@@ -534,11 +525,7 @@ class MistralStreamedResponse(StreamedResponse):
                 # It seems that mistral just sends full tool calls, so we just use them directly, rather than building
                 part_index = self._tool_call_id_to_part_index.get(dtc.id)
                 if part_index is None:
-                    if current_part_index is None:
-                        current_part_index = 0
-                    else:
-                        # yield PartStopEvent(index=current_part_index)  # TODO: Not sure if we want to keep these events..
-                        current_part_index += 1
+                    current_part_index = 0 if current_part_index is None else current_part_index + 1
                     self._tool_call_id_to_part_index[dtc.id] = current_part_index
                     part_index = current_part_index
                 yield PartStartEvent(

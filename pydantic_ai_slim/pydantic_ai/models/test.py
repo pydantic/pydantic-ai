@@ -248,10 +248,8 @@ class TestStreamedResponse(StreamedResponse):
                 yield PartStartEvent(index=i, part=TextPart(content=''))
                 for word in words:
                     yield PartDeltaEvent(index=i, delta=TextPartDelta(content_delta=word))
-                # yield PartStopEvent(index=i, part=part)
             else:
                 yield PartStartEvent(index=i, part=part)
-                # yield PartStopEvent(index=i, part=part)
 
     def get(self, *, final: bool = False) -> ModelResponse:
         parts = [self._parts[index] for index in sorted(self._parts)]

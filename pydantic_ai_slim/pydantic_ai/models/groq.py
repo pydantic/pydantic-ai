@@ -317,7 +317,7 @@ class GroqStreamedResponse(StreamedResponse):
 
         return next_event
 
-    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa C901
+    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         # TODO: Simplify this through the use of a StreamedPartsManager or whatever
         current_part_index: int | None = None
 
@@ -335,12 +335,7 @@ class GroqStreamedResponse(StreamedResponse):
                 if self._content_part_index is not None:
                     yield PartDeltaEvent(index=self._content_part_index, delta=TextPartDelta(content))
                 else:
-                    if current_part_index is None:
-                        current_part_index = 0
-                    else:
-                        # yield PartStopEvent(index=current_part_index)  # TODO: Not sure if we want to keep these events..
-                        current_part_index += 1
-
+                    current_part_index = 0 if current_part_index is None else current_part_index + 1
                     self._content_part_index = current_part_index
                     part = TextPart(content)
                     yield PartStartEvent(index=current_part_index, part=part)
@@ -366,11 +361,7 @@ class GroqStreamedResponse(StreamedResponse):
 
                     part_index = self._tool_call_index_to_part_index.get(dtc.index)
                     if part_index is None:
-                        if current_part_index is None:
-                            current_part_index = 0
-                        else:
-                            # yield PartStopEvent(index=current_part_index)  # TODO: Not sure if we want to keep these events..
-                            current_part_index += 1
+                        current_part_index = 0 if current_part_index is None else current_part_index + 1
                         self._tool_call_index_to_part_index[dtc.index] = current_part_index
                         yield PartStartEvent(
                             index=current_part_index,
@@ -398,11 +389,7 @@ class GroqStreamedResponse(StreamedResponse):
 
                     if dtc.function.name and dtc.function.arguments:
                         # This is the first delta_tool_call we've received with this index
-                        if current_part_index is None:
-                            current_part_index = 0
-                        else:
-                            # yield PartStopEvent(index=current_part_index)  # TODO: Not sure if we want to keep these events..
-                            current_part_index += 1
+                        current_part_index = 0 if current_part_index is None else current_part_index + 1
                         self._tool_call_index_to_part_index[dtc.index] = current_part_index
                         yield PartStartEvent(
                             index=current_part_index,
