@@ -148,9 +148,9 @@ async def main():
         """
         Usage(
             requests=4,
-            request_tokens=310,
+            request_tokens=309,
             response_tokens=32,
-            total_tokens=342,
+            total_tokens=341,
             details=None,
         )
         """
