@@ -3,11 +3,15 @@ from __future__ import annotations as _annotations
 import json
 import os
 
-import gradio as gr
 from httpx import AsyncClient
 
 from pydantic_ai.messages import ToolCallPart, ToolReturnPart
 from pydantic_ai_examples.weather_agent import Deps, weather_agent
+
+try:
+    import gradio as gr
+except ImportError as e:
+    raise ImportError('Please install gradio with `pip install gradio`. You must use python>=3.10.') from e
 
 TOOL_TO_DISPLAY_NAME = {'get_lat_lng': 'Geocoding API', 'get_weather': 'Weather API'}
 
