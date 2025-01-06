@@ -722,6 +722,12 @@ class _GeminiJsonSchema:
             self._object(schema, refs_stack)
         elif type_ == 'array':
             return self._array(schema, refs_stack)
+        elif type_ == 'string' and (fmt := schema.pop('format', None)):
+            description = schema.get('description')
+            if description:
+                schema['description'] = f'{description} (format: {fmt})'
+            else:
+                schema['description'] = f'Format: {fmt}'
 
     def _object(self, schema: dict[str, Any], refs_stack: tuple[str, ...]) -> None:
         ad_props = schema.pop('additionalProperties', None)
