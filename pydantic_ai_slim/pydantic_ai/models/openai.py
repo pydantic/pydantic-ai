@@ -1,6 +1,6 @@
 from __future__ import annotations as _annotations
 
-from collections.abc import AsyncIterator, Iterable, Iterator
+from collections.abc import AsyncIterable, AsyncIterator, Iterable, Iterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -10,8 +10,8 @@ from typing import Literal, Union, overload
 from httpx import AsyncClient as AsyncHTTPClient
 from typing_extensions import assert_never
 
-from .. import _utils, result
-from .._utils import guard_tool_call_id as _guard_tool_call_id, now_utc as _now_utc
+from .. import UnexpectedModelBehavior, _utils, result
+from .._utils import PeekableAsyncStream, guard_tool_call_id as _guard_tool_call_id, now_utc as _now_utc
 from ..messages import (
     ModelMessage,
     ModelRequest,
@@ -159,7 +159,7 @@ class OpenAIAgentModel(AgentModel):
     ) -> AsyncIterator[StreamedResponse]:
         response = await self._completions_create(messages, True, model_settings)
         async with response:
-            yield OpenAIStreamedResponse(response)
+            yield await self._process_streamed_response(response)
 
     @overload
     async def _completions_create(
@@ -215,6 +215,16 @@ class OpenAIAgentModel(AgentModel):
             for c in choice.message.tool_calls:
                 items.append(ToolCallPart.from_raw_args(c.function.name, c.function.arguments, c.id))
         return ModelResponse(items, timestamp=timestamp)
+
+    @staticmethod
+    async def _process_streamed_response(response: AsyncStream[ChatCompletionChunk]) -> OpenAIStreamedResponse:
+        """Process a streamed response, and prepare a streaming response to return."""
+        peekable_response = PeekableAsyncStream(response)
+        first_chunk = await peekable_response.peek()
+        if first_chunk is None:
+            raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')
+
+        return OpenAIStreamedResponse(peekable_response, datetime.fromtimestamp(first_chunk.created, tz=timezone.utc))
 
     @classmethod
     def _map_message(cls, message: ModelMessage) -> Iterable[chat.ChatCompletionMessageParam]:
@@ -275,12 +285,12 @@ _CONTENT_INDEX = 0
 class OpenAIStreamedResponse(StreamedResponse):
     """Implementation of `StreamedResponse` for OpenAI models."""
 
-    _response: AsyncStream[ChatCompletionChunk]
+    _response: AsyncIterable[ChatCompletionChunk]
+    _timestamp: datetime
 
-    _timestamp: datetime | None = field(default=None, init=False)
     _usage: result.Usage = field(default_factory=result.Usage, init=False)
-    _delta_tool_calls: dict[int, ChoiceDeltaToolCall] = field(default_factory=dict, init=False)
 
+    _delta_tool_calls: dict[int, ChoiceDeltaToolCall] = field(default_factory=dict, init=False)
     _content_part: TextPart | None = field(default=None, init=False)
     _tool_call_parts: dict[int, ToolCallPart] = field(default_factory=dict, init=False)
     _async_iterator: AsyncIterator[ModelResponseStreamEvent | None] | None = field(default=None, init=False)
@@ -304,7 +314,7 @@ class OpenAIStreamedResponse(StreamedResponse):
             try:
                 choice = chunk.choices[0]
             except IndexError:
-                raise StopAsyncIteration()
+                continue
 
             for e in self._update_parts_for_content_delta(choice.delta.content):
                 yield e
@@ -321,15 +331,12 @@ class OpenAIStreamedResponse(StreamedResponse):
                             current.function.arguments = _utils.add_optional(
                                 current.function.arguments, new.function.arguments
                             )
-                        for e in self._update_parts_for_tool_call_delta(current, replace_existing_part):
+                        for e in self._update_parts_for_tool_call_delta(new, replace_existing_part):
                             yield e
                 else:
                     self._delta_tool_calls[new.index] = new
                     for e in self._update_parts_for_tool_call_delta(new, True):
                         yield e
-
-            if choice.finish_reason is not None:
-                raise StopAsyncIteration()
 
     def get(self, *, final: bool = False) -> ModelResponse:
         items: list[ModelResponsePart] = [self._content_part] if self._content_part is not None else []

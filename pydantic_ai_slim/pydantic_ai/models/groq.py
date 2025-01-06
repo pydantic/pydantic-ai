@@ -324,9 +324,10 @@ class GroqStreamedResponse(StreamedResponse):
             self._timestamp = self._timestamp or datetime.fromtimestamp(chunk.created, tz=timezone.utc)
             self._usage += _map_usage(chunk)
 
-            if not chunk.choices:
+            try:
+                choice = chunk.choices[0]
+            except IndexError:
                 continue
-            choice = chunk.choices[0]
 
             # Handle the text part of the response
             content = choice.delta.content

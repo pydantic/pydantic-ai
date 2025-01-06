@@ -70,6 +70,9 @@ class MockAsyncStream:
     async def __anext__(self) -> chat.ChatCompletionChunk:
         return _utils.sync_anext(self._iter)
 
+    def __aiter__(self) -> MockAsyncStream:
+        return self
+
     async def __aenter__(self):
         return self
 
@@ -361,7 +364,7 @@ async def test_stream_text(allow_model_requests: None):
 
     async with agent.run_stream('') as result:
         assert not result.is_complete
-        assert [c async for c in result.stream(debounce_by=None)] == snapshot(['hello ', 'hello world'])
+        assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(['hello ', 'hello world'])
         assert result.is_complete
         assert result.usage() == snapshot(Usage(requests=1, request_tokens=6, response_tokens=3, total_tokens=9))
 
@@ -374,7 +377,9 @@ async def test_stream_text_finish_reason(allow_model_requests: None):
 
     async with agent.run_stream('') as result:
         assert not result.is_complete
-        assert [c async for c in result.stream(debounce_by=None)] == snapshot(['hello ', 'hello world', 'hello world.'])
+        assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(
+            ['hello ', 'hello world', 'hello world.']
+        )
         assert result.is_complete
 
 
@@ -453,6 +458,7 @@ async def test_stream_structured_finish_reason(allow_model_requests: None):
                 {'first': 'One', 'second': 'Two'},
                 {'first': 'One', 'second': 'Two'},
                 {'first': 'One', 'second': 'Two'},
+                {'first': 'One', 'second': 'Two'},
             ]
         )
         assert result.is_complete
@@ -464,7 +470,7 @@ async def test_no_content(allow_model_requests: None):
     m = OpenAIModel('gpt-4', openai_client=mock_client)
     agent = Agent(m, result_type=MyTypedDict)
 
-    with pytest.raises(UnexpectedModelBehavior, match='Streamed response ended without con'):
+    with pytest.raises(UnexpectedModelBehavior, match='Received empty model response'):
         async with agent.run_stream(''):
             pass
 
@@ -481,6 +487,6 @@ async def test_no_delta(allow_model_requests: None):
 
     async with agent.run_stream('') as result:
         assert not result.is_complete
-        assert [c async for c in result.stream(debounce_by=None)] == snapshot(['hello ', 'hello world'])
+        assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(['hello ', 'hello world'])
         assert result.is_complete
         assert result.usage() == snapshot(Usage(requests=1, request_tokens=6, response_tokens=3, total_tokens=9))
