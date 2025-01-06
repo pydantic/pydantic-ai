@@ -1,6 +1,6 @@
 from __future__ import annotations as _annotations
 
-from collections.abc import AsyncIterator, Iterable
+from collections.abc import AsyncIterable, AsyncIterator, Iterable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -10,8 +10,8 @@ from typing import Literal, overload
 from httpx import AsyncClient as AsyncHTTPClient
 from typing_extensions import assert_never
 
-from .. import _utils, result
-from .._utils import guard_tool_call_id as _guard_tool_call_id
+from .. import UnexpectedModelBehavior, _utils, result
+from .._utils import PeekableAsyncStream, guard_tool_call_id as _guard_tool_call_id
 from ..messages import (
     ModelMessage,
     ModelRequest,
@@ -170,7 +170,7 @@ class GroqAgentModel(AgentModel):
     ) -> AsyncIterator[StreamedResponse]:
         response = await self._completions_create(messages, True, model_settings)
         async with response:
-            yield GroqStreamedResponse(response)
+            yield await self._process_streamed_response(response)
 
     @overload
     async def _completions_create(
@@ -226,6 +226,16 @@ class GroqAgentModel(AgentModel):
                 items.append(ToolCallPart.from_raw_args(c.function.name, c.function.arguments, c.id))
         return ModelResponse(items, timestamp=timestamp)
 
+    @staticmethod
+    async def _process_streamed_response(response: AsyncStream[ChatCompletionChunk]) -> GroqStreamedResponse:
+        """Process a streamed response, and prepare a streaming response to return."""
+        peekable_response = PeekableAsyncStream(response)
+        first_chunk = await peekable_response.peek()
+        if first_chunk is None:
+            raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')
+
+        return GroqStreamedResponse(peekable_response, datetime.fromtimestamp(first_chunk.created, tz=timezone.utc))
+
     @classmethod
     def _map_message(cls, message: ModelMessage) -> Iterable[chat.ChatCompletionMessageParam]:
         """Just maps a `pydantic_ai.Message` to a `groq.types.ChatCompletionMessageParam`."""
@@ -280,10 +290,11 @@ class GroqAgentModel(AgentModel):
 class GroqStreamedResponse(StreamedResponse):
     """Implementation of `StreamedResponse` for Groq models."""
 
-    _response: AsyncStream[ChatCompletionChunk]
+    _response: AsyncIterable[ChatCompletionChunk]
+    _timestamp: datetime
 
-    _timestamp: datetime | None = field(default=None, init=False)
     _usage: result.Usage = field(default_factory=result.Usage, init=False)
+
     _delta_tool_calls: dict[int, ChoiceDeltaToolCall] = field(default_factory=dict, init=False)
     _content_part_index: int | None = field(default=None, init=False)
     _tool_call_index_to_part_index: dict[int, int] = field(default_factory=dict, init=False)
@@ -400,13 +411,13 @@ class GroqStreamedResponse(StreamedResponse):
                         )
 
     def get(self, *, final: bool = False) -> ModelResponse:
-        return ModelResponse(parts=[self._parts[k] for k in sorted(self._parts)], timestamp=self.timestamp())
+        return ModelResponse(parts=[self._parts[k] for k in sorted(self._parts)], timestamp=self._timestamp)
 
     def usage(self) -> Usage:
         return self._usage
 
     def timestamp(self) -> datetime:
-        return self._timestamp or datetime.now(tz=timezone.utc)
+        return self._timestamp
 
 
 def _map_tool_call(t: ToolCallPart) -> chat.ChatCompletionMessageToolCallParam:

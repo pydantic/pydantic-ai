@@ -262,3 +262,69 @@ def guard_tool_call_id(t: ToolCallPart | ToolReturnPart | RetryPromptPart, model
     """Type guard that checks a `tool_call_id` is not None both for static typing and runtime."""
     assert t.tool_call_id is not None, f'{model_source} requires `tool_call_id` to be set: {t}'
     return t.tool_call_id
+
+
+class PeekableAsyncStream(Generic[T]):
+    """Wraps an async iterable of type T and allows peeking at the *next* item without consuming it.
+
+    We only buffer one item at a time (the next item). Once that item is yielded, it is discarded.
+    This is a single-pass stream.
+    """
+
+    def __init__(self, source: AsyncIterable[T]):
+        self._source = source
+        self._source_iter: AsyncIterator[T] | None = None
+        self._buffer: T | None = None
+        self._exhausted = False
+
+    async def peek(self) -> T | None:
+        """Returns the next item that would be yielded without consuming it.
+
+        Returns None if the stream is exhausted.
+        """
+        if self._exhausted:
+            return None
+
+        # If we already have a buffered item, just return it.
+        if self._buffer is not None:
+            return self._buffer
+
+        # Otherwise, we need to fetch the next item from the underlying iterator.
+        if self._source_iter is None:
+            self._source_iter = self._source.__aiter__()
+
+        try:
+            self._buffer = await self._source_iter.__anext__()
+        except StopAsyncIteration:
+            self._exhausted = True
+            return None
+
+        return self._buffer
+
+    def __aiter__(self) -> AsyncIterator[T]:
+        # For a single-pass iteration, we can return self as the iterator.
+        return self
+
+    async def __anext__(self) -> T:
+        """Yields the buffered item if present, otherwise fetches the next item from the underlying source.
+
+        Raises StopAsyncIteration if the stream is exhausted.
+        """
+        if self._exhausted:
+            raise StopAsyncIteration
+
+        # If we have a buffered item, yield it.
+        if self._buffer is not None:
+            item = self._buffer
+            self._buffer = None
+            return item
+
+        # Otherwise, fetch the next item from the source.
+        if self._source_iter is None:
+            self._source_iter = self._source.__aiter__()
+
+        try:
+            return await self._source_iter.__anext__()
+        except StopAsyncIteration:
+            self._exhausted = True
+            raise
