@@ -259,7 +259,7 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
                 combined_validated_text = ''
                 async for text, index in _stream_text_deltas():
                     chunks[index] += text
-                    combined_text = '\n\n'.join([chunks[k] for k in sorted(chunks)])
+                    combined_text = ''.join([chunks[k] for k in sorted(chunks)])
                     combined_validated_text = await self._validate_text_result(combined_text)
                     yield combined_validated_text
 

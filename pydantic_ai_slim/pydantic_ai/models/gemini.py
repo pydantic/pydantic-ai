@@ -315,8 +315,6 @@ class GeminiStreamedResponse(StreamedResponse):
             self._event_iterator = self._get_event_iterator()
 
         next_event = await self._event_iterator.__anext__()
-        if next_event is None:
-            return None
 
         if isinstance(next_event, PartStartEvent):
             self._parts[next_event.index] = next_event.part
@@ -398,14 +396,7 @@ class GeminiStreamedResponse(StreamedResponse):
             yield r
 
     def get(self, *, final: bool = False) -> ModelResponse:
-        """Get the `ModelResponse` at this point.
-
-        NOTE: It's not clear how the stream of responses should be combined because Gemini seems to always
-        reply with a single response, when returning a structured data.
-
-        I'm therefore assuming that each part contains a complete tool call, and not trying to combine data from
-        separate parts.
-        """
+        """Get the `ModelResponse` at this point."""
         return ModelResponse(parts=[self._parts[k] for k in sorted(self._parts)], timestamp=self._timestamp)
 
     def usage(self) -> result.Usage:

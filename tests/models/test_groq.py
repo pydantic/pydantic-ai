@@ -61,6 +61,9 @@ class MockAsyncStream:
     async def __anext__(self) -> chat.ChatCompletionChunk:
         return _utils.sync_anext(self._iter)
 
+    def __aiter__(self) -> MockAsyncStream:
+        return self
+
     async def __aenter__(self):
         return self
 
@@ -341,7 +344,7 @@ async def test_stream_text(allow_model_requests: None):
 
     async with agent.run_stream('') as result:
         assert not result.is_complete
-        assert [c async for c in result.stream(debounce_by=None)] == snapshot(['hello ', 'hello world'])
+        assert [c async for c in result.stream(debounce_by=None)] == snapshot(['hello ', 'hello world', 'hello world'])
         assert result.is_complete
 
 
@@ -353,7 +356,9 @@ async def test_stream_text_finish_reason(allow_model_requests: None):
 
     async with agent.run_stream('') as result:
         assert not result.is_complete
-        assert [c async for c in result.stream(debounce_by=None)] == snapshot(['hello ', 'hello world', 'hello world.'])
+        assert [c async for c in result.stream(debounce_by=None)] == snapshot(
+            ['hello ', 'hello world', 'hello world.', 'hello world.']
+        )
         assert result.is_complete
 
 
@@ -462,7 +467,7 @@ async def test_no_content(allow_model_requests: None):
     m = GroqModel('llama-3.1-70b-versatile', groq_client=mock_client)
     agent = Agent(m, result_type=MyTypedDict)
 
-    with pytest.raises(UnexpectedModelBehavior, match='Streamed response ended without con'):
+    with pytest.raises(UnexpectedModelBehavior, match='Received empty model response'):
         async with agent.run_stream(''):
             pass  # pragma: no cover
 
@@ -475,5 +480,5 @@ async def test_no_delta(allow_model_requests: None):
 
     async with agent.run_stream('') as result:
         assert not result.is_complete
-        assert [c async for c in result.stream(debounce_by=None)] == snapshot(['hello ', 'hello world'])
+        assert [c async for c in result.stream(debounce_by=None)] == snapshot(['hello ', 'hello world', 'hello world'])
         assert result.is_complete

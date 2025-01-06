@@ -150,10 +150,16 @@ async def test_streamed_text_stream():
                 'The cat sat on ',
                 'The cat sat on the ',
                 'The cat sat on the mat.',
-                # This last value is repeated due to the debounce_by=None combined with the need to emit
-                # a final empty chunk to signal the end of the stream
+                # This last value is repeated due to the debounce_by=None combined with the need to emit a final empty
+                # chunk to signal the end of the stream (which is used to determine whether to allow partial JSON)
                 'The cat sat on the mat.',
             ]
+        )
+
+    async with agent.run_stream('Hello') as result:
+        # with stream_text, there is no need to do partial validation, so we only get the final message once:
+        assert [c async for c in result.stream_text(delta=False, debounce_by=None)] == snapshot(
+            ['The ', 'The cat ', 'The cat sat ', 'The cat sat on ', 'The cat sat on the ', 'The cat sat on the mat.']
         )
 
     async with agent.run_stream('Hello') as result:

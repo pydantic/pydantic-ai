@@ -10,17 +10,22 @@ from typing import Literal, overload
 from httpx import AsyncClient as AsyncHTTPClient
 from typing_extensions import assert_never
 
-from .. import UnexpectedModelBehavior, _utils, result
+from .. import _utils, result
 from .._utils import guard_tool_call_id as _guard_tool_call_id
 from ..messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
     ModelResponsePart,
+    ModelResponseStreamEvent,
+    PartDeltaEvent,
+    PartStartEvent,
     RetryPromptPart,
     SystemPromptPart,
     TextPart,
+    TextPartDelta,
     ToolCallPart,
+    ToolCallPartDelta,
     ToolReturnPart,
     UserPromptPart,
 )
@@ -165,7 +170,7 @@ class GroqAgentModel(AgentModel):
     ) -> AsyncIterator[StreamedResponse]:
         response = await self._completions_create(messages, True, model_settings)
         async with response:
-            yield await self._process_streamed_response(response)
+            yield GroqStreamedResponse(response)
 
     @overload
     async def _completions_create(
@@ -220,34 +225,6 @@ class GroqAgentModel(AgentModel):
             for c in choice.message.tool_calls:
                 items.append(ToolCallPart.from_raw_args(c.function.name, c.function.arguments, c.id))
         return ModelResponse(items, timestamp=timestamp)
-
-    @staticmethod
-    async def _process_streamed_response(response: AsyncStream[ChatCompletionChunk]) -> StreamedResponse:
-        """Process a streamed response, and prepare a streaming response to return."""
-        timestamp: datetime | None = None
-        start_usage = Usage()
-        # the first chunk may contain enough information so we iterate until we get either `tool_calls` or `content`
-        while True:
-            try:
-                chunk = await response.__anext__()
-            except StopAsyncIteration as e:
-                raise UnexpectedModelBehavior('Streamed response ended without content or tool calls') from e
-            timestamp = timestamp or datetime.fromtimestamp(chunk.created, tz=timezone.utc)
-            start_usage += _map_usage(chunk)
-
-            if chunk.choices:
-                delta = chunk.choices[0].delta
-
-                if delta.content is not None:
-                    # return GroqStreamTextResponse(delta.content, response, timestamp, start_usage)
-                    raise NotImplementedError('Fix this branch')
-                elif delta.tool_calls is not None:
-                    return GroqStreamedResponse(
-                        response,
-                        {c.index: c for c in delta.tool_calls},
-                        timestamp,
-                        start_usage,
-                    )
 
     @classmethod
     def _map_message(cls, message: ModelMessage) -> Iterable[chat.ChatCompletionMessageParam]:
@@ -304,48 +281,132 @@ class GroqStreamedResponse(StreamedResponse):
     """Implementation of `StreamedResponse` for Groq models."""
 
     _response: AsyncStream[ChatCompletionChunk]
-    _delta_tool_calls: dict[int, ChoiceDeltaToolCall]
-    _timestamp: datetime
-    _usage: result.Usage
 
-    async def __anext__(self) -> None:
-        chunk = await self._response.__anext__()
-        self._usage = _map_usage(chunk)
+    _timestamp: datetime | None = field(default=None, init=False)
+    _usage: result.Usage = field(default_factory=result.Usage, init=False)
+    _delta_tool_calls: dict[int, ChoiceDeltaToolCall] = field(default_factory=dict, init=False)
+    _content_part_index: int | None = field(default=None, init=False)
+    _tool_call_index_to_part_index: dict[int, int] = field(default_factory=dict, init=False)
+    _parts: dict[int, ModelResponsePart] = field(default_factory=dict, init=False)
+    _event_iterator: AsyncIterator[ModelResponseStreamEvent | None] | None = field(default=None, init=False)
 
-        try:
+    async def __anext__(self) -> ModelResponseStreamEvent | None:
+        if self._event_iterator is None:
+            self._event_iterator = self._get_event_iterator()
+
+        next_event = await self._event_iterator.__anext__()
+
+        if isinstance(next_event, PartStartEvent):
+            self._parts[next_event.index] = next_event.part
+        elif isinstance(next_event, PartDeltaEvent):
+            existing_part = self._parts.get(next_event.index)
+            assert existing_part is not None, 'PartDeltaEvent without existing part'
+            self._parts[next_event.index] = next_event.delta.apply(self._parts[next_event.index])
+
+        return next_event
+
+    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent | None]:  # noqa C901
+        # TODO: Simplify this through the use of a StreamedPartsManager or whatever
+        current_part_index: int | None = None
+
+        async for chunk in self._response:
+            self._timestamp = self._timestamp or datetime.fromtimestamp(chunk.created, tz=timezone.utc)
+            self._usage += _map_usage(chunk)
+
+            if not chunk.choices:
+                continue
             choice = chunk.choices[0]
-        except IndexError:
-            raise StopAsyncIteration()
 
-        if choice.finish_reason is not None:
-            raise StopAsyncIteration()
+            # Handle the text part of the response
+            content = choice.delta.content
+            if content is not None:
+                if self._content_part_index is not None:
+                    yield PartDeltaEvent(index=self._content_part_index, delta=TextPartDelta(content))
+                else:
+                    if current_part_index is None:
+                        current_part_index = 0
+                    else:
+                        # yield PartStopEvent(index=current_part_index)  # TODO: Not sure if we want to keep these events..
+                        current_part_index += 1
 
-        assert choice.delta.content is None, f'Expected tool calls, got content instead, invalid chunk: {chunk!r}'
+                    self._content_part_index = current_part_index
+                    part = TextPart(content)
+                    yield PartStartEvent(index=current_part_index, part=part)
 
-        for new in choice.delta.tool_calls or []:
-            if current := self._delta_tool_calls.get(new.index):
-                if current.function is None:
-                    current.function = new.function
-                elif new.function is not None:
-                    current.function.name = _utils.add_optional(current.function.name, new.function.name)
-                    current.function.arguments = _utils.add_optional(current.function.arguments, new.function.arguments)
-            else:
-                self._delta_tool_calls[new.index] = new
+            # Handle the tool calls
+            for dtc in choice.delta.tool_calls or []:
+                if not dtc.function:
+                    continue
+
+                if existing := self._delta_tool_calls.get(dtc.index):
+                    # We've already received a delta_tool_call for this index
+                    existing.id = existing.id or dtc.id
+                    if existing.function is None:
+                        existing.function = dtc.function
+                    else:
+                        existing.function.name = _utils.add_optional(existing.function.name, dtc.function.name)
+                        existing.function.arguments = _utils.add_optional(
+                            existing.function.arguments, dtc.function.arguments
+                        )
+
+                    if not (existing.function.name and existing.function.arguments):
+                        continue  # We don't have enough information to create a part
+
+                    part_index = self._tool_call_index_to_part_index.get(dtc.index)
+                    if part_index is None:
+                        if current_part_index is None:
+                            current_part_index = 0
+                        else:
+                            # yield PartStopEvent(index=current_part_index)  # TODO: Not sure if we want to keep these events..
+                            current_part_index += 1
+                        self._tool_call_index_to_part_index[dtc.index] = current_part_index
+                        yield PartStartEvent(
+                            index=current_part_index,
+                            part=ToolCallPart.from_raw_args(
+                                existing.function.name, existing.function.arguments, tool_call_id=existing.id
+                            ),
+                        )
+                    elif dtc.function.name:
+                        # We don't currently nicely support streaming updates to the function call name
+                        # So we just replace the whole part if the name has changed
+                        yield PartStartEvent(
+                            index=part_index,
+                            part=ToolCallPart.from_raw_args(
+                                existing.function.name, existing.function.arguments, tool_call_id=existing.id
+                            ),
+                        )
+                    elif dtc.function.arguments:
+                        yield PartDeltaEvent(
+                            index=part_index,
+                            delta=ToolCallPartDelta(dtc.function.arguments),
+                        )
+
+                else:
+                    self._delta_tool_calls[dtc.index] = dtc
+
+                    if dtc.function.name and dtc.function.arguments:
+                        # This is the first delta_tool_call we've received with this index
+                        if current_part_index is None:
+                            current_part_index = 0
+                        else:
+                            # yield PartStopEvent(index=current_part_index)  # TODO: Not sure if we want to keep these events..
+                            current_part_index += 1
+                        self._tool_call_index_to_part_index[dtc.index] = current_part_index
+                        yield PartStartEvent(
+                            index=current_part_index,
+                            part=ToolCallPart.from_raw_args(
+                                dtc.function.name, dtc.function.arguments, tool_call_id=dtc.id
+                            ),
+                        )
 
     def get(self, *, final: bool = False) -> ModelResponse:
-        items: list[ModelResponsePart] = []
-        for c in self._delta_tool_calls.values():
-            if f := c.function:
-                if f.name is not None and f.arguments is not None:
-                    items.append(ToolCallPart.from_raw_args(f.name, f.arguments, c.id))
-
-        return ModelResponse(items, timestamp=self._timestamp)
+        return ModelResponse(parts=[self._parts[k] for k in sorted(self._parts)], timestamp=self.timestamp())
 
     def usage(self) -> Usage:
         return self._usage
 
     def timestamp(self) -> datetime:
-        return self._timestamp
+        return self._timestamp or datetime.now(tz=timezone.utc)
 
 
 def _map_tool_call(t: ToolCallPart) -> chat.ChatCompletionMessageToolCallParam:
