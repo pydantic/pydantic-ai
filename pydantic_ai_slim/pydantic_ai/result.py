@@ -369,10 +369,10 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
 
 
 def _get_usage_checking_stream_response(
-    stream_response: AsyncIterator[ModelResponseStreamEvent | None],
+    stream_response: AsyncIterator[ModelResponseStreamEvent],
     limits: UsageLimits | None,
     get_usage: Callable[[], Usage],
-) -> AsyncIterator[ModelResponseStreamEvent | None]:
+) -> AsyncIterator[ModelResponseStreamEvent]:
     if limits is not None and limits.has_token_limits():
 
         async def _usage_checking_iterator():

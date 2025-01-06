@@ -293,19 +293,19 @@ class OpenAIStreamedResponse(StreamedResponse):
     _delta_tool_calls: dict[int, ChoiceDeltaToolCall] = field(default_factory=dict, init=False)
     _content_part: TextPart | None = field(default=None, init=False)
     _tool_call_parts: dict[int, ToolCallPart] = field(default_factory=dict, init=False)
-    _async_iterator: AsyncIterator[ModelResponseStreamEvent | None] | None = field(default=None, init=False)
+    _async_iterator: AsyncIterator[ModelResponseStreamEvent] | None = field(default=None, init=False)
 
-    def __aiter__(self) -> AsyncIterator[ModelResponseStreamEvent | None]:
+    def __aiter__(self) -> AsyncIterator[ModelResponseStreamEvent]:
         if self._async_iterator is None:
             self._async_iterator = self._get_async_iterator()
         return self._async_iterator
 
-    async def __anext__(self) -> ModelResponseStreamEvent | None:
+    async def __anext__(self) -> ModelResponseStreamEvent:
         if self._async_iterator is None:
             self._async_iterator = self._get_async_iterator()
         return await self._async_iterator.__anext__()
 
-    async def _get_async_iterator(self) -> AsyncIterator[ModelResponseStreamEvent | None]:
+    async def _get_async_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         async for chunk in self._response:
             if self._timestamp is None:
                 self._timestamp = datetime.fromtimestamp(chunk.created, tz=timezone.utc)

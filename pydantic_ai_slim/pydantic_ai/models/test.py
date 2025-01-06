@@ -217,15 +217,13 @@ class TestStreamedResponse(StreamedResponse):
     _timestamp: datetime = field(default_factory=_utils.now_utc, init=False)
 
     _parts: dict[int, ModelResponsePart] = field(default_factory=dict, init=False)
-    _event_iterator: AsyncIterator[ModelResponseStreamEvent | None] | None = field(default=None, init=False)
+    _event_iterator: AsyncIterator[ModelResponseStreamEvent] | None = field(default=None, init=False)
 
-    async def __anext__(self) -> ModelResponseStreamEvent | None:
+    async def __anext__(self) -> ModelResponseStreamEvent:
         if self._event_iterator is None:
             self._event_iterator = self._get_event_iterator()
 
         next_event = await self._event_iterator.__anext__()
-        if next_event is None:
-            return None
 
         if isinstance(next_event, PartStartEvent):
             self._parts[next_event.index] = next_event.part
@@ -237,7 +235,7 @@ class TestStreamedResponse(StreamedResponse):
         self._usage += _estimate_event_usage(next_event)
         return next_event
 
-    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent | None]:
+    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         for i, part in enumerate(self._structured_response.parts):
             if isinstance(part, TextPart):
                 text = part.content
@@ -422,7 +420,7 @@ class _JsonSchemaTestData:
         return s
 
 
-def _estimate_event_usage(event: ModelResponseStreamEvent | None) -> Usage:
+def _estimate_event_usage(event: ModelResponseStreamEvent) -> Usage:
     response_tokens = 0
     if isinstance(event, PartStartEvent) and isinstance(event.part, TextPart):
         response_tokens = _estimate_string_usage(event.part.content)

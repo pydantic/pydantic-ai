@@ -142,17 +142,13 @@ class AgentModel(ABC):
 class StreamedResponse(ABC):
     """Streamed response from an LLM when calling a tool."""
 
-    def __aiter__(self) -> AsyncIterator[ModelResponseStreamEvent | None]:
-        """Stream the response as an async iterable of (optional) `ModelResponseStreamEvent`s.
-
-        This is an async iterator that yields events as they are received. It may yield `None` when raw data is received
-        from the model but there is not enough information to produce a meaningful ModelResponseStreamEvent.
-        """
+    def __aiter__(self) -> AsyncIterator[ModelResponseStreamEvent]:
+        """Stream the response as an async iterable of (optional) `ModelResponseStreamEvent`s."""
         return self
 
     @abstractmethod
-    async def __anext__(self) -> ModelResponseStreamEvent | None:
-        """Process the next chunk of the response, see above for why this may return `None`."""
+    async def __anext__(self) -> ModelResponseStreamEvent:
+        """Process the next chunk of the response."""
         raise NotImplementedError()
 
     @abstractmethod

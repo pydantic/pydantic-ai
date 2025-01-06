@@ -1011,8 +1011,6 @@ class Agent(Generic[AgentDeps, ResultData]):
         received_text = False
 
         async for maybe_part_event in streamed_response:
-            if maybe_part_event is None:
-                continue
             if isinstance(maybe_part_event, PartStartEvent):
                 new_part = maybe_part_event.part
                 if isinstance(new_part, TextPart):

@@ -308,9 +308,9 @@ class GeminiStreamedResponse(StreamedResponse):
     _usage: result.Usage = field(default_factory=result.Usage, init=False)
 
     _parts: dict[int, ModelResponsePart] = field(default_factory=dict, init=False)
-    _event_iterator: AsyncIterator[ModelResponseStreamEvent | None] | None = field(default=None, init=False)
+    _event_iterator: AsyncIterator[ModelResponseStreamEvent] | None = field(default=None, init=False)
 
-    async def __anext__(self) -> ModelResponseStreamEvent | None:
+    async def __anext__(self) -> ModelResponseStreamEvent:
         if self._event_iterator is None:
             self._event_iterator = self._get_event_iterator()
 
@@ -325,7 +325,7 @@ class GeminiStreamedResponse(StreamedResponse):
 
         return next_event
 
-    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent | None]:
+    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         current_part_index: int | None = None
         current_tool_call_name: str | None = None  # None means we are in a text part or have no parts at all
 

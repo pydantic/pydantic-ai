@@ -465,9 +465,9 @@ class MistralStreamedResponse(StreamedResponse):
     _content_part_index: int | None = field(default=None, init=False)
     _tool_call_id_to_part_index: dict[MistralToolCallId, int] = field(default_factory=dict, init=False)
     _parts: dict[int, ModelResponsePart] = field(default_factory=dict, init=False)
-    _event_iterator: AsyncIterator[ModelResponseStreamEvent | None] | None = field(default=None, init=False)
+    _event_iterator: AsyncIterator[ModelResponseStreamEvent] | None = field(default=None, init=False)
 
-    async def __anext__(self) -> ModelResponseStreamEvent | None:
+    async def __anext__(self) -> ModelResponseStreamEvent:
         if self._event_iterator is None:
             self._event_iterator = self._get_event_iterator()
 
@@ -482,7 +482,7 @@ class MistralStreamedResponse(StreamedResponse):
 
         return next_event
 
-    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent | None]:
+    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         # TODO: Simplify this through the use of a StreamedPartsManager or whatever
         current_part_index: int | None = None
 

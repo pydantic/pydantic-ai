@@ -194,14 +194,14 @@ class FunctionStreamedResponse(StreamedResponse):
     _content_part_index: int | None = field(default=None, init=False)
     _tool_call_index_to_part_index: dict[int, int] = field(default_factory=dict, init=False)
     _parts: dict[int, ModelResponsePart] = field(default_factory=dict, init=False)
-    _event_iterator: AsyncIterator[ModelResponseStreamEvent | None] | None = field(default=None, init=False)
+    _event_iterator: AsyncIterator[ModelResponseStreamEvent] | None = field(default=None, init=False)
 
-    async def __anext__(self) -> ModelResponseStreamEvent | None:
+    async def __anext__(self) -> ModelResponseStreamEvent:
         if self._event_iterator is None:
             self._event_iterator = self._get_event_iterator()
         return await self._event_iterator.__anext__()
 
-    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent | None]:
+    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         async for item in self._iter:
             # TODO: Create a PartsStreamManager class that wraps
             #   _next_part_index, _content_part_index, _tool_call_index_to_part_index, and _parts
