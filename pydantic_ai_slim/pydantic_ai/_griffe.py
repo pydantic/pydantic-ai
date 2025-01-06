@@ -134,6 +134,6 @@ _docstring_style_patterns: list[tuple[str, list[str], DocstringStyle]] = [
 def _disable_griffe_logging():
     # Hacky, but suggested here: https://github.com/mkdocstrings/griffe/issues/293#issuecomment-2167668117
     old_level = logging.root.getEffectiveLevel()
-    logging.root.setLevel(logging.CRITICAL + 1)
+    logging.root.setLevel(logging.ERROR)
     yield
     logging.root.setLevel(old_level)
