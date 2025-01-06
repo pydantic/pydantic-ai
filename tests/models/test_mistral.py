@@ -68,6 +68,9 @@ class MockAsyncStream:
     async def __anext__(self) -> MistralCompletionChunk:
         return _utils.sync_anext(self._iter)
 
+    def __aiter__(self):
+        return self
+
     async def __aenter__(self):
         return self
 
@@ -309,7 +312,7 @@ async def test_stream_text(allow_model_requests: None):
     async with agent.run_stream('') as result:
         # Then
         assert not result.is_complete
-        assert [c async for c in result.stream(debounce_by=None)] == snapshot(
+        assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(
             ['hello ', 'hello world ', 'hello world welcome ', 'hello world welcome mistral']
         )
         assert result.is_complete
@@ -329,7 +332,9 @@ async def test_stream_text_finish_reason(allow_model_requests: None):
     async with agent.run_stream('') as result:
         # Then
         assert not result.is_complete
-        assert [c async for c in result.stream(debounce_by=None)] == snapshot(['hello ', 'hello world', 'hello world.'])
+        assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(
+            ['hello ', 'hello world', 'hello world.']
+        )
         assert result.is_complete
 
 
@@ -344,7 +349,7 @@ async def test_no_delta(allow_model_requests: None):
     async with agent.run_stream('') as result:
         # Then
         assert not result.is_complete
-        assert [c async for c in result.stream(debounce_by=None)] == snapshot(['hello ', 'hello world'])
+        assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(['hello ', 'hello world'])
         assert result.is_complete
         assert result.usage().request_tokens == 3
         assert result.usage().response_tokens == 3
@@ -1457,7 +1462,7 @@ async def test_stream_tool_call(allow_model_requests: None):
         # Then
         assert not result.is_complete
         v = [c async for c in result.stream(debounce_by=None)]
-        assert v == snapshot(['final ', 'final response'])
+        assert v == snapshot(['final ', 'final response', 'final response'])
         assert result.is_complete
         assert result.timestamp() == datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)
         assert result.usage().request_tokens == 6
@@ -1495,7 +1500,9 @@ async def test_stream_tool_call(allow_model_requests: None):
                     )
                 ]
             ),
-            ModelResponse.from_text(content='final response', timestamp=IsNow(tz=timezone.utc)),
+            ModelResponse.from_text(
+                content='final response', timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)
+            ),
         ]
     )
 
@@ -1557,7 +1564,7 @@ async def test_stream_tool_call_with_retry(allow_model_requests: None):
     async with agent.run_stream('User prompt value') as result:
         # Then
         assert not result.is_complete
-        v = [c async for c in result.stream(debounce_by=None)]
+        v = [c async for c in result.stream_text(debounce_by=None)]
         assert v == snapshot(['final ', 'final response'])
         assert result.is_complete
         assert result.timestamp() == datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)

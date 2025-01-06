@@ -1,7 +1,7 @@
 from __future__ import annotations as _annotations
 
 import os
-from collections.abc import AsyncIterator, Iterable
+from collections.abc import AsyncIterable, AsyncIterator, Iterable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -13,16 +13,20 @@ from httpx import AsyncClient as AsyncHTTPClient, Timeout
 from typing_extensions import assert_never
 
 from .. import UnexpectedModelBehavior
-from .._utils import now_utc as _now_utc
+from .._utils import PeekableAsyncStream, now_utc as _now_utc
 from ..messages import (
     ArgsJson,
     ModelMessage,
     ModelRequest,
     ModelResponse,
     ModelResponsePart,
+    ModelResponseStreamEvent,
+    PartDeltaEvent,
+    PartStartEvent,
     RetryPromptPart,
     SystemPromptPart,
     TextPart,
+    TextPartDelta,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
@@ -295,44 +299,17 @@ class MistralAgentModel(AgentModel):
         response: MistralEventStreamAsync[MistralCompletionEvent],
     ) -> StreamedResponse:
         """Process a streamed response, and prepare a streaming response to return."""
-        start_usage = Usage()
+        peekable_response = PeekableAsyncStream(response)
+        first_chunk = await peekable_response.peek()
+        if first_chunk is None:
+            raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')
 
-        # Iterate until we get either `tool_calls` or `content` from the first chunk.
-        while True:
-            try:
-                event = await response.__anext__()
-                chunk = event.data
-            except StopAsyncIteration as e:
-                raise UnexpectedModelBehavior('Streamed response ended without content or tool calls') from e
+        if first_chunk.data.created:
+            timestamp = datetime.fromtimestamp(first_chunk.data.created, tz=timezone.utc)
+        else:
+            timestamp = datetime.now(tz=timezone.utc)
 
-            start_usage += _map_usage(chunk)
-
-            if chunk.created:
-                timestamp = datetime.fromtimestamp(chunk.created, tz=timezone.utc)
-            else:
-                timestamp = _now_utc()
-
-            if chunk.choices:
-                delta = chunk.choices[0].delta
-                content = _map_content(delta.content)
-
-                tool_calls: list[MistralToolCall] | None = None
-                if delta.tool_calls:
-                    tool_calls = delta.tool_calls
-
-                if tool_calls or content and result_tools:
-                    return MistralStreamedResponse(
-                        {c.id if c.id else 'null': c for c in tool_calls or []},
-                        {c.name: c for c in result_tools},
-                        response,
-                        content,
-                        timestamp,
-                        start_usage,
-                    )
-
-                elif content:
-                    # return MistralStreamTextResponse(content, response, timestamp, start_usage)
-                    raise NotImplementedError('TODO: Fix this branch')
+        return MistralStreamedResponse(peekable_response, timestamp, {c.name: c for c in result_tools})
 
     @staticmethod
     def _map_to_mistral_tool_call(t: ToolCallPart) -> MistralToolCall:
@@ -466,65 +443,132 @@ class MistralAgentModel(AgentModel):
             assert_never(message)
 
 
+MistralToolCallId = str | None
+
+
 @dataclass
 class MistralStreamedResponse(StreamedResponse):
     """Implementation of `StreamedResponse` for Mistral models."""
 
-    _function_tools: dict[str, MistralToolCall]
-    _result_tools: dict[str, ToolDefinition]
-    _response: MistralEventStreamAsync[MistralCompletionEvent]
-    _delta_content: str | None
+    _response: AsyncIterable[MistralCompletionEvent]
     _timestamp: datetime
-    _usage: Usage
+    _result_tools: dict[str, ToolDefinition]
 
-    async def __anext__(self) -> None:
-        chunk = await self._response.__anext__()
-        self._usage += _map_usage(chunk.data)
+    _usage: Usage = field(default_factory=Usage, init=False)
 
-        try:
-            choice = chunk.data.choices[0]
+    _function_tools: dict[str, MistralToolCall] = field(default_factory=dict, init=False)
+    _delta_content: str = ''
 
-        except IndexError:
-            raise StopAsyncIteration()
+    _delta_tool_calls: dict[MistralToolCallId, MistralToolCall] = field(default_factory=dict, init=False)
 
-        if choice.finish_reason is not None:
-            raise StopAsyncIteration()
+    _result_part_index: int | None = field(default=None, init=False)
+    _content_part_index: int | None = field(default=None, init=False)
+    _tool_call_id_to_part_index: dict[MistralToolCallId, int] = field(default_factory=dict, init=False)
+    _parts: dict[int, ModelResponsePart] = field(default_factory=dict, init=False)
+    _event_iterator: AsyncIterator[ModelResponseStreamEvent | None] | None = field(default=None, init=False)
 
-        content = choice.delta.content
-        if self._result_tools:
-            if text := _map_content(content):
-                self._delta_content = (self._delta_content or '') + text
+    async def __anext__(self) -> ModelResponseStreamEvent | None:
+        if self._event_iterator is None:
+            self._event_iterator = self._get_event_iterator()
+
+        next_event = await self._event_iterator.__anext__()
+
+        if isinstance(next_event, PartStartEvent):
+            self._parts[next_event.index] = next_event.part
+        elif isinstance(next_event, PartDeltaEvent):
+            existing_part = self._parts.get(next_event.index)
+            assert existing_part is not None, 'PartDeltaEvent without existing part'
+            self._parts[next_event.index] = next_event.delta.apply(self._parts[next_event.index])
+
+        return next_event
+
+    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent | None]:
+        # TODO: Simplify this through the use of a StreamedPartsManager or whatever
+        current_part_index: int | None = None
+
+        chunk: MistralCompletionEvent
+        async for chunk in self._response:
+            self._usage += _map_usage(chunk.data)
+
+            try:
+                choice = chunk.data.choices[0]
+            except IndexError:
+                continue
+
+            # Handle the text part of the response
+            content = choice.delta.content
+            text = _map_content(content)
+            if text:
+                if self._result_tools:
+                    self._delta_content += text
+                    maybe_tool_call_part = self._try_get_result_tool_from_text(self._delta_content, self._result_tools)
+                    if maybe_tool_call_part:
+                        if self._result_part_index is None:
+                            if current_part_index is None:
+                                current_part_index = 0
+                            else:
+                                # yield PartStopEvent(index=current_part_index)  # TODO: Not sure if we want to keep these events..
+                                current_part_index += 1
+                            self._result_part_index = current_part_index
+
+                        yield PartStartEvent(
+                            index=self._result_part_index,
+                            part=maybe_tool_call_part,
+                        )
+                else:
+                    if self._content_part_index is not None:
+                        yield PartDeltaEvent(index=self._content_part_index, delta=TextPartDelta(text))
+                    else:
+                        if current_part_index is None:
+                            current_part_index = 0
+                        else:
+                            # yield PartStopEvent(index=current_part_index)  # TODO: Not sure if we want to keep these events..
+                            current_part_index += 1
+
+                        self._content_part_index = current_part_index
+                        part = TextPart(text)
+                        yield PartStartEvent(index=current_part_index, part=part)
+
+            # Handle the tool calls
+            for dtc in choice.delta.tool_calls or []:
+                # It seems that mistral just sends full tool calls, so we just use them directly, rather than building
+                part_index = self._tool_call_id_to_part_index.get(dtc.id)
+                if part_index is None:
+                    if current_part_index is None:
+                        current_part_index = 0
+                    else:
+                        # yield PartStopEvent(index=current_part_index)  # TODO: Not sure if we want to keep these events..
+                        current_part_index += 1
+                    self._tool_call_id_to_part_index[dtc.id] = current_part_index
+                    part_index = current_part_index
+                yield PartStartEvent(
+                    index=part_index,
+                    part=ToolCallPart.from_raw_args(dtc.function.name, dtc.function.arguments, tool_call_id=dtc.id),
+                )
 
     def get(self, *, final: bool = False) -> ModelResponse:
-        calls: list[ModelResponsePart] = []
-        if self._function_tools and self._result_tools or self._function_tools:
-            for tool_call in self._function_tools.values():
-                tool = _map_mistral_to_pydantic_tool_call(tool_call)
-                calls.append(tool)
-
-        elif self._delta_content and self._result_tools:
-            output_json: dict[str, Any] | None = pydantic_core.from_json(
-                self._delta_content, allow_partial='trailing-strings'
-            )
-
-            if output_json:
-                for result_tool in self._result_tools.values():
-                    # NOTE: Additional verification to prevent JSON validation to crash in `_result.py`
-                    # Ensures required parameters in the JSON schema are respected, especially for stream-based return types.
-                    # Example with BaseModel and required fields.
-                    if not self._validate_required_json_schema(output_json, result_tool.parameters_json_schema):
-                        continue
-
-                    tool = ToolCallPart.from_raw_args(result_tool.name, output_json)
-                    calls.append(tool)
-
-        return ModelResponse(calls, timestamp=self._timestamp)
+        return ModelResponse(parts=[self._parts[k] for k in sorted(self._parts)], timestamp=self._timestamp)
 
     def usage(self) -> Usage:
         return self._usage
 
     def timestamp(self) -> datetime:
         return self._timestamp
+
+    @staticmethod
+    def _try_get_result_tool_from_text(text: str, result_tools: dict[str, ToolDefinition]) -> ToolCallPart | None:
+        output_json: dict[str, Any] | None = pydantic_core.from_json(text, allow_partial='trailing-strings')
+        if output_json:
+            for result_tool in result_tools.values():
+                # NOTE: Additional verification to prevent JSON validation to crash in `_result.py`
+                # Ensures required parameters in the JSON schema are respected, especially for stream-based return types.
+                # Example with BaseModel and required fields.
+                if not MistralStreamedResponse._validate_required_json_schema(
+                    output_json, result_tool.parameters_json_schema
+                ):
+                    continue
+
+                return ToolCallPart.from_raw_args(result_tool.name, output_json)
 
     @staticmethod
     def _validate_required_json_schema(json_dict: dict[str, Any], json_schema: dict[str, Any]) -> bool:
@@ -544,9 +588,9 @@ class MistralStreamedResponse(StreamedResponse):
                 if not isinstance(json_dict[param], list):
                     return False
                 for item in json_dict[param]:
-                    if not isinstance(item, VALIDE_JSON_TYPE_MAPPING[param_items_type]):
+                    if not isinstance(item, VALID_JSON_TYPE_MAPPING[param_items_type]):
                         return False
-            elif param_type and not isinstance(json_dict[param], VALIDE_JSON_TYPE_MAPPING[param_type]):
+            elif param_type and not isinstance(json_dict[param], VALID_JSON_TYPE_MAPPING[param_type]):
                 return False
 
             if isinstance(json_dict[param], dict) and 'properties' in param_schema:
@@ -557,7 +601,7 @@ class MistralStreamedResponse(StreamedResponse):
         return True
 
 
-VALIDE_JSON_TYPE_MAPPING: dict[str, Any] = {
+VALID_JSON_TYPE_MAPPING: dict[str, Any] = {
     'string': str,
     'integer': int,
     'number': float,

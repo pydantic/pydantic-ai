@@ -296,6 +296,7 @@ class GroqStreamedResponse(StreamedResponse):
     _usage: result.Usage = field(default_factory=result.Usage, init=False)
 
     _delta_tool_calls: dict[int, ChoiceDeltaToolCall] = field(default_factory=dict, init=False)
+
     _content_part_index: int | None = field(default=None, init=False)
     _tool_call_index_to_part_index: dict[int, int] = field(default_factory=dict, init=False)
     _parts: dict[int, ModelResponsePart] = field(default_factory=dict, init=False)
@@ -321,7 +322,6 @@ class GroqStreamedResponse(StreamedResponse):
         current_part_index: int | None = None
 
         async for chunk in self._response:
-            self._timestamp = self._timestamp or datetime.fromtimestamp(chunk.created, tz=timezone.utc)
             self._usage += _map_usage(chunk)
 
             try:
