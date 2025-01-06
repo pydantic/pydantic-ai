@@ -1,6 +1,7 @@
 # pyright: reportPrivateUsage=false
 from __future__ import annotations as _annotations
 
+import datetime
 import json
 from collections.abc import AsyncIterator, Callable, Sequence
 from dataclasses import dataclass
@@ -9,7 +10,7 @@ from datetime import timezone
 import httpx
 import pytest
 from inline_snapshot import snapshot
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing_extensions import Literal, TypeAlias
 
 from pydantic_ai import Agent, ModelRetry, UnexpectedModelBehavior, UserError
@@ -267,6 +268,7 @@ async def test_json_def_replaced_any_of(allow_model_requests: None):
                                     'lng': {'type': 'number'},
                                 },
                                 'required': ['lat', 'lng'],
+                                'nullable': True,
                                 'type': 'object',
                             }
                         },
@@ -315,6 +317,57 @@ async def test_json_def_recursive(allow_model_requests: None):
     )
     with pytest.raises(UserError, match=r'Recursive `\$ref`s in JSON Schema are not supported by Gemini'):
         await m.agent_model(function_tools=[], allow_text_result=True, result_tools=[result_tool])
+
+
+async def test_json_def_date(allow_model_requests: None):
+    class FormattedStringFields(BaseModel):
+        d: datetime.date
+        dt: datetime.datetime
+        t: datetime.time = Field(description='')
+        td: datetime.timedelta = Field(description='my timedelta')
+
+    json_schema = FormattedStringFields.model_json_schema()
+    assert json_schema == snapshot(
+        {
+            'properties': {
+                'd': {'format': 'date', 'title': 'D', 'type': 'string'},
+                'dt': {'format': 'date-time', 'title': 'Dt', 'type': 'string'},
+                't': {'format': 'time', 'title': 'T', 'type': 'string', 'description': ''},
+                'td': {'format': 'duration', 'title': 'Td', 'type': 'string', 'description': 'my timedelta'},
+            },
+            'required': ['d', 'dt', 't', 'td'],
+            'title': 'FormattedStringFields',
+            'type': 'object',
+        }
+    )
+
+    m = GeminiModel('gemini-1.5-flash', api_key='via-arg')
+    result_tool = ToolDefinition(
+        'result',
+        'This is the tool for the final Result',
+        json_schema,
+    )
+    agent_model = await m.agent_model(function_tools=[], allow_text_result=True, result_tools=[result_tool])
+    assert agent_model.tools == snapshot(
+        _GeminiTools(
+            function_declarations=[
+                _GeminiFunction(
+                    description='This is the tool for the final ' 'Result',
+                    name='result',
+                    parameters={
+                        'properties': {
+                            'd': {'description': 'Format: date', 'type': 'string'},
+                            'dt': {'description': 'Format: date-time', 'type': 'string'},
+                            't': {'description': 'Format: time', 'type': 'string'},
+                            'td': {'description': 'my timedelta (format: duration)', 'type': 'string'},
+                        },
+                        'required': ['d', 'dt', 't', 'td'],
+                        'type': 'object',
+                    },
+                )
+            ]
+        )
+    )
 
 
 @dataclass
