@@ -160,7 +160,7 @@ async def group_by_temporal(
             as soon as `aiter.__anext__()` returns. If `None`, no grouping/debouncing is performed
 
     Returns:
-        A context manager usable as an iterator async iterable of pairs of lists of items from the input async iterable,
+        A context manager usable as an async iterable of pairs of lists of items from the input async iterable,
         and a boolean indicating whether the item was final coming out of the iterator.
     """
     if soft_max_interval is None:
@@ -274,19 +274,19 @@ class PeekableAsyncStream(Generic[T]):
     def __init__(self, source: AsyncIterable[T]):
         self._source = source
         self._source_iter: AsyncIterator[T] | None = None
-        self._buffer: T | None = None
+        self._buffer: T | Unset = UNSET
         self._exhausted = False
 
-    async def peek(self) -> T | None:
+    async def peek(self) -> T | Unset:
         """Returns the next item that would be yielded without consuming it.
 
         Returns None if the stream is exhausted.
         """
         if self._exhausted:
-            return None
+            return UNSET
 
         # If we already have a buffered item, just return it.
-        if self._buffer is not None:
+        if not isinstance(self._buffer, Unset):
             return self._buffer
 
         # Otherwise, we need to fetch the next item from the underlying iterator.
@@ -297,9 +297,13 @@ class PeekableAsyncStream(Generic[T]):
             self._buffer = await self._source_iter.__anext__()
         except StopAsyncIteration:
             self._exhausted = True
-            return None
+            return UNSET
 
         return self._buffer
+
+    async def is_exhausted(self) -> bool:
+        """Returns True if the stream is exhausted, False otherwise."""
+        return isinstance(await self.peek(), Unset)
 
     def __aiter__(self) -> AsyncIterator[T]:
         # For a single-pass iteration, we can return self as the iterator.
@@ -314,9 +318,9 @@ class PeekableAsyncStream(Generic[T]):
             raise StopAsyncIteration
 
         # If we have a buffered item, yield it.
-        if self._buffer is not None:
+        if not isinstance(self._buffer, Unset):
             item = self._buffer
-            self._buffer = None
+            self._buffer = UNSET
             return item
 
         # Otherwise, fetch the next item from the source.

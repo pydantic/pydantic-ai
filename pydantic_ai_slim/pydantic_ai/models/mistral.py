@@ -12,8 +12,8 @@ import pydantic_core
 from httpx import AsyncClient as AsyncHTTPClient, Timeout
 from typing_extensions import assert_never
 
-from .. import UnexpectedModelBehavior
-from .._utils import PeekableAsyncStream, now_utc as _now_utc
+from .. import UnexpectedModelBehavior, _utils
+from .._utils import now_utc as _now_utc
 from ..messages import (
     ArgsJson,
     ModelMessage,
@@ -299,9 +299,9 @@ class MistralAgentModel(AgentModel):
         response: MistralEventStreamAsync[MistralCompletionEvent],
     ) -> StreamedResponse:
         """Process a streamed response, and prepare a streaming response to return."""
-        peekable_response = PeekableAsyncStream(response)
+        peekable_response = _utils.PeekableAsyncStream(response)
         first_chunk = await peekable_response.peek()
-        if first_chunk is None:
+        if isinstance(first_chunk, _utils.Unset):
             raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')
 
         if first_chunk.data.created:

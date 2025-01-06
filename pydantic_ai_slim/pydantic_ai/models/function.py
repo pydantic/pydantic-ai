@@ -12,6 +12,7 @@ from typing import Callable, Union
 from typing_extensions import TypeAlias, assert_never, overload
 
 from .. import _utils, result
+from .._utils import PeekableAsyncStream
 from ..messages import (
     ModelMessage,
     ModelRequest,
@@ -167,20 +168,13 @@ class FunctionAgentModel(AgentModel):
         assert (
             self.stream_function is not None
         ), 'FunctionModel must receive a `stream_function` to support streamed requests'
-        response_stream = self.stream_function(messages, self.agent_info)
+        response_stream = PeekableAsyncStream(self.stream_function(messages, self.agent_info))
 
-        # Explicitly check that we get at least one value, so we can produce a nicer error message for misuse
-        try:
-            first = await response_stream.__anext__()
-        except StopAsyncIteration as e:
-            raise ValueError('Stream function must return at least one item') from e
+        first = await response_stream.peek()
+        if isinstance(first, _utils.Unset):
+            raise ValueError('Stream function must return at least one item')
 
-        async def peeked_stream():
-            yield first
-            async for item in response_stream:
-                yield item
-
-        yield FunctionStreamedResponse(peeked_stream())
+        yield FunctionStreamedResponse(response_stream)
 
 
 @dataclass

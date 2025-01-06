@@ -11,7 +11,7 @@ from httpx import AsyncClient as AsyncHTTPClient
 from typing_extensions import assert_never
 
 from .. import UnexpectedModelBehavior, _utils, result
-from .._utils import PeekableAsyncStream, guard_tool_call_id as _guard_tool_call_id, now_utc as _now_utc
+from .._utils import guard_tool_call_id as _guard_tool_call_id, now_utc as _now_utc
 from ..messages import (
     ModelMessage,
     ModelRequest,
@@ -219,9 +219,9 @@ class OpenAIAgentModel(AgentModel):
     @staticmethod
     async def _process_streamed_response(response: AsyncStream[ChatCompletionChunk]) -> OpenAIStreamedResponse:
         """Process a streamed response, and prepare a streaming response to return."""
-        peekable_response = PeekableAsyncStream(response)
+        peekable_response = _utils.PeekableAsyncStream(response)
         first_chunk = await peekable_response.peek()
-        if first_chunk is None:
+        if isinstance(first_chunk, _utils.Unset):
             raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')
 
         return OpenAIStreamedResponse(peekable_response, datetime.fromtimestamp(first_chunk.created, tz=timezone.utc))
