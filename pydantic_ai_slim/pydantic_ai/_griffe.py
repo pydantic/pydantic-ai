@@ -1,6 +1,8 @@
 from __future__ import annotations as _annotations
 
+import logging
 import re
+from contextlib import contextmanager
 from inspect import Signature
 from typing import Any, Callable, Literal, cast
 
@@ -25,7 +27,8 @@ def doc_descriptions(
     parent = cast(GriffeObject, sig)
 
     docstring = Docstring(doc, lineno=1, parser=style or _infer_docstring_style(doc), parent=parent)
-    sections = docstring.parse()
+    with _disable_griffe_logging():
+        sections = docstring.parse()
 
     params = {}
     if parameters := next((p for p in sections if p.kind == DocstringSectionKind.parameters), None):
@@ -125,3 +128,12 @@ _docstring_style_patterns: list[tuple[str, list[str], DocstringStyle]] = [
         'numpy',
     ),
 ]
+
+
+@contextmanager
+def _disable_griffe_logging():
+    # Hacky, but suggested here: https://github.com/mkdocstrings/griffe/issues/293#issuecomment-2167668117
+    old_level = logging.root.getEffectiveLevel()
+    logging.root.setLevel(logging.ERROR)
+    yield
+    logging.root.setLevel(old_level)

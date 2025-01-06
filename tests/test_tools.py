@@ -4,6 +4,7 @@ from typing import Annotated, Any, Callable, Union
 
 import pydantic_core
 import pytest
+from _pytest.logging import LogCaptureFixture
 from inline_snapshot import snapshot
 from pydantic import BaseModel, Field
 from pydantic_core import PydanticSerializationError
@@ -532,3 +533,36 @@ agent = Agent('test', tools=[ctx_tool], deps_type=int)
     """)
     result = mod.agent.run_sync('foobar', deps=5)
     assert result.data == snapshot('{"ctx_tool":5}')
+
+
+async def tool_without_return_annotation_in_docstring() -> str:  # pragma: no cover
+    """A tool that documents what it returns but doesn't have a return annotation in the docstring.
+
+    Returns:
+        A value.
+    """
+
+    return ''
+
+
+def test_suppress_griffe_logging(set_event_loop: None, caplog: LogCaptureFixture):
+    # This would cause griffe to emit a warning log if we didn't suppress the griffe logging.
+
+    agent = Agent(FunctionModel(get_json_schema))
+    agent.tool_plain(tool_without_return_annotation_in_docstring)
+
+    result = agent.run_sync('')
+    json_schema = json.loads(result.data)
+    assert json_schema == snapshot(
+        {
+            'description': "A tool that documents what it returns but doesn't have a "
+            'return annotation in the docstring.',
+            'name': 'tool_without_return_annotation_in_docstring',
+            'outer_typed_dict_key': None,
+            'parameters_json_schema': {'additionalProperties': False, 'properties': {}, 'type': 'object'},
+        }
+    )
+
+    # Without suppressing griffe logging, we get:
+    # assert caplog.messages == snapshot(['<module>:4: No type or annotation for returned value 1'])
+    assert caplog.messages == snapshot([])
