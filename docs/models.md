@@ -7,7 +7,7 @@ PydanticAI is Model-agnostic and has built in support for the following model pr
 * [Groq](#groq)
 * [Mistral](#mistral)
 
-See [OpenAI-compatible models](#openai-compatible-models) for more examples on how to use models such as [Grok (xAI)](#grok-xai) and [DeepSeek](#deepseek) that support the OpenAI SDK.
+See [OpenAI-compatible models](#openai-compatible-models) for more examples on how to use models such as [OpenRouter](#openrouter), [Grok (xAI)](#grok-xai) and [DeepSeek](#deepseek) that support the OpenAI SDK.
 
 You can also [add support for other models](#implementing-custom-models).
 
@@ -66,23 +66,6 @@ from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIModel
 
 model = OpenAIModel('gpt-4o', api_key='your-api-key')
-agent = Agent(model)
-...
-```
-
-### `base_url` argument
-
-To use another OpenAI-compatible API, such as [OpenRouter](https://openrouter.ai), you can make use of the [`base_url` argument][pydantic_ai.models.openai.OpenAIModel.__init__]:
-
-```python {title="openai_model_base_url.py"}
-from pydantic_ai import Agent
-from pydantic_ai.models.openai import OpenAIModel
-
-model = OpenAIModel(
-    'anthropic/claude-3.5-sonnet',
-    base_url='https://openrouter.ai/api/v1',
-    api_key='your-api-key',
-)
 agent = Agent(model)
 ...
 ```
@@ -452,30 +435,54 @@ agent = Agent(model)
 
 ## OpenAI-compatible Models
 
-Many of the models are compatible with OpenAI SDK, and thus can be used with [`OpenAIModel`][pydantic_ai.models.openai.OpenAIModel] in PydanticAI.
+Many of the models are compatible with OpenAI API, and thus can be used with [`OpenAIModel`][pydantic_ai.models.openai.OpenAIModel] in PydanticAI.
 Before getting started, check the [OpenAI](#openai) section for installation and configuration instructions.
+
+To use another OpenAI-compatible API, you can make use of the [`base_url`][pydantic_ai.models.openai.OpenAIModel.__init__] and [`api_key`][pydantic_ai.models.openai.OpenAIModel.__init__] arguments:
+
+```python {title="openai_model_base_url.py" hl_lines="5-6"}
+from pydantic_ai.models.openai import OpenAIModel
+
+model = OpenAIModel(
+    'model_name',
+    base_url='https://<openai-compatible-api-endpoint>.com',
+    api_key='your-api-key',
+)
+...
+```
+
+### OpenRouter
+
+To use [OpenRouter](https://openrouter.ai), first create an API key at [openrouter.ai/keys](https://openrouter.ai/keys).
+
+Once you have the API key, you can pass it to [`OpenAIModel`][pydantic_ai.models.openai.OpenAIModel] as the `api_key` argument:
+
+```python {title="openrouter_model_init.py"}
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIModel
+
+model = OpenAIModel(
+    'anthropic/claude-3.5-sonnet',
+    base_url='https://openrouter.ai/api/v1',
+    api_key='your-openrouter-api-key',
+)
+agent = Agent(model)
+...
+```
 
 ### Grok (xAI)
 
 Go to [xAI API Console](https://console.x.ai/) and create an API key.
-Once you have the API key, you can set it as an environment variable:
-
-```bash
-export XAI_API_KEY='your-api-key'
-```
-
-Follow the [xAI API Documentation](https://docs.x.ai/docs/overview), and set the `base_url` and `api_key` arguments appropriately.
+Once you have the API key, follow the [xAI API Documentation](https://docs.x.ai/docs/overview), and set the `base_url` and `api_key` arguments appropriately:
 
 ```python {title="grok_model_init.py"}
-import os
-
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIModel
 
 model = OpenAIModel(
     'grok-2-1212',
     base_url='https://api.x.ai/v1',
-    api_key=os.getenv('XAI_API_KEY'),
+    api_key='your-xai-api-key',
 )
 agent = Agent(model)
 ...
@@ -484,24 +491,16 @@ agent = Agent(model)
 ### DeepSeek
 
 Go to [DeepSeek API Platform](https://platform.deepseek.com/api_keys) and create an API key.
-Once you have the API key, you can set it as an environment variable:
-
-```bash
-export DEEPSEEK_API_KEY='your-api-key'
-```
-
-Follow the [DeepSeek API Documentation](https://platform.deepseek.com/docs/api/overview), and set the `base_url` and `api_key` arguments appropriately.
+Once you have the API key, follow the [DeepSeek API Documentation](https://platform.deepseek.com/docs/api/overview), and set the `base_url` and `api_key` arguments appropriately:
 
 ```python {title="deepseek_model_init.py"}
-import os
-
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIModel
 
 model = OpenAIModel(
     'deepseek-chat',
     base_url='https://api.deepseek.com',
-    api_key=os.getenv('DEEPSEEK_API_KEY'),
+    api_key='your-deepseek-api-key',
 )
 agent = Agent(model)
 ...
