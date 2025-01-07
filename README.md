@@ -43,10 +43,10 @@ Supports OpenAI, Anthropic, Gemini, Ollama, Groq, and Mistral, and there is a si
 Seamlessly [integrates](https://ai.pydantic.dev/logfire/) with [Pydantic Logfire](https://pydantic.dev/logfire) for real-time debugging, performance monitoring, and behavior tracking of your LLM-powered applications.
 
 * __Type-safe__
-Designed to make type checking as useful as possible for you, so it [integrates](https://ai.pydantic.dev/agents/#static-type-checking) well with static type checkers, like [`mypy`](https://github.com/python/mypy) and [`pyright`](https://github.com/microsoft/pyright).
+Designed to make [type checking](https://ai.pydantic.dev/agents/#static-type-checking) as powerful and informative as possible for you.
 
 * __Python-centric Design__
-Leverages Python’s familiar control flow and agent composition to build your AI-driven projects, making it easy to apply standard Python best practices you'd use in any other (non-AI) project
+Leverages Python's familiar control flow and agent composition to build your AI-driven projects, making it easy to apply standard Python best practices you'd use in any other (non-AI) project.
 
 * __Structured Responses__
 Harnesses the power of [Pydantic](https://docs.pydantic.dev/latest/) to [validate and structure](https://ai.pydantic.dev/results/#structured-result-validation) model outputs, ensuring responses are consistent across runs.
