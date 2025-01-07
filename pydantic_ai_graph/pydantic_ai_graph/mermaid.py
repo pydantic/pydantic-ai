@@ -9,20 +9,30 @@ from annotated_types import Ge, Le
 
 if TYPE_CHECKING:
     from .graph import Graph
+    from .nodes import BaseNode
 
 
-def generate_code(graph: Graph[Any, Any], start_node_ids: Sequence[str] | str) -> str:
+NodeIdent = type[BaseNode[Any, Any]] | str
+DEFAULT_HIGHLIGHT_CSS = 'fill:#f9f'
+
+
+def generate_code(
+    graph: Graph[Any, Any],
+    start_node_ids: set[str],
+    *,
+    highlighted_nodes: Sequence[NodeIdent] | None = None,
+    highlight_css: str = DEFAULT_HIGHLIGHT_CSS,
+) -> str:
     """Generate Mermaid code for a graph.
 
     Args:
         graph: The graph to generate the image for.
-        start_node_ids: IDs of start nodes of the graph.
+        start_node_ids: Identifiers of nodes that start the graph.
+        highlighted_nodes: Identifiers of nodes to highlight.
+        highlight_css: CSS to use for highlighting nodes.
 
     Returns: The Mermaid code for the graph.
     """
-    if isinstance(start_node_ids, str):
-        start_node_ids = (start_node_ids,)
-
     for node_id in start_node_ids:
         if node_id not in graph.node_defs:
             raise LookupError(f'Start node "{node_id}" is not in the graph.')
@@ -44,6 +54,15 @@ def generate_code(graph: Graph[Any, Any], start_node_ids: Sequence[str] | str) -
         if node_def.returns_end:
             lines.append(f'  {node_id} --> END')
 
+    if highlighted_nodes:
+        lines.append('')
+        lines.append(f'classDef highlighted {highlight_css}')
+        for node in highlighted_nodes:
+            node_id = node if isinstance(node, str) else node.get_id()
+            if node_id not in graph.node_defs:
+                raise LookupError(f'Highlighted node "{node_id}" is not in the graph.')
+            lines.append(f'class {node_id} highlighted')
+
     return '\n'.join(lines)
 
 
@@ -54,8 +73,10 @@ Theme = Literal['default', 'neutral', 'dark', 'forest']
 
 def request_image(
     graph: Graph[Any, Any],
-    start_node_ids: Sequence[str] | str,
+    start_node_ids: set[str],
     *,
+    highlighted_nodes: Sequence[NodeIdent] | None = None,
+    highlight_css: str = 'fill:#f9f,stroke:#333,stroke-width:4px',
     image_type: ImageType | str | None = None,
     pdf_fit: bool = False,
     pdf_landscape: bool = False,
@@ -71,6 +92,8 @@ def request_image(
     Args:
         graph: The graph to generate the image for.
         start_node_ids: IDs of start nodes of the graph.
+        highlighted_nodes: Identifiers of nodes to highlight.
+        highlight_css: CSS to use for highlighting nodes.
         image_type: The image type to generate. If unspecified, the default behavior is `'jpeg'`.
         pdf_fit: When using image_type='pdf', whether to fit the diagram to the PDF page.
         pdf_landscape: When using image_type='pdf', whether to use landscape orientation for the PDF.
@@ -90,7 +113,8 @@ def request_image(
     """
     import httpx
 
-    code_base64 = base64.b64encode(generate_code(graph, start_node_ids).encode()).decode()
+    code = generate_code(graph, start_node_ids, highlighted_nodes=highlighted_nodes, highlight_css=highlight_css)
+    code_base64 = base64.b64encode(code.encode()).decode()
 
     params: dict[str, str] = {}
     if image_type == 'pdf':
@@ -128,8 +152,10 @@ def request_image(
 def save_image(
     path: Path | str,
     graph: Graph[Any, Any],
-    start_node_ids: Sequence[str] | str,
+    start_node_ids: set[str],
     *,
+    highlighted_nodes: Sequence[NodeIdent] | None = None,
+    highlight_css: str = 'fill:#f9f,stroke:#333,stroke-width:4px',
     image_type: ImageType | None = None,
     pdf_fit: bool = False,
     pdf_landscape: bool = False,
@@ -146,6 +172,8 @@ def save_image(
         path: The path to save the image to.
         graph: The graph to generate the image for.
         start_node_ids: IDs of start nodes of the graph.
+        highlighted_nodes: Identifiers of nodes to highlight.
+        highlight_css: CSS to use for highlighting nodes.
         image_type: The image type to generate. If unspecified, the default behavior is `'jpeg'`.
         pdf_fit: When using image_type='pdf', whether to fit the diagram to the PDF page.
         pdf_landscape: When using image_type='pdf', whether to use landscape orientation for the PDF.
@@ -173,6 +201,8 @@ def save_image(
     image_data = request_image(
         graph,
         start_node_ids,
+        highlighted_nodes=highlighted_nodes,
+        highlight_css=highlight_css,
         image_type=image_type,
         pdf_fit=pdf_fit,
         pdf_landscape=pdf_landscape,

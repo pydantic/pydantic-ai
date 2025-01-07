@@ -127,11 +127,20 @@ class GraphRunner(Generic[RunSignatureT, StateT, RunEndT]):
         history = run.history
         return result, history
 
-    def mermaid_code(self) -> str:
-        return mermaid.generate_code(self.graph, self.first_node.get_id())
+    def mermaid_code(
+        self,
+        highlighted_nodes: Sequence[mermaid.NodeIdent] | None = None,
+        highlight_css: str = mermaid.DEFAULT_HIGHLIGHT_CSS,
+    ) -> str:
+        return mermaid.generate_code(
+            self.graph, {self.first_node.get_id()}, highlighted_nodes=highlighted_nodes, highlight_css=highlight_css
+        )
 
     def mermaid_image(
         self,
+        *,
+        highlighted_nodes: Sequence[mermaid.NodeIdent] | None = None,
+        highlight_css: str = mermaid.DEFAULT_HIGHLIGHT_CSS,
         image_type: mermaid.ImageType | None = None,
         pdf_fit: bool = False,
         pdf_landscape: bool = False,
@@ -144,7 +153,9 @@ class GraphRunner(Generic[RunSignatureT, StateT, RunEndT]):
     ) -> bytes:
         return mermaid.request_image(
             self.graph,
-            start_node_ids=self.first_node.get_id(),
+            {self.first_node.get_id()},
+            highlighted_nodes=highlighted_nodes,
+            highlight_css=highlight_css,
             image_type=image_type,
             pdf_fit=pdf_fit,
             pdf_landscape=pdf_landscape,
@@ -159,6 +170,9 @@ class GraphRunner(Generic[RunSignatureT, StateT, RunEndT]):
     def mermaid_save(
         self,
         path: Path | str,
+        *,
+        highlighted_nodes: Sequence[mermaid.NodeIdent] | None = None,
+        highlight_css: str = mermaid.DEFAULT_HIGHLIGHT_CSS,
         image_type: mermaid.ImageType | None = None,
         pdf_fit: bool = False,
         pdf_landscape: bool = False,
@@ -172,7 +186,9 @@ class GraphRunner(Generic[RunSignatureT, StateT, RunEndT]):
         mermaid.save_image(
             path,
             self.graph,
-            self.first_node.get_id(),
+            {self.first_node.get_id()},
+            highlighted_nodes=highlighted_nodes,
+            highlight_css=highlight_css,
             image_type=image_type,
             pdf_fit=pdf_fit,
             pdf_landscape=pdf_landscape,
