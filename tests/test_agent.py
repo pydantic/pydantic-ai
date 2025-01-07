@@ -780,7 +780,7 @@ def test_unknown_tool_fix(set_event_loop: None):
 
 def test_model_requests_blocked(env: TestEnv, set_event_loop: None):
     env.set('GEMINI_API_KEY', 'foobar')
-    agent = Agent('gemini-1.5-flash', result_type=tuple[str, str], defer_model_check=True)
+    agent = Agent('google-gla:gemini-1.5-flash', result_type=tuple[str, str], defer_model_check=True)
 
     with pytest.raises(RuntimeError, match='Model requests are not allowed, since ALLOW_MODEL_REQUESTS is False'):
         agent.run_sync('Hello')
@@ -788,7 +788,7 @@ def test_model_requests_blocked(env: TestEnv, set_event_loop: None):
 
 def test_override_model(env: TestEnv, set_event_loop: None):
     env.set('GEMINI_API_KEY', 'foobar')
-    agent = Agent('gemini-1.5-flash', result_type=tuple[int, str], defer_model_check=True)
+    agent = Agent('google-gla:gemini-1.5-flash', result_type=tuple[int, str], defer_model_check=True)
 
     with agent.override(model='test'):
         result = agent.run_sync('Hello')
@@ -1260,11 +1260,153 @@ def test_double_capture_run_messages(set_event_loop: None) -> None:
         assert result.data == 'success (no tool calls)'
         result2 = agent.run_sync('Hello 2')
         assert result2.data == 'success (no tool calls)'
-
     assert messages == snapshot(
         [
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(parts=[TextPart(content='success (no tool calls)')], timestamp=IsNow(tz=timezone.utc)),
+        ]
+    )
+
+
+def test_dynamic_false_no_reevaluate(set_event_loop: None):
+    """When dynamic is false (default), the system prompt is not reevaluated
+    i.e: SystemPromptPart(
+            content="A",       <--- Remains the same when `message_history` is passed.
+        part_kind='system-prompt')
+    """
+    agent = Agent('test', system_prompt='Foobar')
+
+    dynamic_value = 'A'
+
+    @agent.system_prompt
+    async def func() -> str:
+        return dynamic_value
+
+    res = agent.run_sync('Hello')
+
+    assert res.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(content='Foobar', part_kind='system-prompt'),
+                    SystemPromptPart(content=dynamic_value, part_kind='system-prompt'),
+                    UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc), part_kind='user-prompt'),
+                ],
+                kind='request',
+            ),
+            ModelResponse(
+                parts=[TextPart(content='success (no tool calls)', part_kind='text')],
+                timestamp=IsNow(tz=timezone.utc),
+                kind='response',
+            ),
+        ]
+    )
+
+    dynamic_value = 'B'
+
+    res_two = agent.run_sync('World', message_history=res.all_messages())
+
+    assert res_two.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(content='Foobar', part_kind='system-prompt'),
+                    SystemPromptPart(
+                        content='A',  # Remains the same
+                        part_kind='system-prompt',
+                    ),
+                    UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc), part_kind='user-prompt'),
+                ],
+                kind='request',
+            ),
+            ModelResponse(
+                parts=[TextPart(content='success (no tool calls)', part_kind='text')],
+                timestamp=IsNow(tz=timezone.utc),
+                kind='response',
+            ),
+            ModelRequest(
+                parts=[UserPromptPart(content='World', timestamp=IsNow(tz=timezone.utc), part_kind='user-prompt')],
+                kind='request',
+            ),
+            ModelResponse(
+                parts=[TextPart(content='success (no tool calls)', part_kind='text')],
+                timestamp=IsNow(tz=timezone.utc),
+                kind='response',
+            ),
+        ]
+    )
+
+
+def test_dynamic_true_reevaluate_system_prompt(set_event_loop: None):
+    """When dynamic is true, the system prompt is reevaluated
+    i.e: SystemPromptPart(
+            content="B",       <--- Updated value
+        part_kind='system-prompt')
+    """
+    agent = Agent('test', system_prompt='Foobar')
+
+    dynamic_value = 'A'
+
+    @agent.system_prompt(dynamic=True)
+    async def func():
+        return dynamic_value
+
+    res = agent.run_sync('Hello')
+
+    assert res.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(content='Foobar', part_kind='system-prompt'),
+                    SystemPromptPart(
+                        content=dynamic_value,
+                        part_kind='system-prompt',
+                        dynamic_ref=func.__qualname__,
+                    ),
+                    UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc), part_kind='user-prompt'),
+                ],
+                kind='request',
+            ),
+            ModelResponse(
+                parts=[TextPart(content='success (no tool calls)', part_kind='text')],
+                timestamp=IsNow(tz=timezone.utc),
+                kind='response',
+            ),
+        ]
+    )
+
+    dynamic_value = 'B'
+
+    res_two = agent.run_sync('World', message_history=res.all_messages())
+
+    assert res_two.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(content='Foobar', part_kind='system-prompt'),
+                    SystemPromptPart(
+                        content='B',
+                        part_kind='system-prompt',
+                        dynamic_ref=func.__qualname__,
+                    ),
+                    UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc), part_kind='user-prompt'),
+                ],
+                kind='request',
+            ),
+            ModelResponse(
+                parts=[TextPart(content='success (no tool calls)', part_kind='text')],
+                timestamp=IsNow(tz=timezone.utc),
+                kind='response',
+            ),
+            ModelRequest(
+                parts=[UserPromptPart(content='World', timestamp=IsNow(tz=timezone.utc), part_kind='user-prompt')],
+                kind='request',
+            ),
+            ModelResponse(
+                parts=[TextPart(content='success (no tool calls)', part_kind='text')],
+                timestamp=IsNow(tz=timezone.utc),
+                kind='response',
+            ),
         ]
     )
 
@@ -1299,3 +1441,40 @@ def test_capture_run_messages_tool_agent(set_event_loop: None) -> None:
             ),
         ]
     )
+
+
+class Bar(BaseModel):
+    c: int
+    d: str
+
+
+def test_custom_result_type_sync(set_event_loop: None) -> None:
+    agent = Agent('test', result_type=Foo)
+
+    assert agent.run_sync('Hello').data == snapshot(Foo(a=0, b='a'))
+    assert agent.run_sync('Hello', result_type=Bar).data == snapshot(Bar(c=0, d='a'))
+    assert agent.run_sync('Hello', result_type=str).data == snapshot('success (no tool calls)')
+    assert agent.run_sync('Hello', result_type=int).data == snapshot(0)
+
+
+async def test_custom_result_type_async() -> None:
+    agent = Agent('test')
+
+    result = await agent.run('Hello')
+    assert result.data == snapshot('success (no tool calls)')
+
+    result = await agent.run('Hello', result_type=Foo)
+    assert result.data == snapshot(Foo(a=0, b='a'))
+    result = await agent.run('Hello', result_type=int)
+    assert result.data == snapshot(0)
+
+
+def test_custom_result_type_invalid(set_event_loop: None) -> None:
+    agent = Agent('test')
+
+    @agent.result_validator
+    def validate_result(ctx: RunContext[None], r: Any) -> Any:  # pragma: no cover
+        return r
+
+    with pytest.raises(UserError, match='Cannot set a custom run `result_type` when the agent has result validators'):
+        agent.run_sync('Hello', result_type=int)

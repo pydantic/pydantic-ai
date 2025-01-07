@@ -112,7 +112,7 @@ class GeminiModel(Model):
         )
 
     def name(self) -> str:
-        return self.model_name
+        return f'google-gla:{self.model_name}'
 
 
 class AuthProtocol(Protocol):

@@ -136,7 +136,7 @@ class AnthropicModel(Model):
         )
 
     def name(self) -> str:
-        return self.model_name
+        return f'anthropic:{self.model_name}'
 
     @staticmethod
     def _map_tool_definition(f: ToolDefinition) -> ToolParam:

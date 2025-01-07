@@ -23,10 +23,10 @@ Supports OpenAI, Anthropic, Gemini, Ollama, Groq, and Mistral, and there is a si
 Seamlessly [integrates](logfire.md) with [Pydantic Logfire](https://pydantic.dev/logfire) for real-time debugging, performance monitoring, and behavior tracking of your LLM-powered applications.
 
 :material-shield-check:{ .md .middle .secure-green }&nbsp;<strong class="vertical-middle">Type-safe</strong><br>
-Designed to make type checking as useful as possible for you, so it [integrates](agents.md#static-type-checking) well with static type checkers, like [`mypy`](https://github.com/python/mypy) and [`pyright`](https://github.com/microsoft/pyright).
+Designed to make [type checking](agents.md#static-type-checking) as powerful and informative as possible for you.
 
 :snake:{ .md .middle }&nbsp;<strong class="vertical-middle">Python-centric Design</strong><br>
-Leverages Python’s familiar control flow and agent composition to build your AI-driven projects, making it easy to apply standard Python best practices you'd use in any other (non-AI) project
+Leverages Python's familiar control flow and agent composition to build your AI-driven projects, making it easy to apply standard Python best practices you'd use in any other (non-AI) project.
 
 :simple-pydantic:{ .md .middle .pydantic-pink }&nbsp;<strong class="vertical-middle">Structured Responses</strong><br>
 Harnesses the power of [Pydantic](https://docs.pydantic.dev/latest/) to [validate and structure](results.md#structured-result-validation) model outputs, ensuring responses are consistent across runs.
