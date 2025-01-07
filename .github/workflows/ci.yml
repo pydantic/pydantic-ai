@@ -155,6 +155,9 @@ jobs:
     needs: [test]
     steps:
       - uses: actions/checkout@v4
+        with:
+          # needed for diff-cover
+          fetch-depth: 0
 
       - name: get coverage files
         uses: actions/download-artifact@v4
@@ -166,7 +169,7 @@ jobs:
         with:
           enable-cache: true
 
-      - run: uv sync --frozen --package pydantic-ai-slim
+      - run: uv sync --frozen --package pydantic-ai-slim --only-dev
       - run: uv run --frozen coverage combine coverage
 
       - run: uv run --frozen coverage html --show-contexts --title "PydanticAI coverage for ${{ github.sha }}"
@@ -178,7 +181,18 @@ jobs:
           path: htmlcov
           include-hidden-files: true
 
+      - run: uv run --frozen coverage xml
+
+      - run: uv run --frozen diff-cover coverage.xml --html-report index.html
+
+      - name: Store diff coverage html
+        uses: actions/upload-artifact@v4
+        with:
+          name: diff-coverage-html
+          path: index.html
+
       - run: uv run --frozen coverage report --fail-under 95
+      - run: uv run --frozen diff-cover coverage.xml --fail-under 95
 
   # https://github.com/marketplace/actions/alls-green#why used for branch protection checks
   check:
