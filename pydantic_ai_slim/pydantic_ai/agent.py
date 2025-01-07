@@ -550,15 +550,25 @@ class Agent(Generic[AgentDeps, ResultData]):
         /,
         *,
         dynamic: bool = False,
-    ) -> Any:
+    ) -> (
+        Callable[[_system_prompt.SystemPromptFunc[AgentDeps]], _system_prompt.SystemPromptFunc[AgentDeps]]
+        | _system_prompt.SystemPromptFunc[AgentDeps]
+    ):
         """Decorator to register a system prompt function.
 
         Optionally takes [`RunContext`][pydantic_ai.tools.RunContext] as its only argument.
         Can decorate a sync or async functions.
 
+        The decorator can be used either bare (`agent.system_prompt`) or as a function call
+        (`agent.system_prompt(...)`), see the examples below.
+
+        Overloads for every possible signature of `system_prompt` are included so the decorator doesn't obscure
+        the type of the function, see `tests/typed_agent.py` for tests.
+
         Args:
             func: The function to decorate
-            dynamic: If True, the system prompt will be reevaluated even when `messages_history` is provided.
+            dynamic: If True, the system prompt will be reevaluated even when `messages_history` is provided,
+                see [`SystemPromptPart.dynamic_ref`][pydantic_ai.messages.SystemPromptPart.dynamic_ref]
 
         Example:
         ```python
@@ -869,7 +879,7 @@ class Agent(Generic[AgentDeps, ResultData]):
                 if isinstance(msg, _messages.ModelRequest):
                     for i, part in enumerate(msg.parts):
                         if isinstance(part, _messages.SystemPromptPart) and part.dynamic_ref:
-                            # Look up the runner by its ID (default 0 in case part.ref is None).
+                            # Look up the runner by its ref
                             if runner := self._system_prompt_dynamic_functions.get(part.dynamic_ref):
                                 updated_part_content = await runner.run(run_context)
                                 msg.parts[i] = _messages.SystemPromptPart(

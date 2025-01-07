@@ -22,7 +22,10 @@ class SystemPromptPart:
     """The content of the prompt."""
 
     dynamic_ref: str | None = None
-    """The ref of the dynamic system prompt function that generated this part, if any."""
+    """The ref of the dynamic system prompt function that generated this part.
+
+    Only set if system prompt is dynamic, see [`system_prompt`][pydantic_ai.Agent.system_prompt] for more information.
+    """
 
     part_kind: Literal['system-prompt'] = 'system-prompt'
     """Part type identifier, this is available on all parts as a discriminator."""
