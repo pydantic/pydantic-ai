@@ -25,6 +25,7 @@ jobs:
           commit: ${{ github.event.workflow_run.head_sha }}
           allow_forks: true
           workflow_conclusion: completed
+          if_no_artifact_found: warn
 
       - run: smokeshow upload coverage-html
         if: hashFiles('coverage-html/*.html') != ''
