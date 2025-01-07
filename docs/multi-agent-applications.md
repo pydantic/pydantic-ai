@@ -157,7 +157,7 @@ async def main():
         """
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     asyncio.run(main())
 ```
 
@@ -305,7 +305,7 @@ async def main():  # (7)!
         #> Seat preference: row=1 seat='A'
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     asyncio.run(main())
 ```
 
