@@ -1101,7 +1101,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         final_result: _MarkFinalResult[RunResultData] | None = None
 
         parts: list[_messages.ModelRequestPart] = []
-        if result_schema := result_schema:
+        if result_schema is not None:
             if match := result_schema.find_tool(tool_calls):
                 call, result_tool = match
                 try:
@@ -1218,10 +1218,10 @@ class Agent(Generic[AgentDeps, ResultData]):
                 if tool := self._function_tools.get(p.tool_name):
                     tasks.append(asyncio.create_task(tool.run(p, run_context), name=p.tool_name))
                 else:
-                    parts.append(self._unknown_tool(p.tool_name, run_context))
+                    parts.append(self._unknown_tool(p.tool_name, run_context, result_schema))
 
         if received_text and not tasks and not parts:
-            # Can only get here if self._allow_text_result is False
+            # Can only get here if self._allow_text_result returns `False` for the provided result_schema
             self._incr_result_retry(run_context)
             model_response = _messages.RetryPromptPart(
                 content='Plain text responses are not permitted, please call one of the functions instead.',
