@@ -10,7 +10,6 @@ permissions:
 
 jobs:
   smokeshow:
-    if: ${{ github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
 
     steps:
@@ -18,7 +17,7 @@ jobs:
         with:
           python-version: '3.12'
 
-      - run: pip install smokeshow
+      - run: pip install 'smokeshow>=0.5'
 
       - uses: dawidd6/action-download-artifact@v6
         with:
@@ -27,6 +26,7 @@ jobs:
           allow_forks: true
 
       - run: smokeshow upload coverage-html
+        if: hashFiles('coverage-html/*.html') != ''
         env:
           SMOKESHOW_GITHUB_STATUS_DESCRIPTION: Coverage {coverage-percentage}
           SMOKESHOW_GITHUB_COVERAGE_THRESHOLD: 95
@@ -36,8 +36,10 @@ jobs:
           SMOKESHOW_AUTH_KEY: ${{ secrets.SMOKESHOW_AUTH_KEY }}
 
       - run: smokeshow upload diff-coverage-html
+        if: hashFiles('diff-coverage-html/*.html') != ''
         env:
-          SMOKESHOW_GITHUB_STATUS_DESCRIPTION: Diff coverage report
+          SMOKESHOW_GITHUB_STATUS_DESCRIPTION: Diff coverage {coverage-percentage}
+          SMOKESHOW_GITHUB_COVERAGE_THRESHOLD: 95
           SMOKESHOW_GITHUB_CONTEXT: diff-coverage
           SMOKESHOW_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SMOKESHOW_GITHUB_PR_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
