@@ -26,6 +26,7 @@ jobs:
           commit: ${{ github.event.workflow_run.head_sha }}
           allow_forks: true
 
+      - run: ls -lha
       - run: smokeshow upload coverage-html
         env:
           SMOKESHOW_GITHUB_STATUS_DESCRIPTION: Coverage {coverage-percentage}

@@ -179,6 +179,11 @@ jobs:
           include-hidden-files: true
 
       - run: uv run --frozen coverage xml
+
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
       - run: uv run --frozen diff-cover coverage.xml --html-report diff-coverage.html
 
       - name: Store coverage html
