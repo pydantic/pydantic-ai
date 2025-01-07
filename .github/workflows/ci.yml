@@ -154,11 +154,15 @@ jobs:
     runs-on: ubuntu-latest
     needs: [test]
     steps:
+      # need for diff-cover
       - uses: actions/checkout@v4
         with:
           ref: main
 
       - uses: actions/checkout@v4
+        # need for diff-cover
+        with:
+          fetch-depth: 2
 
       - name: get coverage files
         uses: actions/download-artifact@v4
