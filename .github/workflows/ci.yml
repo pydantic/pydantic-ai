@@ -12,6 +12,7 @@ env:
   CI: true
   COLUMNS: 120
   UV_PYTHON: 3.12
+  UV_FROZEN: '1'
 
 permissions:
   contents: read
@@ -27,7 +28,7 @@ jobs:
           enable-cache: true
 
       - name: Install dependencies
-        run: uv sync --frozen --all-extras --all-packages --group lint
+        run: uv sync --all-extras --all-packages --group lint
 
       - uses: pre-commit/action@v3.0.0
         with:
@@ -49,7 +50,7 @@ jobs:
           enable-cache: true
 
       - name: Install dependencies
-        run: uv sync --frozen --no-dev --group lint
+        run: uv sync --no-dev --group lint
 
       - run: make typecheck-mypy
 
@@ -62,13 +63,13 @@ jobs:
         with:
           enable-cache: true
 
-      - run: uv sync --frozen --group docs
+      - run: uv sync --group docs
 
         # always build docs to check it works without insiders packages
       - run: make docs
 
       - run: make docs-insiders
-        if: github.event.pull_request.head.repo.full_name == github.repository
+        if: github.event.pull_request.head.repo.full_name == github.repository || github.ref == 'refs/heads/main'
         env:
           PPPR_TOKEN: ${{ secrets.PPPR_TOKEN }}
 
@@ -91,7 +92,6 @@ jobs:
 
       - run: >
           uv run
-          --frozen
           --package pydantic-ai-slim
           --extra openai
           --extra vertexai
@@ -129,19 +129,19 @@ jobs:
       - run: mkdir coverage
 
       # run tests with just `pydantic-ai-slim` dependencies
-      - run: uv run --frozen --package pydantic-ai-slim coverage run -m pytest
+      - run: uv run --package pydantic-ai-slim coverage run -m pytest
         env:
           COVERAGE_FILE: coverage/.coverage.${{ runner.os }}-py${{ matrix.python-version }}-slim
 
-      - run: uv run --frozen coverage run -m pytest
+      - run: uv run coverage run -m pytest
         env:
           COVERAGE_FILE: coverage/.coverage.${{ runner.os }}-py${{ matrix.python-version }}-standard
 
-      - run: uv run --frozen --all-extras coverage run -m pytest
+      - run: uv run --all-extras coverage run -m pytest
         env:
           COVERAGE_FILE: coverage/.coverage.${{ runner.os }}-py${{ matrix.python-version }}-all-extras
 
-      - run: uv run --frozen --all-extras python tests/import_examples.py
+      - run: uv run --all-extras python tests/import_examples.py
 
       - name: store coverage files
         uses: actions/upload-artifact@v4
@@ -169,10 +169,10 @@ jobs:
         with:
           enable-cache: true
 
-      - run: uv sync --frozen --package pydantic-ai-slim --only-dev
-      - run: uv run --frozen coverage combine coverage
+      - run: uv sync --package pydantic-ai-slim --only-dev
+      - run: uv run coverage combine coverage
 
-      - run: uv run --frozen coverage html --show-contexts --title "PydanticAI coverage for ${{ github.sha }}"
+      - run: uv run coverage html --show-contexts --title "PydanticAI coverage for ${{ github.sha }}"
 
       - name: Store coverage html
         uses: actions/upload-artifact@v4
@@ -181,9 +181,9 @@ jobs:
           path: htmlcov
           include-hidden-files: true
 
-      - run: uv run --frozen coverage xml
+      - run: uv run coverage xml
 
-      - run: uv run --frozen diff-cover coverage.xml --html-report index.html
+      - run: uv run diff-cover coverage.xml --html-report index.html
 
       - name: Store diff coverage html
         uses: actions/upload-artifact@v4
@@ -191,8 +191,8 @@ jobs:
           name: diff-coverage-html
           path: index.html
 
-      - run: uv run --frozen coverage report --fail-under 95
-      - run: uv run --frozen diff-cover coverage.xml --fail-under 95
+      - run: uv run coverage report --fail-under 95
+      - run: uv run diff-cover coverage.xml --fail-under 95
 
   # https://github.com/marketplace/actions/alls-green#why used for branch protection checks
   check:
