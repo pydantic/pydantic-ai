@@ -159,6 +159,7 @@ async def main():
 
 if __name__ == '__main__':
     asyncio.run(main())
+
 ```
 
 1. Define a dataclass to hold the client and API key dependencies.
@@ -307,6 +308,7 @@ async def main():  # (7)!
 
 if __name__ == '__main__':
     asyncio.run(main())
+
 ```
 
 1. Define the first agent, which finds a flight. We use an explicit type annotation until [PEP-747](https://peps.python.org/pep-0747/) lands, see [structured results](results.md#structured-result-validation). We use a union as the result type so the model can communicate if it's unable to find a satisfactory choice; internally, each member of the union will be registered as a separate tool.
