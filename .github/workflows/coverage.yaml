@@ -24,6 +24,7 @@ jobs:
           workflow: ci.yml
           commit: ${{ github.event.workflow_run.head_sha }}
           allow_forks: true
+          workflow_conclusion: completed
 
       - run: smokeshow upload coverage-html
         if: hashFiles('coverage-html/*.html') != ''
