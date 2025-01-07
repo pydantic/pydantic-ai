@@ -53,7 +53,7 @@ def test_init():
     assert str(m.client.base_url) == 'https://api.openai.com/v1/'
     assert m.client.api_key == 'foobar'
     assert m.name() == 'openai:gpt-4'
-    assert m.enable_parallel_tool_calls is False
+    assert m.enable_parallel_tool_calls is True
 
 
 def test_init_with_base_url():
@@ -61,16 +61,16 @@ def test_init_with_base_url():
     assert str(m.client.base_url) == 'https://example.com/v1/'
     assert m.client.api_key == 'foobar'
     assert m.name() == 'openai:gpt-4'
-    assert m.enable_parallel_tool_calls is False
+    assert m.enable_parallel_tool_calls is True
     m.name()
 
 
 def test_init_with_enable_parallel_tool_calls():
-    m = OpenAIModel('gpt-4', api_key='foobar', enable_parallel_tool_calls=True)
+    m = OpenAIModel('gpt-4', api_key='foobar', enable_parallel_tool_calls=False)
     assert str(m.client.base_url) == 'https://api.openai.com/v1/'
     assert m.client.api_key == 'foobar'
     assert m.name() == 'openai:gpt-4'
-    assert m.enable_parallel_tool_calls is True
+    assert m.enable_parallel_tool_calls is False
 
 
 @dataclass
