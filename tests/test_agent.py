@@ -1473,7 +1473,7 @@ def test_custom_result_type_invalid(set_event_loop: None) -> None:
     agent = Agent('test')
 
     @agent.result_validator
-    def validate_result(ctx: RunContext[None], r: Any) -> Any:
+    def validate_result(ctx: RunContext[None], r: Any) -> Any:  # pragma: no cover
         return r
 
     with pytest.raises(UserError, match='Cannot set a custom run `result_type` when the agent has result validators'):
