@@ -88,6 +88,7 @@ Generally the delegate agent needs to either have the same [dependencies](depend
 from dataclasses import dataclass
 
 import httpx
+import asyncio
 
 from pydantic_ai import Agent, RunContext
 
@@ -154,6 +155,10 @@ async def main():
             details=None,
         )
         """
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
 ```
 
 1. Define a dataclass to hold the client and API key dependencies.
@@ -191,6 +196,8 @@ Here we show two agents used in succession, the first to find a flight and the s
 
 ```python {title="programmatic_handoff.py"}
 from typing import Literal, Union
+
+import asyncio
 
 from pydantic import BaseModel, Field
 from rich.prompt import Prompt
@@ -296,6 +303,10 @@ async def main():  # (7)!
         seat_preference = await find_seat(usage)
         print(f'Seat preference: {seat_preference}')
         #> Seat preference: row=1 seat='A'
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
 ```
 
 1. Define the first agent, which finds a flight. We use an explicit type annotation until [PEP-747](https://peps.python.org/pep-0747/) lands, see [structured results](results.md#structured-result-validation). We use a union as the result type so the model can communicate if it's unable to find a satisfactory choice; internally, each member of the union will be registered as a separate tool.
