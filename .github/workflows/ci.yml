@@ -11,6 +11,7 @@ on:
 env:
   CI: true
   COLUMNS: 120
+  UV_PYTHON: 3.13
 
 permissions:
   contents: read
@@ -48,7 +49,7 @@ jobs:
           enable-cache: true
 
       - name: Install dependencies
-        run: uv sync --python 3.12 --frozen --no-dev --group lint
+        run: uv sync --frozen --no-dev --group lint
 
       - run: make typecheck-mypy
 
@@ -61,7 +62,7 @@ jobs:
         with:
           enable-cache: true
 
-      - run: uv sync --python 3.12 --frozen --group docs
+      - run: uv sync --frozen --group docs
 
         # always build docs to check it works without insiders packages
       - run: make docs
@@ -90,7 +91,6 @@ jobs:
 
       - run: >
           uv run
-          --python 3.12
           --frozen
           --package pydantic-ai-slim
           --extra openai

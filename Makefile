@@ -85,7 +85,7 @@ else ifeq ($(PPPR_TOKEN),)
 	@exit 1
 else
 	@echo 'installing insiders packages...'
-	@uv pip install -U \
+	@uv pip install -U --verbose \
 		--extra-index-url https://pydantic:${PPPR_TOKEN}@pppr.pydantic.dev/simple/ \
 		mkdocs-material mkdocstrings-python
 endif
