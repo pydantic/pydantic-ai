@@ -60,6 +60,7 @@ dev = [
     "pytest-examples>=0.0.14",
     "pytest-mock>=3.14.0",
     "pytest-pretty>=1.2.0",
+    "diff-cover>=9.2.0",
 ]
 
 [tool.hatch.build.targets.wheel]
