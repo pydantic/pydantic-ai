@@ -72,6 +72,7 @@ print(dice_result.all_messages())
         parts=[
             SystemPromptPart(
                 content="You're a dice game, you should roll the die and see if the number you get back matches the user's guess. If so, tell them they're a winner. Use the player's name in the response.",
+                dynamic_ref=None,
                 part_kind='system-prompt',
             ),
             UserPromptPart(

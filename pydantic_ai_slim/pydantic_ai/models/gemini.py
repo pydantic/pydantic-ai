@@ -693,7 +693,7 @@ class _GeminiJsonSchema:
 
     def _simplify(self, schema: dict[str, Any], refs_stack: tuple[str, ...]) -> None:
         schema.pop('title', None)
-        default = schema.pop('default', _utils.UNSET)
+        schema.pop('default', None)
         if ref := schema.pop('$ref', None):
             # noinspection PyTypeChecker
             key = re.sub(r'^#/\$defs/', '', ref)
@@ -708,11 +708,12 @@ class _GeminiJsonSchema:
         if any_of := schema.get('anyOf'):
             for item_schema in any_of:
                 self._simplify(item_schema, refs_stack)
-            if len(any_of) == 2 and {'type': 'null'} in any_of and default is None:
+            if len(any_of) == 2 and {'type': 'null'} in any_of:
                 for item_schema in any_of:
                     if item_schema != {'type': 'null'}:
                         schema.clear()
                         schema.update(item_schema)
+                        schema['nullable'] = True
                         return
 
         type_ = schema.get('type')
@@ -721,6 +722,12 @@ class _GeminiJsonSchema:
             self._object(schema, refs_stack)
         elif type_ == 'array':
             return self._array(schema, refs_stack)
+        elif type_ == 'string' and (fmt := schema.pop('format', None)):
+            description = schema.get('description')
+            if description:
+                schema['description'] = f'{description} (format: {fmt})'
+            else:
+                schema['description'] = f'Format: {fmt}'
 
     def _object(self, schema: dict[str, Any], refs_stack: tuple[str, ...]) -> None:
         ad_props = schema.pop('additionalProperties', None)

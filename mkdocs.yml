@@ -44,6 +44,7 @@ nav:
     - api/exceptions.md
     - api/settings.md
     - api/usage.md
+    - api/format_as_xml.md
     - api/models/base.md
     - api/models/openai.md
     - api/models/anthropic.md
