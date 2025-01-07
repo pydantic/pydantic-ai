@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, Literal, cast
 
 from annotated_types import Ge, Le
+from typing_extensions import TypeAlias
 
 from .nodes import BaseNode
 
@@ -13,7 +14,7 @@ if TYPE_CHECKING:
     from .graph import Graph
 
 
-NodeIdent = type[BaseNode[Any, Any]] | str
+NodeIdent: TypeAlias = 'type[BaseNode[Any, Any]] | str'
 DEFAULT_HIGHLIGHT_CSS = 'fill:#f9f'
 
 
