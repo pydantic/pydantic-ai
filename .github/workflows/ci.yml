@@ -184,7 +184,7 @@ jobs:
 
       - run: uv run --frozen coverage xml
 
-      - run: uv run --frozen diff-cover coverage.xml --html-report diff-coverage.html
+      - run: uv run --frozen diff-cover coverage.xml --compare-branch origin/main --html-report diff-coverage.html
 
       - name: Store coverage html
         uses: actions/upload-artifact@v4
@@ -193,7 +193,7 @@ jobs:
           path: diff-coverage.html
 
       - run: uv run --frozen coverage report --fail-under 95
-      - run: uv run --frozen diff-cover coverage.xml --fail-under 95
+      - run: uv run --frozen diff-cover coverage.xml --compare-branch origin/main --fail-under 95
 
   # https://github.com/marketplace/actions/alls-green#why used for branch protection checks
   check:
