@@ -204,8 +204,8 @@ agent = Agent('google-gla:gemini-1.5-flash')
 ```
 
 !!! note
-    The `google-gla` provider prefix represents the "google generative language api" for `GeminiModel`s.
-    `google-vertex` is used with `VertexAIModel`s.
+    The `google-gla` provider prefix represents the [google generative language api](https://ai.google.dev/api/all-methods) for `GeminiModel`s.
+    `google-vertex` is used with [Vertex AI](https://cloud.google.com/vertex-ai/generative-ai/docs/learn/models) for `VertexAIModel`s.
 
 Or initialise the model directly with just the model name:
 
