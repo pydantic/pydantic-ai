@@ -70,5 +70,5 @@ g3 = Graph(
 # because String2Length came before Double, the output type is Any
 assert_type(g3, Graph[None, X])
 
-Graph[None, bytes](Float2String, String2Length, Double)  # type: ignore[arg-type]
-Graph[None, str](Double)  # type: ignore[arg-type]
+Graph[None, bytes](nodes=(Float2String, String2Length, Double))  # type: ignore[arg-type]
+Graph[None, str](nodes=[Double])  # type: ignore[list-item]
