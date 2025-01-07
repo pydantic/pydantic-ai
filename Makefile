@@ -85,7 +85,8 @@ else ifeq ($(PPPR_TOKEN),)
 	@exit 1
 else
 	@echo 'installing insiders packages...'
-	@uv pip install -U \
+	@uv pip uninstall mkdocs-material mkdocstrings-python
+	@uv pip install \
 		--extra-index-url https://pydantic:${PPPR_TOKEN}@pppr.pydantic.dev/simple/ \
 		mkdocs-material mkdocstrings-python
 endif
@@ -103,6 +104,7 @@ cf-pages-build: ## Install uv, install dependencies and build the docs, used on 
 	curl -LsSf https://astral.sh/uv/install.sh | sh
 	uv python install 3.12
 	uv sync --python 3.12 --frozen --group docs
+	uv pip uninstall mkdocs-material mkdocstrings-python
 	uv pip install -U \
 		--extra-index-url https://pydantic:${PPPR_TOKEN}@pppr.pydantic.dev/simple/ \
 		mkdocs-material mkdocstrings-python
