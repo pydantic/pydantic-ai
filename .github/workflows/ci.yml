@@ -166,7 +166,7 @@ jobs:
         with:
           enable-cache: true
 
-      - run: uv sync --frozen --package pydantic-ai-slim
+      - run: uv sync --frozen --package pydantic-ai-slim --only-dev
       - run: uv run --frozen coverage combine coverage
 
       - run: uv run --frozen coverage html --show-contexts --title "PydanticAI coverage for ${{ github.sha }}"
@@ -180,9 +180,7 @@ jobs:
 
       - run: uv run --frozen coverage xml
 
-      - uses: actions/checkout@v4
-        with:
-          ref: main
+      - run: git fetch origin main
 
       - run: uv run --frozen diff-cover coverage.xml --html-report diff-coverage.html
 
