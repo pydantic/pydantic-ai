@@ -1441,3 +1441,40 @@ def test_capture_run_messages_tool_agent(set_event_loop: None) -> None:
             ),
         ]
     )
+
+
+class Bar(BaseModel):
+    c: int
+    d: str
+
+
+def test_custom_result_type_sync(set_event_loop: None) -> None:
+    agent = Agent('test', result_type=Foo)
+
+    assert agent.run_sync('Hello').data == snapshot(Foo(a=0, b='a'))
+    assert agent.run_sync('Hello', result_type=Bar).data == snapshot(Bar(c=0, d='a'))
+    assert agent.run_sync('Hello', result_type=str).data == snapshot('success (no tool calls)')
+    assert agent.run_sync('Hello', result_type=int).data == snapshot(0)
+
+
+async def test_custom_result_type_async() -> None:
+    agent = Agent('test')
+
+    result = await agent.run('Hello')
+    assert result.data == snapshot('success (no tool calls)')
+
+    result = await agent.run('Hello', result_type=Foo)
+    assert result.data == snapshot(Foo(a=0, b='a'))
+    result = await agent.run('Hello', result_type=int)
+    assert result.data == snapshot(0)
+
+
+def test_custom_result_type_invalid(set_event_loop: None) -> None:
+    agent = Agent('test')
+
+    @agent.result_validator
+    def validate_result(ctx: RunContext[None], r: Any) -> Any:
+        return r
+
+    with pytest.raises(UserError, match='Cannot set a custom run `result_type` when the agent has result validators'):
+        agent.run_sync('Hello', result_type=int)
