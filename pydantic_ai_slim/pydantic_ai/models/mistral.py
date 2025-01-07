@@ -443,7 +443,7 @@ class MistralAgentModel(AgentModel):
             assert_never(message)
 
 
-MistralToolCallId = str | None
+MistralToolCallId = Union[str, None]
 
 
 @dataclass
