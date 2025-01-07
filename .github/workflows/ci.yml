@@ -185,7 +185,7 @@ jobs:
 
       - run: uv run --frozen diff-cover coverage.xml --html-report index.html
 
-      - name: Store coverage html
+      - name: Store diff coverage html
         uses: actions/upload-artifact@v4
         with:
           name: diff-coverage-html
