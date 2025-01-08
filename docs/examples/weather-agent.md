@@ -36,7 +36,7 @@ You can build multi-turn chat applications for your agent with [Gradio](https://
 
 Here's what the UI looks like for the weather agent:
 
-![Weather Agent UI](../img/gradio-demo.gif)
+{{ video('gradio-weather-app-demo.mp4', 25) }}
 
 Note, to run the UI, you'll need Python 3.10+.
 
