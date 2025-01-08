@@ -122,8 +122,7 @@ graph = Graph[State, EventDetails | None](
         InspectEvent,
     )
 )
-graph_runner = graph.get_runner(ExtractEvent)
-print(graph_runner.mermaid_code())
+print(graph.mermaid_code(ExtractEvent))
 
 email = """
 Hi Samuel,
@@ -148,7 +147,7 @@ Best regards,
 
 async def main():
     state = State(email_content=email)
-    result, history = await graph_runner.run(state, None)
+    result, history = await graph.run(state, ExtractEvent())
     debug(result, history)
 
 

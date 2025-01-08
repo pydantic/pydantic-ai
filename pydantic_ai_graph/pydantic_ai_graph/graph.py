@@ -8,26 +8,20 @@ from time import perf_counter
 from typing import TYPE_CHECKING, Generic
 
 import logfire_api
-from typing_extensions import Never, ParamSpec, Protocol, TypeVar, Unpack, assert_never
+from typing_extensions import Never, ParamSpec, TypeVar, Unpack, assert_never
 
 from . import _utils, mermaid
 from ._utils import get_parent_namespace
 from .nodes import BaseNode, End, GraphContext, NodeDef
 from .state import EndEvent, StateT, Step, StepOrEnd
 
-__all__ = 'Graph', 'GraphRun', 'GraphRunner'
+__all__ = 'Graph', 'GraphRun'
 
 _logfire = logfire_api.Logfire(otel_scope='pydantic-ai-graph')
 
 RunSignatureT = ParamSpec('RunSignatureT')
 RunEndT = TypeVar('RunEndT', default=None)
 NodeRunEndT = TypeVar('NodeRunEndT', covariant=True, default=Never)
-
-
-class StartNodeProtocol(Protocol[RunSignatureT, StateT, NodeRunEndT]):
-    def get_id(self) -> str: ...
-
-    def __call__(self, *args: RunSignatureT.args, **kwargs: RunSignatureT.kwargs) -> BaseNode[StateT, NodeRunEndT]: ...
 
 
 @dataclass(init=False)
@@ -91,56 +85,29 @@ class Graph(Generic[StateT, RunEndT]):
         history = run.history
         return result, history
 
-    def get_runner(
-        self,
-        first_node: StartNodeProtocol[RunSignatureT, StateT, RunEndT],
-    ) -> GraphRunner[RunSignatureT, StateT, RunEndT]:
-        # noinspection PyTypeChecker
-        return GraphRunner(
-            graph=self,
-            first_node=first_node,
-        )
-
-
-@dataclass
-class GraphRunner(Generic[RunSignatureT, StateT, RunEndT]):
-    """Runner for a graph.
-
-    This is a separate class from Graph so that you can get a type-safe runner from a graph definition
-    without needing to manually annotate the paramspec of the start node.
-    """
-
-    graph: Graph[StateT, RunEndT]
-    first_node: StartNodeProtocol[RunSignatureT, StateT, RunEndT]
-
-    def __post_init__(self):
-        if self.first_node not in self.graph.nodes:
-            raise ValueError(f'Start node "{self.first_node}" is not in the graph.')
-
-    async def run(
-        self, state: StateT, /, *args: RunSignatureT.args, **kwargs: RunSignatureT.kwargs
-    ) -> tuple[RunEndT, list[StepOrEnd[StateT, RunEndT]]]:
-        run = GraphRun[StateT, RunEndT](state=state)
-        # TODO: Infer the graph name properly
-        result = await run.run(self.graph.name or 'graph', self.first_node(*args, **kwargs))
-        history = run.history
-        return result, history
-
     def mermaid_code(
         self,
+        start_nodes: Sequence[mermaid.NodeIdent] | mermaid.NodeIdent,
         *,
         highlighted_nodes: Sequence[mermaid.NodeIdent] | mermaid.NodeIdent | None = None,
         highlight_css: str = mermaid.DEFAULT_HIGHLIGHT_CSS,
     ) -> str:
         return mermaid.generate_code(
-            self.graph, self.first_node.get_id(), highlighted_nodes=highlighted_nodes, highlight_css=highlight_css
+            self, start_nodes, highlighted_nodes=highlighted_nodes, highlight_css=highlight_css
         )
 
-    def mermaid_image(self, **kwargs: Unpack[mermaid.MermaidConfig]) -> bytes:
-        return mermaid.request_image(self.graph, self.first_node.get_id(), **kwargs)
+    def mermaid_image(
+        self, start_nodes: Sequence[mermaid.NodeIdent] | mermaid.NodeIdent, **kwargs: Unpack[mermaid.MermaidConfig]
+    ) -> bytes:
+        return mermaid.request_image(self, start_nodes, **kwargs)
 
-    def mermaid_save(self, path: Path | str, /, **kwargs: Unpack[mermaid.MermaidConfig]) -> None:
-        mermaid.save_image(path, self.graph, self.first_node.get_id(), **kwargs)
+    def mermaid_save(
+        self,
+        start_nodes: Sequence[mermaid.NodeIdent] | mermaid.NodeIdent,
+        path: Path | str,
+        **kwargs: Unpack[mermaid.MermaidConfig],
+    ) -> None:
+        mermaid.save_image(path, self, start_nodes, **kwargs)
 
 
 @dataclass
