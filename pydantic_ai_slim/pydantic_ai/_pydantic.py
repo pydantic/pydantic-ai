@@ -72,6 +72,11 @@ def function_schema(  # noqa: C901
 
     description, field_descriptions = doc_descriptions(function, sig, docstring_format=docstring_format)
 
+    if require_parameter_descriptions:
+        if len(field_descriptions) != len(sig.parameters):
+            missing_params = set(sig.parameters) - set(field_descriptions)
+            errors.append(f'Missing parameter descriptions for {', '.join(missing_params)}')
+
     for index, (name, p) in enumerate(sig.parameters.items()):
         if p.annotation is sig.empty:
             if takes_ctx and index == 0:
@@ -104,10 +109,6 @@ def function_schema(  # noqa: C901
             annotation = cast(type[Any], annotation)
             field_info = FieldInfo.from_annotation(annotation)
             if field_info.description is None:
-                # TODO: figure out if this is actually where we want to warn
-                parameter_doc = field_descriptions.get(field_name)
-                if not parameter_doc and require_parameter_descriptions:
-                    errors.append(f'Missing description for parameter {field_name}')
                 field_info.description = field_descriptions.get(field_name)
 
             fields[field_name] = td_schema = gen_schema._generate_td_field_schema(  # pyright: ignore[reportPrivateUsage]
