@@ -295,7 +295,7 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
                 async for _events in group_iter:
                     msg = self._stream_response.get()
                     yield msg, False
-                msg = self._stream_response.get(final=True)
+                msg = self._stream_response.get()
                 yield msg, True
                 # TODO: Should this now be `final_response` instead of `structured_response`?
                 lf_span.set_attribute('structured_response', msg)
@@ -309,7 +309,7 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
 
         async for _ in usage_checking_stream:
             pass
-        message = self._stream_response.get(final=True)
+        message = self._stream_response.get()
         await self._marked_completed(message)
         return await self.validate_structured_result(message)
 

@@ -159,7 +159,7 @@ class StreamedResponse(ABC):
         # noinspection PyUnreachableCode
         yield
 
-    def get(self, *, final: bool = False) -> ModelResponse:
+    def get(self) -> ModelResponse:
         return ModelResponse(parts=self._parts_manager.get_parts(), timestamp=self.timestamp())
 
     @abstractmethod
