@@ -14,7 +14,7 @@ import pydantic
 from httpx import USE_CLIENT_DEFAULT, AsyncClient as AsyncHTTPClient, Response as HTTPResponse
 from typing_extensions import NotRequired, TypedDict, assert_never
 
-from .. import UnexpectedModelBehavior, _utils, exceptions, result
+from .. import UnexpectedModelBehavior, _utils, exceptions, usage
 from ..messages import (
     ModelMessage,
     ModelRequest,
@@ -170,7 +170,7 @@ class GeminiAgentModel(AgentModel):
 
     async def request(
         self, messages: list[ModelMessage], model_settings: ModelSettings | None
-    ) -> tuple[ModelResponse, result.Usage]:
+    ) -> tuple[ModelResponse, usage.Usage]:
         async with self._make_request(messages, False, model_settings) as http_response:
             response = _gemini_response_ta.validate_json(await http_response.aread())
         return self._process_response(response), _metadata_as_usage(response)
@@ -303,7 +303,6 @@ class GeminiStreamedResponse(StreamedResponse):
     _content: bytearray
     _stream: AsyncIterator[bytes]
     _timestamp: datetime = field(default_factory=_utils.now_utc, init=False)
-    _usage: result.Usage = field(default_factory=result.Usage, init=False)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         async for gemini_response in self._get_gemini_responses():
@@ -361,9 +360,6 @@ class GeminiStreamedResponse(StreamedResponse):
             r = gemini_responses[-1]
             self._usage += _metadata_as_usage(r)
             yield r
-
-    def usage(self) -> result.Usage:
-        return self._usage
 
     def timestamp(self) -> datetime:
         return self._timestamp
@@ -588,14 +584,14 @@ class _GeminiUsageMetaData(TypedDict, total=False):
     cached_content_token_count: NotRequired[Annotated[int, pydantic.Field(alias='cachedContentTokenCount')]]
 
 
-def _metadata_as_usage(response: _GeminiResponse) -> result.Usage:
+def _metadata_as_usage(response: _GeminiResponse) -> usage.Usage:
     metadata = response.get('usage_metadata')
     if metadata is None:
-        return result.Usage()
+        return usage.Usage()
     details: dict[str, int] = {}
     if cached_content_token_count := metadata.get('cached_content_token_count'):
         details['cached_content_token_count'] = cached_content_token_count
-    return result.Usage(
+    return usage.Usage(
         request_tokens=metadata.get('prompt_token_count', 0),
         response_tokens=metadata.get('candidates_token_count', 0),
         total_tokens=metadata.get('total_token_count', 0),

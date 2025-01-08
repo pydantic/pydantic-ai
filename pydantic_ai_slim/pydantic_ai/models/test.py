@@ -2,9 +2,9 @@ from __future__ import annotations as _annotations
 
 import re
 import string
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterable
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
+from dataclasses import InitVar, dataclass, field
 from datetime import date, datetime, timedelta
 from typing import Any, Literal
 
@@ -31,7 +31,7 @@ from . import (
     Model,
     StreamedResponse,
 )
-from .function import _estimate_string_usage, _estimate_usage  # pyright: ignore[reportPrivateUsage]
+from .function import _estimate_string_tokens, _estimate_usage  # pyright: ignore[reportPrivateUsage]
 
 
 @dataclass
@@ -141,9 +141,8 @@ class TestAgentModel(AgentModel):
     async def request_stream(
         self, messages: list[ModelMessage], model_settings: ModelSettings | None
     ) -> AsyncIterator[StreamedResponse]:
-        msg = self._request(messages, model_settings)
-        usage = _estimate_usage(messages)
-        yield TestStreamedResponse(msg, usage)
+        model_response = self._request(messages, model_settings)
+        yield TestStreamedResponse(model_response, messages)
 
     def gen_tool_args(self, tool_def: ToolDefinition) -> Any:
         return _JsonSchemaTestData(tool_def.parameters_json_schema, self.seed).generate()
@@ -211,8 +210,12 @@ class TestStreamedResponse(StreamedResponse):
     """A structured response that streams test data."""
 
     _structured_response: ModelResponse
-    _usage: Usage
+    _messages: InitVar[Iterable[ModelMessage]]
+
     _timestamp: datetime = field(default_factory=_utils.now_utc, init=False)
+
+    def __post_init__(self, _messages: Iterable[ModelMessage]):
+        self._usage = _estimate_usage(_messages)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         for i, part in enumerate(self._structured_response.parts):
@@ -234,9 +237,6 @@ class TestStreamedResponse(StreamedResponse):
                 yield self._parts_manager.handle_tool_call_part(
                     vendor_part_id=i, tool_name=part.tool_name, args=args, tool_call_id=part.tool_call_id
                 )
-
-    def usage(self) -> Usage:
-        return self._usage
 
     def timestamp(self) -> datetime:
         return self._timestamp
@@ -399,5 +399,5 @@ class _JsonSchemaTestData:
 
 
 def _get_string_usage(text: str) -> Usage:
-    response_tokens = _estimate_string_usage(text)
+    response_tokens = _estimate_string_tokens(text)
     return Usage(response_tokens=response_tokens, total_tokens=response_tokens)

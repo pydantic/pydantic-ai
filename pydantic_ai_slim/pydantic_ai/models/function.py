@@ -11,7 +11,7 @@ from typing import Callable, Union
 
 from typing_extensions import TypeAlias, assert_never, overload
 
-from .. import _utils, result
+from .. import _utils, usage
 from .._utils import PeekableAsyncStream
 from ..messages import (
     ModelMessage,
@@ -143,7 +143,7 @@ class FunctionAgentModel(AgentModel):
 
     async def request(
         self, messages: list[ModelMessage], model_settings: ModelSettings | None
-    ) -> tuple[ModelResponse, result.Usage]:
+    ) -> tuple[ModelResponse, usage.Usage]:
         agent_info = replace(self.agent_info, model_settings=model_settings)
 
         assert self.function is not None, 'FunctionModel must receive a `function` to support non-streamed requests'
@@ -179,13 +179,21 @@ class FunctionStreamedResponse(StreamedResponse):
     _iter: AsyncIterator[str | DeltaToolCalls]
     _timestamp: datetime = field(default_factory=_utils.now_utc)
 
+    def __post_init__(self):
+        self._usage += _estimate_usage([])
+
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         async for item in self._iter:
             if isinstance(item, str):
+                response_tokens = _estimate_string_tokens(item)
+                self._usage += usage.Usage(response_tokens=response_tokens, total_tokens=response_tokens)
                 yield self._parts_manager.handle_text_delta(vendor_part_id='content', content=item)
             else:
                 delta_tool_calls = item
                 for dtc_index, delta_tool_call in delta_tool_calls.items():
+                    if delta_tool_call.json_args:
+                        response_tokens = _estimate_string_tokens(delta_tool_call.json_args)
+                        self._usage += usage.Usage(response_tokens=response_tokens, total_tokens=response_tokens)
                     maybe_event = self._parts_manager.handle_tool_call_delta(
                         vendor_part_id=dtc_index,
                         tool_name=delta_tool_call.name,
@@ -195,14 +203,11 @@ class FunctionStreamedResponse(StreamedResponse):
                     if maybe_event is not None:
                         yield maybe_event
 
-    def usage(self) -> result.Usage:
-        return _estimate_usage([self.get()])
-
     def timestamp(self) -> datetime:
         return self._timestamp
 
 
-def _estimate_usage(messages: Iterable[ModelMessage]) -> result.Usage:
+def _estimate_usage(messages: Iterable[ModelMessage]) -> usage.Usage:
     """Very rough guesstimate of the token usage associated with a series of messages.
 
     This is designed to be used solely to give plausible numbers for testing!
@@ -214,30 +219,30 @@ def _estimate_usage(messages: Iterable[ModelMessage]) -> result.Usage:
         if isinstance(message, ModelRequest):
             for part in message.parts:
                 if isinstance(part, (SystemPromptPart, UserPromptPart)):
-                    request_tokens += _estimate_string_usage(part.content)
+                    request_tokens += _estimate_string_tokens(part.content)
                 elif isinstance(part, ToolReturnPart):
-                    request_tokens += _estimate_string_usage(part.model_response_str())
+                    request_tokens += _estimate_string_tokens(part.model_response_str())
                 elif isinstance(part, RetryPromptPart):
-                    request_tokens += _estimate_string_usage(part.model_response())
+                    request_tokens += _estimate_string_tokens(part.model_response())
                 else:
                     assert_never(part)
         elif isinstance(message, ModelResponse):
             for part in message.parts:
                 if isinstance(part, TextPart):
-                    response_tokens += _estimate_string_usage(part.content)
+                    response_tokens += _estimate_string_tokens(part.content)
                 elif isinstance(part, ToolCallPart):
                     call = part
-                    response_tokens += 1 + _estimate_string_usage(call.args_as_json_str())
+                    response_tokens += 1 + _estimate_string_tokens(call.args_as_json_str())
                 else:
                     assert_never(part)
         else:
             assert_never(message)
-    return result.Usage(
+    return usage.Usage(
         request_tokens=request_tokens, response_tokens=response_tokens, total_tokens=request_tokens + response_tokens
     )
 
 
-def _estimate_string_usage(content: str) -> int:
+def _estimate_string_tokens(content: str) -> int:
     if not content:
         return 0
-    return len(re.split(r'[\s",.:]+', content))
+    return len(re.split(r'[\s",.:]+', content.strip()))

@@ -20,9 +20,9 @@ from .._parts_manager import ModelResponsePartsManager
 from ..exceptions import UserError
 from ..messages import ModelMessage, ModelResponse, ModelResponseStreamEvent
 from ..settings import ModelSettings
+from ..usage import Usage
 
 if TYPE_CHECKING:
-    from ..result import Usage
     from ..tools import ToolDefinition
 
 
@@ -144,6 +144,7 @@ class AgentModel(ABC):
 class StreamedResponse(ABC):
     """Streamed response from an LLM when calling a tool."""
 
+    _usage: Usage = field(default_factory=Usage, init=False)
     _parts_manager: ModelResponsePartsManager = field(default_factory=ModelResponsePartsManager, init=False)
     _event_iterator: AsyncIterator[ModelResponseStreamEvent] | None = field(default=None, init=False)
 
@@ -162,13 +163,8 @@ class StreamedResponse(ABC):
     def get(self) -> ModelResponse:
         return ModelResponse(parts=self._parts_manager.get_parts(), timestamp=self.timestamp())
 
-    @abstractmethod
     def usage(self) -> Usage:
-        """Get the usage of the request.
-
-        NOTE: this won't return the full usage until the stream is finished.
-        """
-        raise NotImplementedError()
+        return self._usage
 
     @abstractmethod
     def timestamp(self) -> datetime:

@@ -10,7 +10,7 @@ from typing import Literal, overload
 from httpx import AsyncClient as AsyncHTTPClient
 from typing_extensions import assert_never
 
-from .. import UnexpectedModelBehavior, _utils, result
+from .. import UnexpectedModelBehavior, _utils, usage
 from .._utils import guard_tool_call_id as _guard_tool_call_id
 from ..messages import (
     ModelMessage,
@@ -25,7 +25,6 @@ from ..messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from ..result import Usage
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from . import (
@@ -155,7 +154,7 @@ class GroqAgentModel(AgentModel):
 
     async def request(
         self, messages: list[ModelMessage], model_settings: ModelSettings | None
-    ) -> tuple[ModelResponse, result.Usage]:
+    ) -> tuple[ModelResponse, usage.Usage]:
         response = await self._completions_create(messages, False, model_settings)
         return self._process_response(response), _map_usage(response)
 
@@ -289,7 +288,6 @@ class GroqStreamedResponse(StreamedResponse):
 
     _response: AsyncIterable[ChatCompletionChunk]
     _timestamp: datetime
-    _usage: result.Usage = field(default_factory=result.Usage, init=False)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         async for chunk in self._response:
@@ -316,9 +314,6 @@ class GroqStreamedResponse(StreamedResponse):
                 if maybe_event is not None:
                     yield maybe_event
 
-    def usage(self) -> Usage:
-        return self._usage
-
     def timestamp(self) -> datetime:
         return self._timestamp
 
@@ -331,18 +326,18 @@ def _map_tool_call(t: ToolCallPart) -> chat.ChatCompletionMessageToolCallParam:
     )
 
 
-def _map_usage(completion: ChatCompletionChunk | ChatCompletion) -> result.Usage:
-    usage = None
+def _map_usage(completion: ChatCompletionChunk | ChatCompletion) -> usage.Usage:
+    response_usage = None
     if isinstance(completion, ChatCompletion):
-        usage = completion.usage
+        response_usage = completion.usage
     elif completion.x_groq is not None:
-        usage = completion.x_groq.usage
+        response_usage = completion.x_groq.usage
 
-    if usage is None:
-        return result.Usage()
+    if response_usage is None:
+        return usage.Usage()
 
-    return result.Usage(
-        request_tokens=usage.prompt_tokens,
-        response_tokens=usage.completion_tokens,
-        total_tokens=usage.total_tokens,
+    return usage.Usage(
+        request_tokens=response_usage.prompt_tokens,
+        response_tokens=response_usage.completion_tokens,
+        total_tokens=response_usage.total_tokens,
     )

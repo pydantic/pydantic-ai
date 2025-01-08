@@ -451,7 +451,6 @@ class MistralStreamedResponse(StreamedResponse):
     _timestamp: datetime
     _result_tools: dict[str, ToolDefinition]
 
-    _usage: Usage = field(default_factory=Usage, init=False)
     _delta_content: str = field(default='', init=False)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
@@ -488,9 +487,6 @@ class MistralStreamedResponse(StreamedResponse):
                 yield self._parts_manager.handle_tool_call_part(
                     vendor_part_id=index, tool_name=dtc.function.name, args=dtc.function.arguments, tool_call_id=dtc.id
                 )
-
-    def usage(self) -> Usage:
-        return self._usage
 
     def timestamp(self) -> datetime:
         return self._timestamp

@@ -8,7 +8,7 @@ from typing import Any, Literal, Union, cast, overload
 from httpx import AsyncClient as AsyncHTTPClient
 from typing_extensions import assert_never
 
-from .. import result
+from .. import usage
 from .._utils import guard_tool_call_id as _guard_tool_call_id
 from ..messages import (
     ArgsDict,
@@ -158,7 +158,7 @@ class AnthropicAgentModel(AgentModel):
 
     async def request(
         self, messages: list[ModelMessage], model_settings: ModelSettings | None
-    ) -> tuple[ModelResponse, result.Usage]:
+    ) -> tuple[ModelResponse, usage.Usage]:
         response = await self._messages_create(messages, False, model_settings)
         return self._process_response(response), _map_usage(response)
 
@@ -315,30 +315,30 @@ def _map_tool_call(t: ToolCallPart) -> ToolUseBlockParam:
     )
 
 
-def _map_usage(message: AnthropicMessage | RawMessageStreamEvent) -> result.Usage:
+def _map_usage(message: AnthropicMessage | RawMessageStreamEvent) -> usage.Usage:
     if isinstance(message, AnthropicMessage):
-        usage = message.usage
+        response_usage = message.usage
     else:
         if isinstance(message, RawMessageStartEvent):
-            usage = message.message.usage
+            response_usage = message.message.usage
         elif isinstance(message, RawMessageDeltaEvent):
-            usage = message.usage
+            response_usage = message.usage
         else:
             # No usage information provided in:
             # - RawMessageStopEvent
             # - RawContentBlockStartEvent
             # - RawContentBlockDeltaEvent
             # - RawContentBlockStopEvent
-            usage = None
+            response_usage = None
 
-    if usage is None:
-        return result.Usage()
+    if response_usage is None:
+        return usage.Usage()
 
-    request_tokens = getattr(usage, 'input_tokens', None)
+    request_tokens = getattr(response_usage, 'input_tokens', None)
 
-    return result.Usage(
+    return usage.Usage(
         # Usage coming from the RawMessageDeltaEvent doesn't have input token data, hence this getattr
         request_tokens=request_tokens,
-        response_tokens=usage.output_tokens,
-        total_tokens=(request_tokens or 0) + usage.output_tokens,
+        response_tokens=response_usage.output_tokens,
+        total_tokens=(request_tokens or 0) + response_usage.output_tokens,
     )
