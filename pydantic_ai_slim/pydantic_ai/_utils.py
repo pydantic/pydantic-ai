@@ -160,8 +160,7 @@ async def group_by_temporal(
             as soon as `aiter.__anext__()` returns. If `None`, no grouping/debouncing is performed
 
     Returns:
-        A context manager usable as an async iterable of pairs of lists of items from the input async iterable,
-        and a boolean indicating whether the item was final coming out of the iterator.
+        A context manager usable as an async iterable of lists of items produced by the input async iterable.
     """
     if soft_max_interval is None:
 
