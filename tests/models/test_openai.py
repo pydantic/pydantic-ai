@@ -1,7 +1,7 @@
 from __future__ import annotations as _annotations
 
 import json
-from collections.abc import Iterator, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from functools import cached_property
@@ -11,7 +11,7 @@ import pytest
 from inline_snapshot import snapshot
 from typing_extensions import TypedDict
 
-from pydantic_ai import Agent, ModelRetry, UnexpectedModelBehavior, _utils
+from pydantic_ai import Agent, ModelRetry, UnexpectedModelBehavior
 from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
@@ -24,6 +24,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.result import Usage
 
 from ..conftest import IsNow, try_import
+from .mock_async_stream import MockAsyncStream
 
 with try_import() as imports_successful:
     from openai import AsyncOpenAI
@@ -63,23 +64,6 @@ def test_init_with_base_url():
 
 
 @dataclass
-class MockAsyncStream:
-    _iter: Iterator[chat.ChatCompletionChunk]
-
-    async def __anext__(self) -> chat.ChatCompletionChunk:
-        return _utils.sync_anext(self._iter)
-
-    def __aiter__(self) -> MockAsyncStream:
-        return self
-
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, *_args: Any):
-        pass
-
-
-@dataclass
 class MockOpenAI:
     completions: chat.ChatCompletion | list[chat.ChatCompletion] | None = None
     stream: list[chat.ChatCompletionChunk] | list[list[chat.ChatCompletionChunk]] | None = None
@@ -102,14 +86,15 @@ class MockOpenAI:
 
     async def chat_completions_create(  # pragma: no cover
         self, *_args: Any, stream: bool = False, **_kwargs: Any
-    ) -> chat.ChatCompletion | MockAsyncStream:
+    ) -> chat.ChatCompletion | MockAsyncStream[chat.ChatCompletionChunk]:
         if stream:
             assert self.stream is not None, 'you can only used `stream=True` if `stream` is provided'
             # noinspection PyUnresolvedReferences
             if isinstance(self.stream[0], list):
-                response = MockAsyncStream(iter(self.stream[self.index]))  # type: ignore
+                indexed_stream = cast(list[chat.ChatCompletionChunk], self.stream[self.index])
+                response = MockAsyncStream(iter(indexed_stream))
             else:
-                response = MockAsyncStream(iter(self.stream))  # type: ignore
+                response = MockAsyncStream(iter(cast(list[chat.ChatCompletionChunk], self.stream)))
         else:
             assert self.completions is not None, 'you can only used `stream=False` if `completions` are provided'
             if isinstance(self.completions, list):

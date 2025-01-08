@@ -1,7 +1,6 @@
 from __future__ import annotations as _annotations
 
 import json
-from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from functools import cached_property
@@ -12,7 +11,6 @@ from inline_snapshot import snapshot
 from pydantic import BaseModel
 from typing_extensions import TypedDict
 
-from pydantic_ai import _utils
 from pydantic_ai.agent import Agent
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import (
@@ -28,6 +26,7 @@ from pydantic_ai.messages import (
 )
 
 from ..conftest import IsNow, try_import
+from .mock_async_stream import MockAsyncStream
 
 with try_import() as imports_successful:
     from mistralai import (
@@ -62,23 +61,6 @@ pytestmark = [
 
 
 @dataclass
-class MockAsyncStream:
-    _iter: Iterator[MistralCompletionChunk]
-
-    async def __anext__(self) -> MistralCompletionChunk:
-        return _utils.sync_anext(self._iter)
-
-    def __aiter__(self):
-        return self
-
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, *_args: Any):
-        pass
-
-
-@dataclass
 class MockMistralAI:
     completions: MistralChatCompletionResponse | list[MistralChatCompletionResponse] | None = None
     stream: list[MistralCompletionEvent] | list[list[MistralCompletionEvent]] | None = None
@@ -107,15 +89,24 @@ class MockMistralAI:
 
     async def chat_completions_create(  # pragma: no cover
         self, *_args: Any, stream: bool = False, **_kwargs: Any
-    ) -> MistralChatCompletionResponse | MockAsyncStream | list[MistralChatCompletionResponse]:
-        response: MistralChatCompletionResponse | MockAsyncStream | list[MistralChatCompletionResponse]
+    ) -> (
+        MistralChatCompletionResponse
+        | MockAsyncStream[MistralChatCompletionResponse]
+        | list[MistralChatCompletionResponse]
+    ):
+        response: (
+            MistralChatCompletionResponse
+            | MockAsyncStream[MistralChatCompletionResponse]
+            | list[MistralChatCompletionResponse]
+        )
         if stream or self.stream:
             assert self.stream is not None, 'you can only used `stream=True` if `stream` is provided'
             if isinstance(self.stream[0], list):
-                response = MockAsyncStream(iter(self.stream[self.index]))  # pyright: ignore[reportArgumentType]
+                indexed_stream = cast(list[MistralChatCompletionResponse], self.stream[self.index])
+                response = MockAsyncStream(iter(indexed_stream))
 
             else:
-                response = MockAsyncStream(iter(self.stream))  # pyright: ignore[reportArgumentType]
+                response = MockAsyncStream(iter(cast(list[MistralChatCompletionResponse], self.stream)))
 
         else:
             assert self.completions is not None, 'you can only used `stream=False` if `completions` are provided'
