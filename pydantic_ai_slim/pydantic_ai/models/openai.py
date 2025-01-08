@@ -1,6 +1,6 @@
 from __future__ import annotations as _annotations
 
-from collections.abc import AsyncIterable, AsyncIterator, Iterable, Iterator
+from collections.abc import AsyncIterable, AsyncIterator, Iterable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -11,6 +11,7 @@ from httpx import AsyncClient as AsyncHTTPClient
 from typing_extensions import assert_never
 
 from .. import UnexpectedModelBehavior, _utils, result
+from .._parts_manager import ModelResponsePartsManager
 from .._utils import guard_tool_call_id as _guard_tool_call_id, now_utc as _now_utc
 from ..messages import (
     ModelMessage,
@@ -18,14 +19,10 @@ from ..messages import (
     ModelResponse,
     ModelResponsePart,
     ModelResponseStreamEvent,
-    PartDeltaEvent,
-    PartStartEvent,
     RetryPromptPart,
     SystemPromptPart,
     TextPart,
-    TextPartDelta,
     ToolCallPart,
-    ToolCallPartDelta,
     ToolReturnPart,
     UserPromptPart,
 )
@@ -44,7 +41,6 @@ try:
     from openai import NOT_GIVEN, AsyncOpenAI, AsyncStream
     from openai.types import ChatModel, chat
     from openai.types.chat import ChatCompletionChunk
-    from openai.types.chat.chat_completion_chunk import ChoiceDeltaToolCall
 except ImportError as _import_error:
     raise ImportError(
         'Please install `openai` to use the OpenAI model, '
@@ -278,9 +274,6 @@ class OpenAIAgentModel(AgentModel):
                 assert_never(part)
 
 
-_CONTENT_INDEX = 0
-
-
 @dataclass
 class OpenAIStreamedResponse(StreamedResponse):
     """Implementation of `StreamedResponse` for OpenAI models."""
@@ -290,95 +283,49 @@ class OpenAIStreamedResponse(StreamedResponse):
 
     _usage: result.Usage = field(default_factory=result.Usage, init=False)
 
-    _delta_tool_calls: dict[int, ChoiceDeltaToolCall] = field(default_factory=dict, init=False)
-    _content_part: TextPart | None = field(default=None, init=False)
-    _tool_call_parts: dict[int, ToolCallPart] = field(default_factory=dict, init=False)
-    _async_iterator: AsyncIterator[ModelResponseStreamEvent] | None = field(default=None, init=False)
-
-    def __aiter__(self) -> AsyncIterator[ModelResponseStreamEvent]:
-        if self._async_iterator is None:
-            self._async_iterator = self._get_async_iterator()
-        return self._async_iterator
+    _parts_manager: ModelResponsePartsManager = field(default_factory=ModelResponsePartsManager, init=False)
+    _event_iterator: AsyncIterator[ModelResponseStreamEvent] | None = field(default=None, init=False)
 
     async def __anext__(self) -> ModelResponseStreamEvent:
-        if self._async_iterator is None:
-            self._async_iterator = self._get_async_iterator()
-        return await self._async_iterator.__anext__()
+        if self._event_iterator is None:
+            self._event_iterator = self._get_events_iterator()
+        return await self._event_iterator.__anext__()
 
-    async def _get_async_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
+    async def _get_events_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         async for chunk in self._response:
-            if self._timestamp is None:
-                self._timestamp = datetime.fromtimestamp(chunk.created, tz=timezone.utc)
-
             self._usage += _map_usage(chunk)
+
             try:
                 choice = chunk.choices[0]
             except IndexError:
                 continue
 
-            for e in self._update_parts_for_content_delta(choice.delta.content):
-                yield e
+            # Handle the text part of the response
+            content = choice.delta.content
+            if content is not None:
+                maybe_event = self._parts_manager.handle_text_delta(vendor_part_id='content', content=content)
+                if maybe_event is not None:
+                    yield maybe_event
 
-            for new in choice.delta.tool_calls or []:
-                if current := self._delta_tool_calls.get(new.index):
-                    if new.function is not None:
-                        if current.function is None:
-                            replace_existing_part = True
-                            current.function = new.function
-                        else:
-                            replace_existing_part = bool(new.function.name)
-                            current.function.name = _utils.add_optional(current.function.name, new.function.name)
-                            current.function.arguments = _utils.add_optional(
-                                current.function.arguments, new.function.arguments
-                            )
-                        for e in self._update_parts_for_tool_call_delta(new, replace_existing_part):
-                            yield e
-                else:
-                    self._delta_tool_calls[new.index] = new
-                    for e in self._update_parts_for_tool_call_delta(new, True):
-                        yield e
+            for dtc in choice.delta.tool_calls or []:
+                maybe_event = self._parts_manager.handle_tool_call_delta(
+                    vendor_part_id=dtc.index,
+                    tool_name=dtc.function and dtc.function.name,
+                    args=dtc.function and dtc.function.arguments,
+                    tool_call_id=dtc.id,
+                )
+                if maybe_event is not None:
+                    yield maybe_event
 
     def get(self, *, final: bool = False) -> ModelResponse:
-        items: list[ModelResponsePart] = [self._content_part] if self._content_part is not None else []
-        items.extend([self._tool_call_parts[k] for k in sorted(self._tool_call_parts.keys())])
-        return ModelResponse(items, timestamp=self.timestamp())
+        parts = self._parts_manager.get_parts()
+        return ModelResponse(parts=parts, timestamp=self._timestamp)
 
     def usage(self) -> Usage:
         return self._usage
 
     def timestamp(self) -> datetime:
         return self._timestamp or _now_utc()
-
-    def _update_parts_for_content_delta(self, choice_delta_content: str | None) -> Iterator[ModelResponseStreamEvent]:
-        if choice_delta_content is None:
-            return
-
-        existing_content = self._content_part
-        if existing_content is None:
-            part = TextPart(content=choice_delta_content)
-            self._content_part = part
-            yield PartStartEvent(index=_CONTENT_INDEX, part=part)
-        else:
-            delta = TextPartDelta(content_delta=choice_delta_content)
-            self._content_part = delta.apply(existing_content)
-            yield PartDeltaEvent(index=_CONTENT_INDEX, delta=delta)
-
-    def _update_parts_for_tool_call_delta(
-        self, tc: ChoiceDeltaToolCall, replace: bool
-    ) -> Iterator[ModelResponseStreamEvent]:
-        if tc.function is None:
-            return
-
-        if replace:
-            assert tc.function.name is not None
-            new_part = ToolCallPart.from_raw_args(tc.function.name, tc.function.arguments or '', tc.id)
-            self._tool_call_parts[tc.index] = new_part
-            yield PartStartEvent(index=tc.index, part=new_part)
-        else:
-            assert (existing_part := self._tool_call_parts.get(tc.index)) is not None
-            delta = ToolCallPartDelta(args_json_delta=tc.function.arguments or '')
-            self._tool_call_parts[tc.index] = delta.apply(existing_part)
-            yield PartDeltaEvent(index=tc.index, delta=delta)
 
 
 def _map_tool_call(t: ToolCallPart) -> chat.ChatCompletionMessageToolCallParam:

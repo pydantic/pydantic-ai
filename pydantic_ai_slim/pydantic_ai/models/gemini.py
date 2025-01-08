@@ -8,24 +8,23 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Annotated, Any, Literal, Protocol, Union
+from uuid import uuid4
 
 import pydantic
 from httpx import USE_CLIENT_DEFAULT, AsyncClient as AsyncHTTPClient, Response as HTTPResponse
 from typing_extensions import NotRequired, TypedDict, assert_never
 
 from .. import UnexpectedModelBehavior, _utils, exceptions, result
+from .._parts_manager import ModelResponsePartsManager
 from ..messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
     ModelResponsePart,
     ModelResponseStreamEvent,
-    PartDeltaEvent,
-    PartStartEvent,
     RetryPromptPart,
     SystemPromptPart,
     TextPart,
-    TextPartDelta,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
@@ -307,51 +306,41 @@ class GeminiStreamedResponse(StreamedResponse):
     _timestamp: datetime = field(default_factory=_utils.now_utc, init=False)
     _usage: result.Usage = field(default_factory=result.Usage, init=False)
 
-    _parts: dict[int, ModelResponsePart] = field(default_factory=dict, init=False)
+    _parts_manager: ModelResponsePartsManager = field(default_factory=ModelResponsePartsManager, init=False)
     _event_iterator: AsyncIterator[ModelResponseStreamEvent] | None = field(default=None, init=False)
 
     async def __anext__(self) -> ModelResponseStreamEvent:
         if self._event_iterator is None:
             self._event_iterator = self._get_event_iterator()
-
-        next_event = await self._event_iterator.__anext__()
-
-        if isinstance(next_event, PartStartEvent):
-            self._parts[next_event.index] = next_event.part
-        elif isinstance(next_event, PartDeltaEvent):
-            existing_part = self._parts.get(next_event.index)
-            assert existing_part is not None, 'PartDeltaEvent without existing part'
-            self._parts[next_event.index] = next_event.delta.apply(self._parts[next_event.index])
-
-        return next_event
+        return await self._event_iterator.__anext__()
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
-        current_part_index: int | None = None
-        current_tool_call_name: str | None = None  # None means we are in a text part or have no parts at all
-
         async for gemini_response in self._get_gemini_responses():
             candidate = gemini_response['candidates'][0]
             gemini_part: _GeminiPartUnion
             for gemini_part in candidate['content']['parts']:
                 if 'text' in gemini_part:
-                    # The following condition holds if and only if we are not already in a text part:
-                    if current_part_index is None or current_tool_call_name is not None:
-                        current_tool_call_name = None
-                        current_part_index = 0 if current_part_index is None else current_part_index + 1
-                        part = TextPart(gemini_part['text'])
-                        yield PartStartEvent(index=current_part_index, part=part)
-                    else:
-                        yield PartDeltaEvent(index=current_part_index, delta=TextPartDelta(gemini_part['text']))
+                    # Using vendor_part_id=None means we can produce multiple text parts if their deltas are sprinkled
+                    # amongst the tool call deltas
+                    maybe_event = self._parts_manager.handle_text_delta(
+                        vendor_part_id=None, content=gemini_part['text']
+                    )
+                    if maybe_event is not None:
+                        yield maybe_event
+
                 elif 'function_call' in gemini_part:
                     # Here, we assume all function_call parts are complete and don't have deltas.
+                    # We do this by assigning a unique randomly generated "vendor_part_id".
                     # We need to confirm whether this is actually true, but if it isn't, we can still handle it properly
                     # it would just be a bit more complicated. And we'd need to confirm the intended semantics.
-                    current_tool_call_name = gemini_part['function_call']['name']
-                    current_part_index = 0 if current_part_index is None else current_part_index + 1
-                    yield PartStartEvent(
-                        index=current_part_index,
-                        part=ToolCallPart.from_raw_args(current_tool_call_name, gemini_part['function_call']['args']),
+                    maybe_event = self._parts_manager.handle_tool_call_delta(
+                        vendor_part_id=uuid4(),
+                        tool_name=gemini_part['function_call']['name'],
+                        args=gemini_part['function_call']['args'],
+                        tool_call_id=None,
                     )
+                    if maybe_event is not None:
+                        yield maybe_event
                 else:
                     assert 'function_response' in gemini_part, f'Unexpected part: {gemini_part}'
 
@@ -388,7 +377,8 @@ class GeminiStreamedResponse(StreamedResponse):
 
     def get(self, *, final: bool = False) -> ModelResponse:
         """Get the `ModelResponse` at this point."""
-        return ModelResponse(parts=[self._parts[k] for k in sorted(self._parts)], timestamp=self._timestamp)
+        parts = self._parts_manager.get_parts()
+        return ModelResponse(parts=parts, timestamp=self._timestamp)
 
     def usage(self) -> result.Usage:
         return self._usage
@@ -468,9 +458,14 @@ def _process_response_from_parts(parts: Sequence[_GeminiPartUnion], timestamp: d
     items: list[ModelResponsePart] = []
     for part in parts:
         if 'text' in part:
-            items.append(TextPart(part['text']))
+            items.append(TextPart(content=part['text']))
         elif 'function_call' in part:
-            items.append(ToolCallPart.from_raw_args(part['function_call']['name'], part['function_call']['args']))
+            items.append(
+                ToolCallPart.from_raw_args(
+                    tool_name=part['function_call']['name'],
+                    args=part['function_call']['args'],
+                )
+            )
         elif 'function_response' in part:
             raise exceptions.UnexpectedModelBehavior(
                 f'Unsupported response from Gemini, expected all parts to be function calls or text, got: {part!r}'

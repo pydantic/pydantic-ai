@@ -203,7 +203,8 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
             An async iterable of the response data.
         """
         async for structured_message, is_last in self.stream_structured(debounce_by=debounce_by):
-            yield await self.validate_structured_result(structured_message, allow_partial=not is_last)
+            result = await self.validate_structured_result(structured_message, allow_partial=not is_last)
+            yield result
 
     async def stream_text(self, *, delta: bool = False, debounce_by: float | None = 0.1) -> AsyncIterator[str]:
         """Stream the text result as an async iterable.
@@ -227,26 +228,24 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
             # TODO: This needs to be rolled into the group_by_temporal below
             msg = self._stream_response.get()
             for i, part in enumerate(msg.parts):
-                # TODO: Probably need to replace this usage of index with a (tracked) part ID or similar
-                #  (It's not guaranteed that this index `i` matches what comes out of the maybe_event.index below)
                 if isinstance(part, TextPart) and part.content:
                     yield part.content, i
 
             async with _utils.group_by_temporal(usage_checking_stream, debounce_by) as group_iter:
                 async for events, _is_final in group_iter:
-                    for maybe_event in events:
+                    for event in events:
                         if (
-                            isinstance(maybe_event, _messages.PartStartEvent)
-                            and isinstance(maybe_event.part, _messages.TextPart)
-                            and maybe_event.part.content
+                            isinstance(event, _messages.PartStartEvent)
+                            and isinstance(event.part, _messages.TextPart)
+                            and event.part.content
                         ):
-                            yield maybe_event.part.content, maybe_event.index
+                            yield event.part.content, event.index
                         elif (
-                            isinstance(maybe_event, _messages.PartDeltaEvent)
-                            and isinstance(maybe_event.delta, _messages.TextPartDelta)
-                            and maybe_event.delta.content_delta
+                            isinstance(event, _messages.PartDeltaEvent)
+                            and isinstance(event.delta, _messages.TextPartDelta)
+                            and event.delta.content_delta
                         ):
-                            yield maybe_event.delta.content_delta, maybe_event.index
+                            yield event.delta.content_delta, event.index
 
         with _logfire.span('response stream text') as lf_span:
             if delta:

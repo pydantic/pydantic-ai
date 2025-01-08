@@ -11,6 +11,7 @@ from httpx import AsyncClient as AsyncHTTPClient
 from typing_extensions import assert_never
 
 from .. import UnexpectedModelBehavior, _utils, result
+from .._parts_manager import ModelResponsePartsManager
 from .._utils import guard_tool_call_id as _guard_tool_call_id
 from ..messages import (
     ModelMessage,
@@ -18,14 +19,10 @@ from ..messages import (
     ModelResponse,
     ModelResponsePart,
     ModelResponseStreamEvent,
-    PartDeltaEvent,
-    PartStartEvent,
     RetryPromptPart,
     SystemPromptPart,
     TextPart,
-    TextPartDelta,
     ToolCallPart,
-    ToolCallPartDelta,
     ToolReturnPart,
     UserPromptPart,
 )
@@ -44,7 +41,6 @@ try:
     from groq import NOT_GIVEN, AsyncGroq, AsyncStream
     from groq.types import chat
     from groq.types.chat import ChatCompletion, ChatCompletionChunk
-    from groq.types.chat.chat_completion_chunk import ChoiceDeltaToolCall
 except ImportError as _import_error:
     raise ImportError(
         'Please install `groq` to use the Groq model, '
@@ -220,10 +216,12 @@ class GroqAgentModel(AgentModel):
         choice = response.choices[0]
         items: list[ModelResponsePart] = []
         if choice.message.content is not None:
-            items.append(TextPart(choice.message.content))
+            items.append(TextPart(content=choice.message.content))
         if choice.message.tool_calls is not None:
             for c in choice.message.tool_calls:
-                items.append(ToolCallPart.from_raw_args(c.function.name, c.function.arguments, c.id))
+                items.append(
+                    ToolCallPart.from_raw_args(tool_name=c.function.name, args=c.function.arguments, tool_call_id=c.id)
+                )
         return ModelResponse(items, timestamp=timestamp)
 
     @staticmethod
@@ -292,35 +290,17 @@ class GroqStreamedResponse(StreamedResponse):
 
     _response: AsyncIterable[ChatCompletionChunk]
     _timestamp: datetime
-
     _usage: result.Usage = field(default_factory=result.Usage, init=False)
 
-    _delta_tool_calls: dict[int, ChoiceDeltaToolCall] = field(default_factory=dict, init=False)
-
-    _content_part_index: int | None = field(default=None, init=False)
-    _tool_call_index_to_part_index: dict[int, int] = field(default_factory=dict, init=False)
-    _parts: dict[int, ModelResponsePart] = field(default_factory=dict, init=False)
+    _parts_manager: ModelResponsePartsManager = field(default_factory=ModelResponsePartsManager, init=False)
     _event_iterator: AsyncIterator[ModelResponseStreamEvent] | None = field(default=None, init=False)
 
     async def __anext__(self) -> ModelResponseStreamEvent:
         if self._event_iterator is None:
             self._event_iterator = self._get_event_iterator()
-
-        next_event = await self._event_iterator.__anext__()
-
-        if isinstance(next_event, PartStartEvent):
-            self._parts[next_event.index] = next_event.part
-        elif isinstance(next_event, PartDeltaEvent):
-            existing_part = self._parts.get(next_event.index)
-            assert existing_part is not None, 'PartDeltaEvent without existing part'
-            self._parts[next_event.index] = next_event.delta.apply(self._parts[next_event.index])
-
-        return next_event
+        return await self._event_iterator.__anext__()
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
-        # TODO: Simplify this through the use of a StreamedPartsManager or whatever
-        current_part_index: int | None = None
-
         async for chunk in self._response:
             self._usage += _map_usage(chunk)
 
@@ -332,74 +312,24 @@ class GroqStreamedResponse(StreamedResponse):
             # Handle the text part of the response
             content = choice.delta.content
             if content is not None:
-                if self._content_part_index is not None:
-                    yield PartDeltaEvent(index=self._content_part_index, delta=TextPartDelta(content))
-                else:
-                    current_part_index = 0 if current_part_index is None else current_part_index + 1
-                    self._content_part_index = current_part_index
-                    part = TextPart(content)
-                    yield PartStartEvent(index=current_part_index, part=part)
+                maybe_event = self._parts_manager.handle_text_delta(vendor_part_id='content', content=content)
+                if maybe_event is not None:
+                    yield maybe_event
 
             # Handle the tool calls
             for dtc in choice.delta.tool_calls or []:
-                if not dtc.function:
-                    continue
-
-                if existing := self._delta_tool_calls.get(dtc.index):
-                    # We've already received a delta_tool_call for this index
-                    existing.id = existing.id or dtc.id
-                    if existing.function is None:
-                        existing.function = dtc.function
-                    else:
-                        existing.function.name = _utils.add_optional(existing.function.name, dtc.function.name)
-                        existing.function.arguments = _utils.add_optional(
-                            existing.function.arguments, dtc.function.arguments
-                        )
-
-                    if not (existing.function.name and existing.function.arguments):
-                        continue  # We don't have enough information to create a part
-
-                    part_index = self._tool_call_index_to_part_index.get(dtc.index)
-                    if part_index is None:
-                        current_part_index = 0 if current_part_index is None else current_part_index + 1
-                        self._tool_call_index_to_part_index[dtc.index] = current_part_index
-                        yield PartStartEvent(
-                            index=current_part_index,
-                            part=ToolCallPart.from_raw_args(
-                                existing.function.name, existing.function.arguments, tool_call_id=existing.id
-                            ),
-                        )
-                    elif dtc.function.name:
-                        # We don't currently nicely support streaming updates to the function call name
-                        # So we just replace the whole part if the name has changed
-                        yield PartStartEvent(
-                            index=part_index,
-                            part=ToolCallPart.from_raw_args(
-                                existing.function.name, existing.function.arguments, tool_call_id=existing.id
-                            ),
-                        )
-                    elif dtc.function.arguments:
-                        yield PartDeltaEvent(
-                            index=part_index,
-                            delta=ToolCallPartDelta(dtc.function.arguments),
-                        )
-
-                else:
-                    self._delta_tool_calls[dtc.index] = dtc
-
-                    if dtc.function.name and dtc.function.arguments:
-                        # This is the first delta_tool_call we've received with this index
-                        current_part_index = 0 if current_part_index is None else current_part_index + 1
-                        self._tool_call_index_to_part_index[dtc.index] = current_part_index
-                        yield PartStartEvent(
-                            index=current_part_index,
-                            part=ToolCallPart.from_raw_args(
-                                dtc.function.name, dtc.function.arguments, tool_call_id=dtc.id
-                            ),
-                        )
+                maybe_event = self._parts_manager.handle_tool_call_delta(
+                    vendor_part_id=dtc.index,
+                    tool_name=dtc.function and dtc.function.name,
+                    args=dtc.function and dtc.function.arguments,
+                    tool_call_id=dtc.id,
+                )
+                if maybe_event is not None:
+                    yield maybe_event
 
     def get(self, *, final: bool = False) -> ModelResponse:
-        return ModelResponse(parts=[self._parts[k] for k in sorted(self._parts)], timestamp=self._timestamp)
+        parts = self._parts_manager.get_parts()
+        return ModelResponse(parts=parts, timestamp=self._timestamp)
 
     def usage(self) -> Usage:
         return self._usage

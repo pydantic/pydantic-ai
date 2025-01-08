@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+import datetime
 import json
 from collections.abc import AsyncIterator
 from datetime import timezone
@@ -503,7 +504,6 @@ async def test_exhaustive_strategy_executes_all_tools():
     )
 
 
-@pytest.mark.xfail(reason='final result tool not first is not yet supported')
 async def test_early_strategy_with_final_result_in_middle():
     """Test that 'early' strategy stops at first final result, regardless of position."""
     tool_called: list[str] = []
@@ -531,14 +531,93 @@ async def test_early_strategy_with_final_result_in_middle():
 
     async with agent.run_stream('test early strategy with final result in middle') as result:
         response = await result.get_data()
-        assert response.value == snapshot('first')
+        assert response.value == snapshot('final')
         messages = result.all_messages()
 
     # Verify no tools were called
     assert tool_called == []
 
     # Verify we got appropriate tool returns
-    assert messages == snapshot()
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='test early strategy with final ' 'result in middle',
+                        timestamp=IsNow(tz=datetime.timezone.utc),
+                        part_kind='user-prompt',
+                    )
+                ],
+                kind='request',
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='regular_tool',
+                        args=ArgsJson(args_json='{"x": 1}'),
+                        tool_call_id=None,
+                        part_kind='tool-call',
+                    ),
+                    ToolCallPart(
+                        tool_name='final_result',
+                        args=ArgsJson(args_json='{"value": "final"}'),
+                        tool_call_id=None,
+                        part_kind='tool-call',
+                    ),
+                    ToolCallPart(
+                        tool_name='another_tool',
+                        args=ArgsJson(args_json='{"y": 2}'),
+                        tool_call_id=None,
+                        part_kind='tool-call',
+                    ),
+                    ToolCallPart(
+                        tool_name='unknown_tool',
+                        args=ArgsJson(args_json='{"value": "???"}'),
+                        tool_call_id=None,
+                        part_kind='tool-call',
+                    ),
+                ],
+                timestamp=IsNow(tz=datetime.timezone.utc),
+                kind='response',
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='regular_tool',
+                        content='Tool not executed - a final ' 'result was already processed.',
+                        tool_call_id=None,
+                        timestamp=IsNow(tz=datetime.timezone.utc),
+                        part_kind='tool-return',
+                    ),
+                    ToolReturnPart(
+                        tool_name='final_result',
+                        content='Final result processed.',
+                        tool_call_id=None,
+                        timestamp=IsNow(tz=datetime.timezone.utc),
+                        part_kind='tool-return',
+                    ),
+                    ToolReturnPart(
+                        tool_name='another_tool',
+                        content='Tool not executed - a final ' 'result was already processed.',
+                        tool_call_id=None,
+                        timestamp=IsNow(tz=datetime.timezone.utc),
+                        part_kind='tool-return',
+                    ),
+                    RetryPromptPart(
+                        content='Unknown tool name: '
+                        "'unknown_tool'. Available tools: "
+                        'regular_tool, another_tool, '
+                        'final_result',
+                        tool_name=None,
+                        tool_call_id=None,
+                        timestamp=IsNow(tz=datetime.timezone.utc),
+                        part_kind='retry-prompt',
+                    ),
+                ],
+                kind='request',
+            ),
+        ]
+    )
 
 
 async def test_early_strategy_does_not_apply_to_tool_calls_without_final_tool():

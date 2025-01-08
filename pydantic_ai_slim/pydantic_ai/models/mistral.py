@@ -13,6 +13,7 @@ from httpx import AsyncClient as AsyncHTTPClient, Timeout
 from typing_extensions import assert_never
 
 from .. import UnexpectedModelBehavior, _utils
+from .._parts_manager import ModelResponsePartsManager
 from .._utils import now_utc as _now_utc
 from ..messages import (
     ArgsJson,
@@ -21,12 +22,9 @@ from ..messages import (
     ModelResponse,
     ModelResponsePart,
     ModelResponseStreamEvent,
-    PartDeltaEvent,
-    PartStartEvent,
     RetryPromptPart,
     SystemPromptPart,
     TextPart,
-    TextPartDelta,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
@@ -284,11 +282,11 @@ class MistralAgentModel(AgentModel):
 
         parts: list[ModelResponsePart] = []
         if text := _map_content(content):
-            parts.append(TextPart(text))
+            parts.append(TextPart(content=text))
 
         if isinstance(tool_calls, list):
             for tool_call in tool_calls:
-                tool = _map_mistral_to_pydantic_tool_call(tool_call)
+                tool = _map_mistral_to_pydantic_tool_call(tool_call=tool_call)
                 parts.append(tool)
 
         return ModelResponse(parts, timestamp=timestamp)
@@ -456,36 +454,24 @@ class MistralStreamedResponse(StreamedResponse):
 
     _usage: Usage = field(default_factory=Usage, init=False)
 
-    _function_tools: dict[str, MistralToolCall] = field(default_factory=dict, init=False)
+    # _function_tools: dict[str, MistralToolCall] = field(default_factory=dict, init=False)
     _delta_content: str = ''
+    # _delta_tool_calls: dict[MistralToolCallId, MistralToolCall] = field(default_factory=dict, init=False)
+    # _result_part_index: int | None = field(default=None, init=False)
+    # _content_part_index: int | None = field(default=None, init=False)
+    # _tool_call_id_to_part_index: dict[MistralToolCallId, int] = field(default_factory=dict, init=False)
+    # _parts: dict[int, ModelResponsePart] = field(default_factory=dict, init=False)
 
-    _delta_tool_calls: dict[MistralToolCallId, MistralToolCall] = field(default_factory=dict, init=False)
-
-    _result_part_index: int | None = field(default=None, init=False)
-    _content_part_index: int | None = field(default=None, init=False)
-    _tool_call_id_to_part_index: dict[MistralToolCallId, int] = field(default_factory=dict, init=False)
-    _parts: dict[int, ModelResponsePart] = field(default_factory=dict, init=False)
+    _parts_manager: ModelResponsePartsManager = field(default_factory=ModelResponsePartsManager, init=False)
     _event_iterator: AsyncIterator[ModelResponseStreamEvent] | None = field(default=None, init=False)
 
     async def __anext__(self) -> ModelResponseStreamEvent:
         if self._event_iterator is None:
             self._event_iterator = self._get_event_iterator()
 
-        next_event = await self._event_iterator.__anext__()
-
-        if isinstance(next_event, PartStartEvent):
-            self._parts[next_event.index] = next_event.part
-        elif isinstance(next_event, PartDeltaEvent):
-            existing_part = self._parts.get(next_event.index)
-            assert existing_part is not None, 'PartDeltaEvent without existing part'
-            self._parts[next_event.index] = next_event.delta.apply(self._parts[next_event.index])
-
-        return next_event
+        return await self._event_iterator.__anext__()
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
-        # TODO: Simplify this through the use of a StreamedPartsManager or whatever
-        current_part_index: int | None = None
-
         chunk: MistralCompletionEvent
         async for chunk in self._response:
             self._usage += _map_usage(chunk.data)
@@ -499,42 +485,32 @@ class MistralStreamedResponse(StreamedResponse):
             content = choice.delta.content
             text = _map_content(content)
             if text:
+                # Attempt to produce a result tool call from the received text
                 if self._result_tools:
                     self._delta_content += text
                     maybe_tool_call_part = self._try_get_result_tool_from_text(self._delta_content, self._result_tools)
                     if maybe_tool_call_part:
-                        if self._result_part_index is None:
-                            current_part_index = 0 if current_part_index is None else current_part_index + 1
-                            self._result_part_index = current_part_index
-
-                        yield PartStartEvent(
-                            index=self._result_part_index,
-                            part=maybe_tool_call_part,
+                        yield self._parts_manager.handle_tool_call_part(
+                            vendor_part_id='result',
+                            tool_name=maybe_tool_call_part.tool_name,
+                            args=maybe_tool_call_part.args_as_dict(),
+                            tool_call_id=maybe_tool_call_part.tool_call_id,
                         )
                 else:
-                    if self._content_part_index is not None:
-                        yield PartDeltaEvent(index=self._content_part_index, delta=TextPartDelta(text))
-                    else:
-                        current_part_index = 0 if current_part_index is None else current_part_index + 1
-                        self._content_part_index = current_part_index
-                        part = TextPart(text)
-                        yield PartStartEvent(index=current_part_index, part=part)
+                    maybe_event = self._parts_manager.handle_text_delta(vendor_part_id='content', content=text)
+                    if maybe_event is not None:
+                        yield maybe_event
 
-            # Handle the tool calls
-            for dtc in choice.delta.tool_calls or []:
+            # Handle the explicit tool calls
+            for index, dtc in enumerate(choice.delta.tool_calls or []):
                 # It seems that mistral just sends full tool calls, so we just use them directly, rather than building
-                part_index = self._tool_call_id_to_part_index.get(dtc.id)
-                if part_index is None:
-                    current_part_index = 0 if current_part_index is None else current_part_index + 1
-                    self._tool_call_id_to_part_index[dtc.id] = current_part_index
-                    part_index = current_part_index
-                yield PartStartEvent(
-                    index=part_index,
-                    part=ToolCallPart.from_raw_args(dtc.function.name, dtc.function.arguments, tool_call_id=dtc.id),
+                yield self._parts_manager.handle_tool_call_part(
+                    vendor_part_id=index, tool_name=dtc.function.name, args=dtc.function.arguments, tool_call_id=dtc.id
                 )
 
     def get(self, *, final: bool = False) -> ModelResponse:
-        return ModelResponse(parts=[self._parts[k] for k in sorted(self._parts)], timestamp=self._timestamp)
+        parts = self._parts_manager.get_parts()
+        return ModelResponse(parts=parts, timestamp=self._timestamp)
 
     def usage(self) -> Usage:
         return self._usage
@@ -555,7 +531,8 @@ class MistralStreamedResponse(StreamedResponse):
                 ):
                     continue
 
-                return ToolCallPart.from_raw_args(result_tool.name, output_json)
+                # The following part_id will be thrown away
+                return ToolCallPart.from_raw_args(tool_name=result_tool.name, args=output_json)
 
     @staticmethod
     def _validate_required_json_schema(json_dict: dict[str, Any], json_schema: dict[str, Any]) -> bool:

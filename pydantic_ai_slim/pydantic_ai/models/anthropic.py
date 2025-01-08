@@ -216,14 +216,14 @@ class AnthropicAgentModel(AgentModel):
         items: list[ModelResponsePart] = []
         for item in response.content:
             if isinstance(item, TextBlock):
-                items.append(TextPart(item.text))
+                items.append(TextPart(content=item.text))
             else:
                 assert isinstance(item, ToolUseBlock), 'unexpected item type'
                 items.append(
                     ToolCallPart.from_raw_args(
-                        item.name,
-                        cast(dict[str, Any], item.input),
-                        item.id,
+                        tool_name=item.name,
+                        args=cast(dict[str, Any], item.input),
+                        tool_call_id=item.id,
                     )
                 )
 

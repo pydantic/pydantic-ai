@@ -13,7 +13,6 @@ from typing_extensions import TypedDict
 
 from pydantic_ai import Agent, ModelRetry, UnexpectedModelBehavior, _utils
 from pydantic_ai.messages import (
-    ArgsJson,
     ModelRequest,
     ModelResponse,
     RetryPromptPart,
@@ -197,9 +196,9 @@ async def test_request_structured_response(allow_model_requests: None):
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[
-                    ToolCallPart(
+                    ToolCallPart.from_raw_args(
                         tool_name='final_result',
-                        args=ArgsJson(args_json='{"response": [1, 2, 123]}'),
+                        args='{"response": [1, 2, 123]}',
                         tool_call_id='123',
                     )
                 ],
@@ -284,9 +283,9 @@ async def test_request_tool_call(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[
-                    ToolCallPart(
+                    ToolCallPart.from_raw_args(
                         tool_name='get_location',
-                        args=ArgsJson(args_json='{"loc_name": "San Fransisco"}'),
+                        args='{"loc_name": "San Fransisco"}',
                         tool_call_id='1',
                     )
                 ],
@@ -304,9 +303,9 @@ async def test_request_tool_call(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[
-                    ToolCallPart(
+                    ToolCallPart.from_raw_args(
                         tool_name='get_location',
-                        args=ArgsJson(args_json='{"loc_name": "London"}'),
+                        args='{"loc_name": "London"}',
                         tool_call_id='2',
                     )
                 ],

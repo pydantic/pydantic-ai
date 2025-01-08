@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 from dataclasses import dataclass, field, replace
 from datetime import datetime
-from typing import Annotated, Any, Literal, Union, cast
+from typing import Annotated, Any, Literal, Union, cast, overload
 
 import pydantic
 import pydantic_core
@@ -257,7 +257,7 @@ class ModelResponse:
 
     @classmethod
     def from_text(cls, content: str, timestamp: datetime | None = None) -> Self:
-        return cls([TextPart(content)], timestamp=timestamp or _now_utc())
+        return cls([TextPart(content=content)], timestamp=timestamp or _now_utc())
 
     @classmethod
     def from_tool_call(cls, tool_call: ToolCallPart) -> Self:
@@ -276,6 +276,7 @@ class TextPartDelta:
     """A text part delta."""
 
     content_delta: str
+
     part_delta_kind: Literal['text'] = 'text'
 
     def apply(self, part: ModelResponsePart) -> TextPart:
@@ -288,16 +289,94 @@ class TextPartDelta:
 class ToolCallPartDelta:
     """A tool call part delta."""
 
-    args_json_delta: str
+    tool_name_delta: str | None = None
+    args_delta: str | dict[str, Any] | None = None
+    tool_call_id: str | None = None
+
     part_delta_kind: Literal['tool_call'] = 'tool_call'
 
-    def apply(self, part: ModelResponsePart) -> ToolCallPart:
-        if not isinstance(part, ToolCallPart):
-            raise ValueError('Cannot apply ToolCallPartDeltas to non-ToolCallParts')
-        if not isinstance(part.args, ArgsJson):
-            raise ValueError('Cannot apply deltas to non-JSON tool arguments')
-        updated_json = part.args.args_json + self.args_json_delta
-        return replace(part, args=ArgsJson(updated_json))
+    def as_part(self) -> ToolCallPart | None:
+        """Converts to a ToolCallPart if the required information is present, otherwise returns None."""
+        if self.tool_name_delta is None or self.args_delta is None:
+            return None
+
+        return ToolCallPart.from_raw_args(
+            self.tool_name_delta,
+            self.args_delta,
+            self.tool_call_id,
+        )
+
+    @overload
+    def apply(self, part: ModelResponsePart) -> ToolCallPart: ...
+
+    @overload
+    def apply(self, part: ModelResponsePart | ToolCallPartDelta) -> ToolCallPart | ToolCallPartDelta: ...
+
+    def apply(self, part: ModelResponsePart | ToolCallPartDelta) -> ToolCallPart | ToolCallPartDelta:
+        if isinstance(part, ToolCallPart):
+            return self._apply_to_part(part)
+
+        if isinstance(part, ToolCallPartDelta):
+            return self._apply_to_delta(part)
+
+        raise ValueError(f'Can only apply ToolCallPartDeltas to ToolCallParts or ToolCallPartDeltas, not {part}')
+
+    def _apply_to_delta(self, delta: ToolCallPartDelta) -> ToolCallPart | ToolCallPartDelta:
+        if self.tool_name_delta:
+            # I'm not sure how common it is to have deltas on the tool name, but I've handled it here for completeness
+            updated_tool_name_delta = (delta.tool_name_delta or '') + self.tool_name_delta
+            delta = replace(delta, tool_name_delta=updated_tool_name_delta)
+
+        if isinstance(self.args_delta, str):
+            if isinstance(delta.args_delta, dict):
+                raise NotImplementedError('Cannot apply a JSON args delta to a dict args delta')
+            updated_args_delta = (delta.args_delta or '') + self.args_delta
+            delta = replace(delta, args_delta=updated_args_delta)
+        elif isinstance(self.args_delta, dict):
+            if isinstance(delta.args_delta, str):
+                raise NotImplementedError('Cannot apply a dict args delta to a JSON args delta')
+            updated_args_delta = {**(delta.args_delta or {}), **self.args_delta}
+            delta = replace(delta, args_delta=updated_args_delta)
+
+        if self.tool_call_id:
+            # Don't treat tool_call_id as a delta, just replace it
+            if delta.tool_call_id is not None and delta.tool_call_id != self.tool_call_id:
+                raise ValueError('Cannot apply a new tool_call_id to a ToolCallPartDelta that already has one')
+            delta = replace(delta, tool_call_id=self.tool_call_id)
+
+        # If we have enough data to create a full ToolCallPart, do so:
+        if delta.tool_name_delta is not None and delta.args_delta is not None:
+            return ToolCallPart.from_raw_args(
+                delta.tool_name_delta,
+                delta.args_delta,
+                delta.tool_call_id,
+            )
+
+        return delta
+
+    def _apply_to_part(self, part: ToolCallPart) -> ToolCallPart:
+        if self.tool_name_delta:
+            # I'm not sure how common it is to have deltas on the tool name, but I've handled it here for completeness
+            tool_name = part.tool_name + self.tool_name_delta
+            part = replace(part, tool_name=tool_name)
+
+        if isinstance(self.args_delta, str):
+            if not isinstance(part.args, ArgsJson):
+                raise ValueError('Cannot apply deltas to non-JSON tool arguments')
+            updated_json = part.args.args_json + self.args_delta
+            part = replace(part, args=ArgsJson(updated_json))
+        elif isinstance(self.args_delta, dict):
+            if not isinstance(part.args, ArgsDict):
+                raise ValueError('Cannot apply deltas to non-dict tool arguments')
+            updated_dict = {**(part.args.args_dict or {}), **self.args_delta}
+            part = replace(part, args=ArgsDict(updated_dict))
+
+        if self.tool_call_id:
+            # Don't treat tool_call_id as a delta, just replace it
+            if part.tool_call_id is not None and part.tool_call_id != self.tool_call_id:
+                raise ValueError('Cannot apply a new tool_call_id to a ToolCallPart that already has one')
+            part = replace(part, tool_call_id=self.tool_call_id)
+        return part
 
 
 ModelResponsePartDelta = Annotated[Union[TextPartDelta, ToolCallPartDelta], pydantic.Discriminator('part_delta_kind')]
@@ -307,7 +386,7 @@ ModelResponsePartDelta = Annotated[Union[TextPartDelta, ToolCallPartDelta], pyda
 class PartStartEvent:  # TODO: Consider renaming to PartReplaceEvent, or somehow indicate full replacement is an option
     """If multiple PartStartEvents are received with the same index, the new one should fully replace the old one."""
 
-    index: int  # TODO: Consider replacing index here and below with part_id
+    index: int
     part: ModelResponsePart
     event_kind: Literal['part_start'] = 'part_start'
 

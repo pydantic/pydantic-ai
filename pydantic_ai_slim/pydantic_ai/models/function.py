@@ -12,21 +12,17 @@ from typing import Callable, Union
 from typing_extensions import TypeAlias, assert_never, overload
 
 from .. import _utils, result
+from .._parts_manager import ModelResponsePartsManager
 from .._utils import PeekableAsyncStream
 from ..messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
-    ModelResponsePart,
     ModelResponseStreamEvent,
-    PartDeltaEvent,
-    PartStartEvent,
     RetryPromptPart,
     SystemPromptPart,
     TextPart,
-    TextPartDelta,
     ToolCallPart,
-    ToolCallPartDelta,
     ToolReturnPart,
     UserPromptPart,
 )
@@ -184,10 +180,7 @@ class FunctionStreamedResponse(StreamedResponse):
     _iter: AsyncIterator[str | DeltaToolCalls]
     _timestamp: datetime = field(default_factory=_utils.now_utc)
 
-    _next_part_index: int = field(default=0, init=False)
-    _content_part_index: int | None = field(default=None, init=False)
-    _tool_call_index_to_part_index: dict[int, int] = field(default_factory=dict, init=False)
-    _parts: dict[int, ModelResponsePart] = field(default_factory=dict, init=False)
+    _parts_manager: ModelResponsePartsManager = field(default_factory=ModelResponsePartsManager, init=False)
     _event_iterator: AsyncIterator[ModelResponseStreamEvent] | None = field(default=None, init=False)
 
     async def __anext__(self) -> ModelResponseStreamEvent:
@@ -197,50 +190,24 @@ class FunctionStreamedResponse(StreamedResponse):
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         async for item in self._iter:
-            # TODO: Create a PartsStreamManager class that wraps
-            #   _next_part_index, _content_part_index, _tool_call_index_to_part_index, and _parts
-            #   and is reusable across the different StreamedResponse implementations.
             if isinstance(item, str):
-                text = item
-                if self._content_part_index is None:
-                    content_part = TextPart(content=text)
-                    self._content_part_index = self._next_part_index
-                    self._parts[self._content_part_index] = content_part
-                    self._next_part_index += 1
-                    yield PartStartEvent(index=self._content_part_index, part=content_part)
-                else:
-                    content_part = self._parts[self._content_part_index]
-                    assert isinstance(content_part, TextPart), 'The content part must be a text part'
-                    delta = TextPartDelta(content_delta=text)
-                    self._parts[self._content_part_index] = delta.apply(content_part)
-                    yield PartDeltaEvent(index=self._content_part_index, delta=delta)
+                maybe_event = self._parts_manager.handle_text_delta(vendor_part_id='content', content=item)
+                if maybe_event is not None:
+                    yield maybe_event
             else:
                 delta_tool_calls = item
                 for dtc_index, delta_tool_call in delta_tool_calls.items():
-                    existing_part_index = self._tool_call_index_to_part_index.get(dtc_index)
-                    if existing_part_index is None:
-                        new_part_index = self._next_part_index
-                        self._tool_call_index_to_part_index[dtc_index] = new_part_index
-                        self._next_part_index += 1
-                        assert (
-                            delta_tool_call.name is not None
-                        ), 'The first delta_tool_call with a given index must include a tool name'
-                        part = ToolCallPart.from_raw_args(
-                            tool_name=delta_tool_call.name, args=delta_tool_call.json_args or ''
-                        )
-                        self._parts[new_part_index] = part
-                        yield PartStartEvent(index=new_part_index, part=part)
-                    else:
-                        existing_part = self._parts[existing_part_index]
-                        assert isinstance(existing_part, ToolCallPart), 'Cannot switch to tool call part mid-stream'
-                        if delta_tool_call.json_args is not None:
-                            delta = ToolCallPartDelta(delta_tool_call.json_args)
-                            self._parts[existing_part_index] = delta.apply(existing_part)
-                            yield PartDeltaEvent(index=existing_part_index, delta=delta)
+                    maybe_event = self._parts_manager.handle_tool_call_delta(
+                        vendor_part_id=dtc_index,
+                        tool_name=delta_tool_call.name,
+                        args=delta_tool_call.json_args,
+                        tool_call_id=None,
+                    )
+                    if maybe_event is not None:
+                        yield maybe_event
 
     def get(self, *, final: bool = False) -> ModelResponse:
-        parts = [self._parts[index] for index in sorted(self._parts)]
-        return ModelResponse(parts, timestamp=self._timestamp)
+        return ModelResponse(self._parts_manager.get_parts(), timestamp=self._timestamp)
 
     def usage(self) -> result.Usage:
         return _estimate_usage([self.get()])

@@ -298,7 +298,7 @@ async def test_request_tool_call(allow_model_requests: None):
                         tool_call_id='2',
                     )
                 ],
-                timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc),
+                timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
             ),
             ModelRequest(
                 parts=[
@@ -419,7 +419,10 @@ async def test_stream_structured(allow_model_requests: None):
             ModelRequest(parts=[UserPromptPart(content='', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[
-                    ToolCallPart(tool_name='final_result', args=ArgsJson(args_json='{"first": "One", "second": "Two"}'))
+                    ToolCallPart(
+                        tool_name='final_result',
+                        args=ArgsJson(args_json='{"first": "One", "second": "Two"}'),
+                    )
                 ],
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
             ),
@@ -453,6 +456,7 @@ async def test_stream_structured_finish_reason(allow_model_requests: None):
         assert [dict(c) async for c in result.stream(debounce_by=None)] == snapshot(
             [
                 {'first': 'One'},
+                {'first': 'One', 'second': 'Two'},
                 {'first': 'One', 'second': 'Two'},
                 {'first': 'One', 'second': 'Two'},
                 {'first': 'One', 'second': 'Two'},

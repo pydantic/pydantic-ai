@@ -216,7 +216,7 @@ class TestStreamedResponse(StreamedResponse):
     _usage: Usage
     _timestamp: datetime = field(default_factory=_utils.now_utc, init=False)
 
-    _parts: dict[int, ModelResponsePart] = field(default_factory=dict, init=False)
+    _parts_by_index: dict[int, ModelResponsePart] = field(default_factory=dict, init=False)
     _event_iterator: AsyncIterator[ModelResponseStreamEvent] | None = field(default=None, init=False)
 
     async def __anext__(self) -> ModelResponseStreamEvent:
@@ -226,11 +226,11 @@ class TestStreamedResponse(StreamedResponse):
         next_event = await self._event_iterator.__anext__()
 
         if isinstance(next_event, PartStartEvent):
-            self._parts[next_event.index] = next_event.part
+            self._parts_by_index[next_event.index] = next_event.part
         elif isinstance(next_event, PartDeltaEvent):
-            existing_part = self._parts.get(next_event.index)
+            existing_part = self._parts_by_index.get(next_event.index)
             assert existing_part is not None, 'PartDeltaEvent without existing part'
-            self._parts[next_event.index] = next_event.delta.apply(existing_part)
+            self._parts_by_index[next_event.index] = next_event.delta.apply(existing_part)
 
         self._usage += _estimate_event_usage(next_event)
         return next_event
@@ -252,7 +252,7 @@ class TestStreamedResponse(StreamedResponse):
                 yield PartStartEvent(index=i, part=part)
 
     def get(self, *, final: bool = False) -> ModelResponse:
-        parts = [self._parts[index] for index in sorted(self._parts)]
+        parts = [self._parts_by_index[index] for index in sorted(self._parts_by_index)]
         return ModelResponse(parts, timestamp=self._timestamp)
 
     def usage(self) -> Usage:
