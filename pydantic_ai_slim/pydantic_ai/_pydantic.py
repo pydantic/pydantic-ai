@@ -75,7 +75,7 @@ def function_schema(  # noqa: C901
     if require_parameter_descriptions:
         if len(field_descriptions) != len(sig.parameters):
             missing_params = set(sig.parameters) - set(field_descriptions)
-            errors.append(f'Missing parameter descriptions for {', '.join(missing_params)}')
+            errors.append(f'Missing parameter descriptions for {", ".join(missing_params)}')
 
     for index, (name, p) in enumerate(sig.parameters.items()):
         if p.annotation is sig.empty:
