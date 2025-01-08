@@ -241,13 +241,9 @@ class TestStreamedResponse(StreamedResponse):
                 if len(words) == 1 and len(text) > 2:
                     mid = len(text) // 2
                     words = [text[:mid], text[mid:]]
-                maybe_event = self._parts_manager.handle_text_delta(vendor_part_id=i, content='')
-                if maybe_event is not None:
-                    yield maybe_event
+                yield self._parts_manager.handle_text_delta(vendor_part_id=i, content='')
                 for word in words:
-                    maybe_event = self._parts_manager.handle_text_delta(vendor_part_id=i, content=word)
-                    if maybe_event is not None:
-                        yield maybe_event
+                    yield self._parts_manager.handle_text_delta(vendor_part_id=i, content=word)
             else:
                 args = part.args.args_json if isinstance(part.args, ArgsJson) else part.args.args_dict
                 yield self._parts_manager.handle_tool_call_part(

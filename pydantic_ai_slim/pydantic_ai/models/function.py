@@ -191,9 +191,7 @@ class FunctionStreamedResponse(StreamedResponse):
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         async for item in self._iter:
             if isinstance(item, str):
-                maybe_event = self._parts_manager.handle_text_delta(vendor_part_id='content', content=item)
-                if maybe_event is not None:
-                    yield maybe_event
+                yield self._parts_manager.handle_text_delta(vendor_part_id='content', content=item)
             else:
                 delta_tool_calls = item
                 for dtc_index, delta_tool_call in delta_tool_calls.items():

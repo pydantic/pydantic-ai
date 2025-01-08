@@ -312,9 +312,7 @@ class GroqStreamedResponse(StreamedResponse):
             # Handle the text part of the response
             content = choice.delta.content
             if content is not None:
-                maybe_event = self._parts_manager.handle_text_delta(vendor_part_id='content', content=content)
-                if maybe_event is not None:
-                    yield maybe_event
+                yield self._parts_manager.handle_text_delta(vendor_part_id='content', content=content)
 
             # Handle the tool calls
             for dtc in choice.delta.tool_calls or []:
