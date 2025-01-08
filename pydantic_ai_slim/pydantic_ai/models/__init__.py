@@ -159,16 +159,8 @@ class StreamedResponse(ABC):
         # noinspection PyUnreachableCode
         yield
 
-    @abstractmethod
     def get(self, *, final: bool = False) -> ModelResponse:
-        """Get the `ModelResponse` at this point.
-
-        The `ModelResponse` may or may not be complete, depending on whether the stream is finished.
-
-        Args:
-            final: If True, this is the final call, after iteration is complete, the response should be fully validated.
-        """
-        raise NotImplementedError()
+        return ModelResponse(parts=self._parts_manager.get_parts(), timestamp=self.timestamp())
 
     @abstractmethod
     def usage(self) -> Usage:

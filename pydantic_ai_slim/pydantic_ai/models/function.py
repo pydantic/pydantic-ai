@@ -195,9 +195,6 @@ class FunctionStreamedResponse(StreamedResponse):
                     if maybe_event is not None:
                         yield maybe_event
 
-    def get(self, *, final: bool = False) -> ModelResponse:
-        return ModelResponse(self._parts_manager.get_parts(), timestamp=self._timestamp)
-
     def usage(self) -> result.Usage:
         return _estimate_usage([self.get()])
 

@@ -489,10 +489,6 @@ class MistralStreamedResponse(StreamedResponse):
                     vendor_part_id=index, tool_name=dtc.function.name, args=dtc.function.arguments, tool_call_id=dtc.id
                 )
 
-    def get(self, *, final: bool = False) -> ModelResponse:
-        parts = self._parts_manager.get_parts()
-        return ModelResponse(parts=parts, timestamp=self._timestamp)
-
     def usage(self) -> Usage:
         return self._usage
 

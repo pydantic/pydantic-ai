@@ -362,11 +362,6 @@ class GeminiStreamedResponse(StreamedResponse):
             self._usage += _metadata_as_usage(r)
             yield r
 
-    def get(self, *, final: bool = False) -> ModelResponse:
-        """Get the `ModelResponse` at this point."""
-        parts = self._parts_manager.get_parts()
-        return ModelResponse(parts=parts, timestamp=self._timestamp)
-
     def usage(self) -> result.Usage:
         return self._usage
 

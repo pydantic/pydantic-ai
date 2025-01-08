@@ -235,10 +235,6 @@ class TestStreamedResponse(StreamedResponse):
                     vendor_part_id=i, tool_name=part.tool_name, args=args, tool_call_id=part.tool_call_id
                 )
 
-    def get(self, *, final: bool = False) -> ModelResponse:
-        parts = self._parts_manager.get_parts()
-        return ModelResponse(parts, timestamp=self._timestamp)
-
     def usage(self) -> Usage:
         return self._usage
 
