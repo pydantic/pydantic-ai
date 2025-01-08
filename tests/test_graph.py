@@ -40,8 +40,7 @@ async def test_graph():
                 return End(self.input_data * 2)
 
     g = Graph[None, int](nodes=(Float2String, String2Length, Double))
-    runner = g.get_runner(Float2String)
-    result, history = await runner.run(None, 3.14)
+    result, history = await g.run(None, Float2String(3.14))
     # len('3.14') * 2 == 8
     assert result == 8
     assert history == snapshot(
@@ -71,7 +70,7 @@ async def test_graph():
             ),
         ]
     )
-    result, history = await runner.run(None, 3.14159)
+    result, history = await g.run(None, Float2String(3.14159))
     # len('3.14159') == 7, 21 * 2 == 42
     assert result == 42
     assert history == snapshot(
