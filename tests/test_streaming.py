@@ -578,3 +578,27 @@ async def test_early_strategy_does_not_apply_to_tool_calls_without_final_tool():
             ),
         ]
     )
+
+
+async def test_custom_result_type_default_str() -> None:
+    agent = Agent('test')
+
+    async with agent.run_stream('test') as result:
+        response = await result.get_data()
+        assert response == snapshot('success (no tool calls)')
+
+    async with agent.run_stream('test', result_type=ResultType) as result:
+        response = await result.get_data()
+        assert response == snapshot(ResultType(value='a'))
+
+
+async def test_custom_result_type_default_structured() -> None:
+    agent = Agent('test', result_type=ResultType)
+
+    async with agent.run_stream('test') as result:
+        response = await result.get_data()
+        assert response == snapshot(ResultType(value='a'))
+
+    async with agent.run_stream('test', result_type=str) as result:
+        response = await result.get_data()
+        assert response == snapshot('success (no tool calls)')

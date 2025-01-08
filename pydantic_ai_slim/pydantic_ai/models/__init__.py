@@ -48,13 +48,12 @@ KnownModelName = Literal[
     'groq:mixtral-8x7b-32768',
     'groq:gemma2-9b-it',
     'groq:gemma-7b-it',
-    'gemini-1.5-flash',
-    'gemini-1.5-pro',
-    'gemini-2.0-flash-exp',
-    'vertexai:gemini-1.5-flash',
-    'vertexai:gemini-1.5-pro',
-    # since mistral models are supported by other providers (e.g. ollama), and some of their models (e.g. "codestral")
-    # don't start with "mistral", we add the "mistral:" prefix to all to be explicit
+    'google-gla:gemini-1.5-flash',
+    'google-gla:gemini-1.5-pro',
+    'google-gla:gemini-2.0-flash-exp',
+    'google-vertex:gemini-1.5-flash',
+    'google-vertex:gemini-1.5-pro',
+    'google-vertex:gemini-2.0-flash-exp',
     'mistral:mistral-small-latest',
     'mistral:mistral-large-latest',
     'mistral:codestral-latest',
@@ -76,9 +75,9 @@ KnownModelName = Literal[
     'ollama:qwen2',
     'ollama:qwen2.5',
     'ollama:starcoder2',
-    'claude-3-5-haiku-latest',
-    'claude-3-5-sonnet-latest',
-    'claude-3-opus-latest',
+    'anthropic:claude-3-5-haiku-latest',
+    'anthropic:claude-3-5-sonnet-latest',
+    'anthropic:claude-3-opus-latest',
     'test',
 ]
 """Known model names that can be used with the `model` parameter of [`Agent`][pydantic_ai.Agent].
@@ -274,6 +273,15 @@ def infer_model(model: Model | KnownModelName) -> Model:
         from .openai import OpenAIModel
 
         return OpenAIModel(model[7:])
+    elif model.startswith(('gpt', 'o1')):
+        from .openai import OpenAIModel
+
+        return OpenAIModel(model)
+    elif model.startswith('google-gla'):
+        from .gemini import GeminiModel
+
+        return GeminiModel(model[11:])  # pyright: ignore[reportArgumentType]
+    # backwards compatibility with old model names (ex, gemini-1.5-flash -> google-gla:gemini-1.5-flash)
     elif model.startswith('gemini'):
         from .gemini import GeminiModel
 
@@ -283,6 +291,11 @@ def infer_model(model: Model | KnownModelName) -> Model:
         from .groq import GroqModel
 
         return GroqModel(model[5:])  # pyright: ignore[reportArgumentType]
+    elif model.startswith('google-vertex'):
+        from .vertexai import VertexAIModel
+
+        return VertexAIModel(model[14:])  # pyright: ignore[reportArgumentType]
+    # backwards compatibility with old model names (ex, vertexai:gemini-1.5-flash -> google-vertex:gemini-1.5-flash)
     elif model.startswith('vertexai:'):
         from .vertexai import VertexAIModel
 
@@ -295,6 +308,11 @@ def infer_model(model: Model | KnownModelName) -> Model:
         from .ollama import OllamaModel
 
         return OllamaModel(model[7:])
+    elif model.startswith('anthropic'):
+        from .anthropic import AnthropicModel
+
+        return AnthropicModel(model[10:])
+    # backwards compatibility with old model names (ex, claude-3-5-sonnet-latest -> anthropic:claude-3-5-sonnet-latest)
     elif model.startswith('claude'):
         from .anthropic import AnthropicModel
 

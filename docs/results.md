@@ -32,7 +32,7 @@ Runs end when either a plain text response is received or the model calls a tool
 
 When the result type is `str`, or a union including `str`, plain text responses are enabled on the model, and the raw text response from the model is used as the response data.
 
-If the result type is a union with multiple members (after remove `str` from the members), each member is registered as a separate tool with the model in order to reduce the complexity of the tool schemas and maximise the changes a model will respond correctly.
+If the result type is a union with multiple members (after remove `str` from the members), each member is registered as a separate tool with the model in order to reduce the complexity of the tool schemas and maximise the chances a model will respond correctly.
 
 If the result type schema is not of type `"object"`, the result type is wrapped in a single element object, so the schema of all tools registered with the model are object schemas.
 
@@ -190,7 +190,7 @@ async def main():
 2. The [`Agent.run_stream()`][pydantic_ai.Agent.run_stream] method is used to start a streamed run, this method returns a context manager so the connection can be closed when the stream completes.
 3. Each item yield by [`StreamedRunResult.stream()`][pydantic_ai.result.StreamedRunResult.stream] is the complete text response, extended as new data is received.
 
-_(This example is complete, it can be run "as is")_
+_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
 
 We can also stream text as deltas rather than the entire text in each item:
 
@@ -214,7 +214,7 @@ async def main():
 
 1. [`stream_text`][pydantic_ai.result.StreamedRunResult.stream_text] will error if the response is not text
 
-_(This example is complete, it can be run "as is")_
+_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
 
 !!! warning "Result message not included in `messages`"
     The final result message will **NOT** be added to result messages if you use `.stream_text(delta=True)`,
@@ -261,7 +261,7 @@ async def main():
             #> {'name': 'Ben', 'dob': date(1990, 1, 28), 'bio': 'Likes the chain the dog and the pyramid'}
 ```
 
-_(This example is complete, it can be run "as is")_
+_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
 
 If you want fine-grained control of validation, particularly catching validation errors, you can use the following pattern:
 
@@ -307,7 +307,7 @@ async def main():
 1. [`stream_structured`][pydantic_ai.result.StreamedRunResult.stream_structured] streams the data as [`ModelResponse`][pydantic_ai.messages.ModelResponse] objects, thus iteration can't fail with a `ValidationError`.
 2. [`validate_structured_result`][pydantic_ai.result.StreamedRunResult.validate_structured_result] validates the data, `allow_partial=True` enables pydantic's [`experimental_allow_partial` flag on `TypeAdapter`][pydantic.type_adapter.TypeAdapter.validate_json].
 
-_(This example is complete, it can be run "as is")_
+_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
 
 ## Examples
 

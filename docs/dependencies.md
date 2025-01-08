@@ -47,7 +47,7 @@ async def main():
 2. Pass the dataclass type to the `deps_type` argument of the [`Agent` constructor][pydantic_ai.Agent.__init__]. **Note**: we're passing the type here, NOT an instance, this parameter is not actually used at runtime, it's here so we can get full type checking of the agent.
 3. When running the agent, pass an instance of the dataclass to the `deps` parameter.
 
-_(This example is complete, it can be run "as is")_
+_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
 
 ## Accessing Dependencies
 
@@ -97,7 +97,7 @@ async def main():
 3. Access dependencies through the [`.deps`][pydantic_ai.tools.RunContext.deps] attribute.
 4. Access dependencies through the [`.deps`][pydantic_ai.tools.RunContext.deps] attribute.
 
-_(This example is complete, it can be run "as is")_
+_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
 
 ### Asynchronous vs. Synchronous dependencies
 
@@ -154,7 +154,7 @@ async def main():
 1. Here we use a synchronous `httpx.Client` instead of an asynchronous `httpx.AsyncClient`.
 2. To match the synchronous dependency, the system prompt function is now a plain function, not a coroutine.
 
-_(This example is complete, it can be run "as is")_
+_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
 
 ## Full Example
 
@@ -222,7 +222,7 @@ async def main():
 1. To pass `RunContext` to a tool, use the [`tool`][pydantic_ai.Agent.tool] decorator.
 2. `RunContext` may optionally be passed to a [`result_validator`][pydantic_ai.Agent.result_validator] function as the first argument.
 
-_(This example is complete, it can be run "as is")_
+_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
 
 ## Overriding Dependencies
 
