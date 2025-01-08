@@ -15,11 +15,11 @@ pytestmark = pytest.mark.anyio
 @pytest.mark.parametrize(
     'interval,expected',
     [
-        (None, snapshot([([1], False), ([2], False), ([3], False), ([], True)])),
-        (0, snapshot([([1], False), ([2], False), ([3], False), ([], True)])),
-        (0.02, snapshot([([1], False), ([2], False), ([3], False), ([], True)])),
-        (0.04, snapshot([([1, 2], False), ([3], True)])),
-        (0.1, snapshot([([1, 2, 3], True)])),
+        (None, snapshot([([1]), ([2]), ([3])])),
+        (0, snapshot([([1]), ([2]), ([3])])),
+        (0.02, snapshot([([1]), ([2]), ([3])])),
+        (0.04, snapshot([([1, 2]), ([3])])),
+        (0.1, snapshot([([1, 2, 3])])),
     ],
 )
 async def test_group_by_temporal(interval: float | None, expected: list[list[int]]):
@@ -32,7 +32,7 @@ async def test_group_by_temporal(interval: float | None, expected: list[list[int
         await asyncio.sleep(0.02)
 
     async with group_by_temporal(yield_groups(), soft_max_interval=interval) as groups_iter:
-        groups: list[tuple[list[int], bool]] = [g async for g in groups_iter]
+        groups: list[list[int]] = [g async for g in groups_iter]
         assert groups == expected
 
 

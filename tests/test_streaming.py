@@ -137,22 +137,26 @@ async def test_streamed_text_stream():
 
     async with agent.run_stream('Hello') as result:
         # typehint to test (via static typing) that the stream type is correctly inferred
-        chunks: list[str] = [c async for c in result.stream()]
-        # one chunk due to group_by_temporal
+        chunks: list[str] = [c async for c in result.stream_text()]
+        # one chunk with `stream_text()` due to group_by_temporal
         assert chunks == snapshot(['The cat sat on the mat.'])
         assert result.is_complete
 
     async with agent.run_stream('Hello') as result:
-        assert [c async for c in result.stream(debounce_by=None)] == snapshot(
+        # typehint to test (via static typing) that the stream type is correctly inferred
+        chunks: list[str] = [c async for c in result.stream()]
+        # two chunks with `stream()` due to not-final vs. final
+        assert chunks == snapshot(['The cat sat on the mat.', 'The cat sat on the mat.'])
+        assert result.is_complete
+
+    async with agent.run_stream('Hello') as result:
+        assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(
             [
                 'The ',
                 'The cat ',
                 'The cat sat ',
                 'The cat sat on ',
                 'The cat sat on the ',
-                'The cat sat on the mat.',
-                # This last value is repeated due to the debounce_by=None combined with the need to emit a final empty
-                # chunk to signal the end of the stream (which is used to determine whether to allow partial JSON)
                 'The cat sat on the mat.',
             ]
         )

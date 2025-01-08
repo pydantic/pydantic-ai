@@ -1,7 +1,6 @@
 from __future__ import annotations as _annotations
 
 from abc import ABC, abstractmethod
-from collections import defaultdict
 from collections.abc import AsyncIterator, Awaitable, Callable
 from copy import deepcopy
 from dataclasses import dataclass, field
@@ -223,41 +222,44 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
             self._stream_response, self._usage_limits, self.usage
         )
 
-        async def _stream_text_deltas() -> AsyncIterator[tuple[str, int]]:
+        async def _stream_text_deltas_ungrouped() -> AsyncIterator[tuple[str, int]]:
             # if the response currently has any parts with content, yield those before streaming
             msg = self._stream_response.get()
             for i, part in enumerate(msg.parts):
                 if isinstance(part, TextPart) and part.content:
                     yield part.content, i
 
-            async with _utils.group_by_temporal(usage_checking_stream, debounce_by) as group_iter:
-                async for events, _is_final in group_iter:
-                    for event in events:
-                        if (
-                            isinstance(event, _messages.PartStartEvent)
-                            and isinstance(event.part, _messages.TextPart)
-                            and event.part.content
-                        ):
-                            yield event.part.content, event.index
-                        elif (
-                            isinstance(event, _messages.PartDeltaEvent)
-                            and isinstance(event.delta, _messages.TextPartDelta)
-                            and event.delta.content_delta
-                        ):
-                            yield event.delta.content_delta, event.index
+            async for event in usage_checking_stream:
+                if (
+                    isinstance(event, _messages.PartStartEvent)
+                    and isinstance(event.part, _messages.TextPart)
+                    and event.part.content
+                ):
+                    yield event.part.content, event.index
+                elif (
+                    isinstance(event, _messages.PartDeltaEvent)
+                    and isinstance(event.delta, _messages.TextPartDelta)
+                    and event.delta.content_delta
+                ):
+                    yield event.delta.content_delta, event.index
+
+        async def _stream_text_deltas() -> AsyncIterator[str]:
+            async with _utils.group_by_temporal(_stream_text_deltas_ungrouped(), debounce_by) as group_iter:
+                async for items in group_iter:
+                    yield ''.join([content for content, _ in items])
 
         with _logfire.span('response stream text') as lf_span:
             if delta:
-                async for text, _ in _stream_text_deltas():
+                async for text in _stream_text_deltas():
                     yield text
             else:
                 # a quick benchmark shows it's faster to build up a string with concat when we're
                 # yielding at each step
-                chunks: dict[int, str] = defaultdict(str)
+                deltas: list[str] = []
                 combined_validated_text = ''
-                async for text, index in _stream_text_deltas():
-                    chunks[index] += text
-                    combined_text = ''.join([chunks[k] for k in sorted(chunks)])
+                async for text in _stream_text_deltas():
+                    deltas.append(text)
+                    combined_text = ''.join(deltas)
                     combined_validated_text = await self._validate_text_result(combined_text)
                     yield combined_validated_text
 
@@ -290,13 +292,14 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
                     break
 
             async with _utils.group_by_temporal(usage_checking_stream, debounce_by) as group_iter:
-                async for _events, is_final in group_iter:
-                    msg = self._stream_response.get(final=is_final)
-                    yield msg, is_final
-                    if is_final:
-                        # TODO: Should this now be `final_response` instead of `structured_response`?
-                        lf_span.set_attribute('structured_response', msg)
-                        await self._marked_completed(msg)
+                async for _events in group_iter:
+                    msg = self._stream_response.get()
+                    yield msg, False
+                msg = self._stream_response.get(final=True)
+                yield msg, True
+                # TODO: Should this now be `final_response` instead of `structured_response`?
+                lf_span.set_attribute('structured_response', msg)
+                await self._marked_completed(msg)
 
     async def get_data(self) -> ResultData:
         """Stream the whole response, validate and return it."""
