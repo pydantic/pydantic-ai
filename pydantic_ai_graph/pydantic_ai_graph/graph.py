@@ -5,11 +5,10 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from time import perf_counter
-from typing import TYPE_CHECKING, Annotated, Generic
+from typing import TYPE_CHECKING, Generic
 
 import logfire_api
-from annotated_types import Ge, Le
-from typing_extensions import Never, ParamSpec, Protocol, TypeVar, assert_never
+from typing_extensions import Never, ParamSpec, Protocol, TypeVar, Unpack, assert_never
 
 from . import _utils, mermaid
 from ._utils import get_parent_namespace
@@ -129,76 +128,19 @@ class GraphRunner(Generic[RunSignatureT, StateT, RunEndT]):
 
     def mermaid_code(
         self,
-        highlighted_nodes: Sequence[mermaid.NodeIdent] | None = None,
+        *,
+        highlighted_nodes: Sequence[mermaid.NodeIdent] | mermaid.NodeIdent | None = None,
         highlight_css: str = mermaid.DEFAULT_HIGHLIGHT_CSS,
     ) -> str:
         return mermaid.generate_code(
-            self.graph, {self.first_node.get_id()}, highlighted_nodes=highlighted_nodes, highlight_css=highlight_css
+            self.graph, self.first_node.get_id(), highlighted_nodes=highlighted_nodes, highlight_css=highlight_css
         )
 
-    def mermaid_image(
-        self,
-        *,
-        highlighted_nodes: Sequence[mermaid.NodeIdent] | None = None,
-        highlight_css: str = mermaid.DEFAULT_HIGHLIGHT_CSS,
-        image_type: mermaid.ImageType | None = None,
-        pdf_fit: bool = False,
-        pdf_landscape: bool = False,
-        pdf_paper: mermaid.PdfPaper | None = None,
-        bg_color: str | None = None,
-        theme: mermaid.Theme | None = None,
-        width: int | None = None,
-        height: int | None = None,
-        scale: Annotated[float, Ge(1), Le(3)] | None = None,
-    ) -> bytes:
-        return mermaid.request_image(
-            self.graph,
-            {self.first_node.get_id()},
-            highlighted_nodes=highlighted_nodes,
-            highlight_css=highlight_css,
-            image_type=image_type,
-            pdf_fit=pdf_fit,
-            pdf_landscape=pdf_landscape,
-            pdf_paper=pdf_paper,
-            bg_color=bg_color,
-            theme=theme,
-            width=width,
-            height=height,
-            scale=scale,
-        )
+    def mermaid_image(self, **kwargs: Unpack[mermaid.MermaidConfig]) -> bytes:
+        return mermaid.request_image(self.graph, self.first_node.get_id(), **kwargs)
 
-    def mermaid_save(
-        self,
-        path: Path | str,
-        *,
-        highlighted_nodes: Sequence[mermaid.NodeIdent] | None = None,
-        highlight_css: str = mermaid.DEFAULT_HIGHLIGHT_CSS,
-        image_type: mermaid.ImageType | None = None,
-        pdf_fit: bool = False,
-        pdf_landscape: bool = False,
-        pdf_paper: mermaid.PdfPaper | None = None,
-        bg_color: str | None = None,
-        theme: mermaid.Theme | None = None,
-        width: int | None = None,
-        height: int | None = None,
-        scale: Annotated[float, Ge(1), Le(3)] | None = None,
-    ) -> None:
-        mermaid.save_image(
-            path,
-            self.graph,
-            {self.first_node.get_id()},
-            highlighted_nodes=highlighted_nodes,
-            highlight_css=highlight_css,
-            image_type=image_type,
-            pdf_fit=pdf_fit,
-            pdf_landscape=pdf_landscape,
-            pdf_paper=pdf_paper,
-            bg_color=bg_color,
-            theme=theme,
-            width=width,
-            height=height,
-            scale=scale,
-        )
+    def mermaid_save(self, path: Path | str, /, **kwargs: Unpack[mermaid.MermaidConfig]) -> None:
+        mermaid.save_image(path, self.graph, self.first_node.get_id(), **kwargs)
 
 
 @dataclass
