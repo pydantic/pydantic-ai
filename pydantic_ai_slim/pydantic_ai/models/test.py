@@ -19,11 +19,8 @@ from ..messages import (
     ModelResponse,
     ModelResponsePart,
     ModelResponseStreamEvent,
-    PartDeltaEvent,
-    PartStartEvent,
     RetryPromptPart,
     TextPart,
-    TextPartDelta,
     ToolCallPart,
     ToolReturnPart,
 )
@@ -219,17 +216,6 @@ class TestStreamedResponse(StreamedResponse):
     _timestamp: datetime = field(default_factory=_utils.now_utc, init=False)
 
     _parts_manager: ModelResponsePartsManager = field(default_factory=ModelResponsePartsManager, init=False)
-    _event_iterator: AsyncIterator[ModelResponseStreamEvent] | None = field(default=None, init=False)
-
-    async def __anext__(self) -> ModelResponseStreamEvent:
-        if self._event_iterator is None:
-            self._event_iterator = self._get_event_iterator()
-
-        next_event = await self._event_iterator.__anext__()
-
-        update = _estimate_event_usage(next_event)
-        self._usage += update
-        return next_event
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         for i, part in enumerate(self._structured_response.parts):
@@ -241,8 +227,10 @@ class TestStreamedResponse(StreamedResponse):
                 if len(words) == 1 and len(text) > 2:
                     mid = len(text) // 2
                     words = [text[:mid], text[mid:]]
+                self._usage += _get_string_usage('')
                 yield self._parts_manager.handle_text_delta(vendor_part_id=i, content='')
                 for word in words:
+                    self._usage += _get_string_usage(word)
                     yield self._parts_manager.handle_text_delta(vendor_part_id=i, content=word)
             else:
                 args = part.args.args_json if isinstance(part.args, ArgsJson) else part.args.args_dict
@@ -417,10 +405,6 @@ class _JsonSchemaTestData:
         return s
 
 
-def _estimate_event_usage(event: ModelResponseStreamEvent) -> Usage:
-    response_tokens = 0
-    if isinstance(event, PartStartEvent) and isinstance(event.part, TextPart):
-        response_tokens = _estimate_string_usage(event.part.content)
-    elif isinstance(event, PartDeltaEvent) and isinstance(event.delta, TextPartDelta):
-        response_tokens = _estimate_string_usage(event.delta.content_delta)
+def _get_string_usage(text: str) -> Usage:
+    response_tokens = _estimate_string_usage(text)
     return Usage(response_tokens=response_tokens, total_tokens=response_tokens)

@@ -453,23 +453,9 @@ class MistralStreamedResponse(StreamedResponse):
     _result_tools: dict[str, ToolDefinition]
 
     _usage: Usage = field(default_factory=Usage, init=False)
-
-    # _function_tools: dict[str, MistralToolCall] = field(default_factory=dict, init=False)
-    _delta_content: str = ''
-    # _delta_tool_calls: dict[MistralToolCallId, MistralToolCall] = field(default_factory=dict, init=False)
-    # _result_part_index: int | None = field(default=None, init=False)
-    # _content_part_index: int | None = field(default=None, init=False)
-    # _tool_call_id_to_part_index: dict[MistralToolCallId, int] = field(default_factory=dict, init=False)
-    # _parts: dict[int, ModelResponsePart] = field(default_factory=dict, init=False)
+    _delta_content: str = field(default='', init=False)
 
     _parts_manager: ModelResponsePartsManager = field(default_factory=ModelResponsePartsManager, init=False)
-    _event_iterator: AsyncIterator[ModelResponseStreamEvent] | None = field(default=None, init=False)
-
-    async def __anext__(self) -> ModelResponseStreamEvent:
-        if self._event_iterator is None:
-            self._event_iterator = self._get_event_iterator()
-
-        return await self._event_iterator.__anext__()
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         chunk: MistralCompletionEvent

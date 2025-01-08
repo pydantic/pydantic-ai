@@ -9,6 +9,7 @@ from __future__ import annotations as _annotations
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager, contextmanager
+from dataclasses import dataclass, field
 from datetime import datetime
 from functools import cache
 from typing import TYPE_CHECKING, Literal
@@ -138,17 +139,23 @@ class AgentModel(ABC):
         yield  # pragma: no cover
 
 
+@dataclass
 class StreamedResponse(ABC):
     """Streamed response from an LLM when calling a tool."""
 
+    _event_iterator: AsyncIterator[ModelResponseStreamEvent] | None = field(default=None, init=False)
+
     def __aiter__(self) -> AsyncIterator[ModelResponseStreamEvent]:
         """Stream the response as an async iterable of (optional) `ModelResponseStreamEvent`s."""
-        return self
+        if self._event_iterator is None:
+            self._event_iterator = self._get_event_iterator()
+        return self._event_iterator
 
     @abstractmethod
-    async def __anext__(self) -> ModelResponseStreamEvent:
-        """Process the next chunk of the response."""
+    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         raise NotImplementedError()
+        # noinspection PyUnreachableCode
+        yield
 
     @abstractmethod
     def get(self, *, final: bool = False) -> ModelResponse:

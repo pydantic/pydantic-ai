@@ -136,7 +136,7 @@ class Either(Generic[Left, Right]):
 
 @asynccontextmanager
 async def group_by_temporal(
-    aiter: AsyncIterator[T], soft_max_interval: float | None
+    aiterable: AsyncIterable[T], soft_max_interval: float | None
 ) -> AsyncIterator[AsyncIterable[list[T]]]:
     """Group items from an async iterable into lists based on time interval between them.
 
@@ -154,7 +154,7 @@ async def group_by_temporal(
     ```
 
     Args:
-        aiter: The async iterable to group.
+        aiterable: The async iterable to group.
         soft_max_interval: Maximum interval over which to group items, this should avoid a trickle of items causing
             a group to never be yielded. It's a soft max in the sense that once we're over this time, we yield items
             as soon as `aiter.__anext__()` returns. If `None`, no grouping/debouncing is performed
@@ -165,7 +165,7 @@ async def group_by_temporal(
     if soft_max_interval is None:
 
         async def async_iter_groups_noop() -> AsyncIterator[list[T]]:
-            async for item in aiter:
+            async for item in aiterable:
                 yield [item]
 
         yield async_iter_groups_noop()
@@ -181,6 +181,7 @@ async def group_by_temporal(
         buffer: list[T] = []
         group_start_time = time.monotonic()
 
+        aiterator = aiterable.__aiter__()
         while True:
             if group_start_time is None:
                 # group hasn't started, we just wait for the maximum interval
@@ -193,7 +194,7 @@ async def group_by_temporal(
             if task is None:
                 # aiter.__anext__() returns an Awaitable[T], not a Coroutine which asyncio.create_task expects
                 # so far, this doesn't seem to be a problem
-                task = asyncio.create_task(aiter.__anext__())  # pyright: ignore[reportArgumentType]
+                task = asyncio.create_task(aiterator.__anext__())  # pyright: ignore[reportArgumentType]
 
             # we use asyncio.wait to avoid cancelling the coroutine if it's not done
             done, _ = await asyncio.wait((task,), timeout=wait_time)

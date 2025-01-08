@@ -1,7 +1,7 @@
 from __future__ import annotations as _annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable
 from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -369,10 +369,10 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
 
 
 def _get_usage_checking_stream_response(
-    stream_response: AsyncIterator[ModelResponseStreamEvent],
+    stream_response: AsyncIterable[ModelResponseStreamEvent],
     limits: UsageLimits | None,
     get_usage: Callable[[], Usage],
-) -> AsyncIterator[ModelResponseStreamEvent]:
+) -> AsyncIterable[ModelResponseStreamEvent]:
     if limits is not None and limits.has_token_limits():
 
         async def _usage_checking_iterator():

@@ -307,12 +307,6 @@ class GeminiStreamedResponse(StreamedResponse):
     _usage: result.Usage = field(default_factory=result.Usage, init=False)
 
     _parts_manager: ModelResponsePartsManager = field(default_factory=ModelResponsePartsManager, init=False)
-    _event_iterator: AsyncIterator[ModelResponseStreamEvent] | None = field(default=None, init=False)
-
-    async def __anext__(self) -> ModelResponseStreamEvent:
-        if self._event_iterator is None:
-            self._event_iterator = self._get_event_iterator()
-        return await self._event_iterator.__anext__()
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         async for gemini_response in self._get_gemini_responses():

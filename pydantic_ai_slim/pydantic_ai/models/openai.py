@@ -12,7 +12,7 @@ from typing_extensions import assert_never
 
 from .. import UnexpectedModelBehavior, _utils, result
 from .._parts_manager import ModelResponsePartsManager
-from .._utils import guard_tool_call_id as _guard_tool_call_id, now_utc as _now_utc
+from .._utils import guard_tool_call_id as _guard_tool_call_id
 from ..messages import (
     ModelMessage,
     ModelRequest,
@@ -284,14 +284,8 @@ class OpenAIStreamedResponse(StreamedResponse):
     _usage: result.Usage = field(default_factory=result.Usage, init=False)
 
     _parts_manager: ModelResponsePartsManager = field(default_factory=ModelResponsePartsManager, init=False)
-    _event_iterator: AsyncIterator[ModelResponseStreamEvent] | None = field(default=None, init=False)
 
-    async def __anext__(self) -> ModelResponseStreamEvent:
-        if self._event_iterator is None:
-            self._event_iterator = self._get_events_iterator()
-        return await self._event_iterator.__anext__()
-
-    async def _get_events_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
+    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         async for chunk in self._response:
             self._usage += _map_usage(chunk)
 
@@ -323,7 +317,7 @@ class OpenAIStreamedResponse(StreamedResponse):
         return self._usage
 
     def timestamp(self) -> datetime:
-        return self._timestamp or _now_utc()
+        return self._timestamp
 
 
 def _map_tool_call(t: ToolCallPart) -> chat.ChatCompletionMessageToolCallParam:
