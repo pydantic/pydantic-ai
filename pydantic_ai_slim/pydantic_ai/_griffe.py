@@ -48,7 +48,7 @@ def doc_descriptions(
     return main_desc, params
 
 
-def _infer_docstring_style(doc: str) -> Literal['google', 'numpy', 'sphinx']:
+def _infer_docstring_style(doc: str) -> DocstringStyle:
     """Simplistic docstring style inference."""
     for pattern, replacements, style in _docstring_style_patterns:
         matches = (
