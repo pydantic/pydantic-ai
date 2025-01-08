@@ -383,7 +383,7 @@ ModelResponsePartDelta = Annotated[Union[TextPartDelta, ToolCallPartDelta], pyda
 
 
 @dataclass
-class PartStartEvent:  # TODO: Consider renaming to PartReplaceEvent, or somehow indicate full replacement is an option
+class PartStartEvent:
     """If multiple PartStartEvents are received with the same index, the new one should fully replace the old one."""
 
     index: int

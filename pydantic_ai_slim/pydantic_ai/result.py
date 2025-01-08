@@ -225,7 +225,6 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
 
         async def _stream_text_deltas() -> AsyncIterator[tuple[str, int]]:
             # if the response currently has any parts with content, yield those before streaming
-            # TODO: This needs to be rolled into the group_by_temporal below
             msg = self._stream_response.get()
             for i, part in enumerate(msg.parts):
                 if isinstance(part, TextPart) and part.content:
@@ -284,7 +283,6 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
 
         with _logfire.span('response stream structured') as lf_span:
             # if the message currently has any parts with content, yield before streaming
-            # TODO: This needs to be rolled into the group_by_temporal below...
             msg = self._stream_response.get()
             for part in msg.parts:
                 if part.has_content():

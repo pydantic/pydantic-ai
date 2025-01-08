@@ -32,9 +32,6 @@ class ModelResponsePartsManager:
 
     def handle_text_delta(self, *, vendor_part_id: Hashable | None, content: str) -> ModelResponseStreamEvent | None:
         # vendor_part_id=None means to use the latest part if it is a text part, otherwise make a new one
-        if not content:
-            return None
-
         existing_text_part_and_index: tuple[TextPart, int] | None = None
         if vendor_part_id is None:
             if self._parts:

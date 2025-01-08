@@ -11,7 +11,9 @@ from typing import Any, Literal
 import pydantic_core
 
 from .. import _utils
+from .._parts_manager import ModelResponsePartsManager
 from ..messages import (
+    ArgsJson,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -216,7 +218,7 @@ class TestStreamedResponse(StreamedResponse):
     _usage: Usage
     _timestamp: datetime = field(default_factory=_utils.now_utc, init=False)
 
-    _parts_by_index: dict[int, ModelResponsePart] = field(default_factory=dict, init=False)
+    _parts_manager: ModelResponsePartsManager = field(default_factory=ModelResponsePartsManager, init=False)
     _event_iterator: AsyncIterator[ModelResponseStreamEvent] | None = field(default=None, init=False)
 
     async def __anext__(self) -> ModelResponseStreamEvent:
@@ -225,14 +227,8 @@ class TestStreamedResponse(StreamedResponse):
 
         next_event = await self._event_iterator.__anext__()
 
-        if isinstance(next_event, PartStartEvent):
-            self._parts_by_index[next_event.index] = next_event.part
-        elif isinstance(next_event, PartDeltaEvent):
-            existing_part = self._parts_by_index.get(next_event.index)
-            assert existing_part is not None, 'PartDeltaEvent without existing part'
-            self._parts_by_index[next_event.index] = next_event.delta.apply(existing_part)
-
-        self._usage += _estimate_event_usage(next_event)
+        update = _estimate_event_usage(next_event)
+        self._usage += update
         return next_event
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
@@ -245,14 +241,21 @@ class TestStreamedResponse(StreamedResponse):
                 if len(words) == 1 and len(text) > 2:
                     mid = len(text) // 2
                     words = [text[:mid], text[mid:]]
-                yield PartStartEvent(index=i, part=TextPart(content=''))
+                maybe_event = self._parts_manager.handle_text_delta(vendor_part_id=i, content='')
+                if maybe_event is not None:
+                    yield maybe_event
                 for word in words:
-                    yield PartDeltaEvent(index=i, delta=TextPartDelta(content_delta=word))
+                    maybe_event = self._parts_manager.handle_text_delta(vendor_part_id=i, content=word)
+                    if maybe_event is not None:
+                        yield maybe_event
             else:
-                yield PartStartEvent(index=i, part=part)
+                args = part.args.args_json if isinstance(part.args, ArgsJson) else part.args.args_dict
+                yield self._parts_manager.handle_tool_call_part(
+                    vendor_part_id=i, tool_name=part.tool_name, args=args, tool_call_id=part.tool_call_id
+                )
 
     def get(self, *, final: bool = False) -> ModelResponse:
-        parts = [self._parts_by_index[index] for index in sorted(self._parts_by_index)]
+        parts = self._parts_manager.get_parts()
         return ModelResponse(parts, timestamp=self._timestamp)
 
     def usage(self) -> Usage:
