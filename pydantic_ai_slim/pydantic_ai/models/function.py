@@ -12,7 +12,6 @@ from typing import Callable, Union
 from typing_extensions import TypeAlias, assert_never, overload
 
 from .. import _utils, result
-from .._parts_manager import ModelResponsePartsManager
 from .._utils import PeekableAsyncStream
 from ..messages import (
     ModelMessage,
@@ -179,8 +178,6 @@ class FunctionStreamedResponse(StreamedResponse):
 
     _iter: AsyncIterator[str | DeltaToolCalls]
     _timestamp: datetime = field(default_factory=_utils.now_utc)
-
-    _parts_manager: ModelResponsePartsManager = field(default_factory=ModelResponsePartsManager, init=False)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         async for item in self._iter:

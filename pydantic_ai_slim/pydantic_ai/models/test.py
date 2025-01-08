@@ -11,7 +11,6 @@ from typing import Any, Literal
 import pydantic_core
 
 from .. import _utils
-from .._parts_manager import ModelResponsePartsManager
 from ..messages import (
     ArgsJson,
     ModelMessage,
@@ -214,8 +213,6 @@ class TestStreamedResponse(StreamedResponse):
     _structured_response: ModelResponse
     _usage: Usage
     _timestamp: datetime = field(default_factory=_utils.now_utc, init=False)
-
-    _parts_manager: ModelResponsePartsManager = field(default_factory=ModelResponsePartsManager, init=False)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         for i, part in enumerate(self._structured_response.parts):

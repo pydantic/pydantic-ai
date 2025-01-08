@@ -15,7 +15,6 @@ from httpx import USE_CLIENT_DEFAULT, AsyncClient as AsyncHTTPClient, Response a
 from typing_extensions import NotRequired, TypedDict, assert_never
 
 from .. import UnexpectedModelBehavior, _utils, exceptions, result
-from .._parts_manager import ModelResponsePartsManager
 from ..messages import (
     ModelMessage,
     ModelRequest,
@@ -305,8 +304,6 @@ class GeminiStreamedResponse(StreamedResponse):
     _stream: AsyncIterator[bytes]
     _timestamp: datetime = field(default_factory=_utils.now_utc, init=False)
     _usage: result.Usage = field(default_factory=result.Usage, init=False)
-
-    _parts_manager: ModelResponsePartsManager = field(default_factory=ModelResponsePartsManager, init=False)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         async for gemini_response in self._get_gemini_responses():

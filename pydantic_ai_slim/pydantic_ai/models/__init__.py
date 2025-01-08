@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Literal
 
 import httpx
 
+from .._parts_manager import ModelResponsePartsManager
 from ..exceptions import UserError
 from ..messages import ModelMessage, ModelResponse, ModelResponseStreamEvent
 from ..settings import ModelSettings
@@ -143,6 +144,7 @@ class AgentModel(ABC):
 class StreamedResponse(ABC):
     """Streamed response from an LLM when calling a tool."""
 
+    _parts_manager: ModelResponsePartsManager = field(default_factory=ModelResponsePartsManager, init=False)
     _event_iterator: AsyncIterator[ModelResponseStreamEvent] | None = field(default=None, init=False)
 
     def __aiter__(self) -> AsyncIterator[ModelResponseStreamEvent]:

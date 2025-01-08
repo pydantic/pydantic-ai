@@ -13,7 +13,6 @@ from httpx import AsyncClient as AsyncHTTPClient, Timeout
 from typing_extensions import assert_never
 
 from .. import UnexpectedModelBehavior, _utils
-from .._parts_manager import ModelResponsePartsManager
 from .._utils import now_utc as _now_utc
 from ..messages import (
     ArgsJson,
@@ -454,8 +453,6 @@ class MistralStreamedResponse(StreamedResponse):
 
     _usage: Usage = field(default_factory=Usage, init=False)
     _delta_content: str = field(default='', init=False)
-
-    _parts_manager: ModelResponsePartsManager = field(default_factory=ModelResponsePartsManager, init=False)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         chunk: MistralCompletionEvent
