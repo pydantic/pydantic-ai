@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 from collections.abc import Hashable
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Union
 
 from pydantic_ai import UnexpectedModelBehavior
 from pydantic_ai.messages import (
@@ -19,7 +19,7 @@ from pydantic_ai.messages import (
 VendorId = Hashable
 
 
-ManagedPart = ModelResponsePart | ToolCallPartDelta
+ManagedPart = Union[ModelResponsePart, ToolCallPartDelta]
 
 
 @dataclass
