@@ -38,6 +38,7 @@ Here's what the UI looks like for the weather agent:
 
 ![Weather Agent UI](../img/gradio-demo.gif)
 
+Note, to run the UI, you'll need Python 3.10+.
 
 ```bash
 pip install gradio>=5.9.0
