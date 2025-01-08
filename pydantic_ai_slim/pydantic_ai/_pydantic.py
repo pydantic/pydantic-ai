@@ -20,7 +20,7 @@ from ._griffe import doc_descriptions
 from ._utils import check_object_json_schema, is_model_like
 
 if TYPE_CHECKING:
-    from .tools import ObjectJsonSchema
+    from .tools import DocstringFormat, ObjectJsonSchema
 
 
 __all__ = ('function_schema',)
@@ -38,12 +38,19 @@ class FunctionSchema(TypedDict):
     var_positional_field: str | None
 
 
-def function_schema(function: Callable[..., Any], takes_ctx: bool) -> FunctionSchema:  # noqa: C901
+def function_schema(  # noqa: C901
+    function: Callable[..., Any],
+    takes_ctx: bool,
+    docstring_format: DocstringFormat,
+    require_parameter_descriptions: bool,
+) -> FunctionSchema:
     """Build a Pydantic validator and JSON schema from a tool function.
 
     Args:
         function: The function to build a validator and JSON schema for.
         takes_ctx: Whether the function takes a `RunContext` first argument.
+        docstring_format: The docstring format to use.
+        require_parameter_descriptions: Whether to require descriptions for all tool function parameters.
 
     Returns:
         A `FunctionSchema` instance.
@@ -62,7 +69,8 @@ def function_schema(function: Callable[..., Any], takes_ctx: bool) -> FunctionSc
     var_positional_field: str | None = None
     errors: list[str] = []
     decorators = _decorators.DecoratorInfos()
-    description, field_descriptions = doc_descriptions(function, sig)
+
+    description, field_descriptions = doc_descriptions(function, sig, docstring_format=docstring_format)
 
     for index, (name, p) in enumerate(sig.parameters.items()):
         if p.annotation is sig.empty:
@@ -96,6 +104,10 @@ def function_schema(function: Callable[..., Any], takes_ctx: bool) -> FunctionSc
             annotation = cast(type[Any], annotation)
             field_info = FieldInfo.from_annotation(annotation)
             if field_info.description is None:
+                # TODO: figure out if this is actually where we want to warn
+                parameter_doc = field_descriptions.get(field_name)
+                if not parameter_doc and require_parameter_descriptions:
+                    errors.append(f'Missing description for parameter {field_name}')
                 field_info.description = field_descriptions.get(field_name)
 
             fields[field_name] = td_schema = gen_schema._generate_td_field_schema(  # pyright: ignore[reportPrivateUsage]
