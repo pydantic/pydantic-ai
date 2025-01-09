@@ -81,7 +81,7 @@ async def get_json_schema(_messages: list[ModelMessage], info: AgentInfo) -> Mod
 @pytest.mark.parametrize('docstring_format', ['google', 'auto'])
 def test_docstring_google(set_event_loop: None, docstring_format: Literal['google', 'auto']):
     agent = Agent(FunctionModel(get_json_schema))
-    agent.tool_plain(google_style_docstring, docstring_format=docstring_format)  # pyright: ignore[reportCallIssue]
+    agent.tool_plain(docstring_format=docstring_format)(google_style_docstring)
 
     result = agent.run_sync('Hello')
     json_schema = json.loads(result.data)
@@ -120,7 +120,7 @@ def sphinx_style_docstring(foo: int, /) -> str:  # pragma: no cover
 @pytest.mark.parametrize('docstring_format', ['sphinx', 'auto'])
 def test_docstring_sphinx(set_event_loop: None, docstring_format: Literal['sphinx', 'auto']):
     agent = Agent(FunctionModel(get_json_schema))
-    agent.tool_plain(sphinx_style_docstring, docstring_format=docstring_format)  # pyright: ignore[reportCallIssue]
+    agent.tool_plain(docstring_format=docstring_format)(sphinx_style_docstring)
 
     result = agent.run_sync('Hello')
     json_schema = json.loads(result.data)
@@ -155,7 +155,7 @@ def numpy_style_docstring(*, foo: int, bar: str) -> str:  # pragma: no cover
 @pytest.mark.parametrize('docstring_format', ['numpy', 'auto'])
 def test_docstring_numpy(set_event_loop: None, docstring_format: Literal['numpy', 'auto']):
     agent = Agent(FunctionModel(get_json_schema))
-    agent.tool_plain(numpy_style_docstring, docstring_format=docstring_format)  # pyright: ignore[reportCallIssue]
+    agent.tool_plain(docstring_format=docstring_format)(numpy_style_docstring)
 
     result = agent.run_sync('Hello')
     json_schema = json.loads(result.data)
@@ -215,7 +215,7 @@ async def google_style_docstring_no_body(
 @pytest.mark.parametrize('docstring_format', ['google', 'auto'])
 def test_docstring_google_no_body(set_event_loop: None, docstring_format: Literal['google', 'auto']):
     agent = Agent(FunctionModel(get_json_schema))
-    agent.tool_plain(google_style_docstring_no_body, docstring_format=docstring_format)  # pyright: ignore[reportCallIssue]
+    agent.tool_plain(docstring_format=docstring_format)(google_style_docstring_no_body)
 
     result = agent.run_sync('')
     json_schema = json.loads(result.data)
@@ -581,7 +581,7 @@ def test_enforce_parameter_descriptions() -> None:
     agent = Agent(FunctionModel(get_json_schema))
 
     with pytest.raises(UserError) as exc_info:
-        agent.tool_plain(missing_parameter_descriptions_docstring, require_parameter_descriptions=True)  # pyright: ignore[reportCallIssue]
+        agent.tool_plain(require_parameter_descriptions=True)(missing_parameter_descriptions_docstring)
 
     error_reason = exc_info.value.args[0]
     error_parts = [
