@@ -10,11 +10,11 @@ from typing_extensions import Never, TypeVar
 
 from . import _utils
 
-__all__ = 'AbstractState', 'StateT', 'NextNodeEvent', 'EndEvent', 'InterruptEvent', 'HistoryStep'
+__all__ = 'AbstractState', 'StateT', 'NextNodeEvent', 'EndEvent', 'HistoryStep'
 
 if TYPE_CHECKING:
     from pydantic_ai_graph import BaseNode
-    from pydantic_ai_graph.nodes import End, RunInterrupt
+    from pydantic_ai_graph.nodes import End
 
 
 class AbstractState(ABC):
@@ -50,26 +50,8 @@ class NextNodeEvent(Generic[StateT, RunEndT]):
         # Copy the state to prevent it from being modified by other code
         self.state = _deep_copy_state(self.state)
 
-    def node_summary(self) -> str:
+    def summary(self) -> str:
         return str(self.node)
-
-
-@dataclass
-class InterruptEvent(Generic[StateT]):
-    """History step describing the interruption of a graph run."""
-
-    state: StateT
-    result: RunInterrupt[StateT]
-    ts: datetime = field(default_factory=_utils.now_utc)
-
-    kind: Literal['interrupt'] = 'interrupt'
-
-    def __post_init__(self):
-        # Copy the state to prevent it from being modified by other code
-        self.state = _deep_copy_state(self.state)
-
-    def node_summary(self) -> str:
-        return str(self.result)
 
 
 @dataclass
@@ -86,7 +68,7 @@ class EndEvent(Generic[StateT, RunEndT]):
         # Copy the state to prevent it from being modified by other code
         self.state = _deep_copy_state(self.state)
 
-    def node_summary(self) -> str:
+    def summary(self) -> str:
         return str(self.result)
 
 
@@ -97,4 +79,4 @@ def _deep_copy_state(state: StateT) -> StateT:
         return state.deep_copy()
 
 
-HistoryStep = Union[NextNodeEvent[StateT, RunEndT], InterruptEvent[StateT], EndEvent[StateT, RunEndT]]
+HistoryStep = Union[NextNodeEvent[StateT, RunEndT], EndEvent[StateT, RunEndT]]

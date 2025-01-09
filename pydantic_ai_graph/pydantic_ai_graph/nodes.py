@@ -3,14 +3,14 @@ from __future__ import annotations as _annotations
 from abc import abstractmethod
 from dataclasses import dataclass
 from functools import cache
-from typing import Any, Generic, get_args, get_origin, get_type_hints
+from typing import Any, Generic, get_origin, get_type_hints
 
 from typing_extensions import Never, TypeVar
 
 from . import _utils
 from .state import StateT
 
-__all__ = 'GraphContext', 'BaseNode', 'End', 'Interrupt', 'RunInterrupt', 'NodeDef'
+__all__ = 'GraphContext', 'BaseNode', 'End', 'NodeDef'
 
 RunEndT = TypeVar('RunEndT', default=None)
 NodeRunEndT = TypeVar('NodeRunEndT', covariant=True, default=Never)
@@ -27,9 +27,7 @@ class BaseNode(Generic[StateT, NodeRunEndT]):
     """Base class for a node."""
 
     @abstractmethod
-    async def run(
-        self, ctx: GraphContext[StateT]
-    ) -> BaseNode[StateT, Any] | End[NodeRunEndT] | RunInterrupt[StateT]: ...
+    async def run(self, ctx: GraphContext[StateT]) -> BaseNode[StateT, Any] | End[NodeRunEndT]: ...
 
     @classmethod
     @cache
@@ -47,17 +45,10 @@ class BaseNode(Generic[StateT, NodeRunEndT]):
         next_node_ids: set[str] = set()
         returns_end: bool = False
         returns_base_node: bool = False
-        after_interrupt_nodes: list[str] = []
         for return_type in _utils.get_union_args(return_hint):
             return_type_origin = get_origin(return_type) or return_type
             if return_type_origin is End:
                 returns_end = True
-            elif issubclass(return_type_origin, Interrupt):
-                interrupt_args = get_args(return_type)
-                assert len(interrupt_args) == 1, f'Invalid Interrupt return type: {return_type}'
-                next_node_id = interrupt_args[0].get_id()
-                next_node_ids.add(next_node_id)
-                after_interrupt_nodes.append(next_node_id)
             elif return_type_origin is BaseNode:
                 # TODO: Should we disallow this?
                 returns_base_node = True
@@ -71,7 +62,6 @@ class BaseNode(Generic[StateT, NodeRunEndT]):
             cls.get_id(),
             next_node_ids,
             returns_end,
-            after_interrupt_nodes,
             returns_base_node,
         )
 
@@ -81,19 +71,6 @@ class End(Generic[RunEndT]):
     """Type to return from a node to signal the end of the graph."""
 
     data: RunEndT
-
-
-InterruptNextNodeT = TypeVar('InterruptNextNodeT', covariant=True, bound=BaseNode[Any, Any])
-
-
-@dataclass
-class Interrupt(Generic[InterruptNextNodeT]):
-    """Type to return from a node to signal that the run should be interrupted."""
-
-    node: InterruptNextNodeT
-
-
-RunInterrupt = Interrupt[BaseNode[StateT, Any]]
 
 
 @dataclass
@@ -112,7 +89,5 @@ class NodeDef(Generic[StateT, NodeRunEndT]):
     """IDs of the nodes that can be called next."""
     returns_end: bool
     """The node definition returns an `End`, hence the node and end the run."""
-    after_interrupt_nodes: list[str]
-    """Nodes that can be returned within an `Interrupt`."""
     returns_base_node: bool
     """The node definition returns a `BaseNode`, hence any node in the next can be called next."""

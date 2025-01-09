@@ -147,7 +147,8 @@ Best regards,
 
 async def main():
     state = State(email_content=email)
-    result, history = await graph.run(state, ExtractEvent())
+    history = []
+    result = await graph.run(state, ExtractEvent())
     debug(result, history)
 
 

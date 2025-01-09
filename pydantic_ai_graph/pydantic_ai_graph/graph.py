@@ -2,20 +2,20 @@ from __future__ import annotations as _annotations
 
 import inspect
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from time import perf_counter
-from typing import TYPE_CHECKING, Generic
+from typing import TYPE_CHECKING, Any, Generic
 
 import logfire_api
 from typing_extensions import Never, ParamSpec, TypeVar, Unpack, assert_never
 
 from . import _utils, mermaid
 from ._utils import get_parent_namespace
-from .nodes import BaseNode, End, GraphContext, Interrupt, NodeDef, RunInterrupt
-from .state import EndEvent, HistoryStep, InterruptEvent, NextNodeEvent, StateT
+from .nodes import BaseNode, End, GraphContext, NodeDef
+from .state import EndEvent, HistoryStep, NextNodeEvent, StateT
 
-__all__ = 'Graph', 'GraphRun'
+__all__ = ('Graph',)
 
 _logfire = logfire_api.Logfire(otel_scope='pydantic-ai-graph')
 
@@ -74,16 +74,48 @@ class Graph(Generic[StateT, RunEndT]):
                 b = '\n'.join(f' {be}' for be in bad_edges_list)
                 raise ValueError(f'Nodes are referenced in the graph but not included in the graph:\n{b}')
 
+    async def next(
+        self, state: StateT, node: BaseNode[StateT, RunEndT], history: list[HistoryStep[StateT, RunEndT]]
+    ) -> BaseNode[StateT, Any] | End[RunEndT]:
+        node_id = node.get_id()
+        if node_id not in self.node_defs:
+            raise TypeError(f'Node "{node}" is not in the graph.')
+
+        history_step: NextNodeEvent[StateT, RunEndT] | None = NextNodeEvent(state, node)
+        history.append(history_step)
+
+        ctx = GraphContext(state)
+        with _logfire.span('run node {node_id}', node_id=node_id, node=node):
+            start = perf_counter()
+            next_node = await node.run(ctx)
+            history_step.duration = perf_counter() - start
+        return next_node
+
     async def run(
-        self, state: StateT, node: BaseNode[StateT, RunEndT]
-    ) -> tuple[End[RunEndT] | RunInterrupt[StateT], list[HistoryStep[StateT, RunEndT]]]:
-        if not isinstance(node, self.nodes):
-            raise ValueError(f'Node "{node}" is not in the graph.')
-        run = GraphRun[StateT, RunEndT](state=state)
-        # TODO: Infer the graph name properly
-        result = await run.run(self.name or 'graph', node)
-        history = run.history
-        return result, history
+        self,
+        state: StateT,
+        node: BaseNode[StateT, RunEndT],
+    ) -> tuple[End[RunEndT], list[HistoryStep[StateT, RunEndT]]]:
+        history: list[HistoryStep[StateT, RunEndT]] = []
+
+        with _logfire.span(
+            '{graph_name} run {start=}',
+            graph_name=self.name or 'graph',
+            start=node,
+        ) as run_span:
+            while True:
+                next_node = await self.next(state, node, history=history)
+                if isinstance(next_node, End):
+                    history.append(EndEvent(state, next_node))
+                    run_span.set_attribute('history', history)
+                    return next_node, history
+                elif isinstance(next_node, BaseNode):
+                    node = next_node
+                else:
+                    if TYPE_CHECKING:
+                        assert_never(next_node)
+                    else:
+                        raise TypeError(f'Invalid node type: {type(next_node)}. Expected `BaseNode` or `End`.')
 
     def mermaid_code(
         self,
@@ -101,51 +133,3 @@ class Graph(Generic[StateT, RunEndT]):
 
     def mermaid_save(self, path: Path | str, /, **kwargs: Unpack[mermaid.MermaidConfig]) -> None:
         mermaid.save_image(path, self, **kwargs)
-
-
-@dataclass
-class GraphRun(Generic[StateT, RunEndT]):
-    """Stateful run of a graph."""
-
-    state: StateT
-    history: list[HistoryStep[StateT, RunEndT]] = field(default_factory=list)
-
-    async def run(
-        self, graph_name: str, start: BaseNode[StateT, RunEndT], infer_name: bool = True
-    ) -> End[RunEndT] | RunInterrupt[StateT]:
-        current_node = start
-
-        with _logfire.span(
-            '{graph_name} run {start=}',
-            graph_name=graph_name,
-            start=start,
-        ) as run_span:
-            while True:
-                next_node = await self.step(current_node)
-                if isinstance(next_node, (Interrupt, End)):
-                    if isinstance(next_node, End):
-                        self.history.append(EndEvent(self.state, next_node))
-                    else:
-                        self.history.append(InterruptEvent(self.state, next_node))
-                    run_span.set_attribute('history', self.history)
-                    return next_node
-                elif isinstance(next_node, BaseNode):
-                    current_node = next_node
-                else:
-                    if TYPE_CHECKING:
-                        assert_never(next_node)
-                    else:
-                        raise TypeError(f'Invalid node type: {type(next_node)}. Expected `BaseNode` or `End`.')
-
-    async def step(
-        self, node: BaseNode[StateT, RunEndT]
-    ) -> BaseNode[StateT, RunEndT] | End[RunEndT] | RunInterrupt[StateT]:
-        history_step = NextNodeEvent(self.state, node)
-        self.history.append(history_step)
-
-        ctx = GraphContext(self.state)
-        with _logfire.span('run node {node_id}', node_id=node.get_id()):
-            start = perf_counter()
-            next_node = await node.run(ctx)
-            history_step.duration = perf_counter() - start
-        return next_node
