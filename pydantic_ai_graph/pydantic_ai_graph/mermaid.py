@@ -2,6 +2,7 @@ from __future__ import annotations as _annotations
 
 import base64
 from collections.abc import Iterable, Sequence
+from itertools import chain
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, Literal
 
@@ -20,9 +21,9 @@ DEFAULT_HIGHLIGHT_CSS = 'fill:#fdff32'
 
 def generate_code(
     graph: Graph[Any, Any],
-    start_nodes: Sequence[NodeIdent] | NodeIdent,
     /,
     *,
+    start_node: Sequence[NodeIdent] | NodeIdent | None = None,
     highlighted_nodes: Sequence[NodeIdent] | NodeIdent | None = None,
     highlight_css: str = DEFAULT_HIGHLIGHT_CSS,
 ) -> str:
@@ -30,33 +31,41 @@ def generate_code(
 
     Args:
         graph: The graph to generate the image for.
-        start_nodes: Identifiers of nodes that start the graph.
+        start_node: Identifiers of nodes that start the graph.
         highlighted_nodes: Identifiers of nodes to highlight.
         highlight_css: CSS to use for highlighting nodes.
 
     Returns: The Mermaid code for the graph.
     """
-    start_node_ids = set(node_ids(start_nodes))
+    start_node_ids = set(node_ids(start_node or ()))
     for node_id in start_node_ids:
         if node_id not in graph.node_defs:
             raise LookupError(f'Start node "{node_id}" is not in the graph.')
 
     node_order = {node_id: index for index, node_id in enumerate(graph.node_defs)}
+    after_interrupt_nodes = set(chain(*(node_def.after_interrupt_nodes for node_def in graph.node_defs.values())))
 
     lines = ['graph TD']
     for node in graph.nodes:
         node_id = node.get_id()
         node_def = graph.node_defs[node_id]
+
+        # we use square brackets (square box) for nodes that can interrupt the flow,
+        # and round brackets (rounded box) for nodes that cannot interrupt the flow
+        if node_id in after_interrupt_nodes:
+            mermaid_name = f'[{node_id}]'
+        else:
+            mermaid_name = f'({node_id})'
         if node_id in start_node_ids:
-            lines.append(f'  START --> {node_id}')
+            lines.append(f'  START --> {node_id}{mermaid_name}')
         if node_def.returns_base_node:
             for next_node_id in graph.nodes:
-                lines.append(f'  {node_id} --> {next_node_id}')
+                lines.append(f'  {node_id}{mermaid_name} --> {next_node_id}')
         else:
             for _, next_node_id in sorted((node_order[node_id], node_id) for node_id in node_def.next_node_ids):
-                lines.append(f'  {node_id} --> {next_node_id}')
+                lines.append(f'  {node_id}{mermaid_name} --> {next_node_id}')
         if node_def.returns_end:
-            lines.append(f'  {node_id} --> END')
+            lines.append(f'  {node_id}{mermaid_name} --> END')
 
     if highlighted_nodes:
         lines.append('')
@@ -88,6 +97,8 @@ def node_ids(node_idents: Sequence[NodeIdent] | NodeIdent) -> Iterable[str]:
 class MermaidConfig(TypedDict, total=False):
     """Parameters to configure mermaid chart generation."""
 
+    start_node: Sequence[NodeIdent] | NodeIdent
+    """Identifiers of nodes that start the graph."""
     highlighted_nodes: Sequence[NodeIdent] | NodeIdent
     """Identifiers of nodes to highlight."""
     highlight_css: str
@@ -125,7 +136,6 @@ class MermaidConfig(TypedDict, total=False):
 
 def request_image(
     graph: Graph[Any, Any],
-    start_nodes: Sequence[NodeIdent] | NodeIdent,
     /,
     **kwargs: Unpack[MermaidConfig],
 ) -> bytes:
@@ -133,7 +143,6 @@ def request_image(
 
     Args:
         graph: The graph to generate the image for.
-        start_nodes: Identifiers of nodes that start the graph.
         **kwargs: Additional parameters to configure mermaid chart generation.
 
     Returns: The image data.
@@ -142,7 +151,7 @@ def request_image(
 
     code = generate_code(
         graph,
-        start_nodes,
+        start_node=kwargs.get('start_node'),
         highlighted_nodes=kwargs.get('highlighted_nodes'),
         highlight_css=kwargs.get('highlight_css', DEFAULT_HIGHLIGHT_CSS),
     )
@@ -184,7 +193,6 @@ def request_image(
 def save_image(
     path: Path | str,
     graph: Graph[Any, Any],
-    start_nodes: Sequence[NodeIdent] | NodeIdent,
     /,
     **kwargs: Unpack[MermaidConfig],
 ) -> None:
@@ -193,7 +201,6 @@ def save_image(
     Args:
         path: The path to save the image to.
         graph: The graph to generate the image for.
-        start_nodes: Identifiers of nodes that start the graph.
         **kwargs: Additional parameters to configure mermaid chart generation.
     """
     if isinstance(path, str):
@@ -205,5 +212,5 @@ def save_image(
         if ext in ('png', 'webp', 'svg', 'pdf'):
             kwargs['image_type'] = ext
 
-    image_data = request_image(graph, start_nodes, **kwargs)
+    image_data = request_image(graph, **kwargs)
     path.write_bytes(image_data)
