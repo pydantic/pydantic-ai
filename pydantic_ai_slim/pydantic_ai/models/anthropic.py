@@ -255,23 +255,19 @@ class AnthropicAgentModel(AgentModel):
         anthropic_messages: list[MessageParam] = []
         for m in messages:
             if isinstance(m, ModelRequest):
+                tool_parts: list[ToolResultBlockParam] = []
                 for part in m.parts:
                     if isinstance(part, SystemPromptPart):
                         system_prompt += part.content
                     elif isinstance(part, UserPromptPart):
                         anthropic_messages.append(MessageParam(role='user', content=part.content))
                     elif isinstance(part, ToolReturnPart):
-                        anthropic_messages.append(
-                            MessageParam(
-                                role='user',
-                                content=[
-                                    ToolResultBlockParam(
-                                        tool_use_id=_guard_tool_call_id(t=part, model_source='Anthropic'),
-                                        type='tool_result',
-                                        content=part.model_response_str(),
-                                        is_error=False,
-                                    )
-                                ],
+                        tool_parts.append(
+                            ToolResultBlockParam(
+                                tool_use_id=_guard_tool_call_id(t=part, model_source='Anthropic'),
+                                type='tool_result',
+                                content=part.model_response_str(),
+                                is_error=False,
                             )
                         )
                     elif isinstance(part, RetryPromptPart):
@@ -291,6 +287,12 @@ class AnthropicAgentModel(AgentModel):
                                     ],
                                 )
                             )
+                anthropic_messages.append(
+                    MessageParam(
+                        role='user',
+                        content=tool_parts,
+                    )
+                )
             elif isinstance(m, ModelResponse):
                 content: list[TextBlockParam | ToolUseBlockParam] = []
                 for item in m.parts:
