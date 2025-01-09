@@ -1,6 +1,6 @@
 from .graph import Graph
 from .nodes import BaseNode, End, GraphContext
-from .state import AbstractState, EndEvent, HistoryStep, NextNodeEvent
+from .state import AbstractState, EndEvent, HistoryStep, NodeEvent
 
 __all__ = (
     'Graph',
@@ -10,5 +10,5 @@ __all__ = (
     'AbstractState',
     'EndEvent',
     'HistoryStep',
-    'NextNodeEvent',
+    'NodeEvent',
 )

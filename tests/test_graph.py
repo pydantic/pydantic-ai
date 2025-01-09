@@ -7,7 +7,7 @@ from typing import Union
 import pytest
 from inline_snapshot import snapshot
 
-from pydantic_ai_graph import BaseNode, End, EndEvent, Graph, GraphContext, NextNodeEvent
+from pydantic_ai_graph import BaseNode, End, EndEvent, Graph, GraphContext, NodeEvent
 
 from .conftest import IsFloat, IsNow
 
@@ -45,19 +45,19 @@ async def test_graph():
     assert result == End(8)
     assert history == snapshot(
         [
-            NextNodeEvent(
+            NodeEvent(
                 state=None,
                 node=Float2String(input_data=3.14),
                 start_ts=IsNow(tz=timezone.utc),
                 duration=IsFloat(),
             ),
-            NextNodeEvent(
+            NodeEvent(
                 state=None,
                 node=String2Length(input_data='3.14'),
                 start_ts=IsNow(tz=timezone.utc),
                 duration=IsFloat(),
             ),
-            NextNodeEvent(
+            NodeEvent(
                 state=None,
                 node=Double(input_data=4),
                 start_ts=IsNow(tz=timezone.utc),
@@ -75,31 +75,31 @@ async def test_graph():
     assert result == End(42)
     assert history == snapshot(
         [
-            NextNodeEvent(
+            NodeEvent(
                 state=None,
                 node=Float2String(input_data=3.14159),
                 start_ts=IsNow(tz=timezone.utc),
                 duration=IsFloat(),
             ),
-            NextNodeEvent(
+            NodeEvent(
                 state=None,
                 node=String2Length(input_data='3.14159'),
                 start_ts=IsNow(tz=timezone.utc),
                 duration=IsFloat(),
             ),
-            NextNodeEvent(
+            NodeEvent(
                 state=None,
                 node=Double(input_data=7),
                 start_ts=IsNow(tz=timezone.utc),
                 duration=IsFloat(),
             ),
-            NextNodeEvent(
+            NodeEvent(
                 state=None,
                 node=String2Length(input_data='xxxxxxxxxxxxxxxxxxxxx'),
                 start_ts=IsNow(tz=timezone.utc),
                 duration=IsFloat(),
             ),
-            NextNodeEvent(
+            NodeEvent(
                 state=None,
                 node=Double(input_data=21),
                 start_ts=IsNow(tz=timezone.utc),
