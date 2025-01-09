@@ -2,7 +2,6 @@ from __future__ import annotations as _annotations
 
 import base64
 from collections.abc import Iterable, Sequence
-from itertools import chain
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, Literal
 
@@ -43,19 +42,14 @@ def generate_code(
             raise LookupError(f'Start node "{node_id}" is not in the graph.')
 
     node_order = {node_id: index for index, node_id in enumerate(graph.node_defs)}
-    after_interrupt_nodes = set(chain(*(node_def.after_interrupt_nodes for node_def in graph.node_defs.values())))
 
     lines = ['graph TD']
     for node in graph.nodes:
         node_id = node.get_id()
         node_def = graph.node_defs[node_id]
 
-        # we use square brackets (square box) for nodes that can interrupt the flow,
-        # and round brackets (rounded box) for nodes that cannot interrupt the flow
-        if node_id in after_interrupt_nodes:
-            mermaid_name = f'[{node_id}]'
-        else:
-            mermaid_name = f'({node_id})'
+        # we use round brackets (rounded box) for nodes other than the start and end
+        mermaid_name = f'({node_id})'
         if node_id in start_node_ids:
             lines.append(f'  START --> {node_id}{mermaid_name}')
         if node_def.returns_base_node:
