@@ -12,8 +12,8 @@ from typing_extensions import Never, ParamSpec, TypeVar, Unpack, assert_never
 
 from . import _utils, mermaid
 from ._utils import get_parent_namespace
-from .nodes import BaseNode, End, GraphContext, NodeDef
-from .state import EndEvent, StateT, Step, StepOrEnd
+from .nodes import BaseNode, End, GraphContext, Interrupt, NodeDef, RunInterrupt
+from .state import EndEvent, HistoryStep, InterruptEvent, NextNodeEvent, StateT
 
 __all__ = 'Graph', 'GraphRun'
 
@@ -76,7 +76,7 @@ class Graph(Generic[StateT, RunEndT]):
 
     async def run(
         self, state: StateT, node: BaseNode[StateT, RunEndT]
-    ) -> tuple[RunEndT, list[StepOrEnd[StateT, RunEndT]]]:
+    ) -> tuple[End[RunEndT] | RunInterrupt[StateT], list[HistoryStep[StateT, RunEndT]]]:
         if not isinstance(node, self.nodes):
             raise ValueError(f'Node "{node}" is not in the graph.')
         run = GraphRun[StateT, RunEndT](state=state)
@@ -87,27 +87,20 @@ class Graph(Generic[StateT, RunEndT]):
 
     def mermaid_code(
         self,
-        start_nodes: Sequence[mermaid.NodeIdent] | mermaid.NodeIdent,
         *,
+        start_node: Sequence[mermaid.NodeIdent] | mermaid.NodeIdent | None = None,
         highlighted_nodes: Sequence[mermaid.NodeIdent] | mermaid.NodeIdent | None = None,
         highlight_css: str = mermaid.DEFAULT_HIGHLIGHT_CSS,
     ) -> str:
         return mermaid.generate_code(
-            self, start_nodes, highlighted_nodes=highlighted_nodes, highlight_css=highlight_css
+            self, start_node=start_node, highlighted_nodes=highlighted_nodes, highlight_css=highlight_css
         )
 
-    def mermaid_image(
-        self, start_nodes: Sequence[mermaid.NodeIdent] | mermaid.NodeIdent, **kwargs: Unpack[mermaid.MermaidConfig]
-    ) -> bytes:
-        return mermaid.request_image(self, start_nodes, **kwargs)
+    def mermaid_image(self, **kwargs: Unpack[mermaid.MermaidConfig]) -> bytes:
+        return mermaid.request_image(self, **kwargs)
 
-    def mermaid_save(
-        self,
-        start_nodes: Sequence[mermaid.NodeIdent] | mermaid.NodeIdent,
-        path: Path | str,
-        **kwargs: Unpack[mermaid.MermaidConfig],
-    ) -> None:
-        mermaid.save_image(path, self, start_nodes, **kwargs)
+    def mermaid_save(self, path: Path | str, /, **kwargs: Unpack[mermaid.MermaidConfig]) -> None:
+        mermaid.save_image(path, self, **kwargs)
 
 
 @dataclass
@@ -115,9 +108,11 @@ class GraphRun(Generic[StateT, RunEndT]):
     """Stateful run of a graph."""
 
     state: StateT
-    history: list[StepOrEnd[StateT, RunEndT]] = field(default_factory=list)
+    history: list[HistoryStep[StateT, RunEndT]] = field(default_factory=list)
 
-    async def run(self, graph_name: str, start: BaseNode[StateT, RunEndT], infer_name: bool = True) -> RunEndT:
+    async def run(
+        self, graph_name: str, start: BaseNode[StateT, RunEndT], infer_name: bool = True
+    ) -> End[RunEndT] | RunInterrupt[StateT]:
         current_node = start
 
         with _logfire.span(
@@ -127,10 +122,13 @@ class GraphRun(Generic[StateT, RunEndT]):
         ) as run_span:
             while True:
                 next_node = await self.step(current_node)
-                if isinstance(next_node, End):
-                    self.history.append(EndEvent(self.state, next_node))
+                if isinstance(next_node, (Interrupt, End)):
+                    if isinstance(next_node, End):
+                        self.history.append(EndEvent(self.state, next_node))
+                    else:
+                        self.history.append(InterruptEvent(self.state, next_node))
                     run_span.set_attribute('history', self.history)
-                    return next_node.data
+                    return next_node
                 elif isinstance(next_node, BaseNode):
                     current_node = next_node
                 else:
@@ -139,8 +137,10 @@ class GraphRun(Generic[StateT, RunEndT]):
                     else:
                         raise TypeError(f'Invalid node type: {type(next_node)}. Expected `BaseNode` or `End`.')
 
-    async def step(self, node: BaseNode[StateT, RunEndT]) -> BaseNode[StateT, RunEndT] | End[RunEndT]:
-        history_step = Step(self.state, node)
+    async def step(
+        self, node: BaseNode[StateT, RunEndT]
+    ) -> BaseNode[StateT, RunEndT] | End[RunEndT] | RunInterrupt[StateT]:
+        history_step = NextNodeEvent(self.state, node)
         self.history.append(history_step)
 
         ctx = GraphContext(self.state)

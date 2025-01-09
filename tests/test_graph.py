@@ -7,7 +7,7 @@ from typing import Union
 import pytest
 from inline_snapshot import snapshot
 
-from pydantic_ai_graph import BaseNode, End, EndEvent, Graph, GraphContext, Step
+from pydantic_ai_graph import BaseNode, End, EndEvent, Graph, GraphContext, NextNodeEvent
 
 from .conftest import IsFloat, IsNow
 
@@ -42,22 +42,22 @@ async def test_graph():
     g = Graph[None, int](nodes=(Float2String, String2Length, Double))
     result, history = await g.run(None, Float2String(3.14))
     # len('3.14') * 2 == 8
-    assert result == 8
+    assert result == End(8)
     assert history == snapshot(
         [
-            Step(
+            NextNodeEvent(
                 state=None,
                 node=Float2String(input_data=3.14),
                 start_ts=IsNow(tz=timezone.utc),
                 duration=IsFloat(),
             ),
-            Step(
+            NextNodeEvent(
                 state=None,
                 node=String2Length(input_data='3.14'),
                 start_ts=IsNow(tz=timezone.utc),
                 duration=IsFloat(),
             ),
-            Step(
+            NextNodeEvent(
                 state=None,
                 node=Double(input_data=4),
                 start_ts=IsNow(tz=timezone.utc),
@@ -72,34 +72,34 @@ async def test_graph():
     )
     result, history = await g.run(None, Float2String(3.14159))
     # len('3.14159') == 7, 21 * 2 == 42
-    assert result == 42
+    assert result == End(42)
     assert history == snapshot(
         [
-            Step(
+            NextNodeEvent(
                 state=None,
                 node=Float2String(input_data=3.14159),
                 start_ts=IsNow(tz=timezone.utc),
                 duration=IsFloat(),
             ),
-            Step(
+            NextNodeEvent(
                 state=None,
                 node=String2Length(input_data='3.14159'),
                 start_ts=IsNow(tz=timezone.utc),
                 duration=IsFloat(),
             ),
-            Step(
+            NextNodeEvent(
                 state=None,
                 node=Double(input_data=7),
                 start_ts=IsNow(tz=timezone.utc),
                 duration=IsFloat(),
             ),
-            Step(
+            NextNodeEvent(
                 state=None,
                 node=String2Length(input_data='xxxxxxxxxxxxxxxxxxxxx'),
                 start_ts=IsNow(tz=timezone.utc),
                 duration=IsFloat(),
             ),
-            Step(
+            NextNodeEvent(
                 state=None,
                 node=Double(input_data=21),
                 start_ts=IsNow(tz=timezone.utc),

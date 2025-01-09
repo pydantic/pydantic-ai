@@ -3,14 +3,14 @@ from __future__ import annotations as _annotations
 from abc import abstractmethod
 from dataclasses import dataclass
 from functools import cache
-from typing import Any, Generic, get_origin, get_type_hints
+from typing import Any, Generic, get_args, get_origin, get_type_hints
 
 from typing_extensions import Never, TypeVar
 
 from . import _utils
 from .state import StateT
 
-__all__ = ('GraphContext', 'End', 'BaseNode', 'NodeDef')
+__all__ = 'GraphContext', 'BaseNode', 'End', 'Interrupt', 'RunInterrupt', 'NodeDef'
 
 RunEndT = TypeVar('RunEndT', default=None)
 NodeRunEndT = TypeVar('NodeRunEndT', covariant=True, default=Never)
@@ -23,18 +23,13 @@ class GraphContext(Generic[StateT]):
     state: StateT
 
 
-@dataclass
-class End(Generic[RunEndT]):
-    """Type to return from a node to signal the end of the graph."""
-
-    data: RunEndT
-
-
 class BaseNode(Generic[StateT, NodeRunEndT]):
     """Base class for a node."""
 
     @abstractmethod
-    async def run(self, ctx: GraphContext[StateT]) -> BaseNode[StateT, Any] | End[NodeRunEndT]: ...
+    async def run(
+        self, ctx: GraphContext[StateT]
+    ) -> BaseNode[StateT, Any] | End[NodeRunEndT] | RunInterrupt[StateT]: ...
 
     @classmethod
     @cache
@@ -44,20 +39,27 @@ class BaseNode(Generic[StateT, NodeRunEndT]):
     @classmethod
     def get_node_def(cls, local_ns: dict[str, Any] | None) -> NodeDef[StateT, NodeRunEndT]:
         type_hints = get_type_hints(cls.run, localns=local_ns)
-        next_node_ids: set[str] = set()
-        returns_end: bool = False
-        returns_base_node: bool = False
         try:
             return_hint = type_hints['return']
         except KeyError:
             raise TypeError(f'Node {cls} is missing a return type hint on its `run` method')
 
+        next_node_ids: set[str] = set()
+        returns_end: bool = False
+        returns_base_node: bool = False
+        after_interrupt_nodes: list[str] = []
         for return_type in _utils.get_union_args(return_hint):
             return_type_origin = get_origin(return_type) or return_type
             if return_type_origin is End:
                 returns_end = True
+            elif issubclass(return_type_origin, Interrupt):
+                interrupt_args = get_args(return_type)
+                assert len(interrupt_args) == 1, f'Invalid Interrupt return type: {return_type}'
+                next_node_id = interrupt_args[0].get_id()
+                next_node_ids.add(next_node_id)
+                after_interrupt_nodes.append(next_node_id)
             elif return_type_origin is BaseNode:
-                # TODO: Should we disallow this? More generally, what do we do about sub-subclasses?
+                # TODO: Should we disallow this?
                 returns_base_node = True
             elif issubclass(return_type_origin, BaseNode):
                 next_node_ids.add(return_type.get_id())
@@ -69,19 +71,48 @@ class BaseNode(Generic[StateT, NodeRunEndT]):
             cls.get_id(),
             next_node_ids,
             returns_end,
+            after_interrupt_nodes,
             returns_base_node,
         )
+
+
+@dataclass
+class End(Generic[RunEndT]):
+    """Type to return from a node to signal the end of the graph."""
+
+    data: RunEndT
+
+
+InterruptNextNodeT = TypeVar('InterruptNextNodeT', covariant=True, bound=BaseNode[Any, Any])
+
+
+@dataclass
+class Interrupt(Generic[InterruptNextNodeT]):
+    """Type to return from a node to signal that the run should be interrupted."""
+
+    node: InterruptNextNodeT
+
+
+RunInterrupt = Interrupt[BaseNode[StateT, Any]]
 
 
 @dataclass
 class NodeDef(Generic[StateT, NodeRunEndT]):
     """Definition of a node.
 
-    Used by [`Graph`][pydantic_ai_graph.graph.Graph] store information about a node.
+    Used by [`Graph`][pydantic_ai_graph.graph.Graph] to store information about a node, and when generating
+    mermaid graphs.
     """
 
     node: type[BaseNode[StateT, NodeRunEndT]]
+    """The node definition itself."""
     node_id: str
+    """ID of the node."""
     next_node_ids: set[str]
+    """IDs of the nodes that can be called next."""
     returns_end: bool
+    """The node definition returns an `End`, hence the node and end the run."""
+    after_interrupt_nodes: list[str]
+    """Nodes that can be returned within an `Interrupt`."""
     returns_base_node: bool
+    """The node definition returns a `BaseNode`, hence any node in the next can be called next."""

@@ -122,7 +122,7 @@ graph = Graph[State, EventDetails | None](
         InspectEvent,
     )
 )
-print(graph.mermaid_code(ExtractEvent))
+print(graph.mermaid_code(start_node=ExtractEvent))
 
 email = """
 Hi Samuel,
