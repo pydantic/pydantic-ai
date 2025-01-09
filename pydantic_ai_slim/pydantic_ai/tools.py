@@ -4,7 +4,7 @@ import dataclasses
 import inspect
 from collections.abc import Awaitable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Callable, Generic, Union, cast
+from typing import TYPE_CHECKING, Any, Callable, Generic, Literal, Union, cast
 
 from pydantic import ValidationError
 from pydantic_core import SchemaValidator
@@ -18,6 +18,7 @@ if TYPE_CHECKING:
 
 __all__ = (
     'AgentDeps',
+    'DocstringFormat',
     'RunContext',
     'SystemPromptFunc',
     'ToolFuncContext',
@@ -127,6 +128,15 @@ hitchhiker = Tool(hitchhiker, prepare=only_if_42)
 Usage `ToolPrepareFunc[AgentDeps]`.
 """
 
+DocstringFormat = Literal['google', 'numpy', 'sphinx', 'auto']
+"""Supported docstring formats.
+
+* `'google'` — [Google-style](https://google.github.io/styleguide/pyguide.html#381-docstrings) docstrings.
+* `'numpy'` — [Numpy-style](https://numpydoc.readthedocs.io/en/latest/format.html) docstrings.
+* `'sphinx'` — [Sphinx-style](https://sphinx-rtd-tutorial.readthedocs.io/en/latest/docstrings.html#the-sphinx-docstring-format) docstrings.
+* `'auto'` — Automatically infer the format based on the structure of the docstring.
+"""
+
 A = TypeVar('A')
 
 
@@ -140,6 +150,8 @@ class Tool(Generic[AgentDeps]):
     name: str
     description: str
     prepare: ToolPrepareFunc[AgentDeps] | None
+    docstring_format: DocstringFormat
+    require_parameter_descriptions: bool
     _is_async: bool = field(init=False)
     _single_arg_name: str | None = field(init=False)
     _positional_fields: list[str] = field(init=False)
@@ -157,6 +169,8 @@ class Tool(Generic[AgentDeps]):
         name: str | None = None,
         description: str | None = None,
         prepare: ToolPrepareFunc[AgentDeps] | None = None,
+        docstring_format: DocstringFormat = 'auto',
+        require_parameter_descriptions: bool = False,
     ):
         """Create a new tool instance.
 
@@ -203,17 +217,22 @@ class Tool(Generic[AgentDeps]):
             prepare: custom method to prepare the tool definition for each step, return `None` to omit this
                 tool from a given step. This is useful if you want to customise a tool at call time,
                 or omit it completely from a step. See [`ToolPrepareFunc`][pydantic_ai.tools.ToolPrepareFunc].
+            docstring_format: The format of the docstring, see [`DocstringFormat`][pydantic_ai.tools.DocstringFormat].
+                Defaults to `'auto'`, such that the format is inferred from the structure of the docstring.
+            require_parameter_descriptions: If True, raise an error if a parameter description is missing. Defaults to False.
         """
         if takes_ctx is None:
             takes_ctx = _pydantic.takes_ctx(function)
 
-        f = _pydantic.function_schema(function, takes_ctx)
+        f = _pydantic.function_schema(function, takes_ctx, docstring_format, require_parameter_descriptions)
         self.function = function
         self.takes_ctx = takes_ctx
         self.max_retries = max_retries
         self.name = name or function.__name__
         self.description = description or f['description']
         self.prepare = prepare
+        self.docstring_format = docstring_format
+        self.require_parameter_descriptions = require_parameter_descriptions
         self._is_async = inspect.iscoroutinefunction(self.function)
         self._single_arg_name = f['single_arg_name']
         self._positional_fields = f['positional_fields']

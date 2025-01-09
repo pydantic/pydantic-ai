@@ -26,6 +26,7 @@ from .result import ResultData
 from .settings import ModelSettings, merge_model_settings
 from .tools import (
     AgentDeps,
+    DocstringFormat,
     RunContext,
     Tool,
     ToolDefinition,
@@ -774,6 +775,8 @@ class Agent(Generic[AgentDeps, ResultData]):
         *,
         retries: int | None = None,
         prepare: ToolPrepareFunc[AgentDeps] | None = None,
+        docstring_format: DocstringFormat = 'auto',
+        require_parameter_descriptions: bool = False,
     ) -> Callable[[ToolFuncContext[AgentDeps, ToolParams]], ToolFuncContext[AgentDeps, ToolParams]]: ...
 
     def tool(
@@ -783,6 +786,8 @@ class Agent(Generic[AgentDeps, ResultData]):
         *,
         retries: int | None = None,
         prepare: ToolPrepareFunc[AgentDeps] | None = None,
+        docstring_format: DocstringFormat = 'auto',
+        require_parameter_descriptions: bool = False,
     ) -> Any:
         """Decorator to register a tool function which takes [`RunContext`][pydantic_ai.tools.RunContext] as its first argument.
 
@@ -820,6 +825,9 @@ class Agent(Generic[AgentDeps, ResultData]):
             prepare: custom method to prepare the tool definition for each step, return `None` to omit this
                 tool from a given step. This is useful if you want to customise a tool at call time,
                 or omit it completely from a step. See [`ToolPrepareFunc`][pydantic_ai.tools.ToolPrepareFunc].
+            docstring_format: The format of the docstring, see [`DocstringFormat`][pydantic_ai.tools.DocstringFormat].
+                Defaults to `'auto'`, such that the format is inferred from the structure of the docstring.
+            require_parameter_descriptions: If True, raise an error if a parameter description is missing. Defaults to False.
         """
         if func is None:
 
@@ -827,13 +835,13 @@ class Agent(Generic[AgentDeps, ResultData]):
                 func_: ToolFuncContext[AgentDeps, ToolParams],
             ) -> ToolFuncContext[AgentDeps, ToolParams]:
                 # noinspection PyTypeChecker
-                self._register_function(func_, True, retries, prepare)
+                self._register_function(func_, True, retries, prepare, docstring_format, require_parameter_descriptions)
                 return func_
 
             return tool_decorator
         else:
             # noinspection PyTypeChecker
-            self._register_function(func, True, retries, prepare)
+            self._register_function(func, True, retries, prepare, docstring_format, require_parameter_descriptions)
             return func
 
     @overload
@@ -846,6 +854,8 @@ class Agent(Generic[AgentDeps, ResultData]):
         *,
         retries: int | None = None,
         prepare: ToolPrepareFunc[AgentDeps] | None = None,
+        docstring_format: DocstringFormat = 'auto',
+        require_parameter_descriptions: bool = False,
     ) -> Callable[[ToolFuncPlain[ToolParams]], ToolFuncPlain[ToolParams]]: ...
 
     def tool_plain(
@@ -855,6 +865,8 @@ class Agent(Generic[AgentDeps, ResultData]):
         *,
         retries: int | None = None,
         prepare: ToolPrepareFunc[AgentDeps] | None = None,
+        docstring_format: DocstringFormat = 'auto',
+        require_parameter_descriptions: bool = False,
     ) -> Any:
         """Decorator to register a tool function which DOES NOT take `RunContext` as an argument.
 
@@ -892,17 +904,22 @@ class Agent(Generic[AgentDeps, ResultData]):
             prepare: custom method to prepare the tool definition for each step, return `None` to omit this
                 tool from a given step. This is useful if you want to customise a tool at call time,
                 or omit it completely from a step. See [`ToolPrepareFunc`][pydantic_ai.tools.ToolPrepareFunc].
+            docstring_format: The format of the docstring, see [`DocstringFormat`][pydantic_ai.tools.DocstringFormat].
+                Defaults to `'auto'`, such that the format is inferred from the structure of the docstring.
+            require_parameter_descriptions: If True, raise an error if a parameter description is missing. Defaults to False.
         """
         if func is None:
 
             def tool_decorator(func_: ToolFuncPlain[ToolParams]) -> ToolFuncPlain[ToolParams]:
                 # noinspection PyTypeChecker
-                self._register_function(func_, False, retries, prepare)
+                self._register_function(
+                    func_, False, retries, prepare, docstring_format, require_parameter_descriptions
+                )
                 return func_
 
             return tool_decorator
         else:
-            self._register_function(func, False, retries, prepare)
+            self._register_function(func, False, retries, prepare, docstring_format, require_parameter_descriptions)
             return func
 
     def _register_function(
@@ -911,10 +928,19 @@ class Agent(Generic[AgentDeps, ResultData]):
         takes_ctx: bool,
         retries: int | None,
         prepare: ToolPrepareFunc[AgentDeps] | None,
+        docstring_format: DocstringFormat,
+        require_parameter_descriptions: bool,
     ) -> None:
         """Private utility to register a function as a tool."""
         retries_ = retries if retries is not None else self._default_retries
-        tool = Tool(func, takes_ctx=takes_ctx, max_retries=retries_, prepare=prepare)
+        tool = Tool(
+            func,
+            takes_ctx=takes_ctx,
+            max_retries=retries_,
+            prepare=prepare,
+            docstring_format=docstring_format,
+            require_parameter_descriptions=require_parameter_descriptions,
+        )
         self._register_tool(tool)
 
     def _register_tool(self, tool: Tool[AgentDeps]) -> None:

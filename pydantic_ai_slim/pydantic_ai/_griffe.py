@@ -4,15 +4,21 @@ import logging
 import re
 from contextlib import contextmanager
 from inspect import Signature
-from typing import Any, Callable, Literal, cast
+from typing import TYPE_CHECKING, Any, Callable, Literal, cast
 
 from griffe import Docstring, DocstringSectionKind, Object as GriffeObject
+
+if TYPE_CHECKING:
+    from .tools import DocstringFormat
 
 DocstringStyle = Literal['google', 'numpy', 'sphinx']
 
 
 def doc_descriptions(
-    func: Callable[..., Any], sig: Signature, *, style: DocstringStyle | None = None
+    func: Callable[..., Any],
+    sig: Signature,
+    *,
+    docstring_format: DocstringFormat,
 ) -> tuple[str, dict[str, str]]:
     """Extract the function description and parameter descriptions from a function's docstring.
 
@@ -26,7 +32,8 @@ def doc_descriptions(
     # see https://github.com/mkdocstrings/griffe/issues/293
     parent = cast(GriffeObject, sig)
 
-    docstring = Docstring(doc, lineno=1, parser=style or _infer_docstring_style(doc), parent=parent)
+    docstring_style = _infer_docstring_style(doc) if docstring_format == 'auto' else docstring_format
+    docstring = Docstring(doc, lineno=1, parser=docstring_style, parent=parent)
     with _disable_griffe_logging():
         sections = docstring.parse()
 
