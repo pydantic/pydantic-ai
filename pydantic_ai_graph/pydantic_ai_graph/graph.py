@@ -13,7 +13,7 @@ from typing_extensions import Never, ParamSpec, TypeVar, Unpack, assert_never
 from . import _utils, mermaid
 from ._utils import get_parent_namespace
 from .nodes import BaseNode, End, GraphContext, NodeDef
-from .state import EndEvent, HistoryStep, NextNodeEvent, StateT
+from .state import EndEvent, HistoryStep, NodeEvent, StateT
 
 __all__ = ('Graph',)
 
@@ -81,7 +81,7 @@ class Graph(Generic[StateT, RunEndT]):
         if node_id not in self.node_defs:
             raise TypeError(f'Node "{node}" is not in the graph.')
 
-        history_step: NextNodeEvent[StateT, RunEndT] | None = NextNodeEvent(state, node)
+        history_step: NodeEvent[StateT, RunEndT] | None = NodeEvent(state, node)
         history.append(history_step)
 
         ctx = GraphContext(state)

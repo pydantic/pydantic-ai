@@ -88,6 +88,6 @@ class NodeDef(Generic[StateT, NodeRunEndT]):
     next_node_ids: set[str]
     """IDs of the nodes that can be called next."""
     returns_end: bool
-    """The node definition returns an `End`, hence the node and end the run."""
+    """The node definition returns an `End`, hence the node can end the run."""
     returns_base_node: bool
     """The node definition returns a `BaseNode`, hence any node in the next can be called next."""

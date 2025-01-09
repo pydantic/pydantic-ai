@@ -10,7 +10,7 @@ from typing_extensions import Never, TypeVar
 
 from . import _utils
 
-__all__ = 'AbstractState', 'StateT', 'NextNodeEvent', 'EndEvent', 'HistoryStep'
+__all__ = 'AbstractState', 'StateT', 'NodeEvent', 'EndEvent', 'HistoryStep'
 
 if TYPE_CHECKING:
     from pydantic_ai_graph import BaseNode
@@ -36,8 +36,8 @@ StateT = TypeVar('StateT', bound=Union[None, AbstractState], default=None)
 
 
 @dataclass
-class NextNodeEvent(Generic[StateT, RunEndT]):
-    """History step describing the execution of a step of a graph."""
+class NodeEvent(Generic[StateT, RunEndT]):
+    """History step describing the execution of a node in a graph."""
 
     state: StateT
     node: BaseNode[StateT, RunEndT]
@@ -74,9 +74,9 @@ class EndEvent(Generic[StateT, RunEndT]):
 
 def _deep_copy_state(state: StateT) -> StateT:
     if state is None:
-        return None  # pyright: ignore[reportReturnType]
+        return state
     else:
         return state.deep_copy()
 
 
-HistoryStep = Union[NextNodeEvent[StateT, RunEndT], EndEvent[StateT, RunEndT]]
+HistoryStep = Union[NodeEvent[StateT, RunEndT], EndEvent[StateT, RunEndT]]
