@@ -38,7 +38,6 @@ def test_init():
 async def test_request_simple_success(allow_model_requests: None):
     c = completion_message(ChatCompletionMessage(content='world', role='assistant'))
     mock_client = MockOpenAI.create_mock(c)
-    print('here')
     m = OllamaModel('llama3.2', openai_client=mock_client, base_url=None)
     agent = Agent(m)
 

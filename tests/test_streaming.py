@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+import datetime
 import json
 from collections.abc import AsyncIterator
 from datetime import timezone
@@ -8,7 +9,7 @@ import pytest
 from inline_snapshot import snapshot
 from pydantic import BaseModel
 
-from pydantic_ai import Agent, UnexpectedModelBehavior, UserError, capture_run_messages
+from pydantic_ai import Agent, UnexpectedModelBehavior, capture_run_messages
 from pydantic_ai.messages import (
     ArgsDict,
     ArgsJson,
@@ -41,7 +42,6 @@ async def test_streamed_text_response():
 
     async with test_agent.run_stream('Hello') as result:
         assert test_agent.name == 'test_agent'
-        assert not result.is_structured
         assert not result.is_complete
         assert result.all_messages() == snapshot(
             [
@@ -66,14 +66,6 @@ async def test_streamed_text_response():
         response = await result.get_data()
         assert response == snapshot('{"ret_a":"a-apple"}')
         assert result.is_complete
-        assert result.usage() == snapshot(
-            Usage(
-                requests=2,
-                request_tokens=103,
-                response_tokens=11,
-                total_tokens=114,
-            )
-        )
         assert result.timestamp() == IsNow(tz=timezone.utc)
         assert result.all_messages() == snapshot(
             [
@@ -88,6 +80,14 @@ async def test_streamed_text_response():
                 ModelResponse.from_text(content='{"ret_a":"a-apple"}', timestamp=IsNow(tz=timezone.utc)),
             ]
         )
+        assert result.usage() == snapshot(
+            Usage(
+                requests=2,
+                request_tokens=103,
+                response_tokens=11,
+                total_tokens=114,
+            )
+        )
 
 
 async def test_streamed_structured_response():
@@ -97,7 +97,6 @@ async def test_streamed_structured_response():
 
     async with agent.run_stream('') as result:
         assert agent.name == 'fig_jam'
-        assert result.is_structured
         assert not result.is_complete
         response = await result.get_data()
         assert response == snapshot(('a', 'a'))
@@ -124,10 +123,11 @@ async def test_structured_response_iter():
 
     assert chunks == snapshot([[1], [1, 2, 3, 4], [1, 2, 3, 4]])
 
-    async with agent.run_stream('Hello') as result:
-        with pytest.raises(UserError, match=r'stream_text\(\) can only be used with text responses'):
-            async for _ in result.stream_text():
-                pass
+    # TODO: Can we remove the following check now?
+    # async with agent.run_stream('Hello') as result:
+    #     with pytest.raises(UserError, match=r'stream_text\(\) can only be used with text responses'):
+    #         async for _ in result.stream_text():
+    #             pass
 
 
 async def test_streamed_text_stream():
@@ -136,15 +136,21 @@ async def test_streamed_text_stream():
     agent = Agent(m)
 
     async with agent.run_stream('Hello') as result:
-        assert not result.is_structured
         # typehint to test (via static typing) that the stream type is correctly inferred
-        chunks: list[str] = [c async for c in result.stream()]
-        # one chunk due to group_by_temporal
+        chunks: list[str] = [c async for c in result.stream_text()]
+        # one chunk with `stream_text()` due to group_by_temporal
         assert chunks == snapshot(['The cat sat on the mat.'])
         assert result.is_complete
 
     async with agent.run_stream('Hello') as result:
-        assert [c async for c in result.stream(debounce_by=None)] == snapshot(
+        # typehint to test (via static typing) that the stream type is correctly inferred
+        chunks: list[str] = [c async for c in result.stream()]
+        # two chunks with `stream()` due to not-final vs. final
+        assert chunks == snapshot(['The cat sat on the mat.', 'The cat sat on the mat.'])
+        assert result.is_complete
+
+    async with agent.run_stream('Hello') as result:
+        assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(
             [
                 'The ',
                 'The cat ',
@@ -156,14 +162,21 @@ async def test_streamed_text_stream():
         )
 
     async with agent.run_stream('Hello') as result:
+        # with stream_text, there is no need to do partial validation, so we only get the final message once:
+        assert [c async for c in result.stream_text(delta=False, debounce_by=None)] == snapshot(
+            ['The ', 'The cat ', 'The cat sat ', 'The cat sat on ', 'The cat sat on the ', 'The cat sat on the mat.']
+        )
+
+    async with agent.run_stream('Hello') as result:
         assert [c async for c in result.stream_text(delta=True, debounce_by=None)] == snapshot(
             ['The ', 'cat ', 'sat ', 'on ', 'the ', 'mat.']
         )
 
-    async with agent.run_stream('Hello') as result:
-        with pytest.raises(UserError, match=r'stream_structured\(\) can only be used with structured responses'):
-            async for _ in result.stream_structured():
-                pass
+    # TODO: Can we remove the following check now?
+    # async with agent.run_stream('Hello') as result:
+    #     with pytest.raises(UserError, match=r'stream_structured\(\) can only be used with structured responses'):
+    #         async for _ in result.stream_structured():
+    #             pass
 
 
 async def test_plain_response():
@@ -180,7 +193,7 @@ async def test_plain_response():
 
     with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum retries \(1\) for result validation'):
         async with agent.run_stream(''):
-            pass
+            pass  # pragma: no cover
 
     assert call_index == 2
 
@@ -271,9 +284,9 @@ async def test_call_tool_empty():
 
     agent = Agent(FunctionModel(stream_function=stream_structured_function), result_type=tuple[str, int])
 
-    with pytest.raises(UnexpectedModelBehavior, match='Received empty tool call message'):
+    with pytest.raises(UnexpectedModelBehavior, match='Received empty model response'):
         async with agent.run_stream('hello'):
-            pass
+            pass  # pragma: no cover
 
 
 async def test_call_tool_wrong_name():
@@ -289,7 +302,8 @@ async def test_call_tool_wrong_name():
     with capture_run_messages() as messages:
         with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum retries \(1\) for result validation'):
             async with agent.run_stream('hello'):
-                pass
+                pass  # pragma: no cover
+
     assert messages == snapshot(
         [
             ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
@@ -495,7 +509,6 @@ async def test_exhaustive_strategy_executes_all_tools():
     )
 
 
-@pytest.mark.xfail(reason='final result tool not first is not yet supported')
 async def test_early_strategy_with_final_result_in_middle():
     """Test that 'early' strategy stops at first final result, regardless of position."""
     tool_called: list[str] = []
@@ -523,14 +536,93 @@ async def test_early_strategy_with_final_result_in_middle():
 
     async with agent.run_stream('test early strategy with final result in middle') as result:
         response = await result.get_data()
-        assert response.value == snapshot('first')
+        assert response.value == snapshot('final')
         messages = result.all_messages()
 
     # Verify no tools were called
     assert tool_called == []
 
     # Verify we got appropriate tool returns
-    assert messages == snapshot()
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='test early strategy with final ' 'result in middle',
+                        timestamp=IsNow(tz=datetime.timezone.utc),
+                        part_kind='user-prompt',
+                    )
+                ],
+                kind='request',
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='regular_tool',
+                        args=ArgsJson(args_json='{"x": 1}'),
+                        tool_call_id=None,
+                        part_kind='tool-call',
+                    ),
+                    ToolCallPart(
+                        tool_name='final_result',
+                        args=ArgsJson(args_json='{"value": "final"}'),
+                        tool_call_id=None,
+                        part_kind='tool-call',
+                    ),
+                    ToolCallPart(
+                        tool_name='another_tool',
+                        args=ArgsJson(args_json='{"y": 2}'),
+                        tool_call_id=None,
+                        part_kind='tool-call',
+                    ),
+                    ToolCallPart(
+                        tool_name='unknown_tool',
+                        args=ArgsJson(args_json='{"value": "???"}'),
+                        tool_call_id=None,
+                        part_kind='tool-call',
+                    ),
+                ],
+                timestamp=IsNow(tz=datetime.timezone.utc),
+                kind='response',
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='regular_tool',
+                        content='Tool not executed - a final ' 'result was already processed.',
+                        tool_call_id=None,
+                        timestamp=IsNow(tz=datetime.timezone.utc),
+                        part_kind='tool-return',
+                    ),
+                    ToolReturnPart(
+                        tool_name='final_result',
+                        content='Final result processed.',
+                        tool_call_id=None,
+                        timestamp=IsNow(tz=datetime.timezone.utc),
+                        part_kind='tool-return',
+                    ),
+                    ToolReturnPart(
+                        tool_name='another_tool',
+                        content='Tool not executed - a final ' 'result was already processed.',
+                        tool_call_id=None,
+                        timestamp=IsNow(tz=datetime.timezone.utc),
+                        part_kind='tool-return',
+                    ),
+                    RetryPromptPart(
+                        content='Unknown tool name: '
+                        "'unknown_tool'. Available tools: "
+                        'regular_tool, another_tool, '
+                        'final_result',
+                        tool_name=None,
+                        tool_call_id=None,
+                        timestamp=IsNow(tz=datetime.timezone.utc),
+                        part_kind='retry-prompt',
+                    ),
+                ],
+                kind='request',
+            ),
+        ]
+    )
 
 
 async def test_early_strategy_does_not_apply_to_tool_calls_without_final_tool():
