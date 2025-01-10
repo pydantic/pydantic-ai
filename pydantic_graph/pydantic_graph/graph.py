@@ -17,7 +17,7 @@ from .state import EndEvent, HistoryStep, NodeEvent, StateT
 
 __all__ = ('Graph',)
 
-_logfire = logfire_api.Logfire(otel_scope='pydantic-ai-graph')
+_logfire = logfire_api.Logfire(otel_scope='pydantic-graph')
 
 RunSignatureT = ParamSpec('RunSignatureT')
 RunEndT = TypeVar('RunEndT', default=None)

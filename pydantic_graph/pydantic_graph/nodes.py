@@ -77,7 +77,7 @@ class End(Generic[RunEndT]):
 class NodeDef(Generic[StateT, NodeRunEndT]):
     """Definition of a node.
 
-    Used by [`Graph`][pydantic_ai_graph.graph.Graph] to store information about a node, and when generating
+    Used by [`Graph`][pydantic_graph.graph.Graph] to store information about a node, and when generating
     mermaid graphs.
     """
 

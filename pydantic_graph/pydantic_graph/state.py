@@ -13,8 +13,8 @@ from . import _utils
 __all__ = 'AbstractState', 'StateT', 'NodeEvent', 'EndEvent', 'HistoryStep'
 
 if TYPE_CHECKING:
-    from pydantic_ai_graph import BaseNode
-    from pydantic_ai_graph.nodes import End
+    from pydantic_graph import BaseNode
+    from pydantic_graph.nodes import End
 
 
 class AbstractState(ABC):

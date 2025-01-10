@@ -3,8 +3,8 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "pydantic-ai-graph"
-version = "0.0.14"
+name = "pydantic-graph"
+version = "0.0.17"
 description = "Graph and state machine library"
 authors = [
     { name = "Samuel Colvin", email = "samuel@pydantic.dev" },
@@ -40,4 +40,4 @@ dependencies = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["pydantic_ai_graph"]
+packages = ["pydantic_graph"]

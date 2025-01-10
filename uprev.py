@@ -5,7 +5,7 @@ we have to update the version number in:
 * pyproject.toml
 * examples/pyproject.toml
 * pydantic_ai_slim/pyproject.toml
-* pydantic_ai_graph/pyproject.toml
+* pydantic_graph/pyproject.toml
 
 Usage:
 
@@ -68,7 +68,7 @@ slim_pp = ROOT_DIR / 'pydantic_ai_slim' / 'pyproject.toml'
 slim_pp_text = slim_pp.read_text()
 slim_pp_text, count_slim = replace_deps_version(slim_pp_text)
 
-graph_pp = ROOT_DIR / 'pydantic_ai_graph' / 'pyproject.toml'
+graph_pp = ROOT_DIR / 'pydantic_graph' / 'pyproject.toml'
 graph_pp_text = graph_pp.read_text()
 graph_pp_text, count_graph = replace_deps_version(graph_pp_text)
 

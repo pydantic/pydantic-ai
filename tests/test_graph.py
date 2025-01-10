@@ -7,7 +7,7 @@ from typing import Union
 import pytest
 from inline_snapshot import snapshot
 
-from pydantic_ai_graph import BaseNode, End, EndEvent, Graph, GraphContext, NodeEvent
+from pydantic_graph import BaseNode, End, EndEvent, Graph, GraphContext, NodeEvent
 
 from .conftest import IsFloat, IsNow
 
