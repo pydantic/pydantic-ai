@@ -129,11 +129,11 @@ async def test_graph():
 def test_one_bad_node():
     class Float2String(BaseNode):
         async def run(self, ctx: GraphContext) -> String2Length:
-            return String2Length()
+            raise NotImplementedError()
 
     class String2Length(BaseNode[None, None]):
         async def run(self, ctx: GraphContext) -> End[None]:
-            return End(None)
+            raise NotImplementedError()
 
     with pytest.raises(GraphSetupError) as exc_info:
         Graph(nodes=(Float2String,))
@@ -154,11 +154,11 @@ def test_two_bad_nodes():
         input_data: str
 
         async def run(self, ctx: GraphContext) -> End[None]:
-            return End(None)
+            raise NotImplementedError()
 
     class Spam(BaseNode[None, None]):
         async def run(self, ctx: GraphContext) -> End[None]:
-            return End(None)
+            raise NotImplementedError()
 
     with pytest.raises(GraphSetupError) as exc_info:
         Graph(nodes=(Foo,))
@@ -189,7 +189,7 @@ def test_three_bad_nodes_separate():
 
     class Eggs(BaseNode[None, None]):
         async def run(self, ctx: GraphContext) -> End[None]:
-            return End(None)
+            raise NotImplementedError()
 
     with pytest.raises(GraphSetupError) as exc_info:
         Graph(nodes=(Foo, Bar, Spam))
@@ -202,11 +202,11 @@ def test_three_bad_nodes_separate():
 def test_duplicate_id():
     class Foo(BaseNode):
         async def run(self, ctx: GraphContext) -> Bar:
-            return Bar()
+            raise NotImplementedError()
 
     class Bar(BaseNode[None, None]):
         async def run(self, ctx: GraphContext) -> End[None]:
-            return End(None)
+            raise NotImplementedError()
 
         @classmethod
         @cache
@@ -233,7 +233,7 @@ async def test_run_node_not_in_graph():
     @dataclass
     class Spam(BaseNode[None, None]):
         async def run(self, ctx: GraphContext) -> End[None]:
-            return End(None)
+            raise NotImplementedError()
 
     g = Graph(nodes=(Foo, Bar))
     with pytest.raises(GraphRuntimeError) as exc_info:
