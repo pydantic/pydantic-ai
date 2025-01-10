@@ -95,23 +95,23 @@ class Graph(Generic[StateT, RunEndT]):
     async def run(
         self,
         state: StateT,
-        node: BaseNode[StateT, RunEndT],
+        start_node: BaseNode[StateT, RunEndT],
     ) -> tuple[RunEndT, list[HistoryStep[StateT, RunEndT]]]:
         history: list[HistoryStep[StateT, RunEndT]] = []
 
         with _logfire.span(
             '{graph_name} run {start=}',
             graph_name=self.name or 'graph',
-            start=node,
+            start=start_node,
         ) as run_span:
             while True:
-                next_node = await self.next(state, node, history=history)
+                next_node = await self.next(state, start_node, history=history)
                 if isinstance(next_node, End):
                     history.append(EndEvent(state, next_node))
                     run_span.set_attribute('history', history)
                     return next_node.data, history
                 elif isinstance(next_node, BaseNode):
-                    node = next_node
+                    start_node = next_node
                 else:
                     if TYPE_CHECKING:
                         assert_never(next_node)
