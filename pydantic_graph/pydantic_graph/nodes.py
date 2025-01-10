@@ -7,7 +7,7 @@ from typing import Any, ClassVar, Generic, get_origin, get_type_hints
 
 from typing_extensions import Never, TypeVar
 
-from . import _utils
+from . import _utils, exceptions
 from .state import StateT
 
 __all__ = 'GraphContext', 'BaseNode', 'End', 'Edge', 'NodeDef'
@@ -57,8 +57,8 @@ class BaseNode(ABC, Generic[StateT, NodeRunEndT]):
         type_hints = get_type_hints(cls.run, localns=local_ns, include_extras=True)
         try:
             return_hint = type_hints['return']
-        except KeyError:
-            raise TypeError(f'Node {cls} is missing a return type hint on its `run` method')
+        except KeyError as e:
+            raise exceptions.GraphSetupError(f'Node {cls} is missing a return type hint on its `run` method') from e
 
         next_node_edges: dict[str, Edge] = {}
         end_edge: Edge | None = None
@@ -75,7 +75,7 @@ class BaseNode(ABC, Generic[StateT, NodeRunEndT]):
             elif issubclass(return_type_origin, BaseNode):
                 next_node_edges[return_type.get_id()] = edge
             else:
-                raise TypeError(f'Invalid return type: {return_type}')
+                raise exceptions.GraphSetupError(f'Invalid return type: {return_type}')
 
         return NodeDef(
             cls,

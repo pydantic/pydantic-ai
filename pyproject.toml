@@ -167,6 +167,7 @@ exclude_lines = [
     'if typing.TYPE_CHECKING:',
     '@overload',
     '@typing.overload',
+    '@abstractmethod',
     '\(Protocol\):$',
     'typing.assert_never',
     '$\s*assert_never\(',

@@ -114,6 +114,16 @@ async def test_graph():
             ),
         ]
     )
+    assert [e.summary() for e in history] == snapshot(
+        [
+            'test_graph.<locals>.Float2String(input_data=3.14159)',
+            "test_graph.<locals>.String2Length(input_data='3.14159')",
+            'test_graph.<locals>.Double(input_data=7)',
+            "test_graph.<locals>.String2Length(input_data='xxxxxxxxxxxxxxxxxxxxx')",
+            'test_graph.<locals>.Double(input_data=21)',
+            'End(data=42)',
+        ]
+    )
 
 
 def test_one_bad_node():
@@ -134,30 +144,59 @@ def test_one_bad_node():
 
 
 def test_two_bad_nodes():
-    class Float2String(BaseNode):
+    class Foo(BaseNode):
         input_data: float
 
-        async def run(self, ctx: GraphContext) -> Union[String2Length, Double]:  # noqa: UP007
+        async def run(self, ctx: GraphContext) -> Union[Bar, Spam]:  # noqa: UP007
             raise NotImplementedError()
 
-    class String2Length(BaseNode[None, None]):
+    class Bar(BaseNode[None, None]):
         input_data: str
 
         async def run(self, ctx: GraphContext) -> End[None]:
             return End(None)
 
-    class Double(BaseNode[None, None]):
+    class Spam(BaseNode[None, None]):
         async def run(self, ctx: GraphContext) -> End[None]:
             return End(None)
 
     with pytest.raises(GraphSetupError) as exc_info:
-        Graph(nodes=(Float2String,))
+        Graph(nodes=(Foo,))
 
     assert exc_info.value.message == snapshot("""\
 Nodes are referenced in the graph but not included in the graph:
- `String2Length` is referenced by `Float2String`
- `Double` is referenced by `Float2String`\
+ `Bar` is referenced by `Foo`
+ `Spam` is referenced by `Foo`\
 """)
+
+
+def test_three_bad_nodes_separate():
+    class Foo(BaseNode):
+        input_data: float
+
+        async def run(self, ctx: GraphContext) -> Eggs:
+            raise NotImplementedError()
+
+    class Bar(BaseNode[None, None]):
+        input_data: str
+
+        async def run(self, ctx: GraphContext) -> Eggs:
+            raise NotImplementedError()
+
+    class Spam(BaseNode[None, None]):
+        async def run(self, ctx: GraphContext) -> Eggs:
+            raise NotImplementedError()
+
+    class Eggs(BaseNode[None, None]):
+        async def run(self, ctx: GraphContext) -> End[None]:
+            return End(None)
+
+    with pytest.raises(GraphSetupError) as exc_info:
+        Graph(nodes=(Foo, Bar, Spam))
+
+    assert exc_info.value.message == snapshot(
+        '`Eggs` is referenced by `Foo`, `Bar`, and `Spam` but not included in the graph.'
+    )
 
 
 def test_duplicate_id():

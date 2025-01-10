@@ -120,7 +120,7 @@ class MermaidConfig(TypedDict, total=False):
     edge_labels: bool
     """Whether to include edge labels in the diagram."""
     notes: bool
-    """Whether to include docstrings as notes in the diagram, defaults to true."""
+    """Whether to include notes on nodes in the diagram, defaults to true."""
     image_type: Literal['jpeg', 'png', 'webp', 'svg', 'pdf']
     """The image type to generate. If unspecified, the default behavior is `'jpeg'`."""
     pdf_fit: bool
@@ -176,13 +176,13 @@ def request_image(
     )
     code_base64 = base64.b64encode(code.encode()).decode()
 
-    params: dict[str, str | bool] = {}
+    params: dict[str, str | float] = {}
     if kwargs.get('image_type') == 'pdf':
         url = f'https://mermaid.ink/pdf/{code_base64}'
         if kwargs.get('pdf_fit'):
-            params['fit'] = True
+            params['fit'] = ''
         if kwargs.get('pdf_landscape'):
-            params['landscape'] = True
+            params['landscape'] = ''
         if pdf_paper := kwargs.get('pdf_paper'):
             params['paper'] = pdf_paper
     elif kwargs.get('image_type') == 'svg':
@@ -198,11 +198,11 @@ def request_image(
     if theme := kwargs.get('theme'):
         params['theme'] = theme
     if width := kwargs.get('width'):
-        params['width'] = str(width)
+        params['width'] = width
     if height := kwargs.get('height'):
-        params['height'] = str(height)
+        params['height'] = height
     if scale := kwargs.get('scale'):
-        params['scale'] = str(scale)
+        params['scale'] = scale
 
     httpx_client = kwargs.get('httpx_client') or httpx.Client()
     response = httpx_client.get(url, params=params)
