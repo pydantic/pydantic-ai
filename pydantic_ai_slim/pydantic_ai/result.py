@@ -11,7 +11,6 @@ import logfire_api
 from typing_extensions import TypeVar
 
 from . import _result, _utils, exceptions, messages as _messages, models
-from .messages import ModelResponseStreamEvent, TextPart
 from .tools import AgentDeps, RunContext
 from .usage import Usage, UsageLimits
 
@@ -232,7 +231,7 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
             # if the response currently has any parts with content, yield those before streaming
             msg = self._stream_response.get()
             for i, part in enumerate(msg.parts):
-                if isinstance(part, TextPart) and part.content:
+                if isinstance(part, _messages.TextPart) and part.content:
                     yield part.content, i
 
             async for event in usage_checking_stream:
@@ -349,7 +348,7 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
                 result_data = await validator.validate(result_data, call, self._run_ctx)
             return result_data
         else:
-            text = '\n\n'.join(x.content for x in message.parts if isinstance(x, TextPart))
+            text = '\n\n'.join(x.content for x in message.parts if isinstance(x, _messages.TextPart))
             for validator in self._result_validators:
                 text = await validator.validate(
                     text,  # pyright: ignore[reportArgumentType]
@@ -375,10 +374,10 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
 
 
 def _get_usage_checking_stream_response(
-    stream_response: AsyncIterable[ModelResponseStreamEvent],
+    stream_response: AsyncIterable[_messages.ModelResponseStreamEvent],
     limits: UsageLimits | None,
     get_usage: Callable[[], Usage],
-) -> AsyncIterable[ModelResponseStreamEvent]:
+) -> AsyncIterable[_messages.ModelResponseStreamEvent]:
     if limits is not None and limits.has_token_limits():
 
         async def _usage_checking_iterator():

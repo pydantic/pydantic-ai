@@ -22,7 +22,6 @@ from . import (
     result,
     usage as _usage,
 )
-from .messages import PartStartEvent, TextPart, ToolCallPart
 from .result import ResultData
 from .settings import ModelSettings, merge_model_settings
 from .tools import (
@@ -1221,13 +1220,13 @@ class Agent(Generic[AgentDeps, ResultData]):
         received_text = False
 
         async for maybe_part_event in streamed_response:
-            if isinstance(maybe_part_event, PartStartEvent):
+            if isinstance(maybe_part_event, _messages.PartStartEvent):
                 new_part = maybe_part_event.part
-                if isinstance(new_part, TextPart):
+                if isinstance(new_part, _messages.TextPart):
                     received_text = True
                     if self._allow_text_result(result_schema):
                         return _MarkFinalResult(streamed_response, None)
-                elif isinstance(new_part, ToolCallPart):
+                elif isinstance(new_part, _messages.ToolCallPart):
                     if result_schema is not None and (match := result_schema.find_tool([new_part])):
                         call, _ = match
                         return _MarkFinalResult(streamed_response, call.tool_name)
@@ -1240,7 +1239,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         if not model_response.parts:
             raise exceptions.UnexpectedModelBehavior('Received empty model response')
         for p in model_response.parts:
-            if isinstance(p, ToolCallPart):
+            if isinstance(p, _messages.ToolCallPart):
                 if tool := self._function_tools.get(p.tool_name):
                     tasks.append(asyncio.create_task(tool.run(p, run_context), name=p.tool_name))
                 else:

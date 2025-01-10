@@ -24,9 +24,6 @@ class MockAsyncStream(Generic[T]):
     asynchronous iterator, enabling iteration in `async for` loops
     and usage within `async with` blocks.
 
-    Attributes:
-        _iter: The underlying synchronous iterator.
-
     Example usage:
         async def example():
             sync_iter = iter([1, 2, 3])
@@ -41,6 +38,7 @@ class MockAsyncStream(Generic[T]):
     """
 
     _iter: Iterator[T]
+    """The underlying synchronous iterator."""
 
     async def __anext__(self) -> T:
         """Return the next item from the synchronous iterator as if it were asynchronous.

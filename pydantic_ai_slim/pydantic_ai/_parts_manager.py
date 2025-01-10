@@ -47,16 +47,12 @@ class ModelResponsePartsManager:
     """Manages a sequence of parts that make up a model's streamed response.
 
     Parts are generally added and/or updated by providing deltas, which are tracked by vendor-specific IDs.
-
-    Attributes:
-        _vendor_id_to_part_index: Maps a vendor's "part" ID (if provided) to the index
-            in the `_parts` list where that part (or its delta) resides.
-        _parts: A list of parts (text or tool calls) that make up the
-            current state of the model's response.
     """
 
-    _vendor_id_to_part_index: dict[VendorId, int] = field(default_factory=dict, init=False)
     _parts: list[ManagedPart] = field(default_factory=list, init=False)
+    """A list of parts (text or tool calls) that make up the current state of the model's response."""
+    _vendor_id_to_part_index: dict[VendorId, int] = field(default_factory=dict, init=False)
+    """Maps a vendor's "part" ID (if provided) to the index in `_parts` where that part resides."""
 
     def get_parts(self) -> list[ModelResponsePart]:
         """Return only model response parts that are complete (i.e., not ToolCallPartDelta's).
@@ -96,8 +92,8 @@ class ModelResponsePartsManager:
         if vendor_part_id is None:
             # If the vendor_part_id is None, check if the latest part is a TextPart to update
             if self._parts:
-                latest_part = self._parts[-1]
                 part_index = len(self._parts) - 1
+                latest_part = self._parts[part_index]
                 if isinstance(latest_part, TextPart):
                     existing_text_part_and_index = latest_part, part_index
         else:
@@ -164,8 +160,8 @@ class ModelResponsePartsManager:
             # When the vendor_part_id is None, if the tool_name is _not_ None, assume this should be a new part rather
             # than a delta on an existing one. We can change this behavior in the future if necessary for some model.
             if tool_name is None and self._parts:
-                latest_part = self._parts[-1]
                 part_index = len(self._parts) - 1
+                latest_part = self._parts[part_index]
                 if isinstance(latest_part, (ToolCallPart, ToolCallPartDelta)):
                     existing_matching_part_and_index = latest_part, part_index
         else:

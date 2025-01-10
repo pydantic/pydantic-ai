@@ -149,21 +149,28 @@ class StreamedResponse(ABC):
     _event_iterator: AsyncIterator[ModelResponseStreamEvent] | None = field(default=None, init=False)
 
     def __aiter__(self) -> AsyncIterator[ModelResponseStreamEvent]:
-        """Stream the response as an async iterable of (optional) `ModelResponseStreamEvent`s."""
+        """Stream the response as an async iterable of [`ModelResponseStreamEvent`][pydantic_ai.messages.ModelResponseStreamEvent]s."""
         if self._event_iterator is None:
             self._event_iterator = self._get_event_iterator()
         return self._event_iterator
 
     @abstractmethod
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
+        """Return an async iterator of [`ModelResponseStreamEvent`][pydantic_ai.messages.ModelResponseStreamEvent]s.
+
+        This method should be implemented by subclasses to translate the vendor-specific stream of events into
+        pydantic_ai-format events.
+        """
         raise NotImplementedError()
         # noinspection PyUnreachableCode
         yield
 
     def get(self) -> ModelResponse:
+        """Build a [`ModelResponse`][pydantic_ai.messages.ModelResponse] from the data received from the stream so far."""
         return ModelResponse(parts=self._parts_manager.get_parts(), timestamp=self.timestamp())
 
     def usage(self) -> Usage:
+        """Get the usage of the response so far. This will not be the final usage until the stream is exhausted."""
         return self._usage
 
     @abstractmethod
