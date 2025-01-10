@@ -1,5 +1,5 @@
 from .graph import Graph
-from .nodes import BaseNode, End, GraphContext
+from .nodes import BaseNode, Edge, End, GraphContext
 from .state import AbstractState, EndEvent, HistoryStep, NodeEvent
 
 __all__ = (
@@ -7,6 +7,7 @@ __all__ = (
     'BaseNode',
     'End',
     'GraphContext',
+    'Edge',
     'AbstractState',
     'EndEvent',
     'HistoryStep',

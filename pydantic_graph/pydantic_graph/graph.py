@@ -62,7 +62,7 @@ class Graph(Generic[StateT, RunEndT]):
         bad_edges: dict[str, list[str]] = {}
 
         for node_id, node_def in self.node_defs.items():
-            node_bad_edges = node_def.next_node_ids - known_node_ids
+            node_bad_edges = node_def.next_node_edges.keys() - known_node_ids
             for bad_edge in node_bad_edges:
                 bad_edges.setdefault(bad_edge, []).append(f'"{node_id}"')
 
