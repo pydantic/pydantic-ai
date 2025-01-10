@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 import sys
 import types
 from datetime import datetime, timezone
-from typing import Any, Union, get_args, get_origin
+from typing import Annotated, Any, Union, get_args, get_origin
 
 from typing_extensions import TypeAliasType
 
@@ -19,6 +19,18 @@ def get_union_args(tp: Any) -> tuple[Any, ...]:
         return get_args(tp)
     else:
         return (tp,)
+
+
+def strip_annotated(tp: Any) -> tuple[Any, list[Any]]:
+    """Strip `Annotated` from the type if present.
+
+    Returns: `(tp argument, ())` if not annotated, otherwise `(stripped type, annotations)`.
+    """
+    if get_origin(tp) is Annotated:
+        inner_tp, *args = get_args(tp)
+        return inner_tp, args
+    else:
+        return tp, []
 
 
 # same as `pydantic_ai_slim/pydantic_ai/_result.py:origin_is_union`

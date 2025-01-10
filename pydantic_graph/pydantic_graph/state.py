@@ -4,9 +4,9 @@ import copy
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import TYPE_CHECKING, Generic, Literal, Self, Union
+from typing import TYPE_CHECKING, Generic, Literal, Union
 
-from typing_extensions import Never, TypeVar
+from typing_extensions import Never, Self, TypeVar
 
 from . import _utils
 

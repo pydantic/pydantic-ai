@@ -1,8 +1,10 @@
 from __future__ import annotations as _annotations
 
 import base64
+import re
 from collections.abc import Iterable, Sequence
 from pathlib import Path
+from textwrap import indent
 from typing import TYPE_CHECKING, Annotated, Any, Literal
 
 from annotated_types import Ge, Le
@@ -25,6 +27,8 @@ def generate_code(
     start_node: Sequence[NodeIdent] | NodeIdent | None = None,
     highlighted_nodes: Sequence[NodeIdent] | NodeIdent | None = None,
     highlight_css: str = DEFAULT_HIGHLIGHT_CSS,
+    edge_labels: bool = True,
+    docstring_notes: bool = True,
 ) -> str:
     """Generate Mermaid code for a graph.
 
@@ -33,6 +37,8 @@ def generate_code(
         start_node: Identifiers of nodes that start the graph.
         highlighted_nodes: Identifiers of nodes to highlight.
         highlight_css: CSS to use for highlighting nodes.
+        edge_labels: Whether to include edge labels in the diagram, defaults to true.
+        docstring_notes: Whether to include docstrings as notes in the diagram, defaults to true.
 
     Returns: The Mermaid code for the graph.
     """
@@ -41,25 +47,34 @@ def generate_code(
         if node_id not in graph.node_defs:
             raise LookupError(f'Start node "{node_id}" is not in the graph.')
 
-    node_order = {node_id: index for index, node_id in enumerate(graph.node_defs)}
-
-    lines = ['graph TD']
+    lines = ['stateDiagram-v2']
     for node in graph.nodes:
         node_id = node.get_id()
         node_def = graph.node_defs[node_id]
 
         # we use round brackets (rounded box) for nodes other than the start and end
-        mermaid_name = f'({node_id})'
         if node_id in start_node_ids:
-            lines.append(f'  START --> {node_id}{mermaid_name}')
+            lines.append(f'  [*] --> {node_id}')
         if node_def.returns_base_node:
             for next_node_id in graph.nodes:
-                lines.append(f'  {node_id}{mermaid_name} --> {next_node_id}')
+                lines.append(f'  {node_id} --> {next_node_id}')
         else:
-            for _, next_node_id in sorted((node_order[node_id], node_id) for node_id in node_def.next_node_ids):
-                lines.append(f'  {node_id}{mermaid_name} --> {next_node_id}')
-        if node_def.returns_end:
-            lines.append(f'  {node_id}{mermaid_name} --> END')
+            for next_node_id, edge in node_def.next_node_edges.items():
+                if edge_labels and (label := edge.label):
+                    lines.append(f'  {node_id} --> {next_node_id}: {label}')
+                else:
+                    lines.append(f'  {node_id} --> {next_node_id}')
+        if end_edge := node_def.end_edge:
+            if edge_labels and (label := end_edge.label):
+                lines.append(f'  {node_id} --> [*]: {label}')
+            else:
+                lines.append(f'  {node_id} --> [*]')
+
+        if docstring_notes and node_def.doc_string:
+            lines.append(f'  note right of {node_id}')
+            clean_docs = re.sub('\n\n+', '\n', node_def.doc_string)
+            lines.append(indent(clean_docs, '    '))
+            lines.append('  end note')
 
     if highlighted_nodes:
         lines.append('')
@@ -97,6 +112,10 @@ class MermaidConfig(TypedDict, total=False):
     """Identifiers of nodes to highlight."""
     highlight_css: str
     """CSS to use for highlighting nodes."""
+    edge_labels: bool
+    """Whether to include edge labels in the diagram."""
+    docstring_notes: bool
+    """Whether to include docstrings as notes in the diagram, defaults to true."""
     image_type: Literal['jpeg', 'png', 'webp', 'svg', 'pdf']
     """The image type to generate. If unspecified, the default behavior is `'jpeg'`."""
     pdf_fit: bool
@@ -148,6 +167,8 @@ def request_image(
         start_node=kwargs.get('start_node'),
         highlighted_nodes=kwargs.get('highlighted_nodes'),
         highlight_css=kwargs.get('highlight_css', DEFAULT_HIGHLIGHT_CSS),
+        edge_labels=kwargs.get('edge_labels', True),
+        docstring_notes=kwargs.get('docstring_notes', True),
     )
     code_base64 = base64.b64encode(code.encode()).decode()
 
@@ -180,7 +201,8 @@ def request_image(
         params['scale'] = str(scale)
 
     response = httpx.get(url, params=params)
-    response.raise_for_status()
+    if not response.is_success:
+        raise ValueError(f'{response.status_code} error generating image:\n{response.text}')
     return response.content
 
 
