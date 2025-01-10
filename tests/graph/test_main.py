@@ -216,7 +216,7 @@ def test_duplicate_id():
     with pytest.raises(GraphSetupError) as exc_info:
         Graph(nodes=(Foo, Bar))
 
-    assert exc_info.value.message == snapshot(IsStr(regex='Node ID `Foo` is not unique — found in.+'))
+    assert exc_info.value.message == snapshot(IsStr(regex='Node ID `Foo` is not unique — found on <class.+'))
 
 
 async def test_run_node_not_in_graph():

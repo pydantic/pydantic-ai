@@ -52,10 +52,7 @@ def generate_code(
             raise LookupError(f'Start node "{node_id}" is not in the graph.')
 
     lines = ['stateDiagram-v2']
-    for node in graph.nodes:
-        node_id = node.get_id()
-        node_def = graph.node_defs[node_id]
-
+    for node_id, node_def in graph.node_defs.items():
         # we use round brackets (rounded box) for nodes other than the start and end
         if node_id in start_node_ids:
             lines.append(f'  [*] --> {node_id}')
