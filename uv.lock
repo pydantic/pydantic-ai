@@ -12,8 +12,8 @@ resolution-markers = [
 members = [
     "pydantic-ai",
     "pydantic-ai-examples",
-    "pydantic-ai-graph",
     "pydantic-ai-slim",
+    "pydantic-graph",
 ]
 
 [[package]]
@@ -2541,23 +2541,6 @@ requires-dist = [
 ]
 
 [[package]]
-name = "pydantic-ai-graph"
-version = "0.0.14"
-source = { editable = "pydantic_ai_graph" }
-dependencies = [
-    { name = "httpx" },
-    { name = "logfire-api" },
-    { name = "pydantic" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "httpx", specifier = ">=0.27.2" },
-    { name = "logfire-api", specifier = ">=1.2.0" },
-    { name = "pydantic", specifier = ">=2.10" },
-]
-
-[[package]]
 name = "pydantic-ai-slim"
 version = "0.0.18"
 source = { editable = "pydantic_ai_slim" }
@@ -2574,7 +2557,7 @@ anthropic = [
     { name = "anthropic" },
 ]
 graph = [
-    { name = "pydantic-ai-graph" },
+    { name = "pydantic-graph" },
 ]
 groq = [
     { name = "groq" },
@@ -2621,7 +2604,7 @@ requires-dist = [
     { name = "mistralai", marker = "extra == 'mistral'", specifier = ">=1.2.5" },
     { name = "openai", marker = "extra == 'openai'", specifier = ">=1.54.3" },
     { name = "pydantic", specifier = ">=2.10" },
-    { name = "pydantic-ai-graph", marker = "extra == 'graph'", editable = "pydantic_ai_graph" },
+    { name = "pydantic-graph", marker = "extra == 'graph'", editable = "pydantic_graph" },
     { name = "requests", marker = "extra == 'vertexai'", specifier = ">=2.32.3" },
 ]
 
@@ -2743,6 +2726,23 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/fe/9a/e6bca0eed82db26562c73b5076539a4a08d3cffd19c3cc5913a3e61145fd/pydub-0.25.1.tar.gz", hash = "sha256:980a33ce9949cab2a569606b65674d748ecbca4f0796887fd6f46173a7b0d30f", size = 38326 }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/a6/53/d78dc063216e62fc55f6b2eebb447f6a4b0a59f55c8406376f76bf959b08/pydub-0.25.1-py2.py3-none-any.whl", hash = "sha256:65617e33033874b59d87db603aa1ed450633288aefead953b30bded59cb599a6", size = 32327 },
+]
+
+[[package]]
+name = "pydantic-graph"
+version = "0.0.17"
+source = { editable = "pydantic_graph" }
+dependencies = [
+    { name = "httpx" },
+    { name = "logfire-api" },
+    { name = "pydantic" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "httpx", specifier = ">=0.27.2" },
+    { name = "logfire-api", specifier = ">=1.2.0" },
+    { name = "pydantic", specifier = ">=2.10" },
 ]
 
 [[package]]

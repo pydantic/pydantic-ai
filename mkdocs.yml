@@ -159,7 +159,7 @@ plugins:
   - mkdocstrings:
       handlers:
         python:
-          paths: [src/packages/pydantic_ai_slim/pydantic_ai]
+          paths: [pydantic_ai_slim/pydantic_ai]
           options:
             relative_crossrefs: true
             members_order: source

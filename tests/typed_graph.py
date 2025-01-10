@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 from typing_extensions import assert_type
 
-from pydantic_ai_graph import BaseNode, End, Graph, GraphContext
+from pydantic_graph import BaseNode, End, Graph, GraphContext
 
 
 @dataclass

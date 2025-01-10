@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 import logfire
 from devtools import debug
 from pydantic import BaseModel
-from pydantic_ai_graph import AbstractState, BaseNode, End, Graph, GraphContext
+from pydantic_graph import AbstractState, BaseNode, End, Graph, GraphContext
 
 from pydantic_ai import Agent, RunContext
 
