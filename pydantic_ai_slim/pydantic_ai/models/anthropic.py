@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 from collections.abc import AsyncIterable, AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime
 from json import JSONDecodeError, loads as json_loads
 from typing import Any, Dict, Literal, Union, cast, overload
 

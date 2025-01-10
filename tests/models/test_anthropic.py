@@ -62,33 +62,35 @@ def test_init():
     assert m.name() == 'anthropic:claude-3-5-haiku-latest'
 
 
-class MockAsyncStream(AsyncStream[T]):
-    """Mock implementation of AsyncStream for testing."""
+if imports_successful():
 
-    def __init__(self, events: list[list[T]]):
-        self.events = events
-        self.stream_index = 0
+    class MockAsyncStream(AsyncStream[T]):
+        """Mock implementation of AsyncStream for testing."""
 
-    def __aiter__(self) -> AsyncIterator[T]:
-        if self.stream_index >= len(self.events):
-            raise StopAsyncIteration
+        def __init__(self, events: list[list[T]]):
+            self.events = events
+            self.stream_index = 0
 
-        async def iterator() -> AsyncIterator[T]:
-            current_stream = self.events[self.stream_index]
-            for event in current_stream:
-                yield event
-            self.stream_index += 1
+        def __aiter__(self) -> AsyncIterator[T]:
+            if self.stream_index >= len(self.events):
+                raise StopAsyncIteration
 
-        return iterator()
+            async def iterator() -> AsyncIterator[T]:
+                current_stream = self.events[self.stream_index]
+                for event in current_stream:
+                    yield event
+                self.stream_index += 1
 
-    async def __anext__(self) -> T:
-        return await self._iterator.__anext__()
+            return iterator()
 
-    async def __aenter__(self) -> MockAsyncStream[T]:
-        return self
+        async def __anext__(self) -> T:
+            return await self._iterator.__anext__()
 
-    async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
-        pass
+        async def __aenter__(self) -> MockAsyncStream[T]:
+            return self
+
+        async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+            pass
 
 
 @dataclass
