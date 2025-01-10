@@ -9,7 +9,7 @@ import pytest
 from inline_snapshot import snapshot
 from pydantic import BaseModel
 
-from pydantic_ai import Agent, UnexpectedModelBehavior, capture_run_messages
+from pydantic_ai import Agent, UnexpectedModelBehavior, UserError, capture_run_messages
 from pydantic_ai.messages import (
     ArgsDict,
     ArgsJson,
@@ -17,6 +17,7 @@ from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
     RetryPromptPart,
+    TextPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
@@ -123,11 +124,10 @@ async def test_structured_response_iter():
 
     assert chunks == snapshot([[1], [1, 2, 3, 4], [1, 2, 3, 4]])
 
-    # TODO: Can we remove the following check now?
-    # async with agent.run_stream('Hello') as result:
-    #     with pytest.raises(UserError, match=r'stream_text\(\) can only be used with text responses'):
-    #         async for _ in result.stream_text():
-    #             pass
+    async with agent.run_stream('Hello') as result:
+        with pytest.raises(UserError, match=r'stream_text\(\) can only be used with text responses'):
+            async for _ in result.stream_text():
+                pass
 
 
 async def test_streamed_text_stream():
@@ -172,11 +172,39 @@ async def test_streamed_text_stream():
             ['The ', 'cat ', 'sat ', 'on ', 'the ', 'mat.']
         )
 
-    # TODO: Can we remove the following check now?
-    # async with agent.run_stream('Hello') as result:
-    #     with pytest.raises(UserError, match=r'stream_structured\(\) can only be used with structured responses'):
-    #         async for _ in result.stream_structured():
-    #             pass
+    async with agent.run_stream('Hello') as result:
+        assert [c async for c, _is_last in result.stream_structured(debounce_by=None)] == snapshot(
+            [
+                ModelResponse(
+                    parts=[TextPart(content='The ')],
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='The cat ')],
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='The cat sat ')],
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='The cat sat on ')],
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='The cat sat on the ')],
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='The cat sat on the mat.')],
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='The cat sat on the mat.')],
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
+            ]
+        )
 
 
 async def test_plain_response():

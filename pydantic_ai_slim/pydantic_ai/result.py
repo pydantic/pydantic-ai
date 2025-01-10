@@ -218,6 +218,9 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
                 Debouncing is particularly important for long structured responses to reduce the overhead of
                 performing validation as each token is received.
         """
+        if self._result_schema and not self._result_schema.allow_text_result:
+            raise exceptions.UserError('stream_text() can only be used with text responses')
+
         usage_checking_stream = _get_usage_checking_stream_response(
             self._stream_response, self._usage_limits, self.usage
         )
