@@ -59,7 +59,7 @@ def generate_code(
         if node_id in start_node_ids:
             lines.append(f'  [*] --> {node_id}')
         if node_def.returns_base_node:
-            for next_node_id in graph.nodes:
+            for next_node_id in graph.node_defs:
                 lines.append(f'  {node_id} --> {next_node_id}')
         else:
             for next_node_id, edge in node_def.next_node_edges.items():
