@@ -11,7 +11,7 @@ from inline_snapshot import snapshot
 
 from pydantic_graph import BaseNode, End, EndEvent, Graph, GraphContext, GraphRuntimeError, GraphSetupError, NodeEvent
 
-from .conftest import IsFloat, IsNow
+from ..conftest import IsFloat, IsNow
 
 pytestmark = pytest.mark.anyio
 
@@ -137,7 +137,7 @@ def test_two_bad_nodes():
     class Float2String(BaseNode):
         input_data: float
 
-        async def run(self, ctx: GraphContext) -> String2Length | Double:
+        async def run(self, ctx: GraphContext) -> Union[String2Length, Double]:  # noqa: UP007
             raise NotImplementedError()
 
     class String2Length(BaseNode[None, None]):

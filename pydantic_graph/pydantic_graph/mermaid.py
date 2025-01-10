@@ -7,6 +7,7 @@ from pathlib import Path
 from textwrap import indent
 from typing import TYPE_CHECKING, Annotated, Any, Literal
 
+import httpx
 from annotated_types import Ge, Le
 from typing_extensions import TypeAlias, TypedDict, Unpack
 
@@ -149,6 +150,7 @@ class MermaidConfig(TypedDict, total=False):
 
     The scale must be a number between 1 and 3, and you can only set a scale if one or both of width and height are set.
     """
+    httpx_client: httpx.Client
 
 
 def request_image(
@@ -164,8 +166,6 @@ def request_image(
 
     Returns: The image data.
     """
-    import httpx
-
     code = generate_code(
         graph,
         start_node=kwargs.get('start_node'),
@@ -204,9 +204,14 @@ def request_image(
     if scale := kwargs.get('scale'):
         params['scale'] = str(scale)
 
-    response = httpx.get(url, params=params)
+    httpx_client = kwargs.get('httpx_client') or httpx.Client()
+    response = httpx_client.get(url, params=params)
     if not response.is_success:
-        raise ValueError(f'{response.status_code} error generating image:\n{response.text}')
+        raise httpx.HTTPStatusError(
+            f'{response.status_code} error generating image:\n{response.text}',
+            request=response.request,
+            response=response,
+        )
     return response.content
 
 
