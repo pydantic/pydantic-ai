@@ -29,7 +29,6 @@ class Graph(Generic[StateT, RunEndT]):
     """Definition of a graph."""
 
     name: str | None
-    nodes: tuple[type[BaseNode[StateT, RunEndT]], ...]
     node_defs: dict[str, NodeDef[StateT, RunEndT]]
 
     def __init__(
@@ -41,23 +40,21 @@ class Graph(Generic[StateT, RunEndT]):
     ):
         self.name = name
 
-        _nodes_by_id: dict[str, type[BaseNode[StateT, RunEndT]]] = {}
-        for node in nodes:
-            node_id = node.get_id()
-            if existing_node := _nodes_by_id.get(node_id):
-                raise exceptions.GraphSetupError(
-                    f'Node ID `{node_id}` is not unique — found in {existing_node} and {node}'
-                )
-            else:
-                _nodes_by_id[node_id] = node
-        self.nodes = tuple(_nodes_by_id.values())
-
         parent_namespace = get_parent_namespace(inspect.currentframe())
-        self.node_defs: dict[str, NodeDef[StateT, RunEndT]] = {
-            node.get_id(): node.get_node_def(parent_namespace) for node in self.nodes
-        }
+        self.node_defs: dict[str, NodeDef[StateT, RunEndT]] = {}
+        for node in nodes:
+            self._register_node(node, parent_namespace)
 
         self._validate_edges()
+
+    def _register_node(self, node: type[BaseNode[StateT, RunEndT]], parent_namespace: dict[str, Any] | None) -> None:
+        node_id = node.get_id()
+        if existing_node := self.node_defs.get(node_id):
+            raise exceptions.GraphSetupError(
+                f'Node ID `{node_id}` is not unique — found on {existing_node.node} and {node}'
+            )
+        else:
+            self.node_defs[node_id] = node.get_node_def(parent_namespace)
 
     def _validate_edges(self):
         known_node_ids = self.node_defs.keys()
