@@ -16,6 +16,9 @@ if TYPE_CHECKING:
     from .graph import Graph
 
 
+__all__ = 'NodeIdent', 'DEFAULT_HIGHLIGHT_CSS', 'generate_code', 'MermaidConfig', 'request_image', 'save_image'
+
+
 NodeIdent: TypeAlias = 'type[BaseNode[Any, Any]] | BaseNode[Any, Any] | str'
 DEFAULT_HIGHLIGHT_CSS = 'fill:#fdff32'
 
@@ -28,21 +31,21 @@ def generate_code(
     highlighted_nodes: Sequence[NodeIdent] | NodeIdent | None = None,
     highlight_css: str = DEFAULT_HIGHLIGHT_CSS,
     edge_labels: bool = True,
-    docstring_notes: bool = True,
+    notes: bool = True,
 ) -> str:
-    """Generate Mermaid code for a graph.
+    """Generate [Mermaid state diagram](https://mermaid.js.org/syntax/stateDiagram.html) code for a graph.
 
     Args:
         graph: The graph to generate the image for.
         start_node: Identifiers of nodes that start the graph.
         highlighted_nodes: Identifiers of nodes to highlight.
         highlight_css: CSS to use for highlighting nodes.
-        edge_labels: Whether to include edge labels in the diagram, defaults to true.
-        docstring_notes: Whether to include docstrings as notes in the diagram, defaults to true.
+        edge_labels: Whether to include edge labels in the diagram.
+        notes: Whether to include notes in the diagram.
 
     Returns: The Mermaid code for the graph.
     """
-    start_node_ids = set(node_ids(start_node or ()))
+    start_node_ids = set(_node_ids(start_node or ()))
     for node_id in start_node_ids:
         if node_id not in graph.node_defs:
             raise LookupError(f'Start node "{node_id}" is not in the graph.')
@@ -60,26 +63,27 @@ def generate_code(
                 lines.append(f'  {node_id} --> {next_node_id}')
         else:
             for next_node_id, edge in node_def.next_node_edges.items():
-                if edge_labels and (label := edge.label):
-                    lines.append(f'  {node_id} --> {next_node_id}: {label}')
-                else:
-                    lines.append(f'  {node_id} --> {next_node_id}')
+                line = f'  {node_id} --> {next_node_id}'
+                if edge_labels and edge.label:
+                    line += f': {edge.label}'
+                lines.append(line)
         if end_edge := node_def.end_edge:
-            if edge_labels and (label := end_edge.label):
-                lines.append(f'  {node_id} --> [*]: {label}')
-            else:
-                lines.append(f'  {node_id} --> [*]')
+            line = f'  {node_id} --> [*]'
+            if edge_labels and end_edge.label:
+                line += f': {end_edge.label}'
+            lines.append(line)
 
-        if docstring_notes and node_def.doc_string:
+        if notes and node_def.note:
             lines.append(f'  note right of {node_id}')
-            clean_docs = re.sub('\n\n+', '\n', node_def.doc_string)
+            # mermaid doesn't like multiple paragraphs in a note, and shows if so
+            clean_docs = re.sub('\n{2,}', '\n', node_def.note)
             lines.append(indent(clean_docs, '    '))
             lines.append('  end note')
 
     if highlighted_nodes:
         lines.append('')
         lines.append(f'classDef highlighted {highlight_css}')
-        for node_id in node_ids(highlighted_nodes):
+        for node_id in _node_ids(highlighted_nodes):
             if node_id not in graph.node_defs:
                 raise LookupError(f'Highlighted node "{node_id}" is not in the graph.')
             lines.append(f'class {node_id} highlighted')
@@ -87,7 +91,7 @@ def generate_code(
     return '\n'.join(lines)
 
 
-def node_ids(node_idents: Sequence[NodeIdent] | NodeIdent) -> Iterable[str]:
+def _node_ids(node_idents: Sequence[NodeIdent] | NodeIdent) -> Iterable[str]:
     """Get the node IDs from a sequence of node identifiers."""
     if isinstance(node_idents, str):
         node_iter = (node_idents,)
@@ -114,7 +118,7 @@ class MermaidConfig(TypedDict, total=False):
     """CSS to use for highlighting nodes."""
     edge_labels: bool
     """Whether to include edge labels in the diagram."""
-    docstring_notes: bool
+    notes: bool
     """Whether to include docstrings as notes in the diagram, defaults to true."""
     image_type: Literal['jpeg', 'png', 'webp', 'svg', 'pdf']
     """The image type to generate. If unspecified, the default behavior is `'jpeg'`."""
@@ -168,7 +172,7 @@ def request_image(
         highlighted_nodes=kwargs.get('highlighted_nodes'),
         highlight_css=kwargs.get('highlight_css', DEFAULT_HIGHLIGHT_CSS),
         edge_labels=kwargs.get('edge_labels', True),
-        docstring_notes=kwargs.get('docstring_notes', True),
+        notes=kwargs.get('notes', True),
     )
     code_base64 = base64.b64encode(code.encode()).decode()
 
