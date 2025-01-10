@@ -10,9 +10,8 @@ from typing import TYPE_CHECKING, Any, Generic
 import logfire_api
 from typing_extensions import Never, ParamSpec, TypeVar, Unpack, assert_never
 
-from . import _utils, mermaid
+from . import _utils, exceptions, mermaid
 from ._utils import get_parent_namespace
-from .exceptions import GraphRuntimeError, GraphSetupError
 from .nodes import BaseNode, End, GraphContext, NodeDef
 from .state import EndEvent, HistoryStep, NodeEvent, StateT
 
@@ -46,7 +45,9 @@ class Graph(Generic[StateT, RunEndT]):
         for node in nodes:
             node_id = node.get_id()
             if existing_node := _nodes_by_id.get(node_id):
-                raise GraphSetupError(f'Node ID `{node_id}` is not unique — found in {existing_node} and {node}')
+                raise exceptions.GraphSetupError(
+                    f'Node ID `{node_id}` is not unique — found in {existing_node} and {node}'
+                )
             else:
                 _nodes_by_id[node_id] = node
         self.nodes = tuple(_nodes_by_id.values())
@@ -70,17 +71,19 @@ class Graph(Generic[StateT, RunEndT]):
         if bad_edges:
             bad_edges_list = [f'`{k}` is referenced by {_utils.comma_and(v)}' for k, v in bad_edges.items()]
             if len(bad_edges_list) == 1:
-                raise GraphSetupError(f'{bad_edges_list[0]} but not included in the graph.')
+                raise exceptions.GraphSetupError(f'{bad_edges_list[0]} but not included in the graph.')
             else:
                 b = '\n'.join(f' {be}' for be in bad_edges_list)
-                raise GraphSetupError(f'Nodes are referenced in the graph but not included in the graph:\n{b}')
+                raise exceptions.GraphSetupError(
+                    f'Nodes are referenced in the graph but not included in the graph:\n{b}'
+                )
 
     async def next(
         self, state: StateT, node: BaseNode[StateT, RunEndT], history: list[HistoryStep[StateT, RunEndT]]
     ) -> BaseNode[StateT, Any] | End[RunEndT]:
         node_id = node.get_id()
         if node_id not in self.node_defs:
-            raise GraphRuntimeError(f'Node `{node}` is not in the graph.')
+            raise exceptions.GraphRuntimeError(f'Node `{node}` is not in the graph.')
 
         history_step: NodeEvent[StateT, RunEndT] | None = NodeEvent(state, node)
         history.append(history_step)
@@ -116,7 +119,7 @@ class Graph(Generic[StateT, RunEndT]):
                     if TYPE_CHECKING:
                         assert_never(next_node)
                     else:
-                        raise GraphRuntimeError(
+                        raise exceptions.GraphRuntimeError(
                             f'Invalid node return type: `{type(next_node).__name__}`. Expected `BaseNode` or `End`.'
                         )
 

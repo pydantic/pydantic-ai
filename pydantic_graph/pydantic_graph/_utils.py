@@ -5,13 +5,13 @@ import types
 from datetime import datetime, timezone
 from typing import Annotated, Any, Union, get_args, get_origin
 
-from typing_extensions import TypeAliasType
+import typing_extensions
 
 
 def get_union_args(tp: Any) -> tuple[Any, ...]:
     """Extract the arguments of a Union type if `response_type` is a union, otherwise return the original type."""
     # similar to `pydantic_ai_slim/pydantic_ai/_result.py:get_union_args`
-    if isinstance(tp, TypeAliasType):
+    if isinstance(tp, typing_extensions.TypeAliasType):
         tp = tp.__value__
 
     origin = get_origin(tp)
@@ -26,7 +26,8 @@ def unpack_annotated(tp: Any) -> tuple[Any, list[Any]]:
 
     Returns: `(tp argument, ())` if not annotated, otherwise `(stripped type, annotations)`.
     """
-    if get_origin(tp) is Annotated:
+    origin = get_origin(tp)
+    if origin is Annotated or origin is typing_extensions.Annotated:
         inner_tp, *args = get_args(tp)
         return inner_tp, args
     else:
@@ -52,16 +53,6 @@ def comma_and(items: list[str]) -> str:
     else:
         # oxford comma ¯\_(ツ)_/¯
         return ', '.join(items[:-1]) + ', and ' + items[-1]
-
-
-_NoneType = type(None)
-
-
-def type_arg_name(arg: Any) -> str:
-    if arg is _NoneType:
-        return 'None'
-    else:
-        return arg.__name__
 
 
 def get_parent_namespace(frame: types.FrameType | None) -> dict[str, Any] | None:

@@ -3,6 +3,7 @@ from __future__ import annotations as _annotations
 from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import timezone
+from pathlib import Path
 from typing import Annotated, Callable
 
 import httpx
@@ -10,7 +11,8 @@ import pytest
 from inline_snapshot import snapshot
 from typing_extensions import TypeAlias
 
-from pydantic_graph import BaseNode, Edge, End, EndEvent, Graph, GraphContext, NodeEvent
+from pydantic_graph import BaseNode, Edge, End, EndEvent, Graph, GraphContext, GraphSetupError, NodeEvent
+from pydantic_graph.nodes import NodeDef
 
 from ..conftest import IsFloat, IsNow
 
@@ -64,6 +66,10 @@ class Spam(BaseNode):
 
 @dataclass
 class Eggs(BaseNode[None, None]):
+    """This is the docstring for Eggs."""
+
+    enable_docstring_notes = False
+
     async def run(self, ctx: GraphContext) -> Annotated[End[None], Edge(label='eggs to end')]:
         return End(None)
 
@@ -190,10 +196,42 @@ stateDiagram-v2
 """)
 
 
-def test_image(httpx_with_handler: HttpxWithHandler):
-    response = httpx.Response(200, content=b'fake image')
-    img = graph1.mermaid_image(start_node=Foo(), httpx_client=httpx_with_handler(response))
-    assert img == b'fake image'
+def test_image_jpg(httpx_with_handler: HttpxWithHandler):
+    def get_jpg(request: httpx.Request) -> httpx.Response:
+        assert dict(request.url.params) == snapshot({})
+        assert request.url.path.startswith('/img/')
+        return httpx.Response(200, content=b'fake jpg')
+
+    img = graph1.mermaid_image(start_node=Foo(), httpx_client=httpx_with_handler(get_jpg))
+    assert img == b'fake jpg'
+
+
+def test_image_png(httpx_with_handler: HttpxWithHandler):
+    def get_png(request: httpx.Request) -> httpx.Response:
+        assert dict(request.url.params) == snapshot(
+            {
+                'type': 'png',
+                'bgColor': '123',
+                'theme': 'forest',
+                'width': '100',
+                'height': '200',
+                'scale': '3',
+            }
+        )
+        assert request.url.path.startswith('/img/')
+        return httpx.Response(200, content=b'fake png')
+
+    img = graph1.mermaid_image(
+        start_node=Foo(),
+        image_type='png',
+        background_color='123',
+        theme='forest',
+        width=100,
+        height=200,
+        scale=3,
+        httpx_client=httpx_with_handler(get_png),
+    )
+    assert img == b'fake png'
 
 
 def test_image_bad(httpx_with_handler: HttpxWithHandler):
@@ -202,3 +240,106 @@ def test_image_bad(httpx_with_handler: HttpxWithHandler):
         graph1.mermaid_image(start_node=Foo(), httpx_client=httpx_with_handler(response))
     assert exc_info.value.response.status_code == 404
     assert exc_info.value.response.content == b'not found'
+
+
+def test_pdf(httpx_with_handler: HttpxWithHandler):
+    def get_pdf(request: httpx.Request) -> httpx.Response:
+        assert dict(request.url.params) == snapshot({})
+        assert request.url.path.startswith('/pdf/')
+        return httpx.Response(200, content=b'fake pdf')
+
+    pdf = graph1.mermaid_image(start_node=Foo(), image_type='pdf', httpx_client=httpx_with_handler(get_pdf))
+    assert pdf == b'fake pdf'
+
+
+def test_pdf_config(httpx_with_handler: HttpxWithHandler):
+    def get_pdf(request: httpx.Request) -> httpx.Response:
+        assert dict(request.url.params) == snapshot({'fit': '', 'landscape': '', 'paper': 'letter'})
+        assert request.url.path.startswith('/pdf/')
+        return httpx.Response(200, content=b'fake pdf')
+
+    pdf = graph1.mermaid_image(
+        start_node=Foo(),
+        image_type='pdf',
+        pdf_fit=True,
+        pdf_landscape=True,
+        pdf_paper='letter',
+        httpx_client=httpx_with_handler(get_pdf),
+    )
+    assert pdf == b'fake pdf'
+
+
+def test_svg(httpx_with_handler: HttpxWithHandler):
+    def get_svg(request: httpx.Request) -> httpx.Response:
+        assert dict(request.url.params) == snapshot({})
+        assert request.url.path.startswith('/svg/')
+        return httpx.Response(200, content=b'fake svg')
+
+    svg = graph1.mermaid_image(start_node=Foo(), image_type='svg', httpx_client=httpx_with_handler(get_svg))
+    assert svg == b'fake svg'
+
+
+def test_save_jpg(tmp_path: Path, httpx_with_handler: HttpxWithHandler):
+    def get_jpg(request: httpx.Request) -> httpx.Response:
+        assert dict(request.url.params) == snapshot({})
+        assert request.url.path.startswith('/img/')
+        return httpx.Response(200, content=b'fake jpg')
+
+    path = tmp_path / 'graph.jpg'
+    graph1.mermaid_save(path, start_node=Foo(), httpx_client=httpx_with_handler(get_jpg))
+    assert path.read_bytes() == b'fake jpg'
+
+
+def test_save_png(tmp_path: Path, httpx_with_handler: HttpxWithHandler):
+    def get_png(request: httpx.Request) -> httpx.Response:
+        assert dict(request.url.params) == snapshot({'type': 'png'})
+        assert request.url.path.startswith('/img/')
+        return httpx.Response(200, content=b'fake png')
+
+    path2 = tmp_path / 'graph.png'
+    graph1.mermaid_save(str(path2), start_node=Foo(), httpx_client=httpx_with_handler(get_png))
+    assert path2.read_bytes() == b'fake png'
+
+
+def test_save_pdf_known(tmp_path: Path, httpx_with_handler: HttpxWithHandler):
+    def get_pdf(request: httpx.Request) -> httpx.Response:
+        assert dict(request.url.params) == snapshot({})
+        assert request.url.path.startswith('/pdf/')
+        return httpx.Response(200, content=b'fake pdf')
+
+    path2 = tmp_path / 'graph'
+    graph1.mermaid_save(str(path2), start_node=Foo(), image_type='pdf', httpx_client=httpx_with_handler(get_pdf))
+    assert path2.read_bytes() == b'fake pdf'
+
+
+def test_get_node_def():
+    assert Foo.get_node_def({}) == snapshot(
+        NodeDef(
+            node=Foo,
+            node_id='Foo',
+            note=None,
+            next_node_edges={'Bar': Edge(label=None)},
+            end_edge=None,
+            returns_base_node=False,
+        )
+    )
+
+
+def test_no_return_type():
+    @dataclass
+    class NoReturnType(BaseNode):
+        async def run(self, ctx: GraphContext):  # type: ignore
+            raise NotImplementedError()
+
+    with pytest.raises(GraphSetupError, match=r".*\.NoReturnType'> is missing a return type hint on its `run` method"):
+        NoReturnType.get_node_def({})
+
+
+def test_wrong_return_type():
+    @dataclass
+    class NoReturnType(BaseNode):
+        async def run(self, ctx: GraphContext) -> int:  # type: ignore
+            raise NotImplementedError()
+
+    with pytest.raises(GraphSetupError, match="Invalid return type: <class 'int'>"):
+        NoReturnType.get_node_def({})
