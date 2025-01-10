@@ -1,17 +1,42 @@
 from __future__ import annotations as _annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import timezone
-from typing import Annotated
+from typing import Annotated, Callable
 
+import httpx
 import pytest
 from inline_snapshot import snapshot
+from typing_extensions import TypeAlias
 
 from pydantic_graph import BaseNode, Edge, End, EndEvent, Graph, GraphContext, NodeEvent
 
-from .conftest import IsFloat, IsNow
+from ..conftest import IsFloat, IsNow
 
 pytestmark = pytest.mark.anyio
+HttpxWithHandler: TypeAlias = 'Callable[[Callable[[httpx.Request], httpx.Response] | httpx.Response], httpx.Client]'
+
+
+@pytest.fixture
+def httpx_with_handler() -> Iterator[HttpxWithHandler]:
+    client: httpx.Client | None = None
+
+    def create_client(handler: Callable[[httpx.Request], httpx.Response] | httpx.Response) -> httpx.Client:
+        nonlocal client
+        assert client is None, 'client_with_handler can only be called once'
+        if isinstance(handler, httpx.Response):
+            transport = httpx.MockTransport(lambda _: handler)
+        else:
+            transport = httpx.MockTransport(handler)
+        client = httpx.Client(mounts={'all://': transport})
+        return client
+
+    try:
+        yield create_client
+    finally:
+        if client:  # pragma: no cover
+            client.close()
 
 
 @dataclass
@@ -163,3 +188,17 @@ stateDiagram-v2
   Foo --> Bar
   Bar --> [*]\
 """)
+
+
+def test_image(httpx_with_handler: HttpxWithHandler):
+    response = httpx.Response(200, content=b'fake image')
+    img = graph1.mermaid_image(start_node=Foo(), httpx_client=httpx_with_handler(response))
+    assert img == b'fake image'
+
+
+def test_image_bad(httpx_with_handler: HttpxWithHandler):
+    response = httpx.Response(404, content=b'not found')
+    with pytest.raises(httpx.HTTPStatusError, match='404 error generating image:\nnot found') as exc_info:
+        graph1.mermaid_image(start_node=Foo(), httpx_client=httpx_with_handler(response))
+    assert exc_info.value.response.status_code == 404
+    assert exc_info.value.response.content == b'not found'
