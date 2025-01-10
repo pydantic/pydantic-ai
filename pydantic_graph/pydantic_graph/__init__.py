@@ -1,3 +1,4 @@
+from .exceptions import GraphRuntimeError, GraphSetupError
 from .graph import Graph
 from .nodes import BaseNode, Edge, End, GraphContext
 from .state import AbstractState, EndEvent, HistoryStep, NodeEvent
@@ -12,4 +13,6 @@ __all__ = (
     'EndEvent',
     'HistoryStep',
     'NodeEvent',
+    'GraphSetupError',
+    'GraphRuntimeError',
 )
