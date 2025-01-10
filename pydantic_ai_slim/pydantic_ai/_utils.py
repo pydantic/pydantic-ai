@@ -233,16 +233,6 @@ async def group_by_temporal(
                 await task
 
 
-def add_optional(a: str | None, b: str | None) -> str | None:
-    """Add two optional strings."""
-    if a is None:
-        return b
-    elif b is None:
-        return a
-    else:
-        return a + b
-
-
 def sync_anext(iterator: Iterator[T]) -> T:
     """Get the next item from a sync iterator, raising `StopAsyncIteration` if it's exhausted.
 

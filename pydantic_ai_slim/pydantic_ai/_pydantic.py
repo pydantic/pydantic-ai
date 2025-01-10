@@ -20,7 +20,7 @@ from ._griffe import doc_descriptions
 from ._utils import check_object_json_schema, is_model_like
 
 if TYPE_CHECKING:
-    from .tools import ObjectJsonSchema
+    from .tools import DocstringFormat, ObjectJsonSchema
 
 
 __all__ = ('function_schema',)
@@ -38,12 +38,19 @@ class FunctionSchema(TypedDict):
     var_positional_field: str | None
 
 
-def function_schema(function: Callable[..., Any], takes_ctx: bool) -> FunctionSchema:  # noqa: C901
+def function_schema(  # noqa: C901
+    function: Callable[..., Any],
+    takes_ctx: bool,
+    docstring_format: DocstringFormat,
+    require_parameter_descriptions: bool,
+) -> FunctionSchema:
     """Build a Pydantic validator and JSON schema from a tool function.
 
     Args:
         function: The function to build a validator and JSON schema for.
         takes_ctx: Whether the function takes a `RunContext` first argument.
+        docstring_format: The docstring format to use.
+        require_parameter_descriptions: Whether to require descriptions for all tool function parameters.
 
     Returns:
         A `FunctionSchema` instance.
@@ -62,7 +69,13 @@ def function_schema(function: Callable[..., Any], takes_ctx: bool) -> FunctionSc
     var_positional_field: str | None = None
     errors: list[str] = []
     decorators = _decorators.DecoratorInfos()
-    description, field_descriptions = doc_descriptions(function, sig)
+
+    description, field_descriptions = doc_descriptions(function, sig, docstring_format=docstring_format)
+
+    if require_parameter_descriptions:
+        if len(field_descriptions) != len(sig.parameters):
+            missing_params = set(sig.parameters) - set(field_descriptions)
+            errors.append(f'Missing parameter descriptions for {", ".join(missing_params)}')
 
     for index, (name, p) in enumerate(sig.parameters.items()):
         if p.annotation is sig.empty:

@@ -9,6 +9,7 @@ import pydantic_core
 from typing_extensions import Self, assert_never
 
 from ._utils import now_utc as _now_utc
+from .exceptions import UnexpectedModelBehavior
 
 
 @dataclass
@@ -72,12 +73,14 @@ class ToolReturnPart:
     """Part type identifier, this is available on all parts as a discriminator."""
 
     def model_response_str(self) -> str:
+        """Return a string representation of the content for the model."""
         if isinstance(self.content, str):
             return self.content
         else:
             return tool_return_ta.dump_json(self.content).decode()
 
     def model_response_object(self) -> dict[str, Any]:
+        """Return a dictionary representation of the content, wrapping non-dict types appropriately."""
         # gemini supports JSON dict return values, but no other JSON types, hence we wrap anything else in a dict
         if isinstance(self.content, dict):
             return tool_return_ta.dump_python(self.content, mode='json')  # pyright: ignore[reportUnknownMemberType]
@@ -124,6 +127,7 @@ class RetryPromptPart:
     """Part type identifier, this is available on all parts as a discriminator."""
 
     def model_response(self) -> str:
+        """Return a string message describing why the retry is requested."""
         if isinstance(self.content, str):
             description = self.content
         else:
@@ -160,6 +164,7 @@ class TextPart:
     """Part type identifier, this is available on all parts as a discriminator."""
 
     def has_content(self) -> bool:
+        """Return `True` if the text content is non-empty."""
         return bool(self.content)
 
 
@@ -200,7 +205,7 @@ class ToolCallPart:
 
     @classmethod
     def from_raw_args(cls, tool_name: str, args: str | dict[str, Any], tool_call_id: str | None = None) -> Self:
-        """Create a `ToolCallPart` from raw arguments."""
+        """Create a `ToolCallPart` from raw arguments, converting them to `ArgsJson` or `ArgsDict`."""
         if isinstance(args, str):
             return cls(tool_name, ArgsJson(args), tool_call_id)
         elif isinstance(args, dict):
@@ -229,6 +234,7 @@ class ToolCallPart:
         return pydantic_core.to_json(self.args.args_dict).decode()
 
     def has_content(self) -> bool:
+        """Return `True` if the arguments contain any data."""
         if isinstance(self.args, ArgsDict):
             return any(self.args.args_dict.values())
         else:
@@ -257,15 +263,17 @@ class ModelResponse:
 
     @classmethod
     def from_text(cls, content: str, timestamp: datetime | None = None) -> Self:
+        """Create a `ModelResponse` containing a single `TextPart`."""
         return cls([TextPart(content=content)], timestamp=timestamp or _now_utc())
 
     @classmethod
     def from_tool_call(cls, tool_call: ToolCallPart) -> Self:
+        """Create a `ModelResponse` containing a single `ToolCallPart`."""
         return cls([tool_call])
 
 
 ModelMessage = Annotated[Union[ModelRequest, ModelResponse], pydantic.Discriminator('kind')]
-"""Any message send to or returned by a model."""
+"""Any message sent to or returned by a model."""
 
 ModelMessagesTypeAdapter = pydantic.TypeAdapter(list[ModelMessage], config=pydantic.ConfigDict(defer_build=True))
 """Pydantic [`TypeAdapter`][pydantic.type_adapter.TypeAdapter] for (de)serializing messages."""
@@ -273,13 +281,26 @@ ModelMessagesTypeAdapter = pydantic.TypeAdapter(list[ModelMessage], config=pydan
 
 @dataclass
 class TextPartDelta:
-    """A text part delta."""
+    """A partial update (delta) for a `TextPart` to append new text content."""
 
     content_delta: str
+    """The incremental text content to add to the existing `TextPart` content."""
 
     part_delta_kind: Literal['text'] = 'text'
+    """Part delta type identifier, used as a discriminator."""
 
     def apply(self, part: ModelResponsePart) -> TextPart:
+        """Apply this text delta to an existing `TextPart`.
+
+        Args:
+            part: The existing model response part, which must be a `TextPart`.
+
+        Returns:
+            A new `TextPart` with updated text content.
+
+        Raises:
+            ValueError: If `part` is not a `TextPart`.
+        """
         if not isinstance(part, TextPart):
             raise ValueError('Cannot apply TextPartDeltas to non-TextParts')
         return replace(part, content=part.content + self.content_delta)
@@ -287,16 +308,33 @@ class TextPartDelta:
 
 @dataclass
 class ToolCallPartDelta:
-    """A tool call part delta."""
+    """A partial update (delta) for a `ToolCallPart` to modify tool name, arguments, or tool call ID."""
 
     tool_name_delta: str | None = None
+    """Incremental text to add to the existing tool name, if any."""
+
     args_delta: str | dict[str, Any] | None = None
+    """Incremental data to add to the tool arguments.
+
+    If this is a string, it will be appended to existing JSON arguments.
+    If this is a dict, it will be merged with existing dict arguments.
+    """
+
     tool_call_id: str | None = None
+    """Optional tool call identifier, this is used by some models including OpenAI.
+
+    Note this is never treated as a delta — it can replace None, but otherwise if a
+    non-matching value is provided an error will be raised."""
 
     part_delta_kind: Literal['tool_call'] = 'tool_call'
+    """Part delta type identifier, used as a discriminator."""
 
     def as_part(self) -> ToolCallPart | None:
-        """Converts to a ToolCallPart if the required information is present, otherwise returns None."""
+        """Convert this delta to a fully formed `ToolCallPart` if possible, otherwise return `None`.
+
+        Returns:
+            A `ToolCallPart` if both `tool_name_delta` and `args_delta` are set, otherwise `None`.
+        """
         if self.tool_name_delta is None or self.args_delta is None:
             return None
 
@@ -313,6 +351,18 @@ class ToolCallPartDelta:
     def apply(self, part: ModelResponsePart | ToolCallPartDelta) -> ToolCallPart | ToolCallPartDelta: ...
 
     def apply(self, part: ModelResponsePart | ToolCallPartDelta) -> ToolCallPart | ToolCallPartDelta:
+        """Apply this delta to a part or delta, returning a new part or delta with the changes applied.
+
+        Args:
+            part: The existing model response part or delta to update.
+
+        Returns:
+            Either a new `ToolCallPart` or an updated `ToolCallPartDelta`.
+
+        Raises:
+            ValueError: If `part` is neither a `ToolCallPart` nor a `ToolCallPartDelta`.
+            UnexpectedModelBehavior: If applying JSON deltas to dict arguments or vice versa.
+        """
         if isinstance(part, ToolCallPart):
             return self._apply_to_part(part)
 
@@ -322,29 +372,36 @@ class ToolCallPartDelta:
         raise ValueError(f'Can only apply ToolCallPartDeltas to ToolCallParts or ToolCallPartDeltas, not {part}')
 
     def _apply_to_delta(self, delta: ToolCallPartDelta) -> ToolCallPart | ToolCallPartDelta:
+        """Internal helper to apply this delta to another delta."""
         if self.tool_name_delta:
-            # I'm not sure how common it is to have deltas on the tool name, but I've handled it here for completeness
+            # Append incremental text to the existing tool_name_delta
             updated_tool_name_delta = (delta.tool_name_delta or '') + self.tool_name_delta
             delta = replace(delta, tool_name_delta=updated_tool_name_delta)
 
         if isinstance(self.args_delta, str):
             if isinstance(delta.args_delta, dict):
-                raise NotImplementedError('Cannot apply a JSON args delta to a dict args delta')
+                raise UnexpectedModelBehavior(
+                    f'Cannot apply JSON deltas to non-JSON tool arguments ({delta=}, {self=})'
+                )
             updated_args_delta = (delta.args_delta or '') + self.args_delta
             delta = replace(delta, args_delta=updated_args_delta)
         elif isinstance(self.args_delta, dict):
             if isinstance(delta.args_delta, str):
-                raise NotImplementedError('Cannot apply a dict args delta to a JSON args delta')
+                raise UnexpectedModelBehavior(
+                    f'Cannot apply dict deltas to non-dict tool arguments ({delta=}, {self=})'
+                )
             updated_args_delta = {**(delta.args_delta or {}), **self.args_delta}
             delta = replace(delta, args_delta=updated_args_delta)
 
         if self.tool_call_id:
-            # Don't treat tool_call_id as a delta, just replace it
+            # Set the tool_call_id if it wasn't present, otherwise error if it has changed
             if delta.tool_call_id is not None and delta.tool_call_id != self.tool_call_id:
-                raise ValueError('Cannot apply a new tool_call_id to a ToolCallPartDelta that already has one')
+                raise UnexpectedModelBehavior(
+                    f'Cannot apply a new tool_call_id to a ToolCallPartDelta that already has one ({delta=}, {self=})'
+                )
             delta = replace(delta, tool_call_id=self.tool_call_id)
 
-        # If we have enough data to create a full ToolCallPart, do so:
+        # If we now have enough data to create a full ToolCallPart, do so
         if delta.tool_name_delta is not None and delta.args_delta is not None:
             return ToolCallPart.from_raw_args(
                 delta.tool_name_delta,
@@ -355,49 +412,68 @@ class ToolCallPartDelta:
         return delta
 
     def _apply_to_part(self, part: ToolCallPart) -> ToolCallPart:
+        """Internal helper to apply this delta directly to a `ToolCallPart`."""
         if self.tool_name_delta:
-            # I'm not sure how common it is to have deltas on the tool name, but I've handled it here for completeness
+            # Append incremental text to the existing tool_name
             tool_name = part.tool_name + self.tool_name_delta
             part = replace(part, tool_name=tool_name)
 
         if isinstance(self.args_delta, str):
             if not isinstance(part.args, ArgsJson):
-                raise ValueError('Cannot apply deltas to non-JSON tool arguments')
+                raise UnexpectedModelBehavior(f'Cannot apply JSON deltas to non-JSON tool arguments ({part=}, {self=})')
             updated_json = part.args.args_json + self.args_delta
             part = replace(part, args=ArgsJson(updated_json))
         elif isinstance(self.args_delta, dict):
             if not isinstance(part.args, ArgsDict):
-                raise ValueError('Cannot apply deltas to non-dict tool arguments')
+                raise UnexpectedModelBehavior(f'Cannot apply dict deltas to non-dict tool arguments ({part=}, {self=})')
             updated_dict = {**(part.args.args_dict or {}), **self.args_delta}
             part = replace(part, args=ArgsDict(updated_dict))
 
         if self.tool_call_id:
-            # Don't treat tool_call_id as a delta, just replace it
+            # Replace the tool_call_id entirely if given
             if part.tool_call_id is not None and part.tool_call_id != self.tool_call_id:
-                raise ValueError('Cannot apply a new tool_call_id to a ToolCallPart that already has one')
+                raise UnexpectedModelBehavior(
+                    f'Cannot apply a new tool_call_id to a ToolCallPartDelta that already has one ({part=}, {self=})'
+                )
             part = replace(part, tool_call_id=self.tool_call_id)
         return part
 
 
 ModelResponsePartDelta = Annotated[Union[TextPartDelta, ToolCallPartDelta], pydantic.Discriminator('part_delta_kind')]
+"""A partial update (delta) for any model response part."""
 
 
 @dataclass
 class PartStartEvent:
-    """If multiple PartStartEvents are received with the same index, the new one should fully replace the old one."""
+    """An event indicating that a new part has started.
+
+    If multiple `PartStartEvent`s are received with the same index,
+    the new one should fully replace the old one.
+    """
 
     index: int
+    """The index of the part within the overall response parts list."""
+
     part: ModelResponsePart
+    """The newly started `ModelResponsePart`."""
+
     event_kind: Literal['part_start'] = 'part_start'
+    """Event type identifier, used as a discriminator."""
 
 
 @dataclass
 class PartDeltaEvent:
-    """A part delta event."""
+    """An event indicating a delta update for an existing part."""
 
     index: int
+    """The index of the part within the overall response parts list."""
+
     delta: ModelResponsePartDelta
+    """The delta to apply to the specified part."""
+
     event_kind: Literal['part_delta'] = 'part_delta'
+    """Event type identifier, used as a discriminator."""
 
 
 ModelResponseStreamEvent = Annotated[Union[PartStartEvent, PartDeltaEvent], pydantic.Discriminator('event_kind')]
+"""An event in the model response stream, either starting a new part or applying a delta to an existing one."""

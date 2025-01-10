@@ -1,6 +1,6 @@
 import json
 from dataclasses import dataclass
-from typing import Annotated, Any, Callable, Union
+from typing import Annotated, Any, Callable, Literal, Union
 
 import pydantic_core
 import pytest
@@ -78,9 +78,10 @@ async def get_json_schema(_messages: list[ModelMessage], info: AgentInfo) -> Mod
     return ModelResponse.from_text(pydantic_core.to_json(r).decode())
 
 
-def test_docstring_google(set_event_loop: None):
+@pytest.mark.parametrize('docstring_format', ['google', 'auto'])
+def test_docstring_google(set_event_loop: None, docstring_format: Literal['google', 'auto']):
     agent = Agent(FunctionModel(get_json_schema))
-    agent.tool_plain(google_style_docstring)
+    agent.tool_plain(docstring_format=docstring_format)(google_style_docstring)
 
     result = agent.run_sync('Hello')
     json_schema = json.loads(result.data)
@@ -116,9 +117,10 @@ def sphinx_style_docstring(foo: int, /) -> str:  # pragma: no cover
     return str(foo)
 
 
-def test_docstring_sphinx(set_event_loop: None):
+@pytest.mark.parametrize('docstring_format', ['sphinx', 'auto'])
+def test_docstring_sphinx(set_event_loop: None, docstring_format: Literal['sphinx', 'auto']):
     agent = Agent(FunctionModel(get_json_schema))
-    agent.tool_plain(sphinx_style_docstring)
+    agent.tool_plain(docstring_format=docstring_format)(sphinx_style_docstring)
 
     result = agent.run_sync('Hello')
     json_schema = json.loads(result.data)
@@ -150,9 +152,10 @@ def numpy_style_docstring(*, foo: int, bar: str) -> str:  # pragma: no cover
     return f'{foo} {bar}'
 
 
-def test_docstring_numpy(set_event_loop: None):
+@pytest.mark.parametrize('docstring_format', ['numpy', 'auto'])
+def test_docstring_numpy(set_event_loop: None, docstring_format: Literal['numpy', 'auto']):
     agent = Agent(FunctionModel(get_json_schema))
-    agent.tool_plain(numpy_style_docstring)
+    agent.tool_plain(docstring_format=docstring_format)(numpy_style_docstring)
 
     result = agent.run_sync('Hello')
     json_schema = json.loads(result.data)
@@ -209,9 +212,10 @@ async def google_style_docstring_no_body(
 # fmt: on
 
 
-def test_docstring_google_no_body(set_event_loop: None):
+@pytest.mark.parametrize('docstring_format', ['google', 'auto'])
+def test_docstring_google_no_body(set_event_loop: None, docstring_format: Literal['google', 'auto']):
     agent = Agent(FunctionModel(get_json_schema))
-    agent.tool_plain(google_style_docstring_no_body)
+    agent.tool_plain(docstring_format=docstring_format)(google_style_docstring_no_body)
 
     result = agent.run_sync('')
     json_schema = json.loads(result.data)
@@ -566,3 +570,24 @@ def test_suppress_griffe_logging(set_event_loop: None, caplog: LogCaptureFixture
     # Without suppressing griffe logging, we get:
     # assert caplog.messages == snapshot(['<module>:4: No type or annotation for returned value 1'])
     assert caplog.messages == snapshot([])
+
+
+async def missing_parameter_descriptions_docstring(foo: int, bar: str) -> str:  # pragma: no cover
+    """Describes function ops, but missing parameter descriptions."""
+    return f'{foo} {bar}'
+
+
+def test_enforce_parameter_descriptions() -> None:
+    agent = Agent(FunctionModel(get_json_schema))
+
+    with pytest.raises(UserError) as exc_info:
+        agent.tool_plain(require_parameter_descriptions=True)(missing_parameter_descriptions_docstring)
+
+    error_reason = exc_info.value.args[0]
+    error_parts = [
+        'Error generating schema for missing_parameter_descriptions_docstring',
+        'Missing parameter descriptions for ',
+        'foo',
+        'bar',
+    ]
+    assert all(err_part in error_reason for err_part in error_parts)

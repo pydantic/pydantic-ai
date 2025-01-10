@@ -218,10 +218,16 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
                 Debouncing is particularly important for long structured responses to reduce the overhead of
                 performing validation as each token is received.
         """
+        if self._result_schema and not self._result_schema.allow_text_result:
+            raise exceptions.UserError('stream_text() can only be used with text responses')
+
         usage_checking_stream = _get_usage_checking_stream_response(
             self._stream_response, self._usage_limits, self.usage
         )
 
+        # Define a "merged" version of the iterator that will yield items that have already been retrieved
+        # and items that we receive while streaming. We define a dedicated async iterator for this so we can
+        # pass the combined stream to the group_by_temporal function within `_stream_text_deltas` below.
         async def _stream_text_deltas_ungrouped() -> AsyncIterator[tuple[str, int]]:
             # if the response currently has any parts with content, yield those before streaming
             msg = self._stream_response.get()

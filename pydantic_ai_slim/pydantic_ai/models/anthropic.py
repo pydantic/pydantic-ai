@@ -10,7 +10,7 @@ from typing import Any, Dict, Literal, Union, cast, overload
 from httpx import AsyncClient as AsyncHTTPClient
 from typing_extensions import assert_never
 
-from .. import UnexpectedModelBehavior, _utils, usage
+from .. import usage
 from .._utils import guard_tool_call_id as _guard_tool_call_id
 from ..messages import (
     ArgsDict,
@@ -239,15 +239,22 @@ class AnthropicAgentModel(AgentModel):
 
     @staticmethod
     async def _process_streamed_response(response: AsyncStream[RawMessageStreamEvent]) -> StreamedResponse:
-        """Process a streamed response, and prepare a streaming response to return."""
-        peekable_response = _utils.PeekableAsyncStream(response)
-        first_chunk = await peekable_response.peek()
-        if isinstance(first_chunk, _utils.Unset):
-            raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')
+        """TODO: Process a streamed response, and prepare a streaming response to return."""
+        # We don't yet support streamed responses from Anthropic, so we raise an error here for now.
+        # Streamed responses will be supported in a future release.
 
-        # Since Anthropic doesn't provide a timestamp in the message, we'll use the current time
-        timestamp = datetime.now(tz=timezone.utc)
-        return AnthropicStreamedResponse(peekable_response, timestamp)
+        raise RuntimeError('Streamed responses are not yet supported for Anthropic models.')
+
+        # Should be returning some sort of AnthropicStreamTextResponse or AnthropicStreamedResponse
+        # depending on the type of chunk we get, but we need to establish how we handle (and when we get) the following:
+        # RawMessageStartEvent
+        # RawMessageDeltaEvent
+        # RawMessageStopEvent
+        # RawContentBlockStartEvent
+        # RawContentBlockDeltaEvent
+        # RawContentBlockDeltaEvent
+        #
+        # We might refactor streaming internally before we implement this...
 
     @staticmethod
     def _map_message(messages: list[ModelMessage]) -> tuple[str, list[MessageParam]]:

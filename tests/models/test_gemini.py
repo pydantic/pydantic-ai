@@ -768,9 +768,9 @@ async def test_stream_text_heterogeneous(get_gemini_client: GetGeminiClient):
     agent = Agent(m)
 
     async with agent.run_stream('Hello') as result:
-        # msg = 'Streamed response with unexpected content, expected all parts to be text'
-        # with pytest.raises(UnexpectedModelBehavior, match=msg):
-        await result.get_data()
+        data = await result.get_data()
+
+    assert data == 'Hello foo'
 
 
 async def test_empty_text_ignored():

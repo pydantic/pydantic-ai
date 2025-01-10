@@ -17,6 +17,7 @@ from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
     RetryPromptPart,
+    TextPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
@@ -172,11 +173,39 @@ async def test_streamed_text_stream():
             ['The ', 'cat ', 'sat ', 'on ', 'the ', 'mat.']
         )
 
-    # TODO: Can we remove the following check now?
-    # async with agent.run_stream('Hello') as result:
-    #     with pytest.raises(UserError, match=r'stream_structured\(\) can only be used with structured responses'):
-    #         async for _ in result.stream_structured():
-    #             pass
+    async with agent.run_stream('Hello') as result:
+        assert [c async for c, _is_last in result.stream_structured(debounce_by=None)] == snapshot(
+            [
+                ModelResponse(
+                    parts=[TextPart(content='The ')],
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='The cat ')],
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='The cat sat ')],
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='The cat sat on ')],
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='The cat sat on the ')],
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='The cat sat on the mat.')],
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='The cat sat on the mat.')],
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
+            ]
+        )
 
 
 async def test_plain_response():
@@ -193,7 +222,7 @@ async def test_plain_response():
 
     with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum retries \(1\) for result validation'):
         async with agent.run_stream(''):
-            pass
+            pass  # pragma: no cover
 
     assert call_index == 2
 
@@ -286,7 +315,7 @@ async def test_call_tool_empty():
 
     with pytest.raises(UnexpectedModelBehavior, match='Received empty model response'):
         async with agent.run_stream('hello'):
-            pass
+            pass  # pragma: no cover
 
 
 async def test_call_tool_wrong_name():
@@ -302,7 +331,8 @@ async def test_call_tool_wrong_name():
     with capture_run_messages() as messages:
         with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum retries \(1\) for result validation'):
             async with agent.run_stream('hello'):
-                pass
+                pass  # pragma: no cover
+
     assert messages == snapshot(
         [
             ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),

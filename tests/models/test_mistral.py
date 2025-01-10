@@ -171,23 +171,6 @@ def func_chunk(
     return chunk([MistralDeltaMessage(tool_calls=tool_calls, role='assistant')], finish_reason=finish_reason)
 
 
-def struc_chunk(
-    tool_name: str,
-    tool_arguments: str,
-    finish_reason: MistralCompletionResponseStreamChoiceFinishReason | None = None,
-) -> MistralCompletionEvent:
-    return chunk(
-        [
-            MistralDeltaMessage(
-                tool_calls=[
-                    MistralToolCall(id='0', function=MistralFunctionCall(name=tool_name, arguments=tool_arguments))
-                ]
-            ),
-        ],
-        finish_reason=finish_reason,
-    )
-
-
 #####################
 ## Init
 #####################

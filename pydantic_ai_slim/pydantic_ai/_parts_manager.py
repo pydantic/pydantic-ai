@@ -7,7 +7,8 @@ and produces PydanticAI-format events as appropriate for consumers of the stream
 The "vendor-specific identifiers" to use depend on the semantics of the responses of the responses from the vendor,
 and are tightly coupled to the specific model being used, and the PydanticAI Model subclass implementation.
 
-This `PartsManager` is used in each of the subclasses of StreamedResponse as a way to consolidate event-emitting logic.
+This `ModelResponsePartsManager` is used in each of the subclasses of `StreamedResponse` as a way to consolidate
+event-emitting logic.
 """
 
 from __future__ import annotations as _annotations
@@ -160,19 +161,12 @@ class ModelResponsePartsManager:
 
         if vendor_part_id is None:
             # vendor_part_id is None, so check if the latest part is a matching tool call or delta to update
-            if self._parts:
+            # When the vendor_part_id is None, if the tool_name is _not_ None, assume this should be a new part rather
+            # than a delta on an existing one. We can change this behavior in the future if necessary for some model.
+            if tool_name is None and self._parts:
                 latest_part = self._parts[-1]
                 part_index = len(self._parts) - 1
-                if (
-                    isinstance(latest_part, ToolCallPart) and (tool_name is None or latest_part.tool_name == tool_name)
-                ) or (
-                    isinstance(latest_part, ToolCallPartDelta)
-                    and (
-                        tool_name is None
-                        or latest_part.tool_name_delta is None
-                        or latest_part.tool_name_delta == tool_name
-                    )
-                ):
+                if isinstance(latest_part, (ToolCallPart, ToolCallPartDelta)):
                     existing_matching_part_and_index = latest_part, part_index
         else:
             # vendor_part_id is provided, so look up the corresponding part or delta
