@@ -593,13 +593,13 @@ name = "diff-cover"
 version = "9.2.0"
 source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
-    "python_full_version < '3.9.17'",
+    "python_full_version < '3.10'",
 ]
 dependencies = [
-    { name = "chardet", marker = "python_full_version < '3.9.17'" },
-    { name = "jinja2", marker = "python_full_version < '3.9.17'" },
-    { name = "pluggy", marker = "python_full_version < '3.9.17'" },
-    { name = "pygments", marker = "python_full_version < '3.9.17'" },
+    { name = "chardet", marker = "python_full_version < '3.10'" },
+    { name = "jinja2", marker = "python_full_version < '3.10'" },
+    { name = "pluggy", marker = "python_full_version < '3.10'" },
+    { name = "pygments", marker = "python_full_version < '3.10'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/44/3a/e49ccba052a4dda264fbad4f467739ecc63498f7223bfc03d4bfac23ea95/diff_cover-9.2.0.tar.gz", hash = "sha256:85a0b353ebbb678f9e87ea303f75b545bd0baca38f563219bb72f2ae862bba36", size = 94857 }
 wheels = [
@@ -611,15 +611,16 @@ name = "diff-cover"
 version = "9.2.1"
 source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
-    "python_full_version >= '3.9.17' and python_full_version < '3.11'",
-    "python_full_version >= '3.11' and python_full_version < '3.13'",
+    "python_full_version == '3.10.*'",
+    "python_full_version == '3.12.*'",
+    "python_full_version == '3.11.*'",
     "python_full_version >= '3.13'",
 ]
 dependencies = [
-    { name = "chardet", marker = "python_full_version >= '3.9.17'" },
-    { name = "jinja2", marker = "python_full_version >= '3.9.17'" },
-    { name = "pluggy", marker = "python_full_version >= '3.9.17'" },
-    { name = "pygments", marker = "python_full_version >= '3.9.17'" },
+    { name = "chardet", marker = "python_full_version >= '3.10'" },
+    { name = "jinja2", marker = "python_full_version >= '3.10'" },
+    { name = "pluggy", marker = "python_full_version >= '3.10'" },
+    { name = "pygments", marker = "python_full_version >= '3.10'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/36/b0/f3ccf97926f6e5cc76d5ece42f3c685d75673d1886fcec62886b8b00c51a/diff_cover-9.2.1.tar.gz", hash = "sha256:5fa5b2d71ccf5d16cd222a71c2ca069d9bf5fa3d657f6fac9b4d9c23379323bf", size = 94964 }
 wheels = [
@@ -922,7 +923,7 @@ wheels = [
 
 [[package]]
 name = "inline-snapshot"
-version = "0.14.0"
+version = "0.15.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "asttokens" },
@@ -933,9 +934,9 @@ dependencies = [
     { name = "tomli", marker = "python_full_version < '3.11'" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/45/a9/b6b9db4f2ef1e3261460701a429f8248e517cb8d18e27ff05f4690ac0a73/inline_snapshot-0.14.0.tar.gz", hash = "sha256:54fdf7831055d06a2423054875d640102865a164cc8291a8086e44dd9b4fd316", size = 209662 }
+sdist = { url = "https://files.pythonhosted.org/packages/76/7c/d6a61e2c21ad07ee50e3eb84fa1bccaaa862d660ba51dbc9ad4b2092d29b/inline_snapshot-0.15.0.tar.gz", hash = "sha256:d0be974774acd1d18c1a922a6f2904ac4fce87d9996cc38595d4b35ae0f59a15", size = 231796 }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/5e/a3/8ca14974625632d56d7e9f899d76d15dc4acd94ec15c179ca528beadeb4a/inline_snapshot-0.14.0-py3-none-any.whl", hash = "sha256:dc246d28b720f6050404b72cc1d171b0671e1494249197753d23771ff228748c", size = 31807 },
+    { url = "https://files.pythonhosted.org/packages/d7/22/278c367ededfce8e0ada244e6614caac0bacc85c8eb610a381cb7ca2ba67/inline_snapshot-0.15.0-py3-none-any.whl", hash = "sha256:5279b81410f06e537f9c0d799314f9703c1b43e4ed26794c9422bf011bae46d0", size = 40501 },
 ]
 
 [[package]]
@@ -2133,8 +2134,8 @@ dev = [
     { name = "anyio" },
     { name = "coverage", extra = ["toml"] },
     { name = "devtools" },
-    { name = "diff-cover", version = "9.2.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.9.17'" },
-    { name = "diff-cover", version = "9.2.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.9.17'" },
+    { name = "diff-cover", version = "9.2.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.10'" },
+    { name = "diff-cover", version = "9.2.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.10'" },
     { name = "dirty-equals" },
     { name = "inline-snapshot" },
     { name = "pytest" },
