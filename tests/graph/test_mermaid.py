@@ -61,7 +61,7 @@ class Spam(BaseNode):
     """This is the docstring for Spam."""
 
     async def run(self, ctx: GraphContext) -> Annotated[Foo, Edge(label='spam to foo')]:
-        return Foo()
+        raise NotImplementedError()
 
 
 @dataclass
@@ -71,7 +71,7 @@ class Eggs(BaseNode[None, None]):
     enable_docstring_notes = False
 
     async def run(self, ctx: GraphContext) -> Annotated[End[None], Edge(label='eggs to end')]:
-        return End(None)
+        raise NotImplementedError()
 
 
 graph2 = Graph(nodes=(Spam, Foo, Bar, Eggs))
@@ -179,7 +179,7 @@ stateDiagram-v2
 @dataclass
 class AllNodes(BaseNode):
     async def run(self, ctx: GraphContext) -> BaseNode:
-        return Foo()
+        raise NotImplementedError()
 
 
 graph3 = Graph(nodes=(AllNodes, Foo, Bar))
