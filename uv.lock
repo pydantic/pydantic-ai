@@ -594,13 +594,13 @@ name = "diff-cover"
 version = "9.2.0"
 source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
-    "python_full_version < '3.9.17'",
+    "python_full_version < '3.10'",
 ]
 dependencies = [
-    { name = "chardet", marker = "python_full_version < '3.9.17'" },
-    { name = "jinja2", marker = "python_full_version < '3.9.17'" },
-    { name = "pluggy", marker = "python_full_version < '3.9.17'" },
-    { name = "pygments", marker = "python_full_version < '3.9.17'" },
+    { name = "chardet", marker = "python_full_version < '3.10'" },
+    { name = "jinja2", marker = "python_full_version < '3.10'" },
+    { name = "pluggy", marker = "python_full_version < '3.10'" },
+    { name = "pygments", marker = "python_full_version < '3.10'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/44/3a/e49ccba052a4dda264fbad4f467739ecc63498f7223bfc03d4bfac23ea95/diff_cover-9.2.0.tar.gz", hash = "sha256:85a0b353ebbb678f9e87ea303f75b545bd0baca38f563219bb72f2ae862bba36", size = 94857 }
 wheels = [
@@ -612,15 +612,16 @@ name = "diff-cover"
 version = "9.2.1"
 source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
-    "python_full_version >= '3.9.17' and python_full_version < '3.11'",
-    "python_full_version >= '3.11' and python_full_version < '3.13'",
+    "python_full_version == '3.10.*'",
+    "python_full_version == '3.12.*'",
+    "python_full_version == '3.11.*'",
     "python_full_version >= '3.13'",
 ]
 dependencies = [
-    { name = "chardet", marker = "python_full_version >= '3.9.17'" },
-    { name = "jinja2", marker = "python_full_version >= '3.9.17'" },
-    { name = "pluggy", marker = "python_full_version >= '3.9.17'" },
-    { name = "pygments", marker = "python_full_version >= '3.9.17'" },
+    { name = "chardet", marker = "python_full_version >= '3.10'" },
+    { name = "jinja2", marker = "python_full_version >= '3.10'" },
+    { name = "pluggy", marker = "python_full_version >= '3.10'" },
+    { name = "pygments", marker = "python_full_version >= '3.10'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/36/b0/f3ccf97926f6e5cc76d5ece42f3c685d75673d1886fcec62886b8b00c51a/diff_cover-9.2.1.tar.gz", hash = "sha256:5fa5b2d71ccf5d16cd222a71c2ca069d9bf5fa3d657f6fac9b4d9c23379323bf", size = 94964 }
 wheels = [
@@ -2137,8 +2138,8 @@ dev = [
     { name = "anyio" },
     { name = "coverage", extra = ["toml"] },
     { name = "devtools" },
-    { name = "diff-cover", version = "9.2.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.9.17'" },
-    { name = "diff-cover", version = "9.2.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.9.17'" },
+    { name = "diff-cover", version = "9.2.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.10'" },
+    { name = "diff-cover", version = "9.2.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.10'" },
     { name = "dirty-equals" },
     { name = "inline-snapshot" },
     { name = "pytest" },
@@ -2276,29 +2277,27 @@ wheels = [
 ]
 
 [[package]]
-name = "pydub"
-version = "0.25.1"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/fe/9a/e6bca0eed82db26562c73b5076539a4a08d3cffd19c3cc5913a3e61145fd/pydub-0.25.1.tar.gz", hash = "sha256:980a33ce9949cab2a569606b65674d748ecbca4f0796887fd6f46173a7b0d30f", size = 38326 }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/a6/53/d78dc063216e62fc55f6b2eebb447f6a4b0a59f55c8406376f76bf959b08/pydub-0.25.1-py2.py3-none-any.whl", hash = "sha256:65617e33033874b59d87db603aa1ed450633288aefead953b30bded59cb599a6", size = 32327 },
-]
-
-[[package]]
 name = "pydantic-graph"
-version = "0.0.17"
+version = "0.0.18"
 source = { editable = "pydantic_graph" }
 dependencies = [
     { name = "httpx" },
     { name = "logfire-api" },
-    { name = "pydantic" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "httpx", specifier = ">=0.27.2" },
     { name = "logfire-api", specifier = ">=1.2.0" },
-    { name = "pydantic", specifier = ">=2.10" },
+]
+
+[[package]]
+name = "pydub"
+version = "0.25.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/fe/9a/e6bca0eed82db26562c73b5076539a4a08d3cffd19c3cc5913a3e61145fd/pydub-0.25.1.tar.gz", hash = "sha256:980a33ce9949cab2a569606b65674d748ecbca4f0796887fd6f46173a7b0d30f", size = 38326 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a6/53/d78dc063216e62fc55f6b2eebb447f6a4b0a59f55c8406376f76bf959b08/pydub-0.25.1-py2.py3-none-any.whl", hash = "sha256:65617e33033874b59d87db603aa1ed450633288aefead953b30bded59cb599a6", size = 32327 },
 ]
 
 [[package]]

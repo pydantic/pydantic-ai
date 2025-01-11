@@ -18,10 +18,8 @@ if TYPE_CHECKING:
 
 
 __all__ = 'NodeIdent', 'DEFAULT_HIGHLIGHT_CSS', 'generate_code', 'MermaidConfig', 'request_image', 'save_image'
-
-
-NodeIdent: TypeAlias = 'type[BaseNode[Any, Any]] | BaseNode[Any, Any] | str'
 DEFAULT_HIGHLIGHT_CSS = 'fill:#fdff32'
+"""The default CSS to use for highlighting nodes."""
 
 
 def generate_code(  # noqa: C901
@@ -46,7 +44,8 @@ def generate_code(  # noqa: C901
         edge_labels: Whether to include edge labels in the diagram.
         notes: Whether to include notes in the diagram.
 
-    Returns: The Mermaid code for the graph.
+    Returns:
+        The Mermaid code for the graph.
     """
     start_node_ids = set(_node_ids(start_node or ()))
     for node_id in start_node_ids:
@@ -108,53 +107,6 @@ def _node_ids(node_idents: Sequence[NodeIdent] | NodeIdent) -> Iterable[str]:
             yield node
         else:
             yield node.get_id()
-
-
-class MermaidConfig(TypedDict, total=False):
-    """Parameters to configure mermaid chart generation."""
-
-    start_node: Sequence[NodeIdent] | NodeIdent
-    """Identifiers of nodes that start the graph."""
-    highlighted_nodes: Sequence[NodeIdent] | NodeIdent
-    """Identifiers of nodes to highlight."""
-    highlight_css: str
-    """CSS to use for highlighting nodes."""
-    title: str | None
-    """The title of the diagram."""
-    edge_labels: bool
-    """Whether to include edge labels in the diagram."""
-    notes: bool
-    """Whether to include notes on nodes in the diagram, defaults to true."""
-    image_type: Literal['jpeg', 'png', 'webp', 'svg', 'pdf']
-    """The image type to generate. If unspecified, the default behavior is `'jpeg'`."""
-    pdf_fit: bool
-    """When using image_type='pdf', whether to fit the diagram to the PDF page."""
-    pdf_landscape: bool
-    """When using image_type='pdf', whether to use landscape orientation for the PDF.
-
-    This has no effect if using `pdf_fit`.
-    """
-    pdf_paper: Literal['letter', 'legal', 'tabloid', 'ledger', 'a0', 'a1', 'a2', 'a3', 'a4', 'a5', 'a6']
-    """When using image_type='pdf', the paper size of the PDF."""
-    background_color: str
-    """The background color of the diagram.
-
-    If None, the default transparent background is used. The color value is interpreted as a hexadecimal color
-    code by default (and should not have a leading '#'), but you can also use named colors by prefixing the
-    value with `'!'`. For example, valid choices include `background_color='!white'` or `background_color='FF0000'`.
-    """
-    theme: Literal['default', 'neutral', 'dark', 'forest']
-    """The theme of the diagram. Defaults to 'default'."""
-    width: int
-    """The width of the diagram."""
-    height: int
-    """The height of the diagram."""
-    scale: Annotated[float, Ge(1), Le(3)]
-    """The scale of the diagram.
-
-    The scale must be a number between 1 and 3, and you can only set a scale if one or both of width and height are set.
-    """
-    httpx_client: httpx.Client
 
 
 def request_image(
@@ -244,3 +196,62 @@ def save_image(
 
     image_data = request_image(graph, **kwargs)
     path.write_bytes(image_data)
+
+
+class MermaidConfig(TypedDict, total=False):
+    """Parameters to configure mermaid chart generation."""
+
+    start_node: Sequence[NodeIdent] | NodeIdent
+    """Identifiers of nodes that start the graph."""
+    highlighted_nodes: Sequence[NodeIdent] | NodeIdent
+    """Identifiers of nodes to highlight."""
+    highlight_css: str
+    """CSS to use for highlighting nodes."""
+    title: str | None
+    """The title of the diagram."""
+    edge_labels: bool
+    """Whether to include edge labels in the diagram."""
+    notes: bool
+    """Whether to include notes on nodes in the diagram, defaults to true."""
+    image_type: Literal['jpeg', 'png', 'webp', 'svg', 'pdf']
+    """The image type to generate. If unspecified, the default behavior is `'jpeg'`."""
+    pdf_fit: bool
+    """When using image_type='pdf', whether to fit the diagram to the PDF page."""
+    pdf_landscape: bool
+    """When using image_type='pdf', whether to use landscape orientation for the PDF.
+
+    This has no effect if using `pdf_fit`.
+    """
+    pdf_paper: Literal['letter', 'legal', 'tabloid', 'ledger', 'a0', 'a1', 'a2', 'a3', 'a4', 'a5', 'a6']
+    """When using image_type='pdf', the paper size of the PDF."""
+    background_color: str
+    """The background color of the diagram.
+
+    If None, the default transparent background is used. The color value is interpreted as a hexadecimal color
+    code by default (and should not have a leading '#'), but you can also use named colors by prefixing the
+    value with `'!'`. For example, valid choices include `background_color='!white'` or `background_color='FF0000'`.
+    """
+    theme: Literal['default', 'neutral', 'dark', 'forest']
+    """The theme of the diagram. Defaults to 'default'."""
+    width: int
+    """The width of the diagram."""
+    height: int
+    """The height of the diagram."""
+    scale: Annotated[float, Ge(1), Le(3)]
+    """The scale of the diagram.
+
+    The scale must be a number between 1 and 3, and you can only set a scale if one or both of width and height are set.
+    """
+    httpx_client: httpx.Client
+    """An HTTPX client to use for requests, mostly for testing purposes."""
+
+
+NodeIdent: TypeAlias = 'type[BaseNode[Any, Any]] | BaseNode[Any, Any] | str'
+"""A type alias for a node identifier.
+
+This can be:
+
+- A node instance (instance of a subclass of [`BaseNode`][pydantic_graph.nodes.BaseNode]).
+- A node class (subclass of [`BaseNode`][pydantic_graph.nodes.BaseNode]).
+- A string representing the node ID.
+"""

@@ -14,7 +14,7 @@ from typing_extensions import Literal, Never, ParamSpec, TypeVar, Unpack, assert
 from . import _utils, exceptions, mermaid
 from ._utils import get_parent_namespace
 from .nodes import BaseNode, End, GraphContext, NodeDef
-from .state import EndEvent, HistoryStep, NodeEvent, StateT
+from .state import EndStep, HistoryStep, NodeStep, StateT
 
 __all__ = ('Graph',)
 
@@ -36,9 +36,16 @@ class Graph(Generic[StateT, RunEndT]):
         self,
         *,
         nodes: Sequence[type[BaseNode[StateT, RunEndT]]],
-        state_type: type[StateT] | None = None,
         name: str | None = None,
     ):
+        """Create a graph from a sequence of nodes.
+
+        Args:
+            nodes: The nodes which make up the graph, nodes need to be unique and all be generic in the same
+                state type.
+            name: Optional name for the graph, if not provided the name will be inferred from the calling frame
+                on the first call to a graph method.
+        """
         self.name = name
 
         parent_namespace = get_parent_namespace(inspect.currentframe())
@@ -47,6 +54,169 @@ class Graph(Generic[StateT, RunEndT]):
             self._register_node(node, parent_namespace)
 
         self._validate_edges()
+
+    async def next(
+        self,
+        state: StateT,
+        node: BaseNode[StateT, RunEndT],
+        history: list[HistoryStep[StateT, RunEndT]],
+        *,
+        infer_name: bool = True,
+    ) -> BaseNode[StateT, Any] | End[RunEndT]:
+        """Run a node in the graph and return the next node to run.
+
+        Args:
+            state: The current state of the graph.
+            node: The node to run.
+            history: The history of the graph run so far. NOTE: this will be mutated to add the new step.
+            infer_name: Whether to infer the graph name from the calling frame.
+
+        Returns:
+            The next node to run or [`End`][pydantic_graph.nodes.End] if the graph has finished.
+        """
+        if infer_name and self.name is None:
+            self._infer_name(inspect.currentframe())
+        node_id = node.get_id()
+        if node_id not in self.node_defs:
+            raise exceptions.GraphRuntimeError(f'Node `{node}` is not in the graph.')
+
+        history_step: NodeStep[StateT, RunEndT] | None = NodeStep(state, node)
+        history.append(history_step)
+
+        ctx = GraphContext(state)
+        with _logfire.span('run node {node_id}', node_id=node_id, node=node):
+            start = perf_counter()
+            next_node = await node.run(ctx)
+            history_step.duration = perf_counter() - start
+        return next_node
+
+    async def run(
+        self,
+        state: StateT,
+        start_node: BaseNode[StateT, RunEndT],
+        *,
+        infer_name: bool = True,
+    ) -> tuple[RunEndT, list[HistoryStep[StateT, RunEndT]]]:
+        """Run the graph from a starting node until it ends.
+
+        Args:
+            state: The initial state of the graph.
+            start_node: the first node to run.
+            infer_name: Whether to infer the graph name from the calling frame.
+
+        Returns: The result type from ending the run and the history of the run.
+        """
+        history: list[HistoryStep[StateT, RunEndT]] = []
+        if infer_name and self.name is None:
+            self._infer_name(inspect.currentframe())
+
+        with _logfire.span(
+            '{graph_name} run {start=}',
+            graph_name=self.name or 'graph',
+            start=start_node,
+        ) as run_span:
+            while True:
+                next_node = await self.next(state, start_node, history, infer_name=False)
+                if isinstance(next_node, End):
+                    history.append(EndStep(state, next_node))
+                    run_span.set_attribute('history', history)
+                    return next_node.data, history
+                elif isinstance(next_node, BaseNode):
+                    start_node = next_node
+                else:
+                    if TYPE_CHECKING:
+                        assert_never(next_node)
+                    else:
+                        raise exceptions.GraphRuntimeError(
+                            f'Invalid node return type: `{type(next_node).__name__}`. Expected `BaseNode` or `End`.'
+                        )
+
+    def mermaid_code(
+        self,
+        *,
+        start_node: Sequence[mermaid.NodeIdent] | mermaid.NodeIdent | None = None,
+        title: str | None | Literal[False] = None,
+        edge_labels: bool = True,
+        notes: bool = True,
+        highlighted_nodes: Sequence[mermaid.NodeIdent] | mermaid.NodeIdent | None = None,
+        highlight_css: str = mermaid.DEFAULT_HIGHLIGHT_CSS,
+        infer_name: bool = True,
+    ) -> str:
+        """Generate a diagram representing the graph as [mermaid](https://mermaid.js.org/) chart.
+
+        This method calls [`pydantic_graph.mermaid.generate_code`][pydantic_graph.mermaid.generate_code].
+
+        Args:
+            start_node: The node or nodes to start the graph from.
+            title: The title of the diagram, use `False` to not include a title.
+            edge_labels: Whether to include edge labels.
+            notes: Whether to include notes on each node.
+            highlighted_nodes: Optional node or nodes to highlight.
+            highlight_css: The CSS to use for highlighting nodes.
+            infer_name: Whether to infer the graph name from the calling frame.
+
+        Returns:
+            The mermaid code for the graph, which can then be rendered as a diagram.
+        """
+        if infer_name and self.name is None:
+            self._infer_name(inspect.currentframe())
+        if title is None and self.name:
+            title = self.name
+        return mermaid.generate_code(
+            self,
+            start_node=start_node,
+            highlighted_nodes=highlighted_nodes,
+            highlight_css=highlight_css,
+            title=title or None,
+            edge_labels=edge_labels,
+            notes=notes,
+        )
+
+    def mermaid_image(self, infer_name: bool = True, **kwargs: Unpack[mermaid.MermaidConfig]) -> bytes:
+        """Generate a diagram representing the graph as an image.
+
+        The format and diagram can be customized using `kwargs`,
+        see [`pydantic_graph.mermaid.MermaidConfig`][pydantic_graph.mermaid.MermaidConfig].
+
+        !!! note "Uses external service"
+            This method makes a request to [mermaid.ink](https://mermaid.ink) to render the image, `mermaid.ink`
+            is a free service not affiliated with Pydantic.
+
+        Args:
+            infer_name: Whether to infer the graph name from the calling frame.
+            **kwargs: Additional arguments to pass to `mermaid.request_image`.
+
+        Returns:
+            The image bytes.
+        """
+        if infer_name and self.name is None:
+            self._infer_name(inspect.currentframe())
+        if 'title' not in kwargs and self.name:
+            kwargs['title'] = self.name
+        return mermaid.request_image(self, **kwargs)
+
+    def mermaid_save(
+        self, path: Path | str, /, *, infer_name: bool = True, **kwargs: Unpack[mermaid.MermaidConfig]
+    ) -> None:
+        """Generate a diagram representing the graph and save it as an image.
+
+        The format and diagram can be customized using `kwargs`,
+        see [`pydantic_graph.mermaid.MermaidConfig`][pydantic_graph.mermaid.MermaidConfig].
+
+        !!! note "Uses external service"
+            This method makes a request to [mermaid.ink](https://mermaid.ink) to render the image, `mermaid.ink`
+            is a free service not affiliated with Pydantic.
+
+        Args:
+            path: The path to save the image to.
+            infer_name: Whether to infer the graph name from the calling frame.
+            **kwargs: Additional arguments to pass to `mermaid.save_image`.
+        """
+        if infer_name and self.name is None:
+            self._infer_name(inspect.currentframe())
+        if 'title' not in kwargs and self.name:
+            kwargs['title'] = self.name
+        mermaid.save_image(path, self, **kwargs)
 
     def _register_node(self, node: type[BaseNode[StateT, RunEndT]], parent_namespace: dict[str, Any] | None) -> None:
         node_id = node.get_id()
@@ -75,103 +245,6 @@ class Graph(Generic[StateT, RunEndT]):
                 raise exceptions.GraphSetupError(
                     f'Nodes are referenced in the graph but not included in the graph:\n{b}'
                 )
-
-    async def next(
-        self,
-        state: StateT,
-        node: BaseNode[StateT, RunEndT],
-        history: list[HistoryStep[StateT, RunEndT]],
-        *,
-        infer_name: bool = True,
-    ) -> BaseNode[StateT, Any] | End[RunEndT]:
-        if infer_name and self.name is None:
-            self._infer_name(inspect.currentframe())
-        node_id = node.get_id()
-        if node_id not in self.node_defs:
-            raise exceptions.GraphRuntimeError(f'Node `{node}` is not in the graph.')
-
-        history_step: NodeEvent[StateT, RunEndT] | None = NodeEvent(state, node)
-        history.append(history_step)
-
-        ctx = GraphContext(state)
-        with _logfire.span('run node {node_id}', node_id=node_id, node=node):
-            start = perf_counter()
-            next_node = await node.run(ctx)
-            history_step.duration = perf_counter() - start
-        return next_node
-
-    async def run(
-        self,
-        state: StateT,
-        start_node: BaseNode[StateT, RunEndT],
-        *,
-        infer_name: bool = True,
-    ) -> tuple[RunEndT, list[HistoryStep[StateT, RunEndT]]]:
-        history: list[HistoryStep[StateT, RunEndT]] = []
-        if infer_name and self.name is None:
-            self._infer_name(inspect.currentframe())
-
-        with _logfire.span(
-            '{graph_name} run {start=}',
-            graph_name=self.name or 'graph',
-            start=start_node,
-        ) as run_span:
-            while True:
-                next_node = await self.next(state, start_node, history, infer_name=False)
-                if isinstance(next_node, End):
-                    history.append(EndEvent(state, next_node))
-                    run_span.set_attribute('history', history)
-                    return next_node.data, history
-                elif isinstance(next_node, BaseNode):
-                    start_node = next_node
-                else:
-                    if TYPE_CHECKING:
-                        assert_never(next_node)
-                    else:
-                        raise exceptions.GraphRuntimeError(
-                            f'Invalid node return type: `{type(next_node).__name__}`. Expected `BaseNode` or `End`.'
-                        )
-
-    def mermaid_code(
-        self,
-        *,
-        start_node: Sequence[mermaid.NodeIdent] | mermaid.NodeIdent | None = None,
-        highlighted_nodes: Sequence[mermaid.NodeIdent] | mermaid.NodeIdent | None = None,
-        highlight_css: str = mermaid.DEFAULT_HIGHLIGHT_CSS,
-        edge_labels: bool = True,
-        title: str | None | Literal[False] = None,
-        notes: bool = True,
-        infer_name: bool = True,
-    ) -> str:
-        if infer_name and self.name is None:
-            self._infer_name(inspect.currentframe())
-        if title is None and self.name:
-            title = self.name
-        return mermaid.generate_code(
-            self,
-            start_node=start_node,
-            highlighted_nodes=highlighted_nodes,
-            highlight_css=highlight_css,
-            title=title or None,
-            edge_labels=edge_labels,
-            notes=notes,
-        )
-
-    def mermaid_image(self, infer_name: bool = True, **kwargs: Unpack[mermaid.MermaidConfig]) -> bytes:
-        if infer_name and self.name is None:
-            self._infer_name(inspect.currentframe())
-        if 'title' not in kwargs and self.name:
-            kwargs['title'] = self.name
-        return mermaid.request_image(self, **kwargs)
-
-    def mermaid_save(
-        self, path: Path | str, /, *, infer_name: bool = True, **kwargs: Unpack[mermaid.MermaidConfig]
-    ) -> None:
-        if infer_name and self.name is None:
-            self._infer_name(inspect.currentframe())
-        if 'title' not in kwargs and self.name:
-            kwargs['title'] = self.name
-        mermaid.save_image(path, self, **kwargs)
 
     def _infer_name(self, function_frame: FrameType | None) -> None:
         """Infer the agent name from the call frame.
