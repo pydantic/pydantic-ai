@@ -24,13 +24,14 @@ NodeIdent: TypeAlias = 'type[BaseNode[Any, Any]] | BaseNode[Any, Any] | str'
 DEFAULT_HIGHLIGHT_CSS = 'fill:#fdff32'
 
 
-def generate_code(
+def generate_code(  # noqa: C901
     graph: Graph[Any, Any],
     /,
     *,
     start_node: Sequence[NodeIdent] | NodeIdent | None = None,
     highlighted_nodes: Sequence[NodeIdent] | NodeIdent | None = None,
     highlight_css: str = DEFAULT_HIGHLIGHT_CSS,
+    title: str | None = None,
     edge_labels: bool = True,
     notes: bool = True,
 ) -> str:
@@ -41,6 +42,7 @@ def generate_code(
         start_node: Identifiers of nodes that start the graph.
         highlighted_nodes: Identifiers of nodes to highlight.
         highlight_css: CSS to use for highlighting nodes.
+        title: The title of the diagram.
         edge_labels: Whether to include edge labels in the diagram.
         notes: Whether to include notes in the diagram.
 
@@ -51,7 +53,10 @@ def generate_code(
         if node_id not in graph.node_defs:
             raise LookupError(f'Start node "{node_id}" is not in the graph.')
 
-    lines = ['stateDiagram-v2']
+    lines: list[str] = []
+    if title:
+        lines = ['---', f'title: {title}', '---']
+    lines.append('stateDiagram-v2')
     for node_id, node_def in graph.node_defs.items():
         # we use round brackets (rounded box) for nodes other than the start and end
         if node_id in start_node_ids:
@@ -114,6 +119,8 @@ class MermaidConfig(TypedDict, total=False):
     """Identifiers of nodes to highlight."""
     highlight_css: str
     """CSS to use for highlighting nodes."""
+    title: str | None
+    """The title of the diagram."""
     edge_labels: bool
     """Whether to include edge labels in the diagram."""
     notes: bool
@@ -168,6 +175,7 @@ def request_image(
         start_node=kwargs.get('start_node'),
         highlighted_nodes=kwargs.get('highlighted_nodes'),
         highlight_css=kwargs.get('highlight_css', DEFAULT_HIGHLIGHT_CSS),
+        title=kwargs.get('title'),
         edge_labels=kwargs.get('edge_labels', True),
         notes=kwargs.get('notes', True),
     )

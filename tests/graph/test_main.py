@@ -3,13 +3,23 @@ from __future__ import annotations as _annotations
 from dataclasses import dataclass
 from datetime import timezone
 from functools import cache
-from typing import Union
+from typing import Never, Union
 
 import pytest
 from dirty_equals import IsStr
 from inline_snapshot import snapshot
 
-from pydantic_graph import BaseNode, End, EndEvent, Graph, GraphContext, GraphRuntimeError, GraphSetupError, NodeEvent
+from pydantic_graph import (
+    BaseNode,
+    End,
+    EndEvent,
+    Graph,
+    GraphContext,
+    GraphRuntimeError,
+    GraphSetupError,
+    HistoryStep,
+    NodeEvent,
+)
 
 from ..conftest import IsFloat, IsNow
 
@@ -41,10 +51,12 @@ async def test_graph():
             else:
                 return End(self.input_data * 2)
 
-    g = Graph[None, int](nodes=(Float2String, String2Length, Double))
-    result, history = await g.run(None, Float2String(3.14))
+    my_graph = Graph[None, int](nodes=(Float2String, String2Length, Double))
+    assert my_graph.name is None
+    result, history = await my_graph.run(None, Float2String(3.14))
     # len('3.14') * 2 == 8
     assert result == 8
+    assert my_graph.name == 'my_graph'
     assert history == snapshot(
         [
             NodeEvent(
@@ -72,7 +84,7 @@ async def test_graph():
             ),
         ]
     )
-    result, history = await g.run(None, Float2String(3.14159))
+    result, history = await my_graph.run(None, Float2String(3.14159))
     # len('3.14159') == 7, 21 * 2 == 42
     assert result == 42
     assert history == snapshot(
@@ -258,3 +270,34 @@ async def test_run_return_other():
         await g.run(None, Foo())
 
     assert exc_info.value.message == snapshot('Invalid node return type: `int`. Expected `BaseNode` or `End`.')
+
+
+async def test_next():
+    @dataclass
+    class Foo(BaseNode):
+        async def run(self, ctx: GraphContext) -> Bar:
+            return Bar()
+
+    @dataclass
+    class Bar(BaseNode):
+        async def run(self, ctx: GraphContext) -> Foo:
+            return Foo()
+
+    g = Graph(nodes=(Foo, Bar))
+    assert g.name is None
+    history: list[HistoryStep[None, Never]] = []
+    n = await g.next(None, Foo(), history)
+    assert n == Bar()
+    assert g.name == 'g'
+    assert history == snapshot([NodeEvent(state=None, node=Foo(), start_ts=IsNow(tz=timezone.utc), duration=IsFloat())])
+
+    assert isinstance(n, Bar)
+    n2 = await g.next(None, n, history)
+    assert n2 == Foo()
+
+    assert history == snapshot(
+        [
+            NodeEvent(state=None, node=Foo(), start_ts=IsNow(tz=timezone.utc), duration=IsFloat()),
+            NodeEvent(state=None, node=Bar(), start_ts=IsNow(tz=timezone.utc), duration=IsFloat()),
+        ]
+    )

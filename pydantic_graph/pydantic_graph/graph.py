@@ -5,10 +5,11 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from time import perf_counter
+from types import FrameType
 from typing import TYPE_CHECKING, Any, Generic
 
 import logfire_api
-from typing_extensions import Never, ParamSpec, TypeVar, Unpack, assert_never
+from typing_extensions import Literal, Never, ParamSpec, TypeVar, Unpack, assert_never
 
 from . import _utils, exceptions, mermaid
 from ._utils import get_parent_namespace
@@ -76,8 +77,15 @@ class Graph(Generic[StateT, RunEndT]):
                 )
 
     async def next(
-        self, state: StateT, node: BaseNode[StateT, RunEndT], history: list[HistoryStep[StateT, RunEndT]]
+        self,
+        state: StateT,
+        node: BaseNode[StateT, RunEndT],
+        history: list[HistoryStep[StateT, RunEndT]],
+        *,
+        infer_name: bool = True,
     ) -> BaseNode[StateT, Any] | End[RunEndT]:
+        if infer_name and self.name is None:
+            self._infer_name(inspect.currentframe())
         node_id = node.get_id()
         if node_id not in self.node_defs:
             raise exceptions.GraphRuntimeError(f'Node `{node}` is not in the graph.')
@@ -96,8 +104,12 @@ class Graph(Generic[StateT, RunEndT]):
         self,
         state: StateT,
         start_node: BaseNode[StateT, RunEndT],
+        *,
+        infer_name: bool = True,
     ) -> tuple[RunEndT, list[HistoryStep[StateT, RunEndT]]]:
         history: list[HistoryStep[StateT, RunEndT]] = []
+        if infer_name and self.name is None:
+            self._infer_name(inspect.currentframe())
 
         with _logfire.span(
             '{graph_name} run {start=}',
@@ -105,7 +117,7 @@ class Graph(Generic[StateT, RunEndT]):
             start=start_node,
         ) as run_span:
             while True:
-                next_node = await self.next(state, start_node, history=history)
+                next_node = await self.next(state, start_node, history, infer_name=False)
                 if isinstance(next_node, End):
                     history.append(EndEvent(state, next_node))
                     run_span.set_attribute('history', history)
@@ -127,19 +139,56 @@ class Graph(Generic[StateT, RunEndT]):
         highlighted_nodes: Sequence[mermaid.NodeIdent] | mermaid.NodeIdent | None = None,
         highlight_css: str = mermaid.DEFAULT_HIGHLIGHT_CSS,
         edge_labels: bool = True,
+        title: str | None | Literal[False] = None,
         notes: bool = True,
+        infer_name: bool = True,
     ) -> str:
+        if infer_name and self.name is None:
+            self._infer_name(inspect.currentframe())
+        if title is None and self.name:
+            title = self.name
         return mermaid.generate_code(
             self,
             start_node=start_node,
             highlighted_nodes=highlighted_nodes,
             highlight_css=highlight_css,
+            title=title or None,
             edge_labels=edge_labels,
             notes=notes,
         )
 
-    def mermaid_image(self, **kwargs: Unpack[mermaid.MermaidConfig]) -> bytes:
+    def mermaid_image(self, infer_name: bool = True, **kwargs: Unpack[mermaid.MermaidConfig]) -> bytes:
+        if infer_name and self.name is None:
+            self._infer_name(inspect.currentframe())
+        if 'title' not in kwargs and self.name:
+            kwargs['title'] = self.name
         return mermaid.request_image(self, **kwargs)
 
-    def mermaid_save(self, path: Path | str, /, **kwargs: Unpack[mermaid.MermaidConfig]) -> None:
+    def mermaid_save(
+        self, path: Path | str, /, *, infer_name: bool = True, **kwargs: Unpack[mermaid.MermaidConfig]
+    ) -> None:
+        if infer_name and self.name is None:
+            self._infer_name(inspect.currentframe())
+        if 'title' not in kwargs and self.name:
+            kwargs['title'] = self.name
         mermaid.save_image(path, self, **kwargs)
+
+    def _infer_name(self, function_frame: FrameType | None) -> None:
+        """Infer the agent name from the call frame.
+
+        Usage should be `self._infer_name(inspect.currentframe())`.
+
+        Copied from `Agent`.
+        """
+        assert self.name is None, 'Name already set'
+        if function_frame is not None and (parent_frame := function_frame.f_back):  # pragma: no branch
+            for name, item in parent_frame.f_locals.items():
+                if item is self:
+                    self.name = name
+                    return
+            if parent_frame.f_locals != parent_frame.f_globals:
+                # if we couldn't find the agent in locals and globals are a different dict, try globals
+                for name, item in parent_frame.f_globals.items():
+                    if item is self:
+                        self.name = name
+                        return
