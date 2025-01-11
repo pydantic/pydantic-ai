@@ -48,7 +48,7 @@ pytestmark = pytest.mark.skipif(VertexAIModel is None or logfire is None, reason
 
 
 def find_filter_examples() -> Iterable[CodeExample]:
-    for ex in find_examples('docs', 'pydantic_ai_slim'):
+    for ex in find_examples('docs', 'pydantic_ai_slim', 'pydantic_graph'):
         if ex.path.name != '_utils.py':
             yield ex
 

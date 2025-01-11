@@ -1,16 +1,15 @@
 from __future__ import annotations as _annotations
 
 import copy
-from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
+from dataclasses import InitVar, dataclass, field
 from datetime import datetime
-from typing import TYPE_CHECKING, Generic, Literal, Union
+from typing import TYPE_CHECKING, Callable, Generic, Literal, Union
 
-from typing_extensions import Self, TypeVar
+from typing_extensions import TypeVar
 
 from . import _utils
 
-__all__ = 'AbstractState', 'StateT', 'NodeStep', 'EndStep', 'HistoryStep'
+__all__ = 'StateT', 'NodeStep', 'EndStep', 'HistoryStep', 'deep_copy_state'
 
 if TYPE_CHECKING:
     from .nodes import BaseNode, End, RunEndT
@@ -18,21 +17,16 @@ else:
     RunEndT = TypeVar('RunEndT', default=None)
 
 
-class AbstractState(ABC):
-    """Abstract class for a state object."""
-
-    @abstractmethod
-    def serialize(self) -> bytes | None:
-        """Serialize the state object."""
-        raise NotImplementedError
-
-    def deep_copy(self) -> Self:
-        """Create a deep copy of the state object."""
-        return copy.deepcopy(self)
-
-
-StateT = TypeVar('StateT', bound=Union[None, AbstractState], default=None)
+StateT = TypeVar('StateT', default=None)
 """Type variable for the state in a graph."""
+
+
+def deep_copy_state(state: StateT) -> StateT:
+    """Default method for snapshotting the state in a graph run, uses [`copy.deepcopy`][copy.deepcopy]."""
+    if state is None:
+        return state
+    else:
+        return copy.deepcopy(state)
 
 
 @dataclass
@@ -40,7 +34,7 @@ class NodeStep(Generic[StateT, RunEndT]):
     """History step describing the execution of a node in a graph."""
 
     state: StateT
-    """The state of the graph after the node has run."""
+    """The state of the graph before the node is run."""
     node: BaseNode[StateT, RunEndT]
     """The node that was run."""
     start_ts: datetime = field(default_factory=_utils.now_utc)
@@ -49,10 +43,12 @@ class NodeStep(Generic[StateT, RunEndT]):
     """The duration of the node run in seconds."""
     kind: Literal['node'] = 'node'
     """The kind of history step, can be used as a discriminator when deserializing history."""
+    snapshot_state: InitVar[Callable[[StateT], StateT]] = deep_copy_state
+    """Function to snapshot the state of the graph."""
 
-    def __post_init__(self):
+    def __post_init__(self, snapshot_state: Callable[[StateT], StateT]):
         # Copy the state to prevent it from being modified by other code
-        self.state = _deep_copy_state(self.state)
+        self.state = snapshot_state(self.state)
 
     def summary(self) -> str:
         return str(self.node)
@@ -70,20 +66,15 @@ class EndStep(Generic[StateT, RunEndT]):
     """The timestamp when the graph run ended."""
     kind: Literal['end'] = 'end'
     """The kind of history step, can be used as a discriminator when deserializing history."""
+    snapshot_state: InitVar[Callable[[StateT], StateT]] = deep_copy_state
+    """Function to snapshot the state of the graph."""
 
-    def __post_init__(self):
+    def __post_init__(self, snapshot_state: Callable[[StateT], StateT]):
         # Copy the state to prevent it from being modified by other code
-        self.state = _deep_copy_state(self.state)
+        self.state = snapshot_state(self.state)
 
     def summary(self) -> str:
         return str(self.result)
-
-
-def _deep_copy_state(state: StateT) -> StateT:
-    if state is None:
-        return state
-    else:
-        return state.deep_copy()
 
 
 HistoryStep = Union[NodeStep[StateT, RunEndT], EndStep[StateT, RunEndT]]
