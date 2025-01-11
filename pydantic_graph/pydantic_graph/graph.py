@@ -33,27 +33,24 @@ class Graph(Generic[StateT, RunEndT]):
     their outgoing edges — e.g. which nodes may be run next, and thereby the structure of the graph.
 
     Here's a very simple example of a graph which increments a number by 1, but makes sure the number is never
-    42 at the end. Note in this example we don't run the graph, but instead just generate a mermaid diagram
-    using [`mermaid_code`][pydantic_graph.graph.Graph.mermaid_code]:
+    42 at the end.
 
     ```py {title="never_42.py"}
     from __future__ import annotations
 
     from dataclasses import dataclass
-    from pydantic_graph import BaseNode, End, Graph, GraphContext
 
+    from pydantic_graph import BaseNode, End, Graph, GraphContext
 
     @dataclass
     class MyState:
         number: int
-
 
     @dataclass
     class Increment(BaseNode[MyState]):
         async def run(self, ctx: GraphContext) -> Check42:
             ctx.state.number += 1
             return Check42()
-
 
     @dataclass
     class Check42(BaseNode[MyState]):
@@ -63,26 +60,13 @@ class Graph(Generic[StateT, RunEndT]):
             else:
                 return End(None)
 
-
     never_42_graph = Graph(nodes=(Increment, Check42))
-    print(never_42_graph.mermaid_code(start_node=Increment))
     ```
     _(This example is complete, it can be run "as is")_
 
-    The rendered mermaid diagram will look like this:
-
-    ```mermaid
-    ---
-    title: never_42_graph
-    ---
-    stateDiagram-v2
-      [*] --> Increment
-      Increment --> Check42
-      Check42 --> Increment
-      Check42 --> [*]
-    ```
-
-    See [`run`][pydantic_graph.graph.Graph.run] For an example of running graph.
+    See [`run`][pydantic_graph.graph.Graph.run] For an example of running graph, and
+    [`mermaid_code`][pydantic_graph.graph.Graph.mermaid_code] for an example of generating a mermaid diagram
+    from the graph.
     """
 
     name: str | None
@@ -172,18 +156,82 @@ class Graph(Generic[StateT, RunEndT]):
         Here's an example of running the graph from [above][pydantic_graph.graph.Graph]:
 
         ```py {title="run_never_42.py"}
-        from never_42 import MyState, Increment, never_42_graph
+        from never_42 import Increment, MyState, never_42_graph
 
         async def main():
             state = MyState(1)
             _, history = await never_42_graph.run(state, Increment())
             print(state)
+            #> MyState(number=2)
             print(history)
+            '''
+            [
+                NodeStep(
+                    state=MyState(number=1),
+                    node=Increment(),
+                    start_ts=datetime.datetime(...),
+                    duration=0.0...,
+                    kind='node',
+                ),
+                NodeStep(
+                    state=MyState(number=2),
+                    node=Check42(),
+                    start_ts=datetime.datetime(...),
+                    duration=0.0...,
+                    kind='node',
+                ),
+                EndStep(
+                    state=MyState(number=2),
+                    result=End(data=None),
+                    ts=datetime.datetime(...),
+                    kind='end',
+                ),
+            ]
+            '''
 
             state = MyState(41)
             _, history = await never_42_graph.run(state, Increment())
             print(state)
+            #> MyState(number=43)
             print(history)
+            '''
+            [
+                NodeStep(
+                    state=MyState(number=41),
+                    node=Increment(),
+                    start_ts=datetime.datetime(...),
+                    duration=0.0...,
+                    kind='node',
+                ),
+                NodeStep(
+                    state=MyState(number=42),
+                    node=Check42(),
+                    start_ts=datetime.datetime(...),
+                    duration=0.0...,
+                    kind='node',
+                ),
+                NodeStep(
+                    state=MyState(number=42),
+                    node=Increment(),
+                    start_ts=datetime.datetime(...),
+                    duration=0.0...,
+                    kind='node',
+                ),
+                NodeStep(
+                    state=MyState(number=43),
+                    node=Check42(),
+                    start_ts=datetime.datetime(...),
+                    duration=0.0...,
+                    kind='node',
+                ),
+                EndStep(
+                    state=MyState(number=43),
+                    result=End(data=None),
+                    ts=datetime.datetime(...),
+                    kind='end',
+                ),
+            ]
+            '''
         ```
         """
         history: list[HistoryStep[StateT, RunEndT]] = []
@@ -227,7 +275,7 @@ class Graph(Generic[StateT, RunEndT]):
         This method calls [`pydantic_graph.mermaid.generate_code`][pydantic_graph.mermaid.generate_code].
 
         Args:
-            start_node: The node or nodes to start the graph from.
+            start_node: The node or nodes which can start the graph.
             title: The title of the diagram, use `False` to not include a title.
             edge_labels: Whether to include edge labels.
             notes: Whether to include notes on each node.
@@ -237,6 +285,37 @@ class Graph(Generic[StateT, RunEndT]):
 
         Returns:
             The mermaid code for the graph, which can then be rendered as a diagram.
+
+        Here's an example of generating a diagram for the graph from [above][pydantic_graph.graph.Graph]:
+
+        ```py {title="never_42.py"}
+        from never_42 import Increment, never_42_graph
+
+        print(never_42_graph.mermaid_code(start_node=Increment))
+        '''
+        ---
+        title: never_42_graph
+        ---
+        stateDiagram-v2
+          [*] --> Increment
+          Increment --> Check42
+          Check42 --> Increment
+          Check42 --> [*]
+        '''
+        ```
+
+        The rendered diagram will look like this:
+
+        ```mermaid
+        ---
+        title: never_42_graph
+        ---
+        stateDiagram-v2
+          [*] --> Increment
+          Increment --> Check42
+          Check42 --> Increment
+          Check42 --> [*]
+        ```
         """
         if infer_name and self.name is None:
             self._infer_name(inspect.currentframe())

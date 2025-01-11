@@ -133,6 +133,7 @@ def test_docs_examples(
 
 def print_callback(s: str) -> str:
     s = re.sub(r'datetime\.datetime\(.+?\)', 'datetime.datetime(...)', s, flags=re.DOTALL)
+    s = re.sub(r'\d\.\d{4,}e-0\d', '0.0...', s)
     return re.sub(r'datetime.date\(', 'date(', s)
 
 
