@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from time import perf_counter
 from types import FrameType
-from typing import TYPE_CHECKING, Any, Generic
+from typing import TYPE_CHECKING, Any, Callable, Generic
 
 import logfire_api
 from typing_extensions import Literal, Never, ParamSpec, TypeVar, Unpack, assert_never
@@ -14,7 +14,7 @@ from typing_extensions import Literal, Never, ParamSpec, TypeVar, Unpack, assert
 from . import _utils, exceptions, mermaid
 from ._utils import get_parent_namespace
 from .nodes import BaseNode, End, GraphContext, NodeDef
-from .state import EndStep, HistoryStep, NodeStep, StateT
+from .state import EndStep, HistoryStep, NodeStep, StateT, deep_copy_state
 
 __all__ = ('Graph',)
 
@@ -27,16 +27,74 @@ NodeRunEndT = TypeVar('NodeRunEndT', covariant=True, default=Never)
 
 @dataclass(init=False)
 class Graph(Generic[StateT, RunEndT]):
-    """Definition of a graph."""
+    """Definition of a graph.
+
+    In `pydantic-graph`, a graph is a collection of nodes that can be run in sequence. The nodes define
+    their outgoing edges — e.g. which nodes may be run next, and thereby the structure of the graph.
+
+    Here's a very simple example of a graph which increments a number by 1, but makes sure the number is never
+    42 at the end. Note in this example we don't run the graph, but instead just generate a mermaid diagram
+    using [`mermaid_code`][pydantic_graph.graph.Graph.mermaid_code]:
+
+    ```py {title="never_42.py"}
+    from __future__ import annotations
+
+    from dataclasses import dataclass
+    from pydantic_graph import BaseNode, End, Graph, GraphContext
+
+
+    @dataclass
+    class MyState:
+        number: int
+
+
+    @dataclass
+    class Increment(BaseNode[MyState]):
+        async def run(self, ctx: GraphContext) -> Check42:
+            ctx.state.number += 1
+            return Check42()
+
+
+    @dataclass
+    class Check42(BaseNode[MyState]):
+        async def run(self, ctx: GraphContext) -> Increment | End:
+            if ctx.state.number == 42:
+                return Increment()
+            else:
+                return End(None)
+
+
+    never_42_graph = Graph(nodes=(Increment, Check42))
+    print(never_42_graph.mermaid_code(start_node=Increment))
+    ```
+    _(This example is complete, it can be run "as is")_
+
+    The rendered mermaid diagram will look like this:
+
+    ```mermaid
+    ---
+    title: never_42_graph
+    ---
+    stateDiagram-v2
+      [*] --> Increment
+      Increment --> Check42
+      Check42 --> Increment
+      Check42 --> [*]
+    ```
+
+    See [`run`][pydantic_graph.graph.Graph.run] For an example of running graph.
+    """
 
     name: str | None
     node_defs: dict[str, NodeDef[StateT, RunEndT]]
+    snapshot_state: Callable[[StateT], StateT]
 
     def __init__(
         self,
         *,
         nodes: Sequence[type[BaseNode[StateT, RunEndT]]],
         name: str | None = None,
+        snapshot_state: Callable[[StateT], StateT] = deep_copy_state,
     ):
         """Create a graph from a sequence of nodes.
 
@@ -45,8 +103,12 @@ class Graph(Generic[StateT, RunEndT]):
                 state type.
             name: Optional name for the graph, if not provided the name will be inferred from the calling frame
                 on the first call to a graph method.
+            snapshot_state: A function to snapshot the state of the graph, this is used in
+                [`NodeStep`][pydantic_graph.state.NodeStep] and [`EndStep`][pydantic_graph.state.EndStep] to record
+                the state before each step.
         """
         self.name = name
+        self.snapshot_state = snapshot_state
 
         parent_namespace = get_parent_namespace(inspect.currentframe())
         self.node_defs: dict[str, NodeDef[StateT, RunEndT]] = {}
@@ -80,7 +142,7 @@ class Graph(Generic[StateT, RunEndT]):
         if node_id not in self.node_defs:
             raise exceptions.GraphRuntimeError(f'Node `{node}` is not in the graph.')
 
-        history_step: NodeStep[StateT, RunEndT] | None = NodeStep(state, node)
+        history_step: NodeStep[StateT, RunEndT] = NodeStep(state, node)
         history.append(history_step)
 
         ctx = GraphContext(state)
@@ -101,10 +163,28 @@ class Graph(Generic[StateT, RunEndT]):
 
         Args:
             state: The initial state of the graph.
-            start_node: the first node to run.
+            start_node: the first node to run, since the graph definition doesn't define the entry point in the graph,
+                you need to provide the starting node.
             infer_name: Whether to infer the graph name from the calling frame.
 
         Returns: The result type from ending the run and the history of the run.
+
+        Here's an example of running the graph from [above][pydantic_graph.graph.Graph]:
+
+        ```py {title="run_never_42.py"}
+        from never_42 import MyState, Increment, never_42_graph
+
+        async def main():
+            state = MyState(1)
+            _, history = await never_42_graph.run(state, Increment())
+            print(state)
+            print(history)
+
+            state = MyState(41)
+            _, history = await never_42_graph.run(state, Increment())
+            print(state)
+            print(history)
+        ```
         """
         history: list[HistoryStep[StateT, RunEndT]] = []
         if infer_name and self.name is None:
@@ -118,7 +198,7 @@ class Graph(Generic[StateT, RunEndT]):
             while True:
                 next_node = await self.next(state, start_node, history, infer_name=False)
                 if isinstance(next_node, End):
-                    history.append(EndStep(state, next_node))
+                    history.append(EndStep(state, next_node, snapshot_state=self.snapshot_state))
                     run_span.set_attribute('history', history)
                     return next_node.data, history
                 elif isinstance(next_node, BaseNode):
