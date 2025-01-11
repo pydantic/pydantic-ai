@@ -257,6 +257,22 @@ async def model_logic(messages: list[ModelMessage], info: AgentInfo) -> ModelRes
             return ModelResponse(parts=[ToolCallPart(tool_name='get_jokes', args=ArgsDict({'count': 5}))])
         elif re.fullmatch(r'sql prompt \d+', m.content):
             return ModelResponse.from_text(content='SELECT 1')
+        elif m.content.startswith('Write a welcome email for the user:'):
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='final_result',
+                        args=ArgsDict(
+                            {
+                                'subject': 'Welcome to our tech blog!',
+                                'body': 'Hello John, Welcome to our tech blog! ...',
+                            }
+                        ),
+                    )
+                ]
+            )
+        elif m.content.startswith('<examples>\n  <user>'):
+            return ModelResponse(parts=[ToolCallPart(tool_name='final_result_EmailOk', args=ArgsDict({}))])
         elif response := text_responses.get(m.content):
             if isinstance(response, str):
                 return ModelResponse.from_text(content=response)
