@@ -3,11 +3,12 @@ from __future__ import annotations as _annotations
 from dataclasses import dataclass
 from datetime import timezone
 from functools import cache
-from typing import Never, Union
+from typing import Union
 
 import pytest
 from dirty_equals import IsStr
 from inline_snapshot import snapshot
+from typing_extensions import Never
 
 from pydantic_graph import (
     BaseNode,
