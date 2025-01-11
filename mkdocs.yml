@@ -25,6 +25,7 @@ nav:
     - testing-evals.md
     - logfire.md
     - multi-agent-applications.md
+    - graph.md
   - Examples:
     - examples/index.md
     - examples/pydantic-model.md
@@ -36,6 +37,7 @@ nav:
     - examples/stream-markdown.md
     - examples/stream-whales.md
     - examples/chat-app.md
+    - examples/question-graph.md
   - API Reference:
     - api/agent.md
     - api/tools.md
