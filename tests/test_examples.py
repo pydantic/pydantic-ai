@@ -95,7 +95,7 @@ def test_docs_examples(
         with (tmp_path / 'examples.json').open('w') as f:
             json.dump(examples, f)
 
-    ruff_ignore: list[str] = ['D']
+    ruff_ignore: list[str] = ['D', 'Q001']
     # `from bank_database import DatabaseConn` wrongly sorted in imports
     # waiting for https://github.com/pydantic/pytest-examples/issues/43
     # and https://github.com/pydantic/pytest-examples/issues/46

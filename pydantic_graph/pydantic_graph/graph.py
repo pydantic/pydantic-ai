@@ -35,7 +35,7 @@ class Graph(Generic[StateT, RunEndT]):
     Here's a very simple example of a graph which increments a number by 1, but makes sure the number is never
     42 at the end.
 
-    ```py {title="never_42.py"}
+    ```py {title="never_42.py" lint="not-imports"}
     from __future__ import annotations
 
     from dataclasses import dataclass
@@ -155,7 +155,7 @@ class Graph(Generic[StateT, RunEndT]):
 
         Here's an example of running the graph from [above][pydantic_graph.graph.Graph]:
 
-        ```py {title="run_never_42.py"}
+        ```py {title="run_never_42.py" lint="not-imports"}
         from never_42 import Increment, MyState, never_42_graph
 
         async def main():
