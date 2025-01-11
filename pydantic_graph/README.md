@@ -9,7 +9,7 @@
 Graph and finite state machine library.
 
 This library is developed as part of the [PydanticAI](https://ai.pydantic.dev), however it has no dependency
-on `pydantic-ai` or related packages and does and can be considered as a pure graph library.
+on `pydantic-ai` or related packages and can be considered as a pure graph library.
 
 As with PydanticAI, this library prioritizes type safety and use of common Python syntax over esoteric, domain-specific use of Python syntax.
 
