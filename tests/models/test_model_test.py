@@ -7,7 +7,7 @@ from typing import Annotated, Any, Literal
 
 import pytest
 from annotated_types import Ge, Gt, Le, Lt, MaxLen, MinLen
-from inline_snapshot import snapshot
+from inline_snapshot import Is, snapshot
 from pydantic import BaseModel, Field
 
 from pydantic_ai import Agent, ModelRetry, RunContext
@@ -95,7 +95,7 @@ def test_tool_retry(set_event_loop: None):
         [
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
-                parts=[ToolCallPart.from_raw_args('my_ret', {'x': 0})],
+                parts=[Is(ToolCallPart.from_raw_args('my_ret', {'x': 0}))],
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
@@ -103,9 +103,9 @@ def test_tool_retry(set_event_loop: None):
                     RetryPromptPart(content='First call failed', tool_name='my_ret', timestamp=IsNow(tz=timezone.utc))
                 ]
             ),
-            ModelResponse(parts=[ToolCallPart.from_raw_args('my_ret', {'x': 0})], timestamp=IsNow(tz=timezone.utc)),
+            ModelResponse(parts=[Is(ToolCallPart.from_raw_args('my_ret', {'x': 0}))], timestamp=IsNow(tz=timezone.utc)),
             ModelRequest(parts=[ToolReturnPart(tool_name='my_ret', content='1', timestamp=IsNow(tz=timezone.utc))]),
-            ModelResponse.from_text(content='{"my_ret":"1"}', timestamp=IsNow(tz=timezone.utc)),
+            Is(ModelResponse.from_text(content='{"my_ret":"1"}', timestamp=IsNow(tz=timezone.utc))),
         ]
     )
 

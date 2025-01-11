@@ -9,7 +9,7 @@ from datetime import timezone
 
 import httpx
 import pytest
-from inline_snapshot import snapshot
+from inline_snapshot import Is, snapshot
 from pydantic import BaseModel, Field
 from typing_extensions import Literal, TypeAlias
 
@@ -445,7 +445,7 @@ async def test_text_success(get_gemini_client: GetGeminiClient):
     assert result.all_messages() == snapshot(
         [
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
-            ModelResponse.from_text(content='Hello world', timestamp=IsNow(tz=timezone.utc)),
+            Is(ModelResponse.from_text(content='Hello world', timestamp=IsNow(tz=timezone.utc))),
         ]
     )
     assert result.usage() == snapshot(Usage(requests=1, request_tokens=1, response_tokens=2, total_tokens=3))
@@ -455,9 +455,9 @@ async def test_text_success(get_gemini_client: GetGeminiClient):
     assert result.all_messages() == snapshot(
         [
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
-            ModelResponse.from_text(content='Hello world', timestamp=IsNow(tz=timezone.utc)),
+            Is(ModelResponse.from_text(content='Hello world', timestamp=IsNow(tz=timezone.utc))),
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
-            ModelResponse.from_text(content='Hello world', timestamp=IsNow(tz=timezone.utc)),
+            Is(ModelResponse.from_text(content='Hello world', timestamp=IsNow(tz=timezone.utc))),
         ]
     )
 
@@ -580,7 +580,7 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
                     ),
                 ]
             ),
-            ModelResponse.from_text(content='final response', timestamp=IsNow(tz=timezone.utc)),
+            Is(ModelResponse.from_text(content='final response', timestamp=IsNow(tz=timezone.utc))),
         ]
     )
     assert result.usage() == snapshot(Usage(requests=3, request_tokens=3, response_tokens=6, total_tokens=9))

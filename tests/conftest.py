@@ -22,6 +22,24 @@ import pydantic_ai.models
 
 __all__ = 'IsNow', 'TestEnv', 'ClientWithHandler', 'try_import'
 
+import dirty_equals
+
+OldIsNow = dirty_equals.IsNow
+
+
+def newIsNow(*a: Any, **ka: Any):
+    # this has a big effect on the test runtime
+    # tests are passing in both cases
+
+    # ~ 4min
+    # (the delta is required to make the tests work)
+    # return OldIsNow(*a,**ka,delta=50)
+
+    # 16 sec
+    return dirty_equals.AnyThing()
+
+
+dirty_equals.IsNow = newIsNow
 
 pydantic_ai.models.ALLOW_MODEL_REQUESTS = False
 

@@ -5,7 +5,7 @@ from collections.abc import AsyncIterator
 from datetime import timezone
 
 import pytest
-from inline_snapshot import snapshot
+from inline_snapshot import Is, snapshot
 from pydantic import BaseModel
 
 from pydantic_ai import Agent, UnexpectedModelBehavior, UserError, capture_run_messages
@@ -85,7 +85,7 @@ async def test_streamed_text_response():
                 ModelRequest(
                     parts=[ToolReturnPart(tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc))]
                 ),
-                ModelResponse.from_text(content='{"ret_a":"a-apple"}', timestamp=IsNow(tz=timezone.utc)),
+                Is(ModelResponse.from_text(content='{"ret_a":"a-apple"}', timestamp=IsNow(tz=timezone.utc))),
             ]
         )
 

@@ -7,7 +7,7 @@ from datetime import timezone
 import pydantic_core
 import pytest
 from dirty_equals import IsStr
-from inline_snapshot import snapshot
+from inline_snapshot import Is, snapshot
 from pydantic import BaseModel
 
 from pydantic_ai import Agent, ModelRetry, RunContext
@@ -127,7 +127,7 @@ def test_weather(set_event_loop: None):
         [
             ModelRequest(parts=[UserPromptPart(content='London', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
-                parts=[ToolCallPart.from_raw_args('get_location', '{"location_description": "London"}')],
+                parts=[Is(ToolCallPart.from_raw_args('get_location', '{"location_description": "London"}'))],
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
@@ -139,9 +139,11 @@ def test_weather(set_event_loop: None):
             ),
             ModelResponse(
                 parts=[
-                    ToolCallPart.from_raw_args(
-                        'get_weather',
-                        '{"lat": 51, "lng": 0}',
+                    Is(
+                        ToolCallPart.from_raw_args(
+                            'get_weather',
+                            '{"lat": 51, "lng": 0}',
+                        )
                     )
                 ],
                 timestamp=IsNow(tz=timezone.utc),
@@ -149,9 +151,11 @@ def test_weather(set_event_loop: None):
             ModelRequest(
                 parts=[ToolReturnPart(tool_name='get_weather', content='Raining', timestamp=IsNow(tz=timezone.utc))]
             ),
-            ModelResponse.from_text(
-                content='Raining in London',
-                timestamp=IsNow(tz=timezone.utc),
+            Is(
+                ModelResponse.from_text(
+                    content='Raining in London',
+                    timestamp=IsNow(tz=timezone.utc),
+                )
             ),
         ]
     )
@@ -313,11 +317,11 @@ def test_call_all(set_event_loop: None):
             ),
             ModelResponse(
                 parts=[
-                    ToolCallPart.from_raw_args('foo', {'x': 0}),
-                    ToolCallPart.from_raw_args('bar', {'x': 0}),
-                    ToolCallPart.from_raw_args('baz', {'x': 0}),
-                    ToolCallPart.from_raw_args('qux', {'x': 0}),
-                    ToolCallPart.from_raw_args('quz', {'x': 'a'}),
+                    Is(ToolCallPart.from_raw_args('foo', {'x': 0})),
+                    Is(ToolCallPart.from_raw_args('bar', {'x': 0})),
+                    Is(ToolCallPart.from_raw_args('baz', {'x': 0})),
+                    Is(ToolCallPart.from_raw_args('qux', {'x': 0})),
+                    Is(ToolCallPart.from_raw_args('quz', {'x': 'a'})),
                 ],
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -330,8 +334,10 @@ def test_call_all(set_event_loop: None):
                     ToolReturnPart(tool_name='quz', content='a', timestamp=IsNow(tz=timezone.utc)),
                 ]
             ),
-            ModelResponse.from_text(
-                content='{"foo":"1","bar":"2","baz":"3","qux":"4","quz":"a"}', timestamp=IsNow(tz=timezone.utc)
+            Is(
+                ModelResponse.from_text(
+                    content='{"foo":"1","bar":"2","baz":"3","qux":"4","quz":"a"}', timestamp=IsNow(tz=timezone.utc)
+                )
             ),
         ]
     )
@@ -396,7 +402,7 @@ async def test_stream_text():
         assert result.all_messages() == snapshot(
             [
                 ModelRequest(parts=[UserPromptPart(content='', timestamp=IsNow(tz=timezone.utc))]),
-                ModelResponse.from_text(content='hello world', timestamp=IsNow(tz=timezone.utc)),
+                Is(ModelResponse.from_text(content='hello world', timestamp=IsNow(tz=timezone.utc))),
             ]
         )
         assert result.usage() == snapshot(Usage(requests=1))

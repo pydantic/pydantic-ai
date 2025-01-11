@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 from datetime import datetime, timezone
 
 import pytest
-from inline_snapshot import snapshot
+from inline_snapshot import Is, snapshot
 
 from pydantic_ai import Agent
 from pydantic_ai.messages import (
@@ -55,8 +55,8 @@ async def test_request_simple_success(allow_model_requests: None):
     assert result.all_messages() == snapshot(
         [
             ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
-            ModelResponse.from_text(content='world', timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)),
+            Is(ModelResponse.from_text(content='world', timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc))),
             ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
-            ModelResponse.from_text(content='world', timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)),
+            Is(ModelResponse.from_text(content='world', timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc))),
         ]
     )

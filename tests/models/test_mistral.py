@@ -8,7 +8,7 @@ from functools import cached_property
 from typing import Any, cast
 
 import pytest
-from inline_snapshot import snapshot
+from inline_snapshot import Is, snapshot
 from pydantic import BaseModel
 from typing_extensions import TypedDict
 
@@ -240,9 +240,13 @@ async def test_multiple_completions(allow_model_requests: None):
     assert result.all_messages() == snapshot(
         [
             ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
-            ModelResponse.from_text(content='world', timestamp=IsNow(tz=timezone.utc)),
+            Is(ModelResponse.from_text(content='world', timestamp=IsNow(tz=timezone.utc))),
             ModelRequest(parts=[UserPromptPart(content='hello again', timestamp=IsNow(tz=timezone.utc))]),
-            ModelResponse.from_text(content='hello again', timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)),
+            Is(
+                ModelResponse.from_text(
+                    content='hello again', timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)
+                )
+            ),
         ]
     )
 
@@ -284,11 +288,19 @@ async def test_three_completions(allow_model_requests: None):
     assert result.all_messages() == snapshot(
         [
             ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
-            ModelResponse.from_text(content='world', timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)),
+            Is(ModelResponse.from_text(content='world', timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc))),
             ModelRequest(parts=[UserPromptPart(content='hello again', timestamp=IsNow(tz=timezone.utc))]),
-            ModelResponse.from_text(content='hello again', timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)),
+            Is(
+                ModelResponse.from_text(
+                    content='hello again', timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)
+                )
+            ),
             ModelRequest(parts=[UserPromptPart(content='final message', timestamp=IsNow(tz=timezone.utc))]),
-            ModelResponse.from_text(content='final message', timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)),
+            Is(
+                ModelResponse.from_text(
+                    content='final message', timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)
+                )
+            ),
         ]
     )
 
@@ -1145,8 +1157,10 @@ async def test_request_tool_call(allow_model_requests: None):
                     )
                 ]
             ),
-            ModelResponse.from_text(
-                content='final response', timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)
+            Is(
+                ModelResponse.from_text(
+                    content='final response', timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)
+                )
             ),
         ]
     )
@@ -1504,7 +1518,7 @@ async def test_stream_tool_call(allow_model_requests: None):
                     )
                 ]
             ),
-            ModelResponse.from_text(content='final response', timestamp=IsNow(tz=timezone.utc)),
+            Is(ModelResponse.from_text(content='final response', timestamp=IsNow(tz=timezone.utc))),
         ]
     )
 
@@ -1625,7 +1639,7 @@ async def test_stream_tool_call_with_retry(allow_model_requests: None):
                     )
                 ]
             ),
-            ModelResponse.from_text(content='final response', timestamp=IsNow(tz=timezone.utc)),
+            Is(ModelResponse.from_text(content='final response', timestamp=IsNow(tz=timezone.utc))),
         ]
     )
 

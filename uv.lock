@@ -923,20 +923,13 @@ wheels = [
 
 [[package]]
 name = "inline-snapshot"
-version = "0.15.0"
-source = { registry = "https://pypi.org/simple" }
+version = "0.19.0"
+source = { git = "https://github.com/15r10nk/inline-snapshot?rev=pydantic_ai_fixes#1ece39c39b9984d235f066aaa6fc83e3557aa843" }
 dependencies = [
     { name = "asttokens" },
-    { name = "black" },
-    { name = "click" },
     { name = "executing" },
     { name = "rich" },
     { name = "tomli", marker = "python_full_version < '3.11'" },
-    { name = "typing-extensions" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/76/7c/d6a61e2c21ad07ee50e3eb84fa1bccaaa862d660ba51dbc9ad4b2092d29b/inline_snapshot-0.15.0.tar.gz", hash = "sha256:d0be974774acd1d18c1a922a6f2904ac4fce87d9996cc38595d4b35ae0f59a15", size = 231796 }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/d7/22/278c367ededfce8e0ada244e6614caac0bacc85c8eb610a381cb7ca2ba67/inline_snapshot-0.15.0-py3-none-any.whl", hash = "sha256:5279b81410f06e537f9c0d799314f9703c1b43e4ed26794c9422bf011bae46d0", size = 40501 },
 ]
 
 [[package]]
@@ -2317,7 +2310,7 @@ wheels = [
 
 [[package]]
 name = "pytest"
-version = "8.3.3"
+version = "8.3.4"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "colorama", marker = "sys_platform == 'win32'" },
@@ -2327,9 +2320,9 @@ dependencies = [
     { name = "pluggy" },
     { name = "tomli", marker = "python_full_version < '3.11'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/8b/6c/62bbd536103af674e227c41a8f3dcd022d591f6eed5facb5a0f31ee33bbc/pytest-8.3.3.tar.gz", hash = "sha256:70b98107bd648308a7952b06e6ca9a50bc660be218d53c257cc1fc94fda10181", size = 1442487 }
+sdist = { url = "https://files.pythonhosted.org/packages/05/35/30e0d83068951d90a01852cb1cef56e5d8a09d20c7f511634cc2f7e0372a/pytest-8.3.4.tar.gz", hash = "sha256:965370d062bce11e73868e0335abac31b4d3de0e82f4007408d242b4f8610761", size = 1445919 }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/6b/77/7440a06a8ead44c7757a64362dd22df5760f9b12dc5f11b6188cd2fc27a0/pytest-8.3.3-py3-none-any.whl", hash = "sha256:a6853c7375b2663155079443d2e45de913a911a11d669df02a50814944db57b2", size = 342341 },
+    { url = "https://files.pythonhosted.org/packages/11/92/76a1c94d3afee238333bc0a42b82935dd8f9cf8ce9e336ff87ee14d9e1cf/pytest-8.3.4-py3-none-any.whl", hash = "sha256:50e16d954148559c9a74109af1eaf0c945ba2d8f30f0a3d3335edde19788b6f6", size = 343083 },
 ]
 
 [[package]]
