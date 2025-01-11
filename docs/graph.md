@@ -162,7 +162,7 @@ async def main():
 1. The state of the vending machine is defined as a dataclass with the user's balance and the product they've selected, if any.
 2. A dictionary of products mapped to prices.
 3. The `InsertCoin` node, [`BaseNode`][pydantic_graph.nodes.BaseNode] is parameterized with `MachineState` as that's the state used in this graph.
-4. The `InsertCoin` node prompts the user to insert coins. Keep things simple by just entering a monetary amount as a float. Before you start thinking this is a toy too since it's using `input` within node, see [below](#running-graphs) for how control flow can be managed when nodes require external input.
+4. The `InsertCoin` node prompts the user to insert coins. Keep things simple by just entering a monetary amount as a float. Before you start thinking this is a toy too since it's using `input` within node, see [below](#custom-control-flow) for how control flow can be managed when nodes require external input.
 5. The `CoinsInserted` node, again this is a [`dataclass`][dataclasses.dataclass], in this case with one field `amount`, thus nodes calling `CoinsInserted` must provide an amount.
 6. Update the user's balance with the amount inserted.
 7. If the user has already selected a product, go to `Purchase`, otherwise go to `SelectProduct`.
@@ -211,9 +211,142 @@ See [below](#mermaid-diagrams) for more information on generating diagrams.
 
 ## GenAI Example
 
-TODO
+So far we haven't shown an example of a Graph that actually uses PydanticAI or GenAI at all.
 
-## Running Graphs
+In this example, one agent generates a welcome email to a user and the other agent provides feedback on the email.
+
+This graph has avery simple structure:
+
+```mermaid
+---
+title: feedback_graph
+---
+stateDiagram-v2
+  [*] --> WriteEmail
+  WriteEmail --> Feedback
+  Feedback --> WriteEmail
+  Feedback --> [*]
+```
+
+
+```python {title="genai_email_feedback.py"}
+from __future__ import annotations as _annotations
+
+from dataclasses import dataclass, field
+
+from pydantic import BaseModel, EmailStr
+
+from pydantic_ai import Agent
+from pydantic_ai.format_as_xml import format_as_xml
+from pydantic_ai.messages import ModelMessage
+from pydantic_graph import BaseNode, End, Graph, GraphContext
+
+
+@dataclass
+class User:
+    name: str
+    email: EmailStr
+    interests: list[str]
+
+
+@dataclass
+class Email:
+    subject: str
+    body: str
+
+
+@dataclass
+class State:
+    user: User
+    write_agent_messages: list[ModelMessage] = field(default_factory=list)
+
+
+email_writer_agent = Agent(
+    'google-vertex:gemini-1.5-pro',
+    result_type=Email,
+    system_prompt='Write a welcome email to our tech blog.',
+)
+
+
+@dataclass
+class WriteEmail(BaseNode[State]):
+    email_feedback: str | None = None
+
+    async def run(self, ctx: GraphContext[State]) -> Feedback:
+        if self.email_feedback:
+            prompt = (
+                f'Rewrite the email for the user:\n'
+                f'{format_as_xml(ctx.state.user)}\n'
+                f'Feedback: {self.email_feedback}'
+            )
+        else:
+            prompt = (
+                f'Write a welcome email for the user:\n'
+                f'{format_as_xml(ctx.state.user)}'
+            )
+
+        result = await email_writer_agent.run(
+            prompt,
+            message_history=ctx.state.write_agent_messages,
+        )
+        ctx.state.write_agent_messages += result.all_messages()
+        return Feedback(result.data)
+
+
+class EmailRequiresWrite(BaseModel):
+    feedback: str
+
+
+class EmailOk(BaseModel):
+    pass
+
+
+feedback_agent = Agent[None, EmailRequiresWrite | EmailOk](
+    'openai:gpt-4o',
+    result_type=EmailRequiresWrite | EmailOk,  # type: ignore
+    system_prompt=(
+        'Review the email and provide feedback, email must reference the users specific interests.'
+    ),
+)
+
+
+@dataclass
+class Feedback(BaseNode[State, Email]):
+    email: Email
+
+    async def run(
+        self,
+        ctx: GraphContext[State],
+    ) -> WriteEmail | End[Email]:
+        prompt = format_as_xml({'user': ctx.state.user, 'email': self.email})
+        result = await feedback_agent.run(prompt)
+        if isinstance(result.data, EmailRequiresWrite):
+            return WriteEmail(email_feedback=result.data.feedback)
+        else:
+            return End(self.email)
+
+
+async def main():
+    user = User(
+        name='John Doe',
+        email='john.joe@exmaple.com',
+        interests=['Haskel', 'Lisp', 'Fortran'],
+    )
+    state = State(user)
+    feedback_graph = Graph(nodes=(WriteEmail, Feedback))
+    email, _ = await feedback_graph.run(state, WriteEmail())
+    print(email)
+    """
+    Email(
+        subject='Welcome to our tech blog!',
+        body='Hello John, Welcome to our tech blog! ...',
+    )
+    """
+```
+
+_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
+
+## Custom Control Flow
 
 TODO
 

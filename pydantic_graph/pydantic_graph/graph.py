@@ -97,41 +97,6 @@ class Graph(Generic[StateT, RunEndT]):
 
         self._validate_edges()
 
-    async def next(
-        self,
-        state: StateT,
-        node: BaseNode[StateT, RunEndT],
-        history: list[HistoryStep[StateT, RunEndT]],
-        *,
-        infer_name: bool = True,
-    ) -> BaseNode[StateT, Any] | End[RunEndT]:
-        """Run a node in the graph and return the next node to run.
-
-        Args:
-            state: The current state of the graph.
-            node: The node to run.
-            history: The history of the graph run so far. NOTE: this will be mutated to add the new step.
-            infer_name: Whether to infer the graph name from the calling frame.
-
-        Returns:
-            The next node to run or [`End`][pydantic_graph.nodes.End] if the graph has finished.
-        """
-        if infer_name and self.name is None:
-            self._infer_name(inspect.currentframe())
-        node_id = node.get_id()
-        if node_id not in self.node_defs:
-            raise exceptions.GraphRuntimeError(f'Node `{node}` is not in the graph.')
-
-        history_step: NodeStep[StateT, RunEndT] = NodeStep(state, node)
-        history.append(history_step)
-
-        ctx = GraphContext(state)
-        with _logfire.span('run node {node_id}', node_id=node_id, node=node):
-            start = perf_counter()
-            next_node = await node.run(ctx)
-            history_step.duration = perf_counter() - start
-        return next_node
-
     async def run(
         self,
         state: StateT,
@@ -147,7 +112,8 @@ class Graph(Generic[StateT, RunEndT]):
                 you need to provide the starting node.
             infer_name: Whether to infer the graph name from the calling frame.
 
-        Returns: The result type from ending the run and the history of the run.
+        Returns:
+            The result type from ending the run and the history of the run.
 
         Here's an example of running the graph from [above][pydantic_graph.graph.Graph]:
 
@@ -254,6 +220,41 @@ class Graph(Generic[StateT, RunEndT]):
                         raise exceptions.GraphRuntimeError(
                             f'Invalid node return type: `{type(next_node).__name__}`. Expected `BaseNode` or `End`.'
                         )
+
+    async def next(
+        self,
+        state: StateT,
+        node: BaseNode[StateT, RunEndT],
+        history: list[HistoryStep[StateT, RunEndT]],
+        *,
+        infer_name: bool = True,
+    ) -> BaseNode[StateT, Any] | End[RunEndT]:
+        """Run a node in the graph and return the next node to run.
+
+        Args:
+            state: The current state of the graph.
+            node: The node to run.
+            history: The history of the graph run so far. NOTE: this will be mutated to add the new step.
+            infer_name: Whether to infer the graph name from the calling frame.
+
+        Returns:
+            The next node to run or [`End`][pydantic_graph.nodes.End] if the graph has finished.
+        """
+        if infer_name and self.name is None:
+            self._infer_name(inspect.currentframe())
+        node_id = node.get_id()
+        if node_id not in self.node_defs:
+            raise exceptions.GraphRuntimeError(f'Node `{node}` is not in the graph.')
+
+        history_step: NodeStep[StateT, RunEndT] = NodeStep(state, node)
+        history.append(history_step)
+
+        ctx = GraphContext(state)
+        with _logfire.span('run node {node_id}', node_id=node_id, node=node):
+            start = perf_counter()
+            next_node = await node.run(ctx)
+            history_step.duration = perf_counter() - start
+        return next_node
 
     def mermaid_code(
         self,
