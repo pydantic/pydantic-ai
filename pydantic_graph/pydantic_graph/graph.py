@@ -9,20 +9,16 @@ from types import FrameType
 from typing import TYPE_CHECKING, Any, Callable, Generic
 
 import logfire_api
-from typing_extensions import Literal, Never, ParamSpec, TypeVar, Unpack, assert_never
+from typing_extensions import Literal, Unpack, assert_never
 
 from . import _utils, exceptions, mermaid
 from ._utils import get_parent_namespace
-from .nodes import BaseNode, End, GraphContext, NodeDef
+from .nodes import BaseNode, End, GraphContext, NodeDef, RunEndT
 from .state import EndStep, HistoryStep, NodeStep, StateT, deep_copy_state
 
 __all__ = ('Graph',)
 
 _logfire = logfire_api.Logfire(otel_scope='pydantic-graph')
-
-RunSignatureT = ParamSpec('RunSignatureT')
-RunEndT = TypeVar('RunEndT', default=None)
-NodeRunEndT = TypeVar('NodeRunEndT', covariant=True, default=Never)
 
 
 @dataclass(init=False)
@@ -270,7 +266,7 @@ class Graph(Generic[StateT, RunEndT]):
         highlight_css: str = mermaid.DEFAULT_HIGHLIGHT_CSS,
         infer_name: bool = True,
     ) -> str:
-        """Generate a diagram representing the graph as [mermaid](https://mermaid.js.org/) chart.
+        """Generate a diagram representing the graph as [mermaid](https://mermaid.js.org/) diagram.
 
         This method calls [`pydantic_graph.mermaid.generate_code`][pydantic_graph.mermaid.generate_code].
 

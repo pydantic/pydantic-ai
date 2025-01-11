@@ -19,9 +19,26 @@ def on_page_markdown(markdown: str, page: Page, config: Config, files: Files) ->
     return markdown
 
 
+# path to the main mkdocs material bundle file, found during `on_env`
+bundle_path: Path | None = None
+
+
 def on_env(env: Environment, config: Config, files: Files) -> Environment:
+    global bundle_path
+    for file in files:
+        if re.match('assets/javascripts/bundle.[a-z0-9]+.min.js', file.src_uri):
+            bundle_path = Path(file.dest_dir) / file.src_uri
+
     env.globals['build_timestamp'] = str(int(time.time()))
     return env
+
+
+def on_post_build(config: Config) -> None:
+    """Inject extra CSS into mermaid styles to avoid titles being the same color as the background in dark mode."""
+    if bundle_path.exists():
+        content = bundle_path.read_text()
+        content, _ = re.subn(r'}(\.statediagram)', '}.statediagramTitleText{fill:#888}\1', content, count=1)
+        bundle_path.write_text(content)
 
 
 def replace_uv_python_run(markdown: str) -> str:

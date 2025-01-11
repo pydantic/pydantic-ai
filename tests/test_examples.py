@@ -150,9 +150,14 @@ async def async_http_request(url: str, **kwargs: Any) -> httpx.Response:
 def rich_prompt_ask(prompt: str, *_args: Any, **_kwargs: Any) -> str:
     if prompt == 'Where would you like to fly from and to?':
         return 'SFO to ANC'
-    else:
-        assert prompt == 'What seat would you like?', prompt
+    elif prompt == 'What seat would you like?':
         return 'window seat with leg room'
+    if prompt == 'Insert coins':
+        return '1'
+    elif prompt == 'Select product':
+        return 'crisps'
+    else:  # pragma: no cover
+        raise ValueError(f'Unexpected prompt: {prompt}')
 
 
 text_responses: dict[str, str | ToolCallPart] = {
