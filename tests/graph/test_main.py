@@ -13,13 +13,13 @@ from typing_extensions import Never
 from pydantic_graph import (
     BaseNode,
     End,
-    EndEvent,
+    EndStep,
     Graph,
     GraphContext,
     GraphRuntimeError,
     GraphSetupError,
     HistoryStep,
-    NodeEvent,
+    NodeStep,
 )
 
 from ..conftest import IsFloat, IsNow
@@ -60,25 +60,25 @@ async def test_graph():
     assert my_graph.name == 'my_graph'
     assert history == snapshot(
         [
-            NodeEvent(
+            NodeStep(
                 state=None,
                 node=Float2String(input_data=3.14),
                 start_ts=IsNow(tz=timezone.utc),
                 duration=IsFloat(),
             ),
-            NodeEvent(
+            NodeStep(
                 state=None,
                 node=String2Length(input_data='3.14'),
                 start_ts=IsNow(tz=timezone.utc),
                 duration=IsFloat(),
             ),
-            NodeEvent(
+            NodeStep(
                 state=None,
                 node=Double(input_data=4),
                 start_ts=IsNow(tz=timezone.utc),
                 duration=IsFloat(),
             ),
-            EndEvent(
+            EndStep(
                 state=None,
                 result=End(data=8),
                 ts=IsNow(tz=timezone.utc),
@@ -90,37 +90,37 @@ async def test_graph():
     assert result == 42
     assert history == snapshot(
         [
-            NodeEvent(
+            NodeStep(
                 state=None,
                 node=Float2String(input_data=3.14159),
                 start_ts=IsNow(tz=timezone.utc),
                 duration=IsFloat(),
             ),
-            NodeEvent(
+            NodeStep(
                 state=None,
                 node=String2Length(input_data='3.14159'),
                 start_ts=IsNow(tz=timezone.utc),
                 duration=IsFloat(),
             ),
-            NodeEvent(
+            NodeStep(
                 state=None,
                 node=Double(input_data=7),
                 start_ts=IsNow(tz=timezone.utc),
                 duration=IsFloat(),
             ),
-            NodeEvent(
+            NodeStep(
                 state=None,
                 node=String2Length(input_data='xxxxxxxxxxxxxxxxxxxxx'),
                 start_ts=IsNow(tz=timezone.utc),
                 duration=IsFloat(),
             ),
-            NodeEvent(
+            NodeStep(
                 state=None,
                 node=Double(input_data=21),
                 start_ts=IsNow(tz=timezone.utc),
                 duration=IsFloat(),
             ),
-            EndEvent(
+            EndStep(
                 state=None,
                 result=End(data=42),
                 ts=IsNow(tz=timezone.utc),
@@ -290,7 +290,7 @@ async def test_next():
     n = await g.next(None, Foo(), history)
     assert n == Bar()
     assert g.name == 'g'
-    assert history == snapshot([NodeEvent(state=None, node=Foo(), start_ts=IsNow(tz=timezone.utc), duration=IsFloat())])
+    assert history == snapshot([NodeStep(state=None, node=Foo(), start_ts=IsNow(tz=timezone.utc), duration=IsFloat())])
 
     assert isinstance(n, Bar)
     n2 = await g.next(None, n, history)
@@ -298,7 +298,7 @@ async def test_next():
 
     assert history == snapshot(
         [
-            NodeEvent(state=None, node=Foo(), start_ts=IsNow(tz=timezone.utc), duration=IsFloat()),
-            NodeEvent(state=None, node=Bar(), start_ts=IsNow(tz=timezone.utc), duration=IsFloat()),
+            NodeStep(state=None, node=Foo(), start_ts=IsNow(tz=timezone.utc), duration=IsFloat()),
+            NodeStep(state=None, node=Bar(), start_ts=IsNow(tz=timezone.utc), duration=IsFloat()),
         ]
     )

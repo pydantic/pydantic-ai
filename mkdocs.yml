@@ -55,6 +55,10 @@ nav:
     - api/models/ollama.md
     - api/models/test.md
     - api/models/function.md
+    - api/pydantic_graph/graph.md
+    - api/pydantic_graph/nodes.md
+    - api/pydantic_graph/state.md
+    - api/pydantic_graph/mermaid.md
 
 extra:
   # hide the "Made with Material for MkDocs" message
@@ -150,6 +154,7 @@ markdown_extensions:
 
 watch:
   - pydantic_ai_slim
+  - pydantic_graph
   - examples
 
 plugins:

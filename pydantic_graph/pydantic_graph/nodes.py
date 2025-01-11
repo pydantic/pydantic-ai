@@ -10,10 +10,12 @@ from typing_extensions import Never, TypeVar
 from . import _utils, exceptions
 from .state import StateT
 
-__all__ = 'GraphContext', 'BaseNode', 'End', 'Edge', 'NodeDef'
+__all__ = 'GraphContext', 'BaseNode', 'End', 'Edge', 'NodeDef', 'RunEndT', 'NodeRunEndT'
 
 RunEndT = TypeVar('RunEndT', default=None)
+"""Type variable for the return type of a graph [`run`][pydantic_graph.graph.Graph.run]."""
 NodeRunEndT = TypeVar('NodeRunEndT', covariant=True, default=Never)
+"""Type variable for the return type of a node [`run`][pydantic_graph.nodes.BaseNode.run]."""
 
 
 @dataclass
@@ -21,6 +23,7 @@ class GraphContext(Generic[StateT]):
     """Context for a graph."""
 
     state: StateT
+    """The state of the graph."""
 
 
 class BaseNode(ABC, Generic[StateT, NodeRunEndT]):
@@ -30,7 +33,23 @@ class BaseNode(ABC, Generic[StateT, NodeRunEndT]):
     """Set to `False` to not generate mermaid diagram notes from the class's docstring."""
 
     @abstractmethod
-    async def run(self, ctx: GraphContext[StateT]) -> BaseNode[StateT, Any] | End[NodeRunEndT]: ...
+    async def run(self, ctx: GraphContext[StateT]) -> BaseNode[StateT, Any] | End[NodeRunEndT]:
+        """Run the node.
+
+        This is an abstract method that must be implemented by subclasses.
+
+        !!! note "Return types used at runtime"
+            The return type of this method are read by `pydantic_graph` at runtime and used to define which
+            nodes can be called next in the graph. This is displayed in [mermaid diagrams](mermaid.md)
+            and enforced when running the graph.
+
+        Args:
+            ctx: The graph context.
+
+        Returns:
+            The next node to run or [`End`][pydantic_graph.nodes.End] to signal the end of the graph.
+        """
+        ...
 
     @classmethod
     @cache
@@ -92,6 +111,7 @@ class End(Generic[RunEndT]):
     """Type to return from a node to signal the end of the graph."""
 
     data: RunEndT
+    """Data to return from the graph."""
 
 
 @dataclass
@@ -99,11 +119,14 @@ class Edge:
     """Annotation to apply a label to an edge in a graph."""
 
     label: str | None
+    """Label for the edge."""
 
 
 @dataclass
 class NodeDef(Generic[StateT, NodeRunEndT]):
     """Definition of a node.
+
+    This is an internal representation of a node, it shouldn't be necessary to use it directly.
 
     Used by [`Graph`][pydantic_graph.graph.Graph] to store information about a node, and when generating
     mermaid graphs.
