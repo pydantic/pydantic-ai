@@ -78,4 +78,8 @@ class EndStep(Generic[StateT, RunEndT]):
 
 
 HistoryStep = Union[NodeStep[StateT, RunEndT], EndStep[StateT, RunEndT]]
-"""A step in the history of a graph run."""
+"""A step in the history of a graph run.
+
+[`Graph.run`][pydantic_graph.graph.Graph.run] returns a list of these steps describing the execution of the graph,
+together with the run return value.
+"""
