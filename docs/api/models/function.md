@@ -9,7 +9,7 @@ Its primary use case is for more advanced unit testing than is possible with `Te
 
 Here's a minimal example:
 
-```py {title="function_model_usage.py" call_name="test_my_agent" lint="not-imports"}
+```py {title="function_model_usage.py" call_name="test_my_agent" noqa="I001"}
 from pydantic_ai import Agent
 from pydantic_ai.messages import ModelMessage, ModelResponse
 from pydantic_ai.models.function import FunctionModel, AgentInfo

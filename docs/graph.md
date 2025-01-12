@@ -18,7 +18,10 @@ Alongside PydanticAI, we've developed `pydantic-graph` — an async graph and st
 
 While this library is developed as part of the PydanticAI; it has no dependency on `pydantic-ai` and can be considered as a pure graph library. You may find it useful whether or not you're using PydanticAI or even building with GenAI.
 
-`pydantic-graph` is designed for advanced users and makes heavy use of Python generics and types hints. It is not designed to b as beginner-friendly as PydanticAI.
+`pydantic-graph` is designed for advanced users and makes heavy use of Python generics and types hints. It is not designed to be as beginner-friendly as PydanticAI.
+
+!!! note "Every Early beta"
+    Graph support was [introduced](https://github.com/pydantic/pydantic-ai/pull/528) in v0.0.19 and is in very earlier beta. The API is subject to change. The documentation is incomplete. The implementation is incomplete.
 
 ## Installation
 
@@ -30,10 +33,19 @@ pip/uv-add pydantic-graph
 
 ## Graph Types
 
-!!! note "Every Early beta"
-    Graph support was [introduced](https://github.com/pydantic/pydantic-ai/pull/528) in v0.0.19 and is in very earlier beta. The API is subject to change. The documentation is incomplete. The implementation is incomplete.
-
 Graphs are made up of a few key components:
+
+### GraphContext
+
+[`GraphContext`][pydantic_graph.nodes.GraphContext] — The context for the graph run, similar to PydanticAI's [`RunContext`][pydantic_ai.tools.RunContext], this holds the state of the graph and is passed to nodes when they're run.
+
+`GraphContext` is generic in the state type of the graph it's used in, [`StateT`][pydantic_graph.state.StateT].
+
+### End
+
+[`End`][pydantic_graph.nodes.End] — return value to indicates the graph run should end.
+
+`End` is generic in the graph return type of the graph it's used in, [`RunEndT`][pydantic_graph.nodes.RunEndT].
 
 ### Nodes
 
@@ -50,17 +62,55 @@ Nodes are generic in:
 * **state** which must have the same type as the state of graphs they're included in, [`StateT`][pydantic_graph.state.StateT] has a default of `None`, so if you're not using state you can omit this generic parameter
 * **graph return type** this only applies if the node returns [`End`][pydantic_graph.nodes.End], [`RunEndT`][pydantic_graph.nodes.RunEndT] has a default of [Never][typing.Never] so this generic parameter can be omitted if the node doesn't return `End`, but must be included if it does.
 
-### GraphContext
+Here's an example of a start or intermediate node in a graph — it can't end the run as it doesn't return [`End`][pydantic_graph.nodes.End]:
 
-[`GraphContext`][pydantic_graph.nodes.GraphContext] — The context for the graph run, similar to PydanticAI's [`RunContext`][pydantic_ai.tools.RunContext], this holds the state of the graph and is passed to nodes when they're run.
+```py {title="intermediate_node.py" noqa="F821" test="skip"}
+from dataclasses import dataclass
 
-`GraphContext` is generic in the state type of the graph it's used in, [`StateT`][pydantic_graph.state.StateT].
+from pydantic_graph import BaseNode, GraphContext
 
-### End
 
-[`End`][pydantic_graph.nodes.End] — return value to indicates the graph run should end.
+@dataclass
+class MyNode(BaseNode[MyState]):  # (1)!
+    foo: int  # (2)!
 
-`End` is generic in the graph return type of the graph it's used in, [`RunEndT`][pydantic_graph.nodes.RunEndT].
+    async def run(
+        self,
+        ctx: GraphContext[MyState],  # (3)!
+    ) -> AnotherNode:  # (4)!
+        ...
+        return AnotherNode()
+```
+
+1. State in this example is `MyState` (not shown), hence `BaseNode` is parameterized with `MyState`. This node can't end the run, so the `RunEndT` generic parameter is omitted and defaults to `Never`.
+2. `MyNode` is a dataclass and has a single field `foo`, an `int`.
+3. The `run` method takes a `GraphContext` parameter, again parameterized with state `MyState`.
+4. The return type of the `run` method is `AnotherNode` (not shown), this is used to determine the outgoing edges of the node.
+
+We could extend `MyNode` to optionally end the run if `foo` is divisible by 5:
+
+```py {title="intermediate_or_end_node.py" hl_lines="7 13" noqa="F821" test="skip"}
+from dataclasses import dataclass
+
+from pydantic_graph import BaseNode, End, GraphContext
+
+
+@dataclass
+class MyNode(BaseNode[MyState, int]):  # (1)!
+    foo: int
+
+    async def run(
+        self,
+        ctx: GraphContext[MyState],
+    ) -> AnotherNode | End[int]:  # (2)!
+        if self.foo % 5 == 0:
+            return End(self.foo)
+        else:
+            return AnotherNode()
+```
+
+1. We parameterize the node with the return type (`int` in this case) as well as state.
+2. The return type of the `run` method is now a union of `AnotherNode` and `End[int]`, this allows the node to end the run if `foo` is divisible by 5.
 
 ### Graph
 
@@ -71,11 +121,76 @@ Nodes are generic in:
 * **state** the state type of the graph, [`StateT`][pydantic_graph.state.StateT]
 * **graph return type** the return type of the graph run, [`RunEndT`][pydantic_graph.nodes.RunEndT]
 
-## Basic Usage
+Here's an example of a simple graph:
+
+```py {title="graph_example.py" py="3.10"}
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from pydantic_graph import BaseNode, End, Graph, GraphContext
+
+
+@dataclass
+class DivisibleBy5(BaseNode[None, int]):  # (1)!
+    foo: int
+
+    async def run(
+        self,
+        ctx: GraphContext,
+    ) -> Increment | End[int]:
+        if self.foo % 5 == 0:
+            return End(self.foo)
+        else:
+            return Increment(self.foo)
+
+
+@dataclass
+class Increment(BaseNode):  # (2)!
+    foo: int
+
+    async def run(self, ctx: GraphContext) -> DivisibleBy5:
+        return DivisibleBy5(self.foo + 1)
+
+
+fives_graph = Graph(nodes=[DivisibleBy5, Increment])
+result, history = fives_graph.run_sync(None, DivisibleBy5(4))
+print(result)
+#> 5
+# the full history is quite verbose (see below), so we'll just print the summary
+print([item.data_snapshot() for item in history])
+#> [DivisibleBy5(foo=4), Increment(foo=4), DivisibleBy5(foo=5), End(data=5)]
+```
+_(This example is complete, it can be run "as is" with Python 3.10+)_
+
+A [mermaid diagram](#mermaid-diagrams) for this graph can be generated with the following code:
+
+```py {title="graph_example_diagram.py" py="3.10"}
+from graph_example import DivisibleBy5, fives_graph
+
+fives_graph.mermaid_code(start_node=DivisibleBy5)
+```
+
+```mermaid
+---
+title: fives_graph
+---
+stateDiagram-v2
+  [*] --> DivisibleBy5
+  DivisibleBy5 --> Increment
+  DivisibleBy5 --> [*]
+  Increment --> DivisibleBy5
+```
+
+## Stateful Graphs
+
+TODO introduce state
+
+TODO link to issue about persistent state.
 
 Here's an example of a graph which represents a vending machine where the user may insert coins and select a product to purchase.
 
-```python {title="vending_machine.py"}
+```python {title="vending_machine.py" py="3.10"}
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -162,7 +277,7 @@ async def main():
 1. The state of the vending machine is defined as a dataclass with the user's balance and the product they've selected, if any.
 2. A dictionary of products mapped to prices.
 3. The `InsertCoin` node, [`BaseNode`][pydantic_graph.nodes.BaseNode] is parameterized with `MachineState` as that's the state used in this graph.
-4. The `InsertCoin` node prompts the user to insert coins. Keep things simple by just entering a monetary amount as a float. Before you start thinking this is a toy too since it's using `input` within node, see [below](#custom-control-flow) for how control flow can be managed when nodes require external input.
+4. The `InsertCoin` node prompts the user to insert coins. We keep things simple by just entering a monetary amount as a float. Before you start thinking this is a toy too since it's using `input` within nodes, see [below](#custom-control-flow) for how control flow can be managed when nodes require external input.
 5. The `CoinsInserted` node, again this is a [`dataclass`][dataclasses.dataclass], in this case with one field `amount`, thus nodes calling `CoinsInserted` must provide an amount.
 6. Update the user's balance with the amount inserted.
 7. If the user has already selected a product, go to `Purchase`, otherwise go to `SelectProduct`.
@@ -171,18 +286,18 @@ async def main():
 10. If the balance is enough to purchase the product, adjust the balance to reflect the purchase and return [`End`][pydantic_graph.nodes.End] to end the graph. We're not using the run return type, so we call `End` with `None`.
 11. If the balance is insufficient, to go `InsertCoin` to prompt the user to insert more coins.
 12. If the product is invalid, go to `SelectProduct` to prompt the user to select a product again.
-13. The graph is created by passing a list of nodes to [`Graph`][pydantic_graph.graph.Graph]. Order of nodes is not important, but will alter how [diagramss](#mermaid-diagrams) are displayed.
+13. The graph is created by passing a list of nodes to [`Graph`][pydantic_graph.graph.Graph]. Order of nodes is not important, but will alter how [diagrams](#mermaid-diagrams) are displayed.
 14. Initialize the state, this will be passed to the graph run and mutated as the graph runs.
 15. Run the graph with the initial state, since the graph can be run from any node, we must pass the start node, in this case `InsertCoin`. [`Graph.run`][pydantic_graph.graph.Graph.run] returns a tuple of the return value (`None`) in this case, and the [history][pydantic_graph.state.HistoryStep] of the graph run.
 16. The return type of the node's [`run`][pydantic_graph.nodes.BaseNode.run] method is important, it's used to determine the outgoing edges of the node, this in turn is used to render [mermaid diagrams](#mermaid-diagrams) and is enforced at runtime.
 17. The return type of `CoinsInserted`s [`run`][pydantic_graph.nodes.BaseNode.run] method is a union, meaning multiple outgoing edges are possible.
 18. Unlike other nodes `Purchase` can end the run, so the [`RunEndT`][pydantic_graph.nodes.RunEndT] generic parameter must be set, in this case it's `None` since the graph run return type is `None`.
 
-_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
+_(This example is complete, it can be run "as is" with Python 3.10+ — you'll need to add `asyncio.run(main())` to run `main`)_
 
 A [mermaid diagram](#mermaid-diagrams) for this graph can be generated with the following code:
 
-```py {title="vending_machine_diagram.py"}
+```py {title="vending_machine_diagram.py" py="3.10"}
 from vending_machine import InsertCoin, vending_machine_graph
 
 vending_machine_graph.mermaid_code(start_node=InsertCoin)
@@ -215,7 +330,7 @@ So far we haven't shown an example of a Graph that actually uses PydanticAI or G
 
 In this example, one agent generates a welcome email to a user and the other agent provides feedback on the email.
 
-This graph has avery simple structure:
+This graph has a very simple structure:
 
 ```mermaid
 ---
@@ -229,7 +344,7 @@ stateDiagram-v2
 ```
 
 
-```python {title="genai_email_feedback.py"}
+```python {title="genai_email_feedback.py" py="3.10"}
 from __future__ import annotations as _annotations
 
 from dataclasses import dataclass, field
@@ -344,15 +459,18 @@ async def main():
     """
 ```
 
-_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
+_(This example is complete, it can be run "as is" with Python 3.10+ — you'll need to add `asyncio.run(main())` to run `main`)_
 
 ## Custom Control Flow
 
-TODO
+In many real-world applications, Graphs cannot run uninterrupted from start to finish — they require external input or run over an extended period of time where a single process cannot execute the entire graph.
 
-## State Machine
+In these scenarios the [`next`][pydantic_graph.graph.Graph.next] method can be used to run the graph one node at a time.
 
-TODO
+In this example, an AI asks the user a question, the user provides an answer, the AI evaluates the answer and ends if the user got it right or asks another question if they got it wrong.
+
+```python {title="ai_q_and_a.py"}
+```
 
 ## Mermaid Diagrams
 

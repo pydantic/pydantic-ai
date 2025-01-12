@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from typing import Annotated
 
 import logfire
+from devtools import debug
 from pydantic_graph import BaseNode, Edge, End, Graph, GraphContext, HistoryStep
 
 from pydantic_ai import Agent
@@ -136,7 +137,7 @@ async def main():
         while True:
             node = await question_graph.next(state, node, history)
             if isinstance(node, End):
-                print('\n'.join(e.summary() for e in history))
+                debug([e.data_snapshot() for e in history])
                 break
             elif isinstance(node, Answer):
                 node.answer = input(f'{node.question} ')

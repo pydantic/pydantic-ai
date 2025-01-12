@@ -50,8 +50,12 @@ class NodeStep(Generic[StateT, RunEndT]):
         # Copy the state to prevent it from being modified by other code
         self.state = snapshot_state(self.state)
 
-    def summary(self) -> str:
-        return str(self.node)
+    def data_snapshot(self) -> BaseNode[StateT, RunEndT]:
+        """Returns a deep copy of [`self.node`][pydantic_graph.state.NodeStep.node].
+
+        Useful for summarizing history.
+        """
+        return copy.deepcopy(self.node)
 
 
 @dataclass
@@ -73,8 +77,12 @@ class EndStep(Generic[StateT, RunEndT]):
         # Copy the state to prevent it from being modified by other code
         self.state = snapshot_state(self.state)
 
-    def summary(self) -> str:
-        return str(self.result)
+    def data_snapshot(self) -> End[RunEndT]:
+        """Returns a deep copy of [`self.result`][pydantic_graph.state.EndStep.result].
+
+        Useful for summarizing history.
+        """
+        return copy.deepcopy(self.result)
 
 
 HistoryStep = Union[NodeStep[StateT, RunEndT], EndStep[StateT, RunEndT]]

@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+import asyncio
 import inspect
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -31,7 +32,7 @@ class Graph(Generic[StateT, RunEndT]):
     Here's a very simple example of a graph which increments a number by 1, but makes sure the number is never
     42 at the end.
 
-    ```py {title="never_42.py" lint="not-imports"}
+    ```py {title="never_42.py" noqa="I001" py="3.10"}
     from __future__ import annotations
 
     from dataclasses import dataclass
@@ -117,7 +118,7 @@ class Graph(Generic[StateT, RunEndT]):
 
         Here's an example of running the graph from [above][pydantic_graph.graph.Graph]:
 
-        ```py {title="run_never_42.py" lint="not-imports"}
+        ```py {title="run_never_42.py" noqa="I001" py="3.10"}
         from never_42 import Increment, MyState, never_42_graph
 
         async def main():
@@ -196,10 +197,10 @@ class Graph(Generic[StateT, RunEndT]):
             '''
         ```
         """
-        history: list[HistoryStep[StateT, RunEndT]] = []
         if infer_name and self.name is None:
             self._infer_name(inspect.currentframe())
 
+        history: list[HistoryStep[StateT, RunEndT]] = []
         with _logfire.span(
             '{graph_name} run {start=}',
             graph_name=self.name or 'graph',
@@ -220,6 +221,31 @@ class Graph(Generic[StateT, RunEndT]):
                         raise exceptions.GraphRuntimeError(
                             f'Invalid node return type: `{type(next_node).__name__}`. Expected `BaseNode` or `End`.'
                         )
+
+    def run_sync(
+        self,
+        state: StateT,
+        start_node: BaseNode[StateT, RunEndT],
+        *,
+        infer_name: bool = True,
+    ) -> tuple[RunEndT, list[HistoryStep[StateT, RunEndT]]]:
+        """Run the graph synchronously.
+
+        This is a convenience method that wraps [`self.run`][pydantic_graph.Graph.run] with `loop.run_until_complete(...)`.
+        You therefore can't use this method inside async code or if there's an active event loop.
+
+        Args:
+            state: The initial state of the graph.
+            start_node: the first node to run, since the graph definition doesn't define the entry point in the graph,
+                you need to provide the starting node.
+            infer_name: Whether to infer the graph name from the calling frame.
+
+        Returns:
+            The result type from ending the run and the history of the run.
+        """
+        if infer_name and self.name is None:
+            self._infer_name(inspect.currentframe())
+        return asyncio.get_event_loop().run_until_complete(self.run(state, start_node, infer_name=False))
 
     async def next(
         self,
@@ -285,7 +311,7 @@ class Graph(Generic[StateT, RunEndT]):
 
         Here's an example of generating a diagram for the graph from [above][pydantic_graph.graph.Graph]:
 
-        ```py {title="never_42.py"}
+        ```py {title="never_42.py" py="3.10"}
         from never_42 import Increment, never_42_graph
 
         print(never_42_graph.mermaid_code(start_node=Increment))

@@ -84,6 +84,14 @@ def test_docs_examples(
     opt_title = prefix_settings.get('title')
     opt_test = prefix_settings.get('test', '')
     opt_lint = prefix_settings.get('lint', '')
+    noqa = prefix_settings.get('noqa', '')
+    python_version = prefix_settings.get('py', None)
+
+    if python_version:
+        python_version_info = tuple(int(v) for v in python_version.split('.'))
+        if sys.version_info < python_version_info:
+            pytest.skip(f'Python version {python_version} required')
+
     cwd = Path.cwd()
 
     if opt_test.startswith('skip') and opt_lint.startswith('skip'):
@@ -99,8 +107,11 @@ def test_docs_examples(
     # `from bank_database import DatabaseConn` wrongly sorted in imports
     # waiting for https://github.com/pydantic/pytest-examples/issues/43
     # and https://github.com/pydantic/pytest-examples/issues/46
-    if opt_lint == 'not-imports' or 'import DatabaseConn' in example.source:
+    if 'import DatabaseConn' in example.source:
         ruff_ignore.append('I001')
+
+    if noqa:
+        ruff_ignore.extend(noqa.upper().split())
 
     line_length = int(prefix_settings.get('line_length', '88'))
 
@@ -116,7 +127,7 @@ def test_docs_examples(
             eval_example.lint(example)
 
     if opt_test.startswith('skip'):
-        pytest.skip(opt_test[4:].lstrip(' -') or 'running code skipped')
+        print(opt_test[4:].lstrip(' -') or 'running code skipped')
     else:
         if eval_example.update_examples:
             module_dict = eval_example.run_print_update(example, call=call_name)
