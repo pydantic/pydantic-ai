@@ -7,7 +7,7 @@ from functools import cached_property
 from typing import Any, cast
 
 import pytest
-from inline_snapshot import Is, snapshot
+from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, ModelRetry
 from pydantic_ai.messages import (
@@ -16,6 +16,7 @@ from pydantic_ai.messages import (
     ModelResponse,
     RetryPromptPart,
     SystemPromptPart,
+    TextPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
@@ -102,9 +103,15 @@ async def test_sync_request_text_response(allow_model_requests: None):
     assert result.all_messages() == snapshot(
         [
             ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
-            Is(ModelResponse.from_text(content='world', timestamp=IsNow(tz=timezone.utc))),
+            ModelResponse(
+                parts=[TextPart(content='world')],
+                timestamp=IsNow(tz=timezone.utc),
+            ),
             ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
-            Is(ModelResponse.from_text(content='world', timestamp=IsNow(tz=timezone.utc))),
+            ModelResponse(
+                parts=[TextPart(content='world')],
+                timestamp=IsNow(tz=timezone.utc),
+            ),
         ]
     )
 
@@ -238,6 +245,9 @@ async def test_request_tool_call(allow_model_requests: None):
                     )
                 ]
             ),
-            Is(ModelResponse.from_text(content='final response', timestamp=IsNow(tz=timezone.utc))),
+            ModelResponse(
+                parts=[TextPart(content='final response')],
+                timestamp=IsNow(tz=timezone.utc),
+            ),
         ]
     )

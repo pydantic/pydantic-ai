@@ -173,3 +173,6 @@ ignore_no_config = true
 [tool.inline-snapshot.shortcuts]
 snap-fix=["create", "fix"]
 snap=["create"]
+
+[tool.inline-snapshot]
+format-command="uv run ruff check --fix-only --stdin-filename {filename} | uv run ruff format --stdin-filename {filename}"
