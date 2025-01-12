@@ -127,14 +127,14 @@ async def test_graph():
             ),
         ]
     )
-    assert [e.summary() for e in history] == snapshot(
+    assert [e.data_snapshot() for e in history] == snapshot(
         [
-            'test_graph.<locals>.Float2String(input_data=3.14159)',
-            "test_graph.<locals>.String2Length(input_data='3.14159')",
-            'test_graph.<locals>.Double(input_data=7)',
-            "test_graph.<locals>.String2Length(input_data='xxxxxxxxxxxxxxxxxxxxx')",
-            'test_graph.<locals>.Double(input_data=21)',
-            'End(data=42)',
+            Float2String(input_data=3.14159),
+            String2Length(input_data='3.14159'),
+            Double(input_data=7),
+            String2Length(input_data='xxxxxxxxxxxxxxxxxxxxx'),
+            Double(input_data=21),
+            End(data=42),
         ]
     )
 

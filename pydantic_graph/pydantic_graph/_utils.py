@@ -24,7 +24,8 @@ def get_union_args(tp: Any) -> tuple[Any, ...]:
 def unpack_annotated(tp: Any) -> tuple[Any, list[Any]]:
     """Strip `Annotated` from the type if present.
 
-    Returns: `(tp argument, ())` if not annotated, otherwise `(stripped type, annotations)`.
+    Returns:
+        `(tp argument, ())` if not annotated, otherwise `(stripped type, annotations)`.
     """
     origin = get_origin(tp)
     if origin is Annotated or origin is typing_extensions.Annotated:

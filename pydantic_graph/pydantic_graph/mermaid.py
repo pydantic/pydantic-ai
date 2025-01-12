@@ -120,7 +120,8 @@ def request_image(
         graph: The graph to generate the image for.
         **kwargs: Additional parameters to configure mermaid chart generation.
 
-    Returns: The image data.
+    Returns:
+        The image data.
     """
     code = generate_code(
         graph,
