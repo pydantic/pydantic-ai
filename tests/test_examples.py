@@ -167,6 +167,10 @@ def rich_prompt_ask(prompt: str, *_args: Any, **_kwargs: Any) -> str:
         return '1'
     elif prompt == 'Select product':
         return 'crisps'
+    elif prompt == 'What is the capital of France?':
+        return 'Vichy'
+    elif prompt == 'what is 1 + 1?':
+        return '2'
     else:  # pragma: no cover
         raise ValueError(f'Unexpected prompt: {prompt}')
 
@@ -256,6 +260,15 @@ text_responses: dict[str, str | ToolCallPart] = {
         tool_name='final_result_SeatPreference',
         args=ArgsDict({'row': 1, 'seat': 'A'}),
     ),
+    'Ask a simple question with a single correct answer.': 'What is the capital of France?',
+    '<examples>\n  <question>What is the capital of France?</question>\n  <answer>Vichy</answer>\n</examples>': ToolCallPart(
+        tool_name='final_result',
+        args=ArgsDict({'correct': False, 'comment': 'Vichy is no longer the capital of France.'}),
+    ),
+    '<examples>\n  <question>what is 1 + 1?</question>\n  <answer>2</answer>\n</examples>': ToolCallPart(
+        tool_name='final_result',
+        args=ArgsDict({'correct': True, 'comment': 'Well done, 1 + 1 = 2'}),
+    ),
 }
 
 
@@ -284,6 +297,8 @@ async def model_logic(messages: list[ModelMessage], info: AgentInfo) -> ModelRes
             )
         elif m.content.startswith('<examples>\n  <user>'):
             return ModelResponse(parts=[ToolCallPart(tool_name='final_result_EmailOk', args=ArgsDict({}))])
+        elif m.content == 'Ask a simple question with a single correct answer.' and len(messages) > 2:
+            return ModelResponse.from_text(content='what is 1 + 1?')
         elif response := text_responses.get(m.content):
             if isinstance(response, str):
                 return ModelResponse.from_text(content=response)

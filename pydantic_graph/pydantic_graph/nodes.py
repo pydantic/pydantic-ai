@@ -54,10 +54,12 @@ class BaseNode(ABC, Generic[StateT, NodeRunEndT]):
     @classmethod
     @cache
     def get_id(cls) -> str:
+        """Get the ID of the node."""
         return cls.__name__
 
     @classmethod
     def get_note(cls) -> str | None:
+        """Get a note about the node to render on mermaid charts."""
         if not cls.enable_docstring_notes:
             return None
         docstring = cls.__doc__
@@ -73,6 +75,7 @@ class BaseNode(ABC, Generic[StateT, NodeRunEndT]):
 
     @classmethod
     def get_node_def(cls, local_ns: dict[str, Any] | None) -> NodeDef[StateT, NodeRunEndT]:
+        """Get the node definition."""
         type_hints = get_type_hints(cls.run, localns=local_ns, include_extras=True)
         try:
             return_hint = type_hints['return']
