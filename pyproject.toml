@@ -65,6 +65,8 @@ lint = [
 ]
 docs = [
     "black>=24.10.0",
+    "bs4>=0.0.2",
+    "markdownify>=0.14.1",
     "mkdocs>=1.6.1",
     "mkdocs-glightbox>=0.4.0",
     "mkdocs-material[imaging]>=9.5.45",
