@@ -49,6 +49,8 @@ groq = ["groq>=0.12.0"]
 mistral = ["mistralai>=1.2.5"]
 logfire = ["logfire>=2.3"]
 
+bedrock = ["boto3", "anyio"]
+
 [dependency-groups]
 dev = [
     "anyio>=4.5.0",
@@ -61,6 +63,7 @@ dev = [
     "pytest-mock>=3.14.0",
     "pytest-pretty>=1.2.0",
     "diff-cover>=9.2.0",
+    "boto3-stubs[bedrock-runtime]",
 ]
 
 [tool.hatch.build.targets.wheel]

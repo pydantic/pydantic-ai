@@ -62,6 +62,7 @@ lint = [
     "mypy>=1.11.2",
     "pyright>=1.1.388",
     "ruff>=0.6.9",
+    "boto3-stubs[bedrock-runtime]",
 ]
 docs = [
     "black>=24.10.0",
