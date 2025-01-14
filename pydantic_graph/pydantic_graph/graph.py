@@ -4,18 +4,20 @@ import asyncio
 import inspect
 from collections.abc import Sequence
 from dataclasses import dataclass
+from functools import cached_property
 from pathlib import Path
 from time import perf_counter
 from types import FrameType
-from typing import TYPE_CHECKING, Any, Callable, Generic
+from typing import TYPE_CHECKING, Annotated, Any, Callable, Generic
 
 import logfire_api
+import pydantic
 from typing_extensions import Literal, Unpack, assert_never
 
 from . import _utils, exceptions, mermaid
 from ._utils import get_parent_namespace
 from .nodes import BaseNode, End, GraphContext, NodeDef, RunEndT
-from .state import EndStep, HistoryStep, NodeStep, StateT, deep_copy_state
+from .state import EndStep, HistoryStep, NodeStep, StateT, deep_copy_state, nodes_schema_var
 
 __all__ = ('Graph',)
 
@@ -66,6 +68,7 @@ class Graph(Generic[StateT, RunEndT]):
     from the graph.
     """
 
+    state_type: type[StateT] | None
     name: str | None
     node_defs: dict[str, NodeDef[StateT, RunEndT]]
     snapshot_state: Callable[[StateT], StateT]
@@ -74,6 +77,7 @@ class Graph(Generic[StateT, RunEndT]):
         self,
         *,
         nodes: Sequence[type[BaseNode[StateT, RunEndT]]],
+        state_type: type[StateT] | None = None,
         name: str | None = None,
         snapshot_state: Callable[[StateT], StateT] = deep_copy_state,
     ):
@@ -82,12 +86,14 @@ class Graph(Generic[StateT, RunEndT]):
         Args:
             nodes: The nodes which make up the graph, nodes need to be unique and all be generic in the same
                 state type.
+            state_type: The type of the state for the graph.
             name: Optional name for the graph, if not provided the name will be inferred from the calling frame
                 on the first call to a graph method.
             snapshot_state: A function to snapshot the state of the graph, this is used in
                 [`NodeStep`][pydantic_graph.state.NodeStep] and [`EndStep`][pydantic_graph.state.EndStep] to record
                 the state before each step.
         """
+        self.state_type = state_type
         self.name = name
         self.snapshot_state = snapshot_state
 
@@ -281,6 +287,42 @@ class Graph(Generic[StateT, RunEndT]):
             next_node = await node.run(ctx)
             history_step.duration = perf_counter() - start
         return next_node
+
+    def dump_history(self, history: list[HistoryStep[StateT, RunEndT]], *, indent: int | None = None) -> bytes:
+        """Dump the history of a graph run as JSON.
+
+        Args:
+            history: The history of the graph run.
+            indent: The number of spaces to indent the JSON.
+
+        Returns:
+            The JSON representation of the history.
+        """
+        return self.history_type_adapter.dump_json(history, indent=indent)
+
+    def load_history(self, json_bytes: str | bytes | bytearray) -> list[HistoryStep[StateT, RunEndT]]:
+        """Load the history of a graph run from JSON.
+
+        Args:
+            json_bytes: The JSON representation of the history.
+
+        Returns:
+            The history of the graph run.
+        """
+        return self.history_type_adapter.validate_json(json_bytes)
+
+    @cached_property
+    def history_type_adapter(self) -> pydantic.TypeAdapter[list[HistoryStep[StateT, RunEndT]]]:
+        nodes = [node_def.node for node_def in self.node_defs.values()]
+        token = nodes_schema_var.set(nodes)
+        try:
+            # TODO get the return type RunEndT
+            ta = pydantic.TypeAdapter(
+                list[Annotated[HistoryStep[self.state_type or Any, Any], pydantic.Discriminator('kind')]],
+            )
+        finally:
+            nodes_schema_var.reset(token)
+        return ta  # type: ignore
 
     def mermaid_code(
         self,

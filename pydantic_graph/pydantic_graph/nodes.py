@@ -3,12 +3,16 @@ from __future__ import annotations as _annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, is_dataclass
 from functools import cache
-from typing import Any, ClassVar, Generic, get_origin, get_type_hints
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, get_origin, get_type_hints
 
 from typing_extensions import Never, TypeVar
 
 from . import _utils, exceptions
-from .state import StateT
+
+if TYPE_CHECKING:
+    from .state import StateT
+else:
+    StateT = TypeVar('StateT', default=None)
 
 __all__ = 'GraphContext', 'BaseNode', 'End', 'Edge', 'NodeDef', 'RunEndT', 'NodeRunEndT'
 
@@ -26,6 +30,7 @@ class GraphContext(Generic[StateT]):
     """The state of the graph."""
 
 
+@dataclass
 class BaseNode(ABC, Generic[StateT, NodeRunEndT]):
     """Base class for a node."""
 
