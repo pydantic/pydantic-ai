@@ -33,8 +33,13 @@ class GraphContext(Generic[StateT]):
 class BaseNode(ABC, Generic[StateT, NodeRunEndT]):
     """Base class for a node."""
 
-    enable_docstring_notes: ClassVar[bool] = True
-    """Set to `False` to not generate mermaid diagram notes from the class's docstring."""
+    docstring_notes: ClassVar[bool] = False
+    """Set to `True` to generate mermaid diagram notes from the class's docstring.
+
+    While this can add valuable information to the diagram, it can make diagrams harder to view, hence
+    it is disabled by default. You can also customise notes overriding the
+    [`get_note`][pydantic_graph.nodes.BaseNode.get_note] method.
+    """
 
     @abstractmethod
     async def run(self, ctx: GraphContext[StateT]) -> BaseNode[StateT, Any] | End[NodeRunEndT]:
@@ -63,8 +68,12 @@ class BaseNode(ABC, Generic[StateT, NodeRunEndT]):
 
     @classmethod
     def get_note(cls) -> str | None:
-        """Get a note about the node to render on mermaid charts."""
-        if not cls.enable_docstring_notes:
+        """Get a note about the node to render on mermaid charts.
+
+        By default, this returns a note only if [`docstring_notes`][pydantic_graph.nodes.BaseNode.docstring_notes]
+        is `True`. You can override this method to customise the node notes.
+        """
+        if not cls.docstring_notes:
             return None
         docstring = cls.__doc__
         # dataclasses get an automatic docstring which is just their signature, we don't want that
