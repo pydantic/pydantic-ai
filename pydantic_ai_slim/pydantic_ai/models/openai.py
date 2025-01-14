@@ -197,8 +197,7 @@ class OpenAIAgentModel(AgentModel):
             timeout=model_settings.get('timeout', NOT_GIVEN),
         )
 
-    @staticmethod
-    def _process_response(response: chat.ChatCompletion) -> ModelResponse:
+    def _process_response(self, response: chat.ChatCompletion) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
         timestamp = datetime.fromtimestamp(response.created, tz=timezone.utc)
         choice = response.choices[0]
@@ -208,17 +207,20 @@ class OpenAIAgentModel(AgentModel):
         if choice.message.tool_calls is not None:
             for c in choice.message.tool_calls:
                 items.append(ToolCallPart.from_raw_args(c.function.name, c.function.arguments, c.id))
-        return ModelResponse(items, timestamp=timestamp)
+        return ModelResponse(items, model_name=self.model_name, timestamp=timestamp)
 
-    @staticmethod
-    async def _process_streamed_response(response: AsyncStream[ChatCompletionChunk]) -> OpenAIStreamedResponse:
+    async def _process_streamed_response(self, response: AsyncStream[ChatCompletionChunk]) -> OpenAIStreamedResponse:
         """Process a streamed response, and prepare a streaming response to return."""
         peekable_response = _utils.PeekableAsyncStream(response)
         first_chunk = await peekable_response.peek()
         if isinstance(first_chunk, _utils.Unset):
             raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')
 
-        return OpenAIStreamedResponse(peekable_response, datetime.fromtimestamp(first_chunk.created, tz=timezone.utc))
+        return OpenAIStreamedResponse(
+            _model_name=self.model_name,
+            _response=peekable_response,
+            _timestamp=datetime.fromtimestamp(first_chunk.created, tz=timezone.utc),
+        )
 
     @classmethod
     def _map_message(cls, message: ModelMessage) -> Iterable[chat.ChatCompletionMessageParam]:

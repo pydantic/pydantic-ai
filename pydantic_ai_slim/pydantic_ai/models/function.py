@@ -140,6 +140,7 @@ class FunctionAgentModel(AgentModel):
     function: FunctionDef | None
     stream_function: StreamFunctionDef | None
     agent_info: AgentInfo
+    model_name: str = 'function'
 
     async def request(
         self, messages: list[ModelMessage], model_settings: ModelSettings | None
@@ -169,7 +170,7 @@ class FunctionAgentModel(AgentModel):
         if isinstance(first, _utils.Unset):
             raise ValueError('Stream function must return at least one item')
 
-        yield FunctionStreamedResponse(response_stream)
+        yield FunctionStreamedResponse(_model_name=self.model_name, _iter=response_stream)
 
 
 @dataclass
