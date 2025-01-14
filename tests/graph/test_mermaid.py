@@ -46,7 +46,7 @@ class Spam(BaseNode):
 class Eggs(BaseNode[None, None]):
     """This is the docstring for Eggs."""
 
-    enable_docstring_notes = False
+    docstring_notes = False
 
     async def run(self, ctx: GraphContext) -> Annotated[End[None], Edge(label='eggs to end')]:
         raise NotImplementedError()

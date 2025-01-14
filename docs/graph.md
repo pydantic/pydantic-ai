@@ -556,7 +556,6 @@ In this example, an AI asks the user a question, the user provides an answer, th
 
         async def run(self, ctx: GraphContext[QuestionState]) -> Ask:
             print(f'Comment: {self.comment}')
-            #> Comment: Vichy is no longer the capital of France.
             ctx.state.question = None
             return Ask()
 
@@ -632,10 +631,84 @@ stateDiagram-v2
   Reprimand --> Ask
 ```
 
-You maybe have noticed that although this examples transfers control flow out of the graph run, we're still using [rich's `Prompt.ask`][rich.prompt.PromptBase.ask] to get user input, with the process hanging while we wait for the user to enter a response.
-
-TODO
+You maybe have noticed that although this examples transfers control flow out of the graph run, we're still using [rich's `Prompt.ask`][rich.prompt.PromptBase.ask] to get user input, with the process hanging while we wait for the user to enter a response. For an example of genuine out-of-process control flow, see the [question graph example](examples/question-graph.md).
 
 ## Mermaid Diagrams
 
-TODO
+Pydantic Graph, can generate [mermaid](https://mermaid.js.org/) [`stateDiagram-v2`](https://mermaid.js.org/syntax/stateDiagram.html) diagrams for graphs, as shown above.
+
+These diagrams can be generated with:
+
+* [`Graph.mermaid_code`][pydantic_graph.graph.Graph.mermaid_code] to generate the mermaid code for a graph
+* [`Graph.mermaid_image`][pydantic_graph.graph.Graph.mermaid_image] to generate an image of the graph using [mermaid.ink](https://mermaid.ink/)
+* ['Graph.mermaid_save`][pydantic_graph.graph.Graph.mermaid_save] to generate an image of the graph using [mermaid.ink](https://mermaid.ink/) and save it to a file
+
+Beyond the diagrams shown above, you can also customise mermaid diagrams with the following options:
+
+* [`Edge`][pydantic_graph.nodes.Edge] allows you to apply a label to an edge
+* [`BaseNode.docstring_notes`][pydantic_graph.nodes.BaseNode.docstring_notes] and [`BaseNode.get_note`][pydantic_graph.nodes.BaseNode.get_note] allows you to add notes to nodes
+* The [`highlighted_nodes`][pydantic_graph.graph.Graph.mermaid_code] parameter allows you to highlight specific node(s) in the diagram
+
+Putting that together, we can edit the last [`ai_q_and_a_graph.py`](#custom-control-flow) example to:
+
+* add labels to some edges
+* add a note to the `Ask` node
+* highlight the `Answer` node
+* save the diagram as a `PNG` image to file
+
+```python {title="ai_q_and_a_graph_extra.py" test="skip" lint="skip" hl_lines="2 4 10-11 14 26 31"}
+...
+from typing import Annotated
+
+from pydantic_graph import BaseNode, End, Graph, GraphContext, Edge
+
+...
+
+@dataclass
+class Ask(BaseNode[QuestionState]):
+    """Generate question using GPT-4o."""
+    docstring_notes = True
+    async def run(
+        self, ctx: GraphContext[QuestionState]
+    ) -> Annotated[Answer, Edge(label='Ask the question')]:
+        ...
+
+...
+
+@dataclass
+class Evaluate(BaseNode[QuestionState]):
+    answer: str
+
+    async def run(
+            self,
+            ctx: GraphContext[QuestionState],
+    ) -> Annotated[End[str], Edge(label='success')] | Reprimand:
+        ...
+
+...
+
+question_graph.mermaid_save('image.png', highlighted_nodes=[Answer])
+```
+
+_(This example is not complete and cannot be run directly)_
+
+Would generate and image that looks like this:
+
+```mermaid
+---
+title: question_graph
+---
+stateDiagram-v2
+  Ask --> Answer: Ask the question
+  note right of Ask
+    Judge the answer.
+    Decide on next step.
+  end note
+  Answer --> Evaluate
+  Evaluate --> Reprimand
+  Evaluate --> [*]: success
+  Reprimand --> Ask
+
+classDef highlighted fill:#fdff32
+class Answer highlighted
+```
