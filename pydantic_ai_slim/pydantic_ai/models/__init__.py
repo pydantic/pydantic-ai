@@ -72,6 +72,7 @@ KnownModelName = Literal[
     'ollama:mistral-nemo',
     'ollama:mixtral',
     'ollama:phi3',
+    'ollama:phi4',
     'ollama:qwq',
     'ollama:qwen',
     'ollama:qwen2',
