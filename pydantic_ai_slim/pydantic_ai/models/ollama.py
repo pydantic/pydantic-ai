@@ -36,6 +36,7 @@ CommonOllamaModelNames = Literal[
     'mistral-nemo',
     'mixtral',
     'phi3',
+    'phi4',
     'qwq',
     'qwen',
     'qwen2',
