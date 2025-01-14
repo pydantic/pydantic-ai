@@ -20,7 +20,7 @@ While this library is developed as part of the PydanticAI; it has no dependency 
 
 `pydantic-graph` is designed for advanced users and makes heavy use of Python generics and types hints. It is not designed to be as beginner-friendly as PydanticAI.
 
-!!! note "Every Early beta"
+!!! note "Very Early beta"
     Graph support was [introduced](https://github.com/pydantic/pydantic-ai/pull/528) in v0.0.19 and is in very earlier beta. The API is subject to change. The documentation is incomplete. The implementation is incomplete.
 
 ## Installation
@@ -89,7 +89,7 @@ class MyNode(BaseNode[MyState]):  # (1)!
 
 We could extend `MyNode` to optionally end the run if `foo` is divisible by 5:
 
-```py {title="intermediate_or_end_node.py" hl_lines="7 13" noqa="F821" test="skip"}
+```py {title="intermediate_or_end_node.py" hl_lines="7 13 15" noqa="F821" test="skip"}
 from dataclasses import dataclass
 
 from pydantic_graph import BaseNode, End, GraphContext
@@ -641,7 +641,7 @@ These diagrams can be generated with:
 
 * [`Graph.mermaid_code`][pydantic_graph.graph.Graph.mermaid_code] to generate the mermaid code for a graph
 * [`Graph.mermaid_image`][pydantic_graph.graph.Graph.mermaid_image] to generate an image of the graph using [mermaid.ink](https://mermaid.ink/)
-* ['Graph.mermaid_save`][pydantic_graph.graph.Graph.mermaid_save] to generate an image of the graph using [mermaid.ink](https://mermaid.ink/) and save it to a file
+* [`Graph.mermaid_save`][pydantic_graph.graph.Graph.mermaid_save] to generate an image of the graph using [mermaid.ink](https://mermaid.ink/) and save it to a file
 
 Beyond the diagrams shown above, you can also customise mermaid diagrams with the following options:
 
