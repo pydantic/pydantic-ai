@@ -132,75 +132,15 @@ class Graph(Generic[StateT, RunEndT]):
             _, history = await never_42_graph.run(state, Increment())
             print(state)
             #> MyState(number=2)
-            print(history)
-            '''
-            [
-                NodeStep(
-                    state=MyState(number=1),
-                    node=Increment(),
-                    start_ts=datetime.datetime(...),
-                    duration=0.0...,
-                    kind='node',
-                ),
-                NodeStep(
-                    state=MyState(number=2),
-                    node=Check42(),
-                    start_ts=datetime.datetime(...),
-                    duration=0.0...,
-                    kind='node',
-                ),
-                EndStep(
-                    state=MyState(number=2),
-                    result=End(data=None),
-                    ts=datetime.datetime(...),
-                    kind='end',
-                ),
-            ]
-            '''
+            print(len(history))
+            #> 3
 
             state = MyState(41)
             _, history = await never_42_graph.run(state, Increment())
             print(state)
             #> MyState(number=43)
-            print(history)
-            '''
-            [
-                NodeStep(
-                    state=MyState(number=41),
-                    node=Increment(),
-                    start_ts=datetime.datetime(...),
-                    duration=0.0...,
-                    kind='node',
-                ),
-                NodeStep(
-                    state=MyState(number=42),
-                    node=Check42(),
-                    start_ts=datetime.datetime(...),
-                    duration=0.0...,
-                    kind='node',
-                ),
-                NodeStep(
-                    state=MyState(number=42),
-                    node=Increment(),
-                    start_ts=datetime.datetime(...),
-                    duration=0.0...,
-                    kind='node',
-                ),
-                NodeStep(
-                    state=MyState(number=43),
-                    node=Check42(),
-                    start_ts=datetime.datetime(...),
-                    duration=0.0...,
-                    kind='node',
-                ),
-                EndStep(
-                    state=MyState(number=43),
-                    result=End(data=None),
-                    ts=datetime.datetime(...),
-                    kind='end',
-                ),
-            ]
-            '''
+            print(len(history))
+            #> 5
         ```
         """
         if infer_name and self.name is None:
