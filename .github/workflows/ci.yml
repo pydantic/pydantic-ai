@@ -10,7 +10,7 @@ on:
 
 env:
   CI: true
-  COLUMNS: 120
+  COLUMNS: 150
   UV_PYTHON: 3.12
   UV_FROZEN: '1'
 
