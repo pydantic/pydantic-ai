@@ -2,24 +2,25 @@ from __future__ import annotations as _annotations
 
 import os
 import re
-from collections.abc import AsyncIterator, Iterable, Sequence
+from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Annotated, Any, Literal, Protocol, Union
+from uuid import uuid4
 
 import pydantic
-import pydantic_core
 from httpx import USE_CLIENT_DEFAULT, AsyncClient as AsyncHTTPClient, Response as HTTPResponse
-from typing_extensions import NotRequired, TypedDict, TypeGuard, assert_never
+from typing_extensions import NotRequired, TypedDict, assert_never
 
-from .. import UnexpectedModelBehavior, _utils, exceptions, result
+from .. import UnexpectedModelBehavior, _utils, exceptions, usage
 from ..messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
     ModelResponsePart,
+    ModelResponseStreamEvent,
     RetryPromptPart,
     SystemPromptPart,
     TextPart,
@@ -31,10 +32,8 @@ from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from . import (
     AgentModel,
-    EitherStreamedResponse,
     Model,
-    StreamStructuredResponse,
-    StreamTextResponse,
+    StreamedResponse,
     cached_async_http_client,
     check_allow_model_requests,
     get_user_agent,
@@ -171,7 +170,7 @@ class GeminiAgentModel(AgentModel):
 
     async def request(
         self, messages: list[ModelMessage], model_settings: ModelSettings | None
-    ) -> tuple[ModelResponse, result.Usage]:
+    ) -> tuple[ModelResponse, usage.Usage]:
         async with self._make_request(messages, False, model_settings) as http_response:
             response = _gemini_response_ta.validate_json(await http_response.aread())
         return self._process_response(response), _metadata_as_usage(response)
@@ -179,7 +178,7 @@ class GeminiAgentModel(AgentModel):
     @asynccontextmanager
     async def request_stream(
         self, messages: list[ModelMessage], model_settings: ModelSettings | None
-    ) -> AsyncIterator[EitherStreamedResponse]:
+    ) -> AsyncIterator[StreamedResponse]:
         async with self._make_request(messages, True, model_settings) as http_response:
             yield await self._process_streamed_response(http_response)
 
@@ -238,7 +237,7 @@ class GeminiAgentModel(AgentModel):
         return _process_response_from_parts(parts)
 
     @staticmethod
-    async def _process_streamed_response(http_response: HTTPResponse) -> EitherStreamedResponse:
+    async def _process_streamed_response(http_response: HTTPResponse) -> StreamedResponse:
         """Process a streamed response, and prepare a streaming response to return."""
         aiter_bytes = http_response.aiter_bytes()
         start_response: _GeminiResponse | None = None
@@ -259,11 +258,7 @@ class GeminiAgentModel(AgentModel):
         if start_response is None:
             raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')
 
-        # TODO: Update this once we rework stream responses to be more flexible
-        if _extract_response_parts(start_response).is_left():
-            return GeminiStreamStructuredResponse(_content=content, _stream=aiter_bytes)
-        else:
-            return GeminiStreamTextResponse(_json_content=content, _stream=aiter_bytes)
+        return GeminiStreamedResponse(_content=content, _stream=aiter_bytes)
 
     @classmethod
     def _message_to_gemini_content(
@@ -302,86 +297,69 @@ class GeminiAgentModel(AgentModel):
 
 
 @dataclass
-class GeminiStreamTextResponse(StreamTextResponse):
-    """Implementation of `StreamTextResponse` for the Gemini model."""
-
-    _json_content: bytearray
-    _stream: AsyncIterator[bytes]
-    _position: int = 0
-    _timestamp: datetime = field(default_factory=_utils.now_utc, init=False)
-    _usage: result.Usage = field(default_factory=result.Usage, init=False)
-
-    async def __anext__(self) -> None:
-        chunk = await self._stream.__anext__()
-        self._json_content.extend(chunk)
-
-    def get(self, *, final: bool = False) -> Iterable[str]:
-        if final:
-            all_items = pydantic_core.from_json(self._json_content)
-            new_items = all_items[self._position :]
-            self._position = len(all_items)
-            new_responses = _gemini_streamed_response_ta.validate_python(new_items)
-        else:
-            all_items = pydantic_core.from_json(self._json_content, allow_partial=True)
-            new_items = all_items[self._position : -1]
-            self._position = len(all_items) - 1
-            new_responses = _gemini_streamed_response_ta.validate_python(
-                new_items, experimental_allow_partial='trailing-strings'
-            )
-        for r in new_responses:
-            self._usage += _metadata_as_usage(r)
-            parts = r['candidates'][0]['content']['parts']
-            if _all_text_parts(parts):
-                for part in parts:
-                    yield part['text']
-            else:
-                raise UnexpectedModelBehavior(
-                    'Streamed response with unexpected content, expected all parts to be text'
-                )
-
-    def usage(self) -> result.Usage:
-        return self._usage
-
-    def timestamp(self) -> datetime:
-        return self._timestamp
-
-
-@dataclass
-class GeminiStreamStructuredResponse(StreamStructuredResponse):
-    """Implementation of `StreamStructuredResponse` for the Gemini model."""
+class GeminiStreamedResponse(StreamedResponse):
+    """Implementation of `StreamedResponse` for the Gemini model."""
 
     _content: bytearray
     _stream: AsyncIterator[bytes]
     _timestamp: datetime = field(default_factory=_utils.now_utc, init=False)
-    _usage: result.Usage = field(default_factory=result.Usage, init=False)
 
-    async def __anext__(self) -> None:
-        chunk = await self._stream.__anext__()
-        self._content.extend(chunk)
+    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
+        async for gemini_response in self._get_gemini_responses():
+            candidate = gemini_response['candidates'][0]
+            gemini_part: _GeminiPartUnion
+            for gemini_part in candidate['content']['parts']:
+                if 'text' in gemini_part:
+                    # Using vendor_part_id=None means we can produce multiple text parts if their deltas are sprinkled
+                    # amongst the tool call deltas
+                    yield self._parts_manager.handle_text_delta(vendor_part_id=None, content=gemini_part['text'])
 
-    def get(self, *, final: bool = False) -> ModelResponse:
-        """Get the `ModelResponse` at this point.
+                elif 'function_call' in gemini_part:
+                    # Here, we assume all function_call parts are complete and don't have deltas.
+                    # We do this by assigning a unique randomly generated "vendor_part_id".
+                    # We need to confirm whether this is actually true, but if it isn't, we can still handle it properly
+                    # it would just be a bit more complicated. And we'd need to confirm the intended semantics.
+                    maybe_event = self._parts_manager.handle_tool_call_delta(
+                        vendor_part_id=uuid4(),
+                        tool_name=gemini_part['function_call']['name'],
+                        args=gemini_part['function_call']['args'],
+                        tool_call_id=None,
+                    )
+                    if maybe_event is not None:
+                        yield maybe_event
+                else:
+                    assert 'function_response' in gemini_part, f'Unexpected part: {gemini_part}'
 
-        NOTE: It's not clear how the stream of responses should be combined because Gemini seems to always
-        reply with a single response, when returning a structured data.
+    async def _get_gemini_responses(self) -> AsyncIterator[_GeminiResponse]:
+        # This method exists to ensure we only yield completed items, so we don't need to worry about
+        # partial gemini responses, which would make everything more complicated
 
-        I'm therefore assuming that each part contains a complete tool call, and not trying to combine data from
-        separate parts.
-        """
-        responses = _gemini_streamed_response_ta.validate_json(
-            self._content,
-            experimental_allow_partial='off' if final else 'trailing-strings',
-        )
-        combined_parts: list[_GeminiPartUnion] = []
-        self._usage = result.Usage()
-        for r in responses:
+        gemini_responses: list[_GeminiResponse] = []
+        current_gemini_response_index = 0
+        # Right now, there are some circumstances where we will have information that could be yielded sooner than it is
+        # But changing that would make things a lot more complicated.
+        async for chunk in self._stream:
+            self._content.extend(chunk)
+
+            gemini_responses = _gemini_streamed_response_ta.validate_json(
+                self._content,
+                experimental_allow_partial='trailing-strings',
+            )
+
+            # The idea: yield only up to the latest response, which might still be partial.
+            # Note that if the latest response is complete, we could yield it immediately, but there's not a good
+            # allow_partial API to determine if the last item in the list is complete.
+            responses_to_yield = gemini_responses[:-1]
+            for r in responses_to_yield[current_gemini_response_index:]:
+                current_gemini_response_index += 1
+                self._usage += _metadata_as_usage(r)
+                yield r
+
+        # Now yield the final response, which should be complete
+        if gemini_responses:
+            r = gemini_responses[-1]
             self._usage += _metadata_as_usage(r)
-            candidate = r['candidates'][0]
-            combined_parts.extend(candidate['content']['parts'])
-        return _process_response_from_parts(combined_parts, timestamp=self._timestamp)
-
-    def usage(self) -> result.Usage:
-        return self._usage
+            yield r
 
     def timestamp(self) -> datetime:
         return self._timestamp
@@ -458,9 +436,14 @@ def _process_response_from_parts(parts: Sequence[_GeminiPartUnion], timestamp: d
     items: list[ModelResponsePart] = []
     for part in parts:
         if 'text' in part:
-            items.append(TextPart(part['text']))
+            items.append(TextPart(content=part['text']))
         elif 'function_call' in part:
-            items.append(ToolCallPart.from_raw_args(part['function_call']['name'], part['function_call']['args']))
+            items.append(
+                ToolCallPart.from_raw_args(
+                    tool_name=part['function_call']['name'],
+                    args=part['function_call']['args'],
+                )
+            )
         elif 'function_response' in part:
             raise exceptions.UnexpectedModelBehavior(
                 f'Unsupported response from Gemini, expected all parts to be function calls or text, got: {part!r}'
@@ -575,35 +558,6 @@ class _GeminiResponse(TypedDict):
     prompt_feedback: NotRequired[Annotated[_GeminiPromptFeedback, pydantic.Field(alias='promptFeedback')]]
 
 
-# TODO: Delete the next three functions once we've reworked streams to be more flexible
-def _extract_response_parts(
-    response: _GeminiResponse,
-) -> _utils.Either[list[_GeminiFunctionCallPart], list[_GeminiTextPart]]:
-    """Extract the parts of the response from the Gemini API.
-
-    Returns Either a list of function calls (Either.left) or a list of text parts (Either.right).
-    """
-    if len(response['candidates']) != 1:
-        raise UnexpectedModelBehavior('Expected exactly one candidate in Gemini response')
-    parts = response['candidates'][0]['content']['parts']
-    if _all_function_call_parts(parts):
-        return _utils.Either(left=parts)
-    elif _all_text_parts(parts):
-        return _utils.Either(right=parts)
-    else:
-        raise exceptions.UnexpectedModelBehavior(
-            f'Unsupported response from Gemini, expected all parts to be function calls or text, got: {parts!r}'
-        )
-
-
-def _all_function_call_parts(parts: list[_GeminiPartUnion]) -> TypeGuard[list[_GeminiFunctionCallPart]]:
-    return all('function_call' in part for part in parts)
-
-
-def _all_text_parts(parts: list[_GeminiPartUnion]) -> TypeGuard[list[_GeminiTextPart]]:
-    return all('text' in part for part in parts)
-
-
 class _GeminiCandidates(TypedDict):
     """See <https://ai.google.dev/api/generate-content#v1beta.Candidate>."""
 
@@ -630,14 +584,14 @@ class _GeminiUsageMetaData(TypedDict, total=False):
     cached_content_token_count: NotRequired[Annotated[int, pydantic.Field(alias='cachedContentTokenCount')]]
 
 
-def _metadata_as_usage(response: _GeminiResponse) -> result.Usage:
+def _metadata_as_usage(response: _GeminiResponse) -> usage.Usage:
     metadata = response.get('usage_metadata')
     if metadata is None:
-        return result.Usage()
+        return usage.Usage()
     details: dict[str, int] = {}
     if cached_content_token_count := metadata.get('cached_content_token_count'):
         details['cached_content_token_count'] = cached_content_token_count
-    return result.Usage(
+    return usage.Usage(
         request_tokens=metadata.get('prompt_token_count', 0),
         response_tokens=metadata.get('candidates_token_count', 0),
         total_tokens=metadata.get('total_token_count', 0),

@@ -536,7 +536,7 @@ class Agent(Generic[AgentDeps, ResultData]):
                         model_req_span.__exit__(None, None, None)
 
                         with _logfire.span('handle model response') as handle_span:
-                            maybe_final_result = await self._handle_streamed_model_response(
+                            maybe_final_result = await self._handle_streamed_response(
                                 model_response, run_context, result_schema
                             )
 
@@ -1126,7 +1126,7 @@ class Agent(Generic[AgentDeps, ResultData]):
         final_result: _MarkFinalResult[RunResultData] | None = None
 
         parts: list[_messages.ModelRequestPart] = []
-        if result_schema := result_schema:
+        if result_schema is not None:
             if match := result_schema.find_tool(tool_calls):
                 call, result_tool = match
                 try:
@@ -1205,76 +1205,58 @@ class Agent(Generic[AgentDeps, ResultData]):
                 parts.extend(task_results)
         return parts
 
-    async def _handle_streamed_model_response(
+    async def _handle_streamed_response(
         self,
-        model_response: models.EitherStreamedResponse,
+        streamed_response: models.StreamedResponse,
         run_context: RunContext[AgentDeps],
         result_schema: _result.ResultSchema[RunResultData] | None,
-    ) -> (
-        _MarkFinalResult[models.EitherStreamedResponse]
-        | tuple[_messages.ModelResponse, list[_messages.ModelRequestPart]]
-    ):
+    ) -> _MarkFinalResult[models.StreamedResponse] | tuple[_messages.ModelResponse, list[_messages.ModelRequestPart]]:
         """Process a streamed response from the model.
 
         Returns:
             Either a final result or a tuple of the model response and the tool responses for the next request.
             If a final result is returned, the conversation should end.
         """
-        if isinstance(model_response, models.StreamTextResponse):
-            # plain string response
-            if self._allow_text_result(result_schema):
-                return _MarkFinalResult(model_response, None)
-            else:
-                self._incr_result_retry(run_context)
-                response = _messages.RetryPromptPart(
-                    content='Plain text responses are not permitted, please call one of the functions instead.',
-                )
-                # stream the response, so usage is correct
-                async for _ in model_response:
-                    pass
+        received_text = False
 
-                text = ''.join(model_response.get(final=True))
-                return _messages.ModelResponse([_messages.TextPart(text)]), [response]
-        elif isinstance(model_response, models.StreamStructuredResponse):
-            if result_schema is not None:
-                # if there's a result schema, iterate over the stream until we find at least one tool
-                # NOTE: this means we ignore any other tools called here
-                structured_msg = model_response.get()
-                while not structured_msg.parts:
-                    try:
-                        await model_response.__anext__()
-                    except StopAsyncIteration:
-                        break
-                    structured_msg = model_response.get()
+        async for maybe_part_event in streamed_response:
+            if isinstance(maybe_part_event, _messages.PartStartEvent):
+                new_part = maybe_part_event.part
+                if isinstance(new_part, _messages.TextPart):
+                    received_text = True
+                    if self._allow_text_result(result_schema):
+                        return _MarkFinalResult(streamed_response, None)
+                elif isinstance(new_part, _messages.ToolCallPart):
+                    if result_schema is not None and (match := result_schema.find_tool([new_part])):
+                        call, _ = match
+                        return _MarkFinalResult(streamed_response, call.tool_name)
+                else:
+                    assert_never(new_part)
 
-                if match := result_schema.find_tool(structured_msg.parts):
-                    call, _ = match
-                    return _MarkFinalResult(model_response, call.tool_name)
+        tasks: list[asyncio.Task[_messages.ModelRequestPart]] = []
+        parts: list[_messages.ModelRequestPart] = []
+        model_response = streamed_response.get()
+        if not model_response.parts:
+            raise exceptions.UnexpectedModelBehavior('Received empty model response')
+        for p in model_response.parts:
+            if isinstance(p, _messages.ToolCallPart):
+                if tool := self._function_tools.get(p.tool_name):
+                    tasks.append(asyncio.create_task(tool.run(p, run_context), name=p.tool_name))
+                else:
+                    parts.append(self._unknown_tool(p.tool_name, run_context, result_schema))
 
-            # the model is calling a tool function, consume the response to get the next message
-            async for _ in model_response:
-                pass
-            model_response_msg = model_response.get()
-            if not model_response_msg.parts:
-                raise exceptions.UnexpectedModelBehavior('Received empty tool call message')
+        if received_text and not tasks and not parts:
+            # Can only get here if self._allow_text_result returns `False` for the provided result_schema
+            self._incr_result_retry(run_context)
+            model_response = _messages.RetryPromptPart(
+                content='Plain text responses are not permitted, please call one of the functions instead.',
+            )
+            return streamed_response.get(), [model_response]
 
-            # we now run all tool functions in parallel
-            tasks: list[asyncio.Task[_messages.ModelRequestPart]] = []
-            parts: list[_messages.ModelRequestPart] = []
-            for item in model_response_msg.parts:
-                if isinstance(item, _messages.ToolCallPart):
-                    call = item
-                    if tool := self._function_tools.get(call.tool_name):
-                        tasks.append(asyncio.create_task(tool.run(call, run_context), name=call.tool_name))
-                    else:
-                        parts.append(self._unknown_tool(call.tool_name, run_context, result_schema))
-
-            with _logfire.span('running {tools=}', tools=[t.get_name() for t in tasks]):
-                task_results: Sequence[_messages.ModelRequestPart] = await asyncio.gather(*tasks)
-                parts.extend(task_results)
-            return model_response_msg, parts
-        else:
-            assert_never(model_response)
+        with _logfire.span('running {tools=}', tools=[t.get_name() for t in tasks]):
+            task_results: Sequence[_messages.ModelRequestPart] = await asyncio.gather(*tasks)
+            parts.extend(task_results)
+        return model_response, parts
 
     async def _validate_result(
         self,

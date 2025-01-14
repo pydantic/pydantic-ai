@@ -260,7 +260,7 @@ def test_plain_response_then_tuple(set_event_loop: None):
                 ]
             ),
             ModelResponse(
-                parts=[ToolCallPart(tool_name='final_result', args=ArgsJson(args_json='{"response": ["foo", "bar"]}'))],
+                parts=[ToolCallPart.from_raw_args(tool_name='final_result', args='{"response": ["foo", "bar"]}')],
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
@@ -510,7 +510,7 @@ def test_run_with_history_new(set_event_loop: None):
                 ]
             ),
             ModelResponse(
-                parts=[ToolCallPart(tool_name='ret_a', args=ArgsDict(args_dict={'x': 'a'}))],
+                parts=[ToolCallPart.from_raw_args(tool_name='ret_a', args={'x': 'a'})],
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
@@ -622,7 +622,13 @@ def test_run_with_history_new_structured(set_event_loop: None):
                 parts=[ToolReturnPart(tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc))]
             ),
             ModelResponse(
-                parts=[ToolCallPart(tool_name='final_result', args=ArgsDict(args_dict={'a': 0}), tool_call_id=None)],
+                parts=[
+                    ToolCallPart(
+                        tool_name='final_result',
+                        args=ArgsDict(args_dict={'a': 0}),
+                        tool_call_id=None,
+                    )
+                ],
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
@@ -1016,11 +1022,11 @@ class TestMultipleToolCalls:
                 ),
                 ModelResponse(
                     parts=[
-                        ToolCallPart(tool_name='regular_tool', args=ArgsDict(args_dict={'x': 42})),
-                        ToolCallPart(tool_name='final_result', args=ArgsDict(args_dict={'value': 'first'})),
-                        ToolCallPart(tool_name='another_tool', args=ArgsDict(args_dict={'y': 2})),
-                        ToolCallPart(tool_name='final_result', args=ArgsDict(args_dict={'value': 'second'})),
-                        ToolCallPart(tool_name='unknown_tool', args=ArgsDict(args_dict={'value': '???'})),
+                        ToolCallPart.from_raw_args(tool_name='regular_tool', args={'x': 42}),
+                        ToolCallPart.from_raw_args(tool_name='final_result', args={'value': 'first'}),
+                        ToolCallPart.from_raw_args(tool_name='another_tool', args={'y': 2}),
+                        ToolCallPart.from_raw_args(tool_name='final_result', args={'value': 'second'}),
+                        ToolCallPart.from_raw_args(tool_name='unknown_tool', args={'value': '???'}),
                     ],
                     timestamp=IsNow(tz=timezone.utc),
                 ),
@@ -1093,10 +1099,10 @@ class TestMultipleToolCalls:
                 ),
                 ModelResponse(
                     parts=[
-                        ToolCallPart(tool_name='regular_tool', args=ArgsDict(args_dict={'x': 1})),
-                        ToolCallPart(tool_name='final_result', args=ArgsDict(args_dict={'value': 'final'})),
-                        ToolCallPart(tool_name='another_tool', args=ArgsDict(args_dict={'y': 2})),
-                        ToolCallPart(tool_name='unknown_tool', args=ArgsDict(args_dict={'value': '???'})),
+                        ToolCallPart.from_raw_args(tool_name='regular_tool', args={'x': 1}),
+                        ToolCallPart.from_raw_args(tool_name='final_result', args={'value': 'final'}),
+                        ToolCallPart.from_raw_args(tool_name='another_tool', args={'y': 2}),
+                        ToolCallPart.from_raw_args(tool_name='unknown_tool', args={'value': '???'}),
                     ],
                     timestamp=IsNow(tz=timezone.utc),
                 ),

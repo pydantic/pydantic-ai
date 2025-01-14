@@ -102,7 +102,7 @@ async def main():
         ]
         """
 
-        async for text in result.stream():
+        async for text in result.stream_text():
             print(text)
             #> Did you hear
             #> Did you hear about the toothpaste

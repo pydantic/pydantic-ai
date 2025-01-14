@@ -79,7 +79,6 @@ async def test_streamed_text_limits() -> None:
 
     async with test_agent.run_stream('Hello', usage_limits=UsageLimits(response_tokens_limit=10)) as result:
         assert test_agent.name == 'test_agent'
-        assert not result.is_structured
         assert not result.is_complete
         assert result.all_messages() == snapshot(
             [

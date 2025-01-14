@@ -1,7 +1,6 @@
 from __future__ import annotations as _annotations
 
 import json
-from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from functools import cached_property
@@ -12,7 +11,6 @@ from inline_snapshot import snapshot
 from pydantic import BaseModel
 from typing_extensions import TypedDict
 
-from pydantic_ai import _utils
 from pydantic_ai.agent import Agent
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import (
@@ -28,6 +26,7 @@ from pydantic_ai.messages import (
 )
 
 from ..conftest import IsNow, try_import
+from .mock_async_stream import MockAsyncStream
 
 with try_import() as imports_successful:
     from mistralai import (
@@ -52,27 +51,13 @@ with try_import() as imports_successful:
     from pydantic_ai.models.mistral import (
         MistralAgentModel,
         MistralModel,
-        MistralStreamStructuredResponse,
+        MistralStreamedResponse,
     )
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='mistral not installed'),
     pytest.mark.anyio,
 ]
-
-
-@dataclass
-class MockAsyncStream:
-    _iter: Iterator[MistralCompletionChunk]
-
-    async def __anext__(self) -> MistralCompletionChunk:
-        return _utils.sync_anext(self._iter)
-
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, *_args: Any):
-        pass
 
 
 @dataclass
@@ -104,15 +89,24 @@ class MockMistralAI:
 
     async def chat_completions_create(  # pragma: no cover
         self, *_args: Any, stream: bool = False, **_kwargs: Any
-    ) -> MistralChatCompletionResponse | MockAsyncStream | list[MistralChatCompletionResponse]:
-        response: MistralChatCompletionResponse | MockAsyncStream | list[MistralChatCompletionResponse]
+    ) -> (
+        MistralChatCompletionResponse
+        | MockAsyncStream[MistralChatCompletionResponse]
+        | list[MistralChatCompletionResponse]
+    ):
+        response: (
+            MistralChatCompletionResponse
+            | MockAsyncStream[MistralChatCompletionResponse]
+            | list[MistralChatCompletionResponse]
+        )
         if stream or self.stream:
             assert self.stream is not None, 'you can only used `stream=True` if `stream` is provided'
             if isinstance(self.stream[0], list):
-                response = MockAsyncStream(iter(self.stream[self.index]))  # pyright: ignore[reportArgumentType]
+                indexed_stream = cast(list[MistralChatCompletionResponse], self.stream[self.index])
+                response = MockAsyncStream(iter(indexed_stream))
 
             else:
-                response = MockAsyncStream(iter(self.stream))  # pyright: ignore[reportArgumentType]
+                response = MockAsyncStream(iter(cast(list[MistralChatCompletionResponse], self.stream)))
 
         else:
             assert self.completions is not None, 'you can only used `stream=False` if `completions` are provided'
@@ -175,23 +169,6 @@ def func_chunk(
     tool_calls: list[MistralToolCall], finish_reason: MistralCompletionResponseStreamChoiceFinishReason | None = None
 ) -> MistralCompletionEvent:
     return chunk([MistralDeltaMessage(tool_calls=tool_calls, role='assistant')], finish_reason=finish_reason)
-
-
-def struc_chunk(
-    tool_name: str,
-    tool_arguments: str,
-    finish_reason: MistralCompletionResponseStreamChoiceFinishReason | None = None,
-) -> MistralCompletionEvent:
-    return chunk(
-        [
-            MistralDeltaMessage(
-                tool_calls=[
-                    MistralToolCall(id='0', function=MistralFunctionCall(name=tool_name, arguments=tool_arguments))
-                ]
-            ),
-        ],
-        finish_reason=finish_reason,
-    )
 
 
 #####################
@@ -308,9 +285,8 @@ async def test_stream_text(allow_model_requests: None):
     # When
     async with agent.run_stream('') as result:
         # Then
-        assert not result.is_structured
         assert not result.is_complete
-        assert [c async for c in result.stream(debounce_by=None)] == snapshot(
+        assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(
             ['hello ', 'hello world ', 'hello world welcome ', 'hello world welcome mistral']
         )
         assert result.is_complete
@@ -329,9 +305,10 @@ async def test_stream_text_finish_reason(allow_model_requests: None):
     # When
     async with agent.run_stream('') as result:
         # Then
-        assert not result.is_structured
         assert not result.is_complete
-        assert [c async for c in result.stream(debounce_by=None)] == snapshot(['hello ', 'hello world', 'hello world.'])
+        assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(
+            ['hello ', 'hello world', 'hello world.']
+        )
         assert result.is_complete
 
 
@@ -345,9 +322,8 @@ async def test_no_delta(allow_model_requests: None):
     # When
     async with agent.run_stream('') as result:
         # Then
-        assert not result.is_structured
         assert not result.is_complete
-        assert [c async for c in result.stream(debounce_by=None)] == snapshot(['hello ', 'hello world'])
+        assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(['hello ', 'hello world'])
         assert result.is_complete
         assert result.usage().request_tokens == 3
         assert result.usage().response_tokens == 3
@@ -588,7 +564,6 @@ async def test_stream_structured_with_all_type(allow_model_requests: None):
     # When
     async with agent.run_stream('User prompt value') as result:
         # Then
-        assert result.is_structured
         assert not result.is_complete
         v = [dict(c) async for c in result.stream(debounce_by=None)]
         assert v == snapshot(
@@ -702,7 +677,6 @@ async def test_stream_result_type_primitif_dict(allow_model_requests: None):
     # When
     async with agent.run_stream('User prompt value') as result:
         # Then
-        assert result.is_structured
         assert not result.is_complete
         v = [c async for c in result.stream(debounce_by=None)]
         assert v == snapshot(
@@ -761,7 +735,6 @@ async def test_stream_result_type_primitif_int(allow_model_requests: None):
     # When
     async with agent.run_stream('User prompt value') as result:
         # Then
-        assert result.is_structured
         assert not result.is_complete
         v = [c async for c in result.stream(debounce_by=None)]
         assert v == snapshot([1, 1, 1])
@@ -823,7 +796,6 @@ async def test_stream_result_type_primitif_array(allow_model_requests: None):
     # When
     async with agent.run_stream('User prompt value') as result:
         # Then
-        assert result.is_structured
         assert not result.is_complete
         v = [c async for c in result.stream(debounce_by=None)]
         assert v == snapshot(
@@ -920,7 +892,6 @@ async def test_stream_result_type_basemodel_with_default_params(allow_model_requ
     # When
     async with agent.run_stream('User prompt value') as result:
         # Then
-        assert result.is_structured
         assert not result.is_complete
         v = [c async for c in result.stream(debounce_by=None)]
         assert v == snapshot(
@@ -1009,7 +980,6 @@ async def test_stream_result_type_basemodel_with_required_params(allow_model_req
     # When
     async with agent.run_stream('User prompt value') as result:
         # Then
-        assert result.is_structured
         assert not result.is_complete
         v = [c async for c in result.stream(debounce_by=None)]
         assert v == snapshot(
@@ -1466,7 +1436,7 @@ async def test_stream_tool_call(allow_model_requests: None):
         # Then
         assert not result.is_complete
         v = [c async for c in result.stream(debounce_by=None)]
-        assert v == snapshot(['final ', 'final response'])
+        assert v == snapshot(['final ', 'final response', 'final response'])
         assert result.is_complete
         assert result.timestamp() == datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)
         assert result.usage().request_tokens == 6
@@ -1504,7 +1474,9 @@ async def test_stream_tool_call(allow_model_requests: None):
                     )
                 ]
             ),
-            ModelResponse.from_text(content='final response', timestamp=IsNow(tz=timezone.utc)),
+            ModelResponse.from_text(
+                content='final response', timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)
+            ),
         ]
     )
 
@@ -1566,7 +1538,7 @@ async def test_stream_tool_call_with_retry(allow_model_requests: None):
     async with agent.run_stream('User prompt value') as result:
         # Then
         assert not result.is_complete
-        v = [c async for c in result.stream(debounce_by=None)]
+        v = [c async for c in result.stream_text(debounce_by=None)]
         assert v == snapshot(['final ', 'final response'])
         assert result.is_complete
         assert result.timestamp() == datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)
@@ -1768,5 +1740,5 @@ def test_generate_user_output_format_multiple():
     ],
 )
 def test_validate_required_json_schema(desc: str, schema: dict[str, Any], data: dict[str, Any], expected: bool) -> None:
-    result = MistralStreamStructuredResponse._validate_required_json_schema(data, schema)  # pyright: ignore[reportPrivateUsage]
+    result = MistralStreamedResponse._validate_required_json_schema(data, schema)  # pyright: ignore[reportPrivateUsage]
     assert result == expected, f'{desc} — expected {expected}, got {result}'
