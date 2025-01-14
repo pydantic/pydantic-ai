@@ -7,12 +7,12 @@ Run with:
 
 from __future__ import annotations as _annotations
 
+import copy
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Annotated
 
 import logfire
-import pydantic
 from devtools import debug
 from pydantic_graph import BaseNode, Edge, End, Graph, GraphContext, HistoryStep
 
@@ -109,7 +109,9 @@ class Reprimand(BaseNode[QuestionState]):
         return Ask()
 
 
-question_graph = Graph(nodes=(Ask, Answer, Evaluate, Congratulate, Reprimand))
+question_graph = Graph(
+    nodes=(Ask, Answer, Evaluate, Congratulate, Reprimand), state_type=QuestionState
+)
 
 
 async def run_as_continuous():
@@ -128,27 +130,23 @@ async def run_as_continuous():
             # otherwise just continue
 
 
-ta = pydantic.TypeAdapter(
-    list[Annotated[HistoryStep[QuestionState, None], pydantic.Discriminator('kind')]]
-)
-
-
 async def run_as_cli(answer: str | None):
     history_file = Path('question_graph_history.json')
     if history_file.exists():
-        history = ta.validate_json(history_file.read_bytes())
+        history = question_graph.load_history(history_file.read_bytes())
     else:
         history = []
 
     if history:
         last = history[-1]
-        assert last.kind != 'node', 'expected last step to be a node'
+        assert last.kind == 'node', 'expected last step to be a node'
         state = last.state
         assert answer is not None, 'answer is required to continue from history'
         node = Answer(answer)
     else:
         state = QuestionState()
         node = Ask()
+    debug(state, node)
 
     with logfire.span('run questions graph'):
         while True:
@@ -158,10 +156,13 @@ async def run_as_cli(answer: str | None):
                 print('Finished!')
                 break
             elif isinstance(node, Answer):
+                print(state.question)
+                # hack - history should show the state at the end of the node
+                history[-1].state = copy.deepcopy(state)
                 break
             # otherwise just continue
 
-    history_file.write_bytes(ta.dump_json(history))
+    history_file.write_bytes(question_graph.dump_history(history, indent=2))
 
 
 if __name__ == '__main__':

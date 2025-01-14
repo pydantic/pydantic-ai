@@ -2726,12 +2726,14 @@ source = { editable = "pydantic_graph" }
 dependencies = [
     { name = "httpx" },
     { name = "logfire-api" },
+    { name = "pydantic" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "httpx", specifier = ">=0.27.2" },
     { name = "logfire-api", specifier = ">=1.2.0" },
+    { name = "pydantic", specifier = ">=2.10" },
 ]
 
 [[package]]
