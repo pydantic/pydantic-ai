@@ -30,7 +30,6 @@ class GraphContext(Generic[StateT]):
     """The state of the graph."""
 
 
-@dataclass
 class BaseNode(ABC, Generic[StateT, NodeRunEndT]):
     """Base class for a node."""
 

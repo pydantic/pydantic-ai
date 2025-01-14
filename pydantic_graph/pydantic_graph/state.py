@@ -45,7 +45,9 @@ class NodeStep(Generic[StateT, RunEndT]):
     kind: Literal['node'] = 'node'
     """The kind of history step, can be used as a discriminator when deserializing history."""
     # waiting for https://github.com/pydantic/pydantic/issues/11264, should in InitVar
-    snapshot_state: Annotated[Callable[[StateT], StateT], pydantic.Field(exclude=True)] = deep_copy_state
+    snapshot_state: Annotated[Callable[[StateT], StateT], pydantic.Field(exclude=True, repr=False)] = field(
+        default=deep_copy_state, repr=False
+    )
     """Function to snapshot the state of the graph."""
 
     def __post_init__(self):
