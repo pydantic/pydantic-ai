@@ -38,6 +38,8 @@ graph1 = Graph(nodes=(Foo, Bar))
 class Spam(BaseNode):
     """This is the docstring for Spam."""
 
+    docstring_notes = True
+
     async def run(self, ctx: GraphContext) -> Annotated[Foo, Edge(label='spam to foo')]:
         raise NotImplementedError()
 
@@ -190,6 +192,11 @@ stateDiagram-v2
   Foo --> Bar
   Bar --> [*]\
 """)
+
+
+def test_docstring_notes_classvar():
+    assert Spam.docstring_notes is True
+    assert repr(Spam()) == 'Spam()'
 
 
 @pytest.fixture
