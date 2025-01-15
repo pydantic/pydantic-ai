@@ -46,7 +46,12 @@ if TYPE_CHECKING:
 
 
 def test_init():
-    m = BedrockModel('us.amazon.nova-micro-v1:0')
+    m = BedrockModel(
+        'us.amazon.nova-micro-v1:0',
+        aws_access_key_id='foo',
+        aws_secret_access_key='bar',
+        aws_region='us-east-1',
+    )
     assert m.name() == 'us.amazon.nova-micro-v1:0'
 
 
