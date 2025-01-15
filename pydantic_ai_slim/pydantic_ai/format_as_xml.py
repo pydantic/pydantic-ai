@@ -37,7 +37,8 @@ def format_as_xml(
         none_str: String to use for `None` values.
         indent: Indentation string to use for pretty printing.
 
-    Returns: XML representation of the object.
+    Returns:
+        XML representation of the object.
 
     Example:
     ```python {title="format_as_xml_example.py" lint="skip"}

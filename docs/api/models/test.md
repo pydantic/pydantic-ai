@@ -4,7 +4,7 @@ Utility model for quickly testing apps built with PydanticAI.
 
 Here's a minimal example:
 
-```py {title="test_model_usage.py" call_name="test_my_agent" lint="not-imports"}
+```py {title="test_model_usage.py" call_name="test_my_agent" noqa="I001"}
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 

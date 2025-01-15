@@ -10,7 +10,7 @@ on:
 
 env:
   CI: true
-  COLUMNS: 120
+  COLUMNS: 150
   UV_PYTHON: 3.12
   UV_FROZEN: '1'
 
@@ -129,8 +129,8 @@ jobs:
 
       - run: mkdir coverage
 
-      # run tests with just `pydantic-ai-slim` dependencies
-      - run: uv run --package pydantic-ai-slim coverage run -m pytest
+      # run tests with just `pydantic-ai-slim` and `pydantic-graph` dependencies
+      - run: uv run --package pydantic-ai-slim --extra graph coverage run -m pytest
         env:
           COVERAGE_FILE: coverage/.coverage.${{ runner.os }}-py${{ matrix.python-version }}-slim
 

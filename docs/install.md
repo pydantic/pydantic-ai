@@ -44,6 +44,16 @@ For example, if you're using just [`OpenAIModel`][pydantic_ai.models.openai.Open
 pip/uv-add 'pydantic-ai-slim[openai]'
 ```
 
+`pydantic-ai-slim` has the following optional groups:
+
+* `logfire` — installs [`logfire`](logfire.md) [PyPI ↗](https://pypi.org/project/logfire){:target="_blank"}
+* `graph` - installs [`pydantic-graph`](graph.md) [PyPI ↗](https://pypi.org/project/pydantic-graph){:target="_blank"}
+* `openai` — installs `openai` [PyPI ↗](https://pypi.org/project/openai){:target="_blank"}
+* `vertexai` — installs `google-auth` [PyPI ↗](https://pypi.org/project/google-auth){:target="_blank"} and `requests` [PyPI ↗](https://pypi.org/project/requests){:target="_blank"}
+* `anthropic` — installs `anthropic` [PyPI ↗](https://pypi.org/project/anthropic){:target="_blank"}
+* `groq` — installs `groq` [PyPI ↗](https://pypi.org/project/groq){:target="_blank"}
+* `mistral` — installs `mistralai` [PyPI ↗](https://pypi.org/project/mistralai){:target="_blank"}
+
 See the [models](models.md) documentation for information on which optional dependencies are required for each model.
 
 You can also install dependencies for multiple models and use cases, for example:
