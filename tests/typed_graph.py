@@ -105,7 +105,7 @@ g5 = Graph(nodes=(A, B))
 assert_type(g5, Graph[MyState, MyDeps, int])
 
 
-def run_g5():
+def run_g5() -> None:
     g5.run_sync(A())  # pyright: ignore[reportArgumentType]
     g5.run_sync(A(), state=MyState(x=1))  # pyright: ignore[reportArgumentType]
     g5.run_sync(A(), deps=MyDeps(y='y'))  # pyright: ignore[reportArgumentType]

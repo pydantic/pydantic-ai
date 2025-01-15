@@ -51,12 +51,12 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
             return Check42()
 
     @dataclass
-    class Check42(BaseNode[MyState, None, None]):
-        async def run(self, ctx: GraphContext) -> Increment | End:
+    class Check42(BaseNode[MyState, None, int]):
+        async def run(self, ctx: GraphContext) -> Increment | End[int]:
             if ctx.state.number == 42:
                 return Increment()
             else:
-                return End(None)
+                return End(ctx.state.number)
 
     never_42_graph = Graph(nodes=(Increment, Check42))
     ```
@@ -69,7 +69,6 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
 
     name: str | None
     node_defs: dict[str, NodeDef[StateT, DepsT, RunEndT]]
-    snapshot_state: Callable[[StateT], StateT]
     snapshot_state: Callable[[StateT], StateT]
     _state_type: type[StateT] | _utils.Unset = field(repr=False)
     _run_end_type: type[RunEndT] | _utils.Unset = field(repr=False)
