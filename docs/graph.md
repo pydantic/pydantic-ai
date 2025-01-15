@@ -60,7 +60,7 @@ Nodes which are generally [`dataclass`es][dataclasses.dataclass] include:
 Nodes are generic in:
 
 * **state**, which must have the same type as the state of graphs they're included in, [`StateT`][pydantic_graph.state.StateT] has a default of `None`, so if you're not using state you can omit this generic parameter
-* **deps**, which must have the same type as the deps of the graph they're included in, [`DepsT`][pydantic_graph.state.DepsT] has a default of `None`, so if you're not using deps you can omit this generic parameter
+* **deps**, which must have the same type as the deps of the graph they're included in, [`DepsT`][pydantic_graph.nodes.DepsT] has a default of `None`, so if you're not using deps you can omit this generic parameter
 * **graph return type** — this only applies if the node returns [`End`][pydantic_graph.nodes.End]. [`RunEndT`][pydantic_graph.nodes.RunEndT] has a default of [Never][typing.Never] so this generic parameter can be omitted if the node doesn't return `End`, but must be included if it does.
 
 Here's an example of a start or intermediate node in a graph — it can't end the run as it doesn't return [`End`][pydantic_graph.nodes.End]:
