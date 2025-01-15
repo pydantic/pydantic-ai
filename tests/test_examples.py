@@ -129,7 +129,7 @@ def test_docs_examples(
     if opt_test.startswith('skip'):
         print(opt_test[4:].lstrip(' -') or 'running code skipped')
     else:
-        if eval_example.update_examples:
+        if eval_example.update_examples:  # pragma: no cover
             module_dict = eval_example.run_print_update(example, call=call_name)
         else:
             module_dict = eval_example.run_print_check(example, call=call_name)

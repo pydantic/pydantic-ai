@@ -72,6 +72,7 @@ jobs:
         if: github.event.pull_request.head.repo.full_name == github.repository || github.ref == 'refs/heads/main'
         env:
           PPPR_TOKEN: ${{ secrets.PPPR_TOKEN }}
+          ALGOLIA_WRITE_API_KEY: ${{ secrets.ALGOLIA_WRITE_API_KEY }}
 
       - run: tree site
 

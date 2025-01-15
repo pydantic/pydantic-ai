@@ -1,5 +1,5 @@
 Results are the final values returned from [running an agent](agents.md#running-agents).
-The result values are wrapped in [`RunResult`][pydantic_ai.result.RunResult] and [`StreamedRunResult`][pydantic_ai.result.StreamedRunResult] so you can access other data like [usage][pydantic_ai.result.Usage] of the run and [message history](message-history.md#accessing-messages-from-results)
+The result values are wrapped in [`RunResult`][pydantic_ai.result.RunResult] and [`StreamedRunResult`][pydantic_ai.result.StreamedRunResult] so you can access other data like [usage][pydantic_ai.usage.Usage] of the run and [message history](message-history.md#accessing-messages-from-results)
 
 Both `RunResult` and `StreamedRunResult` are generic in the data they wrap, so typing information about the data returned by the agent is preserved.
 
@@ -176,7 +176,7 @@ agent = Agent('gemini-1.5-flash')  # (1)!
 
 async def main():
     async with agent.run_stream('Where does "hello world" come from?') as result:  # (2)!
-        async for message in result.stream():  # (3)!
+        async for message in result.stream_text():  # (3)!
             print(message)
             #> The first known
             #> The first known use of "hello,
@@ -188,7 +188,7 @@ async def main():
 
 1. Streaming works with the standard [`Agent`][pydantic_ai.Agent] class, and doesn't require any special setup, just a model that supports streaming (currently all models support streaming).
 2. The [`Agent.run_stream()`][pydantic_ai.Agent.run_stream] method is used to start a streamed run, this method returns a context manager so the connection can be closed when the stream completes.
-3. Each item yield by [`StreamedRunResult.stream()`][pydantic_ai.result.StreamedRunResult.stream] is the complete text response, extended as new data is received.
+3. Each item yield by [`StreamedRunResult.stream_text()`][pydantic_ai.result.StreamedRunResult.stream_text] is the complete text response, extended as new data is received.
 
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
 

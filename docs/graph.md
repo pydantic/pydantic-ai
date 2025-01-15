@@ -133,7 +133,7 @@ from pydantic_graph import BaseNode, End, Graph, GraphContext
 
 
 @dataclass
-class DivisibleBy5(BaseNode[None, None, int]):  # (1)!
+class DivisibleBy5(BaseNode[None, int]):  # (1)!
     foo: int
 
     async def run(

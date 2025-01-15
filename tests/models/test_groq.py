@@ -1,7 +1,7 @@
 from __future__ import annotations as _annotations
 
 import json
-from collections.abc import Iterator, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from functools import cached_property
@@ -11,7 +11,7 @@ import pytest
 from inline_snapshot import snapshot
 from typing_extensions import TypedDict
 
-from pydantic_ai import Agent, ModelRetry, UnexpectedModelBehavior, _utils
+from pydantic_ai import Agent, ModelRetry, UnexpectedModelBehavior
 from pydantic_ai.messages import (
     ArgsJson,
     ModelRequest,
@@ -25,6 +25,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.result import Usage
 
 from ..conftest import IsNow, try_import
+from .mock_async_stream import MockAsyncStream
 
 with try_import() as imports_successful:
     from groq import AsyncGroq
@@ -55,20 +56,6 @@ def test_init():
 
 
 @dataclass
-class MockAsyncStream:
-    _iter: Iterator[chat.ChatCompletionChunk]
-
-    async def __anext__(self) -> chat.ChatCompletionChunk:
-        return _utils.sync_anext(self._iter)
-
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, *_args: Any):
-        pass
-
-
-@dataclass
 class MockGroq:
     completions: chat.ChatCompletion | list[chat.ChatCompletion] | None = None
     stream: list[chat.ChatCompletionChunk] | list[list[chat.ChatCompletionChunk]] | None = None
@@ -91,14 +78,15 @@ class MockGroq:
 
     async def chat_completions_create(
         self, *_args: Any, stream: bool = False, **_kwargs: Any
-    ) -> chat.ChatCompletion | MockAsyncStream:
+    ) -> chat.ChatCompletion | MockAsyncStream[chat.ChatCompletionChunk]:
         if stream:
             assert self.stream is not None, 'you can only used `stream=True` if `stream` is provided'
             # noinspection PyUnresolvedReferences
             if isinstance(self.stream[0], list):  # pragma: no cover
-                response = MockAsyncStream(iter(self.stream[self.index]))  # type: ignore
+                indexed_stream = cast(list[chat.ChatCompletionChunk], self.stream[self.index])
+                response = MockAsyncStream(iter(indexed_stream))
             else:
-                response = MockAsyncStream(iter(self.stream))  # type: ignore
+                response = MockAsyncStream(iter(cast(list[chat.ChatCompletionChunk], self.stream)))
         else:
             assert self.completions is not None, 'you can only used `stream=False` if `completions` are provided'
             if isinstance(self.completions, list):
@@ -295,7 +283,7 @@ async def test_request_tool_call(allow_model_requests: None):
                         tool_call_id='2',
                     )
                 ],
-                timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc),
+                timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
             ),
             ModelRequest(
                 parts=[
@@ -340,9 +328,8 @@ async def test_stream_text(allow_model_requests: None):
     agent = Agent(m)
 
     async with agent.run_stream('') as result:
-        assert not result.is_structured
         assert not result.is_complete
-        assert [c async for c in result.stream(debounce_by=None)] == snapshot(['hello ', 'hello world'])
+        assert [c async for c in result.stream(debounce_by=None)] == snapshot(['hello ', 'hello world', 'hello world'])
         assert result.is_complete
 
 
@@ -353,9 +340,10 @@ async def test_stream_text_finish_reason(allow_model_requests: None):
     agent = Agent(m)
 
     async with agent.run_stream('') as result:
-        assert not result.is_structured
         assert not result.is_complete
-        assert [c async for c in result.stream(debounce_by=None)] == snapshot(['hello ', 'hello world', 'hello world.'])
+        assert [c async for c in result.stream(debounce_by=None)] == snapshot(
+            ['hello ', 'hello world', 'hello world.', 'hello world.']
+        )
         assert result.is_complete
 
 
@@ -399,7 +387,6 @@ async def test_stream_structured(allow_model_requests: None):
     agent = Agent(m, result_type=MyTypedDict)
 
     async with agent.run_stream('') as result:
-        assert result.is_structured
         assert not result.is_complete
         assert [dict(c) async for c in result.stream(debounce_by=None)] == snapshot(
             [
@@ -417,7 +404,10 @@ async def test_stream_structured(allow_model_requests: None):
             ModelRequest(parts=[UserPromptPart(content='', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[
-                    ToolCallPart(tool_name='final_result', args=ArgsJson(args_json='{"first": "One", "second": "Two"}'))
+                    ToolCallPart(
+                        tool_name='final_result',
+                        args=ArgsJson(args_json='{"first": "One", "second": "Two"}'),
+                    )
                 ],
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
             ),
@@ -447,11 +437,11 @@ async def test_stream_structured_finish_reason(allow_model_requests: None):
     agent = Agent(m, result_type=MyTypedDict)
 
     async with agent.run_stream('') as result:
-        assert result.is_structured
         assert not result.is_complete
         assert [dict(c) async for c in result.stream(debounce_by=None)] == snapshot(
             [
                 {'first': 'One'},
+                {'first': 'One', 'second': 'Two'},
                 {'first': 'One', 'second': 'Two'},
                 {'first': 'One', 'second': 'Two'},
                 {'first': 'One', 'second': 'Two'},
@@ -466,7 +456,7 @@ async def test_no_content(allow_model_requests: None):
     m = GroqModel('llama-3.1-70b-versatile', groq_client=mock_client)
     agent = Agent(m, result_type=MyTypedDict)
 
-    with pytest.raises(UnexpectedModelBehavior, match='Streamed response ended without con'):
+    with pytest.raises(UnexpectedModelBehavior, match='Received empty model response'):
         async with agent.run_stream(''):
             pass  # pragma: no cover
 
@@ -478,7 +468,6 @@ async def test_no_delta(allow_model_requests: None):
     agent = Agent(m)
 
     async with agent.run_stream('') as result:
-        assert not result.is_structured
         assert not result.is_complete
-        assert [c async for c in result.stream(debounce_by=None)] == snapshot(['hello ', 'hello world'])
+        assert [c async for c in result.stream(debounce_by=None)] == snapshot(['hello ', 'hello world', 'hello world'])
         assert result.is_complete

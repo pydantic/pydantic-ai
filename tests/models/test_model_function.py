@@ -399,7 +399,7 @@ async def test_stream_text():
                 ModelResponse.from_text(content='hello world', timestamp=IsNow(tz=timezone.utc)),
             ]
         )
-        assert result.usage() == snapshot(Usage(requests=1))
+        assert result.usage() == snapshot(Usage(requests=1, request_tokens=50, response_tokens=2, total_tokens=52))
 
 
 class Foo(BaseModel):

@@ -7,20 +7,22 @@ specific LLM being used.
 from __future__ import annotations as _annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator, Iterable, Iterator
+from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager, contextmanager
+from dataclasses import dataclass, field
 from datetime import datetime
 from functools import cache
-from typing import TYPE_CHECKING, Literal, Union
+from typing import TYPE_CHECKING, Literal
 
 import httpx
 
+from .._parts_manager import ModelResponsePartsManager
 from ..exceptions import UserError
-from ..messages import ModelMessage, ModelResponse
+from ..messages import ModelMessage, ModelResponse, ModelResponseStreamEvent
 from ..settings import ModelSettings
+from ..usage import Usage
 
 if TYPE_CHECKING:
-    from ..result import Usage
     from ..tools import ToolDefinition
 
 
@@ -70,6 +72,7 @@ KnownModelName = Literal[
     'ollama:mistral-nemo',
     'ollama:mixtral',
     'ollama:phi3',
+    'ollama:phi4',
     'ollama:qwq',
     'ollama:qwen',
     'ollama:qwen2',
@@ -129,96 +132,52 @@ class AgentModel(ABC):
     @asynccontextmanager
     async def request_stream(
         self, messages: list[ModelMessage], model_settings: ModelSettings | None
-    ) -> AsyncIterator[EitherStreamedResponse]:
+    ) -> AsyncIterator[StreamedResponse]:
         """Make a request to the model and return a streaming response."""
+        # This method is not required, but you need to implement it if you want to support streamed responses
         raise NotImplementedError(f'Streamed requests not supported by this {self.__class__.__name__}')
         # yield is required to make this a generator for type checking
         # noinspection PyUnreachableCode
         yield  # pragma: no cover
 
 
-class StreamTextResponse(ABC):
-    """Streamed response from an LLM when returning text."""
-
-    def __aiter__(self) -> AsyncIterator[None]:
-        """Stream the response as an async iterable, building up the text as it goes.
-
-        This is an async iterator that yields `None` to avoid doing the work of validating the input and
-        extracting the text field when it will often be thrown away.
-        """
-        return self
-
-    @abstractmethod
-    async def __anext__(self) -> None:
-        """Process the next chunk of the response, see above for why this returns `None`."""
-        raise NotImplementedError()
-
-    @abstractmethod
-    def get(self, *, final: bool = False) -> Iterable[str]:
-        """Returns an iterable of text since the last call to `get()` — e.g. the text delta.
-
-        Args:
-            final: If True, this is the final call, after iteration is complete, the response should be fully validated
-                and all text extracted.
-        """
-        raise NotImplementedError()
-
-    @abstractmethod
-    def usage(self) -> Usage:
-        """Return the usage of the request.
-
-        NOTE: this won't return the full usage until the stream is finished.
-        """
-        raise NotImplementedError()
-
-    @abstractmethod
-    def timestamp(self) -> datetime:
-        """Get the timestamp of the response."""
-        raise NotImplementedError()
-
-
-class StreamStructuredResponse(ABC):
+@dataclass
+class StreamedResponse(ABC):
     """Streamed response from an LLM when calling a tool."""
 
-    def __aiter__(self) -> AsyncIterator[None]:
-        """Stream the response as an async iterable, building up the tool call as it goes.
+    _usage: Usage = field(default_factory=Usage, init=False)
+    _parts_manager: ModelResponsePartsManager = field(default_factory=ModelResponsePartsManager, init=False)
+    _event_iterator: AsyncIterator[ModelResponseStreamEvent] | None = field(default=None, init=False)
 
-        This is an async iterator that yields `None` to avoid doing the work of building the final tool call when
-        it will often be thrown away.
-        """
-        return self
-
-    @abstractmethod
-    async def __anext__(self) -> None:
-        """Process the next chunk of the response, see above for why this returns `None`."""
-        raise NotImplementedError()
+    def __aiter__(self) -> AsyncIterator[ModelResponseStreamEvent]:
+        """Stream the response as an async iterable of [`ModelResponseStreamEvent`][pydantic_ai.messages.ModelResponseStreamEvent]s."""
+        if self._event_iterator is None:
+            self._event_iterator = self._get_event_iterator()
+        return self._event_iterator
 
     @abstractmethod
-    def get(self, *, final: bool = False) -> ModelResponse:
-        """Get the `ModelResponse` at this point.
+    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
+        """Return an async iterator of [`ModelResponseStreamEvent`][pydantic_ai.messages.ModelResponseStreamEvent]s.
 
-        The `ModelResponse` may or may not be complete, depending on whether the stream is finished.
-
-        Args:
-            final: If True, this is the final call, after iteration is complete, the response should be fully validated.
+        This method should be implemented by subclasses to translate the vendor-specific stream of events into
+        pydantic_ai-format events.
         """
         raise NotImplementedError()
+        # noinspection PyUnreachableCode
+        yield
 
-    @abstractmethod
+    def get(self) -> ModelResponse:
+        """Build a [`ModelResponse`][pydantic_ai.messages.ModelResponse] from the data received from the stream so far."""
+        return ModelResponse(parts=self._parts_manager.get_parts(), timestamp=self.timestamp())
+
     def usage(self) -> Usage:
-        """Get the usage of the request.
-
-        NOTE: this won't return the full usage until the stream is finished.
-        """
-        raise NotImplementedError()
+        """Get the usage of the response so far. This will not be the final usage until the stream is exhausted."""
+        return self._usage
 
     @abstractmethod
     def timestamp(self) -> datetime:
         """Get the timestamp of the response."""
         raise NotImplementedError()
-
-
-EitherStreamedResponse = Union[StreamTextResponse, StreamStructuredResponse]
 
 
 ALLOW_MODEL_REQUESTS = True

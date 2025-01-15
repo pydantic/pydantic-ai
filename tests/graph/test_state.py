@@ -1,3 +1,4 @@
+# pyright: reportPrivateUsage=false
 from __future__ import annotations as _annotations
 
 from dataclasses import dataclass
@@ -32,27 +33,26 @@ async def test_run_graph():
             return End(f'x={ctx.state.x} y={ctx.state.y}')
 
     graph = Graph(nodes=(Foo, Bar))
-    s = MyState(1, '')
-    result, history = await graph.run(Foo(), state=s)
+    assert graph._get_state_type() is MyState
+    assert graph._get_run_end_type() is str
+    state = MyState(1, '')
+    result, history = await graph.run(Foo(), state=state)
     assert result == snapshot('x=2 y=y')
     assert history == snapshot(
         [
             NodeStep(
-                state=MyState(x=1, y=''),
+                state=MyState(x=2, y=''),
                 node=Foo(),
                 start_ts=IsNow(tz=timezone.utc),
                 duration=IsFloat(),
             ),
             NodeStep(
-                state=MyState(x=2, y=''),
+                state=MyState(x=2, y='y'),
                 node=Bar(),
                 start_ts=IsNow(tz=timezone.utc),
                 duration=IsFloat(),
             ),
-            EndStep(
-                state=MyState(x=2, y='y'),
-                result=End('x=2 y=y'),
-                ts=IsNow(tz=timezone.utc),
-            ),
+            EndStep(result=End('x=2 y=y'), ts=IsNow(tz=timezone.utc)),
         ]
     )
+    assert state == MyState(x=2, y='y')

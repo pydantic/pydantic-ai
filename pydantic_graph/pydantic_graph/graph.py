@@ -2,20 +2,19 @@ from __future__ import annotations as _annotations
 
 import asyncio
 import inspect
+import types
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import cached_property
 from pathlib import Path
 from time import perf_counter
-from types import FrameType
 from typing import TYPE_CHECKING, Annotated, Any, Callable, Generic
 
 import logfire_api
 import pydantic
-from typing_extensions import Literal, Unpack, assert_never
+import typing_extensions
 
 from . import _utils, exceptions, mermaid
-from ._utils import get_parent_namespace
 from .nodes import BaseNode, DepsT, End, GraphContext, NodeDef, RunEndT
 from .state import EndStep, HistoryStep, NodeStep, StateT, deep_copy_state, nodes_schema_var
 
@@ -68,17 +67,20 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
     from the graph.
     """
 
-    state_type: type[StateT] | None
     name: str | None
     node_defs: dict[str, NodeDef[StateT, DepsT, RunEndT]]
     snapshot_state: Callable[[StateT], StateT]
+    snapshot_state: Callable[[StateT], StateT]
+    _state_type: type[StateT] | _utils.Unset = field(repr=False)
+    _run_end_type: type[RunEndT] | _utils.Unset = field(repr=False)
 
     def __init__(
         self,
         *,
         nodes: Sequence[type[BaseNode[StateT, DepsT, RunEndT]]],
-        state_type: type[StateT] | None = None,
         name: str | None = None,
+        state_type: type[StateT] | _utils.Unset = _utils.UNSET,
+        run_end_type: type[RunEndT] | _utils.Unset = _utils.UNSET,
         snapshot_state: Callable[[StateT], StateT] = deep_copy_state,
     ):
         """Create a graph from a sequence of nodes.
@@ -86,18 +88,20 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
         Args:
             nodes: The nodes which make up the graph, nodes need to be unique and all be generic in the same
                 state type.
-            state_type: The type of the state for the graph.
             name: Optional name for the graph, if not provided the name will be inferred from the calling frame
                 on the first call to a graph method.
+            state_type: The type of the state for the graph, this can generally be inferred from `nodes`.
+            run_end_type: The type of the result of running the graph, this can generally be inferred from `nodes`.
             snapshot_state: A function to snapshot the state of the graph, this is used in
                 [`NodeStep`][pydantic_graph.state.NodeStep] and [`EndStep`][pydantic_graph.state.EndStep] to record
                 the state before each step.
         """
-        self.state_type = state_type
         self.name = name
+        self._state_type = state_type
+        self._run_end_type = run_end_type
         self.snapshot_state = snapshot_state
 
-        parent_namespace = get_parent_namespace(inspect.currentframe())
+        parent_namespace = _utils.get_parent_namespace(inspect.currentframe())
         self.node_defs: dict[str, NodeDef[StateT, DepsT, RunEndT]] = {}
         for node in nodes:
             self._register_node(node, parent_namespace)
@@ -157,14 +161,14 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
             while True:
                 next_node = await self.next(start_node, history, state=state, deps=deps, infer_name=False)
                 if isinstance(next_node, End):
-                    history.append(EndStep(state, next_node, snapshot_state=self.snapshot_state))
+                    history.append(EndStep(result=next_node))
                     run_span.set_attribute('history', history)
                     return next_node.data, history
                 elif isinstance(next_node, BaseNode):
                     start_node = next_node
                 else:
                     if TYPE_CHECKING:
-                        assert_never(next_node)
+                        typing_extensions.assert_never(next_node)
                     else:
                         raise exceptions.GraphRuntimeError(
                             f'Invalid node return type: `{type(next_node).__name__}`. Expected `BaseNode` or `End`.'
@@ -226,14 +230,16 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
         if node_id not in self.node_defs:
             raise exceptions.GraphRuntimeError(f'Node `{node}` is not in the graph.')
 
-        history_step: NodeStep[StateT, RunEndT] = NodeStep(state, node)
-        history.append(history_step)
-
         ctx = GraphContext(state, deps)
         with _logfire.span('run node {node_id}', node_id=node_id, node=node):
+            start_ts = _utils.now_utc()
             start = perf_counter()
             next_node = await node.run(ctx)
-            history_step.duration = perf_counter() - start
+            duration = perf_counter() - start
+
+        history.append(
+            NodeStep(state=state, node=node, start_ts=start_ts, duration=duration, snapshot_state=self.snapshot_state)
+        )
         return next_node
 
     def dump_history(self, history: list[HistoryStep[StateT, RunEndT]], *, indent: int | None = None) -> bytes:
@@ -262,21 +268,20 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
     @cached_property
     def history_type_adapter(self) -> pydantic.TypeAdapter[list[HistoryStep[StateT, RunEndT]]]:
         nodes = [node_def.node for node_def in self.node_defs.values()]
+        state_t = self._get_state_type()
+        end_t = self._get_run_end_type()
         token = nodes_schema_var.set(nodes)
         try:
-            # TODO get the return type RunEndT
-            ta = pydantic.TypeAdapter(
-                list[Annotated[HistoryStep[self.state_type or Any, Any], pydantic.Discriminator('kind')]],
-            )
+            ta = pydantic.TypeAdapter(list[Annotated[HistoryStep[state_t, end_t], pydantic.Discriminator('kind')]])
         finally:
             nodes_schema_var.reset(token)
-        return ta  # type: ignore
+        return ta
 
     def mermaid_code(
         self,
         *,
         start_node: Sequence[mermaid.NodeIdent] | mermaid.NodeIdent | None = None,
-        title: str | None | Literal[False] = None,
+        title: str | None | typing_extensions.Literal[False] = None,
         edge_labels: bool = True,
         notes: bool = True,
         highlighted_nodes: Sequence[mermaid.NodeIdent] | mermaid.NodeIdent | None = None,
@@ -344,7 +349,9 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
             notes=notes,
         )
 
-    def mermaid_image(self, infer_name: bool = True, **kwargs: Unpack[mermaid.MermaidConfig]) -> bytes:
+    def mermaid_image(
+        self, infer_name: bool = True, **kwargs: typing_extensions.Unpack[mermaid.MermaidConfig]
+    ) -> bytes:
         """Generate a diagram representing the graph as an image.
 
         The format and diagram can be customized using `kwargs`,
@@ -368,7 +375,7 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
         return mermaid.request_image(self, **kwargs)
 
     def mermaid_save(
-        self, path: Path | str, /, *, infer_name: bool = True, **kwargs: Unpack[mermaid.MermaidConfig]
+        self, path: Path | str, /, *, infer_name: bool = True, **kwargs: typing_extensions.Unpack[mermaid.MermaidConfig]
     ) -> None:
         """Generate a diagram representing the graph and save it as an image.
 
@@ -389,6 +396,37 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
         if 'title' not in kwargs and self.name:
             kwargs['title'] = self.name
         mermaid.save_image(path, self, **kwargs)
+
+    def _get_state_type(self) -> type[StateT]:
+        if _utils.is_set(self._state_type):
+            return self._state_type
+
+        for node_def in self.node_defs.values():
+            for base in typing_extensions.get_original_bases(node_def.node):
+                if typing_extensions.get_origin(base) is BaseNode:
+                    args = typing_extensions.get_args(base)
+                    if args:
+                        return args[0]
+                    # break the inner (bases) loop
+                    break
+        # state defaults to None, so use that if we can't infer it
+        return type(None)  # pyright: ignore[reportReturnType]
+
+    def _get_run_end_type(self) -> type[RunEndT]:
+        if _utils.is_set(self._run_end_type):
+            return self._run_end_type
+
+        for node_def in self.node_defs.values():
+            for base in typing_extensions.get_original_bases(node_def.node):
+                if typing_extensions.get_origin(base) is BaseNode:
+                    args = typing_extensions.get_args(base)
+                    if len(args) == 3:
+                        t = args[2]
+                        if not _utils.is_never(t):
+                            return t
+                    # break the inner (bases) loop
+                    break
+        raise exceptions.GraphSetupError('Could not infer run end type from nodes, please set `run_end_type`.')
 
     def _register_node(
         self, node: type[BaseNode[StateT, DepsT, RunEndT]], parent_namespace: dict[str, Any] | None
@@ -420,7 +458,7 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
                     f'Nodes are referenced in the graph but not included in the graph:\n{b}'
                 )
 
-    def _infer_name(self, function_frame: FrameType | None) -> None:
+    def _infer_name(self, function_frame: types.FrameType | None) -> None:
         """Infer the agent name from the call frame.
 
         Usage should be `self._infer_name(inspect.currentframe())`.
