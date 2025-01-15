@@ -2138,7 +2138,7 @@ name = "pydantic-ai"
 version = "0.0.18"
 source = { editable = "." }
 dependencies = [
-    { name = "pydantic-ai-slim", extra = ["anthropic", "groq", "mistral", "openai", "vertexai"] },
+    { name = "pydantic-ai-slim", extra = ["anthropic", "bedrock", "groq", "mistral", "openai", "vertexai"] },
 ]
 
 [package.optional-dependencies]
@@ -2170,7 +2170,7 @@ lint = [
 requires-dist = [
     { name = "logfire", marker = "extra == 'logfire'", specifier = ">=2.3" },
     { name = "pydantic-ai-examples", marker = "extra == 'examples'", editable = "examples" },
-    { name = "pydantic-ai-slim", extras = ["openai", "vertexai", "groq", "anthropic", "mistral"], editable = "pydantic_ai_slim" },
+    { name = "pydantic-ai-slim", extras = ["openai", "vertexai", "groq", "anthropic", "mistral", "bedrock"], editable = "pydantic_ai_slim" },
 ]
 
 [package.metadata.requires-dev]

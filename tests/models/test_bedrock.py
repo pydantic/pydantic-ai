@@ -22,13 +22,13 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.models.bedrock import BedrockModel
 from pydantic_ai.usage import Usage
 
 from ..conftest import IsNow, try_import
 
 with try_import() as imports_successful:
-    pass
+    from pydantic_ai.models.bedrock import BedrockModel
+
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='boto3 not installed'),
