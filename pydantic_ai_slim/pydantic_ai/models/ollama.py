@@ -10,6 +10,7 @@ from . import (
     AgentModel,
     Model,
     cached_async_http_client,
+    check_allow_model_requests,
 )
 
 try:
@@ -110,6 +111,7 @@ class OllamaModel(Model):
         allow_text_result: bool,
         result_tools: list[ToolDefinition],
     ) -> AgentModel:
+        check_allow_model_requests()
         return await self.openai_model.agent_model(
             function_tools=function_tools,
             allow_text_result=allow_text_result,
