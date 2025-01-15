@@ -181,3 +181,4 @@ plugins:
 hooks:
 - 'docs/.hooks/main.py'
 - 'docs/.hooks/build_llms_txt.py'
+- 'docs/.hooks/algolia.py'
