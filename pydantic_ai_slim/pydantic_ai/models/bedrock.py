@@ -103,7 +103,7 @@ class BedrockModel(Model):
             self.model_name,
             allow_text_result,
             tools,
-            support_tools=True if self.model_name.startswith('anthropic') else False,
+            support_tools_choice=True if self.model_name.startswith('anthropic') else False,
         )
 
     def name(self) -> str:
@@ -129,7 +129,7 @@ class BedrockAgentModel(AgentModel):
     allow_text_result: bool
     tools: list[ToolTypeDef]
 
-    support_tools: bool
+    support_tools_choice: bool
 
     async def request(
         self, messages: list[ModelMessage], model_settings: ModelSettings | None
@@ -201,7 +201,7 @@ class BedrockAgentModel(AgentModel):
     ) -> ConverseResponseTypeDef | EventStream[ConverseStreamOutputTypeDef]:
         if not self.tools:
             tool_choice: None = None
-        elif not self.allow_text_result:
+        elif not self.allow_text_result and self.support_tools_choice:
             tool_choice = {'tool': {'name': tool_type_def['toolSpec']['name']} for tool_type_def in self.tools}
         else:
             tool_choice = None
@@ -215,7 +215,7 @@ class BedrockAgentModel(AgentModel):
                     'toolChoice': tool_choice,
                 }
             )
-            if self.tools and self.support_tools
+            if self.tools
             else None
         )
         model_settings = model_settings or {}
