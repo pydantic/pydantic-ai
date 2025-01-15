@@ -629,11 +629,11 @@ wheels = [
 
 [[package]]
 name = "dirty-equals"
-version = "0.8.0"
+version = "0.9.0"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/17/4c/39c428b7c900b21c8116d89a56b73f6dc14a2455767961b54adfe7c224fe/dirty_equals-0.8.0.tar.gz", hash = "sha256:798db3b9481b9a5024c0e520946507676ed2f0c65317d3e95bdce1a01657cf60", size = 50294 }
+sdist = { url = "https://files.pythonhosted.org/packages/b0/99/133892f401ced5a27e641a473c547d5fbdb39af8f85dac8a9d633ea3e7a7/dirty_equals-0.9.0.tar.gz", hash = "sha256:17f515970b04ed7900b733c95fd8091f4f85e52f1fb5f268757f25c858eb1f7b", size = 50412 }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/f3/cd/8c3ce82cc6b18e149bff3cf8dd50a75316ca093ae706f0c1c4df87f2b88f/dirty_equals-0.8.0-py3-none-any.whl", hash = "sha256:0ef998ba3c395e03cf5eb3cd1c13c26a9a992efa18c0d59c22ba27344519cee1", size = 28217 },
+    { url = "https://files.pythonhosted.org/packages/77/0c/03cc99bf3b6328604b10829de3460f2b2ad3373200c45665c38508e550c6/dirty_equals-0.9.0-py3-none-any.whl", hash = "sha256:ff4d027f5cfa1b69573af00f7ba9043ea652dbdce3fe5cbe828e478c7346db9c", size = 28226 },
 ]
 
 [[package]]
@@ -923,20 +923,17 @@ wheels = [
 
 [[package]]
 name = "inline-snapshot"
-version = "0.15.0"
+version = "0.19.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "asttokens" },
-    { name = "black" },
-    { name = "click" },
     { name = "executing" },
     { name = "rich" },
     { name = "tomli", marker = "python_full_version < '3.11'" },
-    { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/76/7c/d6a61e2c21ad07ee50e3eb84fa1bccaaa862d660ba51dbc9ad4b2092d29b/inline_snapshot-0.15.0.tar.gz", hash = "sha256:d0be974774acd1d18c1a922a6f2904ac4fce87d9996cc38595d4b35ae0f59a15", size = 231796 }
+sdist = { url = "https://files.pythonhosted.org/packages/42/bc/bbba2efb2ab0c8cf3d43fb0a7a1d3dfd8533d3bf18df9662ee4c09af7cac/inline_snapshot-0.19.3.tar.gz", hash = "sha256:1e40f34da64fe2406c6bba3f473905e22386da43e16c85060610692325aa94d7", size = 88636 }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/d7/22/278c367ededfce8e0ada244e6614caac0bacc85c8eb610a381cb7ca2ba67/inline_snapshot-0.15.0-py3-none-any.whl", hash = "sha256:5279b81410f06e537f9c0d799314f9703c1b43e4ed26794c9422bf011bae46d0", size = 40501 },
+    { url = "https://files.pythonhosted.org/packages/fd/fc/d99b8983af46c0adbe10ad369ab929eb35cb32635526a9de4fe06ffd612f/inline_snapshot-0.19.3-py3-none-any.whl", hash = "sha256:81ed10eedb593aee630d2fc0cfe5d10a843c4bd507c2d96ea058c28413985452", size = 43627 },
 ]
 
 [[package]]
@@ -2166,8 +2163,8 @@ dev = [
     { name = "coverage", extras = ["toml"], specifier = ">=7.6.2" },
     { name = "devtools", specifier = ">=0.12.2" },
     { name = "diff-cover", specifier = ">=9.2.0" },
-    { name = "dirty-equals", specifier = ">=0.8.0" },
-    { name = "inline-snapshot", specifier = ">=0.14" },
+    { name = "dirty-equals", specifier = ">=0.9.0" },
+    { name = "inline-snapshot", specifier = ">=0.19.3" },
     { name = "pytest", specifier = ">=8.3.3" },
     { name = "pytest-examples", specifier = ">=0.0.14" },
     { name = "pytest-mock", specifier = ">=3.14.0" },
