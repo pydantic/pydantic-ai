@@ -393,7 +393,7 @@ class Graph(Generic[StateT, RunEndT]):
             return self._state_type
 
         for node_def in self.node_defs.values():
-            for base in types.get_original_bases(node_def.node):
+            for base in typing_extensions.get_original_bases(node_def.node):
                 if typing_extensions.get_origin(base) is BaseNode:
                     args = typing_extensions.get_args(base)
                     if args:
@@ -408,7 +408,7 @@ class Graph(Generic[StateT, RunEndT]):
             return self._run_end_type
 
         for node_def in self.node_defs.values():
-            for base in types.get_original_bases(node_def.node):
+            for base in typing_extensions.get_original_bases(node_def.node):
                 if typing_extensions.get_origin(base) is BaseNode:
                     args = typing_extensions.get_args(base)
                     if len(args) == 2:
