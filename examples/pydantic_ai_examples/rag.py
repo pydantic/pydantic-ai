@@ -142,6 +142,7 @@ async def insert_doc_section(
         exists = await pool.fetchval('SELECT 1 FROM doc_sections WHERE url = $1', url)
         if exists:
             logfire.info('Skipping {url=}', url=url)
+            return
 
         with logfire.span('create embedding for {url=}', url=url):
             embedding = await openai.embeddings.create(
