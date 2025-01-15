@@ -12,7 +12,7 @@
 
     Unless you're sure you need a graph, you probably don't.
 
-Graphs and finite state machines (FSMs) are a powerful abstraction to model, control and visualize complex workflows.
+Graphs and finite state machines (FSMs) are a powerful abstraction to model, execute, control and visualize complex workflows.
 
 Alongside PydanticAI, we've developed `pydantic-graph` — an async graph and state machine library for Python where nodes and edges are defined using type hints.
 
@@ -60,6 +60,7 @@ Nodes which are generally [`dataclass`es][dataclasses.dataclass] include:
 Nodes are generic in:
 
 * **state**, which must have the same type as the state of graphs they're included in, [`StateT`][pydantic_graph.state.StateT] has a default of `None`, so if you're not using state you can omit this generic parameter
+* **deps**, which must have the same type as the deps of the graph they're included in, [`DepsT`][pydantic_graph.state.DepsT] has a default of `None`, so if you're not using deps you can omit this generic parameter
 * **graph return type** — this only applies if the node returns [`End`][pydantic_graph.nodes.End]. [`RunEndT`][pydantic_graph.nodes.RunEndT] has a default of [Never][typing.Never] so this generic parameter can be omitted if the node doesn't return `End`, but must be included if it does.
 
 Here's an example of a start or intermediate node in a graph — it can't end the run as it doesn't return [`End`][pydantic_graph.nodes.End]:
@@ -96,7 +97,7 @@ from pydantic_graph import BaseNode, End, GraphContext
 
 
 @dataclass
-class MyNode(BaseNode[MyState, int]):  # (1)!
+class MyNode(BaseNode[MyState, None, int]):  # (1)!
     foo: int
 
     async def run(
@@ -109,7 +110,7 @@ class MyNode(BaseNode[MyState, int]):  # (1)!
             return AnotherNode()
 ```
 
-1. We parameterize the node with the return type (`int` in this case) as well as state.
+1. We parameterize the node with the return type (`int` in this case) as well as state. Because generic parameters are positional-only, we have to include `None` as the second parameter representing deps.
 2. The return type of the `run` method is now a union of `AnotherNode` and `End[int]`, this allows the node to end the run if `foo` is divisible by 5.
 
 ### Graph
@@ -132,7 +133,7 @@ from pydantic_graph import BaseNode, End, Graph, GraphContext
 
 
 @dataclass
-class DivisibleBy5(BaseNode[None, int]):  # (1)!
+class DivisibleBy5(BaseNode[None, None, int]):  # (1)!
     foo: int
 
     async def run(
@@ -154,7 +155,7 @@ class Increment(BaseNode):  # (2)!
 
 
 fives_graph = Graph(nodes=[DivisibleBy5, Increment])  # (3)!
-result, history = fives_graph.run_sync(None, DivisibleBy5(4))  # (4)!
+result, history = fives_graph.run_sync(DivisibleBy5(4))  # (4)!
 print(result)
 #> 5
 # the full history is quite verbose (see below), so we'll just print the summary
@@ -247,7 +248,7 @@ PRODUCT_PRICES = {  # (2)!
 
 
 @dataclass
-class Purchase(BaseNode[MachineState, None]):  # (18)!
+class Purchase(BaseNode[MachineState, None, None]):  # (18)!
     product: str
 
     async def run(
@@ -275,7 +276,7 @@ vending_machine_graph = Graph(  # (13)!
 
 async def main():
     state = MachineState()  # (14)!
-    await vending_machine_graph.run(state, InsertCoin())  # (15)!
+    await vending_machine_graph.run(InsertCoin(), state=state)  # (15)!
     print(f'purchase successful item={state.product} change={state.user_balance:0.2f}')
     #> purchase successful item=crisps change=0.25
 ```
@@ -430,7 +431,7 @@ feedback_agent = Agent[None, EmailRequiresWrite | EmailOk](
 
 
 @dataclass
-class Feedback(BaseNode[State, Email]):
+class Feedback(BaseNode[State, None, Email]):
     email: Email
 
     async def run(
@@ -453,7 +454,7 @@ async def main():
     )
     state = State(user)
     feedback_graph = Graph(nodes=(WriteEmail, Feedback))
-    email, _ = await feedback_graph.run(state, WriteEmail())
+    email, _ = await feedback_graph.run(WriteEmail(), state=state)
     print(email)
     """
     Email(
@@ -579,7 +580,7 @@ async def main():
     node = Ask()  # (2)!
     history: list[HistoryStep[QuestionState]] = []  # (3)!
     while True:
-        node = await question_graph.next(state, node, history)  # (4)!
+        node = await question_graph.next(node, history, state=state)  # (4)!
         if isinstance(node, Answer):
             node.answer = Prompt.ask(node.question)  # (5)!
         elif isinstance(node, End):  # (6)!

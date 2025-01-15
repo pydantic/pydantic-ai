@@ -26,14 +26,14 @@ async def test_run_graph():
             return Bar()
 
     @dataclass
-    class Bar(BaseNode[MyState, str]):
+    class Bar(BaseNode[MyState, None, str]):
         async def run(self, ctx: GraphContext[MyState]) -> End[str]:
             ctx.state.y += 'y'
             return End(f'x={ctx.state.x} y={ctx.state.y}')
 
     graph = Graph(nodes=(Foo, Bar))
     s = MyState(1, '')
-    result, history = await graph.run(s, Foo())
+    result, history = await graph.run(Foo(), state=s)
     assert result == snapshot('x=2 y=y')
     assert history == snapshot(
         [

@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 from typing_extensions import assert_type
 
-from pydantic_graph import BaseNode, End, Graph, GraphContext
+from pydantic_graph import BaseNode, End, Graph, GraphContext, HistoryStep
 
 
 @dataclass
@@ -29,7 +29,7 @@ class X:
 
 
 @dataclass
-class Double(BaseNode[None, X]):
+class Double(BaseNode[None, None, X]):
     input_data: int
 
     async def run(self, ctx: GraphContext) -> String2Length | End[X]:
@@ -39,7 +39,7 @@ class Double(BaseNode[None, X]):
             return End(X(self.input_data * 2))
 
 
-def use_double(node: BaseNode[None, X]) -> None:
+def use_double(node: BaseNode[None, None, X]) -> None:
     """Shoe that `Double` is valid as a `BaseNode[None, int, X]`."""
     print(node)
 
@@ -47,18 +47,18 @@ def use_double(node: BaseNode[None, X]) -> None:
 use_double(Double(1))
 
 
-g1 = Graph[None, X](
+g1 = Graph[None, None, X](
     nodes=(
         Float2String,
         String2Length,
         Double,
     )
 )
-assert_type(g1, Graph[None, X])
+assert_type(g1, Graph[None, None, X])
 
 
 g2 = Graph(nodes=(Double,))
-assert_type(g2, Graph[None, X])
+assert_type(g2, Graph[None, None, X])
 
 g3 = Graph(
     nodes=(
@@ -68,7 +68,47 @@ g3 = Graph(
     )
 )
 # because String2Length came before Double, the output type is Any
-assert_type(g3, Graph[None, X])
+assert_type(g3, Graph[None, None, X])
 
 Graph[None, bytes](nodes=(Float2String, String2Length, Double))  # type: ignore[arg-type]
 Graph[None, str](nodes=[Double])  # type: ignore[list-item]
+
+
+@dataclass
+class MyState:
+    x: int
+
+
+@dataclass
+class MyDeps:
+    y: str
+
+
+@dataclass
+class A(BaseNode[MyState, MyDeps]):
+    async def run(self, ctx: GraphContext[MyState, MyDeps]) -> B:
+        assert ctx.state.x == 1
+        assert ctx.deps.y == 'y'
+        return B()
+
+
+@dataclass
+class B(BaseNode[MyState, MyDeps, int]):
+    async def run(self, ctx: GraphContext[MyState, MyDeps]) -> End[int]:
+        return End(42)
+
+
+g4 = Graph[MyState, MyDeps, int](nodes=(A, B))
+assert_type(g4, Graph[MyState, MyDeps, int])
+
+g5 = Graph(nodes=(A, B))
+assert_type(g5, Graph[MyState, MyDeps, int])
+
+
+def run_g5():
+    g5.run_sync(A())  # pyright: ignore[reportArgumentType]
+    g5.run_sync(A(), state=MyState(x=1))  # pyright: ignore[reportArgumentType]
+    g5.run_sync(A(), deps=MyDeps(y='y'))  # pyright: ignore[reportArgumentType]
+    ans, history = g5.run_sync(A(), state=MyState(x=1), deps=MyDeps(y='y'))
+    assert_type(ans, int)
+    assert_type(history, list[HistoryStep[MyState, int]])

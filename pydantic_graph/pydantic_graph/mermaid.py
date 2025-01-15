@@ -23,7 +23,7 @@ DEFAULT_HIGHLIGHT_CSS = 'fill:#fdff32'
 
 
 def generate_code(  # noqa: C901
-    graph: Graph[Any, Any],
+    graph: Graph[Any, Any, Any],
     /,
     *,
     start_node: Sequence[NodeIdent] | NodeIdent | None = None,
@@ -110,7 +110,7 @@ def _node_ids(node_idents: Sequence[NodeIdent] | NodeIdent) -> Iterable[str]:
 
 
 def request_image(
-    graph: Graph[Any, Any],
+    graph: Graph[Any, Any, Any],
     /,
     **kwargs: Unpack[MermaidConfig],
 ) -> bytes:
@@ -175,7 +175,7 @@ def request_image(
 
 def save_image(
     path: Path | str,
-    graph: Graph[Any, Any],
+    graph: Graph[Any, Any, Any],
     /,
     **kwargs: Unpack[MermaidConfig],
 ) -> None:
@@ -247,7 +247,7 @@ class MermaidConfig(TypedDict, total=False):
     """An HTTPX client to use for requests, mostly for testing purposes."""
 
 
-NodeIdent: TypeAlias = 'type[BaseNode[Any, Any]] | BaseNode[Any, Any] | str'
+NodeIdent: TypeAlias = 'type[BaseNode[Any, Any, Any]] | BaseNode[Any, Any, Any] | str'
 """A type alias for a node identifier.
 
 This can be:

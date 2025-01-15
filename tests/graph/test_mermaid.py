@@ -26,7 +26,7 @@ class Foo(BaseNode):
 
 
 @dataclass
-class Bar(BaseNode[None, None]):
+class Bar(BaseNode[None, None, None]):
     async def run(self, ctx: GraphContext) -> End[None]:
         return End(None)
 
@@ -45,7 +45,7 @@ class Spam(BaseNode):
 
 
 @dataclass
-class Eggs(BaseNode[None, None]):
+class Eggs(BaseNode[None, None, None]):
     """This is the docstring for Eggs."""
 
     docstring_notes = False
@@ -58,7 +58,7 @@ graph2 = Graph(nodes=(Spam, Foo, Bar, Eggs))
 
 
 async def test_run_graph():
-    result, history = await graph1.run(None, Foo())
+    result, history = await graph1.run(Foo())
     assert result is None
     assert history == snapshot(
         [
