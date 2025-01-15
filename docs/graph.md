@@ -133,7 +133,7 @@ from pydantic_graph import BaseNode, End, Graph, GraphContext
 
 
 @dataclass
-class DivisibleBy5(BaseNode[None, int]):  # (1)!
+class DivisibleBy5(BaseNode[None, None, int]):  # (1)!
     foo: int
 
     async def run(
@@ -163,7 +163,7 @@ print([item.data_snapshot() for item in history])
 #> [DivisibleBy5(foo=4), Increment(foo=4), DivisibleBy5(foo=5), End(data=5)]
 ```
 
-1. The `DivisibleBy5` node is parameterized with `None` as this graph doesn't use state, and `int` as it can end the run.
+1. The `DivisibleBy5` node is parameterized with `None` for the state param and `None` for the deps param as this graph doesn't use state or deps, and `int` as it can end the run.
 2. The `Increment` node doesn't return `End`, so the `RunEndT` generic parameter is omitted, state can also be omitted as the graph doesn't use state.
 3. The graph is created with a sequence of nodes.
 4. The graph is run synchronously with [`run_sync`][pydantic_graph.graph.Graph.run_sync] the initial state `None` and the start node `DivisibleBy5(4)` are passed as arguments.
