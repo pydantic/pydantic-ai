@@ -15,7 +15,7 @@ import pydantic
 import typing_extensions
 
 from . import _utils, exceptions, mermaid
-from .nodes import BaseNode, DepsT, End, GraphContext, NodeDef, RunEndT
+from .nodes import BaseNode, DepsT, End, GraphRunContext, NodeDef, RunEndT
 from .state import EndStep, HistoryStep, NodeStep, StateT, deep_copy_state, nodes_schema_var
 
 __all__ = ('Graph',)
@@ -38,7 +38,7 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
 
     from dataclasses import dataclass
 
-    from pydantic_graph import BaseNode, End, Graph, GraphContext
+    from pydantic_graph import BaseNode, End, Graph, GraphRunContext
 
     @dataclass
     class MyState:
@@ -46,13 +46,13 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
 
     @dataclass
     class Increment(BaseNode[MyState]):
-        async def run(self, ctx: GraphContext) -> Check42:
+        async def run(self, ctx: GraphRunContext) -> Check42:
             ctx.state.number += 1
             return Check42()
 
     @dataclass
     class Check42(BaseNode[MyState, None, int]):
-        async def run(self, ctx: GraphContext) -> Increment | End[int]:
+        async def run(self, ctx: GraphRunContext) -> Increment | End[int]:
             if ctx.state.number == 42:
                 return Increment()
             else:
@@ -229,7 +229,7 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
         if node_id not in self.node_defs:
             raise exceptions.GraphRuntimeError(f'Node `{node}` is not in the graph.')
 
-        ctx = GraphContext(state, deps)
+        ctx = GraphRunContext(state, deps)
         with _logfire.span('run node {node_id}', node_id=node_id, node=node):
             start_ts = _utils.now_utc()
             start = perf_counter()

@@ -1,7 +1,7 @@
 # Graphs
 
 !!! danger "Don't use a nail gun unless you need a nail gun"
-    If PydanticAI [agents](agents.md) are a hammer, and [multi-agent workflows](multi-agent-applications.md) are a sledgehammer, then graphs are a nail gun, with flames down the side:
+    If PydanticAI [agents](agents.md) are a hammer, and [multi-agent workflows](multi-agent-applications.md) are a sledgehammer, then graphs are a nail gun:
 
     * sure, nail guns look cooler than hammers
     * but nail guns take a lot more setup than hammers
@@ -10,13 +10,13 @@
 
     In short, graphs are a powerful tool, but they're not the right tool for every job. Please consider other [multi-agent approaches](multi-agent-applications.md) before proceeding.
 
-    Unless you're sure you need a graph, you probably don't.
+    If you're not confident a graph-based approach is a good idea, it might be unnecessary.
 
 Graphs and finite state machines (FSMs) are a powerful abstraction to model, execute, control and visualize complex workflows.
 
 Alongside PydanticAI, we've developed `pydantic-graph` — an async graph and state machine library for Python where nodes and edges are defined using type hints.
 
-While this library is developed as part of the PydanticAI; it has no dependency on `pydantic-ai` and can be considered as a pure graph library. You may find it useful whether or not you're using PydanticAI or even building with GenAI.
+While this library is developed as part of PydanticAI; it has no dependency on `pydantic-ai` and can be considered as a pure  graph-based state machine library. You may find it useful whether or not you're using PydanticAI or even building with GenAI.
 
 `pydantic-graph` is designed for advanced users and makes heavy use of Python generics and types hints. It is not designed to be as beginner-friendly as PydanticAI.
 
@@ -33,25 +33,25 @@ pip/uv-add pydantic-graph
 
 ## Graph Types
 
-Graphs are made up of a few key components:
+`pydantic-graph` made up of a few key components:
 
-### GraphContext
+### GraphRunContext
 
-[`GraphContext`][pydantic_graph.nodes.GraphContext] — The context for the graph run, similar to PydanticAI's [`RunContext`][pydantic_ai.tools.RunContext], this holds the state of the graph and is passed to nodes when they're run.
+[`GraphRunContext`][pydantic_graph.nodes.GraphRunContext] — The context for the graph run, similar to PydanticAI's [`RunContext`][pydantic_ai.tools.RunContext]. This holds the state of the graph and dependencies and is passed to nodes when they're run.
 
-`GraphContext` is generic in the state type of the graph it's used in, [`StateT`][pydantic_graph.state.StateT].
+`GraphRunContext` is generic in the state type of the graph it's used in, [`StateT`][pydantic_graph.state.StateT].
 
 ### End
 
-[`End`][pydantic_graph.nodes.End] — return value to indicates the graph run should end.
+[`End`][pydantic_graph.nodes.End] — return value to indicate the graph run should end.
 
 `End` is generic in the graph return type of the graph it's used in, [`RunEndT`][pydantic_graph.nodes.RunEndT].
 
 ### Nodes
 
-Subclasses of [`BaseNode`][pydantic_graph.nodes.BaseNode] to define nodes.
+Subclasses of [`BaseNode`][pydantic_graph.nodes.BaseNode] define nodes for execution in the graph.
 
-Nodes which are generally [`dataclass`es][dataclasses.dataclass] include:
+Nodes, which are generally [`dataclass`es][dataclasses.dataclass], generally consist of:
 
 * fields containing any parameters required/optional when calling the node
 * the business logic to execute the node, in the [`run`][pydantic_graph.nodes.BaseNode.run] method
@@ -68,7 +68,7 @@ Here's an example of a start or intermediate node in a graph — it can't end th
 ```py {title="intermediate_node.py" noqa="F821" test="skip"}
 from dataclasses import dataclass
 
-from pydantic_graph import BaseNode, GraphContext
+from pydantic_graph import BaseNode, GraphRunContext
 
 
 @dataclass
@@ -77,7 +77,7 @@ class MyNode(BaseNode[MyState]):  # (1)!
 
     async def run(
         self,
-        ctx: GraphContext[MyState],  # (3)!
+        ctx: GraphRunContext[MyState],  # (3)!
     ) -> AnotherNode:  # (4)!
         ...
         return AnotherNode()
@@ -85,7 +85,7 @@ class MyNode(BaseNode[MyState]):  # (1)!
 
 1. State in this example is `MyState` (not shown), hence `BaseNode` is parameterized with `MyState`. This node can't end the run, so the `RunEndT` generic parameter is omitted and defaults to `Never`.
 2. `MyNode` is a dataclass and has a single field `foo`, an `int`.
-3. The `run` method takes a `GraphContext` parameter, again parameterized with state `MyState`.
+3. The `run` method takes a `GraphRunContext` parameter, again parameterized with state `MyState`.
 4. The return type of the `run` method is `AnotherNode` (not shown), this is used to determine the outgoing edges of the node.
 
 We could extend `MyNode` to optionally end the run if `foo` is divisible by 5:
@@ -93,7 +93,7 @@ We could extend `MyNode` to optionally end the run if `foo` is divisible by 5:
 ```py {title="intermediate_or_end_node.py" hl_lines="7 13 15" noqa="F821" test="skip"}
 from dataclasses import dataclass
 
-from pydantic_graph import BaseNode, End, GraphContext
+from pydantic_graph import BaseNode, End, GraphRunContext
 
 
 @dataclass
@@ -102,7 +102,7 @@ class MyNode(BaseNode[MyState, None, int]):  # (1)!
 
     async def run(
         self,
-        ctx: GraphContext[MyState],
+        ctx: GraphRunContext[MyState],
     ) -> AnotherNode | End[int]:  # (2)!
         if self.foo % 5 == 0:
             return End(self.foo)
@@ -130,7 +130,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from pydantic_graph import BaseNode, End, Graph, GraphContext
+from pydantic_graph import BaseNode, End, Graph, GraphRunContext
 
 
 @dataclass
@@ -139,7 +139,7 @@ class DivisibleBy5(BaseNode[None, None, int]):  # (1)!
 
     async def run(
         self,
-        ctx: GraphContext,
+        ctx: GraphRunContext,
     ) -> Increment | End[int]:
         if self.foo % 5 == 0:
             return End(self.foo)
@@ -151,7 +151,7 @@ class DivisibleBy5(BaseNode[None, None, int]):  # (1)!
 class Increment(BaseNode):  # (2)!
     foo: int
 
-    async def run(self, ctx: GraphContext) -> DivisibleBy5:
+    async def run(self, ctx: GraphRunContext) -> DivisibleBy5:
         return DivisibleBy5(self.foo + 1)
 
 
@@ -192,9 +192,9 @@ stateDiagram-v2
 
 ## Stateful Graphs
 
-TODO introduce state
+The "state" concept in `pydantic-graph` provides an optional way to access and mutate an object (often a `dataclass` or Pydantic model) as nodes run in a graph. If you think of Graphs as a production line, then you state is the engine being passed along the line and built up by each node as the graph is run.
 
-TODO link to issue about persistent state.
+In future, we intend to extend `pydantic-graph` to provide state persistence with the state recorded after each node is run, see [#695](https://github.com/pydantic/pydantic-ai/issues/695).
 
 Here's an example of a graph which represents a vending machine where the user may insert coins and select a product to purchase.
 
@@ -205,7 +205,7 @@ from dataclasses import dataclass
 
 from rich.prompt import Prompt
 
-from pydantic_graph import BaseNode, End, Graph, GraphContext
+from pydantic_graph import BaseNode, End, Graph, GraphRunContext
 
 
 @dataclass
@@ -216,7 +216,7 @@ class MachineState:  # (1)!
 
 @dataclass
 class InsertCoin(BaseNode[MachineState]):  # (3)!
-    async def run(self, ctx: GraphContext[MachineState]) -> CoinsInserted:  # (16)!
+    async def run(self, ctx: GraphRunContext[MachineState]) -> CoinsInserted:  # (16)!
         return CoinsInserted(float(Prompt.ask('Insert coins')))  # (4)!
 
 
@@ -225,7 +225,7 @@ class CoinsInserted(BaseNode[MachineState]):
     amount: float  # (5)!
 
     async def run(
-        self, ctx: GraphContext[MachineState]
+        self, ctx: GraphRunContext[MachineState]
     ) -> SelectProduct | Purchase:  # (17)!
         ctx.state.user_balance += self.amount  # (6)!
         if ctx.state.product is not None:  # (7)!
@@ -236,7 +236,7 @@ class CoinsInserted(BaseNode[MachineState]):
 
 @dataclass
 class SelectProduct(BaseNode[MachineState]):
-    async def run(self, ctx: GraphContext[MachineState]) -> Purchase:
+    async def run(self, ctx: GraphRunContext[MachineState]) -> Purchase:
         return Purchase(Prompt.ask('Select product'))
 
 
@@ -253,7 +253,7 @@ class Purchase(BaseNode[MachineState, None, None]):  # (18)!
     product: str
 
     async def run(
-        self, ctx: GraphContext[MachineState]
+        self, ctx: GraphRunContext[MachineState]
     ) -> End | InsertCoin | SelectProduct:
         if price := PRODUCT_PRICES.get(self.product):  # (8)!
             ctx.state.product = self.product  # (9)!
@@ -360,7 +360,7 @@ from pydantic import BaseModel, EmailStr
 from pydantic_ai import Agent
 from pydantic_ai.format_as_xml import format_as_xml
 from pydantic_ai.messages import ModelMessage
-from pydantic_graph import BaseNode, End, Graph, GraphContext
+from pydantic_graph import BaseNode, End, Graph, GraphRunContext
 
 
 @dataclass
@@ -393,7 +393,7 @@ email_writer_agent = Agent(
 class WriteEmail(BaseNode[State]):
     email_feedback: str | None = None
 
-    async def run(self, ctx: GraphContext[State]) -> Feedback:
+    async def run(self, ctx: GraphRunContext[State]) -> Feedback:
         if self.email_feedback:
             prompt = (
                 f'Rewrite the email for the user:\n'
@@ -437,7 +437,7 @@ class Feedback(BaseNode[State, None, Email]):
 
     async def run(
         self,
-        ctx: GraphContext[State],
+        ctx: GraphRunContext[State],
     ) -> WriteEmail | End[Email]:
         prompt = format_as_xml({'user': ctx.state.user, 'email': self.email})
         result = await feedback_agent.run(prompt)
@@ -481,7 +481,7 @@ In this example, an AI asks the user a question, the user provides an answer, th
 
     from dataclasses import dataclass, field
 
-    from pydantic_graph import BaseNode, End, Graph, GraphContext
+    from pydantic_graph import BaseNode, End, Graph, GraphRunContext
 
     from pydantic_ai import Agent
     from pydantic_ai.format_as_xml import format_as_xml
@@ -499,7 +499,7 @@ In this example, an AI asks the user a question, the user provides an answer, th
 
     @dataclass
     class Ask(BaseNode[QuestionState]):
-        async def run(self, ctx: GraphContext[QuestionState]) -> Answer:
+        async def run(self, ctx: GraphRunContext[QuestionState]) -> Answer:
             result = await ask_agent.run(
                 'Ask a simple question with a single correct answer.',
                 message_history=ctx.state.ask_agent_messages,
@@ -514,7 +514,7 @@ In this example, an AI asks the user a question, the user provides an answer, th
         question: str
         answer: str | None = None
 
-        async def run(self, ctx: GraphContext[QuestionState]) -> Evaluate:
+        async def run(self, ctx: GraphRunContext[QuestionState]) -> Evaluate:
             assert self.answer is not None
             return Evaluate(self.answer)
 
@@ -538,7 +538,7 @@ In this example, an AI asks the user a question, the user provides an answer, th
 
         async def run(
             self,
-            ctx: GraphContext[QuestionState],
+            ctx: GraphRunContext[QuestionState],
         ) -> End[str] | Reprimand:
             assert ctx.state.question is not None
             result = await evaluate_agent.run(
@@ -556,7 +556,7 @@ In this example, an AI asks the user a question, the user provides an answer, th
     class Reprimand(BaseNode[QuestionState]):
         comment: str
 
-        async def run(self, ctx: GraphContext[QuestionState]) -> Ask:
+        async def run(self, ctx: GraphRunContext[QuestionState]) -> Ask:
             print(f'Comment: {self.comment}')
             ctx.state.question = None
             return Ask()
@@ -637,7 +637,7 @@ You maybe have noticed that although this examples transfers control flow out of
 
 ## Dependency Injection
 
-As with PydanticAI, `pydantic-graph` supports dependency injection via a generic parameter on [`Graph`][pydantic_graph.graph.Graph] and [`BaseNode`][pydantic_graph.nodes.BaseNode], and the [`GraphContext.deps`][pydantic_graph.nodes.GraphContext.deps] fields.
+As with PydanticAI, `pydantic-graph` supports dependency injection via a generic parameter on [`Graph`][pydantic_graph.graph.Graph] and [`BaseNode`][pydantic_graph.nodes.BaseNode], and the [`GraphRunContext.deps`][pydantic_graph.nodes.GraphRunContext.deps] fields.
 
 As an example of dependency injection, let's modify the `DivisibleBy5` example [above](#graph) to use a [`ProcessPoolExecutor`][concurrent.futures.ProcessPoolExecutor] to run the compute load in a separate process (this is a contrived example, `ProcessPoolExecutor` wouldn't actually improve performance in this example):
 
@@ -648,7 +648,7 @@ import asyncio
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
 
-from pydantic_graph import BaseNode, End, Graph, GraphContext
+from pydantic_graph import BaseNode, End, Graph, GraphRunContext
 
 
 @dataclass
@@ -662,7 +662,7 @@ class DivisibleBy5(BaseNode[None, None, int]):
 
     async def run(
         self,
-        ctx: GraphContext,
+        ctx: GraphRunContext,
     ) -> Increment | End[int]:
         if self.foo % 5 == 0:
             return End(self.foo)
@@ -674,7 +674,7 @@ class DivisibleBy5(BaseNode[None, None, int]):
 class Increment(BaseNode):
     foo: int
 
-    async def run(self, ctx: GraphContext) -> DivisibleBy5:
+    async def run(self, ctx: GraphRunContext) -> DivisibleBy5:
         loop = asyncio.get_running_loop()
         compute_result = await loop.run_in_executor(
             ctx.deps.executor,
@@ -738,7 +738,7 @@ Putting that together, we can edit the last [`ai_q_and_a_graph.py`](#custom-cont
 ...
 from typing import Annotated
 
-from pydantic_graph import BaseNode, End, Graph, GraphContext, Edge
+from pydantic_graph import BaseNode, End, Graph, GraphRunContext, Edge
 
 ...
 
@@ -747,7 +747,7 @@ class Ask(BaseNode[QuestionState]):
     """Generate question using GPT-4o."""
     docstring_notes = True
     async def run(
-        self, ctx: GraphContext[QuestionState]
+        self, ctx: GraphRunContext[QuestionState]
     ) -> Annotated[Answer, Edge(label='Ask the question')]:
         ...
 
@@ -759,7 +759,7 @@ class Evaluate(BaseNode[QuestionState]):
 
     async def run(
             self,
-            ctx: GraphContext[QuestionState],
+            ctx: GraphRunContext[QuestionState],
     ) -> Annotated[End[str], Edge(label='success')] | Reprimand:
         ...
 

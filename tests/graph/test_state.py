@@ -7,7 +7,7 @@ from datetime import timezone
 import pytest
 from inline_snapshot import snapshot
 
-from pydantic_graph import BaseNode, End, EndStep, Graph, GraphContext, NodeStep
+from pydantic_graph import BaseNode, End, EndStep, Graph, GraphRunContext, NodeStep
 
 from ..conftest import IsFloat, IsNow
 
@@ -22,13 +22,13 @@ async def test_run_graph():
 
     @dataclass
     class Foo(BaseNode[MyState]):
-        async def run(self, ctx: GraphContext[MyState]) -> Bar:
+        async def run(self, ctx: GraphRunContext[MyState]) -> Bar:
             ctx.state.x += 1
             return Bar()
 
     @dataclass
     class Bar(BaseNode[MyState, None, str]):
-        async def run(self, ctx: GraphContext[MyState]) -> End[str]:
+        async def run(self, ctx: GraphRunContext[MyState]) -> End[str]:
             ctx.state.y += 'y'
             return End(f'x={ctx.state.x} y={ctx.state.y}')
 

@@ -4,14 +4,14 @@ from dataclasses import dataclass
 
 from typing_extensions import assert_type
 
-from pydantic_graph import BaseNode, End, Graph, GraphContext, HistoryStep
+from pydantic_graph import BaseNode, End, Graph, GraphRunContext, HistoryStep
 
 
 @dataclass
 class Float2String(BaseNode):
     input_data: float
 
-    async def run(self, ctx: GraphContext) -> String2Length:
+    async def run(self, ctx: GraphRunContext) -> String2Length:
         return String2Length(str(self.input_data))
 
 
@@ -19,7 +19,7 @@ class Float2String(BaseNode):
 class String2Length(BaseNode):
     input_data: str
 
-    async def run(self, ctx: GraphContext) -> Double:
+    async def run(self, ctx: GraphRunContext) -> Double:
         return Double(len(self.input_data))
 
 
@@ -32,7 +32,7 @@ class X:
 class Double(BaseNode[None, None, X]):
     input_data: int
 
-    async def run(self, ctx: GraphContext) -> String2Length | End[X]:
+    async def run(self, ctx: GraphRunContext) -> String2Length | End[X]:
         if self.input_data == 7:
             return String2Length('x' * 21)
         else:
@@ -86,7 +86,7 @@ class MyDeps:
 
 @dataclass
 class A(BaseNode[MyState, MyDeps]):
-    async def run(self, ctx: GraphContext[MyState, MyDeps]) -> B:
+    async def run(self, ctx: GraphRunContext[MyState, MyDeps]) -> B:
         assert ctx.state.x == 1
         assert ctx.deps.y == 'y'
         return B()
@@ -94,7 +94,7 @@ class A(BaseNode[MyState, MyDeps]):
 
 @dataclass
 class B(BaseNode[MyState, MyDeps, int]):
-    async def run(self, ctx: GraphContext[MyState, MyDeps]) -> End[int]:
+    async def run(self, ctx: GraphRunContext[MyState, MyDeps]) -> End[int]:
         return End(42)
 
 

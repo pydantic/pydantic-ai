@@ -11,7 +11,7 @@ import httpx
 import pytest
 from inline_snapshot import snapshot
 
-from pydantic_graph import BaseNode, Edge, End, EndStep, Graph, GraphContext, GraphSetupError, NodeStep
+from pydantic_graph import BaseNode, Edge, End, EndStep, Graph, GraphRunContext, GraphSetupError, NodeStep
 from pydantic_graph.nodes import NodeDef
 
 from ..conftest import IsFloat, IsNow
@@ -21,13 +21,13 @@ pytestmark = pytest.mark.anyio
 
 @dataclass
 class Foo(BaseNode):
-    async def run(self, ctx: GraphContext) -> Bar:
+    async def run(self, ctx: GraphRunContext) -> Bar:
         return Bar()
 
 
 @dataclass
 class Bar(BaseNode[None, None, None]):
-    async def run(self, ctx: GraphContext) -> End[None]:
+    async def run(self, ctx: GraphRunContext) -> End[None]:
         return End(None)
 
 
@@ -40,7 +40,7 @@ class Spam(BaseNode):
 
     docstring_notes = True
 
-    async def run(self, ctx: GraphContext) -> Annotated[Foo, Edge(label='spam to foo')]:
+    async def run(self, ctx: GraphRunContext) -> Annotated[Foo, Edge(label='spam to foo')]:
         raise NotImplementedError()
 
 
@@ -50,7 +50,7 @@ class Eggs(BaseNode[None, None, None]):
 
     docstring_notes = False
 
-    async def run(self, ctx: GraphContext) -> Annotated[End[None], Edge(label='eggs to end')]:
+    async def run(self, ctx: GraphRunContext) -> Annotated[End[None], Edge(label='eggs to end')]:
         raise NotImplementedError()
 
 
@@ -173,7 +173,7 @@ stateDiagram-v2
 
 @dataclass
 class AllNodes(BaseNode):
-    async def run(self, ctx: GraphContext) -> BaseNode:
+    async def run(self, ctx: GraphRunContext) -> BaseNode:
         raise NotImplementedError()
 
 
@@ -364,7 +364,7 @@ def test_get_node_def():
 def test_no_return_type():
     @dataclass
     class NoReturnType(BaseNode):
-        async def run(self, ctx: GraphContext):  # type: ignore
+        async def run(self, ctx: GraphRunContext):  # type: ignore
             raise NotImplementedError()
 
     with pytest.raises(GraphSetupError, match=r".*\.NoReturnType'> is missing a return type hint on its `run` method"):
@@ -374,7 +374,7 @@ def test_no_return_type():
 def test_wrong_return_type():
     @dataclass
     class NoReturnType(BaseNode):
-        async def run(self, ctx: GraphContext) -> int:  # type: ignore
+        async def run(self, ctx: GraphRunContext) -> int:  # type: ignore
             raise NotImplementedError()
 
     with pytest.raises(GraphSetupError, match="Invalid return type: <class 'int'>"):

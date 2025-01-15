@@ -3,7 +3,7 @@
 ::: pydantic_graph.nodes
     options:
         members:
-            - GraphContext
+            - GraphRunContext
             - BaseNode
             - End
             - Edge

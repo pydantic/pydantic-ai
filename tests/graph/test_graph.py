@@ -16,7 +16,7 @@ from pydantic_graph import (
     End,
     EndStep,
     Graph,
-    GraphContext,
+    GraphRunContext,
     GraphRuntimeError,
     GraphSetupError,
     HistoryStep,
@@ -33,21 +33,21 @@ async def test_graph():
     class Float2String(BaseNode):
         input_data: float
 
-        async def run(self, ctx: GraphContext) -> String2Length:
+        async def run(self, ctx: GraphRunContext) -> String2Length:
             return String2Length(str(self.input_data))
 
     @dataclass
     class String2Length(BaseNode):
         input_data: str
 
-        async def run(self, ctx: GraphContext) -> Double:
+        async def run(self, ctx: GraphRunContext) -> Double:
             return Double(len(self.input_data))
 
     @dataclass
     class Double(BaseNode[None, None, int]):
         input_data: int
 
-        async def run(self, ctx: GraphContext) -> Union[String2Length, End[int]]:  # noqa: UP007
+        async def run(self, ctx: GraphRunContext) -> Union[String2Length, End[int]]:  # noqa: UP007
             if self.input_data == 7:
                 return String2Length('x' * 21)
             else:
@@ -136,11 +136,11 @@ async def test_graph():
 
 def test_one_bad_node():
     class Float2String(BaseNode):
-        async def run(self, ctx: GraphContext) -> String2Length:
+        async def run(self, ctx: GraphRunContext) -> String2Length:
             raise NotImplementedError()
 
     class String2Length(BaseNode[None, None, None]):
-        async def run(self, ctx: GraphContext) -> End[None]:
+        async def run(self, ctx: GraphRunContext) -> End[None]:
             raise NotImplementedError()
 
     with pytest.raises(GraphSetupError) as exc_info:
@@ -155,17 +155,17 @@ def test_two_bad_nodes():
     class Foo(BaseNode):
         input_data: float
 
-        async def run(self, ctx: GraphContext) -> Union[Bar, Spam]:  # noqa: UP007
+        async def run(self, ctx: GraphRunContext) -> Union[Bar, Spam]:  # noqa: UP007
             raise NotImplementedError()
 
     class Bar(BaseNode[None, None, None]):
         input_data: str
 
-        async def run(self, ctx: GraphContext) -> End[None]:
+        async def run(self, ctx: GraphRunContext) -> End[None]:
             raise NotImplementedError()
 
     class Spam(BaseNode[None, None, None]):
-        async def run(self, ctx: GraphContext) -> End[None]:
+        async def run(self, ctx: GraphRunContext) -> End[None]:
             raise NotImplementedError()
 
     with pytest.raises(GraphSetupError) as exc_info:
@@ -182,21 +182,21 @@ def test_three_bad_nodes_separate():
     class Foo(BaseNode):
         input_data: float
 
-        async def run(self, ctx: GraphContext) -> Eggs:
+        async def run(self, ctx: GraphRunContext) -> Eggs:
             raise NotImplementedError()
 
     class Bar(BaseNode[None, None, None]):
         input_data: str
 
-        async def run(self, ctx: GraphContext) -> Eggs:
+        async def run(self, ctx: GraphRunContext) -> Eggs:
             raise NotImplementedError()
 
     class Spam(BaseNode[None, None, None]):
-        async def run(self, ctx: GraphContext) -> Eggs:
+        async def run(self, ctx: GraphRunContext) -> Eggs:
             raise NotImplementedError()
 
     class Eggs(BaseNode[None, None, None]):
-        async def run(self, ctx: GraphContext) -> End[None]:
+        async def run(self, ctx: GraphRunContext) -> End[None]:
             raise NotImplementedError()
 
     with pytest.raises(GraphSetupError) as exc_info:
@@ -209,11 +209,11 @@ def test_three_bad_nodes_separate():
 
 def test_duplicate_id():
     class Foo(BaseNode):
-        async def run(self, ctx: GraphContext) -> Bar:
+        async def run(self, ctx: GraphRunContext) -> Bar:
             raise NotImplementedError()
 
     class Bar(BaseNode[None, None, None]):
-        async def run(self, ctx: GraphContext) -> End[None]:
+        async def run(self, ctx: GraphRunContext) -> End[None]:
             raise NotImplementedError()
 
         @classmethod
@@ -230,17 +230,17 @@ def test_duplicate_id():
 async def test_run_node_not_in_graph():
     @dataclass
     class Foo(BaseNode):
-        async def run(self, ctx: GraphContext) -> Bar:
+        async def run(self, ctx: GraphRunContext) -> Bar:
             return Bar()
 
     @dataclass
     class Bar(BaseNode[None, None, None]):
-        async def run(self, ctx: GraphContext) -> End[None]:
+        async def run(self, ctx: GraphRunContext) -> End[None]:
             return Spam()  # type: ignore
 
     @dataclass
     class Spam(BaseNode[None, None, None]):
-        async def run(self, ctx: GraphContext) -> End[None]:
+        async def run(self, ctx: GraphRunContext) -> End[None]:
             raise NotImplementedError()
 
     g = Graph(nodes=(Foo, Bar))
@@ -253,12 +253,12 @@ async def test_run_node_not_in_graph():
 async def test_run_return_other():
     @dataclass
     class Foo(BaseNode):
-        async def run(self, ctx: GraphContext) -> Bar:
+        async def run(self, ctx: GraphRunContext) -> Bar:
             return Bar()
 
     @dataclass
     class Bar(BaseNode[None, None, None]):
-        async def run(self, ctx: GraphContext) -> End[None]:
+        async def run(self, ctx: GraphRunContext) -> End[None]:
             return 42  # type: ignore
 
     g = Graph(nodes=(Foo, Bar))
@@ -273,12 +273,12 @@ async def test_run_return_other():
 async def test_next():
     @dataclass
     class Foo(BaseNode):
-        async def run(self, ctx: GraphContext) -> Bar:
+        async def run(self, ctx: GraphRunContext) -> Bar:
             return Bar()
 
     @dataclass
     class Bar(BaseNode):
-        async def run(self, ctx: GraphContext) -> Foo:
+        async def run(self, ctx: GraphRunContext) -> Foo:
             return Foo()
 
     g = Graph(nodes=(Foo, Bar))
@@ -309,13 +309,13 @@ async def test_deps():
 
     @dataclass
     class Foo(BaseNode[None, Deps]):
-        async def run(self, ctx: GraphContext[None, Deps]) -> Bar:
+        async def run(self, ctx: GraphRunContext[None, Deps]) -> Bar:
             assert isinstance(ctx.deps, Deps)
             return Bar()
 
     @dataclass
     class Bar(BaseNode[None, Deps, int]):
-        async def run(self, ctx: GraphContext[None, Deps]) -> End[int]:
+        async def run(self, ctx: GraphRunContext[None, Deps]) -> End[int]:
             assert isinstance(ctx.deps, Deps)
             return End(123)
 

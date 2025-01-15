@@ -9,7 +9,7 @@ import pytest
 from dirty_equals import IsStr
 from inline_snapshot import snapshot
 
-from pydantic_graph import BaseNode, End, EndStep, Graph, GraphContext, GraphSetupError, NodeStep
+from pydantic_graph import BaseNode, End, EndStep, Graph, GraphRunContext, GraphSetupError, NodeStep
 
 from ..conftest import IsFloat, IsNow
 
@@ -24,14 +24,14 @@ class MyState:
 
 @dataclass
 class Foo(BaseNode[MyState]):
-    async def run(self, ctx: GraphContext[MyState]) -> Bar:
+    async def run(self, ctx: GraphRunContext[MyState]) -> Bar:
         ctx.state.x += 1
         return Bar()
 
 
 @dataclass
 class Bar(BaseNode[MyState, None, int]):
-    async def run(self, ctx: GraphContext[MyState]) -> End[int]:
+    async def run(self, ctx: GraphRunContext[MyState]) -> End[int]:
         ctx.state.y += 'y'
         return End(ctx.state.x * 2)
 
@@ -105,7 +105,7 @@ async def test_dump_load_history(graph: Graph[MyState, None, int]):
 def test_one_node():
     @dataclass
     class MyNode(BaseNode[None, None, int]):
-        async def run(self, ctx: GraphContext) -> End[int]:
+        async def run(self, ctx: GraphRunContext) -> End[int]:
             return End(123)
 
     g = Graph(nodes=[MyNode])
@@ -124,7 +124,7 @@ def test_one_node():
 def test_no_generic_arg():
     @dataclass
     class NoGenericArgsNode(BaseNode):
-        async def run(self, ctx: GraphContext) -> NoGenericArgsNode:
+        async def run(self, ctx: GraphRunContext) -> NoGenericArgsNode:
             return NoGenericArgsNode()
 
     g = Graph(nodes=[NoGenericArgsNode])

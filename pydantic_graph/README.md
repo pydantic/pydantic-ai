@@ -24,7 +24,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from pydantic_graph import BaseNode, End, Graph, GraphContext
+from pydantic_graph import BaseNode, End, Graph, GraphRunContext
 
 
 @dataclass
@@ -33,7 +33,7 @@ class DivisibleBy5(BaseNode[None, None, int]):
 
     async def run(
         self,
-        ctx: GraphContext,
+        ctx: GraphRunContext,
     ) -> Increment | End[int]:
         if self.foo % 5 == 0:
             return End(self.foo)
@@ -45,7 +45,7 @@ class DivisibleBy5(BaseNode[None, None, int]):
 class Increment(BaseNode):
     foo: int
 
-    async def run(self, ctx: GraphContext) -> DivisibleBy5:
+    async def run(self, ctx: GraphRunContext) -> DivisibleBy5:
         return DivisibleBy5(self.foo + 1)
 
 

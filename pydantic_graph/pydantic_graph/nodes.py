@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 else:
     StateT = TypeVar('StateT', default=None)
 
-__all__ = 'GraphContext', 'BaseNode', 'End', 'Edge', 'NodeDef', 'RunEndT', 'NodeRunEndT', 'DepsT'
+__all__ = 'GraphRunContext', 'BaseNode', 'End', 'Edge', 'NodeDef', 'RunEndT', 'NodeRunEndT', 'DepsT'
 
 RunEndT = TypeVar('RunEndT', default=None)
 """Type variable for the return type of a graph [`run`][pydantic_graph.graph.Graph.run]."""
@@ -25,7 +25,7 @@ DepsT = TypeVar('DepsT', default=None)
 
 
 @dataclass
-class GraphContext(Generic[StateT, DepsT]):
+class GraphRunContext(Generic[StateT, DepsT]):
     """Context for a graph."""
 
     state: StateT
@@ -46,7 +46,7 @@ class BaseNode(ABC, Generic[StateT, DepsT, NodeRunEndT]):
     """
 
     @abstractmethod
-    async def run(self, ctx: GraphContext[StateT, DepsT]) -> BaseNode[StateT, DepsT, Any] | End[NodeRunEndT]:
+    async def run(self, ctx: GraphRunContext[StateT, DepsT]) -> BaseNode[StateT, DepsT, Any] | End[NodeRunEndT]:
         """Run the node.
 
         This is an abstract method that must be implemented by subclasses.

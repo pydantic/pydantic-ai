@@ -13,7 +13,7 @@ from typing import Annotated
 
 import logfire
 from devtools import debug
-from pydantic_graph import BaseNode, Edge, End, Graph, GraphContext, HistoryStep
+from pydantic_graph import BaseNode, Edge, End, Graph, GraphRunContext, HistoryStep
 
 from pydantic_ai import Agent
 from pydantic_ai.format_as_xml import format_as_xml
@@ -34,7 +34,7 @@ class QuestionState:
 
 @dataclass
 class Ask(BaseNode[QuestionState]):
-    async def run(self, ctx: GraphContext[QuestionState]) -> Answer:
+    async def run(self, ctx: GraphRunContext[QuestionState]) -> Answer:
         result = await ask_agent.run(
             'Ask a simple question with a single correct answer.',
             message_history=ctx.state.ask_agent_messages,
@@ -48,7 +48,7 @@ class Ask(BaseNode[QuestionState]):
 class Answer(BaseNode[QuestionState]):
     answer: str | None = None
 
-    async def run(self, ctx: GraphContext[QuestionState]) -> Evaluate:
+    async def run(self, ctx: GraphRunContext[QuestionState]) -> Evaluate:
         assert self.answer is not None
         return Evaluate(self.answer)
 
@@ -72,7 +72,7 @@ class Evaluate(BaseNode[QuestionState]):
 
     async def run(
         self,
-        ctx: GraphContext[QuestionState],
+        ctx: GraphRunContext[QuestionState],
     ) -> Congratulate | Reprimand:
         assert ctx.state.question is not None
         result = await evaluate_agent.run(
@@ -91,7 +91,7 @@ class Congratulate(BaseNode[QuestionState, None, None]):
     comment: str
 
     async def run(
-        self, ctx: GraphContext[QuestionState]
+        self, ctx: GraphRunContext[QuestionState]
     ) -> Annotated[End, Edge(label='success')]:
         print(f'Correct answer! {self.comment}')
         return End(None)
@@ -101,7 +101,7 @@ class Congratulate(BaseNode[QuestionState, None, None]):
 class Reprimand(BaseNode[QuestionState]):
     comment: str
 
-    async def run(self, ctx: GraphContext[QuestionState]) -> Ask:
+    async def run(self, ctx: GraphRunContext[QuestionState]) -> Ask:
         print(f'Comment: {self.comment}')
         # > Comment: Vichy is no longer the capital of France.
         ctx.state.question = None
