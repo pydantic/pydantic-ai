@@ -15,7 +15,7 @@ import pydantic
 import typing_extensions
 
 from . import _utils, exceptions, mermaid
-from .nodes import BaseNode, End, GraphContext, NodeDef, RunEndT
+from .nodes import BaseNode, DepsT, End, GraphContext, NodeDef, RunEndT
 from .state import EndStep, HistoryStep, NodeStep, StateT, deep_copy_state, nodes_schema_var
 
 __all__ = ('Graph',)
@@ -24,7 +24,7 @@ _logfire = logfire_api.Logfire(otel_scope='pydantic-graph')
 
 
 @dataclass(init=False)
-class Graph(Generic[StateT, RunEndT]):
+class Graph(Generic[StateT, DepsT, RunEndT]):
     """Definition of a graph.
 
     In `pydantic-graph`, a graph is a collection of nodes that can be run in sequence. The nodes define
@@ -51,12 +51,12 @@ class Graph(Generic[StateT, RunEndT]):
             return Check42()
 
     @dataclass
-    class Check42(BaseNode[MyState]):
-        async def run(self, ctx: GraphContext) -> Increment | End:
+    class Check42(BaseNode[MyState, None, int]):
+        async def run(self, ctx: GraphContext) -> Increment | End[int]:
             if ctx.state.number == 42:
                 return Increment()
             else:
-                return End(None)
+                return End(ctx.state.number)
 
     never_42_graph = Graph(nodes=(Increment, Check42))
     ```
@@ -68,7 +68,7 @@ class Graph(Generic[StateT, RunEndT]):
     """
 
     name: str | None
-    node_defs: dict[str, NodeDef[StateT, RunEndT]]
+    node_defs: dict[str, NodeDef[StateT, DepsT, RunEndT]]
     snapshot_state: Callable[[StateT], StateT]
     _state_type: type[StateT] | _utils.Unset = field(repr=False)
     _run_end_type: type[RunEndT] | _utils.Unset = field(repr=False)
@@ -76,7 +76,7 @@ class Graph(Generic[StateT, RunEndT]):
     def __init__(
         self,
         *,
-        nodes: Sequence[type[BaseNode[StateT, RunEndT]]],
+        nodes: Sequence[type[BaseNode[StateT, DepsT, RunEndT]]],
         name: str | None = None,
         state_type: type[StateT] | _utils.Unset = _utils.UNSET,
         run_end_type: type[RunEndT] | _utils.Unset = _utils.UNSET,
@@ -101,7 +101,7 @@ class Graph(Generic[StateT, RunEndT]):
         self.snapshot_state = snapshot_state
 
         parent_namespace = _utils.get_parent_namespace(inspect.currentframe())
-        self.node_defs: dict[str, NodeDef[StateT, RunEndT]] = {}
+        self.node_defs: dict[str, NodeDef[StateT, DepsT, RunEndT]] = {}
         for node in nodes:
             self._register_node(node, parent_namespace)
 
@@ -109,17 +109,19 @@ class Graph(Generic[StateT, RunEndT]):
 
     async def run(
         self,
-        state: StateT,
-        start_node: BaseNode[StateT, RunEndT],
+        start_node: BaseNode[StateT, DepsT, RunEndT],
         *,
+        state: StateT = None,
+        deps: DepsT = None,
         infer_name: bool = True,
     ) -> tuple[RunEndT, list[HistoryStep[StateT, RunEndT]]]:
         """Run the graph from a starting node until it ends.
 
         Args:
-            state: The initial state of the graph.
             start_node: the first node to run, since the graph definition doesn't define the entry point in the graph,
                 you need to provide the starting node.
+            state: The initial state of the graph.
+            deps: The dependencies of the graph.
             infer_name: Whether to infer the graph name from the calling frame.
 
         Returns:
@@ -132,14 +134,14 @@ class Graph(Generic[StateT, RunEndT]):
 
         async def main():
             state = MyState(1)
-            _, history = await never_42_graph.run(state, Increment())
+            _, history = await never_42_graph.run(Increment(), state=state)
             print(state)
             #> MyState(number=2)
             print(len(history))
             #> 3
 
             state = MyState(41)
-            _, history = await never_42_graph.run(state, Increment())
+            _, history = await never_42_graph.run(Increment(), state=state)
             print(state)
             #> MyState(number=43)
             print(len(history))
@@ -156,7 +158,7 @@ class Graph(Generic[StateT, RunEndT]):
             start=start_node,
         ) as run_span:
             while True:
-                next_node = await self.next(state, start_node, history, infer_name=False)
+                next_node = await self.next(start_node, history, state=state, deps=deps, infer_name=False)
                 if isinstance(next_node, End):
                     history.append(EndStep(result=next_node))
                     run_span.set_attribute('history', history)
@@ -173,9 +175,10 @@ class Graph(Generic[StateT, RunEndT]):
 
     def run_sync(
         self,
-        state: StateT,
-        start_node: BaseNode[StateT, RunEndT],
+        start_node: BaseNode[StateT, DepsT, RunEndT],
         *,
+        state: StateT = None,
+        deps: DepsT = None,
         infer_name: bool = True,
     ) -> tuple[RunEndT, list[HistoryStep[StateT, RunEndT]]]:
         """Run the graph synchronously.
@@ -184,9 +187,10 @@ class Graph(Generic[StateT, RunEndT]):
         You therefore can't use this method inside async code or if there's an active event loop.
 
         Args:
-            state: The initial state of the graph.
             start_node: the first node to run, since the graph definition doesn't define the entry point in the graph,
                 you need to provide the starting node.
+            state: The initial state of the graph.
+            deps: The dependencies of the graph.
             infer_name: Whether to infer the graph name from the calling frame.
 
         Returns:
@@ -194,22 +198,26 @@ class Graph(Generic[StateT, RunEndT]):
         """
         if infer_name and self.name is None:
             self._infer_name(inspect.currentframe())
-        return asyncio.get_event_loop().run_until_complete(self.run(state, start_node, infer_name=False))
+        return asyncio.get_event_loop().run_until_complete(
+            self.run(start_node, state=state, deps=deps, infer_name=False)
+        )
 
     async def next(
         self,
-        state: StateT,
-        node: BaseNode[StateT, RunEndT],
+        node: BaseNode[StateT, DepsT, RunEndT],
         history: list[HistoryStep[StateT, RunEndT]],
         *,
+        state: StateT = None,
+        deps: DepsT = None,
         infer_name: bool = True,
-    ) -> BaseNode[StateT, Any] | End[RunEndT]:
+    ) -> BaseNode[StateT, DepsT, Any] | End[RunEndT]:
         """Run a node in the graph and return the next node to run.
 
         Args:
-            state: The current state of the graph.
             node: The node to run.
             history: The history of the graph run so far. NOTE: this will be mutated to add the new step.
+            state: The current state of the graph.
+            deps: The dependencies of the graph.
             infer_name: Whether to infer the graph name from the calling frame.
 
         Returns:
@@ -221,7 +229,7 @@ class Graph(Generic[StateT, RunEndT]):
         if node_id not in self.node_defs:
             raise exceptions.GraphRuntimeError(f'Node `{node}` is not in the graph.')
 
-        ctx = GraphContext(state)
+        ctx = GraphContext(state, deps)
         with _logfire.span('run node {node_id}', node_id=node_id, node=node):
             start_ts = _utils.now_utc()
             start = perf_counter()
@@ -411,15 +419,17 @@ class Graph(Generic[StateT, RunEndT]):
             for base in typing_extensions.get_original_bases(node_def.node):
                 if typing_extensions.get_origin(base) is BaseNode:
                     args = typing_extensions.get_args(base)
-                    if len(args) == 2:
-                        t = args[1]
+                    if len(args) == 3:
+                        t = args[2]
                         if not _utils.is_never(t):
                             return t
                     # break the inner (bases) loop
                     break
         raise exceptions.GraphSetupError('Could not infer run end type from nodes, please set `run_end_type`.')
 
-    def _register_node(self, node: type[BaseNode[StateT, RunEndT]], parent_namespace: dict[str, Any] | None) -> None:
+    def _register_node(
+        self, node: type[BaseNode[StateT, DepsT, RunEndT]], parent_namespace: dict[str, Any] | None
+    ) -> None:
         node_id = node.get_id()
         if existing_node := self.node_defs.get(node_id):
             raise exceptions.GraphSetupError(

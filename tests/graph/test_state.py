@@ -27,7 +27,7 @@ async def test_run_graph():
             return Bar()
 
     @dataclass
-    class Bar(BaseNode[MyState, str]):
+    class Bar(BaseNode[MyState, None, str]):
         async def run(self, ctx: GraphContext[MyState]) -> End[str]:
             ctx.state.y += 'y'
             return End(f'x={ctx.state.x} y={ctx.state.y}')
@@ -36,7 +36,7 @@ async def test_run_graph():
     assert graph._get_state_type() is MyState
     assert graph._get_run_end_type() is str
     state = MyState(1, '')
-    result, history = await graph.run(state, Foo())
+    result, history = await graph.run(Foo(), state=state)
     assert result == snapshot('x=2 y=y')
     assert history == snapshot(
         [

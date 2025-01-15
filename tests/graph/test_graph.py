@@ -44,7 +44,7 @@ async def test_graph():
             return Double(len(self.input_data))
 
     @dataclass
-    class Double(BaseNode[None, int]):
+    class Double(BaseNode[None, None, int]):
         input_data: int
 
         async def run(self, ctx: GraphContext) -> Union[String2Length, End[int]]:  # noqa: UP007
@@ -53,11 +53,11 @@ async def test_graph():
             else:
                 return End(self.input_data * 2)
 
-    my_graph = Graph(nodes=(Float2String, String2Length, Double))
+    my_graph = Graph[None, None, int](nodes=(Float2String, String2Length, Double))
+    assert my_graph.name is None
     assert my_graph._get_state_type() is type(None)
     assert my_graph._get_run_end_type() is int
-    assert my_graph.name is None
-    result, history = await my_graph.run(None, Float2String(3.14))
+    result, history = await my_graph.run(Float2String(3.14))
     # len('3.14') * 2 == 8
     assert result == 8
     assert my_graph.name == 'my_graph'
@@ -84,7 +84,7 @@ async def test_graph():
             EndStep(result=End(data=8), ts=IsNow(tz=timezone.utc)),
         ]
     )
-    result, history = await my_graph.run(None, Float2String(3.14159))
+    result, history = await my_graph.run(Float2String(3.14159))
     # len('3.14159') == 7, 21 * 2 == 42
     assert result == 42
     assert history == snapshot(
@@ -139,7 +139,7 @@ def test_one_bad_node():
         async def run(self, ctx: GraphContext) -> String2Length:
             raise NotImplementedError()
 
-    class String2Length(BaseNode[None, None]):
+    class String2Length(BaseNode[None, None, None]):
         async def run(self, ctx: GraphContext) -> End[None]:
             raise NotImplementedError()
 
@@ -158,13 +158,13 @@ def test_two_bad_nodes():
         async def run(self, ctx: GraphContext) -> Union[Bar, Spam]:  # noqa: UP007
             raise NotImplementedError()
 
-    class Bar(BaseNode[None, None]):
+    class Bar(BaseNode[None, None, None]):
         input_data: str
 
         async def run(self, ctx: GraphContext) -> End[None]:
             raise NotImplementedError()
 
-    class Spam(BaseNode[None, None]):
+    class Spam(BaseNode[None, None, None]):
         async def run(self, ctx: GraphContext) -> End[None]:
             raise NotImplementedError()
 
@@ -185,17 +185,17 @@ def test_three_bad_nodes_separate():
         async def run(self, ctx: GraphContext) -> Eggs:
             raise NotImplementedError()
 
-    class Bar(BaseNode[None, None]):
+    class Bar(BaseNode[None, None, None]):
         input_data: str
 
         async def run(self, ctx: GraphContext) -> Eggs:
             raise NotImplementedError()
 
-    class Spam(BaseNode[None, None]):
+    class Spam(BaseNode[None, None, None]):
         async def run(self, ctx: GraphContext) -> Eggs:
             raise NotImplementedError()
 
-    class Eggs(BaseNode[None, None]):
+    class Eggs(BaseNode[None, None, None]):
         async def run(self, ctx: GraphContext) -> End[None]:
             raise NotImplementedError()
 
@@ -212,7 +212,7 @@ def test_duplicate_id():
         async def run(self, ctx: GraphContext) -> Bar:
             raise NotImplementedError()
 
-    class Bar(BaseNode[None, None]):
+    class Bar(BaseNode[None, None, None]):
         async def run(self, ctx: GraphContext) -> End[None]:
             raise NotImplementedError()
 
@@ -234,18 +234,18 @@ async def test_run_node_not_in_graph():
             return Bar()
 
     @dataclass
-    class Bar(BaseNode[None, None]):
+    class Bar(BaseNode[None, None, None]):
         async def run(self, ctx: GraphContext) -> End[None]:
             return Spam()  # type: ignore
 
     @dataclass
-    class Spam(BaseNode[None, None]):
+    class Spam(BaseNode[None, None, None]):
         async def run(self, ctx: GraphContext) -> End[None]:
             raise NotImplementedError()
 
     g = Graph(nodes=(Foo, Bar))
     with pytest.raises(GraphRuntimeError) as exc_info:
-        await g.run(None, Foo())
+        await g.run(Foo())
 
     assert exc_info.value.message == snapshot('Node `test_run_node_not_in_graph.<locals>.Spam()` is not in the graph.')
 
@@ -257,7 +257,7 @@ async def test_run_return_other():
             return Bar()
 
     @dataclass
-    class Bar(BaseNode[None, None]):
+    class Bar(BaseNode[None, None, None]):
         async def run(self, ctx: GraphContext) -> End[None]:
             return 42  # type: ignore
 
@@ -265,7 +265,7 @@ async def test_run_return_other():
     assert g._get_state_type() is type(None)
     assert g._get_run_end_type() is type(None)
     with pytest.raises(GraphRuntimeError) as exc_info:
-        await g.run(None, Foo())
+        await g.run(Foo())
 
     assert exc_info.value.message == snapshot('Invalid node return type: `int`. Expected `BaseNode` or `End`.')
 
@@ -284,18 +284,49 @@ async def test_next():
     g = Graph(nodes=(Foo, Bar))
     assert g.name is None
     history: list[HistoryStep[None, Never]] = []
-    n = await g.next(None, Foo(), history)
+    n = await g.next(Foo(), history)
     assert n == Bar()
     assert g.name == 'g'
     assert history == snapshot([NodeStep(state=None, node=Foo(), start_ts=IsNow(tz=timezone.utc), duration=IsFloat())])
 
     assert isinstance(n, Bar)
-    n2 = await g.next(None, n, history)
+    n2 = await g.next(n, history)
     assert n2 == Foo()
 
     assert history == snapshot(
         [
             NodeStep(state=None, node=Foo(), start_ts=IsNow(tz=timezone.utc), duration=IsFloat()),
             NodeStep(state=None, node=Bar(), start_ts=IsNow(tz=timezone.utc), duration=IsFloat()),
+        ]
+    )
+
+
+async def test_deps():
+    @dataclass
+    class Deps:
+        a: int
+        b: int
+
+    @dataclass
+    class Foo(BaseNode[None, Deps]):
+        async def run(self, ctx: GraphContext[None, Deps]) -> Bar:
+            assert isinstance(ctx.deps, Deps)
+            return Bar()
+
+    @dataclass
+    class Bar(BaseNode[None, Deps, int]):
+        async def run(self, ctx: GraphContext[None, Deps]) -> End[int]:
+            assert isinstance(ctx.deps, Deps)
+            return End(123)
+
+    g = Graph(nodes=(Foo, Bar))
+    result, history = await g.run(Foo(), deps=Deps(1, 2))
+
+    assert result == 123
+    assert history == snapshot(
+        [
+            NodeStep(state=None, node=Foo(), start_ts=IsNow(tz=timezone.utc), duration=IsFloat()),
+            NodeStep(state=None, node=Bar(), start_ts=IsNow(tz=timezone.utc), duration=IsFloat()),
+            EndStep(result=End(data=123), ts=IsNow(tz=timezone.utc)),
         ]
     )

@@ -7,5 +7,6 @@
             - BaseNode
             - End
             - Edge
+            - DepsT
             - RunEndT
             - NodeRunEndT

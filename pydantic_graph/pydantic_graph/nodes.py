@@ -14,23 +14,27 @@ if TYPE_CHECKING:
 else:
     StateT = TypeVar('StateT', default=None)
 
-__all__ = 'GraphContext', 'BaseNode', 'End', 'Edge', 'NodeDef', 'RunEndT', 'NodeRunEndT'
+__all__ = 'GraphContext', 'BaseNode', 'End', 'Edge', 'NodeDef', 'RunEndT', 'NodeRunEndT', 'DepsT'
 
 RunEndT = TypeVar('RunEndT', default=None)
 """Type variable for the return type of a graph [`run`][pydantic_graph.graph.Graph.run]."""
 NodeRunEndT = TypeVar('NodeRunEndT', covariant=True, default=Never)
 """Type variable for the return type of a node [`run`][pydantic_graph.nodes.BaseNode.run]."""
+DepsT = TypeVar('DepsT', default=None)
+"""Type variable for the dependencies of a graph and node."""
 
 
 @dataclass
-class GraphContext(Generic[StateT]):
+class GraphContext(Generic[StateT, DepsT]):
     """Context for a graph."""
 
     state: StateT
     """The state of the graph."""
+    deps: DepsT
+    """Dependencies for the graph."""
 
 
-class BaseNode(ABC, Generic[StateT, NodeRunEndT]):
+class BaseNode(ABC, Generic[StateT, DepsT, NodeRunEndT]):
     """Base class for a node."""
 
     docstring_notes: ClassVar[bool] = False
@@ -42,7 +46,7 @@ class BaseNode(ABC, Generic[StateT, NodeRunEndT]):
     """
 
     @abstractmethod
-    async def run(self, ctx: GraphContext[StateT]) -> BaseNode[StateT, Any] | End[NodeRunEndT]:
+    async def run(self, ctx: GraphContext[StateT, DepsT]) -> BaseNode[StateT, DepsT, Any] | End[NodeRunEndT]:
         """Run the node.
 
         This is an abstract method that must be implemented by subclasses.
@@ -87,7 +91,7 @@ class BaseNode(ABC, Generic[StateT, NodeRunEndT]):
         return docstring
 
     @classmethod
-    def get_node_def(cls, local_ns: dict[str, Any] | None) -> NodeDef[StateT, NodeRunEndT]:
+    def get_node_def(cls, local_ns: dict[str, Any] | None) -> NodeDef[StateT, DepsT, NodeRunEndT]:
         """Get the node definition."""
         type_hints = get_type_hints(cls.run, localns=local_ns, include_extras=True)
         try:
@@ -139,7 +143,7 @@ class Edge:
 
 
 @dataclass
-class NodeDef(Generic[StateT, NodeRunEndT]):
+class NodeDef(Generic[StateT, DepsT, NodeRunEndT]):
     """Definition of a node.
 
     This is a primarily internal representation of a node; in general, it shouldn't be necessary to use it directly.
@@ -148,7 +152,7 @@ class NodeDef(Generic[StateT, NodeRunEndT]):
     mermaid graphs.
     """
 
-    node: type[BaseNode[StateT, NodeRunEndT]]
+    node: type[BaseNode[StateT, DepsT, NodeRunEndT]]
     """The node definition itself."""
     node_id: str
     """ID of the node."""

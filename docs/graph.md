@@ -12,7 +12,7 @@
 
     Unless you're sure you need a graph, you probably don't.
 
-Graphs and finite state machines (FSMs) are a powerful abstraction to model, control and visualize complex workflows.
+Graphs and finite state machines (FSMs) are a powerful abstraction to model, execute, control and visualize complex workflows.
 
 Alongside PydanticAI, we've developed `pydantic-graph` — an async graph and state machine library for Python where nodes and edges are defined using type hints.
 
@@ -59,7 +59,8 @@ Nodes which are generally [`dataclass`es][dataclasses.dataclass] include:
 
 Nodes are generic in:
 
-* **state**, which must have the same type as the state of graphs they're included in, [`StateT`][pydantic_graph.state.StateT] has a default of `None`, so if you're not using state you can omit this generic parameter
+* **state**, which must have the same type as the state of graphs they're included in, [`StateT`][pydantic_graph.state.StateT] has a default of `None`, so if you're not using state you can omit this generic parameter, see [stateful graphs](#stateful-graphs) for more information
+* **deps**, which must have the same type as the deps of the graph they're included in, [`DepsT`][pydantic_graph.nodes.DepsT] has a default of `None`, so if you're not using deps you can omit this generic parameter, see [dependency injection](#dependency-injection) for more information
 * **graph return type** — this only applies if the node returns [`End`][pydantic_graph.nodes.End]. [`RunEndT`][pydantic_graph.nodes.RunEndT] has a default of [Never][typing.Never] so this generic parameter can be omitted if the node doesn't return `End`, but must be included if it does.
 
 Here's an example of a start or intermediate node in a graph — it can't end the run as it doesn't return [`End`][pydantic_graph.nodes.End]:
@@ -96,7 +97,7 @@ from pydantic_graph import BaseNode, End, GraphContext
 
 
 @dataclass
-class MyNode(BaseNode[MyState, int]):  # (1)!
+class MyNode(BaseNode[MyState, None, int]):  # (1)!
     foo: int
 
     async def run(
@@ -109,7 +110,7 @@ class MyNode(BaseNode[MyState, int]):  # (1)!
             return AnotherNode()
 ```
 
-1. We parameterize the node with the return type (`int` in this case) as well as state.
+1. We parameterize the node with the return type (`int` in this case) as well as state. Because generic parameters are positional-only, we have to include `None` as the second parameter representing deps.
 2. The return type of the `run` method is now a union of `AnotherNode` and `End[int]`, this allows the node to end the run if `foo` is divisible by 5.
 
 ### Graph
@@ -119,6 +120,7 @@ class MyNode(BaseNode[MyState, int]):  # (1)!
 `Graph` is generic in:
 
 * **state** the state type of the graph, [`StateT`][pydantic_graph.state.StateT]
+* **deps** the deps type of the graph, [`DepsT`][pydantic_graph.nodes.DepsT]
 * **graph return type** the return type of the graph run, [`RunEndT`][pydantic_graph.nodes.RunEndT]
 
 Here's an example of a simple graph:
@@ -132,7 +134,7 @@ from pydantic_graph import BaseNode, End, Graph, GraphContext
 
 
 @dataclass
-class DivisibleBy5(BaseNode[None, int]):  # (1)!
+class DivisibleBy5(BaseNode[None, None, int]):  # (1)!
     foo: int
 
     async def run(
@@ -154,7 +156,7 @@ class Increment(BaseNode):  # (2)!
 
 
 fives_graph = Graph(nodes=[DivisibleBy5, Increment])  # (3)!
-result, history = fives_graph.run_sync(None, DivisibleBy5(4))  # (4)!
+result, history = fives_graph.run_sync(DivisibleBy5(4))  # (4)!
 print(result)
 #> 5
 # the full history is quite verbose (see below), so we'll just print the summary
@@ -162,7 +164,7 @@ print([item.data_snapshot() for item in history])
 #> [DivisibleBy5(foo=4), Increment(foo=4), DivisibleBy5(foo=5), End(data=5)]
 ```
 
-1. The `DivisibleBy5` node is parameterized with `None` as this graph doesn't use state, and `int` as it can end the run.
+1. The `DivisibleBy5` node is parameterized with `None` for the state param and `None` for the deps param as this graph doesn't use state or deps, and `int` as it can end the run.
 2. The `Increment` node doesn't return `End`, so the `RunEndT` generic parameter is omitted, state can also be omitted as the graph doesn't use state.
 3. The graph is created with a sequence of nodes.
 4. The graph is run synchronously with [`run_sync`][pydantic_graph.graph.Graph.run_sync] the initial state `None` and the start node `DivisibleBy5(4)` are passed as arguments.
@@ -247,7 +249,7 @@ PRODUCT_PRICES = {  # (2)!
 
 
 @dataclass
-class Purchase(BaseNode[MachineState, None]):  # (18)!
+class Purchase(BaseNode[MachineState, None, None]):  # (18)!
     product: str
 
     async def run(
@@ -275,7 +277,7 @@ vending_machine_graph = Graph(  # (13)!
 
 async def main():
     state = MachineState()  # (14)!
-    await vending_machine_graph.run(state, InsertCoin())  # (15)!
+    await vending_machine_graph.run(InsertCoin(), state=state)  # (15)!
     print(f'purchase successful item={state.product} change={state.user_balance:0.2f}')
     #> purchase successful item=crisps change=0.25
 ```
@@ -430,7 +432,7 @@ feedback_agent = Agent[None, EmailRequiresWrite | EmailOk](
 
 
 @dataclass
-class Feedback(BaseNode[State, Email]):
+class Feedback(BaseNode[State, None, Email]):
     email: Email
 
     async def run(
@@ -453,7 +455,7 @@ async def main():
     )
     state = State(user)
     feedback_graph = Graph(nodes=(WriteEmail, Feedback))
-    email, _ = await feedback_graph.run(state, WriteEmail())
+    email, _ = await feedback_graph.run(WriteEmail(), state=state)
     print(email)
     """
     Email(
@@ -579,7 +581,7 @@ async def main():
     node = Ask()  # (2)!
     history: list[HistoryStep[QuestionState]] = []  # (3)!
     while True:
-        node = await question_graph.next(state, node, history)  # (4)!
+        node = await question_graph.next(node, history, state=state)  # (4)!
         if isinstance(node, Answer):
             node.answer = Prompt.ask(node.question)  # (5)!
         elif isinstance(node, End):  # (6)!
@@ -632,6 +634,82 @@ stateDiagram-v2
 ```
 
 You maybe have noticed that although this examples transfers control flow out of the graph run, we're still using [rich's `Prompt.ask`][rich.prompt.PromptBase.ask] to get user input, with the process hanging while we wait for the user to enter a response. For an example of genuine out-of-process control flow, see the [question graph example](examples/question-graph.md).
+
+## Dependency Injection
+
+As with PydanticAI, `pydantic-graph` supports dependency injection via a generic parameter on [`Graph`][pydantic_graph.graph.Graph] and [`BaseNode`][pydantic_graph.nodes.BaseNode], and the [`GraphContext.deps`][pydantic_graph.nodes.GraphContext.deps] fields.
+
+As an example of dependency injection, let's modify the `DivisibleBy5` example [above](#graph) to use a [`ProcessPoolExecutor`][concurrent.futures.ProcessPoolExecutor] to run the compute load in a separate process (this is a contrived example, `ProcessPoolExecutor` wouldn't actually improve performance in this example):
+
+```py {title="deps_example.py" py="3.10" test="skip" hl_lines="4 10-12 35-37 48-49"}
+from __future__ import annotations
+
+import asyncio
+from concurrent.futures import ProcessPoolExecutor
+from dataclasses import dataclass
+
+from pydantic_graph import BaseNode, End, Graph, GraphContext
+
+
+@dataclass
+class GraphDeps:
+    executor: ProcessPoolExecutor
+
+
+@dataclass
+class DivisibleBy5(BaseNode[None, None, int]):
+    foo: int
+
+    async def run(
+        self,
+        ctx: GraphContext,
+    ) -> Increment | End[int]:
+        if self.foo % 5 == 0:
+            return End(self.foo)
+        else:
+            return Increment(self.foo)
+
+
+@dataclass
+class Increment(BaseNode):
+    foo: int
+
+    async def run(self, ctx: GraphContext) -> DivisibleBy5:
+        loop = asyncio.get_running_loop()
+        compute_result = await loop.run_in_executor(
+            ctx.deps.executor,
+            self.compute,
+        )
+        return DivisibleBy5(compute_result)
+
+    def compute(self) -> int:
+        return self.foo + 1
+
+
+fives_graph = Graph(nodes=[DivisibleBy5, Increment])
+
+
+async def main():
+    with ProcessPoolExecutor() as executor:
+        deps = GraphDeps(executor)
+        result, history = await fives_graph.run(DivisibleBy5(3), deps=deps)
+    print(result)
+    #> 5
+    # the full history is quite verbose (see below), so we'll just print the summary
+    print([item.data_snapshot() for item in history])
+    """
+    [
+        DivisibleBy5(foo=3),
+        Increment(foo=3),
+        DivisibleBy5(foo=4),
+        Increment(foo=4),
+        DivisibleBy5(foo=5),
+        End(data=5),
+    ]
+    """
+```
+
+_(This example is complete, it can be run "as is" with Python 3.10+ — you'll need to add `asyncio.run(main())` to run `main`)_
 
 ## Mermaid Diagrams
 

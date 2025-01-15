@@ -28,7 +28,7 @@ from pydantic_graph import BaseNode, End, Graph, GraphContext
 
 
 @dataclass
-class DivisibleBy5(BaseNode[None, int]):
+class DivisibleBy5(BaseNode[None, None, int]):
     foo: int
 
     async def run(
@@ -50,7 +50,7 @@ class Increment(BaseNode):
 
 
 fives_graph = Graph(nodes=[DivisibleBy5, Increment])
-result, history = fives_graph.run_sync(None, DivisibleBy5(4))
+result, history = fives_graph.run_sync(DivisibleBy5(4))
 print(result)
 #> 5
 # the full history is quite verbose (see below), so we'll just print the summary

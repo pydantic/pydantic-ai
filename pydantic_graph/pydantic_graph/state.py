@@ -14,7 +14,7 @@ from typing_extensions import TypeVar
 from . import _utils
 from .nodes import BaseNode, End, RunEndT
 
-__all__ = 'StateT', 'NodeStep', 'EndStep', 'HistoryStep', 'deep_copy_state'
+__all__ = 'StateT', 'NodeStep', 'EndStep', 'HistoryStep', 'deep_copy_state', 'nodes_schema_var'
 
 
 StateT = TypeVar('StateT', default=None)
@@ -35,7 +35,7 @@ class NodeStep(Generic[StateT, RunEndT]):
 
     state: StateT
     """The state of the graph after the node has been run."""
-    node: Annotated[BaseNode[StateT, RunEndT], CustomNodeSchema()]
+    node: Annotated[BaseNode[StateT, Any, RunEndT], CustomNodeSchema()]
     """The node that was run."""
     start_ts: datetime = field(default_factory=_utils.now_utc)
     """The timestamp when the node started running."""
@@ -53,7 +53,7 @@ class NodeStep(Generic[StateT, RunEndT]):
         # Copy the state to prevent it from being modified by other code
         self.state = self.snapshot_state(self.state)
 
-    def data_snapshot(self) -> BaseNode[StateT, RunEndT]:
+    def data_snapshot(self) -> BaseNode[StateT, Any, RunEndT]:
         """Returns a deep copy of [`self.node`][pydantic_graph.state.NodeStep.node].
 
         Useful for summarizing history.
@@ -88,7 +88,7 @@ together with the run return value.
 """
 
 
-nodes_schema_var: ContextVar[Sequence[type[BaseNode[Any, Any]]]] = ContextVar('nodes_var')
+nodes_schema_var: ContextVar[Sequence[type[BaseNode[Any, Any, Any]]]] = ContextVar('nodes_var')
 
 
 class CustomNodeSchema:

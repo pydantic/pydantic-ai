@@ -30,7 +30,7 @@ class Foo(BaseNode[MyState]):
 
 
 @dataclass
-class Bar(BaseNode[MyState, int]):
+class Bar(BaseNode[MyState, None, int]):
     async def run(self, ctx: GraphContext[MyState]) -> End[int]:
         ctx.state.y += 'y'
         return End(ctx.state.x * 2)
@@ -45,8 +45,8 @@ class Bar(BaseNode[MyState, int]):
         Graph(nodes=(Foo, Bar)),
     ],
 )
-async def test_dump_load_history(graph: Graph[MyState, int]):
-    result, history = await graph.run(MyState(1, ''), Foo())
+async def test_dump_load_history(graph: Graph[MyState, None, int]):
+    result, history = await graph.run(Foo(), state=MyState(1, ''))
     assert result == snapshot(4)
     assert history == snapshot(
         [
@@ -104,7 +104,7 @@ async def test_dump_load_history(graph: Graph[MyState, int]):
 
 def test_one_node():
     @dataclass
-    class MyNode(BaseNode[None, int]):
+    class MyNode(BaseNode[None, None, int]):
         async def run(self, ctx: GraphContext) -> End[int]:
             return End(123)
 

@@ -87,7 +87,7 @@ class Evaluate(BaseNode[QuestionState]):
 
 
 @dataclass
-class Congratulate(BaseNode[QuestionState, None]):
+class Congratulate(BaseNode[QuestionState, None, None]):
     comment: str
 
     async def run(
@@ -119,7 +119,7 @@ async def run_as_continuous():
     history: list[HistoryStep[QuestionState, None]] = []
     with logfire.span('run questions graph'):
         while True:
-            node = await question_graph.next(state, node, history)
+            node = await question_graph.next(node, history, state=state)
             if isinstance(node, End):
                 debug([e.data_snapshot() for e in history])
                 break
@@ -150,7 +150,7 @@ async def run_as_cli(answer: str | None):
 
     with logfire.span('run questions graph'):
         while True:
-            node = await question_graph.next(state, node, history)
+            node = await question_graph.next(node, history, state=state)
             if isinstance(node, End):
                 debug([e.data_snapshot() for e in history])
                 print('Finished!')
