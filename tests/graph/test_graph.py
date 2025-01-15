@@ -299,3 +299,34 @@ async def test_next():
             NodeStep(state=None, node=Bar(), start_ts=IsNow(tz=timezone.utc), duration=IsFloat()),
         ]
     )
+
+
+async def test_deps():
+    @dataclass
+    class Deps:
+        a: int
+        b: int
+
+    @dataclass
+    class Foo(BaseNode[None, Deps]):
+        async def run(self, ctx: GraphContext[None, Deps]) -> Bar:
+            assert isinstance(ctx.deps, Deps)
+            return Bar()
+
+    @dataclass
+    class Bar(BaseNode[None, Deps, int]):
+        async def run(self, ctx: GraphContext[None, Deps]) -> End[int]:
+            assert isinstance(ctx.deps, Deps)
+            return End(123)
+
+    g = Graph(nodes=(Foo, Bar))
+    result, history = await g.run(Foo(), deps=Deps(1, 2))
+
+    assert result == 123
+    assert history == snapshot(
+        [
+            NodeStep(state=None, node=Foo(), start_ts=IsNow(tz=timezone.utc), duration=IsFloat()),
+            NodeStep(state=None, node=Bar(), start_ts=IsNow(tz=timezone.utc), duration=IsFloat()),
+            EndStep(result=End(data=123), ts=IsNow(tz=timezone.utc)),
+        ]
+    )

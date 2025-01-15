@@ -634,6 +634,82 @@ stateDiagram-v2
 
 You maybe have noticed that although this examples transfers control flow out of the graph run, we're still using [rich's `Prompt.ask`][rich.prompt.PromptBase.ask] to get user input, with the process hanging while we wait for the user to enter a response. For an example of genuine out-of-process control flow, see the [question graph example](examples/question-graph.md).
 
+## Dependency Injection
+
+As with PydanticAI, `pydantic-graph` supports dependency injection via a generic parameter on [`Graph`][pydantic_graph.graph.Graph] and [`BaseNode`][pydantic_graph.nodes.BaseNode], and the [`GraphContext.deps`][pydantic_graph.nodes.GraphContext.deps] fields.
+
+As an example of dependency injection, let's modify the `DivisibleBy5` example [above](#graph) to use a [`ProcessPoolExecutor`][concurrent.futures.ProcessPoolExecutor] to run the compute load in a separate process (this is a contrived example, `ProcessPoolExecutor` wouldn't actually improve performance in this example):
+
+```py {title="deps_example.py" py="3.10" test="skip" hl_lines="4 10-12 35-37 48-49"}
+from __future__ import annotations
+
+import asyncio
+from concurrent.futures import ProcessPoolExecutor
+from dataclasses import dataclass
+
+from pydantic_graph import BaseNode, End, Graph, GraphContext
+
+
+@dataclass
+class GraphDeps:
+    executor: ProcessPoolExecutor
+
+
+@dataclass
+class DivisibleBy5(BaseNode[None, None, int]):
+    foo: int
+
+    async def run(
+        self,
+        ctx: GraphContext,
+    ) -> Increment | End[int]:
+        if self.foo % 5 == 0:
+            return End(self.foo)
+        else:
+            return Increment(self.foo)
+
+
+@dataclass
+class Increment(BaseNode):
+    foo: int
+
+    async def run(self, ctx: GraphContext) -> DivisibleBy5:
+        loop = asyncio.get_running_loop()
+        compute_result = await loop.run_in_executor(
+            ctx.deps.executor,
+            self.compute,
+        )
+        return DivisibleBy5(compute_result)
+
+    def compute(self) -> int:
+        return self.foo + 1
+
+
+fives_graph = Graph(nodes=[DivisibleBy5, Increment])
+
+
+async def main():
+    with ProcessPoolExecutor() as executor:
+        deps = GraphDeps(executor)
+        result, history = await fives_graph.run(DivisibleBy5(3), deps=deps)
+    print(result)
+    #> 5
+    # the full history is quite verbose (see below), so we'll just print the summary
+    print([item.data_snapshot() for item in history])
+    """
+    [
+        DivisibleBy5(foo=3),
+        Increment(foo=3),
+        DivisibleBy5(foo=4),
+        Increment(foo=4),
+        DivisibleBy5(foo=5),
+        End(data=5),
+    ]
+    """
+```
+
+_(This example is complete, it can be run "as is" with Python 3.10+ — you'll need to add `asyncio.run(main())` to run `main`)_
+
 ## Mermaid Diagrams
 
 Pydantic Graph can generate [mermaid](https://mermaid.js.org/) [`stateDiagram-v2`](https://mermaid.js.org/syntax/stateDiagram.html) diagrams for graphs, as shown above.
