@@ -39,5 +39,11 @@ dependencies = [
     "pydantic>=2.10",
 ]
 
+[project.urls]
+Homepage = "https://ai.pydantic.dev/graph/tree/main/pydantic_graph"
+Source = "https://github.com/pydantic/pydantic-ai"
+Documentation = "https://ai.pydantic.dev/graph"
+Changelog = "https://github.com/pydantic/pydantic-ai/releases"
+
 [tool.hatch.build.targets.wheel]
 packages = ["pydantic_graph"]
