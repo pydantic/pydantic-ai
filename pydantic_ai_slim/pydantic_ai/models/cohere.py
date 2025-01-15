@@ -3,8 +3,9 @@ from __future__ import annotations as _annotations
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from itertools import chain
-from typing import Literal, Union
+from typing import Literal, TypeAlias, Union
 
+from cohere import TextAssistantMessageContentItem
 from typing_extensions import assert_never
 
 from .. import result
@@ -50,7 +51,7 @@ except ImportError as _import_error:
         "you can use the `cohere` optional group — `pip install 'pydantic-ai-slim[cohere]'`"
     ) from _import_error
 
-type CohereModelName = Union[
+CohereModelName: TypeAlias = Union[
     str,
     Literal[
         'c4ai-aya-expanse-32b',
@@ -68,11 +69,6 @@ type CohereModelName = Union[
         'command-r7b-12-2024',
     ],
 ]
-
-"""
-Using this more broad type for the model name instead of the ChatModel definition
-allows this model to be used more easily with other model types (ie, Ollama)
-"""
 
 
 @dataclass(init=False)
@@ -181,6 +177,8 @@ class CohereAgentModel(AgentModel):
         """Process a non-streamed response, and prepare a message to return."""
         parts: list[ModelResponsePart] = []
         if response.message.content is not None and len(response.message.content) > 0:
+            # While Cohere's API returns a list, it only does that for future proofing
+            # and currently only one item is being returned.
             choice = response.message.content[0]
             parts.append(TextPart(choice.text))
         for c in response.message.tool_calls or []:
@@ -211,9 +209,7 @@ class CohereAgentModel(AgentModel):
                     assert_never(item)
             message_param = AssistantChatMessageV2(role='assistant')
             if texts:
-                # Note: model responses from this model should only have one text item, so the following
-                # shouldn't merge multiple texts into one unless you switch models between runs:
-                message_param.content = '\n\n'.join(texts)
+                message_param.content = [TextAssistantMessageContentItem(text='\n\n'.join(texts))]
             if tool_calls:
                 message_param.tool_calls = tool_calls
             yield message_param
