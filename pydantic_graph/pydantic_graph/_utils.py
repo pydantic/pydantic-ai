@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 import sys
 import types
 from datetime import datetime, timezone
-from typing import Annotated, Any, Union, get_args, get_origin
+from typing import Annotated, Any, TypeVar, Union, get_args, get_origin
 
 import typing_extensions
 
@@ -33,6 +33,16 @@ def unpack_annotated(tp: Any) -> tuple[Any, list[Any]]:
         return inner_tp, args
     else:
         return tp, []
+
+
+def is_never(tp: Any) -> bool:
+    """Check if a type is `Never`."""
+    if tp is typing_extensions.Never:
+        return True
+    elif typing_never := getattr(typing_extensions, 'Never', None):
+        return tp is typing_never
+    else:
+        return False
 
 
 # same as `pydantic_ai_slim/pydantic_ai/_result.py:origin_is_union`
@@ -72,3 +82,20 @@ def get_parent_namespace(frame: types.FrameType | None) -> dict[str, Any] | None
 
 def now_utc() -> datetime:
     return datetime.now(tz=timezone.utc)
+
+
+class Unset:
+    """A singleton to represent an unset value.
+
+    Copied from pydantic_ai/_utils.py.
+    """
+
+    pass
+
+
+UNSET = Unset()
+T = TypeVar('T')
+
+
+def is_set(t_or_unset: T | Unset) -> typing_extensions.TypeGuard[T]:
+    return t_or_unset is not UNSET

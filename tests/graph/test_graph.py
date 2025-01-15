@@ -1,3 +1,4 @@
+# pyright: reportPrivateUsage=false
 from __future__ import annotations as _annotations
 
 from dataclasses import dataclass
@@ -52,7 +53,9 @@ async def test_graph():
             else:
                 return End(self.input_data * 2)
 
-    my_graph = Graph[None, int](nodes=(Float2String, String2Length, Double))
+    my_graph = Graph(nodes=(Float2String, String2Length, Double))
+    assert my_graph._get_state_type() is type(None)
+    assert my_graph._get_run_end_type() is int
     assert my_graph.name is None
     result, history = await my_graph.run(None, Float2String(3.14))
     # len('3.14') * 2 == 8
@@ -259,6 +262,8 @@ async def test_run_return_other():
             return 42  # type: ignore
 
     g = Graph(nodes=(Foo, Bar))
+    assert g._get_state_type() is type(None)
+    assert g._get_run_end_type() is type(None)
     with pytest.raises(GraphRuntimeError) as exc_info:
         await g.run(None, Foo())
 

@@ -102,10 +102,13 @@ class CustomNodeSchema:
                 'Unable to build a Pydantic schema for `NodeStep` or `HistoryStep` without setting `nodes_schema_var`. '
                 'You probably want to use '
             ) from e
-        nodes_annotated = [Annotated[node, pydantic.Tag(node.get_id())] for node in nodes]
-        nodes_union = Annotated[Union[tuple(nodes_annotated)], pydantic.Discriminator(self._node_discriminator)]
+        if len(nodes) == 1:
+            nodes_type = nodes[0]
+        else:
+            nodes_annotated = [Annotated[node, pydantic.Tag(node.get_id())] for node in nodes]
+            nodes_type = Annotated[Union[tuple(nodes_annotated)], pydantic.Discriminator(self._node_discriminator)]
 
-        schema = handler(nodes_union)
+        schema = handler(nodes_type)
         schema['serialization'] = core_schema.wrap_serializer_function_ser_schema(
             function=self._node_serializer,
             return_schema=core_schema.dict_schema(core_schema.str_schema(), core_schema.any_schema()),
