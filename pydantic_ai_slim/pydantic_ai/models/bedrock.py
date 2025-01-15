@@ -76,9 +76,9 @@ class BedrockModel(Model):
         self,
         model_name: str,
         *,
-        aws_access_key: str | None = None,
-        aws_secret_key: str | None = None,
-        aws_region: str | None = None,
+        aws_access_key_id: str | None = None,
+        aws_secret_access_key: str | None = None,
+        region_name: str | None = None,
         bedrock_client: BedrockRuntimeClient | None = None,
     ):
         self.model_name = model_name
@@ -87,9 +87,9 @@ class BedrockModel(Model):
         else:
             self.client = boto3.client(
                 'bedrock-runtime',
-                aws_access_key_id=aws_access_key,
-                aws_secret_access_key=aws_secret_key,
-                region_name=aws_region,
+                aws_access_key_id=aws_access_key_id,
+                aws_secret_access_key=aws_secret_access_key,
+                region_name=region_name,
             )
 
     async def agent_model(
