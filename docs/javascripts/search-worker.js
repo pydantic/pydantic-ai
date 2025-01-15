@@ -5,7 +5,8 @@ const READY = 1
 const QUERY = 2
 const RESULT = 3
 
-
+// same constants are present in docs/.hooks/algolia.py.
+// If you change them here, change them there as well.
 const appID = 'KPPUDTIAVX';
 const apiKey = '1fc841595212a2c3afe8c24dd4cb8790';
 const indexName = 'pydantic-ai-docs';

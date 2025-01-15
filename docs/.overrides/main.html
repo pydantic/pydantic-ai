@@ -1,5 +1,10 @@
 {% extends "base.html" %}
 
+<!--
+  We're changing the config block so that we can change the worker script path to a custom web worker script that pulls search results from Algolia.
+  The rest of the block is the "stock" one, so it can safely be updated if something changes in MkDocs.
+-->
+
 {% block config %}
       {%- set app = {
         "base": base_url,
@@ -42,7 +47,6 @@
       <script id="__config" type="application/json">
         {{- app | tojson -}}
       </script>
-  <!-- Add scripts that need to run afterwards here -->
 {% endblock %}
 
 {% block content %}
