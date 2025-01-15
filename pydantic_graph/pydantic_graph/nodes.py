@@ -142,7 +142,7 @@ class Edge:
 class NodeDef(Generic[StateT, NodeRunEndT]):
     """Definition of a node.
 
-    This is an internal representation of a node, it shouldn't be necessary to use it directly.
+    This is a primarily internal representation of a node; in general, it shouldn't be necessary to use it directly.
 
     Used by [`Graph`][pydantic_graph.graph.Graph] to store information about a node, and when generating
     mermaid graphs.

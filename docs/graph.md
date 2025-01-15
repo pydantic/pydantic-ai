@@ -53,14 +53,14 @@ Subclasses of [`BaseNode`][pydantic_graph.nodes.BaseNode] to define nodes.
 
 Nodes which are generally [`dataclass`es][dataclasses.dataclass] include:
 
-* any parameters required when calling the node
-* the business logic to execute the node
-* return annotations which are read by `pydantic-graph` to determine the outgoing edges of the node
+* fields containing any parameters required/optional when calling the node
+* the business logic to execute the node, in the [`run`][pydantic_graph.nodes.BaseNode.run] method
+* return annotations of the [`run`][pydantic_graph.nodes.BaseNode.run] method, which are read by `pydantic-graph` to determine the outgoing edges of the node
 
 Nodes are generic in:
 
-* **state** which must have the same type as the state of graphs they're included in, [`StateT`][pydantic_graph.state.StateT] has a default of `None`, so if you're not using state you can omit this generic parameter
-* **graph return type** this only applies if the node returns [`End`][pydantic_graph.nodes.End], [`RunEndT`][pydantic_graph.nodes.RunEndT] has a default of [Never][typing.Never] so this generic parameter can be omitted if the node doesn't return `End`, but must be included if it does.
+* **state**, which must have the same type as the state of graphs they're included in, [`StateT`][pydantic_graph.state.StateT] has a default of `None`, so if you're not using state you can omit this generic parameter
+* **graph return type** — this only applies if the node returns [`End`][pydantic_graph.nodes.End]. [`RunEndT`][pydantic_graph.nodes.RunEndT] has a default of [Never][typing.Never] so this generic parameter can be omitted if the node doesn't return `End`, but must be included if it does.
 
 Here's an example of a start or intermediate node in a graph — it can't end the run as it doesn't return [`End`][pydantic_graph.nodes.End]:
 
@@ -114,7 +114,7 @@ class MyNode(BaseNode[MyState, int]):  # (1)!
 
 ### Graph
 
-[`Graph`][pydantic_graph.graph.Graph] — The graph itself, made up of a set of nodes.
+[`Graph`][pydantic_graph.graph.Graph] — this is the execution graph itself, made up of a set of [node classes](#nodes) (i.e., `BaseNode` subclasses).
 
 `Graph` is generic in:
 
@@ -284,7 +284,7 @@ async def main():
 2. A dictionary of products mapped to prices.
 3. The `InsertCoin` node, [`BaseNode`][pydantic_graph.nodes.BaseNode] is parameterized with `MachineState` as that's the state used in this graph.
 4. The `InsertCoin` node prompts the user to insert coins. We keep things simple by just entering a monetary amount as a float. Before you start thinking this is a toy too since it's using [rich's `Prompt.ask`][rich.prompt.PromptBase.ask] within nodes, see [below](#custom-control-flow) for how control flow can be managed when nodes require external input.
-5. The `CoinsInserted` node, again this is a [`dataclass`][dataclasses.dataclass], in this case with one field `amount`, thus nodes calling `CoinsInserted` must provide an amount.
+5. The `CoinsInserted` node; again this is a [`dataclass`][dataclasses.dataclass], in this case with one field `amount`, thus nodes calling `CoinsInserted` must provide an amount.
 6. Update the user's balance with the amount inserted.
 7. If the user has already selected a product, go to `Purchase`, otherwise go to `SelectProduct`.
 8. In the `Purchase` node, look up the price of the product if the user entered a valid product.
@@ -293,11 +293,11 @@ async def main():
 11. If the balance is insufficient, to go `InsertCoin` to prompt the user to insert more coins.
 12. If the product is invalid, go to `SelectProduct` to prompt the user to select a product again.
 13. The graph is created by passing a list of nodes to [`Graph`][pydantic_graph.graph.Graph]. Order of nodes is not important, but will alter how [diagrams](#mermaid-diagrams) are displayed.
-14. Initialize the state, this will be passed to the graph run and mutated as the graph runs.
-15. Run the graph with the initial state, since the graph can be run from any node, we must pass the start node, in this case `InsertCoin`. [`Graph.run`][pydantic_graph.graph.Graph.run] returns a tuple of the return value (`None`) in this case, and the [history][pydantic_graph.state.HistoryStep] of the graph run.
-16. The return type of the node's [`run`][pydantic_graph.nodes.BaseNode.run] method is important, it's used to determine the outgoing edges of the node, this in turn is used to render [mermaid diagrams](#mermaid-diagrams) and is enforced at runtime.
-17. The return type of `CoinsInserted`s [`run`][pydantic_graph.nodes.BaseNode.run] method is a union, meaning multiple outgoing edges are possible.
-18. Unlike other nodes `Purchase` can end the run, so the [`RunEndT`][pydantic_graph.nodes.RunEndT] generic parameter must be set, in this case it's `None` since the graph run return type is `None`.
+14. Initialize the state. This will be passed to the graph run and mutated as the graph runs.
+15. Run the graph with the initial state. Since the graph can be run from any node, we must pass the start node — in this case, `InsertCoin`. [`Graph.run`][pydantic_graph.graph.Graph.run] returns a tuple of the return value (`None`) in this case, and the [history][pydantic_graph.state.HistoryStep] of the graph run.
+16. The return type of the node's [`run`][pydantic_graph.nodes.BaseNode.run] method is important as it is used to determine the outgoing edges of the node. This information in turn is used to render [mermaid diagrams](#mermaid-diagrams) and is enforced at runtime to detect misbehavior as soon as possible.
+17. The return type of `CoinsInserted`'s [`run`][pydantic_graph.nodes.BaseNode.run] method is a union, meaning multiple outgoing edges are possible.
+18. Unlike other nodes, `Purchase` can end the run, so the [`RunEndT`][pydantic_graph.nodes.RunEndT] generic parameter must be set. In this case it's `None` since the graph run return type is `None`.
 
 _(This example is complete, it can be run "as is" with Python 3.10+ — you'll need to add `asyncio.run(main())` to run `main`)_
 
@@ -467,7 +467,7 @@ _(This example is complete, it can be run "as is" with Python 3.10+ — you'll n
 
 ## Custom Control Flow
 
-In many real-world applications, Graphs cannot run uninterrupted from start to finish — they require external input or run over an extended period of time where a single process cannot execute the entire graph.
+In many real-world applications, Graphs cannot run uninterrupted from start to finish — they might require external input, or run over an extended period of time such that a single process cannot execute the entire graph run from start to finish without interruption.
 
 In these scenarios the [`next`][pydantic_graph.graph.Graph.next] method can be used to run the graph one node at a time.
 
@@ -603,7 +603,7 @@ async def main():
 
 1. Create the state object which will be mutated by [`next`][pydantic_graph.graph.Graph.next].
 2. The start node is `Ask` but will be updated by [`next`][pydantic_graph.graph.Graph.next] as the graph runs.
-3. The history of the graph run is stored in a list of [`HistoryStep`][pydantic_graph.state.HistoryStep] objects, again [`next`][pydantic_graph.graph.Graph.next] will update this list in place.
+3. The history of the graph run is stored in a list of [`HistoryStep`][pydantic_graph.state.HistoryStep] objects. Again [`next`][pydantic_graph.graph.Graph.next] will update this list in place.
 4. [Run][pydantic_graph.graph.Graph.next] the graph one node at a time, updating the state, current node and history as the graph runs.
 5. If the current node is an `Answer` node, prompt the user for an answer.
 6. Since we're using [`next`][pydantic_graph.graph.Graph.next] we have to manually check for an [`End`][pydantic_graph.nodes.End] and exit the loop if we get one.
@@ -635,7 +635,7 @@ You maybe have noticed that although this examples transfers control flow out of
 
 ## Mermaid Diagrams
 
-Pydantic Graph, can generate [mermaid](https://mermaid.js.org/) [`stateDiagram-v2`](https://mermaid.js.org/syntax/stateDiagram.html) diagrams for graphs, as shown above.
+Pydantic Graph can generate [mermaid](https://mermaid.js.org/) [`stateDiagram-v2`](https://mermaid.js.org/syntax/stateDiagram.html) diagrams for graphs, as shown above.
 
 These diagrams can be generated with:
 
@@ -643,7 +643,7 @@ These diagrams can be generated with:
 * [`Graph.mermaid_image`][pydantic_graph.graph.Graph.mermaid_image] to generate an image of the graph using [mermaid.ink](https://mermaid.ink/)
 * [`Graph.mermaid_save`][pydantic_graph.graph.Graph.mermaid_save] to generate an image of the graph using [mermaid.ink](https://mermaid.ink/) and save it to a file
 
-Beyond the diagrams shown above, you can also customise mermaid diagrams with the following options:
+Beyond the diagrams shown above, you can also customize mermaid diagrams with the following options:
 
 * [`Edge`][pydantic_graph.nodes.Edge] allows you to apply a label to an edge
 * [`BaseNode.docstring_notes`][pydantic_graph.nodes.BaseNode.docstring_notes] and [`BaseNode.get_note`][pydantic_graph.nodes.BaseNode.get_note] allows you to add notes to nodes

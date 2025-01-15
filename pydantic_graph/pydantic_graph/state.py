@@ -35,7 +35,6 @@ class NodeStep(Generic[StateT, RunEndT]):
 
     state: StateT
     """The state of the graph before the node is run."""
-    # node: Annotated[BaseNode[StateT, RunEndT], pydantic.WrapSerializer(node_serializer), pydantic.PlainValidator(node_validator)]
     node: Annotated[BaseNode[StateT, RunEndT], CustomNodeSchema()]
     """The node that was run."""
     start_ts: datetime = field(default_factory=_utils.now_utc)
@@ -44,7 +43,7 @@ class NodeStep(Generic[StateT, RunEndT]):
     """The duration of the node run in seconds."""
     kind: Literal['node'] = 'node'
     """The kind of history step, can be used as a discriminator when deserializing history."""
-    # waiting for https://github.com/pydantic/pydantic/issues/11264, should in InitVar
+    # waiting for https://github.com/pydantic/pydantic/issues/11264, should be an InitVar
     snapshot_state: Annotated[Callable[[StateT], StateT], pydantic.Field(exclude=True, repr=False)] = field(
         default=deep_copy_state, repr=False
     )

@@ -330,6 +330,10 @@ graph TB
   seat_preference_agent --> END
 ```
 
+## Pydantic Graphs
+
+See the [graph](graph.md) documentation on when and how to use graphs.
+
 ## Examples
 
 The following examples demonstrate how to use dependencies in PydanticAI:
