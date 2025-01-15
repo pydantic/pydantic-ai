@@ -19,7 +19,7 @@ Full documentation is available at [ai.pydantic.dev/graph](https://ai.pydantic.d
 
 Here's a basic example:
 
-```python
+```python {noqa="I001" py="3.10"}
 from __future__ import annotations
 
 from dataclasses import dataclass
