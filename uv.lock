@@ -923,13 +923,17 @@ wheels = [
 
 [[package]]
 name = "inline-snapshot"
-version = "0.19.0"
-source = { git = "https://github.com/15r10nk/inline-snapshot?rev=pydantic_ai_fixes#793ad2f70be7b3508781f702a6b4afcd2d17dfdc" }
+version = "0.19.2"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "asttokens" },
     { name = "executing" },
     { name = "rich" },
     { name = "tomli", marker = "python_full_version < '3.11'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/07/93/89c0024f4761e7e83d24dc3ff27c559675642958535bc1955e3b885775f1/inline_snapshot-0.19.2.tar.gz", hash = "sha256:800874e50f98dc133a1fa21c89f1654f53ae626846305dd6a246792a873ad004", size = 88611 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/12/b5/75b02a622eacd11ee6c099d960a35bd4b7e54d2b591954abd80c803f5c0c/inline_snapshot-0.19.2-py3-none-any.whl", hash = "sha256:845202375b858d84f38ff8146a41c75a63c78a1d67ac6c3a29661cae8ef251f4", size = 43634 },
 ]
 
 [[package]]

@@ -22,6 +22,7 @@ import pydantic_ai.models
 
 __all__ = 'IsNow', 'TestEnv', 'ClientWithHandler', 'try_import'
 
+
 pydantic_ai.models.ALLOW_MODEL_REQUESTS = False
 
 if TYPE_CHECKING:

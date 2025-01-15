@@ -16,7 +16,6 @@ from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
     RetryPromptPart,
-    TextPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
@@ -86,10 +85,7 @@ async def test_streamed_text_response():
                 ModelRequest(
                     parts=[ToolReturnPart(tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc))]
                 ),
-                ModelResponse(
-                    parts=[TextPart(content='{"ret_a":"a-apple"}')],
-                    timestamp=IsNow(tz=timezone.utc),
-                ),
+                ModelResponse.from_text(content='{"ret_a":"a-apple"}', timestamp=IsNow(tz=timezone.utc)),
             ]
         )
 

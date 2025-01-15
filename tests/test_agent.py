@@ -88,7 +88,7 @@ def test_result_pydantic_model_retry(set_event_loop: None):
         [
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
-                parts=[ToolCallPart(tool_name='final_result', args=ArgsJson(args_json='{"a": "wrong", "b": "foo"}'))],
+                parts=[ToolCallPart.from_raw_args('final_result', '{"a": "wrong", "b": "foo"}')],
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
@@ -108,7 +108,7 @@ def test_result_pydantic_model_retry(set_event_loop: None):
                 ]
             ),
             ModelResponse(
-                parts=[ToolCallPart(tool_name='final_result', args=ArgsJson(args_json='{"a": 42, "b": "foo"}'))],
+                parts=[ToolCallPart.from_raw_args('final_result', '{"a": 42, "b": "foo"}')],
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
@@ -203,7 +203,7 @@ def test_result_validator(set_event_loop: None):
         [
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
-                parts=[ToolCallPart(tool_name='final_result', args=ArgsJson(args_json='{"a": 41, "b": "foo"}'))],
+                parts=[ToolCallPart.from_raw_args('final_result', '{"a": 41, "b": "foo"}')],
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
@@ -214,7 +214,7 @@ def test_result_validator(set_event_loop: None):
                 ]
             ),
             ModelResponse(
-                parts=[ToolCallPart(tool_name='final_result', args=ArgsJson(args_json='{"a": 42, "b": "foo"}'))],
+                parts=[ToolCallPart.from_raw_args('final_result', '{"a": 42, "b": "foo"}')],
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
@@ -250,10 +250,7 @@ def test_plain_response_then_tuple(set_event_loop: None):
     assert result.all_messages() == snapshot(
         [
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
-            ModelResponse(
-                parts=[TextPart(content='hello')],
-                timestamp=IsNow(tz=timezone.utc),
-            ),
+            ModelResponse.from_text(content='hello', timestamp=IsNow(tz=timezone.utc)),
             ModelRequest(
                 parts=[
                     RetryPromptPart(
@@ -776,10 +773,7 @@ def test_unknown_tool_fix(set_event_loop: None):
                     )
                 ]
             ),
-            ModelResponse(
-                parts=[TextPart(content='success')],
-                timestamp=IsNow(tz=timezone.utc),
-            ),
+            ModelResponse.from_text(content='success', timestamp=IsNow(tz=timezone.utc)),
         ]
     )
 
@@ -1225,10 +1219,7 @@ def test_heterogeneous_responses_non_streaming(set_event_loop: None) -> None:
                     )
                 ]
             ),
-            ModelResponse(
-                parts=[TextPart(content='final response')],
-                timestamp=IsNow(tz=timezone.utc),
-            ),
+            ModelResponse.from_text(content='final response', timestamp=IsNow(tz=timezone.utc)),
         ]
     )
 

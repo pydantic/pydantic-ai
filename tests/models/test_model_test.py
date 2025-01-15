@@ -13,11 +13,9 @@ from pydantic import BaseModel, Field
 from pydantic_ai import Agent, ModelRetry, RunContext
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.messages import (
-    ArgsDict,
     ModelRequest,
     ModelResponse,
     RetryPromptPart,
-    TextPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
@@ -97,7 +95,7 @@ def test_tool_retry(set_event_loop: None):
         [
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
-                parts=[ToolCallPart(tool_name='my_ret', args=ArgsDict(args_dict={'x': 0}))],
+                parts=[ToolCallPart.from_raw_args('my_ret', {'x': 0})],
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
@@ -105,15 +103,9 @@ def test_tool_retry(set_event_loop: None):
                     RetryPromptPart(content='First call failed', tool_name='my_ret', timestamp=IsNow(tz=timezone.utc))
                 ]
             ),
-            ModelResponse(
-                parts=[ToolCallPart(tool_name='my_ret', args=ArgsDict(args_dict={'x': 0}))],
-                timestamp=IsNow(tz=timezone.utc),
-            ),
+            ModelResponse(parts=[ToolCallPart.from_raw_args('my_ret', {'x': 0})], timestamp=IsNow(tz=timezone.utc)),
             ModelRequest(parts=[ToolReturnPart(tool_name='my_ret', content='1', timestamp=IsNow(tz=timezone.utc))]),
-            ModelResponse(
-                parts=[TextPart(content='{"my_ret":"1"}')],
-                timestamp=IsNow(tz=timezone.utc),
-            ),
+            ModelResponse.from_text(content='{"my_ret":"1"}', timestamp=IsNow(tz=timezone.utc)),
         ]
     )
 
