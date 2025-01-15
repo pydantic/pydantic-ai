@@ -92,7 +92,7 @@ async def test_init_right_project_id(tmp_path: Path, allow_model_requests: None)
     assert model.auth is not None
 
 
-async def test_init_service_account_wrong_project_id(tmp_path: Path):
+async def test_init_service_account_wrong_project_id(tmp_path: Path, allow_model_requests: None):
     service_account_path = tmp_path / 'service_account.json'
     save_service_account(service_account_path, 'my-project-id')
 
@@ -105,7 +105,7 @@ async def test_init_service_account_wrong_project_id(tmp_path: Path):
     )
 
 
-async def test_init_env_wrong_project_id(mocker: MockerFixture):
+async def test_init_env_wrong_project_id(mocker: MockerFixture, allow_model_requests: None):
     mocker.patch('pydantic_ai.models.vertexai.google.auth.default', return_value=(NoOpCredentials(), 'my-project-id'))
     model = VertexAIModel('gemini-1.5-flash', project_id='different')
 
@@ -116,7 +116,7 @@ async def test_init_env_wrong_project_id(mocker: MockerFixture):
     )
 
 
-async def test_init_env_no_project_id(mocker: MockerFixture):
+async def test_init_env_no_project_id(mocker: MockerFixture, allow_model_requests: None):
     mocker.patch(
         'pydantic_ai.models.vertexai.google.auth.default',
         return_value=(NoOpCredentials(), None),
