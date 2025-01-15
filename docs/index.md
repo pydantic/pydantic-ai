@@ -38,6 +38,9 @@ This is useful for testing and eval-driven iterative development.
 :material-sine-wave:{ .md .middle }&nbsp;<strong class="vertical-middle">Streamed Responses</strong><br>
 Provides the ability to [stream](results.md#streamed-results) LLM outputs continuously, with immediate validation, ensuring rapid and accurate results.
 
+:material-graph:{ .md .middle .graph-green }&nbsp;<strong class="vertical-middle">Graph Support</strong><br>
+[Pydantic Graph](graph.md) provides a powerful way to define graphs using typing hints, this is useful in complex applications where standard control flow can degrade to spaghetti code.
+
 !!! example "In Beta"
     PydanticAI is in early beta, the API is still subject to change and there's a lot more to do.
     [Feedback](https://github.com/pydantic/pydantic-ai/issues) is very welcome!
