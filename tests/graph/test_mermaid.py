@@ -74,7 +74,7 @@ async def test_run_graph():
                 start_ts=IsNow(tz=timezone.utc),
                 duration=IsFloat(),
             ),
-            EndStep(state=None, result=End(data=None), ts=IsNow(tz=timezone.utc)),
+            EndStep(result=End(data=None), ts=IsNow(tz=timezone.utc)),
         ]
     )
 

@@ -41,9 +41,9 @@ async def test_dump_history():
     assert result == snapshot('x=2 y=y')
     assert history == snapshot(
         [
-            NodeStep(state=MyState(x=1, y=''), node=Foo(), start_ts=IsNow(tz=timezone.utc), duration=IsFloat()),
-            NodeStep(state=MyState(x=2, y=''), node=Bar(), start_ts=IsNow(tz=timezone.utc), duration=IsFloat()),
-            EndStep(state=MyState(x=2, y='y'), result=End(data='x=2 y=y'), ts=IsNow(tz=timezone.utc)),
+            NodeStep(state=MyState(x=2, y=''), node=Foo(), start_ts=IsNow(tz=timezone.utc), duration=IsFloat()),
+            NodeStep(state=MyState(x=2, y='y'), node=Bar(), start_ts=IsNow(tz=timezone.utc), duration=IsFloat()),
+            EndStep(result=End('x=2 y=y'), ts=IsNow(tz=timezone.utc)),
         ]
     )
     history_json = graph.dump_history(history)

@@ -78,11 +78,7 @@ async def test_graph():
                 start_ts=IsNow(tz=timezone.utc),
                 duration=IsFloat(),
             ),
-            EndStep(
-                state=None,
-                result=End(data=8),
-                ts=IsNow(tz=timezone.utc),
-            ),
+            EndStep(result=End(data=8), ts=IsNow(tz=timezone.utc)),
         ]
     )
     result, history = await my_graph.run(None, Float2String(3.14159))
@@ -120,11 +116,7 @@ async def test_graph():
                 start_ts=IsNow(tz=timezone.utc),
                 duration=IsFloat(),
             ),
-            EndStep(
-                state=None,
-                result=End(data=42),
-                ts=IsNow(tz=timezone.utc),
-            ),
+            EndStep(result=End(data=42), ts=IsNow(tz=timezone.utc)),
         ]
     )
     assert [e.data_snapshot() for e in history] == snapshot(

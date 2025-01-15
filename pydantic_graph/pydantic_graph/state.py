@@ -34,7 +34,7 @@ class NodeStep(Generic[StateT, RunEndT]):
     """History step describing the execution of a node in a graph."""
 
     state: StateT
-    """The state of the graph before the node is run."""
+    """The state of the graph after the node has been run."""
     node: Annotated[BaseNode[StateT, RunEndT], CustomNodeSchema()]
     """The node that was run."""
     start_ts: datetime = field(default_factory=_utils.now_utc)
@@ -43,7 +43,7 @@ class NodeStep(Generic[StateT, RunEndT]):
     """The duration of the node run in seconds."""
     kind: Literal['node'] = 'node'
     """The kind of history step, can be used as a discriminator when deserializing history."""
-    # waiting for https://github.com/pydantic/pydantic/issues/11264, should be an InitVar
+    # TODO waiting for https://github.com/pydantic/pydantic/issues/11264, should be an InitVar
     snapshot_state: Annotated[Callable[[StateT], StateT], pydantic.Field(exclude=True, repr=False)] = field(
         default=deep_copy_state, repr=False
     )
@@ -62,24 +62,15 @@ class NodeStep(Generic[StateT, RunEndT]):
 
 
 @dataclass
-class EndStep(Generic[StateT, RunEndT]):
+class EndStep(Generic[RunEndT]):
     """History step describing the end of a graph run."""
 
-    state: StateT
-    """The state of the graph after the run."""
     result: End[RunEndT]
     """The result of the graph run."""
     ts: datetime = field(default_factory=_utils.now_utc)
     """The timestamp when the graph run ended."""
     kind: Literal['end'] = 'end'
     """The kind of history step, can be used as a discriminator when deserializing history."""
-    # waiting for https://github.com/pydantic/pydantic/issues/11264, should in InitVar
-    snapshot_state: Annotated[Callable[[StateT], StateT], pydantic.Field(exclude=True)] = deep_copy_state
-    """Function to snapshot the state of the graph."""
-
-    def __post_init__(self):
-        # Copy the state to prevent it from being modified by other code
-        self.state = self.snapshot_state(self.state)
 
     def data_snapshot(self) -> End[RunEndT]:
         """Returns a deep copy of [`self.result`][pydantic_graph.state.EndStep.result].
@@ -89,7 +80,7 @@ class EndStep(Generic[StateT, RunEndT]):
         return copy.deepcopy(self.result)
 
 
-HistoryStep = Union[NodeStep[StateT, RunEndT], EndStep[StateT, RunEndT]]
+HistoryStep = Union[NodeStep[StateT, RunEndT], EndStep[RunEndT]]
 """A step in the history of a graph run.
 
 [`Graph.run`][pydantic_graph.graph.Graph.run] returns a list of these steps describing the execution of the graph,

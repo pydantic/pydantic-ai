@@ -155,7 +155,7 @@ class Graph(Generic[StateT, RunEndT]):
             while True:
                 next_node = await self.next(state, start_node, history, infer_name=False)
                 if isinstance(next_node, End):
-                    history.append(EndStep(state, next_node, snapshot_state=self.snapshot_state))
+                    history.append(EndStep(result=next_node))
                     run_span.set_attribute('history', history)
                     return next_node.data, history
                 elif isinstance(next_node, BaseNode):
@@ -218,14 +218,16 @@ class Graph(Generic[StateT, RunEndT]):
         if node_id not in self.node_defs:
             raise exceptions.GraphRuntimeError(f'Node `{node}` is not in the graph.')
 
-        history_step: NodeStep[StateT, RunEndT] = NodeStep(state, node)
-        history.append(history_step)
-
         ctx = GraphContext(state)
         with _logfire.span('run node {node_id}', node_id=node_id, node=node):
+            start_ts = _utils.now_utc()
             start = perf_counter()
             next_node = await node.run(ctx)
-            history_step.duration = perf_counter() - start
+            duration = perf_counter() - start
+
+        history.append(
+            NodeStep(state=state, node=node, start_ts=start_ts, duration=duration, snapshot_state=self.snapshot_state)
+        )
         return next_node
 
     def dump_history(self, history: list[HistoryStep[StateT, RunEndT]], *, indent: int | None = None) -> bytes:

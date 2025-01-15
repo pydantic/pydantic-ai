@@ -7,7 +7,6 @@ Run with:
 
 from __future__ import annotations as _annotations
 
-import copy
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Annotated
@@ -132,10 +131,11 @@ async def run_as_continuous():
 
 async def run_as_cli(answer: str | None):
     history_file = Path('question_graph_history.json')
-    if history_file.exists():
-        history = question_graph.load_history(history_file.read_bytes())
-    else:
-        history = []
+    history = (
+        question_graph.load_history(history_file.read_bytes())
+        if history_file.exists()
+        else []
+    )
 
     if history:
         last = history[-1]
@@ -157,8 +157,6 @@ async def run_as_cli(answer: str | None):
                 break
             elif isinstance(node, Answer):
                 print(state.question)
-                # hack - history should show the state at the end of the node
-                history[-1].state = copy.deepcopy(state)
                 break
             # otherwise just continue
 
