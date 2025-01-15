@@ -243,9 +243,10 @@ class Agent(Generic[AgentDeps, ResultData]):
 
         agent = Agent('openai:gpt-4o')
 
-        result_sync = agent.run_sync('What is the capital of Italy?')
-        print(result_sync.data)
-        #> Rome
+        async def main():
+            result = await agent.run('What is the capital of France?')
+            print(result.data)
+            #> Paris
         ```
 
         Args:
@@ -383,10 +384,9 @@ class Agent(Generic[AgentDeps, ResultData]):
 
         agent = Agent('openai:gpt-4o')
 
-        async def main():
-            result = await agent.run('What is the capital of France?')
-            print(result.data)
-            #> Paris
+        result_sync = agent.run_sync('What is the capital of Italy?')
+        print(result_sync.data)
+        #> Rome
         ```
 
         Args:
