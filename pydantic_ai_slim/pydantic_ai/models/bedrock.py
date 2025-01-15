@@ -79,14 +79,18 @@ class BedrockModel(Model):
         aws_access_key: str | None = None,
         aws_secret_key: str | None = None,
         aws_region: str | None = None,
+        bedrock_client: BedrockRuntimeClient | None = None,
     ):
         self.model_name = model_name
-        self.client = boto3.client(
-            'bedrock-runtime',
-            aws_access_key_id=aws_access_key,
-            aws_secret_access_key=aws_secret_key,
-            region_name=aws_region,
-        )
+        if bedrock_client:
+            self.client = bedrock_client
+        else:
+            self.client = boto3.client(
+                'bedrock-runtime',
+                aws_access_key_id=aws_access_key,
+                aws_secret_access_key=aws_secret_key,
+                region_name=aws_region,
+            )
 
     async def agent_model(
         self,
@@ -103,7 +107,7 @@ class BedrockModel(Model):
             self.model_name,
             allow_text_result,
             tools,
-            support_tools_choice=True if self.model_name.startswith('anthropic') else False,
+            support_tools_choice=(True if self.model_name.startswith('anthropic') else False),
         )
 
     def name(self) -> str:
@@ -231,6 +235,7 @@ class BedrockAgentModel(AgentModel):
         )
         if stream:
             model_response = await run_in_threadpool(self.client.converse_stream, **params)
+            model_response = model_response.stream
         else:
             model_response = await run_in_threadpool(self.client.converse, **params)
         return model_response
