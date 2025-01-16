@@ -71,7 +71,7 @@ class FunctionModel(Model):
         result_tools: list[ToolDefinition],
     ) -> AgentModel:
         if self.function is not None:
-            model_name = f'function:{self.function.__qualname__}'
+            model_name = f'function:{self.function.__name__}'
         else:
             model_name = 'function'
         return FunctionAgentModel(

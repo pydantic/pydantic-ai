@@ -47,6 +47,7 @@ def test_simple(set_event_loop: None):
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[TextPart(content="content='Hello' part_kind='user-prompt' message_count=1")],
+                model_name='function:return_last',
                 timestamp=IsNow(tz=timezone.utc),
             ),
         ]
@@ -59,11 +60,13 @@ def test_simple(set_event_loop: None):
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[TextPart(content="content='Hello' part_kind='user-prompt' message_count=1")],
+                model_name='function:return_last',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(parts=[UserPromptPart(content='World', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[TextPart(content="content='World' part_kind='user-prompt' message_count=3")],
+                model_name='function:return_last',
                 timestamp=IsNow(tz=timezone.utc),
             ),
         ]
@@ -128,6 +131,7 @@ def test_weather(set_event_loop: None):
             ModelRequest(parts=[UserPromptPart(content='London', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[ToolCallPart.from_raw_args('get_location', '{"location_description": "London"}')],
+                model_name='function:weather_model',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
@@ -144,13 +148,15 @@ def test_weather(set_event_loop: None):
                         '{"lat": 51, "lng": 0}',
                     )
                 ],
+                model_name='function:weather_model',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
                 parts=[ToolReturnPart(tool_name='get_weather', content='Raining', timestamp=IsNow(tz=timezone.utc))]
             ),
-            ModelResponse.from_text(
-                content='Raining in London',
+            ModelResponse(
+                parts=[TextPart(content='Raining in London')],
+                model_name='function:weather_model',
                 timestamp=IsNow(tz=timezone.utc),
             ),
         ]
@@ -319,6 +325,7 @@ def test_call_all(set_event_loop: None):
                     ToolCallPart.from_raw_args('qux', {'x': 0}),
                     ToolCallPart.from_raw_args('quz', {'x': 'a'}),
                 ],
+                model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
@@ -330,8 +337,10 @@ def test_call_all(set_event_loop: None):
                     ToolReturnPart(tool_name='quz', content='a', timestamp=IsNow(tz=timezone.utc)),
                 ]
             ),
-            ModelResponse.from_text(
-                content='{"foo":"1","bar":"2","baz":"3","qux":"4","quz":"a"}', timestamp=IsNow(tz=timezone.utc)
+            ModelResponse(
+                parts=[TextPart(content='{"foo":"1","bar":"2","baz":"3","qux":"4","quz":"a"}')],
+                model_name='test',
+                timestamp=IsNow(tz=timezone.utc),
             ),
         ]
     )
@@ -396,7 +405,11 @@ async def test_stream_text():
         assert result.all_messages() == snapshot(
             [
                 ModelRequest(parts=[UserPromptPart(content='', timestamp=IsNow(tz=timezone.utc))]),
-                ModelResponse.from_text(content='hello world', timestamp=IsNow(tz=timezone.utc)),
+                ModelResponse(
+                    parts=[TextPart(content='hello world')],
+                    model_name='function',
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
             ]
         )
         assert result.usage() == snapshot(Usage(requests=1, request_tokens=50, response_tokens=2, total_tokens=52))
