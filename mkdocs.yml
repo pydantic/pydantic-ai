@@ -54,6 +54,7 @@ nav:
     - api/models/vertexai.md
     - api/models/groq.md
     - api/models/mistral.md
+    - api/models/lmstudio.md
     - api/models/ollama.md
     - api/models/test.md
     - api/models/function.md
