@@ -308,7 +308,7 @@ agent = Agent(model)
 
 ### Install
 
-To use [`LMStudio`][pydantic_ai.models.lmstudio.LMStudio], you need to either install [`pydantic-ai`](install.md), or install [`pydantic-ai-slim`](install.md#slim-install) with the `openai` optional group:
+To use [`LMStudioModel`][pydantic_ai.models.lmstudio.LMStudio], you need to either install [`pydantic-ai`](install.md), or install [`pydantic-ai-slim`](install.md#slim-install) with the `openai` optional group:
 
 ```bash
 pip/uv-add 'pydantic-ai-slim[openai]'

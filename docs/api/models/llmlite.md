@@ -43,8 +43,8 @@ from pydantic_ai import Agent
 from pydantic_ai.models.lmstudio import LMStudioModel
 
 lmstudio_model = LMStudioModel(
-    model_name='mistral-nemo-instruct-2407',    # (1)!
-    base_url='http://127.0.0.1:1234/v1',        # (2)!
+    model_name='mistral-nemo-instruct-2407',  # (1)!
+    base_url='http://127.0.0.1:1234/v1',    # (2)!
 )
 
 
