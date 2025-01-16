@@ -173,7 +173,7 @@ if __name__ == '__main__':
     except (IndexError, AssertionError):
         print(
             'Usage:\n'
-            '  uv run -m pydantic_ai_examples.question_graph meriad\n'
+            '  uv run -m pydantic_ai_examples.question_graph mermaid\n'
             'or:\n'
             '  uv run -m pydantic_ai_examples.question_graph continuous\n'
             'or:\n'
