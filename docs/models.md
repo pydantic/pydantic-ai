@@ -318,8 +318,7 @@ pip/uv-add 'pydantic-ai-slim[openai]'
 
 ### Configuration
 
-
-To use [LMStudio](https://lmstudio.ai/), you must first download the LMStudio client, [Docs](https://lmstudio.ai/docs), and then download a model using the client [LMStudio model library](https://lmstudio.ai/models).
+To use [LMStudio](https://lmstudio.ai/), you must first download the [LMStudio client](https://lmstudio.ai/) and [see getting started](https://lmstudio.ai/docs), and then download a model using the client [LMStudio model library](https://lmstudio.ai/models).
 
 You must also ensure the LMStudio server is running when trying to make requests to it. For more information, please see the [LMStudio documentation](https://lmstudio.ai/docs/basics).
 
