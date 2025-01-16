@@ -25,7 +25,15 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.usage import Usage
 
-from pydantic_ai_bedrock.bedrock import BedrockModel
+from ..conftest import IsNow, try_import
+
+with try_import() as imports_successful:
+    from pydantic_ai.models.bedrock import BedrockModel
+
+pytestmark = [
+    pytest.mark.skipif(not imports_successful(), reason='anthropic not installed'),
+    pytest.mark.anyio,
+]
 
 if TYPE_CHECKING:
     from botocore.eventstream import EventStream
