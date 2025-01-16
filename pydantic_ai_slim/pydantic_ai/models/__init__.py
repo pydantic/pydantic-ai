@@ -269,7 +269,7 @@ def infer_model(model: Model | KnownModelName) -> Model:
     elif model.startswith('lmstudio:'):
         from .lmstudio import LMStudioModel
 
-        return LMStudioModel(model[8:])
+        return LMStudioModel(model[9:])
 
     elif model.startswith('ollama:'):
         from .ollama import OllamaModel

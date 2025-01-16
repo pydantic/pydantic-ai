@@ -19,9 +19,11 @@ from pydantic import BaseModel
 
 from pydantic_ai import Agent
 
+
 class CityLocation(BaseModel):
     city: str
     country: str
+
 
 agent = Agent('llmite:mistral-nemo-instruct-2407', result_type=CityLocation)
 
@@ -44,7 +46,7 @@ from pydantic_ai.models.lmstudio import LMStudioModel
 
 lmstudio_model = LMStudioModel(
     model_name='mistral-nemo-instruct-2407',  # (1)!
-    base_url='http://127.0.0.1:1234/v1',    # (2)!
+    base_url='http://127.0.0.1:1234/v1',  # (2)!
 )
 
 
