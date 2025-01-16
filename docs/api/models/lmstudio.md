@@ -1,8 +1,8 @@
-# `pydantic_ai.models.ollama`
+# `pydantic_ai.models.llmstudio`
 
 ## Setup
 
-For details on how to set up authentication with this model, see [model configuration for Ollama](../../models.md#lmstudio).
+For details on how to set up authentication with this model, see [model configuration for LMStudio](../../models.md#lmstudio).
 
 ## Example local usage
 
@@ -14,7 +14,7 @@ With `LMStudio` installed, you can run the server.
 4. And load the model
 Then run your code, here's a minimal example:
 
-```python {title="ollama_example.py"}
+```python {title="lmstudio_example.py"}
 from pydantic import BaseModel
 
 from pydantic_ai import Agent
@@ -38,7 +38,7 @@ Usage(requests=1, request_tokens=57, response_tokens=8, total_tokens=65, details
 
 ## Example using a remote server
 
-```python {title="ollama_example_with_remote_server.py"}
+```python {title="lmstudio_example_with_remote_server.py"}
 from pydantic import BaseModel
 
 from pydantic_ai import Agent

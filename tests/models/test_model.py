@@ -51,7 +51,7 @@ TEST_CASES = [
     (
         'LMSTUDIO_API_KEY',
         'lmstudio:mistral-nemo-instruct-2407',
-        'lmstudio:llama-3.2-3b-instruct',
+        'lmstudio:mistral-nemo-instruct-2407',
         'lmstudio',
         'LMStudioModel',
     ),
