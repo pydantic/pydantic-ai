@@ -81,6 +81,47 @@ KnownModelName = Literal[
     'anthropic:claude-3-5-haiku-latest',
     'anthropic:claude-3-5-sonnet-latest',
     'anthropic:claude-3-opus-latest',
+    'bedrock:amazon.titan-tg1-large',
+    'bedrock:amazon.titan-text-lite-v1',
+    'bedrock:amazon.titan-text-express-v1',
+    'bedrock:us.amazon.nova-pro-v1:0',
+    'bedrock:us.amazon.nova-lite-v1:0',
+    'bedrock:us.amazon.nova-micro-v1:0',
+    'bedrock:anthropic.claude-3-5-sonnet-20241022-v2:0',
+    'bedrock:us.anthropic.claude-3-5-sonnet-20241022-v2:0',
+    'bedrock:anthropic.claude-3-5-haiku-20241022-v1:0',
+    'bedrock:us.anthropic.claude-3-5-haiku-20241022-v1:0',
+    'bedrock:anthropic.claude-instant-v1',
+    'bedrock:anthropic.claude-v2:1',
+    'bedrock:anthropic.claude-v2',
+    'bedrock:anthropic.claude-3-sonnet-20240229-v1:0',
+    'bedrock:us.anthropic.claude-3-sonnet-20240229-v1:0',
+    'bedrock:anthropic.claude-3-haiku-20240307-v1:0',
+    'bedrock:us.anthropic.claude-3-haiku-20240307-v1:0',
+    'bedrock:anthropic.claude-3-opus-20240229-v1:0',
+    'bedrock:us.anthropic.claude-3-opus-20240229-v1:0',
+    'bedrock:anthropic.claude-3-5-sonnet-20240620-v1:0',
+    'bedrock:us.anthropic.claude-3-5-sonnet-20240620-v1:0',
+    'bedrock:cohere.command-text-v14',
+    'bedrock:cohere.command-r-v1:0',
+    'bedrock:cohere.command-r-plus-v1:0',
+    'bedrock:cohere.command-light-text-v14',
+    'bedrock:meta.llama3-8b-instruct-v1:0',
+    'bedrock:meta.llama3-70b-instruct-v1:0',
+    'bedrock:meta.llama3-1-8b-instruct-v1:0',
+    'bedrock:us.meta.llama3-1-8b-instruct-v1:0',
+    'bedrock:meta.llama3-1-70b-instruct-v1:0',
+    'bedrock:us.meta.llama3-1-70b-instruct-v1:0',
+    'bedrock:meta.llama3-1-405b-instruct-v1:0',
+    'bedrock:us.meta.llama3-2-11b-instruct-v1:0',
+    'bedrock:us.meta.llama3-2-90b-instruct-v1:0',
+    'bedrock:us.meta.llama3-2-1b-instruct-v1:0',
+    'bedrock:us.meta.llama3-2-3b-instruct-v1:0',
+    'bedrock:us.meta.llama3-3-70b-instruct-v1:0',
+    'bedrock:mistral.mistral-7b-instruct-v0:2',
+    'bedrock:mistral.mixtral-8x7b-instruct-v0:1',
+    'bedrock:mistral.mistral-large-2402-v1:0',
+    'bedrock:mistral.mistral-large-2407-v1:0',
     'test',
 ]
 """Known model names that can be used with the `model` parameter of [`Agent`][pydantic_ai.Agent].
@@ -276,6 +317,10 @@ def infer_model(model: Model | KnownModelName) -> Model:
         from .anthropic import AnthropicModel
 
         return AnthropicModel(model)
+    elif model.startswith('bedrock:'):
+        from .bedrock import BedrockModel
+
+        return BedrockModel(model[8:])
     else:
         raise UserError(f'Unknown model: {model}')
 
