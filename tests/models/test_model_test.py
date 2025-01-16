@@ -131,6 +131,17 @@ def test_result_tool_retry_error_handled(set_event_loop: None):
     assert call_count == 3
 
 
+def test_result_tool_retry_error_handled_with_custom_args(set_event_loop: None):
+    class ResultModel(BaseModel):
+        x: int
+        y: str
+
+    agent = Agent('test', result_type=ResultModel, retries=2)
+
+    with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum retries'):
+        agent.run_sync('Hello', model=TestModel(custom_result_args={'foo': 'a', 'bar': 1}))
+
+
 def test_json_schema_test_data():
     class NestedModel(BaseModel):
         foo: str
