@@ -10,7 +10,7 @@ on:
 
 env:
   CI: true
-  COLUMNS: 120
+  COLUMNS: 150
   UV_PYTHON: 3.12
   UV_FROZEN: '1'
 
@@ -72,6 +72,7 @@ jobs:
         if: github.event.pull_request.head.repo.full_name == github.repository || github.ref == 'refs/heads/main'
         env:
           PPPR_TOKEN: ${{ secrets.PPPR_TOKEN }}
+          ALGOLIA_WRITE_API_KEY: ${{ secrets.ALGOLIA_WRITE_API_KEY }}
 
       - run: tree site
 
@@ -128,8 +129,8 @@ jobs:
 
       - run: mkdir coverage
 
-      # run tests with just `pydantic-ai-slim` dependencies
-      - run: uv run --package pydantic-ai-slim coverage run -m pytest
+      # run tests with just `pydantic-ai-slim` and `pydantic-graph` dependencies
+      - run: uv run --package pydantic-ai-slim --extra graph coverage run -m pytest
         env:
           COVERAGE_FILE: coverage/.coverage.${{ runner.os }}-py${{ matrix.python-version }}-slim
 

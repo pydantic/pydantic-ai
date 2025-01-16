@@ -107,7 +107,7 @@ See [tool docs](../tools.md#tool-prepare) for more information.
 
 Example — here `only_if_42` is valid as a `ToolPrepareFunc`:
 
-```python {lint="not-imports"}
+```python {noqa="I001"}
 from typing import Union
 
 from pydantic_ai import RunContext, Tool
@@ -176,7 +176,7 @@ class Tool(Generic[AgentDeps]):
 
         Example usage:
 
-        ```python {lint="not-imports"}
+        ```python {noqa="I001"}
         from pydantic_ai import Agent, RunContext, Tool
 
         async def my_tool(ctx: RunContext[int], x: int, y: int) -> str:
@@ -187,7 +187,7 @@ class Tool(Generic[AgentDeps]):
 
         or with a custom prepare method:
 
-        ```python {lint="not-imports"}
+        ```python {noqa="I001"}
         from typing import Union
 
         from pydantic_ai import Agent, RunContext, Tool

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "pydantic-ai-slim"
-version = "0.0.18"
+version = "0.0.19"
 description = "Agent Framework / shim to use Pydantic with LLMs, slim package"
 authors = [
     { name = "Samuel Colvin", email = "samuel@pydantic.dev" },
@@ -42,20 +42,22 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# WARNING if you add optional groups, please update docs/install.md
+logfire = ["logfire>=2.3"]
+graph = ["pydantic-graph==0.0.19"]
 openai = ["openai>=1.54.3"]
 vertexai = ["google-auth>=2.36.0", "requests>=2.32.3"]
 anthropic = ["anthropic>=0.40.0"]
 groq = ["groq>=0.12.0"]
 mistral = ["mistralai>=1.2.5"]
-logfire = ["logfire>=2.3"]
 
 [dependency-groups]
 dev = [
     "anyio>=4.5.0",
     "devtools>=0.12.2",
     "coverage[toml]>=7.6.2",
-    "dirty-equals>=0.8.0",
-    "inline-snapshot>=0.14",
+    "dirty-equals>=0.9.0",
+    "inline-snapshot>=0.19.3",
     "pytest>=8.3.3",
     "pytest-examples>=0.0.14",
     "pytest-mock>=3.14.0",
@@ -65,3 +67,6 @@ dev = [
 
 [tool.hatch.build.targets.wheel]
 packages = ["pydantic_ai"]
+
+[tool.uv.sources]
+pydantic-graph = { workspace = true }

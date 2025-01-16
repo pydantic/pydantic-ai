@@ -99,6 +99,7 @@ class GeminiModel(Model):
         allow_text_result: bool,
         result_tools: list[ToolDefinition],
     ) -> GeminiAgentModel:
+        check_allow_model_requests()
         return GeminiAgentModel(
             http_client=self.http_client,
             model_name=self.model_name,
@@ -151,7 +152,6 @@ class GeminiAgentModel(AgentModel):
         allow_text_result: bool,
         result_tools: list[ToolDefinition],
     ):
-        check_allow_model_requests()
         tools = [_function_from_abstract_tool(t) for t in function_tools]
         if result_tools:
             tools += [_function_from_abstract_tool(t) for t in result_tools]

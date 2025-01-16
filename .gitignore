@@ -13,3 +13,4 @@ env*/
 examples/pydantic_ai_examples/.chat_app_messages.sqlite
 .cache/
 .vscode/
+/question_graph_history.json

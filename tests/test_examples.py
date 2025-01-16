@@ -48,7 +48,7 @@ pytestmark = pytest.mark.skipif(VertexAIModel is None or logfire is None, reason
 
 
 def find_filter_examples() -> Iterable[CodeExample]:
-    for ex in find_examples('docs', 'pydantic_ai_slim'):
+    for ex in find_examples('docs', 'pydantic_ai_slim', 'pydantic_graph'):
         if ex.path.name != '_utils.py':
             yield ex
 
@@ -84,6 +84,14 @@ def test_docs_examples(
     opt_title = prefix_settings.get('title')
     opt_test = prefix_settings.get('test', '')
     opt_lint = prefix_settings.get('lint', '')
+    noqa = prefix_settings.get('noqa', '')
+    python_version = prefix_settings.get('py', None)
+
+    if python_version:
+        python_version_info = tuple(int(v) for v in python_version.split('.'))
+        if sys.version_info < python_version_info:
+            pytest.skip(f'Python version {python_version} required')
+
     cwd = Path.cwd()
 
     if opt_test.startswith('skip') and opt_lint.startswith('skip'):
@@ -95,12 +103,15 @@ def test_docs_examples(
         with (tmp_path / 'examples.json').open('w') as f:
             json.dump(examples, f)
 
-    ruff_ignore: list[str] = ['D']
+    ruff_ignore: list[str] = ['D', 'Q001']
     # `from bank_database import DatabaseConn` wrongly sorted in imports
     # waiting for https://github.com/pydantic/pytest-examples/issues/43
     # and https://github.com/pydantic/pytest-examples/issues/46
-    if opt_lint == 'not-imports' or 'import DatabaseConn' in example.source:
+    if 'import DatabaseConn' in example.source:
         ruff_ignore.append('I001')
+
+    if noqa:
+        ruff_ignore.extend(noqa.upper().split())
 
     line_length = int(prefix_settings.get('line_length', '88'))
 
@@ -116,7 +127,7 @@ def test_docs_examples(
             eval_example.lint(example)
 
     if opt_test.startswith('skip'):
-        pytest.skip(opt_test[4:].lstrip(' -') or 'running code skipped')
+        print(opt_test[4:].lstrip(' -') or 'running code skipped')
     else:
         if eval_example.update_examples:  # pragma: no cover
             module_dict = eval_example.run_print_update(example, call=call_name)
@@ -133,6 +144,7 @@ def test_docs_examples(
 
 def print_callback(s: str) -> str:
     s = re.sub(r'datetime\.datetime\(.+?\)', 'datetime.datetime(...)', s, flags=re.DOTALL)
+    s = re.sub(r'\d\.\d{4,}e-0\d', '0.0...', s)
     return re.sub(r'datetime.date\(', 'date(', s)
 
 
@@ -149,9 +161,18 @@ async def async_http_request(url: str, **kwargs: Any) -> httpx.Response:
 def rich_prompt_ask(prompt: str, *_args: Any, **_kwargs: Any) -> str:
     if prompt == 'Where would you like to fly from and to?':
         return 'SFO to ANC'
-    else:
-        assert prompt == 'What seat would you like?', prompt
+    elif prompt == 'What seat would you like?':
         return 'window seat with leg room'
+    if prompt == 'Insert coins':
+        return '1'
+    elif prompt == 'Select product':
+        return 'crisps'
+    elif prompt == 'What is the capital of France?':
+        return 'Vichy'
+    elif prompt == 'what is 1 + 1?':
+        return '2'
+    else:  # pragma: no cover
+        raise ValueError(f'Unexpected prompt: {prompt}')
 
 
 text_responses: dict[str, str | ToolCallPart] = {
@@ -239,6 +260,15 @@ text_responses: dict[str, str | ToolCallPart] = {
         tool_name='final_result_SeatPreference',
         args=ArgsDict({'row': 1, 'seat': 'A'}),
     ),
+    'Ask a simple question with a single correct answer.': 'What is the capital of France?',
+    '<examples>\n  <question>What is the capital of France?</question>\n  <answer>Vichy</answer>\n</examples>': ToolCallPart(
+        tool_name='final_result',
+        args=ArgsDict({'correct': False, 'comment': 'Vichy is no longer the capital of France.'}),
+    ),
+    '<examples>\n  <question>what is 1 + 1?</question>\n  <answer>2</answer>\n</examples>': ToolCallPart(
+        tool_name='final_result',
+        args=ArgsDict({'correct': True, 'comment': 'Well done, 1 + 1 = 2'}),
+    ),
 }
 
 
@@ -251,6 +281,24 @@ async def model_logic(messages: list[ModelMessage], info: AgentInfo) -> ModelRes
             return ModelResponse(parts=[ToolCallPart(tool_name='get_jokes', args=ArgsDict({'count': 5}))])
         elif re.fullmatch(r'sql prompt \d+', m.content):
             return ModelResponse.from_text(content='SELECT 1')
+        elif m.content.startswith('Write a welcome email for the user:'):
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='final_result',
+                        args=ArgsDict(
+                            {
+                                'subject': 'Welcome to our tech blog!',
+                                'body': 'Hello John, Welcome to our tech blog! ...',
+                            }
+                        ),
+                    )
+                ]
+            )
+        elif m.content.startswith('<examples>\n  <user>'):
+            return ModelResponse(parts=[ToolCallPart(tool_name='final_result_EmailOk', args=ArgsDict({}))])
+        elif m.content == 'Ask a simple question with a single correct answer.' and len(messages) > 2:
+            return ModelResponse.from_text(content='what is 1 + 1?')
         elif response := text_responses.get(m.content):
             if isinstance(response, str):
                 return ModelResponse.from_text(content=response)

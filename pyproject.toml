@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "pydantic-ai"
-version = "0.0.18"
+version = "0.0.19"
 description = "Agent Framework / shim to use Pydantic with LLMs"
 authors = [
     { name = "Samuel Colvin", email = "samuel@pydantic.dev" },
@@ -37,7 +37,7 @@ classifiers = [
 ]
 requires-python = ">=3.9"
 
-dependencies = ["pydantic-ai-slim[openai,vertexai,groq,anthropic,mistral]==0.0.18"]
+dependencies = ["pydantic-ai-slim[graph,openai,vertexai,groq,anthropic,mistral]==0.0.19"]
 
 [project.urls]
 Homepage = "https://ai.pydantic.dev"
@@ -46,15 +46,16 @@ Documentation = "https://ai.pydantic.dev"
 Changelog = "https://github.com/pydantic/pydantic-ai/releases"
 
 [project.optional-dependencies]
-examples = ["pydantic-ai-examples==0.0.18"]
+examples = ["pydantic-ai-examples==0.0.19"]
 logfire = ["logfire>=2.3"]
 
 [tool.uv.sources]
 pydantic-ai-slim = { workspace = true }
+pydantic-graph = { workspace = true }
 pydantic-ai-examples = { workspace = true }
 
 [tool.uv.workspace]
-members = ["pydantic_ai_slim", "examples"]
+members = ["pydantic_ai_slim", "pydantic_graph", "examples"]
 
 [dependency-groups]
 # dev dependencies are defined in `pydantic-ai-slim/pyproject.toml` to allow for minimal testing
@@ -64,6 +65,7 @@ lint = [
     "ruff>=0.6.9",
 ]
 docs = [
+    "algoliasearch>=4.12.0",
     "black>=24.10.0",
     "bs4>=0.0.2",
     "markdownify>=0.14.1",
@@ -84,6 +86,7 @@ line-length = 120
 target-version = "py39"
 include = [
     "pydantic_ai_slim/**/*.py",
+    "pydantic_graph/**/*.py",
     "examples/**/*.py",
     "tests/**/*.py",
     "docs/**/*.py",
@@ -127,7 +130,7 @@ typeCheckingMode = "strict"
 reportMissingTypeStubs = false
 reportUnnecessaryIsInstance = false
 reportUnnecessaryTypeIgnoreComment = true
-include = ["pydantic_ai_slim", "tests", "examples"]
+include = ["pydantic_ai_slim", "pydantic_graph", "tests", "examples"]
 venvPath = ".venv"
 # see https://github.com/microsoft/pyright/issues/7771 - we don't want to error on decorated functions in tests
 # which are not otherwise used
@@ -135,6 +138,10 @@ executionEnvironments = [
   { root = "tests", reportUnusedFunction = false },
 ]
 exclude = ["examples/pydantic_ai_examples/weather_agent_gradio.py"]
+
+[tool.mypy]
+files = "tests/typed_agent.py,tests/typed_graph.py"
+strict = true
 
 [tool.pytest.ini_options]
 testpaths = "tests"
@@ -146,7 +153,7 @@ filterwarnings = [
 # https://coverage.readthedocs.io/en/latest/config.html#run
 [tool.coverage.run]
 # required to avoid warnings about files created by create_module fixture
-include = ["pydantic_ai_slim/**/*.py", "tests/**/*.py"]
+include = ["pydantic_ai_slim/**/*.py", "pydantic_graph/**/*.py","tests/**/*.py"]
 omit = ["tests/test_live.py", "tests/example_modules/*.py"]
 branch = true
 
@@ -163,6 +170,7 @@ exclude_lines = [
     'if typing.TYPE_CHECKING:',
     '@overload',
     '@typing.overload',
+    '@abstractmethod',
     '\(Protocol\):$',
     'typing.assert_never',
     '$\s*assert_never\(',

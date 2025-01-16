@@ -36,6 +36,7 @@ from . import (
     Model,
     StreamedResponse,
     cached_async_http_client,
+    check_allow_model_requests,
 )
 
 try:
@@ -130,6 +131,7 @@ class MistralModel(Model):
         result_tools: list[ToolDefinition],
     ) -> AgentModel:
         """Create an agent model, this is called for each step of an agent run from Pydantic AI call."""
+        check_allow_model_requests()
         return MistralAgentModel(
             self.client,
             self.model_name,
