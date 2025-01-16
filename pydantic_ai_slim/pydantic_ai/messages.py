@@ -252,7 +252,7 @@ class ModelResponse:
     parts: list[ModelResponsePart]
     """The parts of the model message."""
 
-    model_name: str
+    model_name: str | None = None
     """The name of the model that generated the response."""
 
     timestamp: datetime = field(default_factory=_now_utc)
@@ -265,12 +265,12 @@ class ModelResponse:
     """Message type identifier, this is available on all parts as a discriminator."""
 
     @classmethod
-    def from_text(cls, content: str, model_name: str, timestamp: datetime | None = None) -> Self:
+    def from_text(cls, content: str, model_name: str | None = None, timestamp: datetime | None = None) -> Self:
         """Create a `ModelResponse` containing a single `TextPart`."""
         return cls([TextPart(content=content)], model_name=model_name, timestamp=timestamp or _now_utc())
 
     @classmethod
-    def from_tool_call(cls, tool_call: ToolCallPart, model_name: str) -> Self:
+    def from_tool_call(cls, tool_call: ToolCallPart, model_name: str | None = None) -> Self:
         """Create a `ModelResponse` containing a single `ToolCallPart`."""
         return cls([tool_call], model_name=model_name)
 

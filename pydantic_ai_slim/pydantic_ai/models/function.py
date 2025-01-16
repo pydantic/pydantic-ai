@@ -70,8 +70,15 @@ class FunctionModel(Model):
         allow_text_result: bool,
         result_tools: list[ToolDefinition],
     ) -> AgentModel:
+        if self.function is not None:
+            model_name = f'function:{self.function.__qualname__}'
+        else:
+            model_name = 'function'
         return FunctionAgentModel(
-            self.function, self.stream_function, AgentInfo(function_tools, allow_text_result, result_tools, None)
+            self.function,
+            self.stream_function,
+            AgentInfo(function_tools, allow_text_result, result_tools, None),
+            model_name,
         )
 
     def name(self) -> str:
@@ -140,7 +147,7 @@ class FunctionAgentModel(AgentModel):
     function: FunctionDef | None
     stream_function: StreamFunctionDef | None
     agent_info: AgentInfo
-    model_name: str = 'function'
+    model_name: str
 
     async def request(
         self, messages: list[ModelMessage], model_settings: ModelSettings | None
@@ -154,6 +161,8 @@ class FunctionAgentModel(AgentModel):
             response_ = await _utils.run_in_executor(self.function, messages, agent_info)
             assert isinstance(response_, ModelResponse), response_
             response = response_
+        if response.model_name is None:
+            response.model_name = self.model_name
         # TODO is `messages` right here? Should it just be new messages?
         return response, _estimate_usage(chain(messages, [response]))
 
