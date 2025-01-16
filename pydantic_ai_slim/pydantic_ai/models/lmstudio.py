@@ -62,7 +62,7 @@ class LMStudioModel(Model):
 
         Args:
             model_name: The name of the LMStudio model to use. List of models available [here](https://lmstudio.ai/models)
-                You must first download the model. [See](https://lmstudio.ai/docs)
+                You must first download the model. [LMStudio](https://lmstudio.ai/) and [Docs](https://lmstudio.ai/docs).
             base_url: The base url for the LMStudio requests. The default value is the LMStudio default.
             api_key: The API key to use for authentication. Defaults to 'LMStudio' don't use it,
                 but can be customized for proxy setups that require authentication.
