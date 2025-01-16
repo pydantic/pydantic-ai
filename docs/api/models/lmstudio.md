@@ -27,9 +27,9 @@ class CityLocation(BaseModel):
 
 agent = Agent('llmite:mistral-nemo-instruct-2407', result_type=CityLocation)
 
-result = agent.run_sync('Where were the olympics held in 2024?')
+result = agent.run_sync('Where were the olympics held in 2012?')
 print(result.data)
-#> city='Paris' country='France'
+#> city='London' country='United Kingdom'
 print(result.usage())
 """
 Usage(requests=1, request_tokens=57, response_tokens=8, total_tokens=65, details=None)
@@ -57,9 +57,9 @@ class CityLocation(BaseModel):
 
 agent = Agent(model=lmstudio_model, result_type=CityLocation)
 
-result = agent.run_sync('Where were the olympics held in 2024?')
+result = agent.run_sync('Where were the olympics held in 2012?')
 print(result.data)
-#> city='Paris' country='France'
+#> city='London' country='United Kingdom'
 print(result.usage())
 """
 Usage(requests=1, request_tokens=57, response_tokens=8, total_tokens=65, details=None)
