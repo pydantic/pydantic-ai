@@ -170,6 +170,7 @@ async def test_forecast():
                     content='{"weather_forecast":"Sunny with a chance of rain"}',
                 )
             ],
+            model_name='test',
             timestamp=IsNow(tz=timezone.utc),
         ),
     ]
