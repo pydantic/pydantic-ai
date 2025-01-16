@@ -50,7 +50,7 @@ class LMStudioModel(Model):
         self,
         model_name: LMStudioModelName,
         *,
-        base_url: str | None = 'http://localhost:11434/v1/',
+        base_url: str | None = 'http://127.0.0.1:1234/v1/',
         api_key: str = 'lmstudio',
         openai_client: AsyncOpenAI | None = None,
         http_client: AsyncHTTPClient | None = None,
