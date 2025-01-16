@@ -54,6 +54,12 @@ def anthropic(http_client: httpx.AsyncClient, _tmp_path: Path) -> Model:
     return AnthropicModel('claude-3-5-sonnet-latest', http_client=http_client)
 
 
+def lmstudio(http_client: httpx.AsyncClient, _tmp_path: Path) -> Model:
+    from pydantic_ai.models.lmstudio import LMStudioModel
+
+    return LMStudioModel('mistral-nemo-instruct-2407', http_client=http_client)
+
+
 def ollama(http_client: httpx.AsyncClient, _tmp_path: Path) -> Model:
     from pydantic_ai.models.ollama import OllamaModel
 
@@ -72,6 +78,7 @@ params = [
     pytest.param(vertexai, id='vertexai'),
     pytest.param(groq, id='groq'),
     pytest.param(anthropic, id='anthropic'),
+    pytest.param(lmstudio, id='lmstudio'),
     pytest.param(ollama, id='ollama'),
     pytest.param(mistral, id='mistral'),
 ]

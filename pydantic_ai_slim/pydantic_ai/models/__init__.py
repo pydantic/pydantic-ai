@@ -60,6 +60,8 @@ KnownModelName = Literal[
     'mistral:mistral-large-latest',
     'mistral:codestral-latest',
     'mistral:mistral-moderation-latest',
+    'lmstudio:mistral-nemo-instruct-2407',
+    'lmstudio:llama-3.2-3b-instruct',
     'ollama:codellama',
     'ollama:gemma',
     'ollama:gemma2',
@@ -263,6 +265,12 @@ def infer_model(model: Model | KnownModelName) -> Model:
         from .mistral import MistralModel
 
         return MistralModel(model[8:])
+
+    elif model.startswith('lmstudio:'):
+        from .lmstudio import LMStudioModel
+
+        return LMStudioModel(model[8:])
+
     elif model.startswith('ollama:'):
         from .ollama import OllamaModel
 

@@ -19,52 +19,52 @@ try:
     from .openai import OpenAIModel
 except ImportError as e:
     raise ImportError(
-        'Please install `openai` to use the LLMLite, '
+        'Please install `openai` to use the LMStudio, '
         "you can use the `openai` optional group — `pip install 'pydantic-ai-slim[openai]'`"
     ) from e
 
 
-CommonLLMLiteModelNames = Literal[
+CommonLMStudioModelNames = Literal[
     'mistral-nemo-instruct-2407',
     'llama-3.2-3b-instruct',
 ]
-"""This contains just the most common LLMLite models.
+"""This contains just the most common LMStudio models.
 
-For a full list see [LLMLite search models](https://models.litellm.ai/).
+For a full list see [LMStudio search models](https://lmstudio.ai/models).
 """
-LLMLiteModelName = Union[CommonLLMLiteModelNames, str]
-"""Possible LLMLite model names or see this model's API identifier in LLMLite."""
+LMStudioModelName = Union[CommonLMStudioModelNames, str]
+"""Possible LMStudio model names or see this model's API identifier in LMStudio."""
 
 
 @dataclass(init=False)
-class LLMLiteModel(Model):
-    """A model that implements LLMLite using the OpenAI API.
+class LMStudioModel(Model):
+    """A model that implements LMStudio using the OpenAI API.
 
-    Internally, this uses the [OpenAI Python client](https://github.com/openai/openai-python) to interact with the LLMLite server.
+    Internally, this uses the [OpenAI Python client](https://github.com/openai/openai-python) to interact with the LMStudio server.
     """
 
-    model_name: LLMLiteModelName
+    model_name: LMStudioModelName
     openai_model: OpenAIModel
 
     def __init__(
         self,
-        model_name: LLMLiteModelName,
+        model_name: LMStudioModelName,
         *,
         base_url: str | None = 'http://localhost:11434/v1/',
-        api_key: str = 'llmlite',
+        api_key: str = 'lmstudio',
         openai_client: AsyncOpenAI | None = None,
         http_client: AsyncHTTPClient | None = None,
     ):
-        """Initialize an LLMLite model.
+        """Initialize an LMStudio model.
 
-        LLMLite has built-in compatability for the OpenAI chat completions API ([LLMLitesource](https://lmstudio.ai/docs/api/openai-api)), so we reuse the
+        LMStudio has built-in compatability for the OpenAI chat completions API ([LMStudiosource](https://lmstudio.ai/docs/api/openai-api)), so we reuse the
         [`OpenAIModel`][pydantic_ai.models.openai.OpenAIModel] here.
 
         Args:
-            model_name: The name of the LLMLite model to use. List of models available [here](https://models.litellm.ai/)
-                You must first download the model. [See](https://lmstudio.ai/docs/basics)
-            base_url: The base url for the LLMLite requests. The default value is the LLMLite default.
-            api_key: The API key to use for authentication. Defaults to 'LLMLite' don't use it,
+            model_name: The name of the LMStudio model to use. List of models available [here](https://lmstudio.ai/models)
+                You must first download the model. [See](https://lmstudio.ai/docs)
+            base_url: The base url for the LMStudio requests. The default value is the LMStudio default.
+            api_key: The API key to use for authentication. Defaults to 'LMStudio' don't use it,
                 but can be customized for proxy setups that require authentication.
             openai_client: An existing
                 [`AsyncOpenAI`](https://github.com/openai/openai-python?tab=readme-ov-file#async-usage)
@@ -77,7 +77,7 @@ class LLMLiteModel(Model):
             assert http_client is None, 'Cannot provide both `openai_client` and `http_client`'
             self.openai_model = OpenAIModel(model_name=model_name, openai_client=openai_client)
         else:
-            # API key is not required for LLMLite but a value is required to create the client
+            # API key is not required for LMStudio but a value is required to create the client
             http_client_ = http_client or cached_async_http_client()
             oai_client = AsyncOpenAI(base_url=base_url, api_key=api_key, http_client=http_client_)
             self.openai_model = OpenAIModel(model_name=model_name, openai_client=oai_client)
@@ -97,4 +97,4 @@ class LLMLiteModel(Model):
         )
 
     def name(self) -> str:
-        return f'llmlite:{self.model_name}'
+        return f'lmstudio:{self.model_name}'
