@@ -270,11 +270,7 @@ class MermaidConfig(TypedDict, total=False):
     direction: StateDiagramDirection
     """The direction of the state diagram.
     
-    This is the direction in which the state diagram should be generated.
-        - 'TB': Top to Bottom, the diagram flows vertically from top to bottom. This is the default if None is given
-        - 'LR': Left to Right, the diagram flows horizontally from left to right.
-        - 'RL': Right to Left, the diagram flows horizontally from right to left.
-        - 'BT': Bottom to Top, the diagram flows vertically from bottom to top.
+    The direction of flow for the state diagram. Must be One of: ['TB', 'LR', 'RL', 'BT']
     """
 
 
