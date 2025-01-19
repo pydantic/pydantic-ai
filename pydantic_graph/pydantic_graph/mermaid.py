@@ -56,11 +56,7 @@ def generate_code(  # noqa: C901
         title: The title of the diagram.
         edge_labels: Whether to include edge labels in the diagram.
         notes: Whether to include notes in the diagram.
-        direction (StateDiagramDirection): The direction in which the state diagram should be generated.
-            - 'TB': Top to Bottom, the diagram flows vertically from top to bottom.
-            - 'LR': Left to Right, the diagram flows horizontally from left to right.
-            - 'RL': Right to Left, the diagram flows horizontally from right to left.
-            - 'BT': Bottom to Top, the diagram flows vertically from bottom to top.
+        direction (StateDiagramDirection): The direction of flow. Must be One of: ['TB', 'LR', 'RL', 'BT']
 
 
     Returns:
