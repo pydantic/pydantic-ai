@@ -302,10 +302,10 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
             highlight_css: The CSS to use for highlighting nodes.
             infer_name: Whether to infer the graph name from the calling frame.
             direction (StateDiagramDirection): The direction in which the state diagram should be generated.
-            - 'TB': Top to Bottom, the diagram flows vertically from top to bottom.
-            - 'LR': Left to Right, the diagram flows horizontally from left to right.
-            - 'RL': Right to Left, the diagram flows horizontally from right to left.
-            - 'BT': Bottom to Top, the diagram flows vertically from bottom to top.
+                - 'TB': Top to Bottom, the diagram flows vertically from top to bottom.
+                - 'LR': Left to Right, the diagram flows horizontally from left to right.
+                - 'RL': Right to Left, the diagram flows horizontally from right to left.
+                - 'BT': Bottom to Top, the diagram flows vertically from bottom to top.
 
         Returns:
             The mermaid code for the graph, which can then be rendered as a diagram.
