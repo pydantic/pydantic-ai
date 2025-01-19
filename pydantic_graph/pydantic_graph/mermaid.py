@@ -266,12 +266,8 @@ class MermaidConfig(TypedDict, total=False):
     """
     httpx_client: httpx.Client
     """An HTTPX client to use for requests, mostly for testing purposes."""
-
     direction: StateDiagramDirection
-    """The direction of the state diagram.
-    
-    The direction of flow for the state diagram. Must be One of: ['TB', 'LR', 'RL', 'BT']
-    """
+    """The direction of the state diagram."""
 
 
 NodeIdent: TypeAlias = 'type[BaseNode[Any, Any, Any]] | BaseNode[Any, Any, Any] | str'
