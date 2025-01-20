@@ -15,6 +15,7 @@ import pydantic
 import typing_extensions
 
 from . import _utils, exceptions, mermaid
+from .mermaid import StateDiagramDirection
 from .nodes import BaseNode, DepsT, End, GraphRunContext, NodeDef, RunEndT
 from .state import EndStep, HistoryStep, NodeStep, StateT, deep_copy_state, nodes_schema_var
 
@@ -286,6 +287,7 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
         highlighted_nodes: Sequence[mermaid.NodeIdent] | mermaid.NodeIdent | None = None,
         highlight_css: str = mermaid.DEFAULT_HIGHLIGHT_CSS,
         infer_name: bool = True,
+        direction: StateDiagramDirection | None = None,
     ) -> str:
         """Generate a diagram representing the graph as [mermaid](https://mermaid.js.org/) diagram.
 
@@ -299,6 +301,7 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
             highlighted_nodes: Optional node or nodes to highlight.
             highlight_css: The CSS to use for highlighting nodes.
             infer_name: Whether to infer the graph name from the calling frame.
+            direction (StateDiagramDirection): The direction of flow. Must be One of: ['TB', 'LR', 'RL', 'BT']
 
         Returns:
             The mermaid code for the graph, which can then be rendered as a diagram.
@@ -346,6 +349,7 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
             title=title or None,
             edge_labels=edge_labels,
             notes=notes,
+            direction=direction or None,
         )
 
     def mermaid_image(
