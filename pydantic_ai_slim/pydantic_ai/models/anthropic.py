@@ -152,7 +152,7 @@ class AnthropicAgentModel(AgentModel):
     """Implementation of `AgentModel` for Anthropic models."""
 
     client: AsyncAnthropic
-    model_name: str
+    model_name: AnthropicModelName
     allow_text_result: bool
     tools: list[ToolParam]
 
@@ -210,8 +210,7 @@ class AnthropicAgentModel(AgentModel):
             timeout=model_settings.get('timeout', NOT_GIVEN),
         )
 
-    @staticmethod
-    def _process_response(response: AnthropicMessage) -> ModelResponse:
+    def _process_response(self, response: AnthropicMessage) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
         items: list[ModelResponsePart] = []
         for item in response.content:
@@ -227,7 +226,7 @@ class AnthropicAgentModel(AgentModel):
                     )
                 )
 
-        return ModelResponse(items)
+        return ModelResponse(items, model_name=self.model_name)
 
     @staticmethod
     async def _process_streamed_response(response: AsyncStream[RawMessageStreamEvent]) -> StreamedResponse:

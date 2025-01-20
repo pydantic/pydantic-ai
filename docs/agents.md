@@ -445,6 +445,7 @@ with capture_run_messages() as messages:  # (2)!
                         part_kind='tool-call',
                     )
                 ],
+                model_name='function:model_logic',
                 timestamp=datetime.datetime(...),
                 kind='response',
             ),
@@ -469,6 +470,7 @@ with capture_run_messages() as messages:  # (2)!
                         part_kind='tool-call',
                     )
                 ],
+                model_name='function:model_logic',
                 timestamp=datetime.datetime(...),
                 kind='response',
             ),

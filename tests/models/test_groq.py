@@ -18,6 +18,7 @@ from pydantic_ai.messages import (
     ModelResponse,
     RetryPromptPart,
     SystemPromptPart,
+    TextPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
@@ -127,9 +128,17 @@ async def test_request_simple_success(allow_model_requests: None):
     assert result.all_messages() == snapshot(
         [
             ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
-            ModelResponse.from_text(content='world', timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)),
+            ModelResponse(
+                parts=[TextPart(content='world')],
+                model_name='llama-3.1-70b-versatile',
+                timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+            ),
             ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
-            ModelResponse.from_text(content='world', timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)),
+            ModelResponse(
+                parts=[TextPart(content='world')],
+                model_name='llama-3.1-70b-versatile',
+                timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+            ),
         ]
     )
 
@@ -178,6 +187,7 @@ async def test_request_structured_response(allow_model_requests: None):
                         tool_call_id='123',
                     )
                 ],
+                model_name='llama-3.1-70b-versatile',
                 timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc),
             ),
             ModelRequest(
@@ -263,6 +273,7 @@ async def test_request_tool_call(allow_model_requests: None):
                         tool_call_id='1',
                     )
                 ],
+                model_name='llama-3.1-70b-versatile',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
             ),
             ModelRequest(
@@ -283,6 +294,7 @@ async def test_request_tool_call(allow_model_requests: None):
                         tool_call_id='2',
                     )
                 ],
+                model_name='llama-3.1-70b-versatile',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
             ),
             ModelRequest(
@@ -295,7 +307,11 @@ async def test_request_tool_call(allow_model_requests: None):
                     )
                 ]
             ),
-            ModelResponse.from_text(content='final response', timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc)),
+            ModelResponse(
+                parts=[TextPart(content='final response')],
+                model_name='llama-3.1-70b-versatile',
+                timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+            ),
         ]
     )
 
@@ -409,6 +425,7 @@ async def test_stream_structured(allow_model_requests: None):
                         args=ArgsJson(args_json='{"first": "One", "second": "Two"}'),
                     )
                 ],
+                model_name='llama-3.1-70b-versatile',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
             ),
             ModelRequest(

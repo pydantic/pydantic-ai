@@ -92,6 +92,7 @@ print(dice_result.all_messages())
                 part_kind='tool-call',
             )
         ],
+        model_name='function:model_logic',
         timestamp=datetime.datetime(...),
         kind='response',
     ),
@@ -116,6 +117,7 @@ print(dice_result.all_messages())
                 part_kind='tool-call',
             )
         ],
+        model_name='function:model_logic',
         timestamp=datetime.datetime(...),
         kind='response',
     ),
@@ -138,6 +140,7 @@ print(dice_result.all_messages())
                 part_kind='text',
             )
         ],
+        model_name='function:model_logic',
         timestamp=datetime.datetime(...),
         kind='response',
     ),
