@@ -1,0 +1,32 @@
+{"messageStart": {"role": "assistant"}}
+{"contentBlockDelta": {"delta": {"text": "Hello"}, "contentBlockIndex": 0}}
+{"contentBlockDelta": {"delta": {"text": "!"}, "contentBlockIndex": 0}}
+{"contentBlockDelta": {"delta": {"text": " How"}, "contentBlockIndex": 0}}
+{"contentBlockDelta": {"delta": {"text": " can"}, "contentBlockIndex": 0}}
+{"contentBlockDelta": {"delta": {"text": " I"}, "contentBlockIndex": 0}}
+{"contentBlockDelta": {"delta": {"text": " assist"}, "contentBlockIndex": 0}}
+{"contentBlockDelta": {"delta": {"text": " you"}, "contentBlockIndex": 0}}
+{"contentBlockDelta": {"delta": {"text": " today"}, "contentBlockIndex": 0}}
+{"contentBlockDelta": {"delta": {"text": "?"}, "contentBlockIndex": 0}}
+{"contentBlockDelta": {"delta": {"text": " If"}, "contentBlockIndex": 0}}
+{"contentBlockDelta": {"delta": {"text": " you"}, "contentBlockIndex": 0}}
+{"contentBlockDelta": {"delta": {"text": " have"}, "contentBlockIndex": 0}}
+{"contentBlockDelta": {"delta": {"text": " any"}, "contentBlockIndex": 0}}
+{"contentBlockDelta": {"delta": {"text": " questions"}, "contentBlockIndex": 0}}
+{"contentBlockDelta": {"delta": {"text": " or"}, "contentBlockIndex": 0}}
+{"contentBlockDelta": {"delta": {"text": " need"}, "contentBlockIndex": 0}}
+{"contentBlockDelta": {"delta": {"text": " help"}, "contentBlockIndex": 0}}
+{"contentBlockDelta": {"delta": {"text": " with"}, "contentBlockIndex": 0}}
+{"contentBlockDelta": {"delta": {"text": " something"}, "contentBlockIndex": 0}}
+{"contentBlockDelta": {"delta": {"text": ","}, "contentBlockIndex": 0}}
+{"contentBlockDelta": {"delta": {"text": " feel"}, "contentBlockIndex": 0}}
+{"contentBlockDelta": {"delta": {"text": " free"}, "contentBlockIndex": 0}}
+{"contentBlockDelta": {"delta": {"text": " to"}, "contentBlockIndex": 0}}
+{"contentBlockDelta": {"delta": {"text": " let"}, "contentBlockIndex": 0}}
+{"contentBlockDelta": {"delta": {"text": " me"}, "contentBlockIndex": 0}}
+{"contentBlockDelta": {"delta": {"text": " know"}, "contentBlockIndex": 0}}
+{"contentBlockDelta": {"delta": {"text": "."}, "contentBlockIndex": 0}}
+{"contentBlockDelta": {"delta": {"text": ""}, "contentBlockIndex": 0}}
+{"contentBlockStop": {"contentBlockIndex": 0}}
+{"messageStop": {"stopReason": "end_turn"}}
+{"metadata": {"usage": {"inputTokens": 7, "outputTokens": 27, "totalTokens": 34}, "metrics": {"latencyMs": 636}}}

@@ -1,0 +1,35 @@
+{"messageStart": {"role": "assistant"}}
+{"contentBlockDelta": {"delta": {"text": "<thinking"}, "contentBlockIndex": 0}}
+{"contentBlockDelta": {"delta": {"text": ">"}, "contentBlockIndex": 0}}
+{"contentBlockDelta": {"delta": {"text": "The"}, "contentBlockIndex": 0}}
+{"contentBlockDelta": {"delta": {"text": " User"}, "contentBlockIndex": 0}}
+{"contentBlockDelta": {"delta": {"text": " has"}, "contentBlockIndex": 0}}
+{"contentBlockDelta": {"delta": {"text": " asked"}, "contentBlockIndex": 0}}
+{"contentBlockDelta": {"delta": {"text": " for"}, "contentBlockIndex": 0}}
+{"contentBlockDelta": {"delta": {"text": " the"}, "contentBlockIndex": 0}}
+{"contentBlockDelta": {"delta": {"text": " capital"}, "contentBlockIndex": 0}}
+{"contentBlockDelta": {"delta": {"text": " of"}, "contentBlockIndex": 0}}
+{"contentBlockDelta": {"delta": {"text": " the"}, "contentBlockIndex": 0}}
+{"contentBlockDelta": {"delta": {"text": " UK"}, "contentBlockIndex": 0}}
+{"contentBlockDelta": {"delta": {"text": "."}, "contentBlockIndex": 0}}
+{"contentBlockDelta": {"delta": {"text": " This"}, "contentBlockIndex": 0}}
+{"contentBlockDelta": {"delta": {"text": " is"}, "contentBlockIndex": 0}}
+{"contentBlockDelta": {"delta": {"text": " a"}, "contentBlockIndex": 0}}
+{"contentBlockDelta": {"delta": {"text": " straightforward"}, "contentBlockIndex": 0}}
+{"contentBlockDelta": {"delta": {"text": " factual"}, "contentBlockIndex": 0}}
+{"contentBlockDelta": {"delta": {"text": " question"}, "contentBlockIndex": 0}}
+{"contentBlockDelta": {"delta": {"text": " that"}, "contentBlockIndex": 0}}
+{"contentBlockDelta": {"delta": {"text": " can"}, "contentBlockIndex": 0}}
+{"contentBlockDelta": {"delta": {"text": " be"}, "contentBlockIndex": 0}}
+{"contentBlockDelta": {"delta": {"text": " answered"}, "contentBlockIndex": 0}}
+{"contentBlockDelta": {"delta": {"text": " directly"}, "contentBlockIndex": 0}}
+{"contentBlockDelta": {"delta": {"text": ".</"}, "contentBlockIndex": 0}}
+{"contentBlockDelta": {"delta": {"text": "thinking"}, "contentBlockIndex": 0}}
+{"contentBlockDelta": {"delta": {"text": ">"}, "contentBlockIndex": 0}}
+{"contentBlockDelta": {"delta": {"text": "\n"}, "contentBlockIndex": 0}}
+{"contentBlockStop": {"contentBlockIndex": 0}}
+{"contentBlockStart": {"start": {"toolUse": {"toolUseId": "tooluse_8iq1myEvSNK4gh3VVdM8og", "name": "final_result"}}, "contentBlockIndex": 1}}
+{"contentBlockDelta": {"delta": {"toolUse": {"input": "{\"answer\":\"London\"}"}}, "contentBlockIndex": 1}}
+{"contentBlockStop": {"contentBlockIndex": 1}}
+{"messageStop": {"stopReason": "tool_use"}}
+{"metadata": {"usage": {"inputTokens": 417, "outputTokens": 76, "totalTokens": 493}, "metrics": {"latencyMs": 762}}}
