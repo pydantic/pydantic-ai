@@ -27,7 +27,7 @@ ALGOLIA_WRITE_API_KEY = os.environ.get('ALGOLIA_WRITE_API_KEY')
 
 # Algolia has a limit of 100kb per record in the paid plan,
 # leave some space for the other fields as well.
-MAX_CONTENT_LENGTH = 90000
+MAX_CONTENT_LENGTH = 90_000
 
 
 def on_page_content(html: str, page: Page, config: Config, files: Files) -> str:
