@@ -3,6 +3,7 @@ PydanticAI is Model-agnostic and has built in support for the following model pr
 * [OpenAI](#openai)
 * [Anthropic](#anthropic)
 * Gemini via two different APIs: [Generative Language API](#gemini) and [VertexAI API](#gemini-via-vertexai)
+* [LMStudio](#lmstudio)
 * [Ollama](#ollama)
 * [Groq](#groq)
 * [Mistral](#mistral)
@@ -302,6 +303,26 @@ agent = Agent(model)
 ```
 
 [`VertexAiRegion`][pydantic_ai.models.vertexai.VertexAiRegion] contains a list of available regions.
+
+## LMStudio
+
+### Install
+
+To use [`LMStudioModel`][pydantic_ai.models.lmstudio.LMStudio], you need to either install [`pydantic-ai`](install.md), or install [`pydantic-ai-slim`](install.md#slim-install) with the `openai` optional group:
+
+```bash
+pip/uv-add 'pydantic-ai-slim[openai]'
+```
+
+**This is because internally, `LMStudioModel` uses the OpenAI API.**
+
+### Configuration
+
+To use [LMStudio](https://lmstudio.ai/), you must first download the [LMStudio client](https://lmstudio.ai/) and [see getting started](https://lmstudio.ai/docs), and then download a model using the client [LMStudio model library](https://lmstudio.ai/models).
+
+You must also ensure the LMStudio server is running when trying to make requests to it. For more information, please see the [LMStudio documentation](https://lmstudio.ai/docs/basics).
+
+For detailed setup and example, please see the [LMStudio setup documentation](https://lmstudio.ai/docs)).
 
 ## Ollama
 

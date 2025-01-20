@@ -48,6 +48,13 @@ TEST_CASES = [
         'groq',
         'GroqModel',
     ),
+    (
+        'LMSTUDIO_API_KEY',
+        'lmstudio:mistral-nemo-instruct-2407',
+        'lmstudio:mistral-nemo-instruct-2407',
+        'lmstudio',
+        'LMStudioModel',
+    ),
     ('OLLAMA_API_KEY', 'ollama:llama3', 'ollama:llama3', 'ollama', 'OllamaModel'),
     (
         'MISTRAL_API_KEY',
