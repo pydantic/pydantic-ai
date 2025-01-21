@@ -269,7 +269,9 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
                     yield combined_validated_text
 
                 lf_span.set_attribute('combined_text', combined_validated_text)
-                await self._marked_completed(_messages.ModelResponse.from_text(combined_validated_text))
+                await self._marked_completed(
+                    _messages.ModelResponse.from_text(combined_validated_text, self._stream_response.model_name())
+                )
 
     async def stream_structured(
         self, *, debounce_by: float | None = 0.1

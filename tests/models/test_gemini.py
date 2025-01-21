@@ -445,7 +445,9 @@ async def test_text_success(get_gemini_client: GetGeminiClient):
     assert result.all_messages() == snapshot(
         [
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
-            ModelResponse.from_text(content='Hello world', timestamp=IsNow(tz=timezone.utc)),
+            ModelResponse(
+                parts=[TextPart(content='Hello world')], model_name='gemini-1.5-flash', timestamp=IsNow(tz=timezone.utc)
+            ),
         ]
     )
     assert result.usage() == snapshot(Usage(requests=1, request_tokens=1, response_tokens=2, total_tokens=3))
@@ -455,9 +457,17 @@ async def test_text_success(get_gemini_client: GetGeminiClient):
     assert result.all_messages() == snapshot(
         [
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
-            ModelResponse.from_text(content='Hello world', timestamp=IsNow(tz=timezone.utc)),
+            ModelResponse(
+                parts=[TextPart(content='Hello world')],
+                model_name='gemini-1.5-flash',
+                timestamp=IsNow(tz=timezone.utc),
+            ),
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
-            ModelResponse.from_text(content='Hello world', timestamp=IsNow(tz=timezone.utc)),
+            ModelResponse(
+                parts=[TextPart(content='Hello world')],
+                model_name='gemini-1.5-flash',
+                timestamp=IsNow(tz=timezone.utc),
+            ),
         ]
     )
 
@@ -484,6 +494,7 @@ async def test_request_structured_response(get_gemini_client: GetGeminiClient):
                         args=ArgsDict(args_dict={'response': [1, 2, 123]}),
                     )
                 ],
+                model_name='gemini-1.5-flash',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
@@ -546,6 +557,7 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
                         args=ArgsDict(args_dict={'loc_name': 'San Fransisco'}),
                     )
                 ],
+                model_name='gemini-1.5-flash',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
@@ -568,6 +580,7 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
                         args=ArgsDict(args_dict={'loc_name': 'New York'}),
                     ),
                 ],
+                model_name='gemini-1.5-flash',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
@@ -580,7 +593,11 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
                     ),
                 ]
             ),
-            ModelResponse.from_text(content='final response', timestamp=IsNow(tz=timezone.utc)),
+            ModelResponse(
+                parts=[TextPart(content='final response')],
+                model_name='gemini-1.5-flash',
+                timestamp=IsNow(tz=timezone.utc),
+            ),
         ]
     )
     assert result.usage() == snapshot(Usage(requests=3, request_tokens=3, response_tokens=6, total_tokens=9))
@@ -713,6 +730,7 @@ async def test_stream_structured_tool_calls(get_gemini_client: GetGeminiClient):
                     ToolCallPart(tool_name='foo', args=ArgsDict(args_dict={'x': 'a'})),
                     ToolCallPart(tool_name='bar', args=ArgsDict(args_dict={'y': 'b'})),
                 ],
+                model_name='gemini-1.5-flash',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
@@ -728,6 +746,7 @@ async def test_stream_structured_tool_calls(get_gemini_client: GetGeminiClient):
                         args=ArgsDict(args_dict={'response': [1, 2]}),
                     )
                 ],
+                model_name='gemini-1.5-flash',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(

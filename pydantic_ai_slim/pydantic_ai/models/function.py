@@ -71,16 +71,15 @@ class FunctionModel(Model):
         result_tools: list[ToolDefinition],
     ) -> AgentModel:
         return FunctionAgentModel(
-            self.function, self.stream_function, AgentInfo(function_tools, allow_text_result, result_tools, None)
+            self.function,
+            self.stream_function,
+            AgentInfo(function_tools, allow_text_result, result_tools, None),
         )
 
     def name(self) -> str:
-        labels: list[str] = []
-        if self.function is not None:
-            labels.append(self.function.__name__)
-        if self.stream_function is not None:
-            labels.append(f'stream-{self.stream_function.__name__}')
-        return f'function:{",".join(labels)}'
+        function_name = self.function.__name__ if self.function is not None else ''
+        stream_function_name = self.stream_function.__name__ if self.stream_function is not None else ''
+        return f'function:{function_name}:{stream_function_name}'
 
 
 @dataclass(frozen=True)
@@ -147,12 +146,15 @@ class FunctionAgentModel(AgentModel):
         agent_info = replace(self.agent_info, model_settings=model_settings)
 
         assert self.function is not None, 'FunctionModel must receive a `function` to support non-streamed requests'
+        model_name = f'function:{self.function.__name__}'
+
         if inspect.iscoroutinefunction(self.function):
             response = await self.function(messages, agent_info)
         else:
             response_ = await _utils.run_in_executor(self.function, messages, agent_info)
             assert isinstance(response_, ModelResponse), response_
             response = response_
+        response.model_name = model_name
         # TODO is `messages` right here? Should it just be new messages?
         return response, _estimate_usage(chain(messages, [response]))
 
@@ -163,13 +165,15 @@ class FunctionAgentModel(AgentModel):
         assert (
             self.stream_function is not None
         ), 'FunctionModel must receive a `stream_function` to support streamed requests'
+        model_name = f'function:{self.stream_function.__name__}'
+
         response_stream = PeekableAsyncStream(self.stream_function(messages, self.agent_info))
 
         first = await response_stream.peek()
         if isinstance(first, _utils.Unset):
             raise ValueError('Stream function must return at least one item')
 
-        yield FunctionStreamedResponse(response_stream)
+        yield FunctionStreamedResponse(_model_name=model_name, _iter=response_stream)
 
 
 @dataclass

@@ -151,6 +151,7 @@ async def test_forecast():
                     tool_call_id=None,
                 )
             ],
+            model_name='test',
             timestamp=IsNow(tz=timezone.utc),
         ),
         ModelRequest(
@@ -169,6 +170,7 @@ async def test_forecast():
                     content='{"weather_forecast":"Sunny with a chance of rain"}',
                 )
             ],
+            model_name='test',
             timestamp=IsNow(tz=timezone.utc),
         ),
     ]
