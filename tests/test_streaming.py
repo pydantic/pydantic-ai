@@ -279,7 +279,7 @@ async def test_call_tool():
                 ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
                 ModelResponse(
                     parts=[ToolCallPart(tool_name='ret_a', args=ArgsJson(args_json='{"x": "hello"}'))],
-                    model_name='function',
+                    model_name='function:stream_structured_function',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 ModelRequest(
@@ -293,7 +293,7 @@ async def test_call_tool():
                 ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
                 ModelResponse(
                     parts=[ToolCallPart(tool_name='ret_a', args=ArgsJson(args_json='{"x": "hello"}'))],
-                    model_name='function',
+                    model_name='function:stream_structured_function',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 ModelRequest(
@@ -306,7 +306,7 @@ async def test_call_tool():
                             args=ArgsJson(args_json='{"response": ["hello world", 2]}'),
                         )
                     ],
-                    model_name='function',
+                    model_name='function:stream_structured_function',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 ModelRequest(
@@ -353,7 +353,7 @@ async def test_call_tool_wrong_name():
             ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='foobar', args=ArgsJson(args_json='{}'))],
-                model_name='function',
+                model_name='function:stream_structured_function',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
@@ -416,7 +416,7 @@ async def test_early_strategy_stops_after_first_final_result():
                     ToolCallPart(tool_name='regular_tool', args=ArgsJson(args_json='{"x": 1}')),
                     ToolCallPart(tool_name='another_tool', args=ArgsJson(args_json='{"y": 2}')),
                 ],
-                model_name='function',
+                model_name='function:sf',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
@@ -468,7 +468,7 @@ async def test_early_strategy_uses_first_final_result():
                     ToolCallPart(tool_name='final_result', args=ArgsJson(args_json='{"value": "first"}')),
                     ToolCallPart(tool_name='final_result', args=ArgsJson(args_json='{"value": "second"}')),
                 ],
-                model_name='function',
+                model_name='function:sf',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
@@ -530,7 +530,7 @@ async def test_exhaustive_strategy_executes_all_tools():
                     ToolCallPart(tool_name='final_result', args=ArgsJson(args_json='{"value": "second"}')),
                     ToolCallPart(tool_name='unknown_tool', args=ArgsJson(args_json='{"value": "???"}')),
                 ],
-                model_name='function',
+                model_name='function:sf',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
@@ -630,7 +630,7 @@ async def test_early_strategy_with_final_result_in_middle():
                         part_kind='tool-call',
                     ),
                 ],
-                model_name='function',
+                model_name='function:sf',
                 timestamp=IsNow(tz=datetime.timezone.utc),
                 kind='response',
             ),

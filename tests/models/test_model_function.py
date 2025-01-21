@@ -30,6 +30,26 @@ from ..conftest import IsNow
 pytestmark = pytest.mark.anyio
 
 
+def hello(_messages: list[ModelMessage], _agent_info: AgentInfo) -> ModelResponse:
+    return ModelResponse.from_text('hello world')
+
+
+async def stream_hello(_messages: list[ModelMessage], _agent_info: AgentInfo) -> AsyncIterator[str]:
+    yield 'hello '
+    yield 'world'
+
+
+def test_init() -> None:
+    m = FunctionModel(function=hello)
+    assert m.name() == 'function:hello:'
+
+    m1 = FunctionModel(stream_function=stream_hello)
+    assert m1.name() == 'function::stream_hello'
+
+    m2 = FunctionModel(function=hello, stream_function=stream_hello)
+    assert m2.name() == 'function:hello:stream_hello'
+
+
 async def return_last(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:
     last = messages[-1].parts[-1]
     response = asdict(last)
@@ -407,7 +427,7 @@ async def test_stream_text():
                 ModelRequest(parts=[UserPromptPart(content='', timestamp=IsNow(tz=timezone.utc))]),
                 ModelResponse(
                     parts=[TextPart(content='hello world')],
-                    model_name='function',
+                    model_name='function:stream_text_function',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
             ]

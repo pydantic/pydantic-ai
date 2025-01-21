@@ -136,7 +136,7 @@ async def main():
                         part_kind='text',
                     )
                 ],
-                model_name='function:model_logic',
+                model_name='function:stream_model_logic',
                 timestamp=datetime.datetime(...),
                 kind='response',
             ),
