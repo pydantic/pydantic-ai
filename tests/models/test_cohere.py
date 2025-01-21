@@ -101,9 +101,13 @@ async def test_request_simple_success(allow_model_requests: None):
     assert result.all_messages() == snapshot(
         [
             ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
-            ModelResponse.from_text(content='world', timestamp=IsNow(tz=timezone.utc)),
+            ModelResponse.from_text(
+                content='world', model_name='command-r7b-12-2024', timestamp=IsNow(tz=timezone.utc)
+            ),
             ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
-            ModelResponse.from_text(content='world', timestamp=IsNow(tz=timezone.utc)),
+            ModelResponse.from_text(
+                content='world', model_name='command-r7b-12-2024', timestamp=IsNow(tz=timezone.utc)
+            ),
         ]
     )
 
@@ -170,6 +174,7 @@ async def test_request_structured_response(allow_model_requests: None):
                         tool_call_id='123',
                     )
                 ],
+                model_name='command-r7b-12-2024',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
@@ -255,6 +260,7 @@ async def test_request_tool_call(allow_model_requests: None):
                         tool_call_id='1',
                     )
                 ],
+                model_name='command-r7b-12-2024',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
@@ -275,6 +281,7 @@ async def test_request_tool_call(allow_model_requests: None):
                         tool_call_id='2',
                     )
                 ],
+                model_name='command-r7b-12-2024',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
@@ -287,7 +294,9 @@ async def test_request_tool_call(allow_model_requests: None):
                     )
                 ]
             ),
-            ModelResponse.from_text(content='final response', timestamp=IsNow(tz=timezone.utc)),
+            ModelResponse.from_text(
+                content='final response', model_name='command-r7b-12-2024', timestamp=IsNow(tz=timezone.utc)
+            ),
         ]
     )
     assert result.usage() == snapshot(
