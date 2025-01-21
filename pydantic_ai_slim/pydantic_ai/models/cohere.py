@@ -172,8 +172,7 @@ class CohereAgentModel(AgentModel):
             p=model_settings.get('top_p', OMIT),
         )
 
-    @staticmethod
-    def _process_response(response: ChatResponse) -> ModelResponse:
+    def _process_response(self, response: ChatResponse) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
         parts: list[ModelResponsePart] = []
         if response.message.content is not None and len(response.message.content) > 0:
@@ -190,7 +189,7 @@ class CohereAgentModel(AgentModel):
                         tool_call_id=c.id,
                     )
                 )
-        return ModelResponse(parts=parts)
+        return ModelResponse(parts=parts, model_name=self.model_name)
 
     @classmethod
     def _map_message(cls, message: ModelMessage) -> Iterable[ChatMessageV2]:
