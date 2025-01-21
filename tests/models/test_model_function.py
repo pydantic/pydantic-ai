@@ -30,14 +30,16 @@ from ..conftest import IsNow
 pytestmark = pytest.mark.anyio
 
 
+def hello(_messages: list[ModelMessage], _agent_info: AgentInfo) -> ModelResponse:
+    return ModelResponse.from_text('hello world')  # pragma: no cover
+
+
+async def stream_hello(_messages: list[ModelMessage], _agent_info: AgentInfo) -> AsyncIterator[str]:
+    yield 'hello '  # pragma: no cover
+    yield 'world'  # pragma: no cover
+
+
 def test_init() -> None:
-    def hello(_messages: list[ModelMessage], _agent_info: AgentInfo) -> ModelResponse:
-        return ModelResponse.from_text('hello world')
-
-    async def stream_hello(_messages: list[ModelMessage], _agent_info: AgentInfo) -> AsyncIterator[str]:
-        yield 'hello '
-        yield 'world'
-
     m = FunctionModel(function=hello)
     assert m.name() == 'function:hello:'
 
