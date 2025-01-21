@@ -81,6 +81,22 @@ KnownModelName = Literal[
     'anthropic:claude-3-5-haiku-latest',
     'anthropic:claude-3-5-sonnet-latest',
     'anthropic:claude-3-opus-latest',
+    'claude-3-5-haiku-latest',
+    'claude-3-5-sonnet-latest',
+    'claude-3-opus-latest',
+    'cohere:c4ai-aya-expanse-32b',
+    'cohere:c4ai-aya-expanse-8b',
+    'cohere:command',
+    'cohere:command-light',
+    'cohere:command-light-nightly',
+    'cohere:command-nightly',
+    'cohere:command-r',
+    'cohere:command-r-03-2024',
+    'cohere:command-r-08-2024',
+    'cohere:command-r-plus',
+    'cohere:command-r-plus-04-2024',
+    'cohere:command-r-plus-08-2024',
+    'cohere:command-r7b-12-2024',
     'test',
 ]
 """Known model names that can be used with the `model` parameter of [`Agent`][pydantic_ai.Agent].
@@ -235,6 +251,10 @@ def infer_model(model: Model | KnownModelName) -> Model:
         from .test import TestModel
 
         return TestModel()
+    elif model.startswith('cohere:'):
+        from .cohere import CohereModel
+
+        return CohereModel(model[7:])
     elif model.startswith('openai:'):
         from .openai import OpenAIModel
 
