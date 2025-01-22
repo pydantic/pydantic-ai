@@ -61,6 +61,7 @@ KnownModelName = Literal[
     'mistral:codestral-latest',
     'mistral:mistral-moderation-latest',
     'ollama:codellama',
+    'ollama:deepseek-r1',
     'ollama:gemma',
     'ollama:gemma2',
     'ollama:llama3',
