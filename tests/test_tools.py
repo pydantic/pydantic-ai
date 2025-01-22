@@ -83,9 +83,9 @@ async def google_style_docstring(foo: int, bar: str) -> str:  # pragma: no cover
 async def get_json_schema(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
     if len(info.function_tools) == 1:
         r = info.function_tools[0]
-        return ModelResponse.from_text(pydantic_core.to_json(r).decode())
+        return ModelResponse(parts=[TextPart(pydantic_core.to_json(r).decode())])
     else:
-        return ModelResponse.from_text(pydantic_core.to_json(info.function_tools).decode())
+        return ModelResponse(parts=[TextPart(pydantic_core.to_json(info.function_tools).decode())])
 
 
 @pytest.mark.parametrize('docstring_format', ['google', 'auto'])
