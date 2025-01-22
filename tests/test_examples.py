@@ -22,6 +22,7 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelResponse,
     RetryPromptPart,
+    TextPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
@@ -280,7 +281,7 @@ async def model_logic(messages: list[ModelMessage], info: AgentInfo) -> ModelRes
         elif m.content == 'Please generate 5 jokes.' and any(t.name == 'get_jokes' for t in info.function_tools):
             return ModelResponse(parts=[ToolCallPart(tool_name='get_jokes', args=ArgsDict({'count': 5}))])
         elif re.fullmatch(r'sql prompt \d+', m.content):
-            return ModelResponse.from_text(content='SELECT 1')
+            return ModelResponse(parts=[TextPart('SELECT 1')])
         elif m.content.startswith('Write a welcome email for the user:'):
             return ModelResponse(
                 parts=[
@@ -298,10 +299,10 @@ async def model_logic(messages: list[ModelMessage], info: AgentInfo) -> ModelRes
         elif m.content.startswith('<examples>\n  <user>'):
             return ModelResponse(parts=[ToolCallPart(tool_name='final_result_EmailOk', args=ArgsDict({}))])
         elif m.content == 'Ask a simple question with a single correct answer.' and len(messages) > 2:
-            return ModelResponse.from_text(content='what is 1 + 1?')
+            return ModelResponse(parts=[TextPart('what is 1 + 1?')])
         elif response := text_responses.get(m.content):
             if isinstance(response, str):
-                return ModelResponse.from_text(content=response)
+                return ModelResponse(parts=[TextPart(response)])
             else:
                 return ModelResponse(parts=[response])
 
@@ -311,7 +312,7 @@ async def model_logic(messages: list[ModelMessage], info: AgentInfo) -> ModelRes
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'roll_die':
         return ModelResponse(parts=[ToolCallPart(tool_name='get_player_name', args=ArgsDict({}))])
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_player_name':
-        return ModelResponse.from_text(content="Congratulations Anne, you guessed correctly! You're a winner!")
+        return ModelResponse(parts=[TextPart("Congratulations Anne, you guessed correctly! You're a winner!")])
     if (
         isinstance(m, RetryPromptPart)
         and isinstance(m.content, str)
@@ -336,7 +337,7 @@ async def model_logic(messages: list[ModelMessage], info: AgentInfo) -> ModelRes
         }
         return ModelResponse(parts=[ToolCallPart(tool_name='final_result', args=ArgsDict(args))])
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'joke_factory':
-        return ModelResponse.from_text(content='Did you hear about the toothpaste scandal? They called it Colgate.')
+        return ModelResponse(parts=[TextPart('Did you hear about the toothpaste scandal? They called it Colgate.')])
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_jokes':
         args = {'response': []}
         return ModelResponse(parts=[ToolCallPart(tool_name='final_result', args=ArgsDict(args))])
