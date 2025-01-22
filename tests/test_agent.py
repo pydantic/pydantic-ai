@@ -241,7 +241,7 @@ def test_plain_response_then_tuple(set_event_loop: None):
         assert info.result_tools is not None
         call_index += 1
         if call_index == 1:
-            return ModelResponse.from_text('hello')
+            return ModelResponse(parts=[TextPart('hello')])
         else:
             args_json = '{"response": ["foo", "bar"]}'
             return ModelResponse(parts=[ToolCallPart.from_raw_args(info.result_tools[0].name, args_json)])
@@ -786,7 +786,7 @@ def test_unknown_tool(set_event_loop: None):
 def test_unknown_tool_fix(set_event_loop: None):
     def empty(m: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
         if len(m) > 1:
-            return ModelResponse.from_text(content='success')
+            return ModelResponse(parts=[TextPart('success')])
         else:
             return ModelResponse(parts=[ToolCallPart.from_raw_args('foobar', '{}')])
 
@@ -1188,7 +1188,7 @@ class TestMultipleToolCalls:
 
 async def test_model_settings_override() -> None:
     def return_settings(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        return ModelResponse.from_text(to_json(info.model_settings).decode())
+        return ModelResponse(parts=[TextPart(to_json(info.model_settings).decode())])
 
     my_agent = Agent(FunctionModel(return_settings))
     assert (await my_agent.run('Hello')).data == IsJson(None)

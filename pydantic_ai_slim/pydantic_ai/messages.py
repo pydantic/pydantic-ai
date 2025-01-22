@@ -264,16 +264,6 @@ class ModelResponse:
     kind: Literal['response'] = 'response'
     """Message type identifier, this is available on all parts as a discriminator."""
 
-    @classmethod
-    def from_text(cls, content: str, model_name: str | None = None, timestamp: datetime | None = None) -> Self:
-        """Create a `ModelResponse` containing a single `TextPart`."""
-        return cls([TextPart(content=content)], model_name=model_name, timestamp=timestamp or _now_utc())
-
-    @classmethod
-    def from_tool_call(cls, tool_call: ToolCallPart, model_name: str | None = None) -> Self:
-        """Create a `ModelResponse` containing a single `ToolCallPart`."""
-        return cls([tool_call], model_name=model_name)
-
 
 ModelMessage = Annotated[Union[ModelRequest, ModelResponse], pydantic.Discriminator('kind')]
 """Any message sent to or returned by a model."""

@@ -191,11 +191,13 @@ class TestAgentModel(AgentModel):
                             if isinstance(part, ToolReturnPart):
                                 output[part.tool_name] = part.content
                 if output:
-                    return ModelResponse.from_text(pydantic_core.to_json(output).decode(), model_name=self.model_name)
+                    return ModelResponse(
+                        parts=[TextPart(pydantic_core.to_json(output).decode())], model_name=self.model_name
+                    )
                 else:
-                    return ModelResponse.from_text('success (no tool calls)', model_name=self.model_name)
+                    return ModelResponse(parts=[TextPart('success (no tool calls)')], model_name=self.model_name)
             else:
-                return ModelResponse.from_text(response_text.value, model_name=self.model_name)
+                return ModelResponse(parts=[TextPart(response_text.value)], model_name=self.model_name)
         else:
             assert self.result_tools, 'No result tools provided'
             custom_result_args = self.result.right

@@ -505,9 +505,9 @@ def test_dynamic_tool_use_messages(set_event_loop: None):
     async def repeat_call_foobar(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if info.function_tools:
             tool = info.function_tools[0]
-            return ModelResponse.from_tool_call(ToolCallPart.from_raw_args(tool.name, {'x': 42, 'y': 'a'}))
+            return ModelResponse(parts=[ToolCallPart.from_raw_args(tool.name, {'x': 42, 'y': 'a'})])
         else:
-            return ModelResponse.from_text('done')
+            return ModelResponse(parts=[TextPart('done')])
 
     agent = Agent(FunctionModel(repeat_call_foobar), deps_type=int)
 

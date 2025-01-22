@@ -11,7 +11,7 @@ Here's a minimal example:
 
 ```py {title="function_model_usage.py" call_name="test_my_agent" noqa="I001"}
 from pydantic_ai import Agent
-from pydantic_ai.messages import ModelMessage, ModelResponse
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
 from pydantic_ai.models.function import FunctionModel, AgentInfo
 
 my_agent = Agent('openai:gpt-4o')
@@ -41,7 +41,7 @@ async def model_function(
         function_tools=[], allow_text_result=True, result_tools=[], model_settings=None
     )
     """
-    return ModelResponse.from_text('hello world')
+    return ModelResponse(parts=[TextPart('hello world')])
 
 
 async def test_my_agent():
