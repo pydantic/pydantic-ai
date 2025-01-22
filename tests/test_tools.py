@@ -10,7 +10,15 @@ from pydantic import BaseModel, Field
 from pydantic_core import PydanticSerializationError
 
 from pydantic_ai import Agent, RunContext, Tool, UserError
-from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
+from pydantic_ai.messages import (
+    ArgsDict,
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    ToolCallPart,
+    ToolReturnPart,
+)
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
@@ -73,9 +81,11 @@ async def google_style_docstring(foo: int, bar: str) -> str:  # pragma: no cover
 
 
 async def get_json_schema(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-    assert len(info.function_tools) == 1
-    r = info.function_tools[0]
-    return ModelResponse.from_text(pydantic_core.to_json(r).decode())
+    if len(info.function_tools) == 1:
+        r = info.function_tools[0]
+        return ModelResponse.from_text(pydantic_core.to_json(r).decode())
+    else:
+        return ModelResponse.from_text(pydantic_core.to_json(info.function_tools).decode())
 
 
 @pytest.mark.parametrize('docstring_format', ['google', 'auto'])
@@ -594,13 +604,84 @@ def test_enforce_parameter_descriptions() -> None:
 
 
 def test_json_schema_required_parameters():
-    agent = Agent()
+    agent = Agent(FunctionModel(get_json_schema))
 
     @agent.tool
-    def my_tool(ctx: RunContext[None], a: int, b: int = 1) -> int: ...
+    def my_tool(ctx: RunContext[None], a: int, b: int = 1) -> int:
+        return a + b
 
     @agent.tool_plain
-    def my_tool_plain(*, a: int = 1, b: int) -> int: ...
+    def my_tool_plain(*, a: int = 1, b: int) -> int:
+        return a * b
 
-    assert agent._function_tools['my_tool']._parameters_json_schema['required'] == ['a']
-    assert agent._function_tools['my_tool_plain']._parameters_json_schema['required'] == ['b']
+    result = agent.run_sync('Hello')
+    json_schema = json.loads(result.data)
+    assert json_schema == snapshot(
+        [
+            {
+                'description': '',
+                'name': 'my_tool',
+                'outer_typed_dict_key': None,
+                'parameters_json_schema': {
+                    'additionalProperties': False,
+                    'properties': {'a': {'title': 'A', 'type': 'integer'}, 'b': {'title': 'B', 'type': 'integer'}},
+                    'required': ['a'],
+                    'type': 'object',
+                },
+            },
+            {
+                'description': '',
+                'name': 'my_tool_plain',
+                'outer_typed_dict_key': None,
+                'parameters_json_schema': {
+                    'additionalProperties': False,
+                    'properties': {'a': {'title': 'A', 'type': 'integer'}, 'b': {'title': 'B', 'type': 'integer'}},
+                    'required': ['b'],
+                    'type': 'object',
+                },
+            },
+        ]
+    )
+
+
+def test_call_tool_without_unrequired_parameters():
+    async def call_tools_first(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(tool_name='my_tool', args=ArgsDict({'a': 13})),
+                    ToolCallPart(tool_name='my_tool', args=ArgsDict({'a': 13, 'b': 4})),
+                    ToolCallPart(tool_name='my_tool_plain', args=ArgsDict({'b': 17})),
+                    ToolCallPart(tool_name='my_tool_plain', args=ArgsDict({'a': 4, 'b': 17})),
+                ]
+            )
+        else:
+            return ModelResponse(parts=[TextPart('finished')])
+
+    agent = Agent(FunctionModel(call_tools_first))
+
+    @agent.tool
+    def my_tool(ctx: RunContext[None], a: int, b: int = 2) -> int:
+        return a + b
+
+    @agent.tool_plain
+    def my_tool_plain(*, a: int = 3, b: int) -> int:
+        return a * b
+
+    result = agent.run_sync('Hello')
+    all_messages = result.all_messages()
+    first_response = all_messages[1]
+    second_request = all_messages[2]
+    assert isinstance(first_response, ModelResponse)
+    assert isinstance(second_request, ModelRequest)
+    tool_call_args = [p.args for p in first_response.parts if isinstance(p, ToolCallPart)]
+    tool_returns = [p.content for p in second_request.parts if isinstance(p, ToolReturnPart)]
+    assert tool_call_args == snapshot(
+        [
+            ArgsDict(args_dict={'a': 13}),
+            ArgsDict(args_dict={'a': 13, 'b': 4}),
+            ArgsDict(args_dict={'b': 17}),
+            ArgsDict(args_dict={'a': 4, 'b': 17}),
+        ]
+    )
+    assert tool_returns == snapshot([15, 17, 51, 68])
