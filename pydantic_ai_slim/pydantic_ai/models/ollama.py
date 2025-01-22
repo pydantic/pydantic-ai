@@ -26,6 +26,7 @@ from .openai import OpenAIModel
 
 CommonOllamaModelNames = Literal[
     'codellama',
+    'deepseek-r1',
     'gemma',
     'gemma2',
     'llama3',

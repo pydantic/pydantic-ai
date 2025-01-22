@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 from pydantic_core import PydanticSerializationError
 
 from pydantic_ai import Agent, RunContext, Tool, UserError
-from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
@@ -75,7 +75,7 @@ async def google_style_docstring(foo: int, bar: str) -> str:  # pragma: no cover
 async def get_json_schema(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
     assert len(info.function_tools) == 1
     r = info.function_tools[0]
-    return ModelResponse.from_text(pydantic_core.to_json(r).decode())
+    return ModelResponse(parts=[TextPart(pydantic_core.to_json(r).decode())])
 
 
 @pytest.mark.parametrize('docstring_format', ['google', 'auto'])
@@ -495,9 +495,9 @@ def test_dynamic_tool_use_messages(set_event_loop: None):
     async def repeat_call_foobar(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if info.function_tools:
             tool = info.function_tools[0]
-            return ModelResponse.from_tool_call(ToolCallPart.from_raw_args(tool.name, {'x': 42, 'y': 'a'}))
+            return ModelResponse(parts=[ToolCallPart.from_raw_args(tool.name, {'x': 42, 'y': 'a'})])
         else:
-            return ModelResponse.from_text('done')
+            return ModelResponse(parts=[TextPart('done')])
 
     agent = Agent(FunctionModel(repeat_call_foobar), deps_type=int)
 

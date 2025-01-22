@@ -288,6 +288,7 @@ class Graph(Generic[StateT, DepsT, RunEndT_co]):
         highlighted_nodes: Sequence[mermaid.NodeIdent] | mermaid.NodeIdent | None = None,
         highlight_css: str = mermaid.DEFAULT_HIGHLIGHT_CSS,
         infer_name: bool = True,
+        direction: mermaid.StateDiagramDirection | None = None,
     ) -> str:
         """Generate a diagram representing the graph as [mermaid](https://mermaid.js.org/) diagram.
 
@@ -301,6 +302,7 @@ class Graph(Generic[StateT, DepsT, RunEndT_co]):
             highlighted_nodes: Optional node or nodes to highlight.
             highlight_css: The CSS to use for highlighting nodes.
             infer_name: Whether to infer the graph name from the calling frame.
+            direction: The direction of flow.
 
         Returns:
             The mermaid code for the graph, which can then be rendered as a diagram.
@@ -348,6 +350,7 @@ class Graph(Generic[StateT, DepsT, RunEndT_co]):
             title=title or None,
             edge_labels=edge_labels,
             notes=notes,
+            direction=direction,
         )
 
     def mermaid_image(

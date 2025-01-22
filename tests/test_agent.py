@@ -89,6 +89,7 @@ def test_result_pydantic_model_retry(set_event_loop: None):
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[ToolCallPart.from_raw_args('final_result', '{"a": "wrong", "b": "foo"}')],
+                model_name='function:return_model',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
@@ -109,6 +110,7 @@ def test_result_pydantic_model_retry(set_event_loop: None):
             ),
             ModelResponse(
                 parts=[ToolCallPart.from_raw_args('final_result', '{"a": 42, "b": "foo"}')],
+                model_name='function:return_model',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
@@ -204,6 +206,7 @@ def test_result_validator(set_event_loop: None):
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[ToolCallPart.from_raw_args('final_result', '{"a": 41, "b": "foo"}')],
+                model_name='function:return_model',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
@@ -215,6 +218,7 @@ def test_result_validator(set_event_loop: None):
             ),
             ModelResponse(
                 parts=[ToolCallPart.from_raw_args('final_result', '{"a": 42, "b": "foo"}')],
+                model_name='function:return_model',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
@@ -237,7 +241,7 @@ def test_plain_response_then_tuple(set_event_loop: None):
         assert info.result_tools is not None
         call_index += 1
         if call_index == 1:
-            return ModelResponse.from_text('hello')
+            return ModelResponse(parts=[TextPart('hello')])
         else:
             args_json = '{"response": ["foo", "bar"]}'
             return ModelResponse(parts=[ToolCallPart.from_raw_args(info.result_tools[0].name, args_json)])
@@ -250,7 +254,11 @@ def test_plain_response_then_tuple(set_event_loop: None):
     assert result.all_messages() == snapshot(
         [
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
-            ModelResponse.from_text(content='hello', timestamp=IsNow(tz=timezone.utc)),
+            ModelResponse(
+                parts=[TextPart(content='hello')],
+                model_name='function:return_tuple',
+                timestamp=IsNow(tz=timezone.utc),
+            ),
             ModelRequest(
                 parts=[
                     RetryPromptPart(
@@ -261,6 +269,7 @@ def test_plain_response_then_tuple(set_event_loop: None):
             ),
             ModelResponse(
                 parts=[ToolCallPart.from_raw_args(tool_name='final_result', args='{"response": ["foo", "bar"]}')],
+                model_name='function:return_tuple',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
@@ -511,12 +520,15 @@ def test_run_with_history_new(set_event_loop: None):
             ),
             ModelResponse(
                 parts=[ToolCallPart.from_raw_args(tool_name='ret_a', args={'x': 'a'})],
+                model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
                 parts=[ToolReturnPart(tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc))]
             ),
-            ModelResponse(parts=[TextPart(content='{"ret_a":"a-apple"}')], timestamp=IsNow(tz=timezone.utc)),
+            ModelResponse(
+                parts=[TextPart(content='{"ret_a":"a-apple"}')], model_name='test', timestamp=IsNow(tz=timezone.utc)
+            ),
         ]
     )
 
@@ -533,14 +545,19 @@ def test_run_with_history_new(set_event_loop: None):
                 ),
                 ModelResponse(
                     parts=[ToolCallPart(tool_name='ret_a', args=ArgsDict(args_dict={'x': 'a'}))],
+                    model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 ModelRequest(
                     parts=[ToolReturnPart(tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc))]
                 ),
-                ModelResponse(parts=[TextPart(content='{"ret_a":"a-apple"}')], timestamp=IsNow(tz=timezone.utc)),
+                ModelResponse(
+                    parts=[TextPart(content='{"ret_a":"a-apple"}')], model_name='test', timestamp=IsNow(tz=timezone.utc)
+                ),
                 ModelRequest(parts=[UserPromptPart(content='Hello again', timestamp=IsNow(tz=timezone.utc))]),
-                ModelResponse(parts=[TextPart(content='{"ret_a":"a-apple"}')], timestamp=IsNow(tz=timezone.utc)),
+                ModelResponse(
+                    parts=[TextPart(content='{"ret_a":"a-apple"}')], model_name='test', timestamp=IsNow(tz=timezone.utc)
+                ),
             ],
             _new_message_index=4,
             data='{"ret_a":"a-apple"}',
@@ -576,14 +593,19 @@ def test_run_with_history_new(set_event_loop: None):
                 ),
                 ModelResponse(
                     parts=[ToolCallPart(tool_name='ret_a', args=ArgsDict(args_dict={'x': 'a'}))],
+                    model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 ModelRequest(
                     parts=[ToolReturnPart(tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc))]
                 ),
-                ModelResponse(parts=[TextPart(content='{"ret_a":"a-apple"}')], timestamp=IsNow(tz=timezone.utc)),
+                ModelResponse(
+                    parts=[TextPart(content='{"ret_a":"a-apple"}')], model_name='test', timestamp=IsNow(tz=timezone.utc)
+                ),
                 ModelRequest(parts=[UserPromptPart(content='Hello again', timestamp=IsNow(tz=timezone.utc))]),
-                ModelResponse(parts=[TextPart(content='{"ret_a":"a-apple"}')], timestamp=IsNow(tz=timezone.utc)),
+                ModelResponse(
+                    parts=[TextPart(content='{"ret_a":"a-apple"}')], model_name='test', timestamp=IsNow(tz=timezone.utc)
+                ),
             ],
             _new_message_index=4,
             data='{"ret_a":"a-apple"}',
@@ -616,6 +638,7 @@ def test_run_with_history_new_structured(set_event_loop: None):
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='ret_a', args=ArgsDict(args_dict={'x': 'a'}))],
+                model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
@@ -629,6 +652,7 @@ def test_run_with_history_new_structured(set_event_loop: None):
                         tool_call_id=None,
                     )
                 ],
+                model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
@@ -654,6 +678,7 @@ def test_run_with_history_new_structured(set_event_loop: None):
                 ),
                 ModelResponse(
                     parts=[ToolCallPart(tool_name='ret_a', args=ArgsDict(args_dict={'x': 'a'}))],
+                    model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 ModelRequest(
@@ -661,6 +686,7 @@ def test_run_with_history_new_structured(set_event_loop: None):
                 ),
                 ModelResponse(
                     parts=[ToolCallPart(tool_name='final_result', args=ArgsDict(args_dict={'a': 0}))],
+                    model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 ModelRequest(
@@ -680,6 +706,7 @@ def test_run_with_history_new_structured(set_event_loop: None):
                 ),
                 ModelResponse(
                     parts=[ToolCallPart(tool_name='final_result', args=ArgsDict(args_dict={'a': 0}))],
+                    model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 ModelRequest(
@@ -737,6 +764,7 @@ def test_unknown_tool(set_event_loop: None):
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='foobar', args=ArgsJson(args_json='{}'))],
+                model_name='function:empty',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
@@ -748,6 +776,7 @@ def test_unknown_tool(set_event_loop: None):
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='foobar', args=ArgsJson(args_json='{}'))],
+                model_name='function:empty',
                 timestamp=IsNow(tz=timezone.utc),
             ),
         ]
@@ -757,7 +786,7 @@ def test_unknown_tool(set_event_loop: None):
 def test_unknown_tool_fix(set_event_loop: None):
     def empty(m: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
         if len(m) > 1:
-            return ModelResponse.from_text(content='success')
+            return ModelResponse(parts=[TextPart('success')])
         else:
             return ModelResponse(parts=[ToolCallPart.from_raw_args('foobar', '{}')])
 
@@ -770,6 +799,7 @@ def test_unknown_tool_fix(set_event_loop: None):
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='foobar', args=ArgsJson(args_json='{}'))],
+                model_name='function:empty',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
@@ -779,7 +809,11 @@ def test_unknown_tool_fix(set_event_loop: None):
                     )
                 ]
             ),
-            ModelResponse.from_text(content='success', timestamp=IsNow(tz=timezone.utc)),
+            ModelResponse(
+                parts=[TextPart(content='success')],
+                model_name='function:empty',
+                timestamp=IsNow(tz=timezone.utc),
+            ),
         ]
     )
 
@@ -1028,6 +1062,7 @@ class TestMultipleToolCalls:
                         ToolCallPart.from_raw_args(tool_name='final_result', args={'value': 'second'}),
                         ToolCallPart.from_raw_args(tool_name='unknown_tool', args={'value': '???'}),
                     ],
+                    model_name='function:return_model',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 ModelRequest(
@@ -1104,6 +1139,7 @@ class TestMultipleToolCalls:
                         ToolCallPart.from_raw_args(tool_name='another_tool', args={'y': 2}),
                         ToolCallPart.from_raw_args(tool_name='unknown_tool', args={'value': '???'}),
                     ],
+                    model_name='function:return_model',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 ModelRequest(
@@ -1152,7 +1188,7 @@ class TestMultipleToolCalls:
 
 async def test_model_settings_override() -> None:
     def return_settings(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        return ModelResponse.from_text(to_json(info.model_settings).decode())
+        return ModelResponse(parts=[TextPart(to_json(info.model_settings).decode())])
 
     my_agent = Agent(FunctionModel(return_settings))
     assert (await my_agent.run('Hello')).data == IsJson(None)
@@ -1216,6 +1252,7 @@ def test_heterogeneous_responses_non_streaming(set_event_loop: None) -> None:
                         args=ArgsDict(args_dict={'loc_name': 'London'}),
                     ),
                 ],
+                model_name='function:return_model',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
@@ -1225,7 +1262,11 @@ def test_heterogeneous_responses_non_streaming(set_event_loop: None) -> None:
                     )
                 ]
             ),
-            ModelResponse.from_text(content='final response', timestamp=IsNow(tz=timezone.utc)),
+            ModelResponse(
+                parts=[TextPart(content='final response')],
+                model_name='function:return_model',
+                timestamp=IsNow(tz=timezone.utc),
+            ),
         ]
     )
 
@@ -1251,7 +1292,9 @@ def test_nested_capture_run_messages(set_event_loop: None) -> None:
     assert messages1 == snapshot(
         [
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
-            ModelResponse(parts=[TextPart(content='success (no tool calls)')], timestamp=IsNow(tz=timezone.utc)),
+            ModelResponse(
+                parts=[TextPart(content='success (no tool calls)')], model_name='test', timestamp=IsNow(tz=timezone.utc)
+            ),
         ]
     )
     assert messages1 == messages2
@@ -1269,7 +1312,9 @@ def test_double_capture_run_messages(set_event_loop: None) -> None:
     assert messages == snapshot(
         [
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
-            ModelResponse(parts=[TextPart(content='success (no tool calls)')], timestamp=IsNow(tz=timezone.utc)),
+            ModelResponse(
+                parts=[TextPart(content='success (no tool calls)')], model_name='test', timestamp=IsNow(tz=timezone.utc)
+            ),
         ]
     )
 
@@ -1302,6 +1347,7 @@ def test_dynamic_false_no_reevaluate(set_event_loop: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='success (no tool calls)', part_kind='text')],
+                model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 kind='response',
             ),
@@ -1327,6 +1373,7 @@ def test_dynamic_false_no_reevaluate(set_event_loop: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='success (no tool calls)', part_kind='text')],
+                model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 kind='response',
             ),
@@ -1336,6 +1383,7 @@ def test_dynamic_false_no_reevaluate(set_event_loop: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='success (no tool calls)', part_kind='text')],
+                model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 kind='response',
             ),
@@ -1375,6 +1423,7 @@ def test_dynamic_true_reevaluate_system_prompt(set_event_loop: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='success (no tool calls)', part_kind='text')],
+                model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 kind='response',
             ),
@@ -1401,6 +1450,7 @@ def test_dynamic_true_reevaluate_system_prompt(set_event_loop: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='success (no tool calls)', part_kind='text')],
+                model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 kind='response',
             ),
@@ -1410,6 +1460,7 @@ def test_dynamic_true_reevaluate_system_prompt(set_event_loop: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='success (no tool calls)', part_kind='text')],
+                model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 kind='response',
             ),
@@ -1435,6 +1486,7 @@ def test_capture_run_messages_tool_agent(set_event_loop: None) -> None:
             ModelRequest(parts=[UserPromptPart(content='foobar', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='foobar', args=ArgsDict(args_dict={'x': 'a'}))],
+                model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
@@ -1443,7 +1495,9 @@ def test_capture_run_messages_tool_agent(set_event_loop: None) -> None:
                 ]
             ),
             ModelResponse(
-                parts=[TextPart(content='{"foobar":"inner agent result"}')], timestamp=IsNow(tz=timezone.utc)
+                parts=[TextPart(content='{"foobar":"inner agent result"}')],
+                model_name='test',
+                timestamp=IsNow(tz=timezone.utc),
             ),
         ]
     )

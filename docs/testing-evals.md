@@ -151,6 +151,7 @@ async def test_forecast():
                     tool_call_id=None,
                 )
             ],
+            model_name='test',
             timestamp=IsNow(tz=timezone.utc),
         ),
         ModelRequest(
@@ -169,6 +170,7 @@ async def test_forecast():
                     content='{"weather_forecast":"Sunny with a chance of rain"}',
                 )
             ],
+            model_name='test',
             timestamp=IsNow(tz=timezone.utc),
         ),
     ]
@@ -200,6 +202,7 @@ from pydantic_ai import models
 from pydantic_ai.messages import (
     ModelMessage,
     ModelResponse,
+    TextPart,
     ToolCallPart,
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -227,7 +230,7 @@ def call_weather_forecast(  # (1)!
         # second call, return the forecast
         msg = messages[-1].parts[0]
         assert msg.part_kind == 'tool-return'
-        return ModelResponse.from_text(f'The forecast is: {msg.content}')
+        return ModelResponse(parts=[TextPart(f'The forecast is: {msg.content}')])
 
 
 async def test_forecast_future():

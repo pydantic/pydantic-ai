@@ -61,6 +61,7 @@ KnownModelName = Literal[
     'mistral:codestral-latest',
     'mistral:mistral-moderation-latest',
     'ollama:codellama',
+    'ollama:deepseek-r1',
     'ollama:gemma',
     'ollama:gemma2',
     'ollama:llama3',
@@ -81,6 +82,22 @@ KnownModelName = Literal[
     'anthropic:claude-3-5-haiku-latest',
     'anthropic:claude-3-5-sonnet-latest',
     'anthropic:claude-3-opus-latest',
+    'claude-3-5-haiku-latest',
+    'claude-3-5-sonnet-latest',
+    'claude-3-opus-latest',
+    'cohere:c4ai-aya-expanse-32b',
+    'cohere:c4ai-aya-expanse-8b',
+    'cohere:command',
+    'cohere:command-light',
+    'cohere:command-light-nightly',
+    'cohere:command-nightly',
+    'cohere:command-r',
+    'cohere:command-r-03-2024',
+    'cohere:command-r-08-2024',
+    'cohere:command-r-plus',
+    'cohere:command-r-plus-04-2024',
+    'cohere:command-r-plus-08-2024',
+    'cohere:command-r7b-12-2024',
     'test',
 ]
 """Known model names that can be used with the `model` parameter of [`Agent`][pydantic_ai.Agent].
@@ -145,6 +162,7 @@ class AgentModel(ABC):
 class StreamedResponse(ABC):
     """Streamed response from an LLM when calling a tool."""
 
+    _model_name: str
     _usage: Usage = field(default_factory=Usage, init=False)
     _parts_manager: ModelResponsePartsManager = field(default_factory=ModelResponsePartsManager, init=False)
     _event_iterator: AsyncIterator[ModelResponseStreamEvent] | None = field(default=None, init=False)
@@ -168,7 +186,13 @@ class StreamedResponse(ABC):
 
     def get(self) -> ModelResponse:
         """Build a [`ModelResponse`][pydantic_ai.messages.ModelResponse] from the data received from the stream so far."""
-        return ModelResponse(parts=self._parts_manager.get_parts(), timestamp=self.timestamp())
+        return ModelResponse(
+            parts=self._parts_manager.get_parts(), model_name=self._model_name, timestamp=self.timestamp()
+        )
+
+    def model_name(self) -> str:
+        """Get the model name of the response."""
+        return self._model_name
 
     def usage(self) -> Usage:
         """Get the usage of the response so far. This will not be the final usage until the stream is exhausted."""
@@ -228,6 +252,10 @@ def infer_model(model: Model | KnownModelName) -> Model:
         from .test import TestModel
 
         return TestModel()
+    elif model.startswith('cohere:'):
+        from .cohere import CohereModel
+
+        return CohereModel(model[7:])
     elif model.startswith('openai:'):
         from .openai import OpenAIModel
 

@@ -51,6 +51,8 @@ Using this more broad type for the model name instead of the ChatModel definitio
 allows this model to be used more easily with other model types (ie, Ollama)
 """
 
+OpenAISystemPromptRole = Literal['system', 'developer']
+
 
 @dataclass(init=False)
 class OpenAIModel(Model):
@@ -63,6 +65,7 @@ class OpenAIModel(Model):
 
     model_name: OpenAIModelName
     client: AsyncOpenAI = field(repr=False)
+    system_prompt_role: OpenAISystemPromptRole | None = field(default=None)
 
     def __init__(
         self,
@@ -72,6 +75,7 @@ class OpenAIModel(Model):
         api_key: str | None = None,
         openai_client: AsyncOpenAI | None = None,
         http_client: AsyncHTTPClient | None = None,
+        system_prompt_role: OpenAISystemPromptRole | None = None,
     ):
         """Initialize an OpenAI model.
 
@@ -87,6 +91,8 @@ class OpenAIModel(Model):
                 [`AsyncOpenAI`](https://github.com/openai/openai-python?tab=readme-ov-file#async-usage)
                 client to use. If provided, `base_url`, `api_key`, and `http_client` must be `None`.
             http_client: An existing `httpx.AsyncClient` to use for making HTTP requests.
+            system_prompt_role: The role to use for the system prompt message. If not provided, defaults to `'system'`.
+                In the future, this may be inferred from the model name.
         """
         self.model_name: OpenAIModelName = model_name
         if openai_client is not None:
@@ -98,6 +104,7 @@ class OpenAIModel(Model):
             self.client = AsyncOpenAI(base_url=base_url, api_key=api_key, http_client=http_client)
         else:
             self.client = AsyncOpenAI(base_url=base_url, api_key=api_key, http_client=cached_async_http_client())
+        self.system_prompt_role = system_prompt_role
 
     async def agent_model(
         self,
@@ -115,6 +122,7 @@ class OpenAIModel(Model):
             self.model_name,
             allow_text_result,
             tools,
+            self.system_prompt_role,
         )
 
     def name(self) -> str:
@@ -140,6 +148,7 @@ class OpenAIAgentModel(AgentModel):
     model_name: OpenAIModelName
     allow_text_result: bool
     tools: list[chat.ChatCompletionToolParam]
+    system_prompt_role: OpenAISystemPromptRole | None
 
     async def request(
         self, messages: list[ModelMessage], model_settings: ModelSettings | None
@@ -197,8 +206,7 @@ class OpenAIAgentModel(AgentModel):
             timeout=model_settings.get('timeout', NOT_GIVEN),
         )
 
-    @staticmethod
-    def _process_response(response: chat.ChatCompletion) -> ModelResponse:
+    def _process_response(self, response: chat.ChatCompletion) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
         timestamp = datetime.fromtimestamp(response.created, tz=timezone.utc)
         choice = response.choices[0]
@@ -208,23 +216,25 @@ class OpenAIAgentModel(AgentModel):
         if choice.message.tool_calls is not None:
             for c in choice.message.tool_calls:
                 items.append(ToolCallPart.from_raw_args(c.function.name, c.function.arguments, c.id))
-        return ModelResponse(items, timestamp=timestamp)
+        return ModelResponse(items, model_name=self.model_name, timestamp=timestamp)
 
-    @staticmethod
-    async def _process_streamed_response(response: AsyncStream[ChatCompletionChunk]) -> OpenAIStreamedResponse:
+    async def _process_streamed_response(self, response: AsyncStream[ChatCompletionChunk]) -> OpenAIStreamedResponse:
         """Process a streamed response, and prepare a streaming response to return."""
         peekable_response = _utils.PeekableAsyncStream(response)
         first_chunk = await peekable_response.peek()
         if isinstance(first_chunk, _utils.Unset):
             raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')
 
-        return OpenAIStreamedResponse(peekable_response, datetime.fromtimestamp(first_chunk.created, tz=timezone.utc))
+        return OpenAIStreamedResponse(
+            _model_name=self.model_name,
+            _response=peekable_response,
+            _timestamp=datetime.fromtimestamp(first_chunk.created, tz=timezone.utc),
+        )
 
-    @classmethod
-    def _map_message(cls, message: ModelMessage) -> Iterable[chat.ChatCompletionMessageParam]:
+    def _map_message(self, message: ModelMessage) -> Iterable[chat.ChatCompletionMessageParam]:
         """Just maps a `pydantic_ai.Message` to a `openai.types.ChatCompletionMessageParam`."""
         if isinstance(message, ModelRequest):
-            yield from cls._map_user_message(message)
+            yield from self._map_user_message(message)
         elif isinstance(message, ModelResponse):
             texts: list[str] = []
             tool_calls: list[chat.ChatCompletionMessageToolCallParam] = []
@@ -246,11 +256,13 @@ class OpenAIAgentModel(AgentModel):
         else:
             assert_never(message)
 
-    @classmethod
-    def _map_user_message(cls, message: ModelRequest) -> Iterable[chat.ChatCompletionMessageParam]:
+    def _map_user_message(self, message: ModelRequest) -> Iterable[chat.ChatCompletionMessageParam]:
         for part in message.parts:
             if isinstance(part, SystemPromptPart):
-                yield chat.ChatCompletionSystemMessageParam(role='system', content=part.content)
+                if self.system_prompt_role == 'developer':
+                    yield chat.ChatCompletionDeveloperMessageParam(role='developer', content=part.content)
+                else:
+                    yield chat.ChatCompletionSystemMessageParam(role='system', content=part.content)
             elif isinstance(part, UserPromptPart):
                 yield chat.ChatCompletionUserMessageParam(role='user', content=part.content)
             elif isinstance(part, ToolReturnPart):
