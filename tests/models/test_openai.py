@@ -497,6 +497,11 @@ async def test_no_delta(allow_model_requests: None):
 async def test_system_prompt_role(
     allow_model_requests: None, system_prompt_role: OpenAISystemPromptRole | None
 ) -> None:
+    """Testing the system prompt role for OpenAI models is properly set / inferred.
+
+    It's not ideal that we test a private method here, this test is bound to be inherently fragile.
+    That beging said, inference / configurabilty here is likely to change, so we just want to test
+    the current desired behavior for now."""
     m = OpenAIModel('gpt-4o', system_prompt_role=system_prompt_role)
     assert m.system_prompt_role == system_prompt_role
 
