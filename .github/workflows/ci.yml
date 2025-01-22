@@ -147,7 +147,7 @@ jobs:
       - name: test lowest versions
         run: |
           unset UV_FROZEN
-          uv run --resolution lowest-direct coverage run -m pytest
+          uv run --all-extras --resolution lowest-direct coverage run -m pytest
         env:
           COVERAGE_FILE: coverage/.coverage.${{ runner.os }}-py${{ matrix.python-version }}-lowest-versions
 
