@@ -194,7 +194,6 @@ stateDiagram-v2
 """)
 
 
-# Tests for direction starts here
 def test_mermaid_code_all_nodes_no_direction():
     assert graph3.mermaid_code() == snapshot("""\
 ---
