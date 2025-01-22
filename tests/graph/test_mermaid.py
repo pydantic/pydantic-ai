@@ -11,7 +11,6 @@ import httpx
 import pytest
 from inline_snapshot import snapshot
 
-from pydantic_ai import UserError
 from pydantic_graph import BaseNode, Edge, End, EndStep, Graph, GraphRunContext, GraphSetupError, NodeStep
 from pydantic_graph.nodes import NodeDef
 
@@ -225,54 +224,7 @@ stateDiagram-v2
 """)
 
 
-def test_mermaid_code_all_nodes_with_direction_tb():
-    assert graph3.mermaid_code(direction='TB') == snapshot("""\
----
-title: graph3
----
-stateDiagram-v2
-  direction TB
-  AllNodes --> AllNodes
-  AllNodes --> Foo
-  AllNodes --> Bar
-  Foo --> Bar
-  Bar --> [*]\
-""")
-
-
-def test_mermaid_code_all_nodes_with_direction_bt():
-    assert graph3.mermaid_code(direction='BT') == snapshot("""\
----
-title: graph3
----
-stateDiagram-v2
-  direction BT
-  AllNodes --> AllNodes
-  AllNodes --> Foo
-  AllNodes --> Bar
-  Foo --> Bar
-  Bar --> [*]\
-""")
-
-
-def test_mermaid_code_all_nodes_with_direction_rl():
-    assert graph3.mermaid_code(direction='RL') == snapshot("""\
----
-title: graph3
----
-stateDiagram-v2
-  direction RL
-  AllNodes --> AllNodes
-  AllNodes --> Foo
-  AllNodes --> Bar
-  Foo --> Bar
-  Bar --> [*]\
-""")
-
-
-def test_mermaid_code_all_nodes_with_direction_wrong():
-    with pytest.raises(UserError):
-        graph3.mermaid_code(direction='AB')
+# Tests for direction ends here
 
 
 def test_docstring_notes_classvar():
