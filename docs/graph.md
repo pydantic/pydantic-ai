@@ -794,6 +794,7 @@ class Answer highlighted
 ### Setting Direction of the State Diagram
 
 You can specify the direction of the state diagram using one of the following values:
+
 - 'TB': Top to Bottom, the diagram flows vertically from top to bottom.
 - 'LR': Left to Right, the diagram flows horizontally from left to right.
 - 'RL': Right to Left, the diagram flows horizontally from right to left.
@@ -814,23 +815,6 @@ title: vending_machine_graph
 ---
 stateDiagram-v2
   direction LR
-  [*] --> InsertCoin
-  InsertCoin --> CoinsInserted
-  CoinsInserted --> SelectProduct
-  CoinsInserted --> Purchase
-  SelectProduct --> Purchase
-  Purchase --> InsertCoin
-  Purchase --> SelectProduct
-  Purchase --> [*]
-```
-
-Here is the original state diagram with the default top to bottom direction:
-
-```mermaid
----
-title: vending_machine_graph
----
-stateDiagram-v2
   [*] --> InsertCoin
   InsertCoin --> CoinsInserted
   CoinsInserted --> SelectProduct
