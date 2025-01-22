@@ -12,7 +12,8 @@ if TYPE_CHECKING:
 class ModelSettings(TypedDict, total=False):
     """Settings to configure an LLM.
 
-    Here we include only settings which apply to multiple models / model providers.
+    Here we include only settings which apply to multiple models / model providers,
+    though not all of these settings are supported by all models.
     """
 
     max_tokens: int
