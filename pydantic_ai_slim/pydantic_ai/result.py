@@ -374,7 +374,7 @@ class StreamedRunResult(_BaseRunResult[ResultDataT], Generic[AgentDepsT, ResultD
                     None,
                     self._run_ctx,
                 )
-            # Since there is no result tool, we can assume that str is compatible with ResultData_co
+            # Since there is no result tool, we can assume that str is compatible with ResultDataT
             return cast(ResultDataT, text)
 
     async def _validate_text_result(self, text: str) -> str:

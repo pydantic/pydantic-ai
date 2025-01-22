@@ -69,8 +69,8 @@ RunResultData = TypeVar('RunResultData')
 class Agent(Generic[AgentDepsT, ResultDataT]):
     """Class for defining "agents" - a way to have a specific type of "conversation" with an LLM.
 
-    Agents are generic in the dependency type they take [`AgentDeps`][pydantic_ai.tools.AgentDeps]
-    and the result data type they return, [`ResultData_co`][pydantic_ai.result.ResultData_co].
+    Agents are generic in the dependency type they take [`AgentDepsT`][pydantic_ai.tools.AgentDepsT]
+    and the result data type they return, [`ResultDataT`][pydantic_ai.result.ResultDataT].
 
     By default, if neither generic parameter is customised, agents have type `Agent[None, str]`.
 
@@ -1411,7 +1411,7 @@ def capture_run_messages() -> Iterator[list[_messages.ModelMessage]]:
 class _MarkFinalResult(Generic[ResultDataT]):
     """Marker class to indicate that the result is the final result.
 
-    This allows us to use `isinstance`, which wouldn't be possible if we were returning `ResultData_co` directly.
+    This allows us to use `isinstance`, which wouldn't be possible if we were returning `ResultDataT` directly.
 
     It also avoids problems in the case where the result type is itself `None`, but is set.
     """
