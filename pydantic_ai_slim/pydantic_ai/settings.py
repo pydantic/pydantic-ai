@@ -25,6 +25,7 @@ class ModelSettings(TypedDict, total=False):
     * OpenAI
     * Groq
     * Cohere
+    * Mistral
     """
 
     temperature: float
@@ -42,6 +43,7 @@ class ModelSettings(TypedDict, total=False):
     * OpenAI
     * Groq
     * Cohere
+    * Mistral
     """
 
     top_p: float
@@ -58,6 +60,7 @@ class ModelSettings(TypedDict, total=False):
     * OpenAI
     * Groq
     * Cohere
+    * Mistral
     """
 
     timeout: float | Timeout
@@ -69,6 +72,16 @@ class ModelSettings(TypedDict, total=False):
     * Anthropic
     * OpenAI
     * Groq
+    * Mistral
+    """
+
+    parallel_tool_calls: bool
+    """Whether to allow parallel tool calls.
+
+    Supported by:
+    * OpenAI
+    * Groq
+    * Anthropic
     """
 
 

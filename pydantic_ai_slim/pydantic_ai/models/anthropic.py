@@ -186,16 +186,22 @@ class AnthropicAgentModel(AgentModel):
         self, messages: list[ModelMessage], stream: bool, model_settings: ModelSettings | None
     ) -> AnthropicMessage | AsyncStream[RawMessageStreamEvent]:
         # standalone function to make it easier to override
+        model_settings = model_settings or {}
+
+        tool_choice: ToolChoiceParam | None
+
         if not self.tools:
-            tool_choice: ToolChoiceParam | None = None
-        elif not self.allow_text_result:
-            tool_choice = {'type': 'any'}
+            tool_choice = None
         else:
-            tool_choice = {'type': 'auto'}
+            if not self.allow_text_result:
+                tool_choice = {'type': 'any'}
+            else:
+                tool_choice = {'type': 'auto'}
+
+            if allow_parallel_tool_calls := model_settings.get('parallel_tool_calls'):
+                tool_choice['disable_parallel_tool_use'] = not allow_parallel_tool_calls
 
         system_prompt, anthropic_messages = self._map_message(messages)
-
-        model_settings = model_settings or {}
 
         return await self.client.messages.create(
             max_tokens=model_settings.get('max_tokens', 1024),
