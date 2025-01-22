@@ -261,7 +261,8 @@ class OpenAIAgentModel(AgentModel):
             if isinstance(part, SystemPromptPart):
                 if self.system_prompt_role == 'developer':
                     yield chat.ChatCompletionDeveloperMessageParam(role='developer', content=part.content)
-                yield chat.ChatCompletionSystemMessageParam(role='system', content=part.content)
+                else:
+                    yield chat.ChatCompletionSystemMessageParam(role='system', content=part.content)
             elif isinstance(part, UserPromptPart):
                 yield chat.ChatCompletionUserMessageParam(role='user', content=part.content)
             elif isinstance(part, ToolReturnPart):
