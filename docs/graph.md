@@ -801,7 +801,7 @@ You can specify the direction of the state diagram using one of the following va
 - `'BT'`: Bottom to top, the diagram flows vertically from bottom to top.
 
 Here is an example of how to do this using 'Left to Right' (LR) instead of the default 'Top to Bottom' (TB)
-```py {title="vending_machine_diagram.py"}
+```py {title="vending_machine_diagram.py" py="3.10"}
 from vending_machine import InsertCoin, vending_machine_graph
 
 vending_machine_graph.mermaid_code(start_node=InsertCoin, direction='LR')
