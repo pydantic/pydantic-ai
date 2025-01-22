@@ -252,7 +252,7 @@ class OpenAIAgentModel(AgentModel):
     def _map_user_message(cls, message: ModelRequest) -> Iterable[chat.ChatCompletionMessageParam]:
         for part in message.parts:
             if isinstance(part, SystemPromptPart):
-                yield chat.ChatCompletionSystemMessageParam(role='system', content=part.content)
+                return chat.ChatCompletionDeveloperMessageParam(role='developer', content=part.content)
             elif isinstance(part, UserPromptPart):
                 yield chat.ChatCompletionUserMessageParam(role='user', content=part.content)
             elif isinstance(part, ToolReturnPart):
