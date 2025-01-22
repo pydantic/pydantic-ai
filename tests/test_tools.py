@@ -644,7 +644,7 @@ def test_json_schema_required_parameters(set_event_loop: None):
     )
 
 
-def test_call_tool_without_unrequired_parameters():
+def test_call_tool_without_unrequired_parameters(set_event_loop: None):
     async def call_tools_first(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if len(messages) == 1:
             return ModelResponse(
