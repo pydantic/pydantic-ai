@@ -603,7 +603,7 @@ def test_enforce_parameter_descriptions() -> None:
     assert all(err_part in error_reason for err_part in error_parts)
 
 
-def test_json_schema_required_parameters():
+def test_json_schema_required_parameters(set_event_loop: None):
     agent = Agent(FunctionModel(get_json_schema))
 
     @agent.tool
