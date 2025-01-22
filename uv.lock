@@ -615,7 +615,7 @@ name = "click"
 version = "8.1.7"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "colorama", marker = "sys_platform == 'win32'" },
+    { name = "colorama", marker = "platform_system == 'Windows'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/96/d3/f04c7bfcf5c1862a2a5b845c6b2b360488cf47af55dfa79c98f6a6bf98b5/click-8.1.7.tar.gz", hash = "sha256:ca9853ad459e787e2192211578cc907e7594e294c7ccc834310722b41b9ca6de", size = 336121 }
 wheels = [
@@ -1584,7 +1584,7 @@ version = "1.6.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "click" },
-    { name = "colorama", marker = "sys_platform == 'win32'" },
+    { name = "colorama", marker = "platform_system == 'Windows'" },
     { name = "ghp-import" },
     { name = "importlib-metadata", marker = "python_full_version < '3.10'" },
     { name = "jinja2" },
@@ -1924,7 +1924,7 @@ wheels = [
 
 [[package]]
 name = "openai"
-version = "1.55.0"
+version = "1.59.9"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
@@ -1936,9 +1936,9 @@ dependencies = [
     { name = "tqdm" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/f8/7b/b1a3b6fa17dc523c603121dd23615bcd895a9fc3ab23be92307b9347bc50/openai-1.55.0.tar.gz", hash = "sha256:6c0975ac8540fe639d12b4ff5a8e0bf1424c844c4a4251148f59f06c4b2bd5db", size = 313963 }
+sdist = { url = "https://files.pythonhosted.org/packages/ec/2d/04faa92bac0341649223398503db4415d2f658a757d9d32bb68f3378ddd0/openai-1.59.9.tar.gz", hash = "sha256:ec1a20b0351b4c3e65c6292db71d8233515437c6065efd4fd50edeb55df5f5d2", size = 347134 }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/81/b2/9d8939c9ef73e6a2d5cb3366ef3fabd728a8de4729210d9af785c0edc6ec/openai-1.55.0-py3-none-any.whl", hash = "sha256:446e08918f8dd70d8723274be860404c8c7cc46b91b93bbc0ef051f57eb503c1", size = 389528 },
+    { url = "https://files.pythonhosted.org/packages/07/b4/57f1954a4560092ad8c45f07ad183eab9c8e093e0a1db829f9b506b2d5d1/openai-1.59.9-py3-none-any.whl", hash = "sha256:61a0608a1313c08ddf92fe793b6dbd1630675a1fe3866b2f96447ce30050c448", size = 455527 },
 ]
 
 [[package]]
@@ -2670,7 +2670,7 @@ requires-dist = [
     { name = "logfire", marker = "extra == 'logfire'", specifier = ">=2.3" },
     { name = "logfire-api", specifier = ">=1.2.0" },
     { name = "mistralai", marker = "extra == 'mistral'", specifier = ">=1.2.5" },
-    { name = "openai", marker = "extra == 'openai'", specifier = ">=1.54.3" },
+    { name = "openai", marker = "extra == 'openai'", specifier = ">=1.59.0" },
     { name = "pydantic", specifier = ">=2.10" },
     { name = "pydantic-graph", marker = "extra == 'graph'", editable = "pydantic_graph" },
     { name = "requests", marker = "extra == 'vertexai'", specifier = ">=2.32.3" },
@@ -3298,7 +3298,7 @@ name = "tqdm"
 version = "4.67.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "colorama", marker = "sys_platform == 'win32'" },
+    { name = "colorama", marker = "platform_system == 'Windows'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/e8/4f/0153c21dc5779a49a0598c445b1978126b1344bab9ee71e53e44877e14e0/tqdm-4.67.0.tar.gz", hash = "sha256:fe5a6f95e6fe0b9755e9469b77b9c3cf850048224ecaa8293d7d2d31f97d869a", size = 169739 }
 wheels = [

@@ -45,7 +45,7 @@ dependencies = [
 # WARNING if you add optional groups, please update docs/install.md
 logfire = ["logfire>=2.3"]
 graph = ["pydantic-graph==0.0.19"]
-openai = ["openai>=1.54.3"]
+openai = ["openai>=1.59.0"]
 cohere = ["cohere>=5.13.11"]
 vertexai = ["google-auth>=2.36.0", "requests>=2.32.3"]
 anthropic = ["anthropic>=0.40.0"]
