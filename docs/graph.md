@@ -795,10 +795,10 @@ class Answer highlighted
 
 You can specify the direction of the state diagram using one of the following values:
 
-- 'TB': Top to Bottom, the diagram flows vertically from top to bottom.
-- 'LR': Left to Right, the diagram flows horizontally from left to right.
-- 'RL': Right to Left, the diagram flows horizontally from right to left.
-- 'BT': Bottom to Top, the diagram flows vertically from bottom to top.
+- `'TB'`: Top to bottom, the diagram flows vertically from top to bottom.
+- `'LR'`: Left to right, the diagram flows horizontally from left to right.
+- `'RL'`: Right to left, the diagram flows horizontally from right to left.
+- `'BT'`: Bottom to top, the diagram flows vertically from bottom to top.
 
 Here is an example of how to do this using 'Left to Right' (LR) instead of the default 'Top to Bottom' (TB)
 ```py {title="vending_machine_diagram.py"}
