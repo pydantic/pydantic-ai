@@ -31,7 +31,7 @@ pytestmark = pytest.mark.anyio
 
 
 def hello(_messages: list[ModelMessage], _agent_info: AgentInfo) -> ModelResponse:
-    return ModelResponse.from_text('hello world')  # pragma: no cover
+    return ModelResponse(parts=[TextPart('hello world')])  # pragma: no cover
 
 
 async def stream_hello(_messages: list[ModelMessage], _agent_info: AgentInfo) -> AsyncIterator[str]:
@@ -55,7 +55,7 @@ async def return_last(messages: list[ModelMessage], _: AgentInfo) -> ModelRespon
     response = asdict(last)
     response.pop('timestamp', None)
     response['message_count'] = len(messages)
-    return ModelResponse.from_text(' '.join(f'{k}={v!r}' for k, v in response.items()))
+    return ModelResponse(parts=[TextPart(' '.join(f'{k}={v!r}' for k, v in response.items()))])
 
 
 def test_simple(set_event_loop: None):
@@ -117,7 +117,7 @@ async def weather_model(messages: list[ModelMessage], info: AgentInfo) -> ModelR
                     break
 
             assert location_name is not None
-            return ModelResponse.from_text(f'{last.content} in {location_name}')
+            return ModelResponse(parts=[TextPart(f'{last.content} in {location_name}')])
 
     raise ValueError(f'Unexpected message: {last}')
 
@@ -200,7 +200,7 @@ async def call_function_model(messages: list[ModelMessage], _: AgentInfo) -> Mod
                 ]
             )
     elif isinstance(last, ToolReturnPart):
-        return ModelResponse.from_text(pydantic_core.to_json(last).decode())
+        return ModelResponse(parts=[TextPart(pydantic_core.to_json(last).decode())])
 
     raise ValueError(f'Unexpected message: {last}')
 
@@ -236,7 +236,7 @@ async def call_tool(messages: list[ModelMessage], info: AgentInfo) -> ModelRespo
         tool_name = info.function_tools[0].name
         return ModelResponse(parts=[ToolCallPart.from_raw_args(tool_name, '{}')])
     else:
-        return ModelResponse.from_text('final response')
+        return ModelResponse(parts=[TextPart('final response')])
 
 
 def test_deps_none(set_event_loop: None):
@@ -318,8 +318,12 @@ def spam() -> str:
 
 def test_register_all(set_event_loop: None):
     async def f(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        return ModelResponse.from_text(
-            f'messages={len(messages)} allow_text_result={info.allow_text_result} tools={len(info.function_tools)}'
+        return ModelResponse(
+            parts=[
+                TextPart(
+                    f'messages={len(messages)} allow_text_result={info.allow_text_result} tools={len(info.function_tools)}'
+                )
+            ]
         )
 
     result = agent_all.run_sync('Hello', model=FunctionModel(f))
@@ -373,7 +377,7 @@ def test_retry_str(set_event_loop: None):
         nonlocal call_count
         call_count += 1
 
-        return ModelResponse.from_text(str(call_count))
+        return ModelResponse(parts=[TextPart(str(call_count))])
 
     agent = Agent(FunctionModel(try_again))
 
