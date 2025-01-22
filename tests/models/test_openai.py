@@ -2,10 +2,9 @@ from __future__ import annotations as _annotations
 
 import json
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from functools import cached_property
-from itertools import chain
 from typing import Any, Literal, cast
 
 import pytest
@@ -29,7 +28,7 @@ from ..conftest import IsNow, try_import
 from .mock_async_stream import MockAsyncStream
 
 with try_import() as imports_successful:
-    from openai import AsyncOpenAI
+    from openai import NOT_GIVEN, AsyncOpenAI
     from openai.types import chat
     from openai.types.chat.chat_completion import Choice
     from openai.types.chat.chat_completion_chunk import (
@@ -42,7 +41,7 @@ with try_import() as imports_successful:
     from openai.types.chat.chat_completion_message_tool_call import Function
     from openai.types.completion_usage import CompletionUsage, PromptTokensDetails
 
-    from pydantic_ai.models.openai import OpenAIAgentModel, OpenAIModel, OpenAISystemPromptRole
+    from pydantic_ai.models.openai import OpenAIModel, OpenAISystemPromptRole
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
@@ -69,7 +68,8 @@ def test_init_with_base_url():
 class MockOpenAI:
     completions: chat.ChatCompletion | list[chat.ChatCompletion] | None = None
     stream: list[chat.ChatCompletionChunk] | list[list[chat.ChatCompletionChunk]] | None = None
-    index = 0
+    index: int = 0
+    chat_completion_kwargs: list[dict[str, Any]] = field(default_factory=list)
 
     @cached_property
     def chat(self) -> Any:
@@ -87,8 +87,10 @@ class MockOpenAI:
         return cast(AsyncOpenAI, cls(stream=list(stream)))  # pyright: ignore[reportArgumentType]
 
     async def chat_completions_create(  # pragma: no cover
-        self, *_args: Any, stream: bool = False, **_kwargs: Any
+        self, *_args: Any, stream: bool = False, **kwargs: Any
     ) -> chat.ChatCompletion | MockAsyncStream[chat.ChatCompletionChunk]:
+        self.chat_completion_kwargs.append({k: v for k, v in kwargs.items() if v is not NOT_GIVEN})
+
         if stream:
             assert self.stream is not None, 'you can only used `stream=True` if `stream` is provided'
             # noinspection PyUnresolvedReferences
@@ -105,6 +107,13 @@ class MockOpenAI:
                 response = self.completions
         self.index += 1
         return response
+
+
+def get_mock_chat_completion_kwargs(async_open_ai: AsyncOpenAI) -> list[dict[str, Any]]:
+    if isinstance(async_open_ai, MockOpenAI):
+        return async_open_ai.chat_completion_kwargs
+    else:  # pragma: no cover
+        raise RuntimeError('Not a MockOpenAI instance')
 
 
 def completion_message(message: ChatCompletionMessage, *, usage: CompletionUsage | None = None) -> chat.ChatCompletion:
@@ -150,6 +159,18 @@ async def test_request_simple_success(allow_model_requests: None):
             ),
         ]
     )
+    assert get_mock_chat_completion_kwargs(mock_client) == [
+        {'messages': [{'content': 'hello', 'role': 'user'}], 'model': 'gpt-4', 'n': 1},
+        {
+            'messages': [
+                {'content': 'hello', 'role': 'user'},
+                {'content': 'world', 'role': 'assistant'},
+                {'content': 'hello', 'role': 'user'},
+            ],
+            'model': 'gpt-4',
+            'n': 1,
+        },
+    ]
 
 
 async def test_request_simple_usage(allow_model_requests: None):
@@ -502,21 +523,23 @@ async def test_system_prompt_role(
     It's not ideal that we test a private method here, this test is bound to be inherently fragile.
     That beging said, inference / configurabilty here is likely to change, so we just want to test
     the current desired behavior for now."""
-    m = OpenAIModel('gpt-4o', api_key='foobar', system_prompt_role=system_prompt_role)
+
+    c = completion_message(ChatCompletionMessage(content='world', role='assistant'))
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIModel('gpt-4o', system_prompt_role=system_prompt_role, openai_client=mock_client)
     assert m.system_prompt_role == system_prompt_role
 
-    agent_model: OpenAIAgentModel = cast(
-        OpenAIAgentModel, await m.agent_model(function_tools=[], allow_text_result=True, result_tools=[])
-    )
-    openai_messages = list(
-        chain(
-            agent_model._map_message(  # pyright: ignore[reportPrivateUsage]
-                ModelRequest(kind='request', parts=[SystemPromptPart(content='system directions')])
-            )
-        )
-    )
+    agent = Agent(m, system_prompt='some instructions')
+    result = await agent.run('hello')
+    assert result.data == 'world'
 
-    if system_prompt_role == 'developer':
-        assert openai_messages == snapshot([{'role': 'developer', 'content': 'system directions'}])
-    else:
-        assert openai_messages == snapshot([{'role': 'system', 'content': 'system directions'}])
+    assert get_mock_chat_completion_kwargs(mock_client) == [
+        {
+            'messages': [
+                {'content': 'some instructions', 'role': system_prompt_role or 'system'},
+                {'content': 'hello', 'role': 'user'},
+            ],
+            'model': 'gpt-4o',
+            'n': 1,
+        }
+    ]
