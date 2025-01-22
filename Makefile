@@ -44,7 +44,7 @@ typecheck-both: typecheck-pyright typecheck-mypy
 
 .PHONY: test
 test: ## Run tests and collect coverage data
-	uv run coverage run -m pytest
+	uv run coverage run -m pytest -vv
 	@uv run coverage report
 
 .PHONY: test-all-python
