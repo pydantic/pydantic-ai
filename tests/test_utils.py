@@ -3,9 +3,8 @@ from __future__ import annotations as _annotations
 import asyncio
 import os
 from collections.abc import AsyncIterator
+from importlib.metadata import distributions
 
-import httpx
-import pydantic
 import pytest
 from inline_snapshot import snapshot
 
@@ -84,6 +83,7 @@ async def test_peekable_async_stream(peek_first: bool):
 def test_package_versions(capsys: pytest.CaptureFixture[str]):
     if os.getenv('CI'):
         with capsys.disabled():
-            print('\ndependency versions:')
-            print('pydantic version:', pydantic.__version__)
-            print('httpx version:', httpx.__version__)
+            print('\npackage versions:')
+            packages = sorted((package.metadata['Name'], package.version) for package in distributions())
+            for name, version in packages:
+                print(f'{name:30} {version}')
