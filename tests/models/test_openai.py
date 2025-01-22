@@ -517,6 +517,6 @@ async def test_system_prompt_role(
     )
 
     if system_prompt_role == 'developer':
-        assert openai_messages[0]['role'] == 'developer'
+        assert openai_messages == snapshot([{'role': 'developer', 'content': 'system directions'}])
     else:
-        assert openai_messages[0]['role'] == 'system'
+        assert openai_messages == snapshot([{'role': 'system', 'content': 'system directions'}])
