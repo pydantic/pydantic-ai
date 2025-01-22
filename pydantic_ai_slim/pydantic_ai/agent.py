@@ -560,6 +560,8 @@ class Agent(Generic[AgentDeps, ResultData]):
                                     parts = await self._process_function_tools(
                                         tool_calls, result_tool_name, run_context, result_schema
                                     )
+                                    if any(isinstance(part, _messages.RetryPromptPart) for part in parts):
+                                        self._incr_result_retry(run_context)
                                     if parts:
                                         messages.append(_messages.ModelRequest(parts))
                                     run_span.set_attribute('all_messages', messages)
@@ -1133,7 +1135,6 @@ class Agent(Generic[AgentDeps, ResultData]):
                     result_data = result_tool.validate(call)
                     result_data = await self._validate_result(result_data, run_context, call)
                 except _result.ToolRetryError as e:
-                    self._incr_result_retry(run_context)
                     parts.append(e.tool_retry)
                 else:
                     final_result = _MarkFinalResult(result_data, call.tool_name)
@@ -1142,6 +1143,9 @@ class Agent(Generic[AgentDeps, ResultData]):
         parts += await self._process_function_tools(
             tool_calls, final_result and final_result.tool_name, run_context, result_schema
         )
+
+        if any(isinstance(part, _messages.RetryPromptPart) for part in parts):
+            self._incr_result_retry(run_context)
 
         return final_result, parts
 
@@ -1196,7 +1200,7 @@ class Agent(Generic[AgentDeps, ResultData]):
                         )
                     )
             else:
-                parts.append(self._unknown_tool(call.tool_name, run_context, result_schema))
+                parts.append(self._unknown_tool(call.tool_name, result_schema))
 
         # Run all tool tasks in parallel
         if tasks:
@@ -1243,7 +1247,7 @@ class Agent(Generic[AgentDeps, ResultData]):
                 if tool := self._function_tools.get(p.tool_name):
                     tasks.append(asyncio.create_task(tool.run(p, run_context), name=p.tool_name))
                 else:
-                    parts.append(self._unknown_tool(p.tool_name, run_context, result_schema))
+                    parts.append(self._unknown_tool(p.tool_name, result_schema))
 
         if received_text and not tasks and not parts:
             # Can only get here if self._allow_text_result returns `False` for the provided result_schema
@@ -1256,6 +1260,10 @@ class Agent(Generic[AgentDeps, ResultData]):
         with _logfire.span('running {tools=}', tools=[t.get_name() for t in tasks]):
             task_results: Sequence[_messages.ModelRequestPart] = await asyncio.gather(*tasks)
             parts.extend(task_results)
+
+        if any(isinstance(part, _messages.RetryPromptPart) for part in parts):
+            self._incr_result_retry(run_context)
+
         return model_response, parts
 
     async def _validate_result(
@@ -1293,10 +1301,8 @@ class Agent(Generic[AgentDeps, ResultData]):
     def _unknown_tool(
         self,
         tool_name: str,
-        run_context: RunContext[AgentDeps],
         result_schema: _result.ResultSchema[RunResultData] | None,
     ) -> _messages.RetryPromptPart:
-        self._incr_result_retry(run_context)
         names = list(self._function_tools.keys())
         if result_schema:
             names.extend(result_schema.tool_names())
