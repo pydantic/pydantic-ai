@@ -608,11 +608,11 @@ def test_json_schema_required_parameters(set_event_loop: None):
 
     @agent.tool
     def my_tool(ctx: RunContext[None], a: int, b: int = 1) -> int:
-        return a + b
+        raise NotImplementedError
 
     @agent.tool_plain
     def my_tool_plain(*, a: int = 1, b: int) -> int:
-        return a * b
+        raise NotImplementedError
 
     result = agent.run_sync('Hello')
     json_schema = json.loads(result.data)
