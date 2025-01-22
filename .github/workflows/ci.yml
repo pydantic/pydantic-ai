@@ -9,7 +9,6 @@ on:
   pull_request: {}
 
 env:
-  CI: true
   COLUMNS: 150
   UV_PYTHON: 3.12
   UV_FROZEN: '1'
@@ -143,6 +142,14 @@ jobs:
           COVERAGE_FILE: coverage/.coverage.${{ runner.os }}-py${{ matrix.python-version }}-all-extras
 
       - run: uv run --all-extras python tests/import_examples.py
+
+      # this must run last as it modifies the environment!
+      - name: test lowest versions
+        run: |
+          unset UV_FROZEN
+          uv run --all-extras --resolution lowest-direct coverage run -m pytest
+        env:
+          COVERAGE_FILE: coverage/.coverage.${{ runner.os }}-py${{ matrix.python-version }}-lowest-versions
 
       - name: store coverage files
         uses: actions/upload-artifact@v4
