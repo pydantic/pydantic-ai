@@ -85,6 +85,7 @@ async def test_streamed_text_limits() -> None:
                 ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
                 ModelResponse(
                     parts=[ToolCallPart(tool_name='ret_a', args=ArgsDict(args_dict={'x': 'a'}))],
+                    model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 ModelRequest(

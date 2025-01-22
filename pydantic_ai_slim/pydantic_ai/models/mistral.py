@@ -149,7 +149,7 @@ class MistralAgentModel(AgentModel):
     """Implementation of `AgentModel` for Mistral models."""
 
     client: Mistral
-    model_name: str
+    model_name: MistralModelName
     allow_text_result: bool
     function_tools: list[ToolDefinition]
     result_tools: list[ToolDefinition]
@@ -267,8 +267,7 @@ class MistralAgentModel(AgentModel):
         ]
         return tools if tools else None
 
-    @staticmethod
-    def _process_response(response: MistralChatCompletionResponse) -> ModelResponse:
+    def _process_response(self, response: MistralChatCompletionResponse) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
         assert response.choices, 'Unexpected empty response choice.'
 
@@ -290,10 +289,10 @@ class MistralAgentModel(AgentModel):
                 tool = _map_mistral_to_pydantic_tool_call(tool_call=tool_call)
                 parts.append(tool)
 
-        return ModelResponse(parts, timestamp=timestamp)
+        return ModelResponse(parts, model_name=self.model_name, timestamp=timestamp)
 
-    @staticmethod
     async def _process_streamed_response(
+        self,
         result_tools: list[ToolDefinition],
         response: MistralEventStreamAsync[MistralCompletionEvent],
     ) -> StreamedResponse:
@@ -308,7 +307,12 @@ class MistralAgentModel(AgentModel):
         else:
             timestamp = datetime.now(tz=timezone.utc)
 
-        return MistralStreamedResponse(peekable_response, timestamp, {c.name: c for c in result_tools})
+        return MistralStreamedResponse(
+            _response=peekable_response,
+            _model_name=self.model_name,
+            _timestamp=timestamp,
+            _result_tools={c.name: c for c in result_tools},
+        )
 
     @staticmethod
     def _map_to_mistral_tool_call(t: ToolCallPart) -> MistralToolCall:
