@@ -1,8 +1,11 @@
 from __future__ import annotations as _annotations
 
 import asyncio
+import os
 from collections.abc import AsyncIterator
 
+import httpx
+import pydantic
 import pytest
 from inline_snapshot import snapshot
 
@@ -76,3 +79,11 @@ async def test_peekable_async_stream(peek_first: bool):
     assert await peekable_async_stream.is_exhausted()
     assert await peekable_async_stream.peek() is UNSET
     assert items == [1, 2, 3]
+
+
+def test_package_versions(capsys: pytest.CaptureFixture[str]):
+    if os.getenv('CI'):
+        with capsys.disabled():
+            print('\ndependency versions:')
+            print('pydantic version:', pydantic.__version__)
+            print('httpx version:', httpx.__version__)
