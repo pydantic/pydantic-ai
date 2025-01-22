@@ -166,7 +166,7 @@ def try_import() -> Iterator[Callable[[], bool]]:
         import_success = True
 
 
-@pytest.fixture
+@pytest.fixture(autouse=True)
 def set_event_loop() -> Iterator[None]:
     new_loop = asyncio.new_event_loop()
     asyncio.set_event_loop(new_loop)
