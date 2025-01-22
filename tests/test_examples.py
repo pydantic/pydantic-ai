@@ -62,7 +62,6 @@ def test_docs_examples(
     client_with_handler: ClientWithHandler,
     env: TestEnv,
     tmp_path: Path,
-    set_event_loop: None,
 ):
     mocker.patch('pydantic_ai.agent.models.infer_model', side_effect=mock_infer_model)
     mocker.patch('pydantic_ai._utils.group_by_temporal', side_effect=mock_group_by_temporal)

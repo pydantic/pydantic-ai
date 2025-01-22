@@ -37,7 +37,7 @@ from .conftest import IsNow, TestEnv
 pytestmark = pytest.mark.anyio
 
 
-def test_result_tuple(set_event_loop: None):
+def test_result_tuple():
     def return_tuple(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         assert info.result_tools is not None
         args_json = '{"response": ["foo", "bar"]}'
@@ -54,7 +54,7 @@ class Foo(BaseModel):
     b: str
 
 
-def test_result_pydantic_model(set_event_loop: None):
+def test_result_pydantic_model():
     def return_model(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         assert info.result_tools is not None
         args_json = '{"a": 1, "b": "foo"}'
@@ -67,7 +67,7 @@ def test_result_pydantic_model(set_event_loop: None):
     assert result.data.model_dump() == {'a': 1, 'b': 'foo'}
 
 
-def test_result_pydantic_model_retry(set_event_loop: None):
+def test_result_pydantic_model_retry():
     def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         assert info.result_tools is not None
         if len(messages) == 1:
@@ -125,7 +125,7 @@ def test_result_pydantic_model_retry(set_event_loop: None):
     assert result.all_messages_json().startswith(b'[{"parts":[{"content":"Hello",')
 
 
-def test_result_pydantic_model_validation_error(set_event_loop: None):
+def test_result_pydantic_model_validation_error():
     def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         assert info.result_tools is not None
         if len(messages) == 1:
@@ -179,7 +179,7 @@ def test_result_pydantic_model_validation_error(set_event_loop: None):
 Fix the errors and try again.""")
 
 
-def test_result_validator(set_event_loop: None):
+def test_result_validator():
     def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         assert info.result_tools is not None
         if len(messages) == 1:
@@ -232,7 +232,7 @@ def test_result_validator(set_event_loop: None):
     )
 
 
-def test_plain_response_then_tuple(set_event_loop: None):
+def test_plain_response_then_tuple():
     call_index = 0
 
     def return_tuple(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -298,7 +298,7 @@ def test_plain_response_then_tuple(set_event_loop: None):
     )
 
 
-def test_result_tool_return_content_str_return(set_event_loop: None):
+def test_result_tool_return_content_str_return():
     agent = Agent('test')
 
     result = agent.run_sync('Hello')
@@ -309,7 +309,7 @@ def test_result_tool_return_content_str_return(set_event_loop: None):
         result.all_messages(result_tool_return_content='foobar')
 
 
-def test_result_tool_return_content_no_tool(set_event_loop: None):
+def test_result_tool_return_content_no_tool():
     agent = Agent('test', result_type=int)
 
     result = agent.run_sync('Hello')
@@ -319,7 +319,7 @@ def test_result_tool_return_content_no_tool(set_event_loop: None):
         result.all_messages(result_tool_return_content='foobar')
 
 
-def test_response_tuple(set_event_loop: None):
+def test_response_tuple():
     m = TestModel()
 
     agent = Agent(m, result_type=tuple[str, str])
@@ -363,7 +363,7 @@ def test_response_tuple(set_event_loop: None):
     [lambda: Union[str, Foo], lambda: Union[Foo, str], lambda: str | Foo, lambda: Foo | str],
     ids=['Union[str, Foo]', 'Union[Foo, str]', 'str | Foo', 'Foo | str'],
 )
-def test_response_union_allow_str(set_event_loop: None, input_union_callable: Callable[[], Any]):
+def test_response_union_allow_str(input_union_callable: Callable[[], Any]):
     try:
         union = input_union_callable()
     except TypeError:
@@ -426,7 +426,7 @@ def test_response_union_allow_str(set_event_loop: None, input_union_callable: Ca
         ),
     ],
 )
-def test_response_multiple_return_tools(set_event_loop: None, create_module: Callable[[str], Any], union_code: str):
+def test_response_multiple_return_tools(create_module: Callable[[str], Any], union_code: str):
     module_code = f'''
 from pydantic import BaseModel
 from typing import Union
@@ -500,7 +500,7 @@ class Bar(BaseModel):
     assert got_tool_call_name == snapshot('final_result_Bar')
 
 
-def test_run_with_history_new(set_event_loop: None):
+def test_run_with_history_new():
     m = TestModel()
 
     agent = Agent(m, system_prompt='Foobar')
@@ -615,7 +615,7 @@ def test_run_with_history_new(set_event_loop: None):
     )
 
 
-def test_run_with_history_new_structured(set_event_loop: None):
+def test_run_with_history_new_structured():
     m = TestModel()
 
     class Response(BaseModel):
@@ -740,7 +740,7 @@ def test_run_with_history_new_structured(set_event_loop: None):
     assert result2.new_messages_json().startswith(b'[{"parts":[{"content":"Hello again",')
 
 
-def test_empty_tool_calls(set_event_loop: None):
+def test_empty_tool_calls():
     def empty(_: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
         return ModelResponse(parts=[])
 
@@ -750,7 +750,7 @@ def test_empty_tool_calls(set_event_loop: None):
         agent.run_sync('Hello')
 
 
-def test_unknown_tool(set_event_loop: None):
+def test_unknown_tool():
     def empty(_: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
         return ModelResponse(parts=[ToolCallPart.from_raw_args('foobar', '{}')])
 
@@ -783,7 +783,7 @@ def test_unknown_tool(set_event_loop: None):
     )
 
 
-def test_unknown_tool_fix(set_event_loop: None):
+def test_unknown_tool_fix():
     def empty(m: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
         if len(m) > 1:
             return ModelResponse(parts=[TextPart('success')])
@@ -818,7 +818,7 @@ def test_unknown_tool_fix(set_event_loop: None):
     )
 
 
-def test_model_requests_blocked(env: TestEnv, set_event_loop: None):
+def test_model_requests_blocked(env: TestEnv):
     env.set('GEMINI_API_KEY', 'foobar')
     agent = Agent('google-gla:gemini-1.5-flash', result_type=tuple[str, str], defer_model_check=True)
 
@@ -826,7 +826,7 @@ def test_model_requests_blocked(env: TestEnv, set_event_loop: None):
         agent.run_sync('Hello')
 
 
-def test_override_model(env: TestEnv, set_event_loop: None):
+def test_override_model(env: TestEnv):
     env.set('GEMINI_API_KEY', 'foobar')
     agent = Agent('google-gla:gemini-1.5-flash', result_type=tuple[int, str], defer_model_check=True)
 
@@ -835,7 +835,7 @@ def test_override_model(env: TestEnv, set_event_loop: None):
         assert result.data == snapshot((0, 'a'))
 
 
-def test_override_model_no_model(set_event_loop: None):
+def test_override_model_no_model():
     agent = Agent()
 
     with pytest.raises(UserError, match=r'`model` must be set either.+Even when `override\(model=...\)` is customiz'):
@@ -843,7 +843,7 @@ def test_override_model_no_model(set_event_loop: None):
             agent.run_sync('Hello')
 
 
-def test_run_sync_multiple(set_event_loop: None):
+def test_run_sync_multiple():
     agent = Agent('test')
 
     @agent.tool_plain
@@ -897,7 +897,7 @@ async def test_agent_name_changes():
     assert new_agent.name == 'my_agent'
 
 
-def test_name_from_global(set_event_loop: None, create_module: Callable[[str], Any]):
+def test_name_from_global(create_module: Callable[[str], Any]):
     module_code = """
 from pydantic_ai import Agent
 
@@ -1211,7 +1211,7 @@ async def test_empty_text_part():
     assert result.data == ('foo', 'bar')
 
 
-def test_heterogeneous_responses_non_streaming(set_event_loop: None) -> None:
+def test_heterogeneous_responses_non_streaming() -> None:
     """Indicates that tool calls are prioritized over text in heterogeneous responses."""
 
     def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -1278,7 +1278,7 @@ def test_last_run_messages() -> None:
         agent.last_run_messages  # pyright: ignore[reportDeprecated]
 
 
-def test_nested_capture_run_messages(set_event_loop: None) -> None:
+def test_nested_capture_run_messages() -> None:
     agent = Agent('test')
 
     with capture_run_messages() as messages1:
@@ -1300,7 +1300,7 @@ def test_nested_capture_run_messages(set_event_loop: None) -> None:
     assert messages1 == messages2
 
 
-def test_double_capture_run_messages(set_event_loop: None) -> None:
+def test_double_capture_run_messages() -> None:
     agent = Agent('test')
 
     with capture_run_messages() as messages:
@@ -1319,7 +1319,7 @@ def test_double_capture_run_messages(set_event_loop: None) -> None:
     )
 
 
-def test_dynamic_false_no_reevaluate(set_event_loop: None):
+def test_dynamic_false_no_reevaluate():
     """When dynamic is false (default), the system prompt is not reevaluated
     i.e: SystemPromptPart(
             content="A",       <--- Remains the same when `message_history` is passed.
@@ -1391,7 +1391,7 @@ def test_dynamic_false_no_reevaluate(set_event_loop: None):
     )
 
 
-def test_dynamic_true_reevaluate_system_prompt(set_event_loop: None):
+def test_dynamic_true_reevaluate_system_prompt():
     """When dynamic is true, the system prompt is reevaluated
     i.e: SystemPromptPart(
             content="B",       <--- Updated value
@@ -1468,7 +1468,7 @@ def test_dynamic_true_reevaluate_system_prompt(set_event_loop: None):
     )
 
 
-def test_capture_run_messages_tool_agent(set_event_loop: None) -> None:
+def test_capture_run_messages_tool_agent() -> None:
     agent_outer = Agent('test')
     agent_inner = Agent(TestModel(custom_result_text='inner agent result'))
 
@@ -1508,7 +1508,7 @@ class Bar(BaseModel):
     d: str
 
 
-def test_custom_result_type_sync(set_event_loop: None) -> None:
+def test_custom_result_type_sync() -> None:
     agent = Agent('test', result_type=Foo)
 
     assert agent.run_sync('Hello').data == snapshot(Foo(a=0, b='a'))
@@ -1529,7 +1529,7 @@ async def test_custom_result_type_async() -> None:
     assert result.data == snapshot(0)
 
 
-def test_custom_result_type_invalid(set_event_loop: None) -> None:
+def test_custom_result_type_invalid() -> None:
     agent = Agent('test')
 
     @agent.result_validator

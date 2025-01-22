@@ -58,7 +58,7 @@ async def return_last(messages: list[ModelMessage], _: AgentInfo) -> ModelRespon
     return ModelResponse(parts=[TextPart(' '.join(f'{k}={v!r}' for k, v in response.items()))])
 
 
-def test_simple(set_event_loop: None):
+def test_simple():
     agent = Agent(FunctionModel(return_last))
     result = agent.run_sync('Hello')
     assert result.data == snapshot("content='Hello' part_kind='user-prompt' message_count=1")
@@ -143,7 +143,7 @@ async def get_weather(_: RunContext[None], lat: int, lng: int):
         return 'Sunny'
 
 
-def test_weather(set_event_loop: None):
+def test_weather():
     result = weather_agent.run_sync('London')
     assert result.data == 'Raining in London'
     assert result.all_messages() == snapshot(
@@ -214,7 +214,7 @@ def get_var_args(ctx: RunContext[int], *args: int):
     return json.dumps({'args': args})
 
 
-def test_var_args(set_event_loop: None):
+def test_var_args():
     result = var_args_agent.run_sync('{"function": "get_var_args", "arguments": {"args": [1, 2, 3]}}', deps=123)
     response_data = json.loads(result.data)
     # Can't parse ISO timestamps with trailing 'Z' in older versions of python:
@@ -239,7 +239,7 @@ async def call_tool(messages: list[ModelMessage], info: AgentInfo) -> ModelRespo
         return ModelResponse(parts=[TextPart('final response')])
 
 
-def test_deps_none(set_event_loop: None):
+def test_deps_none():
     agent = Agent(FunctionModel(call_tool))
 
     @agent.tool
@@ -259,7 +259,7 @@ def test_deps_none(set_event_loop: None):
     assert called
 
 
-def test_deps_init(set_event_loop: None):
+def test_deps_init():
     def get_check_foobar(ctx: RunContext[tuple[str, str]]) -> str:
         nonlocal called
 
@@ -274,7 +274,7 @@ def test_deps_init(set_event_loop: None):
     assert called
 
 
-def test_model_arg(set_event_loop: None):
+def test_model_arg():
     agent = Agent()
     result = agent.run_sync('Hello', model=FunctionModel(return_last))
     assert result.data == snapshot("content='Hello' part_kind='user-prompt' message_count=1")
@@ -316,7 +316,7 @@ def spam() -> str:
     return 'foobar'
 
 
-def test_register_all(set_event_loop: None):
+def test_register_all():
     async def f(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         return ModelResponse(
             parts=[
@@ -330,7 +330,7 @@ def test_register_all(set_event_loop: None):
     assert result.data == snapshot('messages=1 allow_text_result=True tools=5')
 
 
-def test_call_all(set_event_loop: None):
+def test_call_all():
     result = agent_all.run_sync('Hello', model=TestModel())
     assert result.data == snapshot('{"foo":"1","bar":"2","baz":"3","qux":"4","quz":"a"}')
     assert result.all_messages() == snapshot(
@@ -370,7 +370,7 @@ def test_call_all(set_event_loop: None):
     )
 
 
-def test_retry_str(set_event_loop: None):
+def test_retry_str():
     call_count = 0
 
     async def try_again(msgs_: list[ModelMessage], _agent_info: AgentInfo) -> ModelResponse:
@@ -392,7 +392,7 @@ def test_retry_str(set_event_loop: None):
     assert result.data == snapshot('2')
 
 
-def test_retry_result_type(set_event_loop: None):
+def test_retry_result_type():
     call_count = 0
 
     async def try_again(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:
