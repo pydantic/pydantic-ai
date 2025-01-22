@@ -591,3 +591,16 @@ def test_enforce_parameter_descriptions() -> None:
         'bar',
     ]
     assert all(err_part in error_reason for err_part in error_parts)
+
+
+def test_json_schema_required_parameters():
+    agent = Agent()
+
+    @agent.tool
+    def my_tool(ctx: RunContext[None], a: int, b: int = 1) -> int: ...
+
+    @agent.tool_plain
+    def my_tool_plain(*, a: int = 1, b: int) -> int: ...
+
+    assert agent._function_tools['my_tool']._parameters_json_schema['required'] == ['a']
+    assert agent._function_tools['my_tool_plain']._parameters_json_schema['required'] == ['b']
