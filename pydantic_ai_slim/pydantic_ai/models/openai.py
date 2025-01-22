@@ -180,9 +180,6 @@ class OpenAIAgentModel(AgentModel):
 
         openai_messages = list(chain(*(self._map_message(m) for m in messages)))
 
-        print(messages)
-        print(openai_messages)
-
         model_settings = model_settings or {}
 
         return await self.client.chat.completions.create(
