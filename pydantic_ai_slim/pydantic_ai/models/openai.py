@@ -180,6 +180,9 @@ class OpenAIAgentModel(AgentModel):
 
         openai_messages = list(chain(*(self._map_message(m) for m in messages)))
 
+        print(messages)
+        print(openai_messages)
+
         model_settings = model_settings or {}
 
         return await self.client.chat.completions.create(
@@ -252,7 +255,7 @@ class OpenAIAgentModel(AgentModel):
     def _map_user_message(cls, message: ModelRequest) -> Iterable[chat.ChatCompletionMessageParam]:
         for part in message.parts:
             if isinstance(part, SystemPromptPart):
-                return chat.ChatCompletionDeveloperMessageParam(role='developer', content=part.content)
+                yield chat.ChatCompletionDeveloperMessageParam(role='developer', content=part.content)
             elif isinstance(part, UserPromptPart):
                 yield chat.ChatCompletionUserMessageParam(role='user', content=part.content)
             elif isinstance(part, ToolReturnPart):
