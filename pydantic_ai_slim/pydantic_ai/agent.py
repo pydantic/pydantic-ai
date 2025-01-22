@@ -22,11 +22,10 @@ from . import (
     result,
     usage as _usage,
 )
-from .result import ResultData_co
+from .result import ResultDataT
 from .settings import ModelSettings, merge_model_settings
 from .tools import (
-    AgentDeps,
-    AgentDeps_inv,
+    AgentDepsT,
     DocstringFormat,
     RunContext,
     Tool,
@@ -52,6 +51,8 @@ else:
 
     logfire._internal.stack_info.NON_USER_CODE_PREFIXES += (str(Path(__file__).parent.absolute()),)
 
+T = TypeVar('T')
+"""An invariant TypeVar."""
 NoneType = type(None)
 EndStrategy = Literal['early', 'exhaustive']
 """The strategy for handling multiple tool calls when a final result is found.
@@ -65,7 +66,7 @@ RunResultData = TypeVar('RunResultData')
 
 @final
 @dataclasses.dataclass(init=False)
-class Agent(Generic[AgentDeps, ResultData_co]):
+class Agent(Generic[AgentDepsT, ResultDataT]):
     """Class for defining "agents" - a way to have a specific type of "conversation" with an LLM.
 
     Agents are generic in the dependency type they take [`AgentDeps`][pydantic_ai.tools.AgentDeps]
@@ -105,34 +106,34 @@ class Agent(Generic[AgentDeps, ResultData_co]):
     """
     _result_tool_name: str = dataclasses.field(repr=False)
     _result_tool_description: str | None = dataclasses.field(repr=False)
-    _result_schema: _result.ResultSchema[ResultData_co] | None = dataclasses.field(repr=False)
-    _result_validators: list[_result.ResultValidator[AgentDeps, ResultData_co]] = dataclasses.field(repr=False)
+    _result_schema: _result.ResultSchema[ResultDataT] | None = dataclasses.field(repr=False)
+    _result_validators: list[_result.ResultValidator[AgentDepsT, ResultDataT]] = dataclasses.field(repr=False)
     _system_prompts: tuple[str, ...] = dataclasses.field(repr=False)
-    _function_tools: dict[str, Tool[AgentDeps]] = dataclasses.field(repr=False)
+    _function_tools: dict[str, Tool[AgentDepsT]] = dataclasses.field(repr=False)
     _default_retries: int = dataclasses.field(repr=False)
-    _system_prompt_functions: list[_system_prompt.SystemPromptRunner[AgentDeps]] = dataclasses.field(repr=False)
-    _system_prompt_dynamic_functions: dict[str, _system_prompt.SystemPromptRunner[AgentDeps]] = dataclasses.field(
+    _system_prompt_functions: list[_system_prompt.SystemPromptRunner[AgentDepsT]] = dataclasses.field(repr=False)
+    _system_prompt_dynamic_functions: dict[str, _system_prompt.SystemPromptRunner[AgentDepsT]] = dataclasses.field(
         repr=False
     )
-    _deps_type: type[AgentDeps] = dataclasses.field(repr=False)
+    _deps_type: type[AgentDepsT] = dataclasses.field(repr=False)
     _max_result_retries: int = dataclasses.field(repr=False)
-    _override_deps: _utils.Option[AgentDeps] = dataclasses.field(default=None, repr=False)
+    _override_deps: _utils.Option[AgentDepsT] = dataclasses.field(default=None, repr=False)
     _override_model: _utils.Option[models.Model] = dataclasses.field(default=None, repr=False)
 
     def __init__(
         self,
         model: models.Model | models.KnownModelName | None = None,
         *,
-        result_type: type[ResultData_co] = str,
+        result_type: type[ResultDataT] = str,
         system_prompt: str | Sequence[str] = (),
-        deps_type: type[AgentDeps] = NoneType,
+        deps_type: type[AgentDepsT] = NoneType,
         name: str | None = None,
         model_settings: ModelSettings | None = None,
         retries: int = 1,
         result_tool_name: str = 'final_result',
         result_tool_description: str | None = None,
         result_retries: int | None = None,
-        tools: Sequence[Tool[AgentDeps] | ToolFuncEither[AgentDeps, ...]] = (),
+        tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
         defer_model_check: bool = False,
         end_strategy: EndStrategy = 'early',
     ):
@@ -201,12 +202,12 @@ class Agent(Generic[AgentDeps, ResultData_co]):
         result_type: None = None,
         message_history: list[_messages.ModelMessage] | None = None,
         model: models.Model | models.KnownModelName | None = None,
-        deps: AgentDeps = None,
+        deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.Usage | None = None,
         infer_name: bool = True,
-    ) -> result.RunResult[ResultData_co]: ...
+    ) -> result.RunResult[ResultDataT]: ...
 
     @overload
     async def run(
@@ -216,7 +217,7 @@ class Agent(Generic[AgentDeps, ResultData_co]):
         result_type: type[RunResultData],
         message_history: list[_messages.ModelMessage] | None = None,
         model: models.Model | models.KnownModelName | None = None,
-        deps: AgentDeps = None,
+        deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.Usage | None = None,
@@ -229,7 +230,7 @@ class Agent(Generic[AgentDeps, ResultData_co]):
         *,
         message_history: list[_messages.ModelMessage] | None = None,
         model: models.Model | models.KnownModelName | None = None,
-        deps: AgentDeps = None,
+        deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.Usage | None = None,
@@ -339,12 +340,12 @@ class Agent(Generic[AgentDeps, ResultData_co]):
         *,
         message_history: list[_messages.ModelMessage] | None = None,
         model: models.Model | models.KnownModelName | None = None,
-        deps: AgentDeps = None,
+        deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.Usage | None = None,
         infer_name: bool = True,
-    ) -> result.RunResult[ResultData_co]: ...
+    ) -> result.RunResult[ResultDataT]: ...
 
     @overload
     def run_sync(
@@ -354,7 +355,7 @@ class Agent(Generic[AgentDeps, ResultData_co]):
         result_type: type[RunResultData] | None,
         message_history: list[_messages.ModelMessage] | None = None,
         model: models.Model | models.KnownModelName | None = None,
-        deps: AgentDeps = None,
+        deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.Usage | None = None,
@@ -368,7 +369,7 @@ class Agent(Generic[AgentDeps, ResultData_co]):
         result_type: type[RunResultData] | None = None,
         message_history: list[_messages.ModelMessage] | None = None,
         model: models.Model | models.KnownModelName | None = None,
-        deps: AgentDeps = None,
+        deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.Usage | None = None,
@@ -429,12 +430,12 @@ class Agent(Generic[AgentDeps, ResultData_co]):
         result_type: None = None,
         message_history: list[_messages.ModelMessage] | None = None,
         model: models.Model | models.KnownModelName | None = None,
-        deps: AgentDeps = None,
+        deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.Usage | None = None,
         infer_name: bool = True,
-    ) -> AbstractAsyncContextManager[result.StreamedRunResult[AgentDeps, ResultData_co]]: ...
+    ) -> AbstractAsyncContextManager[result.StreamedRunResult[AgentDepsT, ResultDataT]]: ...
 
     @overload
     def run_stream(
@@ -444,12 +445,12 @@ class Agent(Generic[AgentDeps, ResultData_co]):
         result_type: type[RunResultData],
         message_history: list[_messages.ModelMessage] | None = None,
         model: models.Model | models.KnownModelName | None = None,
-        deps: AgentDeps = None,
+        deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.Usage | None = None,
         infer_name: bool = True,
-    ) -> AbstractAsyncContextManager[result.StreamedRunResult[AgentDeps, RunResultData]]: ...
+    ) -> AbstractAsyncContextManager[result.StreamedRunResult[AgentDepsT, RunResultData]]: ...
 
     @asynccontextmanager
     async def run_stream(
@@ -459,12 +460,12 @@ class Agent(Generic[AgentDeps, ResultData_co]):
         result_type: type[RunResultData] | None = None,
         message_history: list[_messages.ModelMessage] | None = None,
         model: models.Model | models.KnownModelName | None = None,
-        deps: AgentDeps = None,
+        deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.Usage | None = None,
         infer_name: bool = True,
-    ) -> AsyncIterator[result.StreamedRunResult[AgentDeps, Any]]:
+    ) -> AsyncIterator[result.StreamedRunResult[AgentDepsT, Any]]:
         """Run the agent with a user prompt in async mode, returning a streamed response.
 
         Example:
@@ -569,7 +570,7 @@ class Agent(Generic[AgentDeps, ResultData_co]):
                                 # there are result validators that might convert the result data from an overridden
                                 # `result_type` to a type that is not valid as such.
                                 result_validators = cast(
-                                    list[_result.ResultValidator[AgentDeps, RunResultData]], self._result_validators
+                                    list[_result.ResultValidator[AgentDepsT, RunResultData]], self._result_validators
                                 )
 
                                 yield result.StreamedRunResult(
@@ -605,7 +606,7 @@ class Agent(Generic[AgentDeps, ResultData_co]):
     def override(
         self,
         *,
-        deps: AgentDeps | _utils.Unset = _utils.UNSET,
+        deps: AgentDepsT | _utils.Unset = _utils.UNSET,
         model: models.Model | models.KnownModelName | _utils.Unset = _utils.UNSET,
     ) -> Iterator[None]:
         """Context manager to temporarily override agent dependencies and model.
@@ -641,13 +642,13 @@ class Agent(Generic[AgentDeps, ResultData_co]):
 
     @overload
     def system_prompt(
-        self, func: Callable[[RunContext[AgentDeps]], str], /
-    ) -> Callable[[RunContext[AgentDeps]], str]: ...
+        self, func: Callable[[RunContext[AgentDepsT]], str], /
+    ) -> Callable[[RunContext[AgentDepsT]], str]: ...
 
     @overload
     def system_prompt(
-        self, func: Callable[[RunContext[AgentDeps]], Awaitable[str]], /
-    ) -> Callable[[RunContext[AgentDeps]], Awaitable[str]]: ...
+        self, func: Callable[[RunContext[AgentDepsT]], Awaitable[str]], /
+    ) -> Callable[[RunContext[AgentDepsT]], Awaitable[str]]: ...
 
     @overload
     def system_prompt(self, func: Callable[[], str], /) -> Callable[[], str]: ...
@@ -658,17 +659,17 @@ class Agent(Generic[AgentDeps, ResultData_co]):
     @overload
     def system_prompt(
         self, /, *, dynamic: bool = False
-    ) -> Callable[[_system_prompt.SystemPromptFunc[AgentDeps]], _system_prompt.SystemPromptFunc[AgentDeps]]: ...
+    ) -> Callable[[_system_prompt.SystemPromptFunc[AgentDepsT]], _system_prompt.SystemPromptFunc[AgentDepsT]]: ...
 
     def system_prompt(
         self,
-        func: _system_prompt.SystemPromptFunc[AgentDeps] | None = None,
+        func: _system_prompt.SystemPromptFunc[AgentDepsT] | None = None,
         /,
         *,
         dynamic: bool = False,
     ) -> (
-        Callable[[_system_prompt.SystemPromptFunc[AgentDeps]], _system_prompt.SystemPromptFunc[AgentDeps]]
-        | _system_prompt.SystemPromptFunc[AgentDeps]
+        Callable[[_system_prompt.SystemPromptFunc[AgentDepsT]], _system_prompt.SystemPromptFunc[AgentDepsT]]
+        | _system_prompt.SystemPromptFunc[AgentDepsT]
     ):
         """Decorator to register a system prompt function.
 
@@ -704,9 +705,9 @@ class Agent(Generic[AgentDeps, ResultData_co]):
         if func is None:
 
             def decorator(
-                func_: _system_prompt.SystemPromptFunc[AgentDeps],
-            ) -> _system_prompt.SystemPromptFunc[AgentDeps]:
-                runner = _system_prompt.SystemPromptRunner[AgentDeps](func_, dynamic=dynamic)
+                func_: _system_prompt.SystemPromptFunc[AgentDepsT],
+            ) -> _system_prompt.SystemPromptFunc[AgentDepsT]:
+                runner = _system_prompt.SystemPromptRunner[AgentDepsT](func_, dynamic=dynamic)
                 self._system_prompt_functions.append(runner)
                 if dynamic:
                     self._system_prompt_dynamic_functions[func_.__qualname__] = runner
@@ -720,27 +721,27 @@ class Agent(Generic[AgentDeps, ResultData_co]):
 
     @overload
     def result_validator(
-        self, func: Callable[[RunContext[AgentDeps], ResultData_co], ResultData_co], /
-    ) -> Callable[[RunContext[AgentDeps], ResultData_co], ResultData_co]: ...
+        self, func: Callable[[RunContext[AgentDepsT], ResultDataT], ResultDataT], /
+    ) -> Callable[[RunContext[AgentDepsT], ResultDataT], ResultDataT]: ...
 
     @overload
     def result_validator(
-        self, func: Callable[[RunContext[AgentDeps], ResultData_co], Awaitable[ResultData_co]], /
-    ) -> Callable[[RunContext[AgentDeps], ResultData_co], Awaitable[ResultData_co]]: ...
+        self, func: Callable[[RunContext[AgentDepsT], ResultDataT], Awaitable[ResultDataT]], /
+    ) -> Callable[[RunContext[AgentDepsT], ResultDataT], Awaitable[ResultDataT]]: ...
 
     @overload
     def result_validator(
-        self, func: Callable[[ResultData_co], ResultData_co], /
-    ) -> Callable[[ResultData_co], ResultData_co]: ...
+        self, func: Callable[[ResultDataT], ResultDataT], /
+    ) -> Callable[[ResultDataT], ResultDataT]: ...
 
     @overload
     def result_validator(
-        self, func: Callable[[ResultData_co], Awaitable[ResultData_co]], /
-    ) -> Callable[[ResultData_co], Awaitable[ResultData_co]]: ...
+        self, func: Callable[[ResultDataT], Awaitable[ResultDataT]], /
+    ) -> Callable[[ResultDataT], Awaitable[ResultDataT]]: ...
 
     def result_validator(
-        self, func: _result.ResultValidatorFunc[AgentDeps, ResultData_co], /
-    ) -> _result.ResultValidatorFunc[AgentDeps, ResultData_co]:
+        self, func: _result.ResultValidatorFunc[AgentDepsT, ResultDataT], /
+    ) -> _result.ResultValidatorFunc[AgentDepsT, ResultDataT]:
         """Decorator to register a result validator function.
 
         Optionally takes [`RunContext`][pydantic_ai.tools.RunContext] as its first argument.
@@ -772,11 +773,11 @@ class Agent(Generic[AgentDeps, ResultData_co]):
         #> success (no tool calls)
         ```
         """
-        self._result_validators.append(_result.ResultValidator[AgentDeps, Any](func))
+        self._result_validators.append(_result.ResultValidator[AgentDepsT, Any](func))
         return func
 
     @overload
-    def tool(self, func: ToolFuncContext[AgentDeps, ToolParams], /) -> ToolFuncContext[AgentDeps, ToolParams]: ...
+    def tool(self, func: ToolFuncContext[AgentDepsT, ToolParams], /) -> ToolFuncContext[AgentDepsT, ToolParams]: ...
 
     @overload
     def tool(
@@ -784,18 +785,18 @@ class Agent(Generic[AgentDeps, ResultData_co]):
         /,
         *,
         retries: int | None = None,
-        prepare: ToolPrepareFunc[AgentDeps] | None = None,
+        prepare: ToolPrepareFunc[AgentDepsT] | None = None,
         docstring_format: DocstringFormat = 'auto',
         require_parameter_descriptions: bool = False,
-    ) -> Callable[[ToolFuncContext[AgentDeps, ToolParams]], ToolFuncContext[AgentDeps, ToolParams]]: ...
+    ) -> Callable[[ToolFuncContext[AgentDepsT, ToolParams]], ToolFuncContext[AgentDepsT, ToolParams]]: ...
 
     def tool(
         self,
-        func: ToolFuncContext[AgentDeps, ToolParams] | None = None,
+        func: ToolFuncContext[AgentDepsT, ToolParams] | None = None,
         /,
         *,
         retries: int | None = None,
-        prepare: ToolPrepareFunc[AgentDeps] | None = None,
+        prepare: ToolPrepareFunc[AgentDepsT] | None = None,
         docstring_format: DocstringFormat = 'auto',
         require_parameter_descriptions: bool = False,
     ) -> Any:
@@ -842,8 +843,8 @@ class Agent(Generic[AgentDeps, ResultData_co]):
         if func is None:
 
             def tool_decorator(
-                func_: ToolFuncContext[AgentDeps, ToolParams],
-            ) -> ToolFuncContext[AgentDeps, ToolParams]:
+                func_: ToolFuncContext[AgentDepsT, ToolParams],
+            ) -> ToolFuncContext[AgentDepsT, ToolParams]:
                 # noinspection PyTypeChecker
                 self._register_function(func_, True, retries, prepare, docstring_format, require_parameter_descriptions)
                 return func_
@@ -863,7 +864,7 @@ class Agent(Generic[AgentDeps, ResultData_co]):
         /,
         *,
         retries: int | None = None,
-        prepare: ToolPrepareFunc[AgentDeps] | None = None,
+        prepare: ToolPrepareFunc[AgentDepsT] | None = None,
         docstring_format: DocstringFormat = 'auto',
         require_parameter_descriptions: bool = False,
     ) -> Callable[[ToolFuncPlain[ToolParams]], ToolFuncPlain[ToolParams]]: ...
@@ -874,7 +875,7 @@ class Agent(Generic[AgentDeps, ResultData_co]):
         /,
         *,
         retries: int | None = None,
-        prepare: ToolPrepareFunc[AgentDeps] | None = None,
+        prepare: ToolPrepareFunc[AgentDepsT] | None = None,
         docstring_format: DocstringFormat = 'auto',
         require_parameter_descriptions: bool = False,
     ) -> Any:
@@ -934,16 +935,16 @@ class Agent(Generic[AgentDeps, ResultData_co]):
 
     def _register_function(
         self,
-        func: ToolFuncEither[AgentDeps, ToolParams],
+        func: ToolFuncEither[AgentDepsT, ToolParams],
         takes_ctx: bool,
         retries: int | None,
-        prepare: ToolPrepareFunc[AgentDeps] | None,
+        prepare: ToolPrepareFunc[AgentDepsT] | None,
         docstring_format: DocstringFormat,
         require_parameter_descriptions: bool,
     ) -> None:
         """Private utility to register a function as a tool."""
         retries_ = retries if retries is not None else self._default_retries
-        tool = Tool[AgentDeps](
+        tool = Tool[AgentDepsT](
             func,
             takes_ctx=takes_ctx,
             max_retries=retries_,
@@ -953,7 +954,7 @@ class Agent(Generic[AgentDeps, ResultData_co]):
         )
         self._register_tool(tool)
 
-    def _register_tool(self, tool: Tool[AgentDeps]) -> None:
+    def _register_tool(self, tool: Tool[AgentDepsT]) -> None:
         """Private utility to register a tool instance."""
         if tool.max_retries is None:
             # noinspection PyTypeChecker
@@ -996,12 +997,12 @@ class Agent(Generic[AgentDeps, ResultData_co]):
         return model_
 
     async def _prepare_model(
-        self, run_context: RunContext[AgentDeps], result_schema: _result.ResultSchema[RunResultData] | None
+        self, run_context: RunContext[AgentDepsT], result_schema: _result.ResultSchema[RunResultData] | None
     ) -> models.AgentModel:
         """Build tools and create an agent model."""
         function_tools: list[ToolDefinition] = []
 
-        async def add_tool(tool: Tool[AgentDeps]) -> None:
+        async def add_tool(tool: Tool[AgentDepsT]) -> None:
             ctx = run_context.replace_with(retry=tool.current_retry, tool_name=tool.name)
             if tool_def := await tool.prepare_tool_def(ctx):
                 function_tools.append(tool_def)
@@ -1015,7 +1016,7 @@ class Agent(Generic[AgentDeps, ResultData_co]):
         )
 
     async def _reevaluate_dynamic_prompts(
-        self, messages: list[_messages.ModelMessage], run_context: RunContext[AgentDeps]
+        self, messages: list[_messages.ModelMessage], run_context: RunContext[AgentDepsT]
     ) -> None:
         """Reevaluate any `SystemPromptPart` with dynamic_ref in the provided messages by running the associated runner function."""
         # Only proceed if there's at least one dynamic runner.
@@ -1044,7 +1045,10 @@ class Agent(Generic[AgentDeps, ResultData_co]):
             return self._result_schema  # pyright: ignore[reportReturnType]
 
     async def _prepare_messages(
-        self, user_prompt: str, message_history: list[_messages.ModelMessage] | None, run_context: RunContext[AgentDeps]
+        self,
+        user_prompt: str,
+        message_history: list[_messages.ModelMessage] | None,
+        run_context: RunContext[AgentDepsT],
     ) -> list[_messages.ModelMessage]:
         try:
             ctx_messages = _messages_ctx_var.get()
@@ -1073,7 +1077,7 @@ class Agent(Generic[AgentDeps, ResultData_co]):
     async def _handle_model_response(
         self,
         model_response: _messages.ModelResponse,
-        run_context: RunContext[AgentDeps],
+        run_context: RunContext[AgentDepsT],
         result_schema: _result.ResultSchema[RunResultData] | None,
     ) -> tuple[_MarkFinalResult[RunResultData] | None, list[_messages.ModelRequestPart]]:
         """Process a non-streamed response from the model.
@@ -1104,7 +1108,7 @@ class Agent(Generic[AgentDeps, ResultData_co]):
             raise exceptions.UnexpectedModelBehavior('Received empty model response')
 
     async def _handle_text_response(
-        self, text: str, run_context: RunContext[AgentDeps], result_schema: _result.ResultSchema[RunResultData] | None
+        self, text: str, run_context: RunContext[AgentDepsT], result_schema: _result.ResultSchema[RunResultData] | None
     ) -> tuple[_MarkFinalResult[RunResultData] | None, list[_messages.ModelRequestPart]]:
         """Handle a plain text response from the model for non-streaming responses."""
         if self._allow_text_result(result_schema):
@@ -1126,7 +1130,7 @@ class Agent(Generic[AgentDeps, ResultData_co]):
     async def _handle_structured_response(
         self,
         tool_calls: list[_messages.ToolCallPart],
-        run_context: RunContext[AgentDeps],
+        run_context: RunContext[AgentDepsT],
         result_schema: _result.ResultSchema[RunResultData] | None,
     ) -> tuple[_MarkFinalResult[RunResultData] | None, list[_messages.ModelRequestPart]]:
         """Handle a structured response containing tool calls from the model for non-streaming responses."""
@@ -1159,7 +1163,7 @@ class Agent(Generic[AgentDeps, ResultData_co]):
         self,
         tool_calls: list[_messages.ToolCallPart],
         result_tool_name: str | None,
-        run_context: RunContext[AgentDeps],
+        run_context: RunContext[AgentDepsT],
         result_schema: _result.ResultSchema[RunResultData] | None,
     ) -> list[_messages.ModelRequestPart]:
         """Process function (non-result) tool calls in parallel.
@@ -1218,7 +1222,7 @@ class Agent(Generic[AgentDeps, ResultData_co]):
     async def _handle_streamed_response(
         self,
         streamed_response: models.StreamedResponse,
-        run_context: RunContext[AgentDeps],
+        run_context: RunContext[AgentDepsT],
         result_schema: _result.ResultSchema[RunResultData] | None,
     ) -> _MarkFinalResult[models.StreamedResponse] | tuple[_messages.ModelResponse, list[_messages.ModelRequestPart]]:
         """Process a streamed response from the model.
@@ -1271,25 +1275,25 @@ class Agent(Generic[AgentDeps, ResultData_co]):
     async def _validate_result(
         self,
         result_data: RunResultData,
-        run_context: RunContext[AgentDeps],
+        run_context: RunContext[AgentDepsT],
         tool_call: _messages.ToolCallPart | None,
     ) -> RunResultData:
         if self._result_validators:
-            agent_result_data = cast(ResultData_co, result_data)
+            agent_result_data = cast(ResultDataT, result_data)
             for validator in self._result_validators:
                 agent_result_data = await validator.validate(agent_result_data, tool_call, run_context)
             return cast(RunResultData, agent_result_data)
         else:
             return result_data
 
-    def _incr_result_retry(self, run_context: RunContext[AgentDeps]) -> None:
+    def _incr_result_retry(self, run_context: RunContext[AgentDepsT]) -> None:
         run_context.retry += 1
         if run_context.retry > self._max_result_retries:
             raise exceptions.UnexpectedModelBehavior(
                 f'Exceeded maximum retries ({self._max_result_retries}) for result validation'
             )
 
-    async def _sys_parts(self, run_context: RunContext[AgentDeps]) -> list[_messages.ModelRequestPart]:
+    async def _sys_parts(self, run_context: RunContext[AgentDepsT]) -> list[_messages.ModelRequestPart]:
         """Build the initial messages for the conversation."""
         messages: list[_messages.ModelRequestPart] = [_messages.SystemPromptPart(p) for p in self._system_prompts]
         for sys_prompt_runner in self._system_prompt_functions:
@@ -1303,7 +1307,7 @@ class Agent(Generic[AgentDeps, ResultData_co]):
     def _unknown_tool(
         self,
         tool_name: str,
-        run_context: RunContext[AgentDeps],
+        run_context: RunContext[AgentDepsT],
         result_schema: _result.ResultSchema[RunResultData] | None,
     ) -> _messages.RetryPromptPart:
         self._incr_result_retry(run_context)
@@ -1316,7 +1320,7 @@ class Agent(Generic[AgentDeps, ResultData_co]):
             msg = 'No tools available.'
         return _messages.RetryPromptPart(content=f'Unknown tool name: {tool_name!r}. {msg}')
 
-    def _get_deps(self: Agent[AgentDeps_inv, Any], deps: AgentDeps_inv) -> AgentDeps_inv:
+    def _get_deps(self: Agent[T, Any], deps: T) -> T:
         """Get deps for a run.
 
         If we've overridden deps via `_override_deps`, use that, otherwise use the deps passed to the call.
@@ -1404,7 +1408,7 @@ def capture_run_messages() -> Iterator[list[_messages.ModelMessage]]:
 
 
 @dataclasses.dataclass
-class _MarkFinalResult(Generic[ResultData_co]):
+class _MarkFinalResult(Generic[ResultDataT]):
     """Marker class to indicate that the result is the final result.
 
     This allows us to use `isinstance`, which wouldn't be possible if we were returning `ResultData_co` directly.
@@ -1412,7 +1416,7 @@ class _MarkFinalResult(Generic[ResultData_co]):
     It also avoids problems in the case where the result type is itself `None`, but is set.
     """
 
-    data: ResultData_co
+    data: ResultDataT
     """The final result data."""
     tool_name: str | None
     """Name of the final result tool, None if the result is a string."""

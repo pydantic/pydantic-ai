@@ -8,23 +8,26 @@ from dataclasses import dataclass, field
 from functools import cached_property
 from pathlib import Path
 from time import perf_counter
-from typing import TYPE_CHECKING, Annotated, Any, Callable, Generic
+from typing import TYPE_CHECKING, Annotated, Any, Callable, Generic, TypeVar
 
 import logfire_api
 import pydantic
 import typing_extensions
 
 from . import _utils, exceptions, mermaid
-from .nodes import BaseNode, DepsT, End, GraphRunContext, NodeDef, RunEndT, RunEndT_co
+from .nodes import BaseNode, DepsT, End, GraphRunContext, NodeDef, RunEndT
 from .state import EndStep, HistoryStep, NodeStep, StateT, deep_copy_state, nodes_schema_var
 
 __all__ = ('Graph',)
 
 _logfire = logfire_api.Logfire(otel_scope='pydantic-graph')
 
+T = TypeVar('T')
+"""An invariant typevar."""
+
 
 @dataclass(init=False)
-class Graph(Generic[StateT, DepsT, RunEndT_co]):
+class Graph(Generic[StateT, DepsT, RunEndT]):
     """Definition of a graph.
 
     In `pydantic-graph`, a graph is a collection of nodes that can be run in sequence. The nodes define
@@ -68,18 +71,18 @@ class Graph(Generic[StateT, DepsT, RunEndT_co]):
     """
 
     name: str | None
-    node_defs: dict[str, NodeDef[StateT, DepsT, RunEndT_co]]
+    node_defs: dict[str, NodeDef[StateT, DepsT, RunEndT]]
     snapshot_state: Callable[[StateT], StateT]
     _state_type: type[StateT] | _utils.Unset = field(repr=False)
-    _run_end_type: type[RunEndT_co] | _utils.Unset = field(repr=False)
+    _run_end_type: type[RunEndT] | _utils.Unset = field(repr=False)
 
     def __init__(
         self,
         *,
-        nodes: Sequence[type[BaseNode[StateT, DepsT, RunEndT_co]]],
+        nodes: Sequence[type[BaseNode[StateT, DepsT, RunEndT]]],
         name: str | None = None,
         state_type: type[StateT] | _utils.Unset = _utils.UNSET,
-        run_end_type: type[RunEndT_co] | _utils.Unset = _utils.UNSET,
+        run_end_type: type[RunEndT] | _utils.Unset = _utils.UNSET,
         snapshot_state: Callable[[StateT], StateT] = deep_copy_state,
     ):
         """Create a graph from a sequence of nodes.
@@ -101,20 +104,20 @@ class Graph(Generic[StateT, DepsT, RunEndT_co]):
         self.snapshot_state = snapshot_state
 
         parent_namespace = _utils.get_parent_namespace(inspect.currentframe())
-        self.node_defs: dict[str, NodeDef[StateT, DepsT, RunEndT_co]] = {}
+        self.node_defs: dict[str, NodeDef[StateT, DepsT, RunEndT]] = {}
         for node in nodes:
             self._register_node(node, parent_namespace)
 
         self._validate_edges()
 
     async def run(
-        self: Graph[StateT, DepsT, RunEndT],
-        start_node: BaseNode[StateT, DepsT, RunEndT],
+        self: Graph[StateT, DepsT, T],
+        start_node: BaseNode[StateT, DepsT, T],
         *,
         state: StateT = None,
         deps: DepsT = None,
         infer_name: bool = True,
-    ) -> tuple[RunEndT, list[HistoryStep[StateT, RunEndT]]]:
+    ) -> tuple[T, list[HistoryStep[StateT, T]]]:
         """Run the graph from a starting node until it ends.
 
         Args:
@@ -151,7 +154,7 @@ class Graph(Generic[StateT, DepsT, RunEndT_co]):
         if infer_name and self.name is None:
             self._infer_name(inspect.currentframe())
 
-        history: list[HistoryStep[StateT, RunEndT]] = []
+        history: list[HistoryStep[StateT, T]] = []
         with _logfire.span(
             '{graph_name} run {start=}',
             graph_name=self.name or 'graph',
@@ -174,13 +177,13 @@ class Graph(Generic[StateT, DepsT, RunEndT_co]):
                         )
 
     def run_sync(
-        self: Graph[StateT, DepsT, RunEndT],
-        start_node: BaseNode[StateT, DepsT, RunEndT],
+        self: Graph[StateT, DepsT, T],
+        start_node: BaseNode[StateT, DepsT, T],
         *,
         state: StateT = None,
         deps: DepsT = None,
         infer_name: bool = True,
-    ) -> tuple[RunEndT, list[HistoryStep[StateT, RunEndT]]]:
+    ) -> tuple[T, list[HistoryStep[StateT, T]]]:
         """Run the graph synchronously.
 
         This is a convenience method that wraps [`self.run`][pydantic_graph.Graph.run] with `loop.run_until_complete(...)`.
@@ -203,14 +206,14 @@ class Graph(Generic[StateT, DepsT, RunEndT_co]):
         )
 
     async def next(
-        self: Graph[StateT, DepsT, RunEndT],
-        node: BaseNode[StateT, DepsT, RunEndT],
-        history: list[HistoryStep[StateT, RunEndT]],
+        self: Graph[StateT, DepsT, T],
+        node: BaseNode[StateT, DepsT, T],
+        history: list[HistoryStep[StateT, T]],
         *,
         state: StateT = None,
         deps: DepsT = None,
         infer_name: bool = True,
-    ) -> BaseNode[StateT, DepsT, Any] | End[RunEndT]:
+    ) -> BaseNode[StateT, DepsT, Any] | End[T]:
         """Run a node in the graph and return the next node to run.
 
         Args:
@@ -242,7 +245,7 @@ class Graph(Generic[StateT, DepsT, RunEndT_co]):
         return next_node
 
     def dump_history(
-        self: Graph[StateT, DepsT, RunEndT], history: list[HistoryStep[StateT, RunEndT]], *, indent: int | None = None
+        self: Graph[StateT, DepsT, T], history: list[HistoryStep[StateT, T]], *, indent: int | None = None
     ) -> bytes:
         """Dump the history of a graph run as JSON.
 
@@ -255,7 +258,7 @@ class Graph(Generic[StateT, DepsT, RunEndT_co]):
         """
         return self.history_type_adapter.dump_json(history, indent=indent)
 
-    def load_history(self, json_bytes: str | bytes | bytearray) -> list[HistoryStep[StateT, RunEndT_co]]:
+    def load_history(self, json_bytes: str | bytes | bytearray) -> list[HistoryStep[StateT, RunEndT]]:
         """Load the history of a graph run from JSON.
 
         Args:
@@ -267,7 +270,7 @@ class Graph(Generic[StateT, DepsT, RunEndT_co]):
         return self.history_type_adapter.validate_json(json_bytes)
 
     @cached_property
-    def history_type_adapter(self) -> pydantic.TypeAdapter[list[HistoryStep[StateT, RunEndT_co]]]:
+    def history_type_adapter(self) -> pydantic.TypeAdapter[list[HistoryStep[StateT, RunEndT]]]:
         nodes = [node_def.node for node_def in self.node_defs.values()]
         state_t = self._get_state_type()
         end_t = self._get_run_end_type()
@@ -416,7 +419,7 @@ class Graph(Generic[StateT, DepsT, RunEndT_co]):
         # state defaults to None, so use that if we can't infer it
         return type(None)  # pyright: ignore[reportReturnType]
 
-    def _get_run_end_type(self) -> type[RunEndT_co]:
+    def _get_run_end_type(self) -> type[RunEndT]:
         if _utils.is_set(self._run_end_type):
             return self._run_end_type
 
@@ -433,8 +436,8 @@ class Graph(Generic[StateT, DepsT, RunEndT_co]):
         raise exceptions.GraphSetupError('Could not infer run end type from nodes, please set `run_end_type`.')
 
     def _register_node(
-        self: Graph[StateT, DepsT, RunEndT],
-        node: type[BaseNode[StateT, DepsT, RunEndT]],
+        self: Graph[StateT, DepsT, T],
+        node: type[BaseNode[StateT, DepsT, T]],
         parent_namespace: dict[str, Any] | None,
     ) -> None:
         node_id = node.get_id()
