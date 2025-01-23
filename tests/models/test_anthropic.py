@@ -1,7 +1,7 @@
 from __future__ import annotations as _annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import timezone
 from functools import cached_property
 from typing import Any, cast
@@ -22,11 +22,12 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.result import Usage
+from pydantic_ai.settings import ModelSettings
 
 from ..conftest import IsNow, try_import
 
 with try_import() as imports_successful:
-    from anthropic import AsyncAnthropic
+    from anthropic import NOT_GIVEN, AsyncAnthropic
     from anthropic.types import (
         ContentBlock,
         Message as AnthropicMessage,
@@ -53,6 +54,7 @@ def test_init():
 class MockAnthropic:
     messages_: AnthropicMessage | list[AnthropicMessage] | None = None
     index = 0
+    chat_completion_kwargs: list[dict[str, Any]] = field(default_factory=list)
 
     @cached_property
     def messages(self) -> Any:
@@ -62,7 +64,9 @@ class MockAnthropic:
     def create_mock(cls, messages_: AnthropicMessage | list[AnthropicMessage]) -> AsyncAnthropic:
         return cast(AsyncAnthropic, cls(messages_=messages_))
 
-    async def messages_create(self, *_args: Any, **_kwargs: Any) -> AnthropicMessage:
+    async def messages_create(self, *_args: Any, **kwargs: Any) -> AnthropicMessage:
+        self.chat_completion_kwargs.append({k: v for k, v in kwargs.items() if v is not NOT_GIVEN})
+
         assert self.messages_ is not None, '`messages` must be provided'
         if isinstance(self.messages_, list):
             response = self.messages_[self.index]
@@ -256,4 +260,41 @@ async def test_request_tool_call(allow_model_requests: None):
                 timestamp=IsNow(tz=timezone.utc),
             ),
         ]
+    )
+
+
+def get_mock_chat_completion_kwargs(async_anthropic: AsyncAnthropic) -> list[dict[str, Any]]:
+    if isinstance(async_anthropic, MockAnthropic):
+        return async_anthropic.chat_completion_kwargs
+    else:  # pragma: no cover
+        raise RuntimeError('Not a MockOpenAI instance')
+
+
+@pytest.mark.parametrize('parallel_tool_calls', [True, False])
+async def test_parallel_tool_calls(allow_model_requests: None, parallel_tool_calls: bool) -> None:
+    responses = [
+        completion_message(
+            [ToolUseBlock(id='1', input={'loc_name': 'San Francisco'}, name='get_location', type='tool_use')],
+            usage=AnthropicUsage(input_tokens=2, output_tokens=1),
+        ),
+        completion_message(
+            [TextBlock(text='final response', type='text')],
+            usage=AnthropicUsage(input_tokens=3, output_tokens=5),
+        ),
+    ]
+
+    mock_client = MockAnthropic.create_mock(responses)
+    m = AnthropicModel('claude-3-5-haiku-latest', anthropic_client=mock_client)
+    agent = Agent(m, model_settings=ModelSettings(parallel_tool_calls=parallel_tool_calls))
+
+    @agent.tool_plain
+    async def get_location(loc_name: str) -> str:
+        if loc_name == 'London':
+            return json.dumps({'lat': 51, 'lng': 0})
+        else:
+            raise ModelRetry('Wrong location, please try again')
+
+    await agent.run('hello')
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['tool_choice']['disable_parallel_tool_use'] == (
+        not parallel_tool_calls
     )
