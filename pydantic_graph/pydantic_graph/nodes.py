@@ -14,13 +14,13 @@ if TYPE_CHECKING:
 else:
     StateT = TypeVar('StateT', default=None)
 
-__all__ = 'GraphRunContext', 'BaseNode', 'End', 'Edge', 'NodeDef', 'RunEndT', 'NodeRunEndT', 'DepsT'
+__all__ = 'GraphRunContext', 'BaseNode', 'End', 'Edge', 'NodeDef', 'DepsT'
 
-RunEndT = TypeVar('RunEndT', default=None)
-"""Type variable for the return type of a graph [`run`][pydantic_graph.graph.Graph.run]."""
+RunEndT = TypeVar('RunEndT', covariant=True, default=None)
+"""Covariant type variable for the return type of a graph [`run`][pydantic_graph.graph.Graph.run]."""
 NodeRunEndT = TypeVar('NodeRunEndT', covariant=True, default=Never)
-"""Type variable for the return type of a node [`run`][pydantic_graph.nodes.BaseNode.run]."""
-DepsT = TypeVar('DepsT', default=None)
+"""Covariant type variable for the return type of a node [`run`][pydantic_graph.nodes.BaseNode.run]."""
+DepsT = TypeVar('DepsT', default=None, contravariant=True)
 """Type variable for the dependencies of a graph and node."""
 
 
