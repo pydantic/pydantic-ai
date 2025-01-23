@@ -153,6 +153,7 @@ class NeverResultType(TypedDict):
 
 agent = Agent(
     'claude-3-5-sonnet-latest',
+    retries=3,
     result_type=NeverResultType,
     system_prompt='Any time you get a response, call the `infinite_retry_tool` to produce another response.',
 )
