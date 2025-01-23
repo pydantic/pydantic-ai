@@ -2,20 +2,17 @@ from __future__ import annotations
 
 import functools
 import typing
+from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import (
     TYPE_CHECKING,
-    Any,
-    AsyncIterator,
-    Iterator,
     Literal,
     overload,
 )
 
 import anyio
-
 
 try:
     import boto3
@@ -26,6 +23,8 @@ except ImportError as _import_error:
     ) from _import_error
 
 
+from typing_extensions import ParamSpec, assert_never
+
 from .. import result
 from ..messages import (
     ArgsDict,
@@ -34,7 +33,6 @@ from ..messages import (
     ModelResponse,
     ModelResponsePart,
     ModelResponseStreamEvent,
-    PartStartEvent,
     RetryPromptPart,
     SystemPromptPart,
     TextPart,
@@ -42,10 +40,9 @@ from ..messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from . import AgentModel, Model, StreamedResponse
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
-from typing_extensions import assert_never, ParamSpec
+from . import AgentModel, Model, StreamedResponse
 
 if TYPE_CHECKING:
     from botocore.eventstream import EventStream
@@ -62,13 +59,11 @@ if TYPE_CHECKING:
     )
 
 
-P = ParamSpec("P")
-T = typing.TypeVar("T")
+P = ParamSpec('P')
+T = typing.TypeVar('T')
 
 
-async def run_in_threadpool(
-    func: typing.Callable[P, T], *args: P.args, **kwargs: P.kwargs
-) -> T:
+async def run_in_threadpool(func: typing.Callable[P, T], *args: P.args, **kwargs: P.kwargs) -> T:
     """Wrapper around `anyio.to_thread.run_sync`, copied from fastapi."""
     if kwargs:  # pragma: no cover
         # run_sync doesn't accept 'kwargs', so bind them in here
@@ -117,21 +112,21 @@ class BedrockStreamedResponse(StreamedResponse):
         """
         chunk: ConverseStreamOutputTypeDef
         async for chunk in AsyncIteratorWrapper(self._event_stream):
-            if "messageStart" in chunk:
+            if 'messageStart' in chunk:
                 continue
-            if "messageStop" in chunk:
+            if 'messageStop' in chunk:
                 continue
-            if "metadata" in chunk:
-                if "usage" in chunk["metadata"]:
-                    self._usage += self._map_usage(chunk["metadata"])
+            if 'metadata' in chunk:
+                if 'usage' in chunk['metadata']:
+                    self._usage += self._map_usage(chunk['metadata'])
                 continue
-            if "contentBlockStart" in chunk:
-                index = chunk["contentBlockStart"]["contentBlockIndex"]
-                start = chunk["contentBlockStart"]["start"]
-                if "toolUse" in start:
-                    tool_use_start = start["toolUse"]
-                    tool_id = tool_use_start["toolUseId"]
-                    tool_name = tool_use_start["name"]
+            if 'contentBlockStart' in chunk:
+                index = chunk['contentBlockStart']['contentBlockIndex']
+                start = chunk['contentBlockStart']['start']
+                if 'toolUse' in start:
+                    tool_use_start = start['toolUse']
+                    tool_id = tool_use_start['toolUseId']
+                    tool_name = tool_use_start['name']
                     yield self._parts_manager.handle_tool_call_delta(
                         vendor_part_id=index,
                         tool_name=tool_name,
@@ -139,19 +134,17 @@ class BedrockStreamedResponse(StreamedResponse):
                         tool_call_id=tool_id,
                     )
 
-            if "contentBlockDelta" in chunk:
-                index = chunk["contentBlockDelta"]["contentBlockIndex"]
-                delta = chunk["contentBlockDelta"]["delta"]
-                if "text" in delta:
-                    yield self._parts_manager.handle_text_delta(
-                        vendor_part_id=index, content=delta["text"]
-                    )
-                if "toolUse" in delta:
-                    tool_use = delta["toolUse"]
+            if 'contentBlockDelta' in chunk:
+                index = chunk['contentBlockDelta']['contentBlockIndex']
+                delta = chunk['contentBlockDelta']['delta']
+                if 'text' in delta:
+                    yield self._parts_manager.handle_text_delta(vendor_part_id=index, content=delta['text'])
+                if 'toolUse' in delta:
+                    tool_use = delta['toolUse']
                     yield self._parts_manager.handle_tool_call_delta(
                         vendor_part_id=index,
-                        tool_name=tool_use.get("name"),
-                        args=tool_use.get("input"),
+                        tool_name=tool_use.get('name'),
+                        args=tool_use.get('input'),
                         tool_call_id=tool_id,
                     )
 
@@ -160,9 +153,9 @@ class BedrockStreamedResponse(StreamedResponse):
 
     def _map_usage(self, metadata: ConverseStreamMetadataEventTypeDef) -> result.Usage:
         return result.Usage(
-            request_tokens=metadata["usage"]["inputTokens"],
-            response_tokens=metadata["usage"]["outputTokens"],
-            total_tokens=metadata["usage"]["totalTokens"],
+            request_tokens=metadata['usage']['inputTokens'],
+            response_tokens=metadata['usage']['outputTokens'],
+            total_tokens=metadata['usage']['totalTokens'],
         )
 
 
@@ -187,7 +180,7 @@ class BedrockModel(Model):
             self.client = bedrock_client
         else:
             self.client = boto3.client(
-                "bedrock-runtime",
+                'bedrock-runtime',
                 aws_access_key_id=aws_access_key_id,
                 aws_secret_access_key=aws_secret_access_key,
                 region_name=region_name,
@@ -208,9 +201,7 @@ class BedrockModel(Model):
             self.model_name,
             allow_text_result,
             tools,
-            support_tools_choice=(
-                True if self.model_name.startswith("anthropic") else False
-            ),
+            support_tools_choice=(True if self.model_name.startswith('anthropic') else False),
         )
 
     def name(self) -> str:
@@ -219,10 +210,10 @@ class BedrockModel(Model):
     @staticmethod
     def _map_tool_definition(f: ToolDefinition) -> ToolTypeDef:
         return {
-            "toolSpec": {
-                "name": f.name,
-                "description": f.description,
-                "inputSchema": {"json": f.parameters_json_schema},
+            'toolSpec': {
+                'name': f.name,
+                'description': f.description,
+                'inputSchema': {'json': f.parameters_json_schema},
             }
         }
 
@@ -249,22 +240,22 @@ class BedrockAgentModel(AgentModel):
         response: ConverseResponseTypeDef,
     ) -> tuple[ModelResponse, result.Usage]:
         items: list[ModelResponsePart] = []
-        for item in response["output"]["message"]["content"]:
-            if item.get("text"):
-                items.append(TextPart(item["text"]))
+        for item in response['output']['message']['content']:
+            if item.get('text'):
+                items.append(TextPart(item['text']))
             else:
-                assert item.get("toolUse")
+                assert item.get('toolUse')
                 items.append(
                     ToolCallPart.from_raw_args(
-                        item["toolUse"]["name"],
-                        item["toolUse"]["input"],
-                        item["toolUse"]["toolUseId"],
+                        item['toolUse']['name'],
+                        item['toolUse']['input'],
+                        item['toolUse']['toolUseId'],
                     ),
                 )
         usage = result.Usage(
-            request_tokens=response["usage"]["inputTokens"],
-            response_tokens=response["usage"]["outputTokens"],
-            total_tokens=response["usage"]["totalTokens"],
+            request_tokens=response['usage']['inputTokens'],
+            response_tokens=response['usage']['outputTokens'],
+            total_tokens=response['usage']['totalTokens'],
         )
         return ModelResponse(items), usage
 
@@ -302,17 +293,17 @@ class BedrockAgentModel(AgentModel):
         if not self.tools or not self.support_tools_choice:
             tool_choice: None = None
         elif not self.allow_text_result:
-            tool_choice = {"any": {}}
+            tool_choice = {'any': {}}
         else:
-            tool_choice = {"auto": {}}
+            tool_choice = {'auto': {}}
 
         system_prompt, bedrock_messages = self._map_message(messages)
         inference_config = self._map_inference_config(model_settings)
         toolConfig = (
             exclude_none(
                 {
-                    "tools": self.tools,
-                    "toolChoice": tool_choice,
+                    'tools': self.tools,
+                    'toolChoice': tool_choice,
                 }
             )
             if self.tools
@@ -324,16 +315,14 @@ class BedrockAgentModel(AgentModel):
             dict(
                 modelId=self.model_name,
                 messages=bedrock_messages,
-                system=[{"text": system_prompt}],
+                system=[{'text': system_prompt}],
                 inferenceConfig=inference_config,
                 toolConfig=toolConfig,
             )
         )
         if stream:
-            model_response = await run_in_threadpool(
-                self.client.converse_stream, **params
-            )
-            model_response = model_response["stream"]
+            model_response = await run_in_threadpool(self.client.converse_stream, **params)
+            model_response = model_response['stream']
         else:
             model_response = await run_in_threadpool(self.client.converse, **params)
         return model_response
@@ -345,9 +334,9 @@ class BedrockAgentModel(AgentModel):
         model_settings = model_settings or {}
         return exclude_none(
             {
-                "maxTokens": model_settings.get("max_tokens"),
-                "temperature": model_settings.get("temperature"),
-                "topP": model_settings.get("top_p"),
+                'maxTokens': model_settings.get('max_tokens'),
+                'temperature': model_settings.get('temperature'),
+                'topP': model_settings.get('top_p'),
                 # TODO: This is not included in model_settings yet
                 # "stopSequences": model_settings.get('stop_sequences'),
             }
@@ -358,7 +347,7 @@ class BedrockAgentModel(AgentModel):
         messages: list[ModelMessage],
     ) -> tuple[str, list[MessageUnionTypeDef]]:
         """Just maps a `pydantic_ai.Message` to a `anthropic.types.MessageParam`."""
-        system_prompt: str = ""
+        system_prompt: str = ''
         bedrock_messages: list[MessageUnionTypeDef] = []
         for m in messages:
             if isinstance(m, ModelRequest):
@@ -368,20 +357,20 @@ class BedrockAgentModel(AgentModel):
                     elif isinstance(part, UserPromptPart):
                         bedrock_messages.append(
                             {
-                                "role": "user",
-                                "content": [{"text": part.content}],
+                                'role': 'user',
+                                'content': [{'text': part.content}],
                             }
                         )
                     elif isinstance(part, ToolReturnPart):
                         bedrock_messages.append(
                             {
-                                "role": "user",
-                                "content": [
+                                'role': 'user',
+                                'content': [
                                     {
-                                        "toolResult": {
-                                            "toolUseId": part.tool_call_id,
-                                            "content": part.model_response_str(),
-                                            "status": "success",
+                                        'toolResult': {
+                                            'toolUseId': part.tool_call_id,
+                                            'content': part.model_response_str(),
+                                            'status': 'success',
                                         }
                                     }
                                 ],
@@ -391,20 +380,20 @@ class BedrockAgentModel(AgentModel):
                         if part.tool_name is None:
                             bedrock_messages.append(
                                 {
-                                    "role": "user",
-                                    "content": [{"text": part.content}],
+                                    'role': 'user',
+                                    'content': [{'text': part.content}],
                                 }
                             )
                         else:
                             bedrock_messages.append(
                                 {
-                                    "role": "user",
-                                    "content": [
+                                    'role': 'user',
+                                    'content': [
                                         {
-                                            "toolResult": {
-                                                "toolUseId": part.tool_call_id,
-                                                "content": part.model_response(),
-                                                "status": "error",
+                                            'toolResult': {
+                                                'toolUseId': part.tool_call_id,
+                                                'content': part.model_response(),
+                                                'status': 'error',
                                             }
                                         }
                                     ],
@@ -414,14 +403,14 @@ class BedrockAgentModel(AgentModel):
                 content: list[ContentBlockOutputTypeDef] = []
                 for item in m.parts:
                     if isinstance(item, TextPart):
-                        content.append({"text": item.content})
+                        content.append({'text': item.content})
                     else:
                         assert isinstance(item, ToolCallPart)
                         content.append(_map_tool_call(item))
                 bedrock_messages.append(
                     {
-                        "role": "assistant",
-                        "content": content,
+                        'role': 'assistant',
+                        'content': content,
                     }
                 )
             else:
@@ -430,9 +419,9 @@ class BedrockAgentModel(AgentModel):
 
 
 def _map_tool_call(t: ToolCallPart) -> ToolUseBlockOutputTypeDef:
-    assert isinstance(t.args, ArgsDict), f"Expected ArgsDict, got {t.args}"
+    assert isinstance(t.args, ArgsDict), f'Expected ArgsDict, got {t.args}'
     return {
-        "toolUseId": t.tool_call_id,
-        "name": t.tool_name,
-        "input": t.args_as_dict(),
+        'toolUseId': t.tool_call_id,
+        'name': t.tool_name,
+        'input': t.args_as_dict(),
     }
