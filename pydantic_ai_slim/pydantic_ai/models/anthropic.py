@@ -242,8 +242,7 @@ class AnthropicAgentModel(AgentModel):
 
         return ModelResponse(items, model_name=self.model_name)
 
-    @staticmethod
-    async def _process_streamed_response(response: AsyncStream[RawMessageStreamEvent]) -> StreamedResponse:
+    async def _process_streamed_response(self, response: AsyncStream[RawMessageStreamEvent]) -> StreamedResponse:
         peekable_response = _utils.PeekableAsyncStream(response)
         first_chunk = await peekable_response.peek()
         if isinstance(first_chunk, _utils.Unset):
@@ -251,7 +250,7 @@ class AnthropicAgentModel(AgentModel):
 
         # Since Anthropic doesn't provide a timestamp in the message, we'll use the current time
         timestamp = datetime.now(tz=timezone.utc)
-        return AnthropicStreamedResponse(peekable_response, timestamp)
+        return AnthropicStreamedResponse(_model_name=self.model_name, _response=peekable_response, _timestamp=timestamp)
 
     @staticmethod
     def _map_message(messages: list[ModelMessage]) -> tuple[str, list[MessageParam]]:
