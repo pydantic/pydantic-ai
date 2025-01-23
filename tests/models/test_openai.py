@@ -515,7 +515,7 @@ async def test_no_delta(allow_model_requests: None):
         assert result.usage() == snapshot(Usage(requests=1, request_tokens=6, response_tokens=3, total_tokens=9))
 
 
-@pytest.mark.parametrize('system_prompt_role', ['system', 'developer', None])
+@pytest.mark.parametrize('system_prompt_role', ['system', 'developer', 'user', None])
 async def test_system_prompt_role(
     allow_model_requests: None, system_prompt_role: OpenAISystemPromptRole | None
 ) -> None:

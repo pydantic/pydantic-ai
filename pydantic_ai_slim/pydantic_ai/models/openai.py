@@ -51,7 +51,7 @@ Using this more broad type for the model name instead of the ChatModel definitio
 allows this model to be used more easily with other model types (ie, Ollama)
 """
 
-OpenAISystemPromptRole = Literal['system', 'developer']
+OpenAISystemPromptRole = Literal['system', 'developer', 'user']
 
 
 @dataclass(init=False)
@@ -261,6 +261,8 @@ class OpenAIAgentModel(AgentModel):
             if isinstance(part, SystemPromptPart):
                 if self.system_prompt_role == 'developer':
                     yield chat.ChatCompletionDeveloperMessageParam(role='developer', content=part.content)
+                elif self.system_prompt_role == 'user':
+                    yield chat.ChatCompletionUserMessageParam(role='user', content=part.content)
                 else:
                     yield chat.ChatCompletionSystemMessageParam(role='system', content=part.content)
             elif isinstance(part, UserPromptPart):
