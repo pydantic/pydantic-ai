@@ -197,7 +197,7 @@ class GroqAgentModel(AgentModel):
             model=str(self.model_name),
             messages=groq_messages,
             n=1,
-            parallel_tool_calls=True if self.tools else NOT_GIVEN,
+            parallel_tool_calls=model_settings.get('parallel_tool_calls', True if self.tools else NOT_GIVEN),
             tools=self.tools or NOT_GIVEN,
             tool_choice=tool_choice or NOT_GIVEN,
             stream=stream,
@@ -207,8 +207,7 @@ class GroqAgentModel(AgentModel):
             timeout=model_settings.get('timeout', NOT_GIVEN),
         )
 
-    @staticmethod
-    def _process_response(response: chat.ChatCompletion) -> ModelResponse:
+    def _process_response(self, response: chat.ChatCompletion) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
         timestamp = datetime.fromtimestamp(response.created, tz=timezone.utc)
         choice = response.choices[0]
@@ -220,17 +219,20 @@ class GroqAgentModel(AgentModel):
                 items.append(
                     ToolCallPart.from_raw_args(tool_name=c.function.name, args=c.function.arguments, tool_call_id=c.id)
                 )
-        return ModelResponse(items, timestamp=timestamp)
+        return ModelResponse(items, model_name=self.model_name, timestamp=timestamp)
 
-    @staticmethod
-    async def _process_streamed_response(response: AsyncStream[ChatCompletionChunk]) -> GroqStreamedResponse:
+    async def _process_streamed_response(self, response: AsyncStream[ChatCompletionChunk]) -> GroqStreamedResponse:
         """Process a streamed response, and prepare a streaming response to return."""
         peekable_response = _utils.PeekableAsyncStream(response)
         first_chunk = await peekable_response.peek()
         if isinstance(first_chunk, _utils.Unset):
             raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')
 
-        return GroqStreamedResponse(peekable_response, datetime.fromtimestamp(first_chunk.created, tz=timezone.utc))
+        return GroqStreamedResponse(
+            _response=peekable_response,
+            _model_name=self.model_name,
+            _timestamp=datetime.fromtimestamp(first_chunk.created, tz=timezone.utc),
+        )
 
     @classmethod
     def _map_message(cls, message: ModelMessage) -> Iterable[chat.ChatCompletionMessageParam]:

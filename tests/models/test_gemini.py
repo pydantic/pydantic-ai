@@ -435,7 +435,7 @@ def example_usage() -> _GeminiUsageMetaData:
 
 
 async def test_text_success(get_gemini_client: GetGeminiClient):
-    response = gemini_response(_content_model_response(ModelResponse.from_text('Hello world')))
+    response = gemini_response(_content_model_response(ModelResponse(parts=[TextPart('Hello world')])))
     gemini_client = get_gemini_client(response)
     m = GeminiModel('gemini-1.5-flash', http_client=gemini_client)
     agent = Agent(m)
@@ -445,7 +445,9 @@ async def test_text_success(get_gemini_client: GetGeminiClient):
     assert result.all_messages() == snapshot(
         [
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
-            ModelResponse.from_text(content='Hello world', timestamp=IsNow(tz=timezone.utc)),
+            ModelResponse(
+                parts=[TextPart(content='Hello world')], model_name='gemini-1.5-flash', timestamp=IsNow(tz=timezone.utc)
+            ),
         ]
     )
     assert result.usage() == snapshot(Usage(requests=1, request_tokens=1, response_tokens=2, total_tokens=3))
@@ -455,9 +457,17 @@ async def test_text_success(get_gemini_client: GetGeminiClient):
     assert result.all_messages() == snapshot(
         [
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
-            ModelResponse.from_text(content='Hello world', timestamp=IsNow(tz=timezone.utc)),
+            ModelResponse(
+                parts=[TextPart(content='Hello world')],
+                model_name='gemini-1.5-flash',
+                timestamp=IsNow(tz=timezone.utc),
+            ),
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
-            ModelResponse.from_text(content='Hello world', timestamp=IsNow(tz=timezone.utc)),
+            ModelResponse(
+                parts=[TextPart(content='Hello world')],
+                model_name='gemini-1.5-flash',
+                timestamp=IsNow(tz=timezone.utc),
+            ),
         ]
     )
 
@@ -484,6 +494,7 @@ async def test_request_structured_response(get_gemini_client: GetGeminiClient):
                         args=ArgsDict(args_dict={'response': [1, 2, 123]}),
                     )
                 ],
+                model_name='gemini-1.5-flash',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
@@ -514,7 +525,7 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
                 )
             )
         ),
-        gemini_response(_content_model_response(ModelResponse.from_text('final response'))),
+        gemini_response(_content_model_response(ModelResponse(parts=[TextPart('final response')]))),
     ]
     gemini_client = get_gemini_client(responses)
     m = GeminiModel('gemini-1.5-flash', http_client=gemini_client)
@@ -546,6 +557,7 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
                         args=ArgsDict(args_dict={'loc_name': 'San Fransisco'}),
                     )
                 ],
+                model_name='gemini-1.5-flash',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
@@ -568,6 +580,7 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
                         args=ArgsDict(args_dict={'loc_name': 'New York'}),
                     ),
                 ],
+                model_name='gemini-1.5-flash',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
@@ -580,7 +593,11 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
                     ),
                 ]
             ),
-            ModelResponse.from_text(content='final response', timestamp=IsNow(tz=timezone.utc)),
+            ModelResponse(
+                parts=[TextPart(content='final response')],
+                model_name='gemini-1.5-flash',
+                timestamp=IsNow(tz=timezone.utc),
+            ),
         ]
     )
     assert result.usage() == snapshot(Usage(requests=3, request_tokens=3, response_tokens=6, total_tokens=9))
@@ -604,8 +621,8 @@ async def test_unexpected_response(client_with_handler: ClientWithHandler, env: 
 
 async def test_stream_text(get_gemini_client: GetGeminiClient):
     responses = [
-        gemini_response(_content_model_response(ModelResponse.from_text('Hello '))),
-        gemini_response(_content_model_response(ModelResponse.from_text('world'))),
+        gemini_response(_content_model_response(ModelResponse(parts=[TextPart('Hello ')]))),
+        gemini_response(_content_model_response(ModelResponse(parts=[TextPart('world')]))),
     ]
     json_data = _gemini_streamed_response_ta.dump_json(responses, by_alias=True)
     stream = AsyncByteStreamList([json_data[:100], json_data[100:200], json_data[200:]])
@@ -713,6 +730,7 @@ async def test_stream_structured_tool_calls(get_gemini_client: GetGeminiClient):
                     ToolCallPart(tool_name='foo', args=ArgsDict(args_dict={'x': 'a'})),
                     ToolCallPart(tool_name='bar', args=ArgsDict(args_dict={'y': 'b'})),
                 ],
+                model_name='gemini-1.5-flash',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
@@ -728,6 +746,7 @@ async def test_stream_structured_tool_calls(get_gemini_client: GetGeminiClient):
                         args=ArgsDict(args_dict={'response': [1, 2]}),
                     )
                 ],
+                model_name='gemini-1.5-flash',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
@@ -744,7 +763,7 @@ async def test_stream_structured_tool_calls(get_gemini_client: GetGeminiClient):
 
 async def test_stream_text_heterogeneous(get_gemini_client: GetGeminiClient):
     responses = [
-        gemini_response(_content_model_response(ModelResponse.from_text('Hello '))),
+        gemini_response(_content_model_response(ModelResponse(parts=[TextPart('Hello ')]))),
         gemini_response(
             _GeminiContent(
                 role='model',

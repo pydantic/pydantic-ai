@@ -160,7 +160,7 @@ class AnthropicAgentModel(AgentModel):
     """Implementation of `AgentModel` for Anthropic models."""
 
     client: AsyncAnthropic
-    model_name: str
+    model_name: AnthropicModelName
     allow_text_result: bool
     tools: list[ToolParam]
 
@@ -194,16 +194,22 @@ class AnthropicAgentModel(AgentModel):
         self, messages: list[ModelMessage], stream: bool, model_settings: ModelSettings | None
     ) -> AnthropicMessage | AsyncStream[RawMessageStreamEvent]:
         # standalone function to make it easier to override
+        model_settings = model_settings or {}
+
+        tool_choice: ToolChoiceParam | None
+
         if not self.tools:
-            tool_choice: ToolChoiceParam | None = None
-        elif not self.allow_text_result:
-            tool_choice = {'type': 'any'}
+            tool_choice = None
         else:
-            tool_choice = {'type': 'auto'}
+            if not self.allow_text_result:
+                tool_choice = {'type': 'any'}
+            else:
+                tool_choice = {'type': 'auto'}
+
+            if (allow_parallel_tool_calls := model_settings.get('parallel_tool_calls')) is not None:
+                tool_choice['disable_parallel_tool_use'] = not allow_parallel_tool_calls
 
         system_prompt, anthropic_messages = self._map_message(messages)
-
-        model_settings = model_settings or {}
 
         return await self.client.messages.create(
             max_tokens=model_settings.get('max_tokens', 1024),
@@ -218,8 +224,7 @@ class AnthropicAgentModel(AgentModel):
             timeout=model_settings.get('timeout', NOT_GIVEN),
         )
 
-    @staticmethod
-    def _process_response(response: AnthropicMessage) -> ModelResponse:
+    def _process_response(self, response: AnthropicMessage) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
         items: list[ModelResponsePart] = []
         for item in response.content:
@@ -235,7 +240,7 @@ class AnthropicAgentModel(AgentModel):
                     )
                 )
 
-        return ModelResponse(items)
+        return ModelResponse(items, model_name=self.model_name)
 
     @staticmethod
     async def _process_streamed_response(response: AsyncStream[RawMessageStreamEvent]) -> StreamedResponse:

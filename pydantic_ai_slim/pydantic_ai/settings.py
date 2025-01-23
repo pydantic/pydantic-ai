@@ -12,7 +12,8 @@ if TYPE_CHECKING:
 class ModelSettings(TypedDict, total=False):
     """Settings to configure an LLM.
 
-    Here we include only settings which apply to multiple models / model providers.
+    Here we include only settings which apply to multiple models / model providers,
+    though not all of these settings are supported by all models.
     """
 
     max_tokens: int
@@ -24,6 +25,8 @@ class ModelSettings(TypedDict, total=False):
     * Anthropic
     * OpenAI
     * Groq
+    * Cohere
+    * Mistral
     """
 
     temperature: float
@@ -40,6 +43,8 @@ class ModelSettings(TypedDict, total=False):
     * Anthropic
     * OpenAI
     * Groq
+    * Cohere
+    * Mistral
     """
 
     top_p: float
@@ -55,6 +60,8 @@ class ModelSettings(TypedDict, total=False):
     * Anthropic
     * OpenAI
     * Groq
+    * Cohere
+    * Mistral
     """
 
     timeout: float | Timeout
@@ -66,6 +73,16 @@ class ModelSettings(TypedDict, total=False):
     * Anthropic
     * OpenAI
     * Groq
+    * Mistral
+    """
+
+    parallel_tool_calls: bool
+    """Whether to allow parallel tool calls.
+
+    Supported by:
+    * OpenAI
+    * Groq
+    * Anthropic
     """
 
 

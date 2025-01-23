@@ -99,6 +99,7 @@ class GeminiModel(Model):
         allow_text_result: bool,
         result_tools: list[ToolDefinition],
     ) -> GeminiAgentModel:
+        check_allow_model_requests()
         return GeminiAgentModel(
             http_client=self.http_client,
             model_name=self.model_name,
@@ -151,7 +152,6 @@ class GeminiAgentModel(AgentModel):
         allow_text_result: bool,
         result_tools: list[ToolDefinition],
     ):
-        check_allow_model_requests()
         tools = [_function_from_abstract_tool(t) for t in function_tools]
         if result_tools:
             tools += [_function_from_abstract_tool(t) for t in result_tools]
@@ -229,15 +229,13 @@ class GeminiAgentModel(AgentModel):
                 raise exceptions.UnexpectedModelBehavior(f'Unexpected response from gemini {r.status_code}', r.text)
             yield r
 
-    @staticmethod
-    def _process_response(response: _GeminiResponse) -> ModelResponse:
+    def _process_response(self, response: _GeminiResponse) -> ModelResponse:
         if len(response['candidates']) != 1:
             raise UnexpectedModelBehavior('Expected exactly one candidate in Gemini response')
         parts = response['candidates'][0]['content']['parts']
-        return _process_response_from_parts(parts)
+        return _process_response_from_parts(parts, model_name=self.model_name)
 
-    @staticmethod
-    async def _process_streamed_response(http_response: HTTPResponse) -> StreamedResponse:
+    async def _process_streamed_response(self, http_response: HTTPResponse) -> StreamedResponse:
         """Process a streamed response, and prepare a streaming response to return."""
         aiter_bytes = http_response.aiter_bytes()
         start_response: _GeminiResponse | None = None
@@ -258,7 +256,7 @@ class GeminiAgentModel(AgentModel):
         if start_response is None:
             raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')
 
-        return GeminiStreamedResponse(_content=content, _stream=aiter_bytes)
+        return GeminiStreamedResponse(_model_name=self.model_name, _content=content, _stream=aiter_bytes)
 
     @classmethod
     def _message_to_gemini_content(
@@ -432,7 +430,9 @@ def _function_call_part_from_call(tool: ToolCallPart) -> _GeminiFunctionCallPart
     return _GeminiFunctionCallPart(function_call=_GeminiFunctionCall(name=tool.tool_name, args=tool.args_as_dict()))
 
 
-def _process_response_from_parts(parts: Sequence[_GeminiPartUnion], timestamp: datetime | None = None) -> ModelResponse:
+def _process_response_from_parts(
+    parts: Sequence[_GeminiPartUnion], model_name: GeminiModelName, timestamp: datetime | None = None
+) -> ModelResponse:
     items: list[ModelResponsePart] = []
     for part in parts:
         if 'text' in part:
@@ -448,7 +448,7 @@ def _process_response_from_parts(parts: Sequence[_GeminiPartUnion], timestamp: d
             raise exceptions.UnexpectedModelBehavior(
                 f'Unsupported response from Gemini, expected all parts to be function calls or text, got: {part!r}'
             )
-    return ModelResponse(items, timestamp=timestamp or _utils.now_utc())
+    return ModelResponse(parts=items, model_name=model_name, timestamp=timestamp or _utils.now_utc())
 
 
 class _GeminiFunctionCall(TypedDict):

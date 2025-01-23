@@ -58,6 +58,9 @@ This is useful for testing and eval-driven iterative development.
 * __Streamed Responses__
 Provides the ability to [stream](https://ai.pydantic.dev/results/#streamed-results) LLM outputs continuously, with immediate validation, ensuring rapid and accurate results.
 
+* __Graph Support__
+[Pydantic Graph](https://ai.pydantic.dev/graph) provides a powerful way to define graphs using typing hints, this is useful in complex applications where standard control flow can degrade to spaghetti code.
+
 ## In Beta!
 
 PydanticAI is in early beta, the API is still subject to change and there's a lot more to do.

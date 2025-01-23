@@ -10,7 +10,7 @@ from httpx import AsyncClient as AsyncHTTPClient
 from .._utils import run_in_executor
 from ..exceptions import UserError
 from ..tools import ToolDefinition
-from . import Model, cached_async_http_client
+from . import Model, cached_async_http_client, check_allow_model_requests
 from .gemini import GeminiAgentModel, GeminiModelName
 
 try:
@@ -114,6 +114,7 @@ class VertexAIModel(Model):
         allow_text_result: bool,
         result_tools: list[ToolDefinition],
     ) -> GeminiAgentModel:
+        check_allow_model_requests()
         url, auth = await self.ainit()
         return GeminiAgentModel(
             http_client=self.http_client,

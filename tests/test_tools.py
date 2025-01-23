@@ -10,7 +10,15 @@ from pydantic import BaseModel, Field
 from pydantic_core import PydanticSerializationError
 
 from pydantic_ai import Agent, RunContext, Tool, UserError
-from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
+from pydantic_ai.messages import (
+    ArgsDict,
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    ToolCallPart,
+    ToolReturnPart,
+)
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
@@ -73,13 +81,15 @@ async def google_style_docstring(foo: int, bar: str) -> str:  # pragma: no cover
 
 
 async def get_json_schema(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-    assert len(info.function_tools) == 1
-    r = info.function_tools[0]
-    return ModelResponse.from_text(pydantic_core.to_json(r).decode())
+    if len(info.function_tools) == 1:
+        r = info.function_tools[0]
+        return ModelResponse(parts=[TextPart(pydantic_core.to_json(r).decode())])
+    else:
+        return ModelResponse(parts=[TextPart(pydantic_core.to_json(info.function_tools).decode())])
 
 
 @pytest.mark.parametrize('docstring_format', ['google', 'auto'])
-def test_docstring_google(set_event_loop: None, docstring_format: Literal['google', 'auto']):
+def test_docstring_google(docstring_format: Literal['google', 'auto']):
     agent = Agent(FunctionModel(get_json_schema))
     agent.tool_plain(docstring_format=docstring_format)(google_style_docstring)
 
@@ -118,7 +128,7 @@ def sphinx_style_docstring(foo: int, /) -> str:  # pragma: no cover
 
 
 @pytest.mark.parametrize('docstring_format', ['sphinx', 'auto'])
-def test_docstring_sphinx(set_event_loop: None, docstring_format: Literal['sphinx', 'auto']):
+def test_docstring_sphinx(docstring_format: Literal['sphinx', 'auto']):
     agent = Agent(FunctionModel(get_json_schema))
     agent.tool_plain(docstring_format=docstring_format)(sphinx_style_docstring)
 
@@ -153,7 +163,7 @@ def numpy_style_docstring(*, foo: int, bar: str) -> str:  # pragma: no cover
 
 
 @pytest.mark.parametrize('docstring_format', ['numpy', 'auto'])
-def test_docstring_numpy(set_event_loop: None, docstring_format: Literal['numpy', 'auto']):
+def test_docstring_numpy(docstring_format: Literal['numpy', 'auto']):
     agent = Agent(FunctionModel(get_json_schema))
     agent.tool_plain(docstring_format=docstring_format)(numpy_style_docstring)
 
@@ -182,7 +192,7 @@ def unknown_docstring(**kwargs: int) -> str:  # pragma: no cover
     return str(kwargs)
 
 
-def test_docstring_unknown(set_event_loop: None):
+def test_docstring_unknown():
     agent = Agent(FunctionModel(get_json_schema))
     agent.tool_plain(unknown_docstring)
 
@@ -213,7 +223,7 @@ async def google_style_docstring_no_body(
 
 
 @pytest.mark.parametrize('docstring_format', ['google', 'auto'])
-def test_docstring_google_no_body(set_event_loop: None, docstring_format: Literal['google', 'auto']):
+def test_docstring_google_no_body(docstring_format: Literal['google', 'auto']):
     agent = Agent(FunctionModel(get_json_schema))
     agent.tool_plain(docstring_format=docstring_format)(google_style_docstring_no_body)
 
@@ -242,7 +252,7 @@ class Foo(BaseModel):
     y: str
 
 
-def test_takes_just_model(set_event_loop: None):
+def test_takes_just_model():
     agent = Agent()
 
     @agent.tool_plain
@@ -272,7 +282,7 @@ def test_takes_just_model(set_event_loop: None):
     assert result.data == snapshot('{"takes_just_model":"0 a"}')
 
 
-def test_takes_model_and_int(set_event_loop: None):
+def test_takes_model_and_int():
     agent = Agent()
 
     @agent.tool_plain
@@ -314,7 +324,7 @@ def test_takes_model_and_int(set_event_loop: None):
 
 
 # pyright: reportPrivateUsage=false
-def test_init_tool_plain(set_event_loop: None):
+def test_init_tool_plain():
     call_args: list[int] = []
 
     def plain_tool(x: int) -> int:
@@ -341,7 +351,7 @@ def ctx_tool(ctx: RunContext[int], x: int) -> int:
 
 
 # pyright: reportPrivateUsage=false
-def test_init_tool_ctx(set_event_loop: None):
+def test_init_tool_ctx():
     agent = Agent('test', tools=[Tool(ctx_tool, takes_ctx=True, max_retries=3)], deps_type=int, retries=7)
     result = agent.run_sync('foobar', deps=5)
     assert result.data == snapshot('{"ctx_tool":5}')
@@ -383,7 +393,7 @@ def test_init_plain_tool_invalid():
         Tool(ctx_tool, takes_ctx=False)
 
 
-def test_return_pydantic_model(set_event_loop: None):
+def test_return_pydantic_model():
     agent = Agent('test')
 
     @agent.tool_plain
@@ -394,7 +404,7 @@ def test_return_pydantic_model(set_event_loop: None):
     assert result.data == snapshot('{"return_pydantic_model":{"x":0,"y":"a"}}')
 
 
-def test_return_bytes(set_event_loop: None):
+def test_return_bytes():
     agent = Agent('test')
 
     @agent.tool_plain
@@ -405,7 +415,7 @@ def test_return_bytes(set_event_loop: None):
     assert result.data == snapshot('{"return_pydantic_model":"🐈 Hello"}')
 
 
-def test_return_bytes_invalid(set_event_loop: None):
+def test_return_bytes_invalid():
     agent = Agent('test')
 
     @agent.tool_plain
@@ -416,7 +426,7 @@ def test_return_bytes_invalid(set_event_loop: None):
         agent.run_sync('')
 
 
-def test_return_unknown(set_event_loop: None):
+def test_return_unknown():
     agent = Agent('test')
 
     class Foobar:
@@ -430,7 +440,7 @@ def test_return_unknown(set_event_loop: None):
         agent.run_sync('')
 
 
-def test_dynamic_cls_tool(set_event_loop: None):
+def test_dynamic_cls_tool():
     @dataclass
     class MyTool(Tool[int]):
         spam: int
@@ -455,7 +465,7 @@ def test_dynamic_cls_tool(set_event_loop: None):
     assert r.data == snapshot('success (no tool calls)')
 
 
-def test_dynamic_plain_tool_decorator(set_event_loop: None):
+def test_dynamic_plain_tool_decorator():
     agent = Agent('test', deps_type=int)
 
     async def prepare_tool_def(ctx: RunContext[int], tool_def: ToolDefinition) -> Union[ToolDefinition, None]:
@@ -473,7 +483,7 @@ def test_dynamic_plain_tool_decorator(set_event_loop: None):
     assert r.data == snapshot('success (no tool calls)')
 
 
-def test_dynamic_tool_decorator(set_event_loop: None):
+def test_dynamic_tool_decorator():
     agent = Agent('test', deps_type=int)
 
     async def prepare_tool_def(ctx: RunContext[int], tool_def: ToolDefinition) -> Union[ToolDefinition, None]:
@@ -491,13 +501,13 @@ def test_dynamic_tool_decorator(set_event_loop: None):
     assert r.data == snapshot('success (no tool calls)')
 
 
-def test_dynamic_tool_use_messages(set_event_loop: None):
+def test_dynamic_tool_use_messages():
     async def repeat_call_foobar(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if info.function_tools:
             tool = info.function_tools[0]
-            return ModelResponse.from_tool_call(ToolCallPart.from_raw_args(tool.name, {'x': 42, 'y': 'a'}))
+            return ModelResponse(parts=[ToolCallPart.from_raw_args(tool.name, {'x': 42, 'y': 'a'})])
         else:
-            return ModelResponse.from_text('done')
+            return ModelResponse(parts=[TextPart('done')])
 
     agent = Agent(FunctionModel(repeat_call_foobar), deps_type=int)
 
@@ -524,7 +534,7 @@ def test_dynamic_tool_use_messages(set_event_loop: None):
     )
 
 
-def test_future_run_context(set_event_loop: None, create_module: Callable[[str], Any]):
+def test_future_run_context(create_module: Callable[[str], Any]):
     mod = create_module("""
 from __future__ import annotations
 
@@ -549,7 +559,7 @@ async def tool_without_return_annotation_in_docstring() -> str:  # pragma: no co
     return ''
 
 
-def test_suppress_griffe_logging(set_event_loop: None, caplog: LogCaptureFixture):
+def test_suppress_griffe_logging(caplog: LogCaptureFixture):
     # This would cause griffe to emit a warning log if we didn't suppress the griffe logging.
 
     agent = Agent(FunctionModel(get_json_schema))
@@ -591,3 +601,87 @@ def test_enforce_parameter_descriptions() -> None:
         'bar',
     ]
     assert all(err_part in error_reason for err_part in error_parts)
+
+
+def test_json_schema_required_parameters(set_event_loop: None):
+    agent = Agent(FunctionModel(get_json_schema))
+
+    @agent.tool
+    def my_tool(ctx: RunContext[None], a: int, b: int = 1) -> int:
+        raise NotImplementedError
+
+    @agent.tool_plain
+    def my_tool_plain(*, a: int = 1, b: int) -> int:
+        raise NotImplementedError
+
+    result = agent.run_sync('Hello')
+    json_schema = json.loads(result.data)
+    assert json_schema == snapshot(
+        [
+            {
+                'description': '',
+                'name': 'my_tool',
+                'outer_typed_dict_key': None,
+                'parameters_json_schema': {
+                    'additionalProperties': False,
+                    'properties': {'a': {'title': 'A', 'type': 'integer'}, 'b': {'title': 'B', 'type': 'integer'}},
+                    'required': ['a'],
+                    'type': 'object',
+                },
+            },
+            {
+                'description': '',
+                'name': 'my_tool_plain',
+                'outer_typed_dict_key': None,
+                'parameters_json_schema': {
+                    'additionalProperties': False,
+                    'properties': {'a': {'title': 'A', 'type': 'integer'}, 'b': {'title': 'B', 'type': 'integer'}},
+                    'required': ['b'],
+                    'type': 'object',
+                },
+            },
+        ]
+    )
+
+
+def test_call_tool_without_unrequired_parameters(set_event_loop: None):
+    async def call_tools_first(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(tool_name='my_tool', args=ArgsDict({'a': 13})),
+                    ToolCallPart(tool_name='my_tool', args=ArgsDict({'a': 13, 'b': 4})),
+                    ToolCallPart(tool_name='my_tool_plain', args=ArgsDict({'b': 17})),
+                    ToolCallPart(tool_name='my_tool_plain', args=ArgsDict({'a': 4, 'b': 17})),
+                ]
+            )
+        else:
+            return ModelResponse(parts=[TextPart('finished')])
+
+    agent = Agent(FunctionModel(call_tools_first))
+
+    @agent.tool
+    def my_tool(ctx: RunContext[None], a: int, b: int = 2) -> int:
+        return a + b
+
+    @agent.tool_plain
+    def my_tool_plain(*, a: int = 3, b: int) -> int:
+        return a * b
+
+    result = agent.run_sync('Hello')
+    all_messages = result.all_messages()
+    first_response = all_messages[1]
+    second_request = all_messages[2]
+    assert isinstance(first_response, ModelResponse)
+    assert isinstance(second_request, ModelRequest)
+    tool_call_args = [p.args for p in first_response.parts if isinstance(p, ToolCallPart)]
+    tool_returns = [p.content for p in second_request.parts if isinstance(p, ToolReturnPart)]
+    assert tool_call_args == snapshot(
+        [
+            ArgsDict(args_dict={'a': 13}),
+            ArgsDict(args_dict={'a': 13, 'b': 4}),
+            ArgsDict(args_dict={'b': 17}),
+            ArgsDict(args_dict={'a': 4, 'b': 17}),
+        ]
+    )
+    assert tool_returns == snapshot([15, 17, 51, 68])

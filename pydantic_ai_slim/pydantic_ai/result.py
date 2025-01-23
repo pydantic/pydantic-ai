@@ -11,35 +11,49 @@ import logfire_api
 from typing_extensions import TypeVar
 
 from . import _result, _utils, exceptions, messages as _messages, models
-from .tools import AgentDeps, RunContext
+from .tools import AgentDepsT, RunContext
 from .usage import Usage, UsageLimits
 
-__all__ = 'ResultData', 'ResultValidatorFunc', 'RunResult', 'StreamedRunResult'
+__all__ = 'ResultDataT', 'ResultDataT_inv', 'ResultValidatorFunc', 'RunResult', 'StreamedRunResult'
 
 
-ResultData = TypeVar('ResultData', default=str)
-"""Type variable for the result data of a run."""
+T = TypeVar('T')
+"""An invariant TypeVar."""
+ResultDataT_inv = TypeVar('ResultDataT_inv', default=str)
+"""
+An invariant type variable for the result data of a model.
+
+We need to use an invariant typevar for `ResultValidator` and `ResultValidatorFunc` because the result data type is used
+in both the input and output of a `ResultValidatorFunc`. This can theoretically lead to some issues assuming that types
+possessing ResultValidator's are covariant in the result data type, but in practice this is rarely an issue, and
+changing it would have negative consequences for the ergonomics of the library.
+
+At some point, it may make sense to change the input to ResultValidatorFunc to be `Any` or `object` as doing that would
+resolve these potential variance issues.
+"""
+ResultDataT = TypeVar('ResultDataT', default=str, covariant=True)
+"""Covariant type variable for the result data type of a run."""
 
 ResultValidatorFunc = Union[
-    Callable[[RunContext[AgentDeps], ResultData], ResultData],
-    Callable[[RunContext[AgentDeps], ResultData], Awaitable[ResultData]],
-    Callable[[ResultData], ResultData],
-    Callable[[ResultData], Awaitable[ResultData]],
+    Callable[[RunContext[AgentDepsT], ResultDataT_inv], ResultDataT_inv],
+    Callable[[RunContext[AgentDepsT], ResultDataT_inv], Awaitable[ResultDataT_inv]],
+    Callable[[ResultDataT_inv], ResultDataT_inv],
+    Callable[[ResultDataT_inv], Awaitable[ResultDataT_inv]],
 ]
 """
-A function that always takes `ResultData` and returns `ResultData` and:
+A function that always takes and returns the same type of data (which is the result type of an agent run), and:
 
 * may or may not take [`RunContext`][pydantic_ai.tools.RunContext] as a first argument
 * may or may not be async
 
-Usage `ResultValidatorFunc[AgentDeps, ResultData]`.
+Usage `ResultValidatorFunc[AgentDeps, T]`.
 """
 
 _logfire = logfire_api.Logfire(otel_scope='pydantic-ai')
 
 
 @dataclass
-class _BaseRunResult(ABC, Generic[ResultData]):
+class _BaseRunResult(ABC, Generic[ResultDataT]):
     """Base type for results.
 
     You should not import or use this type directly, instead use its subclasses `RunResult` and `StreamedRunResult`.
@@ -119,10 +133,10 @@ class _BaseRunResult(ABC, Generic[ResultData]):
 
 
 @dataclass
-class RunResult(_BaseRunResult[ResultData]):
+class RunResult(_BaseRunResult[ResultDataT]):
     """Result of a non-streamed run."""
 
-    data: ResultData
+    data: ResultDataT
     """Data from the final response in the run."""
     _result_tool_name: str | None
     _usage: Usage
@@ -165,14 +179,14 @@ class RunResult(_BaseRunResult[ResultData]):
 
 
 @dataclass
-class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultData]):
+class StreamedRunResult(_BaseRunResult[ResultDataT], Generic[AgentDepsT, ResultDataT]):
     """Result of a streamed run that returns structured data via a tool call."""
 
     _usage_limits: UsageLimits | None
     _stream_response: models.StreamedResponse
-    _result_schema: _result.ResultSchema[ResultData] | None
-    _run_ctx: RunContext[AgentDeps]
-    _result_validators: list[_result.ResultValidator[AgentDeps, ResultData]]
+    _result_schema: _result.ResultSchema[ResultDataT] | None
+    _run_ctx: RunContext[AgentDepsT]
+    _result_validators: list[_result.ResultValidator[AgentDepsT, ResultDataT]]
     _result_tool_name: str | None
     _on_complete: Callable[[], Awaitable[None]]
     is_complete: bool = field(default=False, init=False)
@@ -185,7 +199,7 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
     [`get_data`][pydantic_ai.result.StreamedRunResult.get_data] completes.
     """
 
-    async def stream(self, *, debounce_by: float | None = 0.1) -> AsyncIterator[ResultData]:
+    async def stream(self, *, debounce_by: float | None = 0.1) -> AsyncIterator[ResultDataT]:
         """Stream the response as an async iterable.
 
         The pydantic validator for structured data will be called in
@@ -269,7 +283,12 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
                     yield combined_validated_text
 
                 lf_span.set_attribute('combined_text', combined_validated_text)
-                await self._marked_completed(_messages.ModelResponse.from_text(combined_validated_text))
+                await self._marked_completed(
+                    _messages.ModelResponse(
+                        parts=[_messages.TextPart(combined_validated_text)],
+                        model_name=self._stream_response.model_name(),
+                    )
+                )
 
     async def stream_structured(
         self, *, debounce_by: float | None = 0.1
@@ -306,7 +325,7 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
                 lf_span.set_attribute('structured_response', msg)
                 await self._marked_completed(msg)
 
-    async def get_data(self) -> ResultData:
+    async def get_data(self) -> ResultDataT:
         """Stream the whole response, validate and return it."""
         usage_checking_stream = _get_usage_checking_stream_response(
             self._stream_response, self._usage_limits, self.usage
@@ -332,7 +351,7 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
 
     async def validate_structured_result(
         self, message: _messages.ModelResponse, *, allow_partial: bool = False
-    ) -> ResultData:
+    ) -> ResultDataT:
         """Validate a structured result message."""
         if self._result_schema is not None and self._result_tool_name is not None:
             match = self._result_schema.find_named_tool(message.parts, self._result_tool_name)
@@ -351,17 +370,17 @@ class StreamedRunResult(_BaseRunResult[ResultData], Generic[AgentDeps, ResultDat
             text = '\n\n'.join(x.content for x in message.parts if isinstance(x, _messages.TextPart))
             for validator in self._result_validators:
                 text = await validator.validate(
-                    text,  # pyright: ignore[reportArgumentType]
+                    text,
                     None,
                     self._run_ctx,
                 )
-            # Since there is no result tool, we can assume that str is compatible with ResultData
-            return cast(ResultData, text)
+            # Since there is no result tool, we can assume that str is compatible with ResultDataT
+            return cast(ResultDataT, text)
 
     async def _validate_text_result(self, text: str) -> str:
         for validator in self._result_validators:
-            text = await validator.validate(  # pyright: ignore[reportAssignmentType]
-                text,  # pyright: ignore[reportArgumentType]
+            text = await validator.validate(
+                text,
                 None,
                 self._run_ctx,
             )

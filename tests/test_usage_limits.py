@@ -23,7 +23,7 @@ from .conftest import IsNow
 pytestmark = pytest.mark.anyio
 
 
-def test_request_token_limit(set_event_loop: None) -> None:
+def test_request_token_limit() -> None:
     test_agent = Agent(TestModel())
 
     with pytest.raises(
@@ -34,7 +34,7 @@ def test_request_token_limit(set_event_loop: None) -> None:
         )
 
 
-def test_response_token_limit(set_event_loop: None) -> None:
+def test_response_token_limit() -> None:
     test_agent = Agent(
         TestModel(custom_result_text='Unfortunately, this response exceeds the response tokens limit by a few!')
     )
@@ -45,14 +45,14 @@ def test_response_token_limit(set_event_loop: None) -> None:
         test_agent.run_sync('Hello', usage_limits=UsageLimits(response_tokens_limit=5))
 
 
-def test_total_token_limit(set_event_loop: None) -> None:
+def test_total_token_limit() -> None:
     test_agent = Agent(TestModel(custom_result_text='This utilizes 4 tokens!'))
 
     with pytest.raises(UsageLimitExceeded, match=re.escape('Exceeded the total_tokens_limit of 50 (total_tokens=55)')):
         test_agent.run_sync('Hello', usage_limits=UsageLimits(total_tokens_limit=50))
 
 
-def test_retry_limit(set_event_loop: None) -> None:
+def test_retry_limit() -> None:
     test_agent = Agent(TestModel())
 
     @test_agent.tool_plain
@@ -85,6 +85,7 @@ async def test_streamed_text_limits() -> None:
                 ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
                 ModelResponse(
                     parts=[ToolCallPart(tool_name='ret_a', args=ArgsDict(args_dict={'x': 'a'}))],
+                    model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 ModelRequest(
@@ -106,7 +107,7 @@ async def test_streamed_text_limits() -> None:
             await result.get_data()
 
 
-def test_usage_so_far(set_event_loop: None) -> None:
+def test_usage_so_far() -> None:
     test_agent = Agent(TestModel())
 
     with pytest.raises(

@@ -58,7 +58,7 @@ def get_logfire_summary(capfire: CaptureLogfire) -> Callable[[], LogfireSummary]
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
-def test_logfire(get_logfire_summary: Callable[[], LogfireSummary], set_event_loop: None) -> None:
+def test_logfire(get_logfire_summary: Callable[[], LogfireSummary]) -> None:
     my_agent = Agent(model=TestModel())
 
     @my_agent.tool_plain
@@ -137,6 +137,7 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary], set_event_lo
                                 'part_kind': 'tool-call',
                             }
                         ],
+                        'model_name': 'test',
                         'timestamp': IsStr(regex=r'\d{4}-\d{2}-.+'),
                         'kind': 'response',
                     },
@@ -154,6 +155,7 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary], set_event_lo
                     },
                     {
                         'parts': [{'content': '{"my_ret":"1"}', 'part_kind': 'text'}],
+                        'model_name': 'test',
                         'timestamp': IsStr(regex=r'\d{4}-\d{2}-.+'),
                         'kind': 'response',
                     },

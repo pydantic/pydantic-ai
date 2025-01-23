@@ -92,6 +92,7 @@ print(dice_result.all_messages())
                 part_kind='tool-call',
             )
         ],
+        model_name='function:model_logic',
         timestamp=datetime.datetime(...),
         kind='response',
     ),
@@ -116,6 +117,7 @@ print(dice_result.all_messages())
                 part_kind='tool-call',
             )
         ],
+        model_name='function:model_logic',
         timestamp=datetime.datetime(...),
         kind='response',
     ),
@@ -138,6 +140,7 @@ print(dice_result.all_messages())
                 part_kind='text',
             )
         ],
+        model_name='function:model_logic',
         timestamp=datetime.datetime(...),
         kind='response',
     ),
@@ -240,7 +243,7 @@ To demonstrate a tool's schema, here we use [`FunctionModel`][pydantic_ai.models
 
 ```python {title="tool_schema.py"}
 from pydantic_ai import Agent
-from pydantic_ai.messages import ModelMessage, ModelResponse
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 agent = Agent()
@@ -280,7 +283,7 @@ def print_schema(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse
         'additionalProperties': False,
     }
     """
-    return ModelResponse.from_text(content='foobar')
+    return ModelResponse(parts=[TextPart('foobar')])
 
 
 agent.run_sync('hello', model=FunctionModel(print_schema))

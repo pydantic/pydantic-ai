@@ -30,15 +30,35 @@ from ..conftest import IsNow
 pytestmark = pytest.mark.anyio
 
 
+def hello(_messages: list[ModelMessage], _agent_info: AgentInfo) -> ModelResponse:
+    return ModelResponse(parts=[TextPart('hello world')])  # pragma: no cover
+
+
+async def stream_hello(_messages: list[ModelMessage], _agent_info: AgentInfo) -> AsyncIterator[str]:
+    yield 'hello '  # pragma: no cover
+    yield 'world'  # pragma: no cover
+
+
+def test_init() -> None:
+    m = FunctionModel(function=hello)
+    assert m.name() == 'function:hello:'
+
+    m1 = FunctionModel(stream_function=stream_hello)
+    assert m1.name() == 'function::stream_hello'
+
+    m2 = FunctionModel(function=hello, stream_function=stream_hello)
+    assert m2.name() == 'function:hello:stream_hello'
+
+
 async def return_last(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:
     last = messages[-1].parts[-1]
     response = asdict(last)
     response.pop('timestamp', None)
     response['message_count'] = len(messages)
-    return ModelResponse.from_text(' '.join(f'{k}={v!r}' for k, v in response.items()))
+    return ModelResponse(parts=[TextPart(' '.join(f'{k}={v!r}' for k, v in response.items()))])
 
 
-def test_simple(set_event_loop: None):
+def test_simple():
     agent = Agent(FunctionModel(return_last))
     result = agent.run_sync('Hello')
     assert result.data == snapshot("content='Hello' part_kind='user-prompt' message_count=1")
@@ -47,6 +67,7 @@ def test_simple(set_event_loop: None):
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[TextPart(content="content='Hello' part_kind='user-prompt' message_count=1")],
+                model_name='function:return_last',
                 timestamp=IsNow(tz=timezone.utc),
             ),
         ]
@@ -59,11 +80,13 @@ def test_simple(set_event_loop: None):
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[TextPart(content="content='Hello' part_kind='user-prompt' message_count=1")],
+                model_name='function:return_last',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(parts=[UserPromptPart(content='World', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[TextPart(content="content='World' part_kind='user-prompt' message_count=3")],
+                model_name='function:return_last',
                 timestamp=IsNow(tz=timezone.utc),
             ),
         ]
@@ -94,7 +117,7 @@ async def weather_model(messages: list[ModelMessage], info: AgentInfo) -> ModelR
                     break
 
             assert location_name is not None
-            return ModelResponse.from_text(f'{last.content} in {location_name}')
+            return ModelResponse(parts=[TextPart(f'{last.content} in {location_name}')])
 
     raise ValueError(f'Unexpected message: {last}')
 
@@ -120,7 +143,7 @@ async def get_weather(_: RunContext[None], lat: int, lng: int):
         return 'Sunny'
 
 
-def test_weather(set_event_loop: None):
+def test_weather():
     result = weather_agent.run_sync('London')
     assert result.data == 'Raining in London'
     assert result.all_messages() == snapshot(
@@ -128,6 +151,7 @@ def test_weather(set_event_loop: None):
             ModelRequest(parts=[UserPromptPart(content='London', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[ToolCallPart.from_raw_args('get_location', '{"location_description": "London"}')],
+                model_name='function:weather_model',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
@@ -144,13 +168,15 @@ def test_weather(set_event_loop: None):
                         '{"lat": 51, "lng": 0}',
                     )
                 ],
+                model_name='function:weather_model',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
                 parts=[ToolReturnPart(tool_name='get_weather', content='Raining', timestamp=IsNow(tz=timezone.utc))]
             ),
-            ModelResponse.from_text(
-                content='Raining in London',
+            ModelResponse(
+                parts=[TextPart(content='Raining in London')],
+                model_name='function:weather_model',
                 timestamp=IsNow(tz=timezone.utc),
             ),
         ]
@@ -174,7 +200,7 @@ async def call_function_model(messages: list[ModelMessage], _: AgentInfo) -> Mod
                 ]
             )
     elif isinstance(last, ToolReturnPart):
-        return ModelResponse.from_text(pydantic_core.to_json(last).decode())
+        return ModelResponse(parts=[TextPart(pydantic_core.to_json(last).decode())])
 
     raise ValueError(f'Unexpected message: {last}')
 
@@ -188,7 +214,7 @@ def get_var_args(ctx: RunContext[int], *args: int):
     return json.dumps({'args': args})
 
 
-def test_var_args(set_event_loop: None):
+def test_var_args():
     result = var_args_agent.run_sync('{"function": "get_var_args", "arguments": {"args": [1, 2, 3]}}', deps=123)
     response_data = json.loads(result.data)
     # Can't parse ISO timestamps with trailing 'Z' in older versions of python:
@@ -210,10 +236,10 @@ async def call_tool(messages: list[ModelMessage], info: AgentInfo) -> ModelRespo
         tool_name = info.function_tools[0].name
         return ModelResponse(parts=[ToolCallPart.from_raw_args(tool_name, '{}')])
     else:
-        return ModelResponse.from_text('final response')
+        return ModelResponse(parts=[TextPart('final response')])
 
 
-def test_deps_none(set_event_loop: None):
+def test_deps_none():
     agent = Agent(FunctionModel(call_tool))
 
     @agent.tool
@@ -233,7 +259,7 @@ def test_deps_none(set_event_loop: None):
     assert called
 
 
-def test_deps_init(set_event_loop: None):
+def test_deps_init():
     def get_check_foobar(ctx: RunContext[tuple[str, str]]) -> str:
         nonlocal called
 
@@ -248,7 +274,7 @@ def test_deps_init(set_event_loop: None):
     assert called
 
 
-def test_model_arg(set_event_loop: None):
+def test_model_arg():
     agent = Agent()
     result = agent.run_sync('Hello', model=FunctionModel(return_last))
     assert result.data == snapshot("content='Hello' part_kind='user-prompt' message_count=1")
@@ -290,17 +316,21 @@ def spam() -> str:
     return 'foobar'
 
 
-def test_register_all(set_event_loop: None):
+def test_register_all():
     async def f(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        return ModelResponse.from_text(
-            f'messages={len(messages)} allow_text_result={info.allow_text_result} tools={len(info.function_tools)}'
+        return ModelResponse(
+            parts=[
+                TextPart(
+                    f'messages={len(messages)} allow_text_result={info.allow_text_result} tools={len(info.function_tools)}'
+                )
+            ]
         )
 
     result = agent_all.run_sync('Hello', model=FunctionModel(f))
     assert result.data == snapshot('messages=1 allow_text_result=True tools=5')
 
 
-def test_call_all(set_event_loop: None):
+def test_call_all():
     result = agent_all.run_sync('Hello', model=TestModel())
     assert result.data == snapshot('{"foo":"1","bar":"2","baz":"3","qux":"4","quz":"a"}')
     assert result.all_messages() == snapshot(
@@ -319,6 +349,7 @@ def test_call_all(set_event_loop: None):
                     ToolCallPart.from_raw_args('qux', {'x': 0}),
                     ToolCallPart.from_raw_args('quz', {'x': 'a'}),
                 ],
+                model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
@@ -330,21 +361,23 @@ def test_call_all(set_event_loop: None):
                     ToolReturnPart(tool_name='quz', content='a', timestamp=IsNow(tz=timezone.utc)),
                 ]
             ),
-            ModelResponse.from_text(
-                content='{"foo":"1","bar":"2","baz":"3","qux":"4","quz":"a"}', timestamp=IsNow(tz=timezone.utc)
+            ModelResponse(
+                parts=[TextPart(content='{"foo":"1","bar":"2","baz":"3","qux":"4","quz":"a"}')],
+                model_name='test',
+                timestamp=IsNow(tz=timezone.utc),
             ),
         ]
     )
 
 
-def test_retry_str(set_event_loop: None):
+def test_retry_str():
     call_count = 0
 
     async def try_again(msgs_: list[ModelMessage], _agent_info: AgentInfo) -> ModelResponse:
         nonlocal call_count
         call_count += 1
 
-        return ModelResponse.from_text(str(call_count))
+        return ModelResponse(parts=[TextPart(str(call_count))])
 
     agent = Agent(FunctionModel(try_again))
 
@@ -359,7 +392,7 @@ def test_retry_str(set_event_loop: None):
     assert result.data == snapshot('2')
 
 
-def test_retry_result_type(set_event_loop: None):
+def test_retry_result_type():
     call_count = 0
 
     async def try_again(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:
@@ -396,7 +429,11 @@ async def test_stream_text():
         assert result.all_messages() == snapshot(
             [
                 ModelRequest(parts=[UserPromptPart(content='', timestamp=IsNow(tz=timezone.utc))]),
-                ModelResponse.from_text(content='hello world', timestamp=IsNow(tz=timezone.utc)),
+                ModelResponse(
+                    parts=[TextPart(content='hello world')],
+                    model_name='function:stream_text_function',
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
             ]
         )
         assert result.usage() == snapshot(Usage(requests=1, request_tokens=50, response_tokens=2, total_tokens=52))

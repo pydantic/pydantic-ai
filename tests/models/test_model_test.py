@@ -16,6 +16,7 @@ from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
     RetryPromptPart,
+    TextPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
@@ -25,7 +26,7 @@ from pydantic_ai.models.test import TestModel, _chars, _JsonSchemaTestData  # py
 from ..conftest import IsNow
 
 
-def test_call_one(set_event_loop: None):
+def test_call_one():
     agent = Agent()
     calls: list[str] = []
 
@@ -44,7 +45,7 @@ def test_call_one(set_event_loop: None):
     assert calls == ['a']
 
 
-def test_custom_result_text(set_event_loop: None):
+def test_custom_result_text():
     agent = Agent()
     result = agent.run_sync('x', model=TestModel(custom_result_text='custom'))
     assert result.data == snapshot('custom')
@@ -53,13 +54,13 @@ def test_custom_result_text(set_event_loop: None):
         agent.run_sync('x', model=TestModel(custom_result_text='custom'))
 
 
-def test_custom_result_args(set_event_loop: None):
+def test_custom_result_args():
     agent = Agent(result_type=tuple[str, str])
     result = agent.run_sync('x', model=TestModel(custom_result_args=['a', 'b']))
     assert result.data == ('a', 'b')
 
 
-def test_custom_result_args_model(set_event_loop: None):
+def test_custom_result_args_model():
     class Foo(BaseModel):
         foo: str
         bar: int
@@ -69,13 +70,13 @@ def test_custom_result_args_model(set_event_loop: None):
     assert result.data == Foo(foo='a', bar=1)
 
 
-def test_result_type(set_event_loop: None):
+def test_result_type():
     agent = Agent(result_type=tuple[str, str])
     result = agent.run_sync('x', model=TestModel())
     assert result.data == ('a', 'a')
 
 
-def test_tool_retry(set_event_loop: None):
+def test_tool_retry():
     agent = Agent()
     call_count = 0
 
@@ -96,6 +97,7 @@ def test_tool_retry(set_event_loop: None):
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[ToolCallPart.from_raw_args('my_ret', {'x': 0})],
+                model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
@@ -103,14 +105,22 @@ def test_tool_retry(set_event_loop: None):
                     RetryPromptPart(content='First call failed', tool_name='my_ret', timestamp=IsNow(tz=timezone.utc))
                 ]
             ),
-            ModelResponse(parts=[ToolCallPart.from_raw_args('my_ret', {'x': 0})], timestamp=IsNow(tz=timezone.utc)),
+            ModelResponse(
+                parts=[ToolCallPart.from_raw_args('my_ret', {'x': 0})],
+                model_name='test',
+                timestamp=IsNow(tz=timezone.utc),
+            ),
             ModelRequest(parts=[ToolReturnPart(tool_name='my_ret', content='1', timestamp=IsNow(tz=timezone.utc))]),
-            ModelResponse.from_text(content='{"my_ret":"1"}', timestamp=IsNow(tz=timezone.utc)),
+            ModelResponse(
+                parts=[TextPart(content='{"my_ret":"1"}')],
+                model_name='test',
+                timestamp=IsNow(tz=timezone.utc),
+            ),
         ]
     )
 
 
-def test_result_tool_retry_error_handled(set_event_loop: None):
+def test_result_tool_retry_error_handled():
     class ResultModel(BaseModel):
         x: int
         y: str
