@@ -49,15 +49,15 @@ def on_page_content(html: str, page: Page, config: Config, files: Files) -> str:
 
     # Cleanup code examples
     for extra in soup.find_all('div', attrs={'class': 'language-python highlight'}):
-        extra.replace_with(BeautifulSoup(f'<pre>{extra.find('code').get_text()}</pre>', 'html.parser'))
+        extra.replace_with(BeautifulSoup(f'<pre>{extra.find("code").get_text()}</pre>', 'html.parser'))
 
     # Cleanup code examples, part 2
     for extra in soup.find_all('div', attrs={'class': 'language-python doc-signature highlight'}):
-        extra.replace_with(BeautifulSoup(f'<pre>{extra.find('code').get_text()}</pre>', 'html.parser'))
+        extra.replace_with(BeautifulSoup(f'<pre>{extra.find("code").get_text()}</pre>', 'html.parser'))
 
     # The API reference generates HTML tables with line numbers, this strips the line numbers cell and goes back to a code block
     for extra in soup.find_all('table', attrs={'class': 'highlighttable'}):
-        extra.replace_with(BeautifulSoup(f'<pre>{extra.find('code').get_text()}</pre>', 'html.parser'))
+        extra.replace_with(BeautifulSoup(f'<pre>{extra.find("code").get_text()}</pre>', 'html.parser'))
 
     # Find all h1 and h2 headings
     headings = soup.find_all(['h1', 'h2'])
