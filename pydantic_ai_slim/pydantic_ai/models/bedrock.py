@@ -172,6 +172,7 @@ class BedrockModel(Model):
         *,
         aws_access_key_id: str | None = None,
         aws_secret_access_key: str | None = None,
+        aws_session_token: str | None = None,
         region_name: str | None = None,
         bedrock_client: BedrockRuntimeClient | None = None,
     ):
@@ -183,6 +184,7 @@ class BedrockModel(Model):
                 'bedrock-runtime',
                 aws_access_key_id=aws_access_key_id,
                 aws_secret_access_key=aws_secret_access_key,
+                aws_session_token=aws_session_token,
                 region_name=region_name,
             )
 
