@@ -198,7 +198,7 @@ class AnthropicAgentModel(AgentModel):
             else:
                 tool_choice = {'type': 'auto'}
 
-            if allow_parallel_tool_calls := model_settings.get('parallel_tool_calls'):
+            if (allow_parallel_tool_calls := model_settings.get('parallel_tool_calls')) is not None:
                 tool_choice['disable_parallel_tool_use'] = not allow_parallel_tool_calls
 
         system_prompt, anthropic_messages = self._map_message(messages)
