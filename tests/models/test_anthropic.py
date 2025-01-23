@@ -1,7 +1,6 @@
 from __future__ import annotations as _annotations
 
 import json
-from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from datetime import timezone
 from functools import cached_property
@@ -26,9 +25,10 @@ from pydantic_ai.result import Usage
 from pydantic_ai.settings import ModelSettings
 
 from ..conftest import IsNow, try_import
+from .mock_async_stream import MockAsyncStream
 
 with try_import() as imports_successful:
-    from anthropic import NOT_GIVEN, AsyncAnthropic, AsyncStream
+    from anthropic import NOT_GIVEN, AsyncAnthropic
     from anthropic.types import (
         ContentBlock,
         InputJSONDelta,
@@ -64,40 +64,10 @@ def test_init():
     assert m.name() == 'anthropic:claude-3-5-haiku-latest'
 
 
-if imports_successful():
-
-    class MockAsyncStream(AsyncStream[T]):
-        """Mock implementation of AsyncStream for testing."""
-
-        def __init__(self, events: list[list[T]]):
-            self.events = events
-            self.stream_index = 0
-
-        def __aiter__(self) -> AsyncIterator[T]:
-            if self.stream_index >= len(self.events):
-                raise StopAsyncIteration
-
-            async def iterator() -> AsyncIterator[T]:
-                current_stream = self.events[self.stream_index]
-                for event in current_stream:
-                    yield event
-                self.stream_index += 1
-
-            return iterator()
-
-        async def __anext__(self) -> T:
-            return await self._iterator.__anext__()
-
-        async def __aenter__(self) -> MockAsyncStream[T]:
-            return self
-
-        async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
-            pass
-
-
 @dataclass
 class MockAnthropic:
-    messages_: AnthropicMessage | list[AnthropicMessage] | AsyncStream[RawMessageStreamEvent] | None = None
+    messages_: AnthropicMessage | list[AnthropicMessage] | None = None
+    stream: list[RawMessageStreamEvent] | list[list[RawMessageStreamEvent]] | None = None
     index = 0
     chat_completion_kwargs: list[dict[str, Any]] = field(default_factory=list)
 
@@ -106,24 +76,34 @@ class MockAnthropic:
         return type('Messages', (), {'create': self.messages_create})
 
     @classmethod
-    def create_mock(
-        cls, messages_: AnthropicMessage | list[AnthropicMessage] | AsyncStream[RawMessageStreamEvent]
-    ) -> AsyncAnthropic:
+    def create_mock(cls, messages_: AnthropicMessage | list[AnthropicMessage]) -> AsyncAnthropic:
         return cast(AsyncAnthropic, cls(messages_=messages_))
+
+    @classmethod
+    def create_stream_mock(
+        cls, stream: list[RawMessageStreamEvent] | list[list[RawMessageStreamEvent]]
+    ) -> AsyncAnthropic:
+        return cast(AsyncAnthropic, cls(stream=stream))
 
     async def messages_create(
         self, *_args: Any, stream: bool = False, **kwargs: Any
-    ) -> AnthropicMessage | AsyncStream[RawMessageStreamEvent]:
+    ) -> AnthropicMessage | MockAsyncStream[RawMessageStreamEvent]:
         self.chat_completion_kwargs.append({k: v for k, v in kwargs.items() if v is not NOT_GIVEN})
 
-        assert self.messages_ is not None, '`messages` must be provided'
-        if isinstance(self.messages_, AsyncStream):
-            assert stream, 'stream must be True when using AsyncStream'
-            return self.messages_
-        if isinstance(self.messages_, list):
-            response = self.messages_[self.index]
+        if stream:
+            assert self.stream is not None, 'you can only use `stream=True` if `stream` is provided'
+            # noinspection PyUnresolvedReferences
+            if isinstance(self.stream[0], list):
+                indexed_stream = cast(list[RawMessageStreamEvent], self.stream[self.index])
+                response = MockAsyncStream(iter(indexed_stream))
+            else:
+                response = MockAsyncStream(iter(cast(list[RawMessageStreamEvent], self.stream)))
         else:
-            response = self.messages_
+            assert self.messages_ is not None, '`messages` must be provided'
+            if isinstance(self.messages_, list):
+                response = self.messages_[self.index]
+            else:
+                response = self.messages_
         self.index += 1
         return response
 
@@ -432,7 +412,7 @@ async def test_stream_structured(allow_model_requests: None):
         RawMessageStopEvent(type='message_stop'),
     ]
 
-    mock_client = MockAnthropic.create_mock(MockAsyncStream([stream, done_stream]))
+    mock_client = MockAnthropic.create_stream_mock([stream, done_stream])
     m = AnthropicModel('claude-3-5-haiku-latest', anthropic_client=mock_client)
     agent = Agent(m)
 
