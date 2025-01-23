@@ -23,6 +23,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.result import Usage
+from pydantic_ai.settings import ModelSettings
 
 from ..conftest import IsNow, try_import
 from .mock_async_stream import MockAsyncStream
@@ -539,3 +540,26 @@ async def test_system_prompt_role(
             'n': 1,
         }
     ]
+
+
+@pytest.mark.parametrize('parallel_tool_calls', [True, False])
+async def test_parallel_tool_calls(allow_model_requests: None, parallel_tool_calls: bool) -> None:
+    c = completion_message(
+        ChatCompletionMessage(
+            content=None,
+            role='assistant',
+            tool_calls=[
+                chat.ChatCompletionMessageToolCall(
+                    id='123',
+                    function=Function(arguments='{"response": [1, 2, 3]}', name='final_result'),
+                    type='function',
+                )
+            ],
+        )
+    )
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIModel('gpt-4o', openai_client=mock_client)
+    agent = Agent(m, result_type=list[int], model_settings=ModelSettings(parallel_tool_calls=parallel_tool_calls))
+
+    await agent.run('Hello')
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['parallel_tool_calls'] == parallel_tool_calls
