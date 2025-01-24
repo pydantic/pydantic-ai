@@ -51,6 +51,8 @@ See [the Gemini API docs](https://ai.google.dev/gemini-api/docs/models/gemini#mo
 class GeminiModelSettings(ModelSettings):
     """Settings used for a Gemini model request."""
 
+    # This class is a placeholder for any future gemini-specific settings
+
 
 @dataclass(init=False)
 class GeminiModel(Model):
@@ -210,6 +212,10 @@ class GeminiAgentModel(AgentModel):
                 generation_config['temperature'] = temperature
             if (top_p := model_settings.get('top_p')) is not None:
                 generation_config['top_p'] = top_p
+            if (presence_penalty := model_settings.get('presence_penalty')) is not None:
+                generation_config['presence_penalty'] = presence_penalty
+            if (frequency_penalty := model_settings.get('frequency_penalty')) is not None:
+                generation_config['frequency_penalty'] = frequency_penalty
         if generation_config:
             request_data['generation_config'] = generation_config
 
@@ -404,6 +410,8 @@ class _GeminiGenerationConfig(TypedDict, total=False):
     max_output_tokens: int
     temperature: float
     top_p: float
+    presence_penalty: float
+    frequency_penalty: float
 
 
 class _GeminiContent(TypedDict):

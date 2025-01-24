@@ -74,6 +74,8 @@ CohereModelName: TypeAlias = Union[
 class CohereModelSettings(ModelSettings):
     """Settings used for a Cohere model request."""
 
+    # This class is a placeholder for any future cohere-specific settings
+
 
 @dataclass(init=False)
 class CohereModel(Model):
@@ -174,6 +176,8 @@ class CohereAgentModel(AgentModel):
             temperature=model_settings.get('temperature', OMIT),
             p=model_settings.get('top_p', OMIT),
             seed=model_settings.get('seed', OMIT),
+            presence_penalty=model_settings.get('presence_penalty', OMIT),
+            frequency_penalty=model_settings.get('frequency_penalty', OMIT),
         )
 
     def _process_response(self, response: ChatResponse) -> ModelResponse:

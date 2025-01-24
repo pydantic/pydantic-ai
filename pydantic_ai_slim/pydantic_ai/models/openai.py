@@ -57,6 +57,8 @@ OpenAISystemPromptRole = Literal['system', 'developer', 'user']
 class OpenAIModelSettings(ModelSettings):
     """Settings used for an OpenAI model request."""
 
+    # This class is a placeholder for any future openai-specific settings
+
 
 @dataclass(init=False)
 class OpenAIModel(Model):
@@ -207,6 +209,9 @@ class OpenAIAgentModel(AgentModel):
             top_p=model_settings.get('top_p', NOT_GIVEN),
             timeout=model_settings.get('timeout', NOT_GIVEN),
             seed=model_settings.get('seed', NOT_GIVEN),
+            presence_penalty=model_settings.get('presence_penalty', NOT_GIVEN),
+            frequency_penalty=model_settings.get('frequency_penalty', NOT_GIVEN),
+            logit_bias=model_settings.get('logit_bias', NOT_GIVEN),
         )
 
     def _process_response(self, response: chat.ChatCompletion) -> ModelResponse:

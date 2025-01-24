@@ -95,6 +95,36 @@ class ModelSettings(TypedDict, total=False):
     * Mistral
     """
 
+    presence_penalty: float
+    """Penalize new tokens based on whether they have appeared in the text so far.
+
+    Supported by:
+    * OpenAI
+    * Groq
+    * Cohere
+    * Gemini
+    * Mistral
+    """
+
+    frequency_penalty: float
+    """Penalize new tokens based on their existing frequency in the text so far.
+
+    Supported by:
+    * OpenAI
+    * Groq
+    * Cohere
+    * Gemini
+    * Mistral
+    """
+
+    logit_bias: dict[str, int]
+    """Modify the likelihood of specified tokens appearing in the completion.
+
+    Supported by:
+    * OpenAI
+    * Groq
+    """
+
 
 def merge_model_settings(base: ModelSettings | None, overrides: ModelSettings | None) -> ModelSettings | None:
     """Merge two sets of model settings, preferring the overrides.

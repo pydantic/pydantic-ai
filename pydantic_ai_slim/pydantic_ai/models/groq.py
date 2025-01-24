@@ -71,6 +71,8 @@ See [the Groq docs](https://console.groq.com/docs/models) for a full list.
 class GroqModelSettings(ModelSettings):
     """Settings used for a Groq model request."""
 
+    # This class is a placeholder for any future groq-specific settings
+
 
 @dataclass(init=False)
 class GroqModel(Model):
@@ -208,6 +210,9 @@ class GroqAgentModel(AgentModel):
             top_p=model_settings.get('top_p', NOT_GIVEN),
             timeout=model_settings.get('timeout', NOT_GIVEN),
             seed=model_settings.get('seed', NOT_GIVEN),
+            presence_penalty=model_settings.get('presence_penalty', NOT_GIVEN),
+            frequency_penalty=model_settings.get('frequency_penalty', NOT_GIVEN),
+            logit_bias=model_settings.get('logit_bias', NOT_GIVEN),
         )
 
     def _process_response(self, response: chat.ChatCompletion) -> ModelResponse:

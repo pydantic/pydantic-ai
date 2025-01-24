@@ -82,6 +82,8 @@ Since [the Anthropic docs](https://docs.anthropic.com/en/docs/about-claude/model
 class AnthropicModelSettings(ModelSettings):
     """Settings used for an Anthropic model request."""
 
+    # This class is a placeholder for any future anthropic-specific settings
+
 
 @dataclass(init=False)
 class AnthropicModel(Model):

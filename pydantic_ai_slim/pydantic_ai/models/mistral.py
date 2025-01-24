@@ -88,6 +88,8 @@ Since [the Mistral docs](https://docs.mistral.ai/getting-started/models/models_o
 class MistralModelSettings(ModelSettings):
     """Settings used for a Mistral model request."""
 
+    # This class is a placeholder for any future mistral-specific settings
+
 
 @dataclass(init=False)
 class MistralModel(Model):
@@ -216,6 +218,8 @@ class MistralAgentModel(AgentModel):
                 top_p=model_settings.get('top_p', 1),
                 max_tokens=model_settings.get('max_tokens', UNSET),
                 timeout_ms=self._get_timeout_ms(model_settings.get('timeout')),
+                presence_penalty=model_settings.get('presence_penalty'),
+                frequency_penalty=model_settings.get('frequency_penalty'),
             )
 
         elif self.result_tools:
