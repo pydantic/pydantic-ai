@@ -174,7 +174,10 @@ class TestAgentModel(AgentModel):
                 if self.result_tools:
                     retry_parts.extend(
                         [
-                            ToolCallPart.from_raw_args(tool.name, self.gen_tool_args(tool))
+                            ToolCallPart.from_raw_args(
+                                tool.name,
+                                self.result.right if self.result.right is not None else self.gen_tool_args(tool),
+                            )
                             for tool in self.result_tools
                             if tool.name in new_retry_names
                         ]
