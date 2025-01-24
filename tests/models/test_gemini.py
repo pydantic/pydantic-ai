@@ -828,15 +828,31 @@ async def test_empty_text_ignored():
     )
 
 
-async def test_model_settings(get_gemini_client: GetGeminiClient) -> None:
-    # TODO: confirm that these model settings were passed through correctly
-    response = gemini_response(_content_model_response(ModelResponse(parts=[TextPart('Hello world')])))
-    gemini_client = get_gemini_client(response)
+async def test_model_settings(client_with_handler: ClientWithHandler, env: TestEnv, allow_model_requests: None) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        generation_config = json.loads(request.content)['generation_config']
+        assert generation_config == {
+            'max_output_tokens': 1,
+            'temperature': 0.1,
+            'top_p': 0.2,
+            'presence_penalty': 0.3,
+            'frequency_penalty': 0.4,
+        }
+        return httpx.Response(
+            200,
+            content=_gemini_response_ta.dump_json(
+                gemini_response(_content_model_response(ModelResponse(parts=[TextPart('world')]))),
+                by_alias=True,
+            ),
+            headers={'Content-Type': 'application/json'},
+        )
+
+    gemini_client = client_with_handler(handler)
     m = GeminiModel('gemini-1.5-flash', http_client=gemini_client)
     agent = Agent(m)
 
     result = await agent.run(
-        'Hello',
+        'hello',
         model_settings={
             'max_tokens': 1,
             'temperature': 0.1,
@@ -845,4 +861,4 @@ async def test_model_settings(get_gemini_client: GetGeminiClient) -> None:
             'frequency_penalty': 0.4,
         },
     )
-    assert result.data == 'Hello world'
+    assert result.data == 'world'

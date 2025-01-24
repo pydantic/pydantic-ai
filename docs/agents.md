@@ -208,7 +208,7 @@ print(result_sync.data)
 
 <!-- TODO: replace this with the gemini safety settings example once added via https://github.com/pydantic/pydantic-ai/issues/373 -->
 
-If you wish to further customize model behavior, you can use a subclass of [`ModelSettings`][pydantic_ai.settings.ModelSettings], like [`AnthropicModelSettings`][models.anthropic.AnthropicModelSettings], associated with your model of choice.
+If you wish to further customize model behavior, you can use a subclass of [`ModelSettings`][pydantic_ai.settings.ModelSettings], like [`AnthropicModelSettings`][pydantic_ai.models.anthropic.AnthropicModelSettings], associated with your model of choice.
 
 For example:
 
