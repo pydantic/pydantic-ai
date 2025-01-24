@@ -450,7 +450,7 @@ class Feedback(BaseNode[State, None, Email]):
 async def main():
     user = User(
         name='John Doe',
-        email='john.joe@exmaple.com',
+        email='john.joe@example.com',
         interests=['Haskel', 'Lisp', 'Fortran'],
     )
     state = State(user)

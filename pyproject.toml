@@ -183,3 +183,11 @@ ignore_no_config = true
 [tool.inline-snapshot.shortcuts]
 snap-fix=["create", "fix"]
 snap=["create"]
+
+[tool.codespell]
+# Ref: https://github.com/codespell-project/codespell#using-a-config-file
+skip = '.git*,*.svg,*.lock,*.css'
+check-hidden = true
+# Ignore "formatting" like **L**anguage
+ignore-regex = '\*\*[A-Z]\*\*[a-z]+\b'
+# ignore-words-list = ''
