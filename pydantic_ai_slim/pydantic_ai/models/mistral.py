@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from itertools import chain
-from typing import Any, Callable, Literal, Union
+from typing import Any, Callable, Literal, Union, cast
 
 import pydantic_core
 from httpx import AsyncClient as AsyncHTTPClient, Timeout
@@ -29,7 +29,7 @@ from ..messages import (
     UserPromptPart,
 )
 from ..result import Usage
-from ..settings import ModelSettings
+from ..settings import MistralModelSettings, ModelSettings
 from ..tools import ToolDefinition
 from . import (
     AgentModel,
@@ -175,7 +175,8 @@ class MistralAgentModel(AgentModel):
         self, messages: list[ModelMessage], model_settings: ModelSettings | None
     ) -> MistralChatCompletionResponse:
         """Make a non-streaming request to the model."""
-        model_settings = model_settings or {}
+        model_settings = cast(MistralModelSettings, model_settings or {})
+
         response = await self.client.chat.complete_async(
             model=str(self.model_name),
             messages=list(chain(*(self._map_message(m) for m in messages))),
@@ -187,6 +188,7 @@ class MistralAgentModel(AgentModel):
             temperature=model_settings.get('temperature', UNSET),
             top_p=model_settings.get('top_p', 1),
             timeout_ms=self._get_timeout_ms(model_settings.get('timeout')),
+            random_seed=model_settings.get('seed', UNSET),
         )
         assert response, 'A unexpected empty response from Mistral.'
         return response

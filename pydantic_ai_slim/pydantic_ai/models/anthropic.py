@@ -26,7 +26,7 @@ from ..messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from ..settings import ModelSettings
+from ..settings import AnthropicModelSettings, ModelSettings
 from ..tools import ToolDefinition
 from . import (
     AgentModel,
@@ -194,7 +194,7 @@ class AnthropicAgentModel(AgentModel):
         self, messages: list[ModelMessage], stream: bool, model_settings: ModelSettings | None
     ) -> AnthropicMessage | AsyncStream[RawMessageStreamEvent]:
         # standalone function to make it easier to override
-        model_settings = model_settings or {}
+        model_settings = cast(AnthropicModelSettings, model_settings or {})
 
         tool_choice: ToolChoiceParam | None
 

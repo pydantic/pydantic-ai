@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from itertools import chain
-from typing import Literal, TypeAlias, Union
+from typing import Literal, TypeAlias, Union, cast
 
 from cohere import TextAssistantMessageContentItem
 from typing_extensions import assert_never
@@ -22,7 +22,7 @@ from ..messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from ..settings import ModelSettings
+from ..settings import CohereModelSettings, ModelSettings
 from ..tools import ToolDefinition
 from . import (
     AgentModel,
@@ -162,7 +162,7 @@ class CohereAgentModel(AgentModel):
         model_settings: ModelSettings | None,
     ) -> ChatResponse:
         cohere_messages = list(chain(*(self._map_message(m) for m in messages)))
-        model_settings = model_settings or {}
+        model_settings = cast(CohereModelSettings, model_settings or {})
         return await self.client.chat(
             model=self.model_name,
             messages=cohere_messages,
@@ -170,6 +170,7 @@ class CohereAgentModel(AgentModel):
             max_tokens=model_settings.get('max_tokens', OMIT),
             temperature=model_settings.get('temperature', OMIT),
             p=model_settings.get('top_p', OMIT),
+            seed=model_settings.get('seed', OMIT),
         )
 
     def _process_response(self, response: ChatResponse) -> ModelResponse:

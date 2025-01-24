@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Annotated, Any, Literal, Protocol, Union
+from typing import Annotated, Any, Literal, Protocol, Union, cast
 from uuid import uuid4
 
 import pydantic
@@ -28,7 +28,7 @@ from ..messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from ..settings import ModelSettings
+from ..settings import GeminiModelSettings, ModelSettings
 from ..tools import ToolDefinition
 from . import (
     AgentModel,
@@ -197,6 +197,7 @@ class GeminiAgentModel(AgentModel):
             request_data['tool_config'] = self.tool_config
 
         generation_config: _GeminiGenerationConfig = {}
+        model_settings = cast(GeminiModelSettings, model_settings or {})
         if model_settings:
             if (max_tokens := model_settings.get('max_tokens')) is not None:
                 generation_config['max_output_tokens'] = max_tokens
@@ -222,7 +223,7 @@ class GeminiAgentModel(AgentModel):
             url,
             content=request_json,
             headers=headers,
-            timeout=(model_settings or {}).get('timeout', USE_CLIENT_DEFAULT),
+            timeout=model_settings.get('timeout', USE_CLIENT_DEFAULT),
         ) as r:
             if r.status_code != 200:
                 await r.aread()

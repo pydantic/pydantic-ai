@@ -85,6 +85,40 @@ class ModelSettings(TypedDict, total=False):
     * Anthropic
     """
 
+    seed: int
+    """The random seed to use for the model, theoretically allowing for deterministic results.
+
+    Supported by:
+    * OpenAI
+    * Groq
+    * Cohere
+    * Mistral
+    """
+
+
+class OpenAIModelSettings(ModelSettings):
+    """Settings used for an OpenAI model request."""
+
+
+class GroqModelSettings(ModelSettings):
+    """Settings used for a Groq model request."""
+
+
+class CohereModelSettings(ModelSettings):
+    """Settings used for a Cohere model request."""
+
+
+class MistralModelSettings(ModelSettings):
+    """Settings used for a Mistral model request."""
+
+
+class GeminiModelSettings(ModelSettings):
+    """Settings used for a Gemini model request."""
+
+
+class AnthropicModelSettings(ModelSettings):
+    """Settings used for an Anthropic model request."""
+
 
 def merge_model_settings(base: ModelSettings | None, overrides: ModelSettings | None) -> ModelSettings | None:
     """Merge two sets of model settings, preferring the overrides.

@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from itertools import chain
-from typing import Literal, Union, overload
+from typing import Literal, Union, cast, overload
 
 from httpx import AsyncClient as AsyncHTTPClient
 from typing_extensions import assert_never
@@ -25,7 +25,7 @@ from ..messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from ..settings import ModelSettings
+from ..settings import ModelSettings, OpenAIModelSettings
 from ..tools import ToolDefinition
 from . import (
     AgentModel,
@@ -189,7 +189,7 @@ class OpenAIAgentModel(AgentModel):
 
         openai_messages = list(chain(*(self._map_message(m) for m in messages)))
 
-        model_settings = model_settings or {}
+        model_settings = cast(OpenAIModelSettings, model_settings or {})
 
         return await self.client.chat.completions.create(
             model=self.model_name,
@@ -204,6 +204,7 @@ class OpenAIAgentModel(AgentModel):
             temperature=model_settings.get('temperature', NOT_GIVEN),
             top_p=model_settings.get('top_p', NOT_GIVEN),
             timeout=model_settings.get('timeout', NOT_GIVEN),
+            seed=model_settings.get('seed', NOT_GIVEN),
         )
 
     def _process_response(self, response: chat.ChatCompletion) -> ModelResponse:
