@@ -848,7 +848,7 @@ async def test_model_settings(client_with_handler: ClientWithHandler, env: TestE
         )
 
     gemini_client = client_with_handler(handler)
-    m = GeminiModel('gemini-1.5-flash', http_client=gemini_client)
+    m = GeminiModel('gemini-1.5-flash', http_client=gemini_client, api_key='mock')
     agent = Agent(m)
 
     result = await agent.run(
