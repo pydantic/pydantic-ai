@@ -17,7 +17,7 @@ if TYPE_CHECKING:
     from .result import Usage
 
 __all__ = (
-    'AgentDeps',
+    'AgentDepsT',
     'DocstringFormat',
     'RunContext',
     'SystemPromptFunc',
@@ -31,15 +31,15 @@ __all__ = (
     'ToolDefinition',
 )
 
-AgentDeps = TypeVar('AgentDeps', default=None)
+AgentDepsT = TypeVar('AgentDepsT', default=None, contravariant=True)
 """Type variable for agent dependencies."""
 
 
 @dataclasses.dataclass
-class RunContext(Generic[AgentDeps]):
+class RunContext(Generic[AgentDepsT]):
     """Information about the current call."""
 
-    deps: AgentDeps
+    deps: AgentDepsT
     """Dependencies for the agent."""
     model: models.Model
     """The model used in this run."""
@@ -58,7 +58,7 @@ class RunContext(Generic[AgentDeps]):
 
     def replace_with(
         self, retry: int | None = None, tool_name: str | None | _utils.Unset = _utils.UNSET
-    ) -> RunContext[AgentDeps]:
+    ) -> RunContext[AgentDepsT]:
         # Create a new `RunContext` a new `retry` value and `tool_name`.
         kwargs = {}
         if retry is not None:
@@ -72,8 +72,8 @@ ToolParams = ParamSpec('ToolParams', default=...)
 """Retrieval function param spec."""
 
 SystemPromptFunc = Union[
-    Callable[[RunContext[AgentDeps]], str],
-    Callable[[RunContext[AgentDeps]], Awaitable[str]],
+    Callable[[RunContext[AgentDepsT]], str],
+    Callable[[RunContext[AgentDepsT]], Awaitable[str]],
     Callable[[], str],
     Callable[[], Awaitable[str]],
 ]
@@ -82,7 +82,7 @@ SystemPromptFunc = Union[
 Usage `SystemPromptFunc[AgentDeps]`.
 """
 
-ToolFuncContext = Callable[Concatenate[RunContext[AgentDeps], ToolParams], Any]
+ToolFuncContext = Callable[Concatenate[RunContext[AgentDepsT], ToolParams], Any]
 """A tool function that takes `RunContext` as the first argument.
 
 Usage `ToolContextFunc[AgentDeps, ToolParams]`.
@@ -92,7 +92,7 @@ ToolFuncPlain = Callable[ToolParams, Any]
 
 Usage `ToolPlainFunc[ToolParams]`.
 """
-ToolFuncEither = Union[ToolFuncContext[AgentDeps, ToolParams], ToolFuncPlain[ToolParams]]
+ToolFuncEither = Union[ToolFuncContext[AgentDepsT, ToolParams], ToolFuncPlain[ToolParams]]
 """Either kind of tool function.
 
 This is just a union of [`ToolFuncContext`][pydantic_ai.tools.ToolFuncContext] and
@@ -100,7 +100,7 @@ This is just a union of [`ToolFuncContext`][pydantic_ai.tools.ToolFuncContext] a
 
 Usage `ToolFuncEither[AgentDeps, ToolParams]`.
 """
-ToolPrepareFunc: TypeAlias = 'Callable[[RunContext[AgentDeps], ToolDefinition], Awaitable[ToolDefinition | None]]'
+ToolPrepareFunc: TypeAlias = 'Callable[[RunContext[AgentDepsT], ToolDefinition], Awaitable[ToolDefinition | None]]'
 """Definition of a function that can prepare a tool definition at call time.
 
 See [tool docs](../tools.md#tool-prepare) for more information.
@@ -141,15 +141,15 @@ A = TypeVar('A')
 
 
 @dataclass(init=False)
-class Tool(Generic[AgentDeps]):
+class Tool(Generic[AgentDepsT]):
     """A tool function for an agent."""
 
-    function: ToolFuncEither[AgentDeps]
+    function: ToolFuncEither[AgentDepsT]
     takes_ctx: bool
     max_retries: int | None
     name: str
     description: str
-    prepare: ToolPrepareFunc[AgentDeps] | None
+    prepare: ToolPrepareFunc[AgentDepsT] | None
     docstring_format: DocstringFormat
     require_parameter_descriptions: bool
     _is_async: bool = field(init=False)
@@ -162,13 +162,13 @@ class Tool(Generic[AgentDeps]):
 
     def __init__(
         self,
-        function: ToolFuncEither[AgentDeps],
+        function: ToolFuncEither[AgentDepsT],
         *,
         takes_ctx: bool | None = None,
         max_retries: int | None = None,
         name: str | None = None,
         description: str | None = None,
-        prepare: ToolPrepareFunc[AgentDeps] | None = None,
+        prepare: ToolPrepareFunc[AgentDepsT] | None = None,
         docstring_format: DocstringFormat = 'auto',
         require_parameter_descriptions: bool = False,
     ):
@@ -240,7 +240,7 @@ class Tool(Generic[AgentDeps]):
         self._validator = f['validator']
         self._parameters_json_schema = f['json_schema']
 
-    async def prepare_tool_def(self, ctx: RunContext[AgentDeps]) -> ToolDefinition | None:
+    async def prepare_tool_def(self, ctx: RunContext[AgentDepsT]) -> ToolDefinition | None:
         """Get the tool definition.
 
         By default, this method creates a tool definition, then either returns it, or calls `self.prepare`
@@ -260,7 +260,7 @@ class Tool(Generic[AgentDeps]):
             return tool_def
 
     async def run(
-        self, message: _messages.ToolCallPart, run_context: RunContext[AgentDeps]
+        self, message: _messages.ToolCallPart, run_context: RunContext[AgentDepsT]
     ) -> _messages.ModelRequestPart:
         """Run the tool function asynchronously."""
         try:
@@ -293,7 +293,7 @@ class Tool(Generic[AgentDeps]):
         self,
         args_dict: dict[str, Any],
         message: _messages.ToolCallPart,
-        run_context: RunContext[AgentDeps],
+        run_context: RunContext[AgentDepsT],
     ) -> tuple[list[Any], dict[str, Any]]:
         if self._single_arg_name:
             args_dict = {self._single_arg_name: args_dict}

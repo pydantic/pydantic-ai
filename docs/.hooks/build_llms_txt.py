@@ -27,7 +27,7 @@ def on_page_content(html: str, page: Page, config: MkDocsConfig, files: Files) -
 
     # The API reference generates HTML tables with line numbers, this strips the line numbers cell and goes back to a code block
     for extra in soup.find_all('table', attrs={'class': 'highlighttable'}):
-        extra.replace_with(BeautifulSoup(f'<pre>{extra.find('code').get_text()}</pre>', 'html.parser'))
+        extra.replace_with(BeautifulSoup(f'<pre>{extra.find("code").get_text()}</pre>', 'html.parser'))
 
     with open(os.path.join(config.site_dir, 'llms.txt'), 'a', encoding='utf-8') as f:
         f.write(MarkdownConverter().convert_soup(soup))  # type: ignore[reportUnknownMemberType]
