@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from itertools import chain
-from typing import Literal, TypeAlias, Union
+from typing import Literal, TypeAlias, Union, cast
 
 from cohere import TextAssistantMessageContentItem
 from typing_extensions import assert_never
@@ -69,6 +69,12 @@ CohereModelName: TypeAlias = Union[
         'command-r7b-12-2024',
     ],
 ]
+
+
+class CohereModelSettings(ModelSettings):
+    """Settings used for a Cohere model request."""
+
+    # This class is a placeholder for any future cohere-specific settings
 
 
 @dataclass(init=False)
@@ -153,16 +159,15 @@ class CohereAgentModel(AgentModel):
     async def request(
         self, messages: list[ModelMessage], model_settings: ModelSettings | None
     ) -> tuple[ModelResponse, result.Usage]:
-        response = await self._chat(messages, model_settings)
+        response = await self._chat(messages, cast(CohereModelSettings, model_settings or {}))
         return self._process_response(response), _map_usage(response)
 
     async def _chat(
         self,
         messages: list[ModelMessage],
-        model_settings: ModelSettings | None,
+        model_settings: CohereModelSettings,
     ) -> ChatResponse:
         cohere_messages = list(chain(*(self._map_message(m) for m in messages)))
-        model_settings = model_settings or {}
         return await self.client.chat(
             model=self.model_name,
             messages=cohere_messages,
@@ -170,6 +175,9 @@ class CohereAgentModel(AgentModel):
             max_tokens=model_settings.get('max_tokens', OMIT),
             temperature=model_settings.get('temperature', OMIT),
             p=model_settings.get('top_p', OMIT),
+            seed=model_settings.get('seed', OMIT),
+            presence_penalty=model_settings.get('presence_penalty', OMIT),
+            frequency_penalty=model_settings.get('frequency_penalty', OMIT),
         )
 
     def _process_response(self, response: ChatResponse) -> ModelResponse:

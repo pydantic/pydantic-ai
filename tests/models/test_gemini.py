@@ -826,3 +826,39 @@ async def test_empty_text_ignored():
             'parts': [{'function_call': {'name': 'final_result', 'args': {'response': [1, 2, 123]}}}],
         }
     )
+
+
+async def test_model_settings(client_with_handler: ClientWithHandler, env: TestEnv, allow_model_requests: None) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        generation_config = json.loads(request.content)['generation_config']
+        assert generation_config == {
+            'max_output_tokens': 1,
+            'temperature': 0.1,
+            'top_p': 0.2,
+            'presence_penalty': 0.3,
+            'frequency_penalty': 0.4,
+        }
+        return httpx.Response(
+            200,
+            content=_gemini_response_ta.dump_json(
+                gemini_response(_content_model_response(ModelResponse(parts=[TextPart('world')]))),
+                by_alias=True,
+            ),
+            headers={'Content-Type': 'application/json'},
+        )
+
+    gemini_client = client_with_handler(handler)
+    m = GeminiModel('gemini-1.5-flash', http_client=gemini_client, api_key='mock')
+    agent = Agent(m)
+
+    result = await agent.run(
+        'hello',
+        model_settings={
+            'max_tokens': 1,
+            'temperature': 0.1,
+            'top_p': 0.2,
+            'presence_penalty': 0.3,
+            'frequency_penalty': 0.4,
+        },
+    )
+    assert result.data == 'world'

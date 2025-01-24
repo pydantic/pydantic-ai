@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from itertools import chain
-from typing import Any, Callable, Literal, Union
+from typing import Any, Callable, Literal, Union, cast
 
 import pydantic_core
 from httpx import AsyncClient as AsyncHTTPClient, Timeout
@@ -85,6 +85,12 @@ Since [the Mistral docs](https://docs.mistral.ai/getting-started/models/models_o
 """
 
 
+class MistralModelSettings(ModelSettings):
+    """Settings used for a Mistral model request."""
+
+    # This class is a placeholder for any future mistral-specific settings
+
+
 @dataclass(init=False)
 class MistralModel(Model):
     """A model that uses Mistral.
@@ -159,7 +165,7 @@ class MistralAgentModel(AgentModel):
         self, messages: list[ModelMessage], model_settings: ModelSettings | None
     ) -> tuple[ModelResponse, Usage]:
         """Make a non-streaming request to the model from Pydantic AI call."""
-        response = await self._completions_create(messages, model_settings)
+        response = await self._completions_create(messages, cast(MistralModelSettings, model_settings or {}))
         return self._process_response(response), _map_usage(response)
 
     @asynccontextmanager
@@ -167,15 +173,14 @@ class MistralAgentModel(AgentModel):
         self, messages: list[ModelMessage], model_settings: ModelSettings | None
     ) -> AsyncIterator[StreamedResponse]:
         """Make a streaming request to the model from Pydantic AI call."""
-        response = await self._stream_completions_create(messages, model_settings)
+        response = await self._stream_completions_create(messages, cast(MistralModelSettings, model_settings or {}))
         async with response:
             yield await self._process_streamed_response(self.result_tools, response)
 
     async def _completions_create(
-        self, messages: list[ModelMessage], model_settings: ModelSettings | None
+        self, messages: list[ModelMessage], model_settings: MistralModelSettings
     ) -> MistralChatCompletionResponse:
         """Make a non-streaming request to the model."""
-        model_settings = model_settings or {}
         response = await self.client.chat.complete_async(
             model=str(self.model_name),
             messages=list(chain(*(self._map_message(m) for m in messages))),
@@ -187,6 +192,7 @@ class MistralAgentModel(AgentModel):
             temperature=model_settings.get('temperature', UNSET),
             top_p=model_settings.get('top_p', 1),
             timeout_ms=self._get_timeout_ms(model_settings.get('timeout')),
+            random_seed=model_settings.get('seed', UNSET),
         )
         assert response, 'A unexpected empty response from Mistral.'
         return response
@@ -194,12 +200,11 @@ class MistralAgentModel(AgentModel):
     async def _stream_completions_create(
         self,
         messages: list[ModelMessage],
-        model_settings: ModelSettings | None,
+        model_settings: MistralModelSettings,
     ) -> MistralEventStreamAsync[MistralCompletionEvent]:
         """Create a streaming completion request to the Mistral model."""
         response: MistralEventStreamAsync[MistralCompletionEvent] | None
         mistral_messages = list(chain(*(self._map_message(m) for m in messages)))
-        model_settings = model_settings or {}
 
         if self.result_tools and self.function_tools or self.function_tools:
             # Function Calling
@@ -213,6 +218,8 @@ class MistralAgentModel(AgentModel):
                 top_p=model_settings.get('top_p', 1),
                 max_tokens=model_settings.get('max_tokens', UNSET),
                 timeout_ms=self._get_timeout_ms(model_settings.get('timeout')),
+                presence_penalty=model_settings.get('presence_penalty'),
+                frequency_penalty=model_settings.get('frequency_penalty'),
             )
 
         elif self.result_tools:
