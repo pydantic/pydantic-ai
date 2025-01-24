@@ -191,7 +191,7 @@ class CohereAgentModel(AgentModel):
         for c in response.message.tool_calls or []:
             if c.function and c.function.name and c.function.arguments:
                 parts.append(
-                    ToolCallPart.from_raw_args(
+                    ToolCallPart(
                         tool_name=c.function.name,
                         args=c.function.arguments,
                         tool_call_id=c.id,

@@ -13,7 +13,6 @@ from typing_extensions import assert_never
 from .. import UnexpectedModelBehavior, _utils, usage
 from .._utils import guard_tool_call_id as _guard_tool_call_id
 from ..messages import (
-    ArgsDict,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -242,7 +241,7 @@ class AnthropicAgentModel(AgentModel):
             else:
                 assert isinstance(item, ToolUseBlock), 'unexpected item type'
                 items.append(
-                    ToolCallPart.from_raw_args(
+                    ToolCallPart(
                         tool_name=item.name,
                         args=cast(dict[str, Any], item.input),
                         tool_call_id=item.id,
@@ -319,7 +318,6 @@ class AnthropicAgentModel(AgentModel):
 
 
 def _map_tool_call(t: ToolCallPart) -> ToolUseBlockParam:
-    assert isinstance(t.args, ArgsDict), f'Expected ArgsDict, got {t.args}'
     return ToolUseBlockParam(
         id=_guard_tool_call_id(t=t, model_source='Anthropic'),
         type='tool_use',

@@ -9,8 +9,6 @@ from inline_snapshot import snapshot
 from pydantic_ai import UnexpectedModelBehavior
 from pydantic_ai._parts_manager import ModelResponsePartsManager
 from pydantic_ai.messages import (
-    ArgsDict,
-    ArgsJson,
     PartDeltaEvent,
     PartStartEvent,
     TextPart,
@@ -91,14 +89,12 @@ def test_handle_tool_call_deltas():
     assert event == snapshot(
         PartStartEvent(
             index=0,
-            part=ToolCallPart(
-                tool_name='tool', args=ArgsJson(args_json='{"arg1":'), tool_call_id=None, part_kind='tool-call'
-            ),
+            part=ToolCallPart(tool_name='tool', args='{"arg1":', tool_call_id=None, part_kind='tool-call'),
             event_kind='part_start',
         )
     )
     assert manager.get_parts() == snapshot(
-        [ToolCallPart(tool_name='tool', args=ArgsJson(args_json='{"arg1":'), tool_call_id=None, part_kind='tool-call')]
+        [ToolCallPart(tool_name='tool', args='{"arg1":', tool_call_id=None, part_kind='tool-call')]
     )
 
     event = manager.handle_tool_call_delta(vendor_part_id='first', tool_name='1', args=None, tool_call_id=None)
@@ -112,7 +108,7 @@ def test_handle_tool_call_deltas():
         )
     )
     assert manager.get_parts() == snapshot(
-        [ToolCallPart(tool_name='tool1', args=ArgsJson(args_json='{"arg1":'), tool_call_id=None, part_kind='tool-call')]
+        [ToolCallPart(tool_name='tool1', args='{"arg1":', tool_call_id=None, part_kind='tool-call')]
     )
 
     event = manager.handle_tool_call_delta(vendor_part_id='first', tool_name=None, args='"value1"}', tool_call_id=None)
@@ -129,7 +125,7 @@ def test_handle_tool_call_deltas():
         [
             ToolCallPart(
                 tool_name='tool1',
-                args=ArgsJson(args_json='{"arg1":"value1"}'),
+                args='{"arg1":"value1"}',
                 tool_call_id=None,
                 part_kind='tool-call',
             )
@@ -146,7 +142,7 @@ def test_handle_tool_call_deltas_without_vendor_id():
         [
             ToolCallPart(
                 tool_name='tool1',
-                args=ArgsJson(args_json='{"arg1":"value1"}'),
+                args='{"arg1":"value1"}',
                 tool_call_id=None,
                 part_kind='tool-call',
             )
@@ -159,12 +155,8 @@ def test_handle_tool_call_deltas_without_vendor_id():
     manager.handle_tool_call_delta(vendor_part_id=None, tool_name='tool2', args='"value1"}', tool_call_id=None)
     assert manager.get_parts() == snapshot(
         [
-            ToolCallPart(
-                tool_name='tool2', args=ArgsJson(args_json='{"arg1":'), tool_call_id=None, part_kind='tool-call'
-            ),
-            ToolCallPart(
-                tool_name='tool2', args=ArgsJson(args_json='"value1"}'), tool_call_id=None, part_kind='tool-call'
-            ),
+            ToolCallPart(tool_name='tool2', args='{"arg1":', tool_call_id=None, part_kind='tool-call'),
+            ToolCallPart(tool_name='tool2', args='"value1"}', tool_call_id=None, part_kind='tool-call'),
         ]
     )
 
@@ -177,9 +169,7 @@ def test_handle_tool_call_part():
     assert event == snapshot(
         PartStartEvent(
             index=0,
-            part=ToolCallPart(
-                tool_name='tool1', args=ArgsJson(args_json='{"arg1":'), tool_call_id=None, part_kind='tool-call'
-            ),
+            part=ToolCallPart(tool_name='tool1', args='{"arg1":', tool_call_id=None, part_kind='tool-call'),
             event_kind='part_start',
         )
     )
@@ -187,17 +177,15 @@ def test_handle_tool_call_part():
     # Add a delta
     manager.handle_tool_call_delta(vendor_part_id='second', tool_name='tool1', args=None, tool_call_id=None)
     assert manager.get_parts() == snapshot(
-        [ToolCallPart(tool_name='tool1', args=ArgsJson(args_json='{"arg1":'), tool_call_id=None, part_kind='tool-call')]
+        [ToolCallPart(tool_name='tool1', args='{"arg1":', tool_call_id=None, part_kind='tool-call')]
     )
 
     # Override it with handle_tool_call_part
     manager.handle_tool_call_part(vendor_part_id='second', tool_name='tool1', args='{}', tool_call_id=None)
     assert manager.get_parts() == snapshot(
         [
-            ToolCallPart(
-                tool_name='tool1', args=ArgsJson(args_json='{"arg1":'), tool_call_id=None, part_kind='tool-call'
-            ),
-            ToolCallPart(tool_name='tool1', args=ArgsJson(args_json='{}'), tool_call_id=None, part_kind='tool-call'),
+            ToolCallPart(tool_name='tool1', args='{"arg1":', tool_call_id=None, part_kind='tool-call'),
+            ToolCallPart(tool_name='tool1', args='{}', tool_call_id=None, part_kind='tool-call'),
         ]
     )
 
@@ -215,11 +203,11 @@ def test_handle_tool_call_part():
         [
             ToolCallPart(
                 tool_name='tool1',
-                args=ArgsJson(args_json='{"arg1":"value1"}'),
+                args='{"arg1":"value1"}',
                 tool_call_id=None,
                 part_kind='tool-call',
             ),
-            ToolCallPart(tool_name='tool1', args=ArgsJson(args_json='{}'), tool_call_id=None, part_kind='tool-call'),
+            ToolCallPart(tool_name='tool1', args='{}', tool_call_id=None, part_kind='tool-call'),
         ]
     )
 
@@ -228,9 +216,7 @@ def test_handle_tool_call_part():
     assert event == snapshot(
         PartStartEvent(
             index=2,
-            part=ToolCallPart(
-                tool_name='tool1', args=ArgsJson(args_json='{}'), tool_call_id=None, part_kind='tool-call'
-            ),
+            part=ToolCallPart(tool_name='tool1', args='{}', tool_call_id=None, part_kind='tool-call'),
             event_kind='part_start',
         )
     )
@@ -238,12 +224,12 @@ def test_handle_tool_call_part():
         [
             ToolCallPart(
                 tool_name='tool1',
-                args=ArgsJson(args_json='{"arg1":"value1"}'),
+                args='{"arg1":"value1"}',
                 tool_call_id=None,
                 part_kind='tool-call',
             ),
-            ToolCallPart(tool_name='tool1', args=ArgsJson(args_json='{}'), tool_call_id=None, part_kind='tool-call'),
-            ToolCallPart(tool_name='tool1', args=ArgsJson(args_json='{}'), tool_call_id=None, part_kind='tool-call'),
+            ToolCallPart(tool_name='tool1', args='{}', tool_call_id=None, part_kind='tool-call'),
+            ToolCallPart(tool_name='tool1', args='{}', tool_call_id=None, part_kind='tool-call'),
         ]
     )
 
@@ -265,9 +251,7 @@ def test_handle_mixed_deltas_without_text_part_id(text_vendor_part_id: str | Non
     assert event == snapshot(
         PartStartEvent(
             index=1,
-            part=ToolCallPart(
-                tool_name='tool1', args=ArgsJson(args_json='{"arg1":'), tool_call_id='abc', part_kind='tool-call'
-            ),
+            part=ToolCallPart(tool_name='tool1', args='{"arg1":', tool_call_id='abc', part_kind='tool-call'),
             event_kind='part_start',
         )
     )
@@ -284,9 +268,7 @@ def test_handle_mixed_deltas_without_text_part_id(text_vendor_part_id: str | Non
         assert manager.get_parts() == snapshot(
             [
                 TextPart(content='hello ', part_kind='text'),
-                ToolCallPart(
-                    tool_name='tool1', args=ArgsJson(args_json='{"arg1":'), tool_call_id='abc', part_kind='tool-call'
-                ),
+                ToolCallPart(tool_name='tool1', args='{"arg1":', tool_call_id='abc', part_kind='tool-call'),
                 TextPart(content='world', part_kind='text'),
             ]
         )
@@ -299,9 +281,7 @@ def test_handle_mixed_deltas_without_text_part_id(text_vendor_part_id: str | Non
         assert manager.get_parts() == snapshot(
             [
                 TextPart(content='hello world', part_kind='text'),
-                ToolCallPart(
-                    tool_name='tool1', args=ArgsJson(args_json='{"arg1":'), tool_call_id='abc', part_kind='tool-call'
-                ),
+                ToolCallPart(tool_name='tool1', args='{"arg1":', tool_call_id='abc', part_kind='tool-call'),
             ]
         )
 
@@ -331,7 +311,7 @@ def test_tool_call_id_delta():
         [
             ToolCallPart(
                 tool_name='tool1',
-                args=ArgsJson(args_json='{"arg1":'),
+                args='{"arg1":',
                 tool_call_id=None,
                 part_kind='tool-call',
             )
@@ -343,7 +323,7 @@ def test_tool_call_id_delta():
         [
             ToolCallPart(
                 tool_name='tool1',
-                args=ArgsJson(args_json='{"arg1":"value1"}'),
+                args='{"arg1":"value1"}',
                 tool_call_id='id2',
                 part_kind='tool-call',
             )
@@ -364,7 +344,7 @@ def test_tool_call_id_delta_failure(apply_to_delta: bool):
         else [
             ToolCallPart(
                 tool_name='tool1',
-                args=ArgsJson(args_json='{"arg1":'),
+                args='{"arg1":',
                 tool_call_id='id1',
                 part_kind='tool-call',
             )
@@ -381,17 +361,17 @@ def test_tool_call_id_delta_failure(apply_to_delta: bool):
 @pytest.mark.parametrize(
     'args1,args2,result',
     [
-        ('{"arg1":', '"value1"}', ArgsJson(args_json='{"arg1":"value1"}')),
+        ('{"arg1":', '"value1"}', '{"arg1":"value1"}'),
         ('{"a":1}', {}, UnexpectedModelBehavior('Cannot apply dict deltas to non-dict tool arguments ')),
         ({}, '{"b":2}', UnexpectedModelBehavior('Cannot apply JSON deltas to non-JSON tool arguments ')),
-        ({'a': 1}, {'b': 2}, ArgsDict(args_dict={'a': 1, 'b': 2})),
+        ({'a': 1}, {'b': 2}, {'a': 1, 'b': 2}),
     ],
 )
 @pytest.mark.parametrize('apply_to_delta', [False, True])
 def test_apply_tool_delta_variants(
     args1: str | dict[str, Any],
     args2: str | dict[str, Any],
-    result: ArgsJson | ArgsDict | UnexpectedModelBehavior,
+    result: str | dict[str, Any] | UnexpectedModelBehavior,
     apply_to_delta: bool,
 ):
     tool_name = 'tool1'

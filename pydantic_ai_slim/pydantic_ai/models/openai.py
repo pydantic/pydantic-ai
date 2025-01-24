@@ -223,7 +223,7 @@ class OpenAIAgentModel(AgentModel):
             items.append(TextPart(choice.message.content))
         if choice.message.tool_calls is not None:
             for c in choice.message.tool_calls:
-                items.append(ToolCallPart.from_raw_args(c.function.name, c.function.arguments, c.id))
+                items.append(ToolCallPart(c.function.name, c.function.arguments, c.id))
         return ModelResponse(items, model_name=self.model_name, timestamp=timestamp)
 
     async def _process_streamed_response(self, response: AsyncStream[ChatCompletionChunk]) -> OpenAIStreamedResponse:

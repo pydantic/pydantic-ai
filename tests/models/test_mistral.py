@@ -14,8 +14,6 @@ from typing_extensions import TypedDict
 from pydantic_ai.agent import Agent
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import (
-    ArgsDict,
-    ArgsJson,
     ModelRequest,
     ModelResponse,
     RetryPromptPart,
@@ -395,7 +393,7 @@ async def test_request_model_structured_with_arguments_dict_response(allow_model
                 parts=[
                     ToolCallPart(
                         tool_name='final_result',
-                        args=ArgsDict(args_dict={'city': 'paris', 'country': 'france'}),
+                        args={'city': 'paris', 'country': 'france'},
                         tool_call_id='123',
                     )
                 ],
@@ -457,7 +455,7 @@ async def test_request_model_structured_with_arguments_str_response(allow_model_
                 parts=[
                     ToolCallPart(
                         tool_name='final_result',
-                        args=ArgsJson(args_json='{"city": "paris", "country": "france"}'),
+                        args='{"city": "paris", "country": "france"}',
                         tool_call_id='123',
                     )
                 ],
@@ -518,7 +516,7 @@ async def test_request_result_type_with_arguments_str_response(allow_model_reque
                 parts=[
                     ToolCallPart(
                         tool_name='final_result',
-                        args=ArgsJson(args_json='{"response": 42}'),
+                        args='{"response": 42}',
                         tool_call_id='123',
                     )
                 ],
@@ -1103,7 +1101,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 parts=[
                     ToolCallPart(
                         tool_name='get_location',
-                        args=ArgsJson(args_json='{"loc_name": "San Fransisco"}'),
+                        args='{"loc_name": "San Fransisco"}',
                         tool_call_id='1',
                     )
                 ],
@@ -1124,7 +1122,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 parts=[
                     ToolCallPart(
                         tool_name='get_location',
-                        args=ArgsJson(args_json='{"loc_name": "London"}'),
+                        args='{"loc_name": "London"}',
                         tool_call_id='2',
                     )
                 ],
@@ -1243,7 +1241,7 @@ async def test_request_tool_call_with_result_type(allow_model_requests: None):
                 parts=[
                     ToolCallPart(
                         tool_name='get_location',
-                        args=ArgsJson(args_json='{"loc_name": "San Fransisco"}'),
+                        args='{"loc_name": "San Fransisco"}',
                         tool_call_id='1',
                     )
                 ],
@@ -1264,7 +1262,7 @@ async def test_request_tool_call_with_result_type(allow_model_requests: None):
                 parts=[
                     ToolCallPart(
                         tool_name='get_location',
-                        args=ArgsJson(args_json='{"loc_name": "London"}'),
+                        args='{"loc_name": "London"}',
                         tool_call_id='2',
                     )
                 ],
@@ -1285,7 +1283,7 @@ async def test_request_tool_call_with_result_type(allow_model_requests: None):
                 parts=[
                     ToolCallPart(
                         tool_name='final_result',
-                        args=ArgsJson(args_json='{"lat": 51, "lng": 0}'),
+                        args='{"lat": 51, "lng": 0}',
                         tool_call_id='1',
                     )
                 ],
@@ -1386,7 +1384,7 @@ async def test_stream_tool_call_with_return_type(allow_model_requests: None):
                 parts=[
                     ToolCallPart(
                         tool_name='get_location',
-                        args=ArgsJson(args_json='{"loc_name": "San Fransisco"}'),
+                        args='{"loc_name": "San Fransisco"}',
                         tool_call_id='1',
                     )
                 ],
@@ -1404,9 +1402,7 @@ async def test_stream_tool_call_with_return_type(allow_model_requests: None):
                 ]
             ),
             ModelResponse(
-                parts=[
-                    ToolCallPart(tool_name='final_result', args=ArgsJson(args_json='{"won": true}'), tool_call_id='1')
-                ],
+                parts=[ToolCallPart(tool_name='final_result', args='{"won": true}', tool_call_id='1')],
                 model_name='mistral-large-latest',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
             ),
@@ -1491,7 +1487,7 @@ async def test_stream_tool_call(allow_model_requests: None):
                 parts=[
                     ToolCallPart(
                         tool_name='get_location',
-                        args=ArgsJson(args_json='{"loc_name": "San Fransisco"}'),
+                        args='{"loc_name": "San Fransisco"}',
                         tool_call_id='1',
                     )
                 ],
@@ -1597,7 +1593,7 @@ async def test_stream_tool_call_with_retry(allow_model_requests: None):
                 parts=[
                     ToolCallPart(
                         tool_name='get_location',
-                        args=ArgsJson(args_json='{"loc_name": "San Fransisco"}'),
+                        args='{"loc_name": "San Fransisco"}',
                         tool_call_id='1',
                     )
                 ],
@@ -1618,7 +1614,7 @@ async def test_stream_tool_call_with_retry(allow_model_requests: None):
                 parts=[
                     ToolCallPart(
                         tool_name='get_location',
-                        args=ArgsJson(args_json='{"loc_name": "London"}'),
+                        args='{"loc_name": "London"}',
                         tool_call_id='2',
                     )
                 ],

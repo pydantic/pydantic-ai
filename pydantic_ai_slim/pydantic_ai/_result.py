@@ -201,14 +201,10 @@ class ResultTool(Generic[ResultDataT]):
         """
         try:
             pyd_allow_partial: Literal['off', 'trailing-strings'] = 'trailing-strings' if allow_partial else 'off'
-            if isinstance(tool_call.args, _messages.ArgsJson):
-                result = self.type_adapter.validate_json(
-                    tool_call.args.args_json or '', experimental_allow_partial=pyd_allow_partial
-                )
+            if isinstance(tool_call.args, str):
+                result = self.type_adapter.validate_json(tool_call.args, experimental_allow_partial=pyd_allow_partial)
             else:
-                result = self.type_adapter.validate_python(
-                    tool_call.args.args_dict, experimental_allow_partial=pyd_allow_partial
-                )
+                result = self.type_adapter.validate_python(tool_call.args, experimental_allow_partial=pyd_allow_partial)
         except ValidationError as e:
             if wrap_validation_errors:
                 m = _messages.RetryPromptPart(

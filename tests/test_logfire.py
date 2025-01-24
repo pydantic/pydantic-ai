@@ -130,12 +130,7 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary]) -> None:
                     },
                     {
                         'parts': [
-                            {
-                                'tool_name': 'my_ret',
-                                'args': {'args_dict': {'x': 0}},
-                                'tool_call_id': None,
-                                'part_kind': 'tool-call',
-                            }
+                            {'tool_name': 'my_ret', 'args': {'x': 0}, 'tool_call_id': None, 'part_kind': 'tool-call'}
                         ],
                         'model_name': 'test',
                         'timestamp': IsStr(regex=r'\d{4}-\d{2}-.+'),
@@ -209,13 +204,6 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary]) -> None:
                                                 'type': 'object',
                                                 'title': 'ToolCallPart',
                                                 'x-python-datatype': 'dataclass',
-                                                'properties': {
-                                                    'args': {
-                                                        'type': 'object',
-                                                        'title': 'ArgsDict',
-                                                        'x-python-datatype': 'dataclass',
-                                                    }
-                                                },
                                             },
                                         },
                                         'timestamp': {'type': 'string', 'format': 'date-time'},

@@ -453,7 +453,7 @@ def _process_response_from_parts(
             items.append(TextPart(content=part['text']))
         elif 'function_call' in part:
             items.append(
-                ToolCallPart.from_raw_args(
+                ToolCallPart(
                     tool_name=part['function_call']['name'],
                     args=part['function_call']['args'],
                 )

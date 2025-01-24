@@ -100,7 +100,7 @@ async def weather_model(messages: list[ModelMessage], info: AgentInfo) -> ModelR
     if isinstance(last, UserPromptPart):
         return ModelResponse(
             parts=[
-                ToolCallPart.from_raw_args(
+                ToolCallPart(
                     'get_location',
                     json.dumps({'location_description': last.content}),
                 )
@@ -108,7 +108,7 @@ async def weather_model(messages: list[ModelMessage], info: AgentInfo) -> ModelR
         )
     elif isinstance(last, ToolReturnPart):
         if last.tool_name == 'get_location':
-            return ModelResponse(parts=[ToolCallPart.from_raw_args('get_weather', last.model_response_str())])
+            return ModelResponse(parts=[ToolCallPart('get_weather', last.model_response_str())])
         elif last.tool_name == 'get_weather':
             location_name: str | None = None
             for m in messages:
@@ -150,7 +150,7 @@ def test_weather():
         [
             ModelRequest(parts=[UserPromptPart(content='London', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
-                parts=[ToolCallPart.from_raw_args('get_location', '{"location_description": "London"}')],
+                parts=[ToolCallPart('get_location', '{"location_description": "London"}')],
                 model_name='function:weather_model',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -163,7 +163,7 @@ def test_weather():
             ),
             ModelResponse(
                 parts=[
-                    ToolCallPart.from_raw_args(
+                    ToolCallPart(
                         'get_weather',
                         '{"lat": 51, "lng": 0}',
                     )
@@ -193,7 +193,7 @@ async def call_function_model(messages: list[ModelMessage], _: AgentInfo) -> Mod
             details = json.loads(last.content)
             return ModelResponse(
                 parts=[
-                    ToolCallPart.from_raw_args(
+                    ToolCallPart(
                         details['function'],
                         json.dumps(details['arguments']),
                     )
@@ -234,7 +234,7 @@ async def call_tool(messages: list[ModelMessage], info: AgentInfo) -> ModelRespo
     if len(messages) == 1:
         assert len(info.function_tools) == 1
         tool_name = info.function_tools[0].name
-        return ModelResponse(parts=[ToolCallPart.from_raw_args(tool_name, '{}')])
+        return ModelResponse(parts=[ToolCallPart(tool_name, '{}')])
     else:
         return ModelResponse(parts=[TextPart('final response')])
 
@@ -343,11 +343,11 @@ def test_call_all():
             ),
             ModelResponse(
                 parts=[
-                    ToolCallPart.from_raw_args('foo', {'x': 0}),
-                    ToolCallPart.from_raw_args('bar', {'x': 0}),
-                    ToolCallPart.from_raw_args('baz', {'x': 0}),
-                    ToolCallPart.from_raw_args('qux', {'x': 0}),
-                    ToolCallPart.from_raw_args('quz', {'x': 'a'}),
+                    ToolCallPart('foo', {'x': 0}),
+                    ToolCallPart('bar', {'x': 0}),
+                    ToolCallPart('baz', {'x': 0}),
+                    ToolCallPart('qux', {'x': 0}),
+                    ToolCallPart('quz', {'x': 'a'}),
                 ],
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
@@ -399,7 +399,7 @@ def test_retry_result_type():
         nonlocal call_count
         call_count += 1
 
-        return ModelResponse(parts=[ToolCallPart.from_raw_args('final_result', {'x': call_count})])
+        return ModelResponse(parts=[ToolCallPart('final_result', {'x': call_count})])
 
     class Foo(BaseModel):
         x: int
