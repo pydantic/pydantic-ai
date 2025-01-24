@@ -46,7 +46,7 @@ A function that always takes and returns the same type of data (which is the res
 * may or may not take [`RunContext`][pydantic_ai.tools.RunContext] as a first argument
 * may or may not be async
 
-Usage `ResultValidatorFunc[AgentDeps, T]`.
+Usage `ResultValidatorFunc[AgentDepsT, T]`.
 """
 
 _logfire = logfire_api.Logfire(otel_scope='pydantic-ai')
