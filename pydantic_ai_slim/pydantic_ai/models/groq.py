@@ -25,7 +25,7 @@ from ..messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from ..settings import GroqModelSettings, ModelSettings
+from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from . import (
     AgentModel,
@@ -66,6 +66,10 @@ GroqModelName = Literal[
 
 See [the Groq docs](https://console.groq.com/docs/models) for a full list.
 """
+
+
+class GroqModelSettings(ModelSettings):
+    """Settings used for a Groq model request."""
 
 
 @dataclass(init=False)
@@ -155,31 +159,31 @@ class GroqAgentModel(AgentModel):
     async def request(
         self, messages: list[ModelMessage], model_settings: ModelSettings | None
     ) -> tuple[ModelResponse, usage.Usage]:
-        response = await self._completions_create(messages, False, model_settings)
+        response = await self._completions_create(messages, False, cast(GroqModelSettings, model_settings or {}))
         return self._process_response(response), _map_usage(response)
 
     @asynccontextmanager
     async def request_stream(
         self, messages: list[ModelMessage], model_settings: ModelSettings | None
     ) -> AsyncIterator[StreamedResponse]:
-        response = await self._completions_create(messages, True, model_settings)
+        response = await self._completions_create(messages, True, cast(GroqModelSettings, model_settings or {}))
         async with response:
             yield await self._process_streamed_response(response)
 
     @overload
     async def _completions_create(
-        self, messages: list[ModelMessage], stream: Literal[True], model_settings: ModelSettings | None
+        self, messages: list[ModelMessage], stream: Literal[True], model_settings: GroqModelSettings
     ) -> AsyncStream[ChatCompletionChunk]:
         pass
 
     @overload
     async def _completions_create(
-        self, messages: list[ModelMessage], stream: Literal[False], model_settings: ModelSettings | None
+        self, messages: list[ModelMessage], stream: Literal[False], model_settings: GroqModelSettings
     ) -> chat.ChatCompletion:
         pass
 
     async def _completions_create(
-        self, messages: list[ModelMessage], stream: bool, model_settings: ModelSettings | None
+        self, messages: list[ModelMessage], stream: bool, model_settings: GroqModelSettings
     ) -> chat.ChatCompletion | AsyncStream[ChatCompletionChunk]:
         # standalone function to make it easier to override
         if not self.tools:
@@ -190,8 +194,6 @@ class GroqAgentModel(AgentModel):
             tool_choice = 'auto'
 
         groq_messages = list(chain(*(self._map_message(m) for m in messages)))
-
-        model_settings = cast(GroqModelSettings, model_settings or {})
 
         return await self.client.chat.completions.create(
             model=str(self.model_name),

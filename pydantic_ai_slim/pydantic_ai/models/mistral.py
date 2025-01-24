@@ -29,7 +29,7 @@ from ..messages import (
     UserPromptPart,
 )
 from ..result import Usage
-from ..settings import MistralModelSettings, ModelSettings
+from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from . import (
     AgentModel,
@@ -83,6 +83,10 @@ Since Mistral supports a variety of date-stamped models, we explicitly list the 
 allow any name in the type hints.
 Since [the Mistral docs](https://docs.mistral.ai/getting-started/models/models_overview/) for a full list.
 """
+
+
+class MistralModelSettings(ModelSettings):
+    """Settings used for a Mistral model request."""
 
 
 @dataclass(init=False)
@@ -159,7 +163,7 @@ class MistralAgentModel(AgentModel):
         self, messages: list[ModelMessage], model_settings: ModelSettings | None
     ) -> tuple[ModelResponse, Usage]:
         """Make a non-streaming request to the model from Pydantic AI call."""
-        response = await self._completions_create(messages, model_settings)
+        response = await self._completions_create(messages, cast(MistralModelSettings, model_settings or {}))
         return self._process_response(response), _map_usage(response)
 
     @asynccontextmanager
@@ -167,16 +171,14 @@ class MistralAgentModel(AgentModel):
         self, messages: list[ModelMessage], model_settings: ModelSettings | None
     ) -> AsyncIterator[StreamedResponse]:
         """Make a streaming request to the model from Pydantic AI call."""
-        response = await self._stream_completions_create(messages, model_settings)
+        response = await self._stream_completions_create(messages, cast(MistralModelSettings, model_settings or {}))
         async with response:
             yield await self._process_streamed_response(self.result_tools, response)
 
     async def _completions_create(
-        self, messages: list[ModelMessage], model_settings: ModelSettings | None
+        self, messages: list[ModelMessage], model_settings: MistralModelSettings
     ) -> MistralChatCompletionResponse:
         """Make a non-streaming request to the model."""
-        model_settings = cast(MistralModelSettings, model_settings or {})
-
         response = await self.client.chat.complete_async(
             model=str(self.model_name),
             messages=list(chain(*(self._map_message(m) for m in messages))),
@@ -196,12 +198,11 @@ class MistralAgentModel(AgentModel):
     async def _stream_completions_create(
         self,
         messages: list[ModelMessage],
-        model_settings: ModelSettings | None,
+        model_settings: MistralModelSettings,
     ) -> MistralEventStreamAsync[MistralCompletionEvent]:
         """Create a streaming completion request to the Mistral model."""
         response: MistralEventStreamAsync[MistralCompletionEvent] | None
         mistral_messages = list(chain(*(self._map_message(m) for m in messages)))
-        model_settings = model_settings or {}
 
         if self.result_tools and self.function_tools or self.function_tools:
             # Function Calling

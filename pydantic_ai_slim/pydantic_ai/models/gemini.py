@@ -28,7 +28,7 @@ from ..messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from ..settings import GeminiModelSettings, ModelSettings
+from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from . import (
     AgentModel,
@@ -46,6 +46,10 @@ GeminiModelName = Literal[
 
 See [the Gemini API docs](https://ai.google.dev/gemini-api/docs/models/gemini#model-variations) for a full list.
 """
+
+
+class GeminiModelSettings(ModelSettings):
+    """Settings used for a Gemini model request."""
 
 
 @dataclass(init=False)
@@ -171,7 +175,9 @@ class GeminiAgentModel(AgentModel):
     async def request(
         self, messages: list[ModelMessage], model_settings: ModelSettings | None
     ) -> tuple[ModelResponse, usage.Usage]:
-        async with self._make_request(messages, False, model_settings) as http_response:
+        async with self._make_request(
+            messages, False, cast(GeminiModelSettings, model_settings or {})
+        ) as http_response:
             response = _gemini_response_ta.validate_json(await http_response.aread())
         return self._process_response(response), _metadata_as_usage(response)
 
@@ -179,12 +185,12 @@ class GeminiAgentModel(AgentModel):
     async def request_stream(
         self, messages: list[ModelMessage], model_settings: ModelSettings | None
     ) -> AsyncIterator[StreamedResponse]:
-        async with self._make_request(messages, True, model_settings) as http_response:
+        async with self._make_request(messages, True, cast(GeminiModelSettings, model_settings or {})) as http_response:
             yield await self._process_streamed_response(http_response)
 
     @asynccontextmanager
     async def _make_request(
-        self, messages: list[ModelMessage], streamed: bool, model_settings: ModelSettings | None
+        self, messages: list[ModelMessage], streamed: bool, model_settings: GeminiModelSettings
     ) -> AsyncIterator[HTTPResponse]:
         sys_prompt_parts, contents = self._message_to_gemini_content(messages)
 
@@ -197,7 +203,6 @@ class GeminiAgentModel(AgentModel):
             request_data['tool_config'] = self.tool_config
 
         generation_config: _GeminiGenerationConfig = {}
-        model_settings = cast(GeminiModelSettings, model_settings or {})
         if model_settings:
             if (max_tokens := model_settings.get('max_tokens')) is not None:
                 generation_config['max_output_tokens'] = max_tokens

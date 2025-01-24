@@ -22,7 +22,7 @@ from ..messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from ..settings import CohereModelSettings, ModelSettings
+from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from . import (
     AgentModel,
@@ -69,6 +69,10 @@ CohereModelName: TypeAlias = Union[
         'command-r7b-12-2024',
     ],
 ]
+
+
+class CohereModelSettings(ModelSettings):
+    """Settings used for a Cohere model request."""
 
 
 @dataclass(init=False)
@@ -153,16 +157,15 @@ class CohereAgentModel(AgentModel):
     async def request(
         self, messages: list[ModelMessage], model_settings: ModelSettings | None
     ) -> tuple[ModelResponse, result.Usage]:
-        response = await self._chat(messages, model_settings)
+        response = await self._chat(messages, cast(CohereModelSettings, model_settings or {}))
         return self._process_response(response), _map_usage(response)
 
     async def _chat(
         self,
         messages: list[ModelMessage],
-        model_settings: ModelSettings | None,
+        model_settings: CohereModelSettings,
     ) -> ChatResponse:
         cohere_messages = list(chain(*(self._map_message(m) for m in messages)))
-        model_settings = cast(CohereModelSettings, model_settings or {})
         return await self.client.chat(
             model=self.model_name,
             messages=cohere_messages,
