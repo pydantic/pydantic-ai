@@ -8,7 +8,7 @@ from dataclasses import dataclass, is_dataclass
 from datetime import datetime, timezone
 from functools import partial
 from types import GenericAlias
-from typing import TYPE_CHECKING, Any, Callable, Generic, TypeVar, Union, cast, overload
+from typing import TYPE_CHECKING, Any, Callable, Generic, TypeVar, Union
 
 from pydantic import BaseModel
 from pydantic.json_schema import JsonSchemaValue
@@ -77,61 +77,6 @@ UNSET = Unset()
 
 def is_set(t_or_unset: T | Unset) -> TypeGuard[T]:
     return t_or_unset is not UNSET
-
-
-Left = TypeVar('Left')
-Right = TypeVar('Right')
-
-
-class Either(Generic[Left, Right]):
-    """Two member Union that records which member was set, this is analogous to Rust enums with two variants.
-
-    Usage:
-
-    ```python
-    if left_thing := either.left:
-        use_left(left_thing.value)
-    else:
-        use_right(either.right)
-    ```
-    """
-
-    __slots__ = '_left', '_right'
-
-    @overload
-    def __init__(self, *, left: Left) -> None: ...
-
-    @overload
-    def __init__(self, *, right: Right) -> None: ...
-
-    def __init__(self, left: Left | Unset = UNSET, right: Right | Unset = UNSET) -> None:
-        if left is not UNSET:
-            assert right is UNSET, '`Either` must receive exactly one argument - `left` or `right`'
-            self._left: Option[Left] = Some(cast(Left, left))
-        else:
-            assert right is not UNSET, '`Either` must receive exactly one argument - `left` or `right`'
-            self._left = None
-            self._right = cast(Right, right)
-
-    @property
-    def left(self) -> Option[Left]:
-        return self._left
-
-    @property
-    def right(self) -> Right:
-        return self._right
-
-    def is_left(self) -> bool:
-        return self._left is not None
-
-    def whichever(self) -> Left | Right:
-        return self._left.value if self._left is not None else self.right
-
-    def __repr__(self):
-        if left := self._left:
-            return f'Either(left={left.value!r})'
-        else:
-            return f'Either(right={self.right!r})'
 
 
 @asynccontextmanager

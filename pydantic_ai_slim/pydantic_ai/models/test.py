@@ -35,6 +35,20 @@ from .function import _estimate_string_tokens, _estimate_usage  # pyright: ignor
 
 
 @dataclass
+class _TextResult:
+    """A private wrapper class to tag a result that came from the custom_result_text field."""
+
+    value: str | None
+
+
+@dataclass
+class _FunctionToolResult:
+    """A wrapper class to tag a result that came from the custom_result_args field."""
+
+    value: Any | None
+
+
+@dataclass
 class TestModel(Model):
     """A model specifically for testing purposes.
 
@@ -53,7 +67,7 @@ class TestModel(Model):
     call_tools: list[str] | Literal['all'] = 'all'
     """List of tools to call. If `'all'`, all tools will be called."""
     custom_result_text: str | None = None
-    """If set, this text is return as the final result."""
+    """If set, this text is returned as the final result."""
     custom_result_args: Any | None = None
     """If set, these args will be passed to the result tool."""
     seed: int = 0
@@ -95,21 +109,21 @@ class TestModel(Model):
         if self.custom_result_text is not None:
             assert allow_text_result, 'Plain response not allowed, but `custom_result_text` is set.'
             assert self.custom_result_args is None, 'Cannot set both `custom_result_text` and `custom_result_args`.'
-            result: _utils.Either[str | None, Any | None] = _utils.Either(left=self.custom_result_text)
+            result: _TextResult | _FunctionToolResult = _TextResult(self.custom_result_text)
         elif self.custom_result_args is not None:
             assert result_tools is not None, 'No result tools provided, but `custom_result_args` is set.'
             result_tool = result_tools[0]
 
             if k := result_tool.outer_typed_dict_key:
-                result = _utils.Either(right={k: self.custom_result_args})
+                result = _FunctionToolResult({k: self.custom_result_args})
             else:
-                result = _utils.Either(right=self.custom_result_args)
+                result = _FunctionToolResult(self.custom_result_args)
         elif allow_text_result:
-            result = _utils.Either(left=None)
+            result = _TextResult(None)
         elif result_tools:
-            result = _utils.Either(right=None)
+            result = _FunctionToolResult(None)
         else:
-            result = _utils.Either(left=None)
+            result = _TextResult(None)
 
         return TestAgentModel(tool_calls, result, result_tools, self.seed)
 
@@ -126,7 +140,7 @@ class TestAgentModel(AgentModel):
 
     tool_calls: list[tuple[str, ToolDefinition]]
     # left means the text is plain text; right means it's a function call
-    result: _utils.Either[str | None, Any | None]
+    result: _TextResult | _FunctionToolResult
     result_tools: list[ToolDefinition]
     seed: int
     model_name: str = 'test'
@@ -176,7 +190,9 @@ class TestAgentModel(AgentModel):
                         [
                             ToolCallPart.from_raw_args(
                                 tool.name,
-                                self.result.right if self.result.right is not None else self.gen_tool_args(tool),
+                                self.result.value
+                                if isinstance(self.result, _FunctionToolResult) and self.result.value is not None
+                                else self.gen_tool_args(tool),
                             )
                             for tool in self.result_tools
                             if tool.name in new_retry_names
@@ -184,8 +200,8 @@ class TestAgentModel(AgentModel):
                     )
                 return ModelResponse(parts=retry_parts, model_name=self.model_name)
 
-        if response_text := self.result.left:
-            if response_text.value is None:
+        if isinstance(self.result, _TextResult):
+            if (response_text := self.result.value) is None:
                 # build up details of tool responses
                 output: dict[str, Any] = {}
                 for message in messages:
@@ -200,10 +216,10 @@ class TestAgentModel(AgentModel):
                 else:
                     return ModelResponse(parts=[TextPart('success (no tool calls)')], model_name=self.model_name)
             else:
-                return ModelResponse(parts=[TextPart(response_text.value)], model_name=self.model_name)
+                return ModelResponse(parts=[TextPart(response_text)], model_name=self.model_name)
         else:
             assert self.result_tools, 'No result tools provided'
-            custom_result_args = self.result.right
+            custom_result_args = self.result.value
             result_tool = self.result_tools[self.seed % len(self.result_tools)]
             if custom_result_args is not None:
                 return ModelResponse(
