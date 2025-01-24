@@ -21,7 +21,6 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.models.anthropic import AnthropicModelSettings
 from pydantic_ai.result import Usage
 from pydantic_ai.settings import ModelSettings
 
@@ -48,7 +47,7 @@ with try_import() as imports_successful:
     )
     from anthropic.types.raw_message_delta_event import Delta
 
-    from pydantic_ai.models.anthropic import AnthropicModel
+    from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='anthropic not installed'),
