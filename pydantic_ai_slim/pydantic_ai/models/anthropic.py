@@ -41,6 +41,7 @@ try:
     from anthropic.types import (
         Message as AnthropicMessage,
         MessageParam,
+        MetadataParam,
         RawContentBlockDeltaEvent,
         RawContentBlockStartEvent,
         RawContentBlockStopEvent,
@@ -82,7 +83,10 @@ Since [the Anthropic docs](https://docs.anthropic.com/en/docs/about-claude/model
 class AnthropicModelSettings(ModelSettings):
     """Settings used for an Anthropic model request."""
 
-    # This class is a placeholder for any future anthropic-specific settings
+    anthropic_metadata: MetadataParam
+    """An object describing metadata about the request.
+
+    Contains `user_id`, an external identifier for the user who is associated with the request."""
 
 
 @dataclass(init=False)
@@ -226,6 +230,7 @@ class AnthropicAgentModel(AgentModel):
             temperature=model_settings.get('temperature', NOT_GIVEN),
             top_p=model_settings.get('top_p', NOT_GIVEN),
             timeout=model_settings.get('timeout', NOT_GIVEN),
+            metadata=model_settings.get('anthropic_metadata', NOT_GIVEN),
         )
 
     def _process_response(self, response: AnthropicMessage) -> ModelResponse:
