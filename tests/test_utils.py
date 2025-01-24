@@ -9,7 +9,7 @@ import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai import UserError
-from pydantic_ai._utils import UNSET, Either, PeekableAsyncStream, check_object_json_schema, group_by_temporal
+from pydantic_ai._utils import UNSET, PeekableAsyncStream, check_object_json_schema, group_by_temporal
 
 from .models.mock_async_stream import MockAsyncStream
 
@@ -47,13 +47,6 @@ def test_check_object_json_schema():
     array_schema = {'type': 'array', 'items': {'type': 'string'}}
     with pytest.raises(UserError, match='^Schema must be an object$'):
         check_object_json_schema(array_schema)
-
-
-def test_either():
-    assert repr(Either[int, int](left=123)) == 'Either(left=123)'
-    assert Either(left=123).whichever() == 123
-    assert repr(Either[int, int](right=456)) == 'Either(right=456)'
-    assert Either(right=456).whichever() == 456
 
 
 @pytest.mark.parametrize('peek_first', [True, False])
