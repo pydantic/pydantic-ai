@@ -197,7 +197,7 @@ class GroqAgentModel(AgentModel):
             model=str(self.model_name),
             messages=groq_messages,
             n=1,
-            parallel_tool_calls=model_settings.get('parallel_tool_calls', True if self.tools else NOT_GIVEN),
+            parallel_tool_calls=model_settings.get('parallel_tool_calls', NOT_GIVEN),
             tools=self.tools or NOT_GIVEN,
             tool_choice=tool_choice or NOT_GIVEN,
             stream=stream,
