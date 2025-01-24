@@ -178,7 +178,7 @@ logfire.instrument_asyncpg()  # (2)!
 ...
 ```
 
-1. Configure logfire, this will fail if not project is set up.
+1. Configure logfire, this will fail if project is not set up.
 2. In our demo, `DatabaseConn` uses [`asyncpg`]() to connect to a PostgreSQL database, so [`logfire.instrument_asyncpg()`](https://magicstack.github.io/asyncpg/current/) is used to log the database queries.
 
 That's enough to get the following view of your agent in action:
