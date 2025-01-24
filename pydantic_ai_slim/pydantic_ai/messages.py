@@ -6,7 +6,6 @@ from typing import Annotated, Any, Literal, Union, cast, overload
 
 import pydantic
 import pydantic_core
-from typing_extensions import Self, assert_never
 
 from ._utils import now_utc as _now_utc
 from .exceptions import UnexpectedModelBehavior
@@ -169,32 +168,16 @@ class TextPart:
 
 
 @dataclass
-class ArgsJson:
-    """Tool arguments as a JSON string."""
-
-    args_json: str
-    """A JSON string of arguments."""
-
-
-@dataclass
-class ArgsDict:
-    """Tool arguments as a Python dictionary."""
-
-    args_dict: dict[str, Any]
-    """A python dictionary of arguments."""
-
-
-@dataclass
 class ToolCallPart:
     """A tool call from a model."""
 
     tool_name: str
     """The name of the tool to call."""
 
-    args: ArgsJson | ArgsDict
+    args: str | dict[str, Any]
     """The arguments to pass to the tool.
 
-    Either as JSON or a Python dictionary depending on how data was returned.
+    This is stored either as a JSON string or a Python dictionary depending on how data was received.
     """
 
     tool_call_id: str | None = None
@@ -203,24 +186,14 @@ class ToolCallPart:
     part_kind: Literal['tool-call'] = 'tool-call'
     """Part type identifier, this is available on all parts as a discriminator."""
 
-    @classmethod
-    def from_raw_args(cls, tool_name: str, args: str | dict[str, Any], tool_call_id: str | None = None) -> Self:
-        """Create a `ToolCallPart` from raw arguments, converting them to `ArgsJson` or `ArgsDict`."""
-        if isinstance(args, str):
-            return cls(tool_name, ArgsJson(args), tool_call_id)
-        elif isinstance(args, dict):
-            return cls(tool_name, ArgsDict(args), tool_call_id)
-        else:
-            assert_never(args)
-
     def args_as_dict(self) -> dict[str, Any]:
         """Return the arguments as a Python dictionary.
 
         This is just for convenience with models that require dicts as input.
         """
-        if isinstance(self.args, ArgsDict):
-            return self.args.args_dict
-        args = pydantic_core.from_json(self.args.args_json)
+        if isinstance(self.args, dict):
+            return self.args
+        args = pydantic_core.from_json(self.args)
         assert isinstance(args, dict), 'args should be a dict'
         return cast(dict[str, Any], args)
 
@@ -229,16 +202,18 @@ class ToolCallPart:
 
         This is just for convenience with models that require JSON strings as input.
         """
-        if isinstance(self.args, ArgsJson):
-            return self.args.args_json
-        return pydantic_core.to_json(self.args.args_dict).decode()
+        if isinstance(self.args, str):
+            return self.args
+        return pydantic_core.to_json(self.args).decode()
 
     def has_content(self) -> bool:
         """Return `True` if the arguments contain any data."""
-        if isinstance(self.args, ArgsDict):
-            return any(self.args.args_dict.values())
+        if isinstance(self.args, dict):
+            # TODO: This should probably return True if you have the value False, or 0, etc.
+            #   It makes sense to me to ignore empty strings, but not sure about empty lists or dicts
+            return any(self.args.values())
         else:
-            return bool(self.args.args_json)
+            return bool(self.args)
 
 
 ModelResponsePart = Annotated[Union[TextPart, ToolCallPart], pydantic.Discriminator('part_kind')]
@@ -331,7 +306,7 @@ class ToolCallPartDelta:
         if self.tool_name_delta is None or self.args_delta is None:
             return None
 
-        return ToolCallPart.from_raw_args(
+        return ToolCallPart(
             self.tool_name_delta,
             self.args_delta,
             self.tool_call_id,
@@ -396,7 +371,7 @@ class ToolCallPartDelta:
 
         # If we now have enough data to create a full ToolCallPart, do so
         if delta.tool_name_delta is not None and delta.args_delta is not None:
-            return ToolCallPart.from_raw_args(
+            return ToolCallPart(
                 delta.tool_name_delta,
                 delta.args_delta,
                 delta.tool_call_id,
@@ -412,15 +387,15 @@ class ToolCallPartDelta:
             part = replace(part, tool_name=tool_name)
 
         if isinstance(self.args_delta, str):
-            if not isinstance(part.args, ArgsJson):
+            if not isinstance(part.args, str):
                 raise UnexpectedModelBehavior(f'Cannot apply JSON deltas to non-JSON tool arguments ({part=}, {self=})')
-            updated_json = part.args.args_json + self.args_delta
-            part = replace(part, args=ArgsJson(updated_json))
+            updated_json = part.args + self.args_delta
+            part = replace(part, args=updated_json)
         elif isinstance(self.args_delta, dict):
-            if not isinstance(part.args, ArgsDict):
+            if not isinstance(part.args, dict):
                 raise UnexpectedModelBehavior(f'Cannot apply dict deltas to non-dict tool arguments ({part=}, {self=})')
-            updated_dict = {**(part.args.args_dict or {}), **self.args_delta}
-            part = replace(part, args=ArgsDict(updated_dict))
+            updated_dict = {**(part.args or {}), **self.args_delta}
+            part = replace(part, args=updated_dict)
 
         if self.tool_call_id:
             # Replace the tool_call_id entirely if given

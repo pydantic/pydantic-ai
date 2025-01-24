@@ -463,7 +463,7 @@ with capture_run_messages() as messages:  # (2)!
                 parts=[
                     ToolCallPart(
                         tool_name='calc_volume',
-                        args=ArgsDict(args_dict={'size': 6}),
+                        args={'size': 6},
                         tool_call_id=None,
                         part_kind='tool-call',
                     )
@@ -488,7 +488,7 @@ with capture_run_messages() as messages:  # (2)!
                 parts=[
                     ToolCallPart(
                         tool_name='calc_volume',
-                        args=ArgsDict(args_dict={'size': 6}),
+                        args={'size': 6},
                         tool_call_id=None,
                         part_kind='tool-call',
                     )

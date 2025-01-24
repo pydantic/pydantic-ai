@@ -12,7 +12,6 @@ import pydantic_core
 
 from .. import _utils
 from ..messages import (
-    ArgsJson,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -166,7 +165,7 @@ class TestAgentModel(AgentModel):
         # if there are tools, the first thing we want to do is call all of them
         if self.tool_calls and not any(isinstance(m, ModelResponse) for m in messages):
             return ModelResponse(
-                parts=[ToolCallPart.from_raw_args(name, self.gen_tool_args(args)) for name, args in self.tool_calls],
+                parts=[ToolCallPart(name, self.gen_tool_args(args)) for name, args in self.tool_calls],
                 model_name=self.model_name,
             )
 
@@ -180,7 +179,7 @@ class TestAgentModel(AgentModel):
                 # Handle retries for both function tools and result tools
                 # Check function tools first
                 retry_parts: list[ModelResponsePart] = [
-                    ToolCallPart.from_raw_args(name, self.gen_tool_args(args))
+                    ToolCallPart(name, self.gen_tool_args(args))
                     for name, args in self.tool_calls
                     if name in new_retry_names
                 ]
@@ -188,7 +187,7 @@ class TestAgentModel(AgentModel):
                 if self.result_tools:
                     retry_parts.extend(
                         [
-                            ToolCallPart.from_raw_args(
+                            ToolCallPart(
                                 tool.name,
                                 self.result.value
                                 if isinstance(self.result, _FunctionToolResult) and self.result.value is not None
@@ -223,13 +222,11 @@ class TestAgentModel(AgentModel):
             result_tool = self.result_tools[self.seed % len(self.result_tools)]
             if custom_result_args is not None:
                 return ModelResponse(
-                    parts=[ToolCallPart.from_raw_args(result_tool.name, custom_result_args)], model_name=self.model_name
+                    parts=[ToolCallPart(result_tool.name, custom_result_args)], model_name=self.model_name
                 )
             else:
                 response_args = self.gen_tool_args(result_tool)
-                return ModelResponse(
-                    parts=[ToolCallPart.from_raw_args(result_tool.name, response_args)], model_name=self.model_name
-                )
+                return ModelResponse(parts=[ToolCallPart(result_tool.name, response_args)], model_name=self.model_name)
 
 
 @dataclass
@@ -260,9 +257,8 @@ class TestStreamedResponse(StreamedResponse):
                     self._usage += _get_string_usage(word)
                     yield self._parts_manager.handle_text_delta(vendor_part_id=i, content=word)
             else:
-                args = part.args.args_json if isinstance(part.args, ArgsJson) else part.args.args_dict
                 yield self._parts_manager.handle_tool_call_part(
-                    vendor_part_id=i, tool_name=part.tool_name, args=args, tool_call_id=part.tool_call_id
+                    vendor_part_id=i, tool_name=part.tool_name, args=part.args, tool_call_id=part.tool_call_id
                 )
 
     def timestamp(self) -> datetime:

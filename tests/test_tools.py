@@ -11,7 +11,6 @@ from pydantic_core import PydanticSerializationError
 
 from pydantic_ai import Agent, RunContext, Tool, UserError
 from pydantic_ai.messages import (
-    ArgsDict,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -505,7 +504,7 @@ def test_dynamic_tool_use_messages():
     async def repeat_call_foobar(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if info.function_tools:
             tool = info.function_tools[0]
-            return ModelResponse(parts=[ToolCallPart.from_raw_args(tool.name, {'x': 42, 'y': 'a'})])
+            return ModelResponse(parts=[ToolCallPart(tool.name, {'x': 42, 'y': 'a'})])
         else:
             return ModelResponse(parts=[TextPart('done')])
 
@@ -649,10 +648,10 @@ def test_call_tool_without_unrequired_parameters(set_event_loop: None):
         if len(messages) == 1:
             return ModelResponse(
                 parts=[
-                    ToolCallPart(tool_name='my_tool', args=ArgsDict({'a': 13})),
-                    ToolCallPart(tool_name='my_tool', args=ArgsDict({'a': 13, 'b': 4})),
-                    ToolCallPart(tool_name='my_tool_plain', args=ArgsDict({'b': 17})),
-                    ToolCallPart(tool_name='my_tool_plain', args=ArgsDict({'a': 4, 'b': 17})),
+                    ToolCallPart(tool_name='my_tool', args={'a': 13}),
+                    ToolCallPart(tool_name='my_tool', args={'a': 13, 'b': 4}),
+                    ToolCallPart(tool_name='my_tool_plain', args={'b': 17}),
+                    ToolCallPart(tool_name='my_tool_plain', args={'a': 4, 'b': 17}),
                 ]
             )
         else:
@@ -678,10 +677,10 @@ def test_call_tool_without_unrequired_parameters(set_event_loop: None):
     tool_returns = [p.content for p in second_request.parts if isinstance(p, ToolReturnPart)]
     assert tool_call_args == snapshot(
         [
-            ArgsDict(args_dict={'a': 13}),
-            ArgsDict(args_dict={'a': 13, 'b': 4}),
-            ArgsDict(args_dict={'b': 17}),
-            ArgsDict(args_dict={'a': 4, 'b': 17}),
+            {'a': 13},
+            {'a': 13, 'b': 4},
+            {'b': 17},
+            {'a': 4, 'b': 17},
         ]
     )
     assert tool_returns == snapshot([15, 17, 51, 68])

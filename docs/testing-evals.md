@@ -98,7 +98,6 @@ from dirty_equals import IsNow
 from pydantic_ai import models, capture_run_messages
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.messages import (
-    ArgsDict,
     ModelResponse,
     SystemPromptPart,
     TextPart,
@@ -142,12 +141,10 @@ async def test_forecast():
             parts=[
                 ToolCallPart(
                     tool_name='weather_forecast',
-                    args=ArgsDict(
-                        args_dict={
-                            'location': 'a',
-                            'forecast_date': '2024-01-01',  # (8)!
-                        }
-                    ),
+                    args={
+                        'location': 'a',
+                        'forecast_date': '2024-01-01',  # (8)!
+                    },
                     tool_call_id=None,
                 )
             ],
@@ -223,9 +220,7 @@ def call_weather_forecast(  # (1)!
         m = re.search(r'\d{4}-\d{2}-\d{2}', user_prompt.content)
         assert m is not None
         args = {'location': 'London', 'forecast_date': m.group()}  # (2)!
-        return ModelResponse(
-            parts=[ToolCallPart.from_raw_args('weather_forecast', args)]
-        )
+        return ModelResponse(parts=[ToolCallPart('weather_forecast', args)])
     else:
         # second call, return the forecast
         msg = messages[-1].parts[0]

@@ -264,10 +264,10 @@ class Tool(Generic[AgentDepsT]):
     ) -> _messages.ModelRequestPart:
         """Run the tool function asynchronously."""
         try:
-            if isinstance(message.args, _messages.ArgsJson):
-                args_dict = self._validator.validate_json(message.args.args_json)
+            if isinstance(message.args, str):
+                args_dict = self._validator.validate_json(message.args)
             else:
-                args_dict = self._validator.validate_python(message.args.args_dict)
+                args_dict = self._validator.validate_python(message.args)
         except ValidationError as e:
             return self._on_error(e, message)
 

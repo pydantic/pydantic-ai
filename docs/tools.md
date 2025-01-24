@@ -86,10 +86,7 @@ print(dice_result.all_messages())
     ModelResponse(
         parts=[
             ToolCallPart(
-                tool_name='roll_die',
-                args=ArgsDict(args_dict={}),
-                tool_call_id=None,
-                part_kind='tool-call',
+                tool_name='roll_die', args={}, tool_call_id=None, part_kind='tool-call'
             )
         ],
         model_name='function:model_logic',
@@ -112,7 +109,7 @@ print(dice_result.all_messages())
         parts=[
             ToolCallPart(
                 tool_name='get_player_name',
-                args=ArgsDict(args_dict={}),
+                args={},
                 tool_call_id=None,
                 part_kind='tool-call',
             )

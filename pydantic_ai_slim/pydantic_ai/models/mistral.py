@@ -15,7 +15,6 @@ from typing_extensions import assert_never
 from .. import UnexpectedModelBehavior, _utils
 from .._utils import now_utc as _now_utc
 from ..messages import (
-    ArgsJson,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -324,18 +323,11 @@ class MistralAgentModel(AgentModel):
     @staticmethod
     def _map_to_mistral_tool_call(t: ToolCallPart) -> MistralToolCall:
         """Maps a pydantic-ai ToolCall to a MistralToolCall."""
-        if isinstance(t.args, ArgsJson):
-            return MistralToolCall(
-                id=t.tool_call_id,
-                type='function',
-                function=MistralFunctionCall(name=t.tool_name, arguments=t.args.args_json),
-            )
-        else:
-            return MistralToolCall(
-                id=t.tool_call_id,
-                type='function',
-                function=MistralFunctionCall(name=t.tool_name, arguments=t.args.args_dict),
-            )
+        return MistralToolCall(
+            id=t.tool_call_id,
+            type='function',
+            function=MistralFunctionCall(name=t.tool_name, arguments=t.args),
+        )
 
     def _generate_user_output_format(self, schemas: list[dict[str, Any]]) -> MistralUserMessage:
         """Get a message with an example of the expected output format."""
@@ -518,7 +510,7 @@ class MistralStreamedResponse(StreamedResponse):
                     continue
 
                 # The following part_id will be thrown away
-                return ToolCallPart.from_raw_args(tool_name=result_tool.name, args=output_json)
+                return ToolCallPart(tool_name=result_tool.name, args=output_json)
 
     @staticmethod
     def _validate_required_json_schema(json_dict: dict[str, Any], json_schema: dict[str, Any]) -> bool:
@@ -576,7 +568,7 @@ def _map_mistral_to_pydantic_tool_call(tool_call: MistralToolCall) -> ToolCallPa
     tool_call_id = tool_call.id or None
     func_call = tool_call.function
 
-    return ToolCallPart.from_raw_args(func_call.name, func_call.arguments, tool_call_id)
+    return ToolCallPart(func_call.name, func_call.arguments, tool_call_id)
 
 
 def _map_usage(response: MistralChatCompletionResponse | MistralCompletionChunk) -> Usage:
