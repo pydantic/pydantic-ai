@@ -186,7 +186,7 @@ sequenceDiagram
 
 ## Registering Function Tools via kwarg
 
-As well as using the decorators, we can register tools via the `tools` argument to the [`Agent` constructor][pydantic_ai.Agent.__init__]. This is useful when you want to re-use tools, and can also give more fine-grained control over the tools.
+As well as using the decorators, we can register tools via the `tools` argument to the [`Agent` constructor][pydantic_ai.Agent.__init__]. This is useful when you want to reuse tools, and can also give more fine-grained control over the tools.
 
 ```python {title="dice_game_tool_kwarg.py"}
 import random

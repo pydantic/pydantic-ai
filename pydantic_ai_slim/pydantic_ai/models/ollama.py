@@ -80,7 +80,7 @@ class OllamaModel(Model):
     ):
         """Initialize an Ollama model.
 
-        Ollama has built-in compatability for the OpenAI chat completions API ([source](https://ollama.com/blog/openai-compatibility)), so we reuse the
+        Ollama has built-in compatibility for the OpenAI chat completions API ([source](https://ollama.com/blog/openai-compatibility)), so we reuse the
         [`OpenAIModel`][pydantic_ai.models.openai.OpenAIModel] here.
 
         Args:

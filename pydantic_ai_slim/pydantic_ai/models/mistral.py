@@ -600,7 +600,7 @@ def _map_content(content: MistralOptionalNullable[MistralContent]) -> str | None
     elif isinstance(content, str):
         result = content
 
-    # Note: Check len to handle potential mismatch between function calls and responses from the API. (`msg: not the same number of function class and reponses`)
+    # Note: Check len to handle potential mismatch between function calls and responses from the API. (`msg: not the same number of function class and responses`)
     if result and len(result) == 0:
         result = None
 
