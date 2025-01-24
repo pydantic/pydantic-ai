@@ -826,3 +826,23 @@ async def test_empty_text_ignored():
             'parts': [{'function_call': {'name': 'final_result', 'args': {'response': [1, 2, 123]}}}],
         }
     )
+
+
+async def test_model_settings(get_gemini_client: GetGeminiClient) -> None:
+    # TODO: confirm that these model settings were passed through correctly
+    response = gemini_response(_content_model_response(ModelResponse(parts=[TextPart('Hello world')])))
+    gemini_client = get_gemini_client(response)
+    m = GeminiModel('gemini-1.5-flash', http_client=gemini_client)
+    agent = Agent(m)
+
+    result = await agent.run(
+        'Hello',
+        model_settings={
+            'max_tokens': 1,
+            'temperature': 0.1,
+            'top_p': 0.2,
+            'presence_penalty': 0.3,
+            'frequency_penalty': 0.4,
+        },
+    )
+    assert result.data == 'Hello world'

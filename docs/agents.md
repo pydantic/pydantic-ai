@@ -204,6 +204,28 @@ print(result_sync.data)
 #> Rome
 ```
 
+### Model specific settings
+
+<!-- TODO: replace this with the gemini safety settings example once added via https://github.com/pydantic/pydantic-ai/issues/373 -->
+
+If you wish to further customize model behavior, you can use a subclass of [`ModelSettings`][pydantic_ai.settings.ModelSettings], like [`AnthropicModelSettings`][models.anthropic.AnthropicModelSettings], associated with your model of choice.
+
+For example:
+
+```py
+from pydantic_ai import Agent
+from pydantic_ai.models.anthropic import AnthropicModelSettings
+
+agent = Agent('anthropic:claude-3-5-sonnet-latest')
+
+result_sync = agent.run_sync(
+    'What is the capital of Italy?',
+    model_settings=AnthropicModelSettings(anthropic_metadata={'user_id': 'my_user_id'}),
+)
+print(result_sync.data)
+#> Rome
+```
+
 ## Runs vs. Conversations
 
 An agent **run** might represent an entire conversation — there's no limit to how many messages can be exchanged in a single run. However, a **conversation** might also be composed of multiple runs, especially if you need to maintain state between separate interactions or API calls.

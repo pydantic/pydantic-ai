@@ -21,6 +21,7 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai.models.anthropic import AnthropicModelSettings
 from pydantic_ai.result import Usage
 from pydantic_ai.settings import ModelSettings
 
@@ -330,6 +331,17 @@ async def test_parallel_tool_calls(allow_model_requests: None, parallel_tool_cal
     assert get_mock_chat_completion_kwargs(mock_client)[0]['tool_choice']['disable_parallel_tool_use'] == (
         not parallel_tool_calls
     )
+
+
+async def test_anthropic_specific_metadata(allow_model_requests: None) -> None:
+    c = completion_message([TextBlock(text='world', type='text')], AnthropicUsage(input_tokens=5, output_tokens=10))
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-3-5-haiku-latest', anthropic_client=mock_client)
+    agent = Agent(m)
+
+    result = await agent.run('hello', model_settings=AnthropicModelSettings(anthropic_metadata={'user_id': '123'}))
+    assert result.data == 'world'
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['metadata']['user_id'] == '123'
 
 
 async def test_stream_structured(allow_model_requests: None):
