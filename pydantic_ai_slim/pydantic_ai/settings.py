@@ -80,7 +80,7 @@ class ModelSettings(TypedDict, total=False):
     """Whether to allow parallel tool calls.
 
     Supported by:
-    * OpenAI
+    * OpenAI (some models, not o1)
     * Groq
     * Anthropic
     """
