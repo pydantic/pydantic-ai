@@ -38,13 +38,13 @@ async def stream_from_agent(prompt: str, chatbot: list[dict], past_messages: lis
                         if hasattr(call.args, 'args_json')
                         else json.dumps(call.args.args_dict)
                     )
+                    if call.tool_call_id is not None:
+                        metadata["id"] = {call.tool_call_id}
+
                     gr_message = {
-                        'role': 'assistant',
-                        'content': 'Parameters: ' + call_args,
-                        'metadata': {
-                            'title': f'🛠️ Using {TOOL_TO_DISPLAY_NAME[call.tool_name]}',
-                            **(({'id': {id_}} if (id_ := call.tool_call_id) is not None else {}))
-                        },
+                        "role": "assistant",
+                        "content": "Parameters: " + call_args,
+                        "metadata": metadata,
                     }
                     chatbot.append(gr_message)
                 if isinstance(call, ToolReturnPart):
