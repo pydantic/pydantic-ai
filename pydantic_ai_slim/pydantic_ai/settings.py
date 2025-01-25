@@ -12,7 +12,8 @@ if TYPE_CHECKING:
 class ModelSettings(TypedDict, total=False):
     """Settings to configure an LLM.
 
-    Here we include only settings which apply to multiple models / model providers.
+    Here we include only settings which apply to multiple models / model providers,
+    though not all of these settings are supported by all models.
     """
 
     max_tokens: int
@@ -24,6 +25,8 @@ class ModelSettings(TypedDict, total=False):
     * Anthropic
     * OpenAI
     * Groq
+    * Cohere
+    * Mistral
     """
 
     temperature: float
@@ -40,6 +43,8 @@ class ModelSettings(TypedDict, total=False):
     * Anthropic
     * OpenAI
     * Groq
+    * Cohere
+    * Mistral
     """
 
     top_p: float
@@ -55,6 +60,8 @@ class ModelSettings(TypedDict, total=False):
     * Anthropic
     * OpenAI
     * Groq
+    * Cohere
+    * Mistral
     """
 
     timeout: float | Timeout
@@ -64,6 +71,56 @@ class ModelSettings(TypedDict, total=False):
 
     * Gemini
     * Anthropic
+    * OpenAI
+    * Groq
+    * Mistral
+    """
+
+    parallel_tool_calls: bool
+    """Whether to allow parallel tool calls.
+
+    Supported by:
+    * OpenAI
+    * Groq
+    * Anthropic
+    """
+
+    seed: int
+    """The random seed to use for the model, theoretically allowing for deterministic results.
+
+    Supported by:
+    * OpenAI
+    * Groq
+    * Cohere
+    * Mistral
+    """
+
+    presence_penalty: float
+    """Penalize new tokens based on whether they have appeared in the text so far.
+
+    Supported by:
+    * OpenAI
+    * Groq
+    * Cohere
+    * Gemini
+    * Mistral
+    """
+
+    frequency_penalty: float
+    """Penalize new tokens based on their existing frequency in the text so far.
+
+    Supported by:
+    * OpenAI
+    * Groq
+    * Cohere
+    * Gemini
+    * Mistral
+    """
+
+    logit_bias: dict[str, int]
+    """Modify the likelihood of specified tokens appearing in the completion.
+
+    Supported by:
     * OpenAI
     * Groq
     """

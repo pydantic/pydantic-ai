@@ -98,7 +98,6 @@ from dirty_equals import IsNow
 from pydantic_ai import models, capture_run_messages
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.messages import (
-    ArgsDict,
     ModelResponse,
     SystemPromptPart,
     TextPart,
@@ -142,15 +141,14 @@ async def test_forecast():
             parts=[
                 ToolCallPart(
                     tool_name='weather_forecast',
-                    args=ArgsDict(
-                        args_dict={
-                            'location': 'a',
-                            'forecast_date': '2024-01-01',  # (8)!
-                        }
-                    ),
+                    args={
+                        'location': 'a',
+                        'forecast_date': '2024-01-01',  # (8)!
+                    },
                     tool_call_id=None,
                 )
             ],
+            model_name='test',
             timestamp=IsNow(tz=timezone.utc),
         ),
         ModelRequest(
@@ -169,6 +167,7 @@ async def test_forecast():
                     content='{"weather_forecast":"Sunny with a chance of rain"}',
                 )
             ],
+            model_name='test',
             timestamp=IsNow(tz=timezone.utc),
         ),
     ]
@@ -200,6 +199,7 @@ from pydantic_ai import models
 from pydantic_ai.messages import (
     ModelMessage,
     ModelResponse,
+    TextPart,
     ToolCallPart,
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -220,14 +220,12 @@ def call_weather_forecast(  # (1)!
         m = re.search(r'\d{4}-\d{2}-\d{2}', user_prompt.content)
         assert m is not None
         args = {'location': 'London', 'forecast_date': m.group()}  # (2)!
-        return ModelResponse(
-            parts=[ToolCallPart.from_raw_args('weather_forecast', args)]
-        )
+        return ModelResponse(parts=[ToolCallPart('weather_forecast', args)])
     else:
         # second call, return the forecast
         msg = messages[-1].parts[0]
         assert msg.part_kind == 'tool-return'
-        return ModelResponse.from_text(f'The forecast is: {msg.content}')
+        return ModelResponse(parts=[TextPart(f'The forecast is: {msg.content}')])
 
 
 async def test_forecast_future():

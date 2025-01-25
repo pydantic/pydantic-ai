@@ -62,6 +62,7 @@ print(result.all_messages())
                 part_kind='text',
             )
         ],
+        model_name='function:model_logic',
         timestamp=datetime.datetime(...),
         kind='response',
     ),
@@ -135,6 +136,7 @@ async def main():
                         part_kind='text',
                     )
                 ],
+                model_name='function:stream_model_logic',
                 timestamp=datetime.datetime(...),
                 kind='response',
             ),
@@ -191,6 +193,7 @@ print(result2.all_messages())
                 part_kind='text',
             )
         ],
+        model_name='function:model_logic',
         timestamp=datetime.datetime(...),
         kind='response',
     ),
@@ -211,6 +214,7 @@ print(result2.all_messages())
                 part_kind='text',
             )
         ],
+        model_name='function:model_logic',
         timestamp=datetime.datetime(...),
         kind='response',
     ),
@@ -265,6 +269,7 @@ print(result2.all_messages())
                 part_kind='text',
             )
         ],
+        model_name='function:model_logic',
         timestamp=datetime.datetime(...),
         kind='response',
     ),
@@ -285,6 +290,7 @@ print(result2.all_messages())
                 part_kind='text',
             )
         ],
+        model_name='function:model_logic',
         timestamp=datetime.datetime(...),
         kind='response',
     ),

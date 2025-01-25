@@ -25,6 +25,10 @@ ALGOLIA_APP_ID = 'KPPUDTIAVX'
 ALGOLIA_INDEX_NAME = 'pydantic-ai-docs'
 ALGOLIA_WRITE_API_KEY = os.environ.get('ALGOLIA_WRITE_API_KEY')
 
+# Algolia has a limit of 100kb per record in the paid plan,
+# leave some space for the other fields as well.
+MAX_CONTENT_LENGTH = 90_000
+
 
 def on_page_content(html: str, page: Page, config: Config, files: Files) -> str:
     if not ALGOLIA_WRITE_API_KEY:
@@ -34,6 +38,26 @@ def on_page_content(html: str, page: Page, config: Config, files: Files) -> str:
     title = cast(str, page.title)
 
     soup = BeautifulSoup(html, 'html.parser')
+
+    # Clean up presentational and UI elements
+    for element in soup.find_all(['autoref']):
+        element.decompose()
+
+    # this removes the large source code embeds from Github
+    for element in soup.find_all('details'):
+        element.decompose()
+
+    # Cleanup code examples
+    for extra in soup.find_all('div', attrs={'class': 'language-python highlight'}):
+        extra.replace_with(BeautifulSoup(f'<pre>{extra.find("code").get_text()}</pre>', 'html.parser'))
+
+    # Cleanup code examples, part 2
+    for extra in soup.find_all('div', attrs={'class': 'language-python doc-signature highlight'}):
+        extra.replace_with(BeautifulSoup(f'<pre>{extra.find("code").get_text()}</pre>', 'html.parser'))
+
+    # The API reference generates HTML tables with line numbers, this strips the line numbers cell and goes back to a code block
+    for extra in soup.find_all('table', attrs={'class': 'highlighttable'}):
+        extra.replace_with(BeautifulSoup(f'<pre>{extra.find("code").get_text()}</pre>', 'html.parser'))
 
     # Find all h1 and h2 headings
     headings = soup.find_all(['h1', 'h2'])
@@ -75,14 +99,19 @@ def on_post_build(config: Config) -> None:
 
     client = SearchClientSync(ALGOLIA_APP_ID, ALGOLIA_WRITE_API_KEY)
 
-    # temporary filter the records from the index if the content is bigger than 10k characters
-    filtered_records = list(filter(lambda record: len(record['content']) < 9000, records))
+    for record in records:
+        if len(record['content']) > MAX_CONTENT_LENGTH:
+            print(
+                f"Record with title '{record['title']}' has more than {MAX_CONTENT_LENGTH} characters, {len(record['content'])}."
+            )
+            print(record['content'])
+
+    # Filter the records from the index if the content is bigger than 100kb, Algolia limit
+    filtered_records = list(filter(lambda record: len(record['content']) < MAX_CONTENT_LENGTH, records))
     print(f'Uploading {len(filtered_records)} out of {len(records)} records to Algolia...')
 
-    # Clear the index first
     client.clear_objects(index_name=ALGOLIA_INDEX_NAME)
 
-    # Execute batch operation
     client.batch(
         index_name=ALGOLIA_INDEX_NAME,
         batch_write_params={'requests': [{'action': 'addObject', 'body': record} for record in filtered_records]},

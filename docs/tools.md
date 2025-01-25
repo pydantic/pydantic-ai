@@ -86,12 +86,10 @@ print(dice_result.all_messages())
     ModelResponse(
         parts=[
             ToolCallPart(
-                tool_name='roll_die',
-                args=ArgsDict(args_dict={}),
-                tool_call_id=None,
-                part_kind='tool-call',
+                tool_name='roll_die', args={}, tool_call_id=None, part_kind='tool-call'
             )
         ],
+        model_name='function:model_logic',
         timestamp=datetime.datetime(...),
         kind='response',
     ),
@@ -111,11 +109,12 @@ print(dice_result.all_messages())
         parts=[
             ToolCallPart(
                 tool_name='get_player_name',
-                args=ArgsDict(args_dict={}),
+                args={},
                 tool_call_id=None,
                 part_kind='tool-call',
             )
         ],
+        model_name='function:model_logic',
         timestamp=datetime.datetime(...),
         kind='response',
     ),
@@ -138,6 +137,7 @@ print(dice_result.all_messages())
                 part_kind='text',
             )
         ],
+        model_name='function:model_logic',
         timestamp=datetime.datetime(...),
         kind='response',
     ),
@@ -183,7 +183,7 @@ sequenceDiagram
 
 ## Registering Function Tools via kwarg
 
-As well as using the decorators, we can register tools via the `tools` argument to the [`Agent` constructor][pydantic_ai.Agent.__init__]. This is useful when you want to re-use tools, and can also give more fine-grained control over the tools.
+As well as using the decorators, we can register tools via the `tools` argument to the [`Agent` constructor][pydantic_ai.Agent.__init__]. This is useful when you want to reuse tools, and can also give more fine-grained control over the tools.
 
 ```python {title="dice_game_tool_kwarg.py"}
 import random
@@ -240,7 +240,7 @@ To demonstrate a tool's schema, here we use [`FunctionModel`][pydantic_ai.models
 
 ```python {title="tool_schema.py"}
 from pydantic_ai import Agent
-from pydantic_ai.messages import ModelMessage, ModelResponse
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 agent = Agent()
@@ -280,7 +280,7 @@ def print_schema(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse
         'additionalProperties': False,
     }
     """
-    return ModelResponse.from_text(content='foobar')
+    return ModelResponse(parts=[TextPart('foobar')])
 
 
 agent.run_sync('hello', model=FunctionModel(print_schema))

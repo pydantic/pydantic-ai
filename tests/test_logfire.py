@@ -58,7 +58,7 @@ def get_logfire_summary(capfire: CaptureLogfire) -> Callable[[], LogfireSummary]
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
-def test_logfire(get_logfire_summary: Callable[[], LogfireSummary], set_event_loop: None) -> None:
+def test_logfire(get_logfire_summary: Callable[[], LogfireSummary]) -> None:
     my_agent = Agent(model=TestModel())
 
     @my_agent.tool_plain
@@ -130,13 +130,9 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary], set_event_lo
                     },
                     {
                         'parts': [
-                            {
-                                'tool_name': 'my_ret',
-                                'args': {'args_dict': {'x': 0}},
-                                'tool_call_id': None,
-                                'part_kind': 'tool-call',
-                            }
+                            {'tool_name': 'my_ret', 'args': {'x': 0}, 'tool_call_id': None, 'part_kind': 'tool-call'}
                         ],
+                        'model_name': 'test',
                         'timestamp': IsStr(regex=r'\d{4}-\d{2}-.+'),
                         'kind': 'response',
                     },
@@ -154,6 +150,7 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary], set_event_lo
                     },
                     {
                         'parts': [{'content': '{"my_ret":"1"}', 'part_kind': 'text'}],
+                        'model_name': 'test',
                         'timestamp': IsStr(regex=r'\d{4}-\d{2}-.+'),
                         'kind': 'response',
                     },
@@ -207,13 +204,6 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary], set_event_lo
                                                 'type': 'object',
                                                 'title': 'ToolCallPart',
                                                 'x-python-datatype': 'dataclass',
-                                                'properties': {
-                                                    'args': {
-                                                        'type': 'object',
-                                                        'title': 'ArgsDict',
-                                                        'x-python-datatype': 'dataclass',
-                                                    }
-                                                },
                                             },
                                         },
                                         'timestamp': {'type': 'string', 'format': 'date-time'},

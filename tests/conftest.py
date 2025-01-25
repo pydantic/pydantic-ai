@@ -30,7 +30,14 @@ if TYPE_CHECKING:
     def IsNow(*args: Any, **kwargs: Any) -> datetime: ...
     def IsFloat(*args: Any, **kwargs: Any) -> float: ...
 else:
-    from dirty_equals import IsFloat, IsNow
+    from dirty_equals import IsFloat, IsNow as _IsNow
+
+    def IsNow(*args: Any, **kwargs: Any):
+        # Increase the default value of `delta` to 10 to reduce test flakiness on overburdened machines
+        if 'delta' not in kwargs:
+            kwargs['delta'] = 10
+        return _IsNow(*args, **kwargs)
+
 
 try:
     from logfire.testing import CaptureLogfire
@@ -166,7 +173,7 @@ def try_import() -> Iterator[Callable[[], bool]]:
         import_success = True
 
 
-@pytest.fixture
+@pytest.fixture(autouse=True)
 def set_event_loop() -> Iterator[None]:
     new_loop = asyncio.new_event_loop()
     asyncio.set_event_loop(new_loop)

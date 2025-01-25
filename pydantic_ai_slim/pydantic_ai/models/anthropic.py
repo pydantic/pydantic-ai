@@ -1,21 +1,23 @@
 from __future__ import annotations as _annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterable, AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from json import JSONDecodeError, loads as json_loads
 from typing import Any, Literal, Union, cast, overload
 
 from httpx import AsyncClient as AsyncHTTPClient
 from typing_extensions import assert_never
 
-from .. import usage
+from .. import UnexpectedModelBehavior, _utils, usage
 from .._utils import guard_tool_call_id as _guard_tool_call_id
 from ..messages import (
-    ArgsDict,
     ModelMessage,
     ModelRequest,
     ModelResponse,
     ModelResponsePart,
+    ModelResponseStreamEvent,
     RetryPromptPart,
     SystemPromptPart,
     TextPart,
@@ -38,11 +40,17 @@ try:
     from anthropic.types import (
         Message as AnthropicMessage,
         MessageParam,
+        MetadataParam,
+        RawContentBlockDeltaEvent,
+        RawContentBlockStartEvent,
+        RawContentBlockStopEvent,
         RawMessageDeltaEvent,
         RawMessageStartEvent,
+        RawMessageStopEvent,
         RawMessageStreamEvent,
         TextBlock,
         TextBlockParam,
+        TextDelta,
         ToolChoiceParam,
         ToolParam,
         ToolResultBlockParam,
@@ -69,6 +77,15 @@ Since Anthropic supports a variety of date-stamped models, we explicitly list th
 allow any name in the type hints.
 Since [the Anthropic docs](https://docs.anthropic.com/en/docs/about-claude/models) for a full list.
 """
+
+
+class AnthropicModelSettings(ModelSettings):
+    """Settings used for an Anthropic model request."""
+
+    anthropic_metadata: MetadataParam
+    """An object describing metadata about the request.
+
+    Contains `user_id`, an external identifier for the user who is associated with the request."""
 
 
 @dataclass(init=False)
@@ -152,50 +169,54 @@ class AnthropicAgentModel(AgentModel):
     """Implementation of `AgentModel` for Anthropic models."""
 
     client: AsyncAnthropic
-    model_name: str
+    model_name: AnthropicModelName
     allow_text_result: bool
     tools: list[ToolParam]
 
     async def request(
         self, messages: list[ModelMessage], model_settings: ModelSettings | None
     ) -> tuple[ModelResponse, usage.Usage]:
-        response = await self._messages_create(messages, False, model_settings)
+        response = await self._messages_create(messages, False, cast(AnthropicModelSettings, model_settings or {}))
         return self._process_response(response), _map_usage(response)
 
     @asynccontextmanager
     async def request_stream(
         self, messages: list[ModelMessage], model_settings: ModelSettings | None
     ) -> AsyncIterator[StreamedResponse]:
-        response = await self._messages_create(messages, True, model_settings)
+        response = await self._messages_create(messages, True, cast(AnthropicModelSettings, model_settings or {}))
         async with response:
             yield await self._process_streamed_response(response)
 
     @overload
     async def _messages_create(
-        self, messages: list[ModelMessage], stream: Literal[True], model_settings: ModelSettings | None
+        self, messages: list[ModelMessage], stream: Literal[True], model_settings: AnthropicModelSettings
     ) -> AsyncStream[RawMessageStreamEvent]:
         pass
 
     @overload
     async def _messages_create(
-        self, messages: list[ModelMessage], stream: Literal[False], model_settings: ModelSettings | None
+        self, messages: list[ModelMessage], stream: Literal[False], model_settings: AnthropicModelSettings
     ) -> AnthropicMessage:
         pass
 
     async def _messages_create(
-        self, messages: list[ModelMessage], stream: bool, model_settings: ModelSettings | None
+        self, messages: list[ModelMessage], stream: bool, model_settings: AnthropicModelSettings
     ) -> AnthropicMessage | AsyncStream[RawMessageStreamEvent]:
         # standalone function to make it easier to override
+        tool_choice: ToolChoiceParam | None
+
         if not self.tools:
-            tool_choice: ToolChoiceParam | None = None
-        elif not self.allow_text_result:
-            tool_choice = {'type': 'any'}
+            tool_choice = None
         else:
-            tool_choice = {'type': 'auto'}
+            if not self.allow_text_result:
+                tool_choice = {'type': 'any'}
+            else:
+                tool_choice = {'type': 'auto'}
+
+            if (allow_parallel_tool_calls := model_settings.get('parallel_tool_calls')) is not None:
+                tool_choice['disable_parallel_tool_use'] = not allow_parallel_tool_calls
 
         system_prompt, anthropic_messages = self._map_message(messages)
-
-        model_settings = model_settings or {}
 
         return await self.client.messages.create(
             max_tokens=model_settings.get('max_tokens', 1024),
@@ -208,10 +229,10 @@ class AnthropicAgentModel(AgentModel):
             temperature=model_settings.get('temperature', NOT_GIVEN),
             top_p=model_settings.get('top_p', NOT_GIVEN),
             timeout=model_settings.get('timeout', NOT_GIVEN),
+            metadata=model_settings.get('anthropic_metadata', NOT_GIVEN),
         )
 
-    @staticmethod
-    def _process_response(response: AnthropicMessage) -> ModelResponse:
+    def _process_response(self, response: AnthropicMessage) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
         items: list[ModelResponsePart] = []
         for item in response.content:
@@ -220,33 +241,24 @@ class AnthropicAgentModel(AgentModel):
             else:
                 assert isinstance(item, ToolUseBlock), 'unexpected item type'
                 items.append(
-                    ToolCallPart.from_raw_args(
+                    ToolCallPart(
                         tool_name=item.name,
                         args=cast(dict[str, Any], item.input),
                         tool_call_id=item.id,
                     )
                 )
 
-        return ModelResponse(items)
+        return ModelResponse(items, model_name=self.model_name)
 
-    @staticmethod
-    async def _process_streamed_response(response: AsyncStream[RawMessageStreamEvent]) -> StreamedResponse:
-        """TODO: Process a streamed response, and prepare a streaming response to return."""
-        # We don't yet support streamed responses from Anthropic, so we raise an error here for now.
-        # Streamed responses will be supported in a future release.
+    async def _process_streamed_response(self, response: AsyncStream[RawMessageStreamEvent]) -> StreamedResponse:
+        peekable_response = _utils.PeekableAsyncStream(response)
+        first_chunk = await peekable_response.peek()
+        if isinstance(first_chunk, _utils.Unset):
+            raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')
 
-        raise RuntimeError('Streamed responses are not yet supported for Anthropic models.')
-
-        # Should be returning some sort of AnthropicStreamTextResponse or AnthropicStreamedResponse
-        # depending on the type of chunk we get, but we need to establish how we handle (and when we get) the following:
-        # RawMessageStartEvent
-        # RawMessageDeltaEvent
-        # RawMessageStopEvent
-        # RawContentBlockStartEvent
-        # RawContentBlockDeltaEvent
-        # RawContentBlockDeltaEvent
-        #
-        # We might refactor streaming internally before we implement this...
+        # Since Anthropic doesn't provide a timestamp in the message, we'll use the current time
+        timestamp = datetime.now(tz=timezone.utc)
+        return AnthropicStreamedResponse(_model_name=self.model_name, _response=peekable_response, _timestamp=timestamp)
 
     @staticmethod
     def _map_message(messages: list[ModelMessage]) -> tuple[str, list[MessageParam]]:
@@ -306,7 +318,6 @@ class AnthropicAgentModel(AgentModel):
 
 
 def _map_tool_call(t: ToolCallPart) -> ToolUseBlockParam:
-    assert isinstance(t.args, ArgsDict), f'Expected ArgsDict, got {t.args}'
     return ToolUseBlockParam(
         id=_guard_tool_call_id(t=t, model_source='Anthropic'),
         type='tool_use',
@@ -342,3 +353,63 @@ def _map_usage(message: AnthropicMessage | RawMessageStreamEvent) -> usage.Usage
         response_tokens=response_usage.output_tokens,
         total_tokens=(request_tokens or 0) + response_usage.output_tokens,
     )
+
+
+@dataclass
+class AnthropicStreamedResponse(StreamedResponse):
+    """Implementation of `StreamedResponse` for Anthropic models."""
+
+    _response: AsyncIterable[RawMessageStreamEvent]
+    _timestamp: datetime
+
+    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
+        current_block: TextBlock | ToolUseBlock | None = None
+        current_json: str = ''
+
+        async for event in self._response:
+            self._usage += _map_usage(event)
+
+            if isinstance(event, RawContentBlockStartEvent):
+                current_block = event.content_block
+                if isinstance(current_block, TextBlock) and current_block.text:
+                    yield self._parts_manager.handle_text_delta(vendor_part_id='content', content=current_block.text)
+                elif isinstance(current_block, ToolUseBlock):
+                    maybe_event = self._parts_manager.handle_tool_call_delta(
+                        vendor_part_id=current_block.id,
+                        tool_name=current_block.name,
+                        args=cast(dict[str, Any], current_block.input),
+                        tool_call_id=current_block.id,
+                    )
+                    if maybe_event is not None:
+                        yield maybe_event
+
+            elif isinstance(event, RawContentBlockDeltaEvent):
+                if isinstance(event.delta, TextDelta):
+                    yield self._parts_manager.handle_text_delta(vendor_part_id='content', content=event.delta.text)
+                elif (
+                    current_block and event.delta.type == 'input_json_delta' and isinstance(current_block, ToolUseBlock)
+                ):
+                    # Try to parse the JSON immediately, otherwise cache the value for later. This handles
+                    # cases where the JSON is not currently valid but will be valid once we stream more tokens.
+                    try:
+                        parsed_args = json_loads(current_json + event.delta.partial_json)
+                        current_json = ''
+                    except JSONDecodeError:
+                        current_json += event.delta.partial_json
+                        continue
+
+                    # For tool calls, we need to handle partial JSON updates
+                    maybe_event = self._parts_manager.handle_tool_call_delta(
+                        vendor_part_id=current_block.id,
+                        tool_name='',
+                        args=parsed_args,
+                        tool_call_id=current_block.id,
+                    )
+                    if maybe_event is not None:
+                        yield maybe_event
+
+            elif isinstance(event, (RawContentBlockStopEvent, RawMessageStopEvent)):
+                current_block = None
+
+    def timestamp(self) -> datetime:
+        return self._timestamp

@@ -11,8 +11,6 @@ from pydantic import BaseModel
 
 from pydantic_ai import Agent, UnexpectedModelBehavior, UserError, capture_run_messages
 from pydantic_ai.messages import (
-    ArgsDict,
-    ArgsJson,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -48,7 +46,8 @@ async def test_streamed_text_response():
             [
                 ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
                 ModelResponse(
-                    parts=[ToolCallPart(tool_name='ret_a', args=ArgsDict(args_dict={'x': 'a'}))],
+                    parts=[ToolCallPart(tool_name='ret_a', args={'x': 'a'})],
+                    model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 ModelRequest(
@@ -72,13 +71,18 @@ async def test_streamed_text_response():
             [
                 ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
                 ModelResponse(
-                    parts=[ToolCallPart(tool_name='ret_a', args=ArgsDict(args_dict={'x': 'a'}))],
+                    parts=[ToolCallPart(tool_name='ret_a', args={'x': 'a'})],
+                    model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 ModelRequest(
                     parts=[ToolReturnPart(tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc))]
                 ),
-                ModelResponse.from_text(content='{"ret_a":"a-apple"}', timestamp=IsNow(tz=timezone.utc)),
+                ModelResponse(
+                    parts=[TextPart(content='{"ret_a":"a-apple"}')],
+                    model_name='test',
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
             ]
         )
         assert result.usage() == snapshot(
@@ -177,30 +181,37 @@ async def test_streamed_text_stream():
             [
                 ModelResponse(
                     parts=[TextPart(content='The ')],
+                    model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='The cat ')],
+                    model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='The cat sat ')],
+                    model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='The cat sat on ')],
+                    model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='The cat sat on the ')],
+                    model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='The cat sat on the mat.')],
+                    model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='The cat sat on the mat.')],
+                    model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
             ]
@@ -265,7 +276,8 @@ async def test_call_tool():
             [
                 ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
                 ModelResponse(
-                    parts=[ToolCallPart(tool_name='ret_a', args=ArgsJson(args_json='{"x": "hello"}'))],
+                    parts=[ToolCallPart(tool_name='ret_a', args='{"x": "hello"}')],
+                    model_name='function:stream_structured_function',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 ModelRequest(
@@ -278,7 +290,8 @@ async def test_call_tool():
             [
                 ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
                 ModelResponse(
-                    parts=[ToolCallPart(tool_name='ret_a', args=ArgsJson(args_json='{"x": "hello"}'))],
+                    parts=[ToolCallPart(tool_name='ret_a', args='{"x": "hello"}')],
+                    model_name='function:stream_structured_function',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 ModelRequest(
@@ -288,9 +301,10 @@ async def test_call_tool():
                     parts=[
                         ToolCallPart(
                             tool_name='final_result',
-                            args=ArgsJson(args_json='{"response": ["hello world", 2]}'),
+                            args='{"response": ["hello world", 2]}',
                         )
                     ],
+                    model_name='function:stream_structured_function',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 ModelRequest(
@@ -336,7 +350,8 @@ async def test_call_tool_wrong_name():
         [
             ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
-                parts=[ToolCallPart(tool_name='foobar', args=ArgsJson(args_json='{}'))],
+                parts=[ToolCallPart(tool_name='foobar', args='{}')],
+                model_name='function:stream_structured_function',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
@@ -395,10 +410,11 @@ async def test_early_strategy_stops_after_first_final_result():
             ModelRequest(parts=[UserPromptPart(content='test early strategy', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[
-                    ToolCallPart(tool_name='final_result', args=ArgsJson(args_json='{"value": "final"}')),
-                    ToolCallPart(tool_name='regular_tool', args=ArgsJson(args_json='{"x": 1}')),
-                    ToolCallPart(tool_name='another_tool', args=ArgsJson(args_json='{"y": 2}')),
+                    ToolCallPart(tool_name='final_result', args='{"value": "final"}'),
+                    ToolCallPart(tool_name='regular_tool', args='{"x": 1}'),
+                    ToolCallPart(tool_name='another_tool', args='{"y": 2}'),
                 ],
+                model_name='function:sf',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
@@ -447,9 +463,10 @@ async def test_early_strategy_uses_first_final_result():
             ),
             ModelResponse(
                 parts=[
-                    ToolCallPart(tool_name='final_result', args=ArgsJson(args_json='{"value": "first"}')),
-                    ToolCallPart(tool_name='final_result', args=ArgsJson(args_json='{"value": "second"}')),
+                    ToolCallPart(tool_name='final_result', args='{"value": "first"}'),
+                    ToolCallPart(tool_name='final_result', args='{"value": "second"}'),
                 ],
+                model_name='function:sf',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
@@ -505,12 +522,13 @@ async def test_exhaustive_strategy_executes_all_tools():
             ModelRequest(parts=[UserPromptPart(content='test exhaustive strategy', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[
-                    ToolCallPart(tool_name='final_result', args=ArgsJson(args_json='{"value": "first"}')),
-                    ToolCallPart(tool_name='regular_tool', args=ArgsJson(args_json='{"x": 42}')),
-                    ToolCallPart(tool_name='another_tool', args=ArgsJson(args_json='{"y": 2}')),
-                    ToolCallPart(tool_name='final_result', args=ArgsJson(args_json='{"value": "second"}')),
-                    ToolCallPart(tool_name='unknown_tool', args=ArgsJson(args_json='{"value": "???"}')),
+                    ToolCallPart(tool_name='final_result', args='{"value": "first"}'),
+                    ToolCallPart(tool_name='regular_tool', args='{"x": 42}'),
+                    ToolCallPart(tool_name='another_tool', args='{"y": 2}'),
+                    ToolCallPart(tool_name='final_result', args='{"value": "second"}'),
+                    ToolCallPart(tool_name='unknown_tool', args='{"value": "???"}'),
                 ],
+                model_name='function:sf',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
@@ -587,29 +605,30 @@ async def test_early_strategy_with_final_result_in_middle():
                 parts=[
                     ToolCallPart(
                         tool_name='regular_tool',
-                        args=ArgsJson(args_json='{"x": 1}'),
+                        args='{"x": 1}',
                         tool_call_id=None,
                         part_kind='tool-call',
                     ),
                     ToolCallPart(
                         tool_name='final_result',
-                        args=ArgsJson(args_json='{"value": "final"}'),
+                        args='{"value": "final"}',
                         tool_call_id=None,
                         part_kind='tool-call',
                     ),
                     ToolCallPart(
                         tool_name='another_tool',
-                        args=ArgsJson(args_json='{"y": 2}'),
+                        args='{"y": 2}',
                         tool_call_id=None,
                         part_kind='tool-call',
                     ),
                     ToolCallPart(
                         tool_name='unknown_tool',
-                        args=ArgsJson(args_json='{"value": "???"}'),
+                        args='{"value": "???"}',
                         tool_call_id=None,
                         part_kind='tool-call',
                     ),
                 ],
+                model_name='function:sf',
                 timestamp=IsNow(tz=datetime.timezone.utc),
                 kind='response',
             ),
@@ -681,12 +700,14 @@ async def test_early_strategy_does_not_apply_to_tool_calls_without_final_tool():
                 ]
             ),
             ModelResponse(
-                parts=[ToolCallPart(tool_name='regular_tool', args=ArgsDict(args_dict={'x': 0}))],
+                parts=[ToolCallPart(tool_name='regular_tool', args={'x': 0})],
+                model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(parts=[ToolReturnPart(tool_name='regular_tool', content=0, timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
-                parts=[ToolCallPart(tool_name='final_result', args=ArgsDict(args_dict={'value': 'a'}))],
+                parts=[ToolCallPart(tool_name='final_result', args={'value': 'a'})],
+                model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(

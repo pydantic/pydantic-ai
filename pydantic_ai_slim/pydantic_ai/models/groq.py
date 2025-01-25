@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from itertools import chain
-from typing import Literal, overload
+from typing import Literal, cast, overload
 
 from httpx import AsyncClient as AsyncHTTPClient
 from typing_extensions import assert_never
@@ -66,6 +66,12 @@ GroqModelName = Literal[
 
 See [the Groq docs](https://console.groq.com/docs/models) for a full list.
 """
+
+
+class GroqModelSettings(ModelSettings):
+    """Settings used for a Groq model request."""
+
+    # This class is a placeholder for any future groq-specific settings
 
 
 @dataclass(init=False)
@@ -155,31 +161,31 @@ class GroqAgentModel(AgentModel):
     async def request(
         self, messages: list[ModelMessage], model_settings: ModelSettings | None
     ) -> tuple[ModelResponse, usage.Usage]:
-        response = await self._completions_create(messages, False, model_settings)
+        response = await self._completions_create(messages, False, cast(GroqModelSettings, model_settings or {}))
         return self._process_response(response), _map_usage(response)
 
     @asynccontextmanager
     async def request_stream(
         self, messages: list[ModelMessage], model_settings: ModelSettings | None
     ) -> AsyncIterator[StreamedResponse]:
-        response = await self._completions_create(messages, True, model_settings)
+        response = await self._completions_create(messages, True, cast(GroqModelSettings, model_settings or {}))
         async with response:
             yield await self._process_streamed_response(response)
 
     @overload
     async def _completions_create(
-        self, messages: list[ModelMessage], stream: Literal[True], model_settings: ModelSettings | None
+        self, messages: list[ModelMessage], stream: Literal[True], model_settings: GroqModelSettings
     ) -> AsyncStream[ChatCompletionChunk]:
         pass
 
     @overload
     async def _completions_create(
-        self, messages: list[ModelMessage], stream: Literal[False], model_settings: ModelSettings | None
+        self, messages: list[ModelMessage], stream: Literal[False], model_settings: GroqModelSettings
     ) -> chat.ChatCompletion:
         pass
 
     async def _completions_create(
-        self, messages: list[ModelMessage], stream: bool, model_settings: ModelSettings | None
+        self, messages: list[ModelMessage], stream: bool, model_settings: GroqModelSettings
     ) -> chat.ChatCompletion | AsyncStream[ChatCompletionChunk]:
         # standalone function to make it easier to override
         if not self.tools:
@@ -191,13 +197,11 @@ class GroqAgentModel(AgentModel):
 
         groq_messages = list(chain(*(self._map_message(m) for m in messages)))
 
-        model_settings = model_settings or {}
-
         return await self.client.chat.completions.create(
             model=str(self.model_name),
             messages=groq_messages,
             n=1,
-            parallel_tool_calls=True if self.tools else NOT_GIVEN,
+            parallel_tool_calls=model_settings.get('parallel_tool_calls', True if self.tools else NOT_GIVEN),
             tools=self.tools or NOT_GIVEN,
             tool_choice=tool_choice or NOT_GIVEN,
             stream=stream,
@@ -205,10 +209,13 @@ class GroqAgentModel(AgentModel):
             temperature=model_settings.get('temperature', NOT_GIVEN),
             top_p=model_settings.get('top_p', NOT_GIVEN),
             timeout=model_settings.get('timeout', NOT_GIVEN),
+            seed=model_settings.get('seed', NOT_GIVEN),
+            presence_penalty=model_settings.get('presence_penalty', NOT_GIVEN),
+            frequency_penalty=model_settings.get('frequency_penalty', NOT_GIVEN),
+            logit_bias=model_settings.get('logit_bias', NOT_GIVEN),
         )
 
-    @staticmethod
-    def _process_response(response: chat.ChatCompletion) -> ModelResponse:
+    def _process_response(self, response: chat.ChatCompletion) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
         timestamp = datetime.fromtimestamp(response.created, tz=timezone.utc)
         choice = response.choices[0]
@@ -217,20 +224,21 @@ class GroqAgentModel(AgentModel):
             items.append(TextPart(content=choice.message.content))
         if choice.message.tool_calls is not None:
             for c in choice.message.tool_calls:
-                items.append(
-                    ToolCallPart.from_raw_args(tool_name=c.function.name, args=c.function.arguments, tool_call_id=c.id)
-                )
-        return ModelResponse(items, timestamp=timestamp)
+                items.append(ToolCallPart(tool_name=c.function.name, args=c.function.arguments, tool_call_id=c.id))
+        return ModelResponse(items, model_name=self.model_name, timestamp=timestamp)
 
-    @staticmethod
-    async def _process_streamed_response(response: AsyncStream[ChatCompletionChunk]) -> GroqStreamedResponse:
+    async def _process_streamed_response(self, response: AsyncStream[ChatCompletionChunk]) -> GroqStreamedResponse:
         """Process a streamed response, and prepare a streaming response to return."""
         peekable_response = _utils.PeekableAsyncStream(response)
         first_chunk = await peekable_response.peek()
         if isinstance(first_chunk, _utils.Unset):
             raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')
 
-        return GroqStreamedResponse(peekable_response, datetime.fromtimestamp(first_chunk.created, tz=timezone.utc))
+        return GroqStreamedResponse(
+            _response=peekable_response,
+            _model_name=self.model_name,
+            _timestamp=datetime.fromtimestamp(first_chunk.created, tz=timezone.utc),
+        )
 
     @classmethod
     def _map_message(cls, message: ModelMessage) -> Iterable[chat.ChatCompletionMessageParam]:

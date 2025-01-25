@@ -10,6 +10,7 @@ from . import (
     AgentModel,
     Model,
     cached_async_http_client,
+    check_allow_model_requests,
 )
 
 try:
@@ -25,6 +26,7 @@ from .openai import OpenAIModel
 
 CommonOllamaModelNames = Literal[
     'codellama',
+    'deepseek-r1',
     'gemma',
     'gemma2',
     'llama3',
@@ -78,7 +80,7 @@ class OllamaModel(Model):
     ):
         """Initialize an Ollama model.
 
-        Ollama has built-in compatability for the OpenAI chat completions API ([source](https://ollama.com/blog/openai-compatibility)), so we reuse the
+        Ollama has built-in compatibility for the OpenAI chat completions API ([source](https://ollama.com/blog/openai-compatibility)), so we reuse the
         [`OpenAIModel`][pydantic_ai.models.openai.OpenAIModel] here.
 
         Args:
@@ -110,6 +112,7 @@ class OllamaModel(Model):
         allow_text_result: bool,
         result_tools: list[ToolDefinition],
     ) -> AgentModel:
+        check_allow_model_requests()
         return await self.openai_model.agent_model(
             function_tools=function_tools,
             allow_text_result=allow_text_result,

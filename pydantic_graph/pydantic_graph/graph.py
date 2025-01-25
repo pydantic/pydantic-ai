@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from functools import cached_property
 from pathlib import Path
 from time import perf_counter
-from typing import TYPE_CHECKING, Annotated, Any, Callable, Generic
+from typing import TYPE_CHECKING, Annotated, Any, Callable, Generic, TypeVar
 
 import logfire_api
 import pydantic
@@ -21,6 +21,9 @@ from .state import EndStep, HistoryStep, NodeStep, StateT, deep_copy_state, node
 __all__ = ('Graph',)
 
 _logfire = logfire_api.Logfire(otel_scope='pydantic-graph')
+
+T = TypeVar('T')
+"""An invariant typevar."""
 
 
 @dataclass(init=False)
@@ -108,13 +111,13 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
         self._validate_edges()
 
     async def run(
-        self,
-        start_node: BaseNode[StateT, DepsT, RunEndT],
+        self: Graph[StateT, DepsT, T],
+        start_node: BaseNode[StateT, DepsT, T],
         *,
         state: StateT = None,
         deps: DepsT = None,
         infer_name: bool = True,
-    ) -> tuple[RunEndT, list[HistoryStep[StateT, RunEndT]]]:
+    ) -> tuple[T, list[HistoryStep[StateT, T]]]:
         """Run the graph from a starting node until it ends.
 
         Args:
@@ -151,7 +154,7 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
         if infer_name and self.name is None:
             self._infer_name(inspect.currentframe())
 
-        history: list[HistoryStep[StateT, RunEndT]] = []
+        history: list[HistoryStep[StateT, T]] = []
         with _logfire.span(
             '{graph_name} run {start=}',
             graph_name=self.name or 'graph',
@@ -174,13 +177,13 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
                         )
 
     def run_sync(
-        self,
-        start_node: BaseNode[StateT, DepsT, RunEndT],
+        self: Graph[StateT, DepsT, T],
+        start_node: BaseNode[StateT, DepsT, T],
         *,
         state: StateT = None,
         deps: DepsT = None,
         infer_name: bool = True,
-    ) -> tuple[RunEndT, list[HistoryStep[StateT, RunEndT]]]:
+    ) -> tuple[T, list[HistoryStep[StateT, T]]]:
         """Run the graph synchronously.
 
         This is a convenience method that wraps [`self.run`][pydantic_graph.Graph.run] with `loop.run_until_complete(...)`.
@@ -203,14 +206,14 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
         )
 
     async def next(
-        self,
-        node: BaseNode[StateT, DepsT, RunEndT],
-        history: list[HistoryStep[StateT, RunEndT]],
+        self: Graph[StateT, DepsT, T],
+        node: BaseNode[StateT, DepsT, T],
+        history: list[HistoryStep[StateT, T]],
         *,
         state: StateT = None,
         deps: DepsT = None,
         infer_name: bool = True,
-    ) -> BaseNode[StateT, DepsT, Any] | End[RunEndT]:
+    ) -> BaseNode[StateT, DepsT, Any] | End[T]:
         """Run a node in the graph and return the next node to run.
 
         Args:
@@ -241,7 +244,9 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
         )
         return next_node
 
-    def dump_history(self, history: list[HistoryStep[StateT, RunEndT]], *, indent: int | None = None) -> bytes:
+    def dump_history(
+        self: Graph[StateT, DepsT, T], history: list[HistoryStep[StateT, T]], *, indent: int | None = None
+    ) -> bytes:
         """Dump the history of a graph run as JSON.
 
         Args:
@@ -286,6 +291,7 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
         highlighted_nodes: Sequence[mermaid.NodeIdent] | mermaid.NodeIdent | None = None,
         highlight_css: str = mermaid.DEFAULT_HIGHLIGHT_CSS,
         infer_name: bool = True,
+        direction: mermaid.StateDiagramDirection | None = None,
     ) -> str:
         """Generate a diagram representing the graph as [mermaid](https://mermaid.js.org/) diagram.
 
@@ -299,6 +305,7 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
             highlighted_nodes: Optional node or nodes to highlight.
             highlight_css: The CSS to use for highlighting nodes.
             infer_name: Whether to infer the graph name from the calling frame.
+            direction: The direction of flow.
 
         Returns:
             The mermaid code for the graph, which can then be rendered as a diagram.
@@ -346,6 +353,7 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
             title=title or None,
             edge_labels=edge_labels,
             notes=notes,
+            direction=direction,
         )
 
     def mermaid_image(
@@ -428,7 +436,9 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
         raise exceptions.GraphSetupError('Could not infer run end type from nodes, please set `run_end_type`.')
 
     def _register_node(
-        self, node: type[BaseNode[StateT, DepsT, RunEndT]], parent_namespace: dict[str, Any] | None
+        self: Graph[StateT, DepsT, T],
+        node: type[BaseNode[StateT, DepsT, T]],
+        parent_namespace: dict[str, Any] | None,
     ) -> None:
         node_id = node.get_id()
         if existing_node := self.node_defs.get(node_id):
