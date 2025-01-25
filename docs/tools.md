@@ -246,7 +246,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 agent = Agent()
 
 
-@agent.tool_plain(docstring_format="google", require_parameter_descriptions=True)
+@agent.tool_plain(docstring_format='google', require_parameter_descriptions=True)
 def foobar(a: int, b: str, c: dict[str, list[float]]) -> str:
     """Get me foobar.
 
