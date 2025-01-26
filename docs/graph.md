@@ -190,6 +190,17 @@ stateDiagram-v2
   Increment --> DivisibleBy5
 ```
 
+!!! tips
+    In order to visualize a graph within a `jupyter-notebook`, `IPython.display` needs to be used
+    ```python
+    from IPython.display import Image, display
+    display(
+        Image(
+            fives_graph.mermaid_image(start_node=DivisibleBy5)
+            )
+    )
+    ```
+
 ## Stateful Graphs
 
 The "state" concept in `pydantic-graph` provides an optional way to access and mutate an object (often a `dataclass` or Pydantic model) as nodes run in a graph. If you think of Graphs as a production line, then you state is the engine being passed along the line and built up by each node as the graph is run.
