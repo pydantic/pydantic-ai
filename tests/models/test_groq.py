@@ -50,9 +50,9 @@ pytestmark = [
 
 
 def test_init():
-    m = GroqModel('llama-3.1-70b-versatile', api_key='foobar')
+    m = GroqModel('llama-3.3-70b-versatile', api_key='foobar')
     assert m.client.api_key == 'foobar'
-    assert m.name() == 'groq:llama-3.1-70b-versatile'
+    assert m.name() == 'groq:llama-3.3-70b-versatile'
 
 
 @dataclass
@@ -102,7 +102,7 @@ def completion_message(message: ChatCompletionMessage, *, usage: CompletionUsage
         id='123',
         choices=[Choice(finish_reason='stop', index=0, message=message)],
         created=1704067200,  # 2024-01-01
-        model='llama-3.1-70b-versatile',
+        model='llama-3.3-70b-versatile',
         object='chat.completion',
         usage=usage,
     )
@@ -111,7 +111,7 @@ def completion_message(message: ChatCompletionMessage, *, usage: CompletionUsage
 async def test_request_simple_success(allow_model_requests: None):
     c = completion_message(ChatCompletionMessage(content='world', role='assistant'))
     mock_client = MockGroq.create_mock(c)
-    m = GroqModel('llama-3.1-70b-versatile', groq_client=mock_client)
+    m = GroqModel('llama-3.3-70b-versatile', groq_client=mock_client)
     agent = Agent(m)
 
     result = await agent.run('hello')
@@ -129,13 +129,13 @@ async def test_request_simple_success(allow_model_requests: None):
             ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[TextPart(content='world')],
-                model_name='llama-3.1-70b-versatile',
+                model_name='llama-3.3-70b-versatile',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
             ),
             ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[TextPart(content='world')],
-                model_name='llama-3.1-70b-versatile',
+                model_name='llama-3.3-70b-versatile',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
             ),
         ]
@@ -148,7 +148,7 @@ async def test_request_simple_usage(allow_model_requests: None):
         usage=CompletionUsage(completion_tokens=1, prompt_tokens=2, total_tokens=3),
     )
     mock_client = MockGroq.create_mock(c)
-    m = GroqModel('llama-3.1-70b-versatile', groq_client=mock_client)
+    m = GroqModel('llama-3.3-70b-versatile', groq_client=mock_client)
     agent = Agent(m)
 
     result = await agent.run('Hello')
@@ -170,7 +170,7 @@ async def test_request_structured_response(allow_model_requests: None):
         )
     )
     mock_client = MockGroq.create_mock(c)
-    m = GroqModel('llama-3.1-70b-versatile', groq_client=mock_client)
+    m = GroqModel('llama-3.3-70b-versatile', groq_client=mock_client)
     agent = Agent(m, result_type=list[int])
 
     result = await agent.run('Hello')
@@ -186,7 +186,7 @@ async def test_request_structured_response(allow_model_requests: None):
                         tool_call_id='123',
                     )
                 ],
-                model_name='llama-3.1-70b-versatile',
+                model_name='llama-3.3-70b-versatile',
                 timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc),
             ),
             ModelRequest(
@@ -244,7 +244,7 @@ async def test_request_tool_call(allow_model_requests: None):
         completion_message(ChatCompletionMessage(content='final response', role='assistant')),
     ]
     mock_client = MockGroq.create_mock(responses)
-    m = GroqModel('llama-3.1-70b-versatile', groq_client=mock_client)
+    m = GroqModel('llama-3.3-70b-versatile', groq_client=mock_client)
     agent = Agent(m, system_prompt='this is the system prompt')
 
     @agent.tool_plain
@@ -272,7 +272,7 @@ async def test_request_tool_call(allow_model_requests: None):
                         tool_call_id='1',
                     )
                 ],
-                model_name='llama-3.1-70b-versatile',
+                model_name='llama-3.3-70b-versatile',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
             ),
             ModelRequest(
@@ -293,7 +293,7 @@ async def test_request_tool_call(allow_model_requests: None):
                         tool_call_id='2',
                     )
                 ],
-                model_name='llama-3.1-70b-versatile',
+                model_name='llama-3.3-70b-versatile',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
             ),
             ModelRequest(
@@ -308,7 +308,7 @@ async def test_request_tool_call(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='final response')],
-                model_name='llama-3.1-70b-versatile',
+                model_name='llama-3.3-70b-versatile',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
             ),
         ]
@@ -326,7 +326,7 @@ def chunk(delta: list[ChoiceDelta], finish_reason: FinishReason | None = None) -
         ],
         created=1704067200,  # 2024-01-01
         x_groq=None,
-        model='llama-3.1-70b-versatile',
+        model='llama-3.3-70b-versatile',
         object='chat.completion.chunk',
         usage=CompletionUsage(completion_tokens=1, prompt_tokens=2, total_tokens=3),
     )
@@ -339,7 +339,7 @@ def text_chunk(text: str, finish_reason: FinishReason | None = None) -> chat.Cha
 async def test_stream_text(allow_model_requests: None):
     stream = text_chunk('hello '), text_chunk('world'), chunk([])
     mock_client = MockGroq.create_mock_stream(stream)
-    m = GroqModel('llama-3.1-70b-versatile', groq_client=mock_client)
+    m = GroqModel('llama-3.3-70b-versatile', groq_client=mock_client)
     agent = Agent(m)
 
     async with agent.run_stream('') as result:
@@ -351,7 +351,7 @@ async def test_stream_text(allow_model_requests: None):
 async def test_stream_text_finish_reason(allow_model_requests: None):
     stream = text_chunk('hello '), text_chunk('world'), text_chunk('.', finish_reason='stop')
     mock_client = MockGroq.create_mock_stream(stream)
-    m = GroqModel('llama-3.1-70b-versatile', groq_client=mock_client)
+    m = GroqModel('llama-3.3-70b-versatile', groq_client=mock_client)
     agent = Agent(m)
 
     async with agent.run_stream('') as result:
@@ -398,7 +398,7 @@ async def test_stream_structured(allow_model_requests: None):
         chunk([]),
     )
     mock_client = MockGroq.create_mock_stream(stream)
-    m = GroqModel('llama-3.1-70b-versatile', groq_client=mock_client)
+    m = GroqModel('llama-3.3-70b-versatile', groq_client=mock_client)
     agent = Agent(m, result_type=MyTypedDict)
 
     async with agent.run_stream('') as result:
@@ -424,7 +424,7 @@ async def test_stream_structured(allow_model_requests: None):
                         args='{"first": "One", "second": "Two"}',
                     )
                 ],
-                model_name='llama-3.1-70b-versatile',
+                model_name='llama-3.3-70b-versatile',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
             ),
             ModelRequest(
@@ -449,7 +449,7 @@ async def test_stream_structured_finish_reason(allow_model_requests: None):
         struc_chunk(None, None, finish_reason='stop'),
     )
     mock_client = MockGroq.create_mock_stream(stream)
-    m = GroqModel('llama-3.1-70b-versatile', groq_client=mock_client)
+    m = GroqModel('llama-3.3-70b-versatile', groq_client=mock_client)
     agent = Agent(m, result_type=MyTypedDict)
 
     async with agent.run_stream('') as result:
@@ -469,7 +469,7 @@ async def test_stream_structured_finish_reason(allow_model_requests: None):
 async def test_no_content(allow_model_requests: None):
     stream = chunk([ChoiceDelta()]), chunk([ChoiceDelta()])
     mock_client = MockGroq.create_mock_stream(stream)
-    m = GroqModel('llama-3.1-70b-versatile', groq_client=mock_client)
+    m = GroqModel('llama-3.3-70b-versatile', groq_client=mock_client)
     agent = Agent(m, result_type=MyTypedDict)
 
     with pytest.raises(UnexpectedModelBehavior, match='Received empty model response'):
@@ -480,7 +480,7 @@ async def test_no_content(allow_model_requests: None):
 async def test_no_delta(allow_model_requests: None):
     stream = chunk([]), text_chunk('hello '), text_chunk('world')
     mock_client = MockGroq.create_mock_stream(stream)
-    m = GroqModel('llama-3.1-70b-versatile', groq_client=mock_client)
+    m = GroqModel('llama-3.3-70b-versatile', groq_client=mock_client)
     agent = Agent(m)
 
     async with agent.run_stream('') as result:

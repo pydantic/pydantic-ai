@@ -27,7 +27,7 @@ agent = Agent()
 models: list[tuple[KnownModelName, str]] = [
     ('google-gla:gemini-1.5-flash', 'GEMINI_API_KEY'),
     ('openai:gpt-4o-mini', 'OPENAI_API_KEY'),
-    ('groq:llama-3.1-70b-versatile', 'GROQ_API_KEY'),
+    ('groq:llama-3.3-70b-versatile', 'GROQ_API_KEY'),
 ]
 
 

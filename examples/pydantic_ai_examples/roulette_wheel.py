@@ -21,7 +21,7 @@ class Deps:
 
 # Create the agent with proper typing
 roulette_agent = Agent(
-    'groq:llama-3.1-70b-versatile',
+    'groq:llama-3.3-70b-versatile',
     deps_type=Deps,
     retries=3,
     result_type=bool,

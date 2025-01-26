@@ -352,7 +352,7 @@ You can then use [`GroqModel`][pydantic_ai.models.groq.GroqModel] by name:
 ```python {title="groq_model_by_name.py"}
 from pydantic_ai import Agent
 
-agent = Agent('groq:llama-3.1-70b-versatile')
+agent = Agent('groq:llama-3.3-70b-versatile')
 ...
 ```
 
@@ -362,7 +362,7 @@ Or initialise the model directly with just the model name:
 from pydantic_ai import Agent
 from pydantic_ai.models.groq import GroqModel
 
-model = GroqModel('llama-3.1-70b-versatile')
+model = GroqModel('llama-3.3-70b-versatile')
 agent = Agent(model)
 ...
 ```
@@ -375,7 +375,7 @@ If you don't want to or can't set the environment variable, you can pass it at r
 from pydantic_ai import Agent
 from pydantic_ai.models.groq import GroqModel
 
-model = GroqModel('llama-3.1-70b-versatile', api_key='your-api-key')
+model = GroqModel('llama-3.3-70b-versatile', api_key='your-api-key')
 agent = Agent(model)
 ...
 ```
