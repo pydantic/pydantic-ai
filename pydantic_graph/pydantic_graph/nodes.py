@@ -5,6 +5,7 @@ from dataclasses import dataclass, is_dataclass
 from functools import cache
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, get_origin, get_type_hints
 
+from logfire_api import LogfireSpan
 from typing_extensions import Never, TypeVar
 
 from . import _utils, exceptions
@@ -32,6 +33,8 @@ class GraphRunContext(Generic[StateT, DepsT]):
     """The state of the graph."""
     deps: DepsT
     """Dependencies for the graph."""
+    node_span: LogfireSpan
+    """Span corresponding to the current node's execution"""
 
 
 class BaseNode(ABC, Generic[StateT, DepsT, NodeRunEndT]):

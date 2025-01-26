@@ -232,8 +232,8 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
         if node_id not in self.node_defs:
             raise exceptions.GraphRuntimeError(f'Node `{node}` is not in the graph.')
 
-        ctx = GraphRunContext(state, deps)
-        with _logfire.span('run node {node_id}', node_id=node_id, node=node):
+        with _logfire.span('run node {node_id}', node_id=node_id, node=node) as node_span:
+            ctx = GraphRunContext(state, deps, node_span)
             start_ts = _utils.now_utc()
             start = perf_counter()
             next_node = await node.run(ctx)
