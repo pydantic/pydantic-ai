@@ -244,10 +244,9 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
             raise exceptions.GraphRuntimeError(f'Node `{node}` is not in the graph.')
 
         with ExitStack() as stack:
-            node_span: logfire_api.LogfireSpan | None = None
             if self._auto_instrument:
-                node_span = stack.enter_context(_logfire.span('run node {node_id}', node_id=node_id, node=node))
-            ctx = GraphRunContext(state, deps, node_span)
+                stack.enter_context(_logfire.span('run node {node_id}', node_id=node_id, node=node))
+            ctx = GraphRunContext(state, deps)
             start_ts = _utils.now_utc()
             start = perf_counter()
             next_node = await node.run(ctx)
