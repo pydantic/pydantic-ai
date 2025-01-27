@@ -271,7 +271,8 @@ class AnthropicAgentModel(AgentModel):
                     if isinstance(part, SystemPromptPart):
                         system_prompt += part.content
                     elif isinstance(part, UserPromptPart):
-                        anthropic_messages.append(MessageParam(role='user', content=part.content))
+                        if isinstance(part.content, str):
+                            anthropic_messages.append(MessageParam(role='user', content=part.content))
                     elif isinstance(part, ToolReturnPart):
                         anthropic_messages.append(
                             MessageParam(

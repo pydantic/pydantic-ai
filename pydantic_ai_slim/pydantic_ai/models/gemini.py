@@ -284,7 +284,8 @@ class GeminiAgentModel(AgentModel):
                     if isinstance(part, SystemPromptPart):
                         sys_prompt_parts.append(_GeminiTextPart(text=part.content))
                     elif isinstance(part, UserPromptPart):
-                        message_parts.append(_GeminiTextPart(text=part.content))
+                        if isinstance(part.content, str):
+                            message_parts.append(_GeminiTextPart(text=part.content))
                     elif isinstance(part, ToolReturnPart):
                         message_parts.append(_response_part_from_response(part.tool_name, part.model_response_object()))
                     elif isinstance(part, RetryPromptPart):

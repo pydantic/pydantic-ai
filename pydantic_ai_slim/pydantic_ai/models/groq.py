@@ -268,7 +268,8 @@ class GroqAgentModel(AgentModel):
             if isinstance(part, SystemPromptPart):
                 yield chat.ChatCompletionSystemMessageParam(role='system', content=part.content)
             elif isinstance(part, UserPromptPart):
-                yield chat.ChatCompletionUserMessageParam(role='user', content=part.content)
+                if isinstance(part.content, str):
+                    yield chat.ChatCompletionUserMessageParam(role='user', content=part.content)
             elif isinstance(part, ToolReturnPart):
                 yield chat.ChatCompletionToolMessageParam(
                     role='tool',

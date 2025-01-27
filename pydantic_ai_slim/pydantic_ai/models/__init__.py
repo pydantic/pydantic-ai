@@ -101,6 +101,7 @@ KnownModelName = Literal[
     'mistral:mistral-large-latest',
     'mistral:mistral-moderation-latest',
     'mistral:mistral-small-latest',
+    'mistral:pixtral-12b-2409',
     'o1',
     'o1-2024-12-17',
     'o1-mini',

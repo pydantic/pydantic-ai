@@ -274,9 +274,9 @@ async def model_logic(messages: list[ModelMessage], info: AgentInfo) -> ModelRes
             return ModelResponse(parts=[ToolCallPart(tool_name='joke_factory', args={'count': 5})])
         elif m.content == 'Please generate 5 jokes.' and any(t.name == 'get_jokes' for t in info.function_tools):
             return ModelResponse(parts=[ToolCallPart(tool_name='get_jokes', args={'count': 5})])
-        elif re.fullmatch(r'sql prompt \d+', m.content):
+        elif isinstance(m.content, str) and re.fullmatch(r'sql prompt \d+', m.content):
             return ModelResponse(parts=[TextPart('SELECT 1')])
-        elif m.content.startswith('Write a welcome email for the user:'):
+        elif isinstance(m.content, str) and m.content.startswith('Write a welcome email for the user:'):
             return ModelResponse(
                 parts=[
                     ToolCallPart(
@@ -288,11 +288,15 @@ async def model_logic(messages: list[ModelMessage], info: AgentInfo) -> ModelRes
                     )
                 ]
             )
-        elif m.content.startswith('<examples>\n  <user>'):
+        elif isinstance(m.content, str) and m.content.startswith('<examples>\n  <user>'):
             return ModelResponse(parts=[ToolCallPart(tool_name='final_result_EmailOk', args={})])
-        elif m.content == 'Ask a simple question with a single correct answer.' and len(messages) > 2:
+        elif (
+            isinstance(m.content, str)
+            and m.content == 'Ask a simple question with a single correct answer.'
+            and len(messages) > 2
+        ):
             return ModelResponse(parts=[TextPart('what is 1 + 1?')])
-        elif response := text_responses.get(m.content):
+        elif isinstance(m.content, str) and (response := text_responses.get(m.content)):
             if isinstance(response, str):
                 return ModelResponse(parts=[TextPart(response)])
             else:
@@ -346,7 +350,7 @@ async def stream_model_logic(
 ) -> AsyncIterator[str | DeltaToolCalls]:  # pragma: no cover
     m = messages[-1].parts[-1]
     if isinstance(m, UserPromptPart):
-        if response := text_responses.get(m.content):
+        if isinstance(m.content, str) and (response := text_responses.get(m.content)):
             if isinstance(response, str):
                 words = response.split(' ')
                 chunk: list[str] = []

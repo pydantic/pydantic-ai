@@ -197,7 +197,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
     @overload
     async def run(
         self,
-        user_prompt: str,
+        user_prompt: str | list[_messages.UserPromptChunk],
         *,
         result_type: None = None,
         message_history: list[_messages.ModelMessage] | None = None,
@@ -212,7 +212,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
     @overload
     async def run(
         self,
-        user_prompt: str,
+        user_prompt: str | list[_messages.UserPromptChunk],
         *,
         result_type: type[RunResultData],
         message_history: list[_messages.ModelMessage] | None = None,
@@ -226,7 +226,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
 
     async def run(
         self,
-        user_prompt: str,
+        user_prompt: str | list[_messages.UserPromptChunk],
         *,
         message_history: list[_messages.ModelMessage] | None = None,
         model: models.Model | models.KnownModelName | None = None,
@@ -336,7 +336,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
     @overload
     def run_sync(
         self,
-        user_prompt: str,
+        user_prompt: str | list[_messages.UserPromptChunk],
         *,
         message_history: list[_messages.ModelMessage] | None = None,
         model: models.Model | models.KnownModelName | None = None,
@@ -350,7 +350,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
     @overload
     def run_sync(
         self,
-        user_prompt: str,
+        user_prompt: str | list[_messages.UserPromptChunk],
         *,
         result_type: type[RunResultData] | None,
         message_history: list[_messages.ModelMessage] | None = None,
@@ -364,7 +364,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
 
     def run_sync(
         self,
-        user_prompt: str,
+        user_prompt: str | list[_messages.UserPromptChunk],
         *,
         result_type: type[RunResultData] | None = None,
         message_history: list[_messages.ModelMessage] | None = None,
@@ -425,7 +425,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
     @overload
     def run_stream(
         self,
-        user_prompt: str,
+        user_prompt: str | list[_messages.UserPromptChunk],
         *,
         result_type: None = None,
         message_history: list[_messages.ModelMessage] | None = None,
@@ -440,7 +440,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
     @overload
     def run_stream(
         self,
-        user_prompt: str,
+        user_prompt: str | list[_messages.UserPromptChunk],
         *,
         result_type: type[RunResultData],
         message_history: list[_messages.ModelMessage] | None = None,
@@ -455,7 +455,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
     @asynccontextmanager
     async def run_stream(
         self,
-        user_prompt: str,
+        user_prompt: str | list[_messages.UserPromptChunk],
         *,
         result_type: type[RunResultData] | None = None,
         message_history: list[_messages.ModelMessage] | None = None,
@@ -1048,7 +1048,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
 
     async def _prepare_messages(
         self,
-        user_prompt: str,
+        user_prompt: str | list[_messages.UserPromptChunk],
         message_history: list[_messages.ModelMessage] | None,
         run_context: RunContext[AgentDepsT],
     ) -> list[_messages.ModelMessage]:

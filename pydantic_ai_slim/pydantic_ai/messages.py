@@ -32,6 +32,20 @@ class SystemPromptPart:
 
 
 @dataclass
+class UserPromptChunk:
+    """A chunk of user prompt content."""
+
+    content: str
+    """The chunk of user prompt content."""
+
+    type: str
+    """The type of the chunk."""
+
+    part_kind: Literal['user-prompt-chunk'] = 'user-prompt-chunk'
+    """Part type identifier, this is available on all parts as a discriminator."""
+
+
+@dataclass
 class UserPromptPart:
     """A user prompt, generally written by the end user.
 
@@ -39,7 +53,7 @@ class UserPromptPart:
     [`Agent.run_sync`][pydantic_ai.Agent.run_sync], and [`Agent.run_stream`][pydantic_ai.Agent.run_stream].
     """
 
-    content: str
+    content: str | list[UserPromptChunk]
     """The content of the prompt."""
 
     timestamp: datetime = field(default_factory=_now_utc)

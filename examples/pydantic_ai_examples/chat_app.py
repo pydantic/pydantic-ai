@@ -92,7 +92,9 @@ def to_chat_message(m: ModelMessage) -> ChatMessage:
             return {
                 'role': 'user',
                 'timestamp': first_part.timestamp.isoformat(),
-                'content': first_part.content,
+                'content': first_part.content
+                if isinstance(first_part.content, str)
+                else '',
             }
     elif isinstance(m, ModelResponse):
         if isinstance(first_part, TextPart):

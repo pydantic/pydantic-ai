@@ -112,7 +112,14 @@ async def weather_model(messages: list[ModelMessage], info: AgentInfo) -> ModelR
         elif last.tool_name == 'get_weather':
             location_name: str | None = None
             for m in messages:
-                location_name = next((part.content for part in m.parts if isinstance(part, UserPromptPart)), None)
+                location_name = next(
+                    (
+                        part.content
+                        for part in m.parts
+                        if isinstance(part, UserPromptPart) and isinstance(part.content, str)
+                    ),
+                    None,
+                )
                 if location_name is not None:
                     break
 
@@ -189,7 +196,7 @@ def test_weather():
 async def call_function_model(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:  # pragma: no cover
     last = messages[-1].parts[-1]
     if isinstance(last, UserPromptPart):
-        if last.content.startswith('{'):
+        if isinstance(last.content, str) and last.content.startswith('{'):
             details = json.loads(last.content)
             return ModelResponse(
                 parts=[

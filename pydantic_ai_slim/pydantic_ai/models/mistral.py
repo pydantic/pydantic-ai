@@ -25,6 +25,7 @@ from ..messages import (
     TextPart,
     ToolCallPart,
     ToolReturnPart,
+    UserPromptChunk,
     UserPromptPart,
 )
 from ..result import Usage
@@ -45,6 +46,7 @@ try:
         Content as MistralContent,
         ContentChunk as MistralContentChunk,
         FunctionCall as MistralFunctionCall,
+        ImageURLChunk as MistralImageURLChunk,
         Mistral,
         OptionalNullable as MistralOptionalNullable,
         TextChunk as MistralTextChunk,
@@ -71,7 +73,7 @@ except ImportError as e:
     ) from e
 
 NamedMistralModels = Literal[
-    'mistral-large-latest', 'mistral-small-latest', 'codestral-latest', 'mistral-moderation-latest'
+    'mistral-large-latest', 'mistral-small-latest', 'codestral-latest', 'mistral-moderation-latest', 'pixtral-12b-2409'
 ]
 """Latest / most popular named Mistral models."""
 
@@ -406,8 +408,22 @@ class MistralAgentModel(AgentModel):
         for part in message.parts:
             if isinstance(part, SystemPromptPart):
                 yield MistralSystemMessage(content=part.content)
+
             elif isinstance(part, UserPromptPart):
-                yield MistralUserMessage(content=part.content)
+                if isinstance(part.content, list):
+                    content_chunks: list[MistralContentChunk] = []
+
+                    for chunk in part.content:
+                        if isinstance(chunk, UserPromptChunk):
+                            if chunk.type == 'image_url':
+                                content_chunks.append(MistralImageURLChunk(image_url=chunk.content))
+                            elif chunk.type == 'text':
+                                content_chunks.append(MistralTextChunk(text=chunk.content))
+
+                    yield MistralUserMessage(content=content_chunks)
+
+                else:
+                    yield MistralUserMessage(content=part.content)
             elif isinstance(part, ToolReturnPart):
                 yield MistralToolMessage(
                     tool_call_id=part.tool_call_id,
