@@ -583,20 +583,21 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
     The type of the result data, used to validate the result data, defaults to `str`.
     """
 
-    # _result_tool_name: str
-    # _result_tool_description: str | None
-    # _result_schema: _result.ResultSchema[ResultDataT] | None
-    # _system_prompts: tuple[str, ...]
-    # _function_tools: dict[str, Tool[AgentDepsT]]
-    # _default_retries: int
-    # _system_prompt_functions: list[_system_prompt.SystemPromptRunner[AgentDepsT]]
-    # _system_prompt_dynamic_functions: dict[str, _system_prompt.SystemPromptRunner[AgentDepsT]]
-    # _deps_type: type[AgentDepsT]
-    # _max_result_retries: int
-    # _result_validators: list[_result.ResultValidator[AgentDepsT, ResultDataT]]
-
-    _override_deps: _utils.Option[AgentDepsT] = dataclasses.field(repr=False)
-    _override_model: _utils.Option[models.Model] = dataclasses.field(repr=False)
+    _deps_type: type[AgentDepsT] = dataclasses.field(repr=False)
+    _result_tool_name: str = dataclasses.field(repr=False)
+    _result_tool_description: str | None = dataclasses.field(repr=False)
+    _result_schema: _result.ResultSchema[ResultDataT] | None = dataclasses.field(repr=False)
+    _result_validators: list[_result.ResultValidator[AgentDepsT, ResultDataT]] = dataclasses.field(repr=False)
+    _system_prompts: tuple[str, ...] = dataclasses.field(repr=False)
+    _system_prompt_functions: list[_system_prompt.SystemPromptRunner[AgentDepsT]] = dataclasses.field(repr=False)
+    _system_prompt_dynamic_functions: dict[str, _system_prompt.SystemPromptRunner[AgentDepsT]] = dataclasses.field(
+        repr=False
+    )
+    _function_tools: dict[str, Tool[AgentDepsT]] = dataclasses.field(repr=False)
+    _default_retries: int = dataclasses.field(repr=False)
+    _max_result_retries: int = dataclasses.field(repr=False)
+    _override_deps: _utils.Option[AgentDepsT] = dataclasses.field(default=None, repr=False)
+    _override_model: _utils.Option[models.Model] = dataclasses.field(default=None, repr=False)
 
     def __init__(
         self,
@@ -654,28 +655,28 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         self.model_settings = model_settings
         self.result_type = result_type
 
+        self._deps_type = deps_type
+
         self._result_tool_name = result_tool_name
         self._result_tool_description = result_tool_description
         self._result_schema: _result.ResultSchema[ResultDataT] | None = _result.ResultSchema[result_type].build(
             result_type, result_tool_name, result_tool_description
         )
+        self._result_validators: list[_result.ResultValidator[AgentDepsT, ResultDataT]] = []
 
         self._system_prompts = (system_prompt,) if isinstance(system_prompt, str) else tuple(system_prompt)
+        self._system_prompt_functions: list[_system_prompt.SystemPromptRunner[AgentDepsT]] = []
+        self._system_prompt_dynamic_functions: dict[str, _system_prompt.SystemPromptRunner[AgentDepsT]] = {}
+
         self._function_tools: dict[str, Tool[AgentDepsT]] = {}
+
         self._default_retries = retries
+        self._max_result_retries = result_retries if result_retries is not None else retries
         for tool in tools:
             if isinstance(tool, Tool):
                 self._register_tool(tool)
             else:
                 self._register_tool(Tool(tool))
-        self._deps_type = deps_type
-        self._system_prompt_functions: list[_system_prompt.SystemPromptRunner[AgentDepsT]] = []
-        self._system_prompt_dynamic_functions: dict[str, _system_prompt.SystemPromptRunner[AgentDepsT]] = {}
-        self._max_result_retries = result_retries if result_retries is not None else retries
-        self._result_validators: list[_result.ResultValidator[AgentDepsT, ResultDataT]] = []
-
-        self._override_deps = None
-        self._override_model = None
 
     @overload
     async def run(
