@@ -221,7 +221,7 @@ class ModelResponsePartsManager:
             ModelResponseStreamEvent: A `PartStartEvent` indicating that a new tool call part
             has been added to the manager, or replaced an existing part.
         """
-        new_part = ToolCallPart.from_raw_args(tool_name=tool_name, args=args, tool_call_id=tool_call_id)
+        new_part = ToolCallPart(tool_name=tool_name, args=args, tool_call_id=tool_call_id)
         if vendor_part_id is None:
             # vendor_part_id is None, so we unconditionally append a new ToolCallPart to the end of the list
             new_part_index = len(self._parts)

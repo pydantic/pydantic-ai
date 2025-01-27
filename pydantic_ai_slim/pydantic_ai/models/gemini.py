@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Annotated, Any, Literal, Protocol, Union
+from typing import Annotated, Any, Literal, Protocol, Union, cast
 from uuid import uuid4
 
 import pydantic
@@ -46,6 +46,12 @@ GeminiModelName = Literal[
 
 See [the Gemini API docs](https://ai.google.dev/gemini-api/docs/models/gemini#model-variations) for a full list.
 """
+
+
+class GeminiModelSettings(ModelSettings):
+    """Settings used for a Gemini model request."""
+
+    # This class is a placeholder for any future gemini-specific settings
 
 
 @dataclass(init=False)
@@ -171,7 +177,9 @@ class GeminiAgentModel(AgentModel):
     async def request(
         self, messages: list[ModelMessage], model_settings: ModelSettings | None
     ) -> tuple[ModelResponse, usage.Usage]:
-        async with self._make_request(messages, False, model_settings) as http_response:
+        async with self._make_request(
+            messages, False, cast(GeminiModelSettings, model_settings or {})
+        ) as http_response:
             response = _gemini_response_ta.validate_json(await http_response.aread())
         return self._process_response(response), _metadata_as_usage(response)
 
@@ -179,12 +187,12 @@ class GeminiAgentModel(AgentModel):
     async def request_stream(
         self, messages: list[ModelMessage], model_settings: ModelSettings | None
     ) -> AsyncIterator[StreamedResponse]:
-        async with self._make_request(messages, True, model_settings) as http_response:
+        async with self._make_request(messages, True, cast(GeminiModelSettings, model_settings or {})) as http_response:
             yield await self._process_streamed_response(http_response)
 
     @asynccontextmanager
     async def _make_request(
-        self, messages: list[ModelMessage], streamed: bool, model_settings: ModelSettings | None
+        self, messages: list[ModelMessage], streamed: bool, model_settings: GeminiModelSettings
     ) -> AsyncIterator[HTTPResponse]:
         sys_prompt_parts, contents = self._message_to_gemini_content(messages)
 
@@ -204,6 +212,10 @@ class GeminiAgentModel(AgentModel):
                 generation_config['temperature'] = temperature
             if (top_p := model_settings.get('top_p')) is not None:
                 generation_config['top_p'] = top_p
+            if (presence_penalty := model_settings.get('presence_penalty')) is not None:
+                generation_config['presence_penalty'] = presence_penalty
+            if (frequency_penalty := model_settings.get('frequency_penalty')) is not None:
+                generation_config['frequency_penalty'] = frequency_penalty
         if generation_config:
             request_data['generation_config'] = generation_config
 
@@ -222,7 +234,7 @@ class GeminiAgentModel(AgentModel):
             url,
             content=request_json,
             headers=headers,
-            timeout=(model_settings or {}).get('timeout', USE_CLIENT_DEFAULT),
+            timeout=model_settings.get('timeout', USE_CLIENT_DEFAULT),
         ) as r:
             if r.status_code != 200:
                 await r.aread()
@@ -398,6 +410,8 @@ class _GeminiGenerationConfig(TypedDict, total=False):
     max_output_tokens: int
     temperature: float
     top_p: float
+    presence_penalty: float
+    frequency_penalty: float
 
 
 class _GeminiContent(TypedDict):
@@ -439,7 +453,7 @@ def _process_response_from_parts(
             items.append(TextPart(content=part['text']))
         elif 'function_call' in part:
             items.append(
-                ToolCallPart.from_raw_args(
+                ToolCallPart(
                     tool_name=part['function_call']['name'],
                     args=part['function_call']['args'],
                 )

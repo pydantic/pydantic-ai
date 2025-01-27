@@ -213,7 +213,7 @@ async def test_request_structured_response(allow_model_requests: None):
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[
-                    ToolCallPart.from_raw_args(
+                    ToolCallPart(
                         tool_name='final_result',
                         args='{"response": [1, 2, 123]}',
                         tool_call_id='123',
@@ -301,7 +301,7 @@ async def test_request_tool_call(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[
-                    ToolCallPart.from_raw_args(
+                    ToolCallPart(
                         tool_name='get_location',
                         args='{"loc_name": "San Fransisco"}',
                         tool_call_id='1',
@@ -322,7 +322,7 @@ async def test_request_tool_call(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[
-                    ToolCallPart.from_raw_args(
+                    ToolCallPart(
                         tool_name='get_location',
                         args='{"loc_name": "London"}',
                         tool_call_id='2',

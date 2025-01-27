@@ -264,7 +264,8 @@ agent = Agent(model)
 Internally this uses [`google.auth.default()`](https://google-auth.readthedocs.io/en/master/reference/google.auth.html) from the `google-auth` package to obtain credentials.
 
 !!! note "Won't fail until `agent.run()`"
-    Because `google.auth.default()` requires network requests and can be slow, it's not run until you call `agent.run()`. Meaning any configuration or permissions error will only be raised when you try to use the model. For this check to be run, call [`await model.ainit()`][pydantic_ai.models.vertexai.VertexAIModel.ainit].
+
+    Because `google.auth.default()` requires network requests and can be slow, it's not run until you call `agent.run()`. Meaning any configuration or permissions error will only be raised when you try to use the model. To initialize the model for this check to be run, call [`await model.ainit()`][pydantic_ai.models.vertexai.VertexAIModel.ainit].
 
 You may also need to pass the [`project_id` argument to `VertexAIModel`][pydantic_ai.models.vertexai.VertexAIModel.__init__] if application default credentials don't set a project, if you pass `project_id` and it conflicts with the project set by application default credentials, an error is raised.
 
@@ -352,7 +353,7 @@ You can then use [`GroqModel`][pydantic_ai.models.groq.GroqModel] by name:
 ```python {title="groq_model_by_name.py"}
 from pydantic_ai import Agent
 
-agent = Agent('groq:llama-3.1-70b-versatile')
+agent = Agent('groq:llama-3.3-70b-versatile')
 ...
 ```
 
@@ -362,7 +363,7 @@ Or initialise the model directly with just the model name:
 from pydantic_ai import Agent
 from pydantic_ai.models.groq import GroqModel
 
-model = GroqModel('llama-3.1-70b-versatile')
+model = GroqModel('llama-3.3-70b-versatile')
 agent = Agent(model)
 ...
 ```
@@ -375,7 +376,7 @@ If you don't want to or can't set the environment variable, you can pass it at r
 from pydantic_ai import Agent
 from pydantic_ai.models.groq import GroqModel
 
-model = GroqModel('llama-3.1-70b-versatile', api_key='your-api-key')
+model = GroqModel('llama-3.3-70b-versatile', api_key='your-api-key')
 agent = Agent(model)
 ...
 ```

@@ -8,7 +8,6 @@ from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, RunContext, UsageLimitExceeded
 from pydantic_ai.messages import (
-    ArgsDict,
     ModelRequest,
     ModelResponse,
     ToolCallPart,
@@ -84,7 +83,7 @@ async def test_streamed_text_limits() -> None:
             [
                 ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
                 ModelResponse(
-                    parts=[ToolCallPart(tool_name='ret_a', args=ArgsDict(args_dict={'x': 'a'}))],
+                    parts=[ToolCallPart(tool_name='ret_a', args={'x': 'a'})],
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
                 ),

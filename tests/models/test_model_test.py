@@ -96,7 +96,7 @@ def test_tool_retry():
         [
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
-                parts=[ToolCallPart.from_raw_args('my_ret', {'x': 0})],
+                parts=[ToolCallPart('my_ret', {'x': 0})],
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -106,7 +106,7 @@ def test_tool_retry():
                 ]
             ),
             ModelResponse(
-                parts=[ToolCallPart.from_raw_args('my_ret', {'x': 0})],
+                parts=[ToolCallPart('my_ret', {'x': 0})],
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -139,6 +139,17 @@ def test_result_tool_retry_error_handled():
         agent.run_sync('Hello', model=TestModel())
 
     assert call_count == 3
+
+
+def test_result_tool_retry_error_handled_with_custom_args(set_event_loop: None):
+    class ResultModel(BaseModel):
+        x: int
+        y: str
+
+    agent = Agent('test', result_type=ResultModel, retries=2)
+
+    with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum retries'):
+        agent.run_sync('Hello', model=TestModel(custom_result_args={'foo': 'a', 'bar': 1}))
 
 
 def test_json_schema_test_data():

@@ -79,13 +79,13 @@ SystemPromptFunc = Union[
 ]
 """A function that may or maybe not take `RunContext` as an argument, and may or may not be async.
 
-Usage `SystemPromptFunc[AgentDeps]`.
+Usage `SystemPromptFunc[AgentDepsT]`.
 """
 
 ToolFuncContext = Callable[Concatenate[RunContext[AgentDepsT], ToolParams], Any]
 """A tool function that takes `RunContext` as the first argument.
 
-Usage `ToolContextFunc[AgentDeps, ToolParams]`.
+Usage `ToolContextFunc[AgentDepsT, ToolParams]`.
 """
 ToolFuncPlain = Callable[ToolParams, Any]
 """A tool function that does not take `RunContext` as the first argument.
@@ -98,7 +98,7 @@ ToolFuncEither = Union[ToolFuncContext[AgentDepsT, ToolParams], ToolFuncPlain[To
 This is just a union of [`ToolFuncContext`][pydantic_ai.tools.ToolFuncContext] and
 [`ToolFuncPlain`][pydantic_ai.tools.ToolFuncPlain].
 
-Usage `ToolFuncEither[AgentDeps, ToolParams]`.
+Usage `ToolFuncEither[AgentDepsT, ToolParams]`.
 """
 ToolPrepareFunc: TypeAlias = 'Callable[[RunContext[AgentDepsT], ToolDefinition], Awaitable[ToolDefinition | None]]'
 """Definition of a function that can prepare a tool definition at call time.
@@ -125,7 +125,7 @@ def hitchhiker(ctx: RunContext[int], answer: str) -> str:
 hitchhiker = Tool(hitchhiker, prepare=only_if_42)
 ```
 
-Usage `ToolPrepareFunc[AgentDeps]`.
+Usage `ToolPrepareFunc[AgentDepsT]`.
 """
 
 DocstringFormat = Literal['google', 'numpy', 'sphinx', 'auto']
@@ -264,10 +264,10 @@ class Tool(Generic[AgentDepsT]):
     ) -> _messages.ModelRequestPart:
         """Run the tool function asynchronously."""
         try:
-            if isinstance(message.args, _messages.ArgsJson):
-                args_dict = self._validator.validate_json(message.args.args_json)
+            if isinstance(message.args, str):
+                args_dict = self._validator.validate_json(message.args)
             else:
-                args_dict = self._validator.validate_python(message.args.args_dict)
+                args_dict = self._validator.validate_python(message.args)
         except ValidationError as e:
             return self._on_error(e, message)
 

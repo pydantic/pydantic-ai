@@ -13,8 +13,6 @@ from pydantic_core import to_json
 
 from pydantic_ai import Agent, ModelRetry, RunContext, UnexpectedModelBehavior, UserError, capture_run_messages
 from pydantic_ai.messages import (
-    ArgsDict,
-    ArgsJson,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -41,7 +39,7 @@ def test_result_tuple():
     def return_tuple(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         assert info.result_tools is not None
         args_json = '{"response": ["foo", "bar"]}'
-        return ModelResponse(parts=[ToolCallPart.from_raw_args(info.result_tools[0].name, args_json)])
+        return ModelResponse(parts=[ToolCallPart(info.result_tools[0].name, args_json)])
 
     agent = Agent(FunctionModel(return_tuple), result_type=tuple[str, str])
 
@@ -58,7 +56,7 @@ def test_result_pydantic_model():
     def return_model(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         assert info.result_tools is not None
         args_json = '{"a": 1, "b": "foo"}'
-        return ModelResponse(parts=[ToolCallPart.from_raw_args(info.result_tools[0].name, args_json)])
+        return ModelResponse(parts=[ToolCallPart(info.result_tools[0].name, args_json)])
 
     agent = Agent(FunctionModel(return_model), result_type=Foo)
 
@@ -74,7 +72,7 @@ def test_result_pydantic_model_retry():
             args_json = '{"a": "wrong", "b": "foo"}'
         else:
             args_json = '{"a": 42, "b": "foo"}'
-        return ModelResponse(parts=[ToolCallPart.from_raw_args(info.result_tools[0].name, args_json)])
+        return ModelResponse(parts=[ToolCallPart(info.result_tools[0].name, args_json)])
 
     agent = Agent(FunctionModel(return_model), result_type=Foo)
 
@@ -88,7 +86,7 @@ def test_result_pydantic_model_retry():
         [
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
-                parts=[ToolCallPart.from_raw_args('final_result', '{"a": "wrong", "b": "foo"}')],
+                parts=[ToolCallPart('final_result', '{"a": "wrong", "b": "foo"}')],
                 model_name='function:return_model',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -109,7 +107,7 @@ def test_result_pydantic_model_retry():
                 ]
             ),
             ModelResponse(
-                parts=[ToolCallPart.from_raw_args('final_result', '{"a": 42, "b": "foo"}')],
+                parts=[ToolCallPart('final_result', '{"a": 42, "b": "foo"}')],
                 model_name='function:return_model',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -132,7 +130,7 @@ def test_result_pydantic_model_validation_error():
             args_json = '{"a": 1, "b": "foo"}'
         else:
             args_json = '{"a": 1, "b": "bar"}'
-        return ModelResponse(parts=[ToolCallPart.from_raw_args(info.result_tools[0].name, args_json)])
+        return ModelResponse(parts=[ToolCallPart(info.result_tools[0].name, args_json)])
 
     class Bar(BaseModel):
         a: int
@@ -186,7 +184,7 @@ def test_result_validator():
             args_json = '{"a": 41, "b": "foo"}'
         else:
             args_json = '{"a": 42, "b": "foo"}'
-        return ModelResponse(parts=[ToolCallPart.from_raw_args(info.result_tools[0].name, args_json)])
+        return ModelResponse(parts=[ToolCallPart(info.result_tools[0].name, args_json)])
 
     agent = Agent(FunctionModel(return_model), result_type=Foo)
 
@@ -205,7 +203,7 @@ def test_result_validator():
         [
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
-                parts=[ToolCallPart.from_raw_args('final_result', '{"a": 41, "b": "foo"}')],
+                parts=[ToolCallPart('final_result', '{"a": 41, "b": "foo"}')],
                 model_name='function:return_model',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -217,7 +215,7 @@ def test_result_validator():
                 ]
             ),
             ModelResponse(
-                parts=[ToolCallPart.from_raw_args('final_result', '{"a": 42, "b": "foo"}')],
+                parts=[ToolCallPart('final_result', '{"a": 42, "b": "foo"}')],
                 model_name='function:return_model',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -244,7 +242,7 @@ def test_plain_response_then_tuple():
             return ModelResponse(parts=[TextPart('hello')])
         else:
             args_json = '{"response": ["foo", "bar"]}'
-            return ModelResponse(parts=[ToolCallPart.from_raw_args(info.result_tools[0].name, args_json)])
+            return ModelResponse(parts=[ToolCallPart(info.result_tools[0].name, args_json)])
 
     agent = Agent(FunctionModel(return_tuple), result_type=tuple[str, str])
 
@@ -268,7 +266,7 @@ def test_plain_response_then_tuple():
                 ]
             ),
             ModelResponse(
-                parts=[ToolCallPart.from_raw_args(tool_name='final_result', args='{"response": ["foo", "bar"]}')],
+                parts=[ToolCallPart(tool_name='final_result', args='{"response": ["foo", "bar"]}')],
                 model_name='function:return_tuple',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -519,7 +517,7 @@ def test_run_with_history_new():
                 ]
             ),
             ModelResponse(
-                parts=[ToolCallPart.from_raw_args(tool_name='ret_a', args={'x': 'a'})],
+                parts=[ToolCallPart(tool_name='ret_a', args={'x': 'a'})],
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -544,7 +542,7 @@ def test_run_with_history_new():
                     ]
                 ),
                 ModelResponse(
-                    parts=[ToolCallPart(tool_name='ret_a', args=ArgsDict(args_dict={'x': 'a'}))],
+                    parts=[ToolCallPart(tool_name='ret_a', args={'x': 'a'})],
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
@@ -592,7 +590,7 @@ def test_run_with_history_new():
                     ]
                 ),
                 ModelResponse(
-                    parts=[ToolCallPart(tool_name='ret_a', args=ArgsDict(args_dict={'x': 'a'}))],
+                    parts=[ToolCallPart(tool_name='ret_a', args={'x': 'a'})],
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
@@ -637,7 +635,7 @@ def test_run_with_history_new_structured():
                 ]
             ),
             ModelResponse(
-                parts=[ToolCallPart(tool_name='ret_a', args=ArgsDict(args_dict={'x': 'a'}))],
+                parts=[ToolCallPart(tool_name='ret_a', args={'x': 'a'})],
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -648,7 +646,7 @@ def test_run_with_history_new_structured():
                 parts=[
                     ToolCallPart(
                         tool_name='final_result',
-                        args=ArgsDict(args_dict={'a': 0}),
+                        args={'a': 0},
                         tool_call_id=None,
                     )
                 ],
@@ -677,7 +675,7 @@ def test_run_with_history_new_structured():
                     ],
                 ),
                 ModelResponse(
-                    parts=[ToolCallPart(tool_name='ret_a', args=ArgsDict(args_dict={'x': 'a'}))],
+                    parts=[ToolCallPart(tool_name='ret_a', args={'x': 'a'})],
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
@@ -685,7 +683,7 @@ def test_run_with_history_new_structured():
                     parts=[ToolReturnPart(tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc))],
                 ),
                 ModelResponse(
-                    parts=[ToolCallPart(tool_name='final_result', args=ArgsDict(args_dict={'a': 0}))],
+                    parts=[ToolCallPart(tool_name='final_result', args={'a': 0})],
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
@@ -705,7 +703,7 @@ def test_run_with_history_new_structured():
                     ],
                 ),
                 ModelResponse(
-                    parts=[ToolCallPart(tool_name='final_result', args=ArgsDict(args_dict={'a': 0}))],
+                    parts=[ToolCallPart(tool_name='final_result', args={'a': 0})],
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
@@ -752,7 +750,7 @@ def test_empty_tool_calls():
 
 def test_unknown_tool():
     def empty(_: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
-        return ModelResponse(parts=[ToolCallPart.from_raw_args('foobar', '{}')])
+        return ModelResponse(parts=[ToolCallPart('foobar', '{}')])
 
     agent = Agent(FunctionModel(empty))
 
@@ -763,7 +761,7 @@ def test_unknown_tool():
         [
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
-                parts=[ToolCallPart(tool_name='foobar', args=ArgsJson(args_json='{}'))],
+                parts=[ToolCallPart(tool_name='foobar', args='{}')],
                 model_name='function:empty',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -775,7 +773,7 @@ def test_unknown_tool():
                 ]
             ),
             ModelResponse(
-                parts=[ToolCallPart(tool_name='foobar', args=ArgsJson(args_json='{}'))],
+                parts=[ToolCallPart(tool_name='foobar', args='{}')],
                 model_name='function:empty',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -788,7 +786,7 @@ def test_unknown_tool_fix():
         if len(m) > 1:
             return ModelResponse(parts=[TextPart('success')])
         else:
-            return ModelResponse(parts=[ToolCallPart.from_raw_args('foobar', '{}')])
+            return ModelResponse(parts=[ToolCallPart('foobar', '{}')])
 
     agent = Agent(FunctionModel(empty))
 
@@ -798,7 +796,7 @@ def test_unknown_tool_fix():
         [
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
-                parts=[ToolCallPart(tool_name='foobar', args=ArgsJson(args_json='{}'))],
+                parts=[ToolCallPart(tool_name='foobar', args='{}')],
                 model_name='function:empty',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -933,9 +931,9 @@ class TestMultipleToolCalls:
             assert info.result_tools is not None
             return ModelResponse(
                 parts=[
-                    ToolCallPart.from_raw_args('final_result', {'value': 'final'}),
-                    ToolCallPart.from_raw_args('regular_tool', {'x': 1}),
-                    ToolCallPart.from_raw_args('another_tool', {'y': 2}),
+                    ToolCallPart('final_result', {'value': 'final'}),
+                    ToolCallPart('regular_tool', {'x': 1}),
+                    ToolCallPart('another_tool', {'y': 2}),
                 ]
             )
 
@@ -985,8 +983,8 @@ class TestMultipleToolCalls:
             assert info.result_tools is not None
             return ModelResponse(
                 parts=[
-                    ToolCallPart.from_raw_args('final_result', {'value': 'first'}),
-                    ToolCallPart.from_raw_args('final_result', {'value': 'second'}),
+                    ToolCallPart('final_result', {'value': 'first'}),
+                    ToolCallPart('final_result', {'value': 'second'}),
                 ]
             )
 
@@ -1018,11 +1016,11 @@ class TestMultipleToolCalls:
             assert info.result_tools is not None
             return ModelResponse(
                 parts=[
-                    ToolCallPart.from_raw_args('regular_tool', {'x': 42}),
-                    ToolCallPart.from_raw_args('final_result', {'value': 'first'}),
-                    ToolCallPart.from_raw_args('another_tool', {'y': 2}),
-                    ToolCallPart.from_raw_args('final_result', {'value': 'second'}),
-                    ToolCallPart.from_raw_args('unknown_tool', {'value': '???'}),
+                    ToolCallPart('regular_tool', {'x': 42}),
+                    ToolCallPart('final_result', {'value': 'first'}),
+                    ToolCallPart('another_tool', {'y': 2}),
+                    ToolCallPart('final_result', {'value': 'second'}),
+                    ToolCallPart('unknown_tool', {'value': '???'}),
                 ]
             )
 
@@ -1056,11 +1054,11 @@ class TestMultipleToolCalls:
                 ),
                 ModelResponse(
                     parts=[
-                        ToolCallPart.from_raw_args(tool_name='regular_tool', args={'x': 42}),
-                        ToolCallPart.from_raw_args(tool_name='final_result', args={'value': 'first'}),
-                        ToolCallPart.from_raw_args(tool_name='another_tool', args={'y': 2}),
-                        ToolCallPart.from_raw_args(tool_name='final_result', args={'value': 'second'}),
-                        ToolCallPart.from_raw_args(tool_name='unknown_tool', args={'value': '???'}),
+                        ToolCallPart(tool_name='regular_tool', args={'x': 42}),
+                        ToolCallPart(tool_name='final_result', args={'value': 'first'}),
+                        ToolCallPart(tool_name='another_tool', args={'y': 2}),
+                        ToolCallPart(tool_name='final_result', args={'value': 'second'}),
+                        ToolCallPart(tool_name='unknown_tool', args={'value': '???'}),
                     ],
                     model_name='function:return_model',
                     timestamp=IsNow(tz=timezone.utc),
@@ -1096,10 +1094,10 @@ class TestMultipleToolCalls:
             assert info.result_tools is not None
             return ModelResponse(
                 parts=[
-                    ToolCallPart.from_raw_args('regular_tool', {'x': 1}),
-                    ToolCallPart.from_raw_args('final_result', {'value': 'final'}),
-                    ToolCallPart.from_raw_args('another_tool', {'y': 2}),
-                    ToolCallPart.from_raw_args('unknown_tool', {'value': '???'}),
+                    ToolCallPart('regular_tool', {'x': 1}),
+                    ToolCallPart('final_result', {'value': 'final'}),
+                    ToolCallPart('another_tool', {'y': 2}),
+                    ToolCallPart('unknown_tool', {'value': '???'}),
                 ]
             )
 
@@ -1134,10 +1132,10 @@ class TestMultipleToolCalls:
                 ),
                 ModelResponse(
                     parts=[
-                        ToolCallPart.from_raw_args(tool_name='regular_tool', args={'x': 1}),
-                        ToolCallPart.from_raw_args(tool_name='final_result', args={'value': 'final'}),
-                        ToolCallPart.from_raw_args(tool_name='another_tool', args={'y': 2}),
-                        ToolCallPart.from_raw_args(tool_name='unknown_tool', args={'value': '???'}),
+                        ToolCallPart(tool_name='regular_tool', args={'x': 1}),
+                        ToolCallPart(tool_name='final_result', args={'value': 'final'}),
+                        ToolCallPart(tool_name='another_tool', args={'y': 2}),
+                        ToolCallPart(tool_name='unknown_tool', args={'value': '???'}),
                     ],
                     model_name='function:return_model',
                     timestamp=IsNow(tz=timezone.utc),
@@ -1203,7 +1201,7 @@ async def test_empty_text_part():
     def return_empty_text(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         assert info.result_tools is not None
         args_json = '{"response": ["foo", "bar"]}'
-        return ModelResponse(parts=[TextPart(''), ToolCallPart.from_raw_args(info.result_tools[0].name, args_json)])
+        return ModelResponse(parts=[TextPart(''), ToolCallPart(info.result_tools[0].name, args_json)])
 
     agent = Agent(FunctionModel(return_empty_text), result_type=tuple[str, str])
 
@@ -1220,7 +1218,7 @@ def test_heterogeneous_responses_non_streaming() -> None:
         if len(messages) == 1:
             parts = [
                 TextPart(content='foo'),
-                ToolCallPart.from_raw_args('get_location', {'loc_name': 'London'}),
+                ToolCallPart('get_location', {'loc_name': 'London'}),
             ]
         else:
             parts = [TextPart(content='final response')]
@@ -1249,7 +1247,7 @@ def test_heterogeneous_responses_non_streaming() -> None:
                     TextPart(content='foo'),
                     ToolCallPart(
                         tool_name='get_location',
-                        args=ArgsDict(args_dict={'loc_name': 'London'}),
+                        args={'loc_name': 'London'},
                     ),
                 ],
                 model_name='function:return_model',
@@ -1485,7 +1483,7 @@ def test_capture_run_messages_tool_agent() -> None:
         [
             ModelRequest(parts=[UserPromptPart(content='foobar', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
-                parts=[ToolCallPart(tool_name='foobar', args=ArgsDict(args_dict={'x': 'a'}))],
+                parts=[ToolCallPart(tool_name='foobar', args={'x': 'a'})],
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
             ),

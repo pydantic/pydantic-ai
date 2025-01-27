@@ -13,7 +13,6 @@ from typing_extensions import assert_never
 from .. import UnexpectedModelBehavior, _utils, usage
 from .._utils import guard_tool_call_id as _guard_tool_call_id
 from ..messages import (
-    ArgsDict,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -41,6 +40,7 @@ try:
     from anthropic.types import (
         Message as AnthropicMessage,
         MessageParam,
+        MetadataParam,
         RawContentBlockDeltaEvent,
         RawContentBlockStartEvent,
         RawContentBlockStopEvent,
@@ -77,6 +77,15 @@ Since Anthropic supports a variety of date-stamped models, we explicitly list th
 allow any name in the type hints.
 Since [the Anthropic docs](https://docs.anthropic.com/en/docs/about-claude/models) for a full list.
 """
+
+
+class AnthropicModelSettings(ModelSettings):
+    """Settings used for an Anthropic model request."""
+
+    anthropic_metadata: MetadataParam
+    """An object describing metadata about the request.
+
+    Contains `user_id`, an external identifier for the user who is associated with the request."""
 
 
 @dataclass(init=False)
@@ -167,35 +176,33 @@ class AnthropicAgentModel(AgentModel):
     async def request(
         self, messages: list[ModelMessage], model_settings: ModelSettings | None
     ) -> tuple[ModelResponse, usage.Usage]:
-        response = await self._messages_create(messages, False, model_settings)
+        response = await self._messages_create(messages, False, cast(AnthropicModelSettings, model_settings or {}))
         return self._process_response(response), _map_usage(response)
 
     @asynccontextmanager
     async def request_stream(
         self, messages: list[ModelMessage], model_settings: ModelSettings | None
     ) -> AsyncIterator[StreamedResponse]:
-        response = await self._messages_create(messages, True, model_settings)
+        response = await self._messages_create(messages, True, cast(AnthropicModelSettings, model_settings or {}))
         async with response:
             yield await self._process_streamed_response(response)
 
     @overload
     async def _messages_create(
-        self, messages: list[ModelMessage], stream: Literal[True], model_settings: ModelSettings | None
+        self, messages: list[ModelMessage], stream: Literal[True], model_settings: AnthropicModelSettings
     ) -> AsyncStream[RawMessageStreamEvent]:
         pass
 
     @overload
     async def _messages_create(
-        self, messages: list[ModelMessage], stream: Literal[False], model_settings: ModelSettings | None
+        self, messages: list[ModelMessage], stream: Literal[False], model_settings: AnthropicModelSettings
     ) -> AnthropicMessage:
         pass
 
     async def _messages_create(
-        self, messages: list[ModelMessage], stream: bool, model_settings: ModelSettings | None
+        self, messages: list[ModelMessage], stream: bool, model_settings: AnthropicModelSettings
     ) -> AnthropicMessage | AsyncStream[RawMessageStreamEvent]:
         # standalone function to make it easier to override
-        model_settings = model_settings or {}
-
         tool_choice: ToolChoiceParam | None
 
         if not self.tools:
@@ -222,6 +229,7 @@ class AnthropicAgentModel(AgentModel):
             temperature=model_settings.get('temperature', NOT_GIVEN),
             top_p=model_settings.get('top_p', NOT_GIVEN),
             timeout=model_settings.get('timeout', NOT_GIVEN),
+            metadata=model_settings.get('anthropic_metadata', NOT_GIVEN),
         )
 
     def _process_response(self, response: AnthropicMessage) -> ModelResponse:
@@ -233,7 +241,7 @@ class AnthropicAgentModel(AgentModel):
             else:
                 assert isinstance(item, ToolUseBlock), 'unexpected item type'
                 items.append(
-                    ToolCallPart.from_raw_args(
+                    ToolCallPart(
                         tool_name=item.name,
                         args=cast(dict[str, Any], item.input),
                         tool_call_id=item.id,
@@ -310,7 +318,6 @@ class AnthropicAgentModel(AgentModel):
 
 
 def _map_tool_call(t: ToolCallPart) -> ToolUseBlockParam:
-    assert isinstance(t.args, ArgsDict), f'Expected ArgsDict, got {t.args}'
     return ToolUseBlockParam(
         id=_guard_tool_call_id(t=t, model_source='Anthropic'),
         type='tool_use',

@@ -18,7 +18,6 @@ from pytest_mock import MockerFixture
 
 from pydantic_ai._utils import group_by_temporal
 from pydantic_ai.messages import (
-    ArgsDict,
     ModelMessage,
     ModelResponse,
     RetryPromptPart,
@@ -187,87 +186,83 @@ text_responses: dict[str, str | ToolCallPart] = {
     'Who was Albert Einstein?': 'Albert Einstein was a German-born theoretical physicist.',
     'What was his most famous equation?': "Albert Einstein's most famous equation is (E = mc^2).",
     'What is the date?': 'Hello Frank, the date today is 2032-01-02.',
-    'Put my money on square eighteen': ToolCallPart(tool_name='roulette_wheel', args=ArgsDict({'square': 18})),
-    'I bet five is the winner': ToolCallPart(tool_name='roulette_wheel', args=ArgsDict({'square': 5})),
-    'My guess is 4': ToolCallPart(tool_name='roll_die', args=ArgsDict({})),
+    'Put my money on square eighteen': ToolCallPart(tool_name='roulette_wheel', args={'square': 18}),
+    'I bet five is the winner': ToolCallPart(tool_name='roulette_wheel', args={'square': 5}),
+    'My guess is 4': ToolCallPart(tool_name='roll_die', args={}),
     'Send a message to John Doe asking for coffee next week': ToolCallPart(
-        tool_name='get_user_by_name', args=ArgsDict({'name': 'John'})
+        tool_name='get_user_by_name', args={'name': 'John'}
     ),
-    'Please get me the volume of a box with size 6.': ToolCallPart(tool_name='calc_volume', args=ArgsDict({'size': 6})),
+    'Please get me the volume of a box with size 6.': ToolCallPart(tool_name='calc_volume', args={'size': 6}),
     'Where does "hello world" come from?': (
         'The first known use of "hello, world" was in a 1974 textbook about the C programming language.'
     ),
-    'What is my balance?': ToolCallPart(tool_name='customer_balance', args=ArgsDict({'include_pending': True})),
+    'What is my balance?': ToolCallPart(tool_name='customer_balance', args={'include_pending': True}),
     'I just lost my card!': ToolCallPart(
         tool_name='final_result',
-        args=ArgsDict(
-            {
-                'support_advice': (
-                    "I'm sorry to hear that, John. "
-                    'We are temporarily blocking your card to prevent unauthorized transactions.'
-                ),
-                'block_card': True,
-                'risk': 8,
-            }
-        ),
+        args={
+            'support_advice': (
+                "I'm sorry to hear that, John. "
+                'We are temporarily blocking your card to prevent unauthorized transactions.'
+            ),
+            'block_card': True,
+            'risk': 8,
+        },
     ),
     'Where were the olympics held in 2012?': ToolCallPart(
         tool_name='final_result',
-        args=ArgsDict({'city': 'London', 'country': 'United Kingdom'}),
+        args={'city': 'London', 'country': 'United Kingdom'},
     ),
     'The box is 10x20x30': 'Please provide the units for the dimensions (e.g., cm, in, m).',
     'The box is 10x20x30 cm': ToolCallPart(
         tool_name='final_result',
-        args=ArgsDict({'width': 10, 'height': 20, 'depth': 30, 'units': 'cm'}),
+        args={'width': 10, 'height': 20, 'depth': 30, 'units': 'cm'},
     ),
     'red square, blue circle, green triangle': ToolCallPart(
         tool_name='final_result_list',
-        args=ArgsDict({'response': ['red', 'blue', 'green']}),
+        args={'response': ['red', 'blue', 'green']},
     ),
     'square size 10, circle size 20, triangle size 30': ToolCallPart(
         tool_name='final_result_list_2',
-        args=ArgsDict({'response': [10, 20, 30]}),
+        args={'response': [10, 20, 30]},
     ),
     'get me uses who were last active yesterday.': ToolCallPart(
         tool_name='final_result_Success',
-        args=ArgsDict({'sql_query': 'SELECT * FROM users WHERE last_active::date = today() - interval 1 day'}),
+        args={'sql_query': 'SELECT * FROM users WHERE last_active::date = today() - interval 1 day'},
     ),
     'My name is Ben, I was born on January 28th 1990, I like the chain the dog and the pyramid.': ToolCallPart(
         tool_name='final_result',
-        args=ArgsDict(
-            {
-                'name': 'Ben',
-                'dob': '1990-01-28',
-                'bio': 'Likes the chain the dog and the pyramid',
-            }
-        ),
+        args={
+            'name': 'Ben',
+            'dob': '1990-01-28',
+            'bio': 'Likes the chain the dog and the pyramid',
+        },
     ),
     'What is the capital of Italy? Answer with just the city.': 'Rome',
     'What is the capital of Italy? Answer with a paragraph.': (
         'The capital of Italy is Rome (Roma, in Italian), which has been a cultural and political center for centuries.'
         'Rome is known for its rich history, stunning architecture, and delicious cuisine.'
     ),
-    'Begin infinite retry loop!': ToolCallPart(tool_name='infinite_retry_tool', args=ArgsDict({})),
+    'Begin infinite retry loop!': ToolCallPart(tool_name='infinite_retry_tool', args={}),
     'Please generate 5 jokes.': ToolCallPart(
         tool_name='final_result',
-        args=ArgsDict({'response': []}),
+        args={'response': []},
     ),
     'SFO to ANC': ToolCallPart(
         tool_name='flight_search',
-        args=ArgsDict({'origin': 'SFO', 'destination': 'ANC'}),
+        args={'origin': 'SFO', 'destination': 'ANC'},
     ),
     'window seat with leg room': ToolCallPart(
         tool_name='final_result_SeatPreference',
-        args=ArgsDict({'row': 1, 'seat': 'A'}),
+        args={'row': 1, 'seat': 'A'},
     ),
     'Ask a simple question with a single correct answer.': 'What is the capital of France?',
     '<examples>\n  <question>What is the capital of France?</question>\n  <answer>Vichy</answer>\n</examples>': ToolCallPart(
         tool_name='final_result',
-        args=ArgsDict({'correct': False, 'comment': 'Vichy is no longer the capital of France.'}),
+        args={'correct': False, 'comment': 'Vichy is no longer the capital of France.'},
     ),
     '<examples>\n  <question>what is 1 + 1?</question>\n  <answer>2</answer>\n</examples>': ToolCallPart(
         tool_name='final_result',
-        args=ArgsDict({'correct': True, 'comment': 'Well done, 1 + 1 = 2'}),
+        args={'correct': True, 'comment': 'Well done, 1 + 1 = 2'},
     ),
 }
 
@@ -276,9 +271,9 @@ async def model_logic(messages: list[ModelMessage], info: AgentInfo) -> ModelRes
     m = messages[-1].parts[-1]
     if isinstance(m, UserPromptPart):
         if m.content == 'Tell me a joke.' and any(t.name == 'joke_factory' for t in info.function_tools):
-            return ModelResponse(parts=[ToolCallPart(tool_name='joke_factory', args=ArgsDict({'count': 5}))])
+            return ModelResponse(parts=[ToolCallPart(tool_name='joke_factory', args={'count': 5})])
         elif m.content == 'Please generate 5 jokes.' and any(t.name == 'get_jokes' for t in info.function_tools):
-            return ModelResponse(parts=[ToolCallPart(tool_name='get_jokes', args=ArgsDict({'count': 5}))])
+            return ModelResponse(parts=[ToolCallPart(tool_name='get_jokes', args={'count': 5})])
         elif re.fullmatch(r'sql prompt \d+', m.content):
             return ModelResponse(parts=[TextPart('SELECT 1')])
         elif m.content.startswith('Write a welcome email for the user:'):
@@ -286,17 +281,15 @@ async def model_logic(messages: list[ModelMessage], info: AgentInfo) -> ModelRes
                 parts=[
                     ToolCallPart(
                         tool_name='final_result',
-                        args=ArgsDict(
-                            {
-                                'subject': 'Welcome to our tech blog!',
-                                'body': 'Hello John, Welcome to our tech blog! ...',
-                            }
-                        ),
+                        args={
+                            'subject': 'Welcome to our tech blog!',
+                            'body': 'Hello John, Welcome to our tech blog! ...',
+                        },
                     )
                 ]
             )
         elif m.content.startswith('<examples>\n  <user>'):
-            return ModelResponse(parts=[ToolCallPart(tool_name='final_result_EmailOk', args=ArgsDict({}))])
+            return ModelResponse(parts=[ToolCallPart(tool_name='final_result_EmailOk', args={})])
         elif m.content == 'Ask a simple question with a single correct answer.' and len(messages) > 2:
             return ModelResponse(parts=[TextPart('what is 1 + 1?')])
         elif response := text_responses.get(m.content):
@@ -307,9 +300,9 @@ async def model_logic(messages: list[ModelMessage], info: AgentInfo) -> ModelRes
 
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'roulette_wheel':
         win = m.content == 'winner'
-        return ModelResponse(parts=[ToolCallPart(tool_name='final_result', args=ArgsDict({'response': win}))])
+        return ModelResponse(parts=[ToolCallPart(tool_name='final_result', args={'response': win})])
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'roll_die':
-        return ModelResponse(parts=[ToolCallPart(tool_name='get_player_name', args=ArgsDict({}))])
+        return ModelResponse(parts=[ToolCallPart(tool_name='get_player_name', args={})])
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_player_name':
         return ModelResponse(parts=[TextPart("Congratulations Anne, you guessed correctly! You're a winner!")])
     if (
@@ -317,32 +310,32 @@ async def model_logic(messages: list[ModelMessage], info: AgentInfo) -> ModelRes
         and isinstance(m.content, str)
         and m.content.startswith("No user found with name 'Joh")
     ):
-        return ModelResponse(parts=[ToolCallPart(tool_name='get_user_by_name', args=ArgsDict({'name': 'John Doe'}))])
+        return ModelResponse(parts=[ToolCallPart(tool_name='get_user_by_name', args={'name': 'John Doe'})])
     elif isinstance(m, RetryPromptPart) and m.tool_name == 'infinite_retry_tool':
-        return ModelResponse(parts=[ToolCallPart(tool_name='infinite_retry_tool', args=ArgsDict({}))])
+        return ModelResponse(parts=[ToolCallPart(tool_name='infinite_retry_tool', args={})])
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_user_by_name':
         args: dict[str, Any] = {
             'message': 'Hello John, would you be free for coffee sometime next week? Let me know what works for you!',
             'user_id': 123,
         }
-        return ModelResponse(parts=[ToolCallPart(tool_name='final_result', args=ArgsDict(args))])
+        return ModelResponse(parts=[ToolCallPart(tool_name='final_result', args=args)])
     elif isinstance(m, RetryPromptPart) and m.tool_name == 'calc_volume':
-        return ModelResponse(parts=[ToolCallPart(tool_name='calc_volume', args=ArgsDict({'size': 6}))])
+        return ModelResponse(parts=[ToolCallPart(tool_name='calc_volume', args={'size': 6})])
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'customer_balance':
         args = {
             'support_advice': 'Hello John, your current account balance, including pending transactions, is $123.45.',
             'block_card': False,
             'risk': 1,
         }
-        return ModelResponse(parts=[ToolCallPart(tool_name='final_result', args=ArgsDict(args))])
+        return ModelResponse(parts=[ToolCallPart(tool_name='final_result', args=args)])
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'joke_factory':
         return ModelResponse(parts=[TextPart('Did you hear about the toothpaste scandal? They called it Colgate.')])
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_jokes':
         args = {'response': []}
-        return ModelResponse(parts=[ToolCallPart(tool_name='final_result', args=ArgsDict(args))])
+        return ModelResponse(parts=[ToolCallPart(tool_name='final_result', args=args)])
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'flight_search':
         args = {'flight_number': m.content.flight_number}  # type: ignore
-        return ModelResponse(parts=[ToolCallPart(tool_name='final_result_FlightDetails', args=ArgsDict(args))])
+        return ModelResponse(parts=[ToolCallPart(tool_name='final_result_FlightDetails', args=args)])
     else:
         sys.stdout.write(str(debug.format(messages, info)))
         raise RuntimeError(f'Unexpected message: {m}')
