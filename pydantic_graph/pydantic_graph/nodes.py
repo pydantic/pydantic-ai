@@ -33,8 +33,8 @@ class GraphRunContext(Generic[StateT, DepsT]):
     """The state of the graph."""
     deps: DepsT
     """Dependencies for the graph."""
-    node_span: LogfireSpan
-    """Span corresponding to the current node's execution"""
+    node_span: LogfireSpan | None
+    """Span corresponding to the current node's execution. `None` if auto instrumentation is disabled for the graph."""
 
 
 class BaseNode(ABC, Generic[StateT, DepsT, NodeRunEndT]):
