@@ -1602,8 +1602,6 @@ def _build_streamed_run_result(
 async def _process_function_tools(
     tool_calls: list[_messages.ToolCallPart],
     result_tool_name: str | None,
-    # run_context: RunContext[AgentDepsT],
-    # result_schema: _result.ResultSchema[RunResultDataT] | None,
     ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
 ) -> list[_messages.ModelRequestPart]:
     """Process function (non-result) tool calls in parallel.
