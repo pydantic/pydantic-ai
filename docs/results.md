@@ -149,7 +149,7 @@ async def validate_result(ctx: RunContext[DatabaseConn], result: Response) -> Re
 
 
 result = agent.run_sync(
-    'get me uses who were last active yesterday.', deps=DatabaseConn()
+    'get me users who were last active yesterday.', deps=DatabaseConn()
 )
 print(result.data)
 #> sql_query='SELECT * FROM users WHERE last_active::date = today() - interval 1 day'

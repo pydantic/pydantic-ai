@@ -225,7 +225,7 @@ text_responses: dict[str, str | ToolCallPart] = {
         tool_name='final_result_list_2',
         args={'response': [10, 20, 30]},
     ),
-    'get me uses who were last active yesterday.': ToolCallPart(
+    'get me users who were last active yesterday.': ToolCallPart(
         tool_name='final_result_Success',
         args={'sql_query': 'SELECT * FROM users WHERE last_active::date = today() - interval 1 day'},
     ),
