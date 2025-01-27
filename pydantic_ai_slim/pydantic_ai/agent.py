@@ -6,13 +6,14 @@ import inspect
 from collections.abc import AsyncIterator, Awaitable, Iterator, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
 from contextvars import ContextVar
+from dataclasses import field
 from types import FrameType
 from typing import Any, Callable, Generic, Literal, Union, cast, final, overload
 
 import logfire_api
 from typing_extensions import TypeVar, assert_never, deprecated
 
-from pydantic_graph import BaseNode, Graph, GraphRunContext
+from pydantic_graph import BaseNode, Graph, GraphRunContext, HistoryStep
 from pydantic_graph.nodes import End, NodeRunEndT
 
 from . import (
@@ -392,9 +393,23 @@ class ModelRequestNode(BaseModelRequestNode[DepsT, NodeRunEndT]):
 class StreamModelRequestNode(BaseModelRequestNode[DepsT, NodeRunEndT]):
     """Make a request to the model using the last message in state.message_history (or a specified request)."""
 
+    _result: StreamModelRequestNode[DepsT, NodeRunEndT] | End[result.StreamedRunResult[DepsT, NodeRunEndT]] | None = (
+        field(repr=False, default=None)
+    )
+
     async def run(
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
     ) -> Union[StreamModelRequestNode[DepsT, NodeRunEndT], End[result.StreamedRunResult[DepsT, NodeRunEndT]]]:  # noqa UP007
+        if self._result is not None:
+            return self._result
+
+        async with self.run_to_result(ctx) as final_node:
+            return final_node
+
+    @asynccontextmanager
+    async def run_to_result(
+        self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
+    ) -> AsyncIterator[StreamModelRequestNode[DepsT, NodeRunEndT] | End[result.StreamedRunResult[DepsT, NodeRunEndT]]]:
         result_schema = ctx.deps.result_schema
 
         ctx.state.message_history.append(self.request)
@@ -433,7 +448,9 @@ class StreamModelRequestNode(BaseModelRequestNode[DepsT, NodeRunEndT]):
                                 if _allow_text_result(result_schema):
                                     handle_span.message = 'handle model response -> final result'
                                     streamed_run_result = _build_streamed_run_result(streamed_response, None, ctx)
-                                    return End(streamed_run_result)
+                                    self._result = End(streamed_run_result)
+                                    yield self._result
+                                    return
                             elif isinstance(new_part, _messages.ToolCallPart):
                                 if result_schema is not None and (match := result_schema.find_tool([new_part])):
                                     call, _ = match
@@ -441,7 +458,9 @@ class StreamModelRequestNode(BaseModelRequestNode[DepsT, NodeRunEndT]):
                                     streamed_run_result = _build_streamed_run_result(
                                         streamed_response, call.tool_name, ctx
                                     )
-                                    return End(streamed_run_result)
+                                    self._result = End(streamed_run_result)
+                                    yield self._result
+                                    return
                             else:
                                 assert_never(new_part)
 
@@ -463,7 +482,7 @@ class StreamModelRequestNode(BaseModelRequestNode[DepsT, NodeRunEndT]):
                     if received_text and not tasks and not parts:
                         # Can only get here if self._allow_text_result returns `False` for the provided result_schema
                         ctx.state.increment_retries(ctx.deps.max_result_retries)
-                        return StreamModelRequestNode[DepsT, NodeRunEndT](
+                        self._result = StreamModelRequestNode[DepsT, NodeRunEndT](
                             ModelRequest(
                                 parts=[
                                     _messages.RetryPromptPart(
@@ -472,6 +491,8 @@ class StreamModelRequestNode(BaseModelRequestNode[DepsT, NodeRunEndT]):
                                 ]
                             )
                         )
+                        yield self._result
+                        return
 
                     with _logfire.span('running {tools=}', tools=[t.get_name() for t in tasks]):
                         task_results: Sequence[_messages.ModelRequestPart] = await asyncio.gather(*tasks)
@@ -493,7 +514,9 @@ class StreamModelRequestNode(BaseModelRequestNode[DepsT, NodeRunEndT]):
                     streamed_response_usage = streamed_response.usage()
                     run_context.usage.incr(streamed_response_usage)
                     ctx.deps.usage_limits.check_tokens(run_context.usage)
-                    return StreamModelRequestNode[DepsT, NodeRunEndT](next_request)
+                    self._result = StreamModelRequestNode[DepsT, NodeRunEndT](next_request)
+                    yield self._result
+                    return
 
 
 @dataclasses.dataclass
@@ -1050,14 +1073,25 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
             )
 
             # Actually run
-            end_result, _history = await g.run(
-                start_node,
-                state=s,
-                deps=d,
-                infer_name=False,
-            )
-            # run_span.set_attribute('history', history)
-            yield end_result
+            node = start_node
+            history: list[HistoryStep[GraphAgentState, RunResultDataT]] = []
+            while True:
+                if isinstance(node, StreamModelRequestNode):
+                    node = cast(
+                        StreamModelRequestNode[AgentDepsT, result.StreamedRunResult[AgentDepsT, RunResultDataT]], node
+                    )
+                    async with node.run_to_result(GraphRunContext(s, d)) as r:
+                        if isinstance(r, End):
+                            yield r.data
+                            break
+                assert not isinstance(node, End)  # the previous line should be hit first
+                node = await g.next(
+                    node,
+                    history,
+                    state=s,
+                    deps=d,
+                    infer_name=False,
+                )
 
     @contextmanager
     def override(
