@@ -7,7 +7,7 @@ from collections.abc import AsyncIterator, Awaitable, Iterator, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from types import FrameType
-from typing import Any, Callable, Generic, Literal, cast, final, overload
+from typing import Any, Callable, Generic, Literal, Union, cast, final, overload
 
 import logfire_api
 from typing_extensions import TypeVar, assert_never, deprecated
@@ -257,7 +257,7 @@ class ModelRequestNode(BaseModelRequestNode[DepsT, NodeRunEndT]):
 
     async def run(
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
-    ) -> ModelRequestNode[DepsT, NodeRunEndT] | FinalResultNode[DepsT, NodeRunEndT]:
+    ) -> Union[ModelRequestNode[DepsT, NodeRunEndT], FinalResultNode[DepsT, NodeRunEndT]]:  # noqa UP007
         ctx.state.message_history.append(self.request)
 
         # Check usage
@@ -394,7 +394,7 @@ class StreamModelRequestNode(BaseModelRequestNode[DepsT, NodeRunEndT]):
 
     async def run(
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
-    ) -> StreamModelRequestNode[DepsT, NodeRunEndT] | End[result.StreamedRunResult[DepsT, NodeRunEndT]]:
+    ) -> Union[StreamModelRequestNode[DepsT, NodeRunEndT], End[result.StreamedRunResult[DepsT, NodeRunEndT]]]:  # noqa UP007
         result_schema = ctx.deps.result_schema
 
         ctx.state.message_history.append(self.request)
