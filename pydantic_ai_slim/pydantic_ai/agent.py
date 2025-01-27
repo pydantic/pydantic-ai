@@ -93,8 +93,6 @@ class GraphAgentState:
     retries: int
     run_step: int
 
-    # TODO: Add tool retry tracking here, use that to make concurrent runs not run into tool retry count issues
-
     def increment_retries(self, max_result_retries: int) -> None:
         self.retries += 1
         if self.retries > max_result_retries:
@@ -117,21 +115,19 @@ class GraphAgentDeps(Generic[DepsT, ResultDataT]):
     """The original user prompt passed to the run."""
     new_message_index: int
 
-    function_tools: dict[str, Tool[DepsT]] = dataclasses.field(repr=False)
-    result_tools: list[ToolDefinition]
-
-    # TODO: Should this be moved to graph run context somehow?
-    run_span: logfire_api.LogfireSpan
-
-    result_schema: _result.ResultSchema[ResultDataT] | None
-    result_validators: list[_result.ResultValidator[DepsT, ResultDataT]]
-
     model: models.Model
     model_settings: ModelSettings | None
     usage_limits: _usage.UsageLimits
-
     max_result_retries: int
     end_strategy: EndStrategy
+
+    result_schema: _result.ResultSchema[ResultDataT] | None
+    result_tools: list[ToolDefinition]
+    result_validators: list[_result.ResultValidator[DepsT, ResultDataT]]
+
+    function_tools: dict[str, Tool[DepsT]] = dataclasses.field(repr=False)
+
+    run_span: logfire_api.LogfireSpan
 
 
 @dataclasses.dataclass
@@ -794,16 +790,16 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
                 user_deps=deps,
                 prompt=user_prompt,
                 new_message_index=new_message_index,
-                function_tools=self._function_tools,
-                result_tools=self._result_schema.tool_defs() if self._result_schema else [],
-                run_span=run_span,
-                result_schema=result_schema,
-                result_validators=result_validators,
                 model=model_used,
                 model_settings=model_settings,
                 usage_limits=usage_limits,
                 max_result_retries=self._max_result_retries,
                 end_strategy=self.end_strategy,
+                result_schema=result_schema,
+                result_tools=self._result_schema.tool_defs() if self._result_schema else [],
+                result_validators=result_validators,
+                function_tools=self._function_tools,
+                run_span=run_span,
             )
 
             start_node = UserPromptNode[AgentDepsT](
@@ -1042,16 +1038,16 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
                 user_deps=deps,
                 prompt=user_prompt,
                 new_message_index=new_message_index,
-                function_tools=self._function_tools,
-                result_tools=self._result_schema.tool_defs() if self._result_schema else [],
-                run_span=run_span,
-                result_schema=result_schema,
-                result_validators=result_validators,
                 model=model_used,
                 model_settings=model_settings,
                 usage_limits=usage_limits,
                 max_result_retries=self._max_result_retries,
                 end_strategy=self.end_strategy,
+                result_schema=result_schema,
+                result_tools=self._result_schema.tool_defs() if self._result_schema else [],
+                result_validators=result_validators,
+                function_tools=self._function_tools,
+                run_span=run_span,
             )
 
             start_node = StreamUserPromptNode[AgentDepsT](
