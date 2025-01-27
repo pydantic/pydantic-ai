@@ -132,13 +132,25 @@ class GraphAgentDeps(Generic[DepsT, ResultDataT]):
 
 @dataclasses.dataclass
 class BaseUserPromptNode(BaseNode[GraphAgentState, GraphAgentDeps[DepsT, Any], NodeRunEndT]):
-    """First node: incorporate the system prompts and user prompt into state.message_history, then go to ModelRequestNode."""
-
     user_prompt: str
 
     system_prompts: tuple[str, ...]
     system_prompt_functions: list[_system_prompt.SystemPromptRunner[DepsT]]
     system_prompt_dynamic_functions: dict[str, _system_prompt.SystemPromptRunner[DepsT]]
+
+    async def _get_next_message(
+        self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]]
+    ) -> _messages.ModelRequest:
+        run_context = _build_run_context(ctx)
+        history, next_message = await self._prepare_messages(self.user_prompt, ctx.state.message_history, run_context)
+        ctx.state.message_history = history
+        run_context.messages = history
+
+        # TODO: We need to make it so that function_tools are not shared between runs
+        #   See comment on the current_retry field of `Tool` for more details.
+        for tool in ctx.deps.function_tools.values():
+            tool.current_retry = 0
+        return next_message
 
     async def _prepare_messages(
         self, user_prompt: str, message_history: list[_messages.ModelMessage] | None, run_context: RunContext[DepsT]
@@ -199,17 +211,7 @@ class UserPromptNode(BaseUserPromptNode[DepsT, NodeRunEndT]):
     async def run(
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]]
     ) -> ModelRequestNode[DepsT, NodeRunEndT]:
-        run_context = _build_run_context(ctx)
-        history, next_message = await self._prepare_messages(self.user_prompt, ctx.state.message_history, run_context)
-        ctx.state.message_history = history
-        run_context.messages = history
-
-        # TODO: We need to make it so that function_tools are not shared between runs
-        #   See comment on the current_retry field of `Tool` for more details.
-        for tool in ctx.deps.function_tools.values():
-            tool.current_retry = 0
-
-        return ModelRequestNode(request=next_message)
+        return ModelRequestNode[DepsT, NodeRunEndT](request=await self._get_next_message(ctx))
 
 
 @dataclasses.dataclass
@@ -217,17 +219,7 @@ class StreamUserPromptNode(BaseUserPromptNode[DepsT, NodeRunEndT]):
     async def run(
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]]
     ) -> StreamModelRequestNode[DepsT, NodeRunEndT]:
-        run_context = _build_run_context(ctx)
-        history, next_message = await self._prepare_messages(self.user_prompt, ctx.state.message_history, run_context)
-        ctx.state.message_history = history
-        run_context.messages = history
-
-        # TODO: We need to make it so that function_tools are not shared between runs
-        #   See comment on the current_retry field of `Tool` for more details.
-        for tool in ctx.deps.function_tools.values():
-            tool.current_retry = 0
-
-        return StreamModelRequestNode(request=next_message)
+        return StreamModelRequestNode[DepsT, NodeRunEndT](request=await self._get_next_message(ctx))
 
 
 @dataclasses.dataclass
