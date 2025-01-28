@@ -26,8 +26,6 @@ from . import (
     result,
     usage as _usage,
 )
-from .messages import ModelRequest, ModelResponse
-from .models import StreamedResponse
 from .result import ResultDataT
 from .settings import ModelSettings, merge_model_settings
 from .tools import (
@@ -290,7 +288,7 @@ class ModelRequestNode(BaseModelRequestNode[DepsT, NodeRunEndT]):
     async def _handle_response(
         self,
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
-        response: ModelResponse,
+        response: _messages.ModelResponse,
     ) -> ModelRequestNode[DepsT, NodeRunEndT] | FinalResultNode[DepsT, NodeRunEndT]:
         with _logfire.span('handle model response', run_step=ctx.state.run_step) as handle_span:
             texts: list[str] = []
@@ -354,7 +352,7 @@ class ModelRequestNode(BaseModelRequestNode[DepsT, NodeRunEndT]):
                 tool_responses_str = ' '.join(r.part_kind for r in tool_responses)
                 handle_span.message = f'handle model response -> {tool_responses_str}'
                 parts.extend(tool_responses)
-            return ModelRequestNode[DepsT, NodeRunEndT](ModelRequest(parts=parts))
+            return ModelRequestNode[DepsT, NodeRunEndT](_messages.ModelRequest(parts=parts))
 
     async def _handle_text_response(
         self,
@@ -371,7 +369,7 @@ class ModelRequestNode(BaseModelRequestNode[DepsT, NodeRunEndT]):
                 result_data = await _validate_result(result_data_input, ctx, None)
             except _result.ToolRetryError as e:
                 ctx.state.increment_retries(ctx.deps.max_result_retries)
-                return ModelRequestNode[DepsT, NodeRunEndT](ModelRequest(parts=[e.tool_retry]))
+                return ModelRequestNode[DepsT, NodeRunEndT](_messages.ModelRequest(parts=[e.tool_retry]))
             else:
                 handle_span.set_attribute('result', result_data)
                 handle_span.message = 'handle model response -> final result'
@@ -379,7 +377,7 @@ class ModelRequestNode(BaseModelRequestNode[DepsT, NodeRunEndT]):
         else:
             ctx.state.increment_retries(ctx.deps.max_result_retries)
             return ModelRequestNode[DepsT, NodeRunEndT](
-                ModelRequest(
+                _messages.ModelRequest(
                     parts=[
                         _messages.RetryPromptPart(
                             content='Plain text responses are not permitted, please call one of the functions instead.',
@@ -483,7 +481,7 @@ class StreamModelRequestNode(BaseModelRequestNode[DepsT, NodeRunEndT]):
                         # Can only get here if self._allow_text_result returns `False` for the provided result_schema
                         ctx.state.increment_retries(ctx.deps.max_result_retries)
                         self._result = StreamModelRequestNode[DepsT, NodeRunEndT](
-                            ModelRequest(
+                            _messages.ModelRequest(
                                 parts=[
                                     _messages.RetryPromptPart(
                                         content='Plain text responses are not permitted, please call one of the functions instead.',
@@ -498,7 +496,7 @@ class StreamModelRequestNode(BaseModelRequestNode[DepsT, NodeRunEndT]):
                         task_results: Sequence[_messages.ModelRequestPart] = await asyncio.gather(*tasks)
                         parts.extend(task_results)
 
-                    next_request = ModelRequest(parts=parts)
+                    next_request = _messages.ModelRequest(parts=parts)
                     if any(isinstance(part, _messages.RetryPromptPart) for part in parts):
                         try:
                             ctx.state.increment_retries(ctx.deps.max_result_retries)
@@ -536,7 +534,7 @@ class FinalResultNode(BaseNode[GraphAgentState, GraphAgentDeps[DepsT, Any], _Mar
 
         # TODO: For backwards compatibility, append a new ModelRequest using the tool returns and retries
         if self.extra_parts:
-            messages.append(ModelRequest(parts=self.extra_parts))
+            messages.append(_messages.ModelRequest(parts=self.extra_parts))
 
         # TODO: Set this attribute somewhere
         # handle_span = self.handle_model_response_span
@@ -1587,7 +1585,7 @@ def _allow_text_result(result_schema: _result.ResultSchema[RunResultDataT] | Non
 
 
 def _build_streamed_run_result(
-    result_stream: StreamedResponse,
+    result_stream: models.StreamedResponse,
     result_tool_name: str | None,
     ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
 ) -> result.StreamedRunResult[DepsT, NodeRunEndT]:
