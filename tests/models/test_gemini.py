@@ -27,6 +27,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.gemini import (
     ApiKeyAuth,
     GeminiModel,
+    GeminiModelSettings,
     _content_model_response,
     _function_call_part_from_call,
     _gemini_response_ta,
@@ -851,5 +852,40 @@ async def test_model_settings(client_with_handler: ClientWithHandler, env: TestE
             'presence_penalty': 0.3,
             'frequency_penalty': 0.4,
         },
+    )
+    assert result.data == 'world'
+
+
+async def test_safety_settings(
+    client_with_handler: ClientWithHandler, env: TestEnv, allow_model_requests: None
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        safety_settings = json.loads(request.content)['safety_settings']
+        assert safety_settings == [
+            {'category': 'HARM_CATEGORY_CIVIC_INTEGRITY', 'threshold': 'BLOCK_LOW_AND_ABOVE'},
+            {'category': 'HARM_CATEGORY_DANGEROUS_CONTENT', 'threshold': 'BLOCK_LOW_AND_ABOVE'},
+        ]
+
+        return httpx.Response(
+            200,
+            content=_gemini_response_ta.dump_json(
+                gemini_response(_content_model_response(ModelResponse(parts=[TextPart('world')]))),
+                by_alias=True,
+            ),
+            headers={'Content-Type': 'application/json'},
+        )
+
+    gemini_client = client_with_handler(handler)
+    m = GeminiModel('gemini-1.5-flash', http_client=gemini_client, api_key='mock')
+    agent = Agent(m)
+
+    result = await agent.run(
+        'hello',
+        model_settings=GeminiModelSettings(
+            gemini_safety_settings=[
+                {'category': 'HARM_CATEGORY_CIVIC_INTEGRITY', 'threshold': 'BLOCK_LOW_AND_ABOVE'},
+                {'category': 'HARM_CATEGORY_DANGEROUS_CONTENT', 'threshold': 'BLOCK_LOW_AND_ABOVE'},
+            ]
+        ),
     )
     assert result.data == 'world'

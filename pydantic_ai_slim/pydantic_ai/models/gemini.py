@@ -52,6 +52,7 @@ class GeminiModelSettings(ModelSettings):
     """Settings used for a Gemini model request."""
 
     # This class is a placeholder for any future gemini-specific settings
+    gemini_safety_settings: list[GeminiSafetySettings]  # are duplicates a problem?
 
 
 @dataclass(init=False)
@@ -216,6 +217,8 @@ class GeminiAgentModel(AgentModel):
                 generation_config['presence_penalty'] = presence_penalty
             if (frequency_penalty := model_settings.get('frequency_penalty')) is not None:
                 generation_config['frequency_penalty'] = frequency_penalty
+            if (gemini_safety_settings := model_settings.get('gemini_safety_settings')) is not None:
+                request_data['safety_settings'] = gemini_safety_settings
         if generation_config:
             request_data['generation_config'] = generation_config
 
@@ -390,6 +393,7 @@ class _GeminiRequest(TypedDict):
     contents: list[_GeminiContent]
     tools: NotRequired[_GeminiTools]
     tool_config: NotRequired[_GeminiToolConfig]
+    safety_settings: NotRequired[list[GeminiSafetySettings]]
     # we don't implement `generationConfig`, instead we use a named tool for the response
     system_instruction: NotRequired[_GeminiTextContent]
     """
@@ -397,6 +401,36 @@ class _GeminiRequest(TypedDict):
     <https://ai.google.dev/gemini-api/docs/system-instructions?lang=rest>
     """
     generation_config: NotRequired[_GeminiGenerationConfig]
+
+
+class GeminiSafetySettings(TypedDict):
+    """Individual safety settings fields for Gemini."""
+
+    category: Literal[
+        'HARM_CATEGORY_UNSPECIFIED',
+        'HARM_CATEGORY_HARASSMENT',
+        'HARM_CATEGORY_HATE_SPEECH',
+        'HARM_CATEGORY_SEXUALLY_EXPLICIT',
+        'HARM_CATEGORY_DANGEROUS_CONTENT',
+        'HARM_CATEGORY_CIVIC_INTEGRITY',
+    ]
+    """
+    See <https://ai.google.dev/api/generate-content#v1beta.HarmCategory> for HarmCategory API docs.
+    """
+    threshold: Literal[
+        'HARM_BLOCK_THRESHOLD_UNSPECIFIED',
+        'BLOCK_LOW_AND_ABOVE',
+        'BLOCK_MEDIUM_AND_ABOVE',
+        'BLOCK_ONLY_HIGH',
+        'BLOCK_NONE',
+        'OFF',
+    ]
+    """
+    See <https://ai.google.dev/api/generate-content#HarmBlockThreshold> for HarmBlockThreshold API docs.
+
+    Note: there are some restrictions on who has access to BLOCK_NONE and OFF.
+    See <https://cloud.google.com/vertex-ai/generative-ai/docs/multimodal/configure-safety-filters> for more details.
+    """
 
 
 class _GeminiGenerationConfig(TypedDict, total=False):
