@@ -3,6 +3,7 @@ from __future__ import annotations as _annotations
 import asyncio
 import dataclasses
 import inspect
+from abc import ABC
 from collections.abc import AsyncIterator, Awaitable, Iterator, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
 from contextvars import ContextVar
@@ -130,7 +131,7 @@ class GraphAgentDeps(Generic[DepsT, ResultDataT]):
 
 
 @dataclasses.dataclass
-class BaseUserPromptNode(BaseNode[GraphAgentState, GraphAgentDeps[DepsT, Any], NodeRunEndT]):
+class BaseUserPromptNode(BaseNode[GraphAgentState, GraphAgentDeps[DepsT, Any], NodeRunEndT], ABC):
     user_prompt: str
 
     system_prompts: tuple[str, ...]
@@ -222,7 +223,7 @@ class StreamUserPromptNode(BaseUserPromptNode[DepsT, NodeRunEndT]):
 
 
 @dataclasses.dataclass
-class BaseModelRequestNode(BaseNode[GraphAgentState, GraphAgentDeps[DepsT, Any], NodeRunEndT]):
+class BaseModelRequestNode(BaseNode[GraphAgentState, GraphAgentDeps[DepsT, Any], NodeRunEndT], ABC):
     """Make a request to the model using the last message in state.message_history (or a specified request)."""
 
     request: _messages.ModelRequest
