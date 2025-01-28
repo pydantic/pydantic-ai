@@ -60,7 +60,7 @@ EndStrategy = Literal['early', 'exhaustive']
 - `'early'`: Stop processing other tool calls once a final result is found
 - `'exhaustive'`: Process all tool calls even after finding a final result
 """
-RunResultData = TypeVar('RunResultData')
+RunResultDataT = TypeVar('RunResultDataT')
 """Type variable for the result data of a run where `result_type` was customized on the run call."""
 
 
@@ -214,7 +214,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         self,
         user_prompt: str,
         *,
-        result_type: type[RunResultData],
+        result_type: type[RunResultDataT],
         message_history: list[_messages.ModelMessage] | None = None,
         model: models.Model | models.KnownModelName | None = None,
         deps: AgentDepsT = None,
@@ -222,7 +222,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.Usage | None = None,
         infer_name: bool = True,
-    ) -> result.RunResult[RunResultData]: ...
+    ) -> result.RunResult[RunResultDataT]: ...
 
     async def run(
         self,
@@ -234,7 +234,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.Usage | None = None,
-        result_type: type[RunResultData] | None = None,
+        result_type: type[RunResultDataT] | None = None,
         infer_name: bool = True,
     ) -> result.RunResult[Any]:
         """Run the agent with a user prompt in async mode.
@@ -352,7 +352,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         self,
         user_prompt: str,
         *,
-        result_type: type[RunResultData] | None,
+        result_type: type[RunResultDataT] | None,
         message_history: list[_messages.ModelMessage] | None = None,
         model: models.Model | models.KnownModelName | None = None,
         deps: AgentDepsT = None,
@@ -360,13 +360,13 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.Usage | None = None,
         infer_name: bool = True,
-    ) -> result.RunResult[RunResultData]: ...
+    ) -> result.RunResult[RunResultDataT]: ...
 
     def run_sync(
         self,
         user_prompt: str,
         *,
-        result_type: type[RunResultData] | None = None,
+        result_type: type[RunResultDataT] | None = None,
         message_history: list[_messages.ModelMessage] | None = None,
         model: models.Model | models.KnownModelName | None = None,
         deps: AgentDepsT = None,
@@ -442,7 +442,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         self,
         user_prompt: str,
         *,
-        result_type: type[RunResultData],
+        result_type: type[RunResultDataT],
         message_history: list[_messages.ModelMessage] | None = None,
         model: models.Model | models.KnownModelName | None = None,
         deps: AgentDepsT = None,
@@ -450,14 +450,14 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.Usage | None = None,
         infer_name: bool = True,
-    ) -> AbstractAsyncContextManager[result.StreamedRunResult[AgentDepsT, RunResultData]]: ...
+    ) -> AbstractAsyncContextManager[result.StreamedRunResult[AgentDepsT, RunResultDataT]]: ...
 
     @asynccontextmanager
     async def run_stream(
         self,
         user_prompt: str,
         *,
-        result_type: type[RunResultData] | None = None,
+        result_type: type[RunResultDataT] | None = None,
         message_history: list[_messages.ModelMessage] | None = None,
         model: models.Model | models.KnownModelName | None = None,
         deps: AgentDepsT = None,
@@ -572,7 +572,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
                                 # there are result validators that might convert the result data from an overridden
                                 # `result_type` to a type that is not valid as such.
                                 result_validators = cast(
-                                    list[_result.ResultValidator[AgentDepsT, RunResultData]], self._result_validators
+                                    list[_result.ResultValidator[AgentDepsT, RunResultDataT]], self._result_validators
                                 )
 
                                 yield result.StreamedRunResult(
@@ -999,7 +999,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         return model_
 
     async def _prepare_model(
-        self, run_context: RunContext[AgentDepsT], result_schema: _result.ResultSchema[RunResultData] | None
+        self, run_context: RunContext[AgentDepsT], result_schema: _result.ResultSchema[RunResultDataT] | None
     ) -> models.AgentModel:
         """Build tools and create an agent model."""
         function_tools: list[ToolDefinition] = []
@@ -1035,8 +1035,8 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
                                 )
 
     def _prepare_result_schema(
-        self, result_type: type[RunResultData] | None
-    ) -> _result.ResultSchema[RunResultData] | None:
+        self, result_type: type[RunResultDataT] | None
+    ) -> _result.ResultSchema[RunResultDataT] | None:
         if result_type is not None:
             if self._result_validators:
                 raise exceptions.UserError('Cannot set a custom run `result_type` when the agent has result validators')
@@ -1053,7 +1053,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         run_context: RunContext[AgentDepsT],
     ) -> list[_messages.ModelMessage]:
         try:
-            ctx_messages = _messages_ctx_var.get()
+            ctx_messages = get_captured_run_messages()
         except LookupError:
             messages: list[_messages.ModelMessage] = []
         else:
@@ -1080,8 +1080,8 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         self,
         model_response: _messages.ModelResponse,
         run_context: RunContext[AgentDepsT],
-        result_schema: _result.ResultSchema[RunResultData] | None,
-    ) -> tuple[_MarkFinalResult[RunResultData] | None, list[_messages.ModelRequestPart]]:
+        result_schema: _result.ResultSchema[RunResultDataT] | None,
+    ) -> tuple[_MarkFinalResult[RunResultDataT] | None, list[_messages.ModelRequestPart]]:
         """Process a non-streamed response from the model.
 
         Returns:
@@ -1110,11 +1110,11 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
             raise exceptions.UnexpectedModelBehavior('Received empty model response')
 
     async def _handle_text_response(
-        self, text: str, run_context: RunContext[AgentDepsT], result_schema: _result.ResultSchema[RunResultData] | None
-    ) -> tuple[_MarkFinalResult[RunResultData] | None, list[_messages.ModelRequestPart]]:
+        self, text: str, run_context: RunContext[AgentDepsT], result_schema: _result.ResultSchema[RunResultDataT] | None
+    ) -> tuple[_MarkFinalResult[RunResultDataT] | None, list[_messages.ModelRequestPart]]:
         """Handle a plain text response from the model for non-streaming responses."""
         if self._allow_text_result(result_schema):
-            result_data_input = cast(RunResultData, text)
+            result_data_input = cast(RunResultDataT, text)
             try:
                 result_data = await self._validate_result(result_data_input, run_context, None)
             except _result.ToolRetryError as e:
@@ -1133,13 +1133,13 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         self,
         tool_calls: list[_messages.ToolCallPart],
         run_context: RunContext[AgentDepsT],
-        result_schema: _result.ResultSchema[RunResultData] | None,
-    ) -> tuple[_MarkFinalResult[RunResultData] | None, list[_messages.ModelRequestPart]]:
+        result_schema: _result.ResultSchema[RunResultDataT] | None,
+    ) -> tuple[_MarkFinalResult[RunResultDataT] | None, list[_messages.ModelRequestPart]]:
         """Handle a structured response containing tool calls from the model for non-streaming responses."""
         assert tool_calls, 'Expected at least one tool call'
 
         # first look for the result tool call
-        final_result: _MarkFinalResult[RunResultData] | None = None
+        final_result: _MarkFinalResult[RunResultDataT] | None = None
 
         parts: list[_messages.ModelRequestPart] = []
         if result_schema is not None:
@@ -1168,7 +1168,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         tool_calls: list[_messages.ToolCallPart],
         result_tool_name: str | None,
         run_context: RunContext[AgentDepsT],
-        result_schema: _result.ResultSchema[RunResultData] | None,
+        result_schema: _result.ResultSchema[RunResultDataT] | None,
     ) -> list[_messages.ModelRequestPart]:
         """Process function (non-result) tool calls in parallel.
 
@@ -1227,7 +1227,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         self,
         streamed_response: models.StreamedResponse,
         run_context: RunContext[AgentDepsT],
-        result_schema: _result.ResultSchema[RunResultData] | None,
+        result_schema: _result.ResultSchema[RunResultDataT] | None,
     ) -> _MarkFinalResult[models.StreamedResponse] | tuple[_messages.ModelResponse, list[_messages.ModelRequestPart]]:
         """Process a streamed response from the model.
 
@@ -1282,15 +1282,15 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
 
     async def _validate_result(
         self,
-        result_data: RunResultData,
+        result_data: RunResultDataT,
         run_context: RunContext[AgentDepsT],
         tool_call: _messages.ToolCallPart | None,
-    ) -> RunResultData:
+    ) -> RunResultDataT:
         if self._result_validators:
             agent_result_data = cast(ResultDataT, result_data)
             for validator in self._result_validators:
                 agent_result_data = await validator.validate(agent_result_data, tool_call, run_context)
-            return cast(RunResultData, agent_result_data)
+            return cast(RunResultDataT, agent_result_data)
         else:
             return result_data
 
@@ -1315,7 +1315,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
     def _unknown_tool(
         self,
         tool_name: str,
-        result_schema: _result.ResultSchema[RunResultData] | None,
+        result_schema: _result.ResultSchema[RunResultDataT] | None,
     ) -> _messages.RetryPromptPart:
         names = list(self._function_tools.keys())
         if result_schema:
@@ -1358,7 +1358,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
                             return
 
     @staticmethod
-    def _allow_text_result(result_schema: _result.ResultSchema[RunResultData] | None) -> bool:
+    def _allow_text_result(result_schema: _result.ResultSchema[RunResultDataT] | None) -> bool:
         return result_schema is None or result_schema.allow_text_result
 
     @property
@@ -1411,6 +1411,10 @@ def capture_run_messages() -> Iterator[list[_messages.ModelMessage]]:
             yield messages
         finally:
             _messages_ctx_var.reset(token)
+
+
+def get_captured_run_messages() -> _RunMessages:
+    return _messages_ctx_var.get()
 
 
 @dataclasses.dataclass

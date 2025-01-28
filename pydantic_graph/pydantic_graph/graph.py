@@ -4,6 +4,7 @@ import asyncio
 import inspect
 import types
 from collections.abc import Sequence
+from contextlib import ExitStack
 from dataclasses import dataclass, field
 from functools import cached_property
 from pathlib import Path
@@ -75,6 +76,7 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
     snapshot_state: Callable[[StateT], StateT]
     _state_type: type[StateT] | _utils.Unset = field(repr=False)
     _run_end_type: type[RunEndT] | _utils.Unset = field(repr=False)
+    _auto_instrument: bool = field(repr=False)
 
     def __init__(
         self,
@@ -84,6 +86,7 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
         state_type: type[StateT] | _utils.Unset = _utils.UNSET,
         run_end_type: type[RunEndT] | _utils.Unset = _utils.UNSET,
         snapshot_state: Callable[[StateT], StateT] = deep_copy_state,
+        auto_instrument: bool = True,
     ):
         """Create a graph from a sequence of nodes.
 
@@ -97,10 +100,12 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
             snapshot_state: A function to snapshot the state of the graph, this is used in
                 [`NodeStep`][pydantic_graph.state.NodeStep] and [`EndStep`][pydantic_graph.state.EndStep] to record
                 the state before each step.
+            auto_instrument: Whether to create a span for the graph run and the execution of each node's run method.
         """
         self.name = name
         self._state_type = state_type
         self._run_end_type = run_end_type
+        self._auto_instrument = auto_instrument
         self.snapshot_state = snapshot_state
 
         parent_namespace = _utils.get_parent_namespace(inspect.currentframe())
@@ -155,26 +160,32 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
             self._infer_name(inspect.currentframe())
 
         history: list[HistoryStep[StateT, T]] = []
-        with _logfire.span(
-            '{graph_name} run {start=}',
-            graph_name=self.name or 'graph',
-            start=start_node,
-        ) as run_span:
-            while True:
-                next_node = await self.next(start_node, history, state=state, deps=deps, infer_name=False)
-                if isinstance(next_node, End):
-                    history.append(EndStep(result=next_node))
+        with ExitStack() as stack:
+            run_span: logfire_api.LogfireSpan | None = None
+            if self._auto_instrument:
+                run_span = stack.enter_context(
+                    _logfire.span(
+                        '{graph_name} run {start=}',
+                        graph_name=self.name or 'graph',
+                        start=start_node,
+                    )
+                )
+        while True:
+            next_node = await self.next(start_node, history, state=state, deps=deps, infer_name=False)
+            if isinstance(next_node, End):
+                history.append(EndStep(result=next_node))
+                if run_span is not None:
                     run_span.set_attribute('history', history)
-                    return next_node.data, history
-                elif isinstance(next_node, BaseNode):
-                    start_node = next_node
+                return next_node.data, history
+            elif isinstance(next_node, BaseNode):
+                start_node = next_node
+            else:
+                if TYPE_CHECKING:
+                    typing_extensions.assert_never(next_node)
                 else:
-                    if TYPE_CHECKING:
-                        typing_extensions.assert_never(next_node)
-                    else:
-                        raise exceptions.GraphRuntimeError(
-                            f'Invalid node return type: `{type(next_node).__name__}`. Expected `BaseNode` or `End`.'
-                        )
+                    raise exceptions.GraphRuntimeError(
+                        f'Invalid node return type: `{type(next_node).__name__}`. Expected `BaseNode` or `End`.'
+                    )
 
     def run_sync(
         self: Graph[StateT, DepsT, T],
@@ -232,8 +243,10 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
         if node_id not in self.node_defs:
             raise exceptions.GraphRuntimeError(f'Node `{node}` is not in the graph.')
 
-        ctx = GraphRunContext(state, deps)
-        with _logfire.span('run node {node_id}', node_id=node_id, node=node):
+        with ExitStack() as stack:
+            if self._auto_instrument:
+                stack.enter_context(_logfire.span('run node {node_id}', node_id=node_id, node=node))
+            ctx = GraphRunContext(state, deps)
             start_ts = _utils.now_utc()
             start = perf_counter()
             next_node = await node.run(ctx)
