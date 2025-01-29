@@ -9,36 +9,27 @@ from pydantic_ai.messages import UserPromptChunk
 from pydantic_ai.models.mistral import MistralModel
 from pydantic_ai.models.ollama import OllamaModel
 
+agent_system_prompt = """
+        Role: you are a helpful assistant that can help with image analysis
+
+        Tasks:
+            - Answer the question of the user about the image
+            - Your answer will be given in Markdown format.
+            - If there is a chart or graph in the image, extract the data and present it in a table.
+        """
+
 model = MistralModel('pixtral-12b-2409')
 
 pixtral_agent = Agent(
     model,
     result_type=str,
-    system_prompt=(
-        """
-        Role: you are a helpful assistant that can help with image analysis
-
-        Tasks:
-            - Answer the question of the user about the image
-            - Your answer will be given in Markdown format.
-            - If there is a chart or graph in the image, extract the data and present it in a table.
-        """
-    ),
+    system_prompt=agent_system_prompt,
 )
 
 openai_agent = Agent(
     'openai:gpt-4o',
     result_type=str,
-    system_prompt=(
-        """
-        Role: you are a helpful assistant that can help with image analysis
-
-        Tasks:
-            - Answer the question of the user about the image
-            - Your answer will be given in Markdown format.
-            - If there is a chart or graph in the image, extract the data and present it in a table.
-        """
-    ),
+    system_prompt=agent_system_prompt,
 )
 
 vision_model = OllamaModel(model_name='llama3.2-vision')
@@ -46,16 +37,7 @@ vision_model = OllamaModel(model_name='llama3.2-vision')
 ollama_agent = Agent(
     vision_model,
     result_type=str,
-    system_prompt=(
-        """
-        Role: you are a helpful assistant that can help with image analysis
-
-        Tasks:
-            - Answer the question of the user about the image
-            - Your answer will be given in Markdown format.
-            - If there is a chart or graph in the image, extract the data and present it in a table.
-        """
-    ),
+    system_prompt=agent_system_prompt,
 )
 
 
@@ -68,6 +50,9 @@ def image_as_content(image_path: str) -> str | None:
 
     Returns:
         str: Base64 encoded image content.
+
+    Raises:
+        FileNotFoundError: If the image file does not exist.
     """
     try:
         image_file = Path(image_path)
@@ -87,7 +72,7 @@ def image_as_content(image_path: str) -> str | None:
         return f'data:image/{image_format};base64,{base64_image}'
 
 
-async def main():
+async def main() -> None:
     # This is the user prompt with an image URL.
     user_prompt_1 = [
         UserPromptChunk(type='text', content='What is this image?'),
