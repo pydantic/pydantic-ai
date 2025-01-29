@@ -292,7 +292,7 @@ The return type of tool can be anything which Pydantic can serialize to JSON as 
 
 If a tool has a single parameter that can be represented as an object in JSON schema (e.g. dataclass, TypedDict, pydantic model), the schema for the tool is simplified to be just that object.
 
-Here's an example, we use [`TestModel.last_agent_request_config.function_tools`][pydantic_ai.models.test.TestModel.last_agent_request_config.function_tools] to inspect the tool schema that would be passed to the model.
+Here's an example where we use [`TestModel.last_agent_request_config`][pydantic_ai.models.test.TestModel.last_agent_request_config] to inspect the tool schema that would be passed to the model.
 
 ```python {title="single_parameter_tool.py"}
 from pydantic import BaseModel
