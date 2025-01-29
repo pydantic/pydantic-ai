@@ -459,7 +459,7 @@ Or initialise the model directly with just the model name:
 from pydantic_ai import Agent
 from pydantic_ai.models.cohere import CohereModel
 
-model = CohereModel('command')
+model = CohereModel('command', api_key='your-api-key')
 agent = Agent(model)
 ...
 ```
