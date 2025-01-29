@@ -71,20 +71,12 @@ class TestModel(Model):
     """If set, these args will be passed to the result tool."""
     seed: int = 0
     """Seed for generating random data."""
-    agent_model_function_tools: list[ToolDefinition] | None = field(default=None, init=False)
-    """Definition of function tools passed to the model.
+    last_agent_request_config: AgentRequestConfig | None = field(default=None, init=False)
+    """The last AgentRequestConfig passed to the model in a request.
 
-    This is set when the model is called, so will reflect the function tools from the last step of the last run.
-    """
-    agent_model_allow_text_result: bool | None = field(default=None, init=False)
-    """Whether plain text responses from the model are allowed.
+    The AgentRequestConfig contains information about the function and result tools available during request handling.
 
-    This is set when the model is called, so will reflect the value from the last step of the last run.
-    """
-    agent_model_result_tools: list[ToolDefinition] | None = field(default=None, init=False)
-    """Definition of result tools passed to the model.
-
-    This is set when the model is called, so will reflect the result tools from the last step of the last run.
+    This is set when a request is made, so will reflect the function tools from the last step of the last run.
     """
 
     def name(self) -> str:
@@ -96,6 +88,8 @@ class TestModel(Model):
         model_settings: ModelSettings | None,
         agent_request_config: AgentRequestConfig,
     ) -> tuple[ModelResponse, Usage]:
+        self.last_agent_request_config = agent_request_config
+
         model_response = self._request(messages, model_settings, agent_request_config)
         usage = _estimate_usage([*messages, model_response])
         return model_response, usage
@@ -107,6 +101,8 @@ class TestModel(Model):
         model_settings: ModelSettings | None,
         agent_request_config: AgentRequestConfig,
     ) -> AsyncIterator[StreamedResponse]:
+        self.last_agent_request_config = agent_request_config
+
         model_response = self._request(messages, model_settings, agent_request_config)
         yield TestStreamedResponse(_model_name=self.name(), _structured_response=model_response, _messages=messages)
 

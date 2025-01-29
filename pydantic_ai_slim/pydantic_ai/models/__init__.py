@@ -155,6 +155,8 @@ KnownModelName = Literal[
 
 @dataclass
 class AgentRequestConfig:
+    """Configuration for an agent's request to a model, specifically related to tools and result handling."""
+
     function_tools: list[ToolDefinition]
     allow_text_result: bool
     result_tools: list[ToolDefinition]
