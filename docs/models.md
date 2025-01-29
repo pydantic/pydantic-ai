@@ -434,7 +434,7 @@ pip/uv-add 'pydantic-ai-slim[cohere]'
 
 To use [Cohere](https://cohere.com/) through their API, go to [dashboard.cohere.com/api-keys](https://dashboard.cohere.com/api-keys) and follow your nose until you find the place to generate an API key.
 
-[`CohereModelName`][pydantic_ai.models.cohere.CohereModelName] contains a list of the most popular Cohere models.
+[`NamedCohereModels`][pydantic_ai.models.cohere.NamedCohereModels] contains a list of the most popular Cohere models.
 
 ### Environment variable
 
