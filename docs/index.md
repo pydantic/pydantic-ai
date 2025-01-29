@@ -53,7 +53,7 @@ Here's a minimal example of PydanticAI:
 from pydantic_ai import Agent
 
 agent = Agent(  # (1)!
-    'gemini-1.5-flash',
+    'google-gla:gemini-1.5-flash',
     system_prompt='Be concise, reply with one sentence.',  # (2)!
 )
 
