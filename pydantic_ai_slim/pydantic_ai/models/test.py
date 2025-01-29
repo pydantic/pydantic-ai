@@ -88,7 +88,7 @@ class TestModel(Model):
     """
 
     def name(self) -> str:
-        return 'test-model'
+        return 'test'
 
     async def request(
         self,

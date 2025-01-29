@@ -30,8 +30,8 @@ async def test_init_service_account(tmp_path: Path, allow_model_requests: None):
     save_service_account(service_account_path, 'my-project-id')
 
     model = VertexAIModel('gemini-1.5-flash', service_account_file=service_account_path)
-    assert model.url is None
-    assert model.auth is None
+    assert model._url is None
+    assert model._auth is None
 
     await model.ainit()
 
@@ -53,8 +53,8 @@ async def test_init_env(mocker: MockerFixture, allow_model_requests: None):
         return_value=(NoOpCredentials(), 'my-project-id'),
     )
     model = VertexAIModel('gemini-1.5-flash')
-    assert model.url is None
-    assert model.auth is None
+    assert model._url is None
+    assert model._auth is None
 
     assert patch.call_count == 0
 
@@ -80,8 +80,8 @@ async def test_init_right_project_id(tmp_path: Path, allow_model_requests: None)
     save_service_account(service_account_path, 'my-project-id')
 
     model = VertexAIModel('gemini-1.5-flash', service_account_file=service_account_path, project_id='my-project-id')
-    assert model.url is None
-    assert model.auth is None
+    assert model._url is None
+    assert model._auth is None
 
     await model.ainit()
 
