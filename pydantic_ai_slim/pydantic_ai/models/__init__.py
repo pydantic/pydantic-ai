@@ -12,9 +12,10 @@ from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
 from functools import cache
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING
 
 import httpx
+from typing_extensions import Literal
 
 from .._parts_manager import ModelResponsePartsManager
 from ..exceptions import UserError
@@ -107,25 +108,6 @@ KnownModelName = Literal[
     'o1-mini-2024-09-12',
     'o1-preview',
     'o1-preview-2024-09-12',
-    'ollama:codellama',
-    'ollama:deepseek-r1',
-    'ollama:gemma',
-    'ollama:gemma2',
-    'ollama:llama3',
-    'ollama:llama3.1',
-    'ollama:llama3.2',
-    'ollama:llama3.2-vision',
-    'ollama:llama3.3',
-    'ollama:mistral',
-    'ollama:mistral-nemo',
-    'ollama:mixtral',
-    'ollama:phi3',
-    'ollama:phi4',
-    'ollama:qwen',
-    'ollama:qwen2',
-    'ollama:qwen2.5',
-    'ollama:qwq',
-    'ollama:starcoder2',
     'openai:chatgpt-4o-latest',
     'openai:gpt-3.5-turbo',
     'openai:gpt-3.5-turbo-0125',
@@ -356,10 +338,6 @@ def infer_model(model: Model | KnownModelName) -> Model:
         from .mistral import MistralModel
 
         return MistralModel(model[8:])
-    elif model.startswith('ollama:'):
-        from .ollama import OllamaModel
-
-        return OllamaModel(model[7:])
     elif model.startswith('anthropic'):
         from .anthropic import AnthropicModel
 
