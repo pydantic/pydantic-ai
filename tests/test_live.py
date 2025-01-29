@@ -55,9 +55,9 @@ def anthropic(http_client: httpx.AsyncClient, _tmp_path: Path) -> Model:
 
 
 def ollama(http_client: httpx.AsyncClient, _tmp_path: Path) -> Model:
-    from pydantic_ai.models.ollama import OllamaModel
+    from pydantic_ai.models.openai import OpenAIModel
 
-    return OllamaModel('qwen2:0.5b', http_client=http_client)
+    return OpenAIModel('qwen2:0.5b', base_url='http://localhost:11434/v1/', http_client=http_client)
 
 
 def mistral(http_client: httpx.AsyncClient, _tmp_path: Path) -> Model:
