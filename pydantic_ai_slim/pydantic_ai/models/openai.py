@@ -23,6 +23,7 @@ from ..messages import (
     TextPart,
     ToolCallPart,
     ToolReturnPart,
+    UserPromptChunk,
     UserPromptPart,
 )
 from ..settings import ModelSettings
@@ -39,6 +40,8 @@ try:
     from openai import NOT_GIVEN, AsyncOpenAI, AsyncStream
     from openai.types import ChatModel, chat
     from openai.types.chat import ChatCompletionChunk
+    from openai.types.chat.chat_completion_content_part_image_param import ChatCompletionContentPartImageParam, ImageURL
+    from openai.types.chat.chat_completion_content_part_text_param import ChatCompletionContentPartTextParam
 except ImportError as _import_error:
     raise ImportError(
         'Please install `openai` to use the OpenAI model, '
@@ -276,6 +279,20 @@ class OpenAIAgentModel(AgentModel):
             elif isinstance(part, UserPromptPart):
                 if isinstance(part.content, str):
                     yield chat.ChatCompletionUserMessageParam(role='user', content=part.content)
+                elif isinstance(part.content, list):
+                    content_chunks: list[chat.ChatCompletionContentPartParam] = []
+                    for chunk in part.content:
+                        if isinstance(chunk, UserPromptChunk):
+                            if chunk.type == 'image_url':
+                                image_url = ImageURL(url=chunk.content, detail='auto')
+                                content_chunks.append(
+                                    ChatCompletionContentPartImageParam(image_url=image_url, type='image_url')
+                                )
+                            elif chunk.type == 'text':
+                                content_chunks.append(
+                                    ChatCompletionContentPartTextParam(text=chunk.content, type='text')
+                                )
+                    yield chat.ChatCompletionUserMessageParam(role='user', content=content_chunks)
             elif isinstance(part, ToolReturnPart):
                 yield chat.ChatCompletionToolMessageParam(
                     role='tool',
