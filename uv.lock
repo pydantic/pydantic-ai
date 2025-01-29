@@ -2522,7 +2522,7 @@ name = "pydantic-ai"
 version = "0.0.20"
 source = { editable = "." }
 dependencies = [
-    { name = "pydantic-ai-slim", extra = ["anthropic", "cohere", "graph", "groq", "mistral", "openai", "vertexai"] },
+    { name = "pydantic-ai-slim", extra = ["anthropic", "cohere", "groq", "mistral", "openai", "vertexai"] },
 ]
 
 [package.optional-dependencies]
@@ -2614,6 +2614,7 @@ dependencies = [
     { name = "httpx" },
     { name = "logfire-api" },
     { name = "pydantic" },
+    { name = "pydantic-graph" },
 ]
 
 [package.optional-dependencies]
@@ -2622,9 +2623,6 @@ anthropic = [
 ]
 cohere = [
     { name = "cohere" },
-]
-graph = [
-    { name = "pydantic-graph" },
 ]
 groq = [
     { name = "groq" },
@@ -2672,7 +2670,7 @@ requires-dist = [
     { name = "mistralai", marker = "extra == 'mistral'", specifier = ">=1.2.5" },
     { name = "openai", marker = "extra == 'openai'", specifier = ">=1.59.0" },
     { name = "pydantic", specifier = ">=2.10" },
-    { name = "pydantic-graph", marker = "extra == 'graph'", editable = "pydantic_graph" },
+    { name = "pydantic-graph", editable = "pydantic_graph" },
     { name = "requests", marker = "extra == 'vertexai'", specifier = ">=2.32.3" },
 ]
 

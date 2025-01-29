@@ -6,7 +6,7 @@ import inspect
 from collections.abc import AsyncIterator, Awaitable, Iterator, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
 from types import FrameType
-from typing import Any, Callable, Generic, Literal, cast, final, overload
+from typing import Any, Callable, Generic, cast, final, overload
 
 import logfire_api
 from typing_extensions import TypeVar, deprecated
@@ -25,7 +25,7 @@ from . import (
     result,
     usage as _usage,
 )
-from ._agent_graph import capture_run_messages  # imported for re-export
+from ._agent_graph import EndStrategy, capture_run_messages  # imported for re-export
 from .result import ResultDataT
 from .settings import ModelSettings, merge_model_settings
 from .tools import (
@@ -55,14 +55,7 @@ else:
     logfire._internal.stack_info.NON_USER_CODE_PREFIXES += (str(Path(__file__).parent.absolute()),)
 
 T = TypeVar('T')
-"""An invariant TypeVar."""
 NoneType = type(None)
-EndStrategy = Literal['early', 'exhaustive']
-"""The strategy for handling multiple tool calls when a final result is found.
-
-- `'early'`: Stop processing other tool calls once a final result is found
-- `'exhaustive'`: Process all tool calls even after finding a final result
-"""
 RunResultDataT = TypeVar('RunResultDataT')
 """Type variable for the result data of a run where `result_type` was customized on the run call."""
 
@@ -289,10 +282,10 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         result_schema: _result.ResultSchema[RunResultDataT] | None = self._prepare_result_schema(result_type)
 
         # Build the graph
-        g = self._build_graph(result_type)
+        graph = _agent_graph.build_agent_graph(self.name, self._deps_type, result_type or self.result_type)
 
         # Build the initial state
-        s = _agent_graph.GraphAgentState(
+        state = _agent_graph.GraphAgentState(
             message_history=message_history[:] if message_history else [],
             usage=usage or _usage.Usage(),
             retries=0,
@@ -320,7 +313,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
             agent_name=self.name or 'agent',
         ) as run_span:
             # Build the deps object for the graph
-            d = _agent_graph.GraphAgentDeps[AgentDepsT, RunResultDataT](
+            graph_deps = _agent_graph.GraphAgentDeps[AgentDepsT, RunResultDataT](
                 user_deps=deps,
                 prompt=user_prompt,
                 new_message_index=new_message_index,
@@ -343,26 +336,24 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
                 system_prompt_dynamic_functions=self._system_prompt_dynamic_functions,
             )
 
+            graph.mermaid_save('diagram.png', start_node=start_node)
             # Actually run
-            end_result, _history = await g.run(
+            end_result, _ = await graph.run(
                 start_node,
-                state=s,
-                deps=d,
+                state=state,
+                deps=graph_deps,
                 infer_name=False,
             )
-            # run_span.set_attribute('history', history)
 
-        usage_out = s.usage
-        # Build final runresult
+        # Build final run result
         # We don't do any advanced checking if the data is actually from a final result or not
-        rr = result.RunResult(
-            s.message_history,
+        return result.RunResult(
+            state.message_history,
             new_message_index,
             end_result.data,
             end_result.tool_name,
-            usage_out,
+            state.usage,
         )
-        return rr
 
     @overload
     def run_sync(
@@ -537,10 +528,10 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         result_schema: _result.ResultSchema[RunResultDataT] | None = self._prepare_result_schema(result_type)
 
         # Build the graph
-        g = self._build_stream_graph(result_type)
+        graph = self._build_stream_graph(result_type)
 
         # Build the initial state
-        s = _agent_graph.GraphAgentState(
+        graph_state = _agent_graph.GraphAgentState(
             message_history=message_history[:] if message_history else [],
             usage=usage or _usage.Usage(),
             retries=0,
@@ -568,7 +559,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
             agent_name=self.name or 'agent',
         ) as run_span:
             # Build the deps object for the graph
-            d = _agent_graph.GraphAgentDeps[AgentDepsT, RunResultDataT](
+            graph_deps = _agent_graph.GraphAgentDeps[AgentDepsT, RunResultDataT](
                 user_deps=deps,
                 prompt=user_prompt,
                 new_message_index=new_message_index,
@@ -602,16 +593,16 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
                         ],
                         node,
                     )
-                    async with node.run_to_result(GraphRunContext(s, d)) as r:
+                    async with node.run_to_result(GraphRunContext(graph_state, graph_deps)) as r:
                         if isinstance(r, End):
                             yield r.data
                             break
                 assert not isinstance(node, End)  # the previous line should be hit first
-                node = await g.next(
+                node = await graph.next(
                     node,
                     history,
-                    state=s,
-                    deps=d,
+                    state=graph_state,
+                    deps=graph_deps,
                     infer_name=False,
                 )
 
