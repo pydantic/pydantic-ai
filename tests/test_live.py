@@ -102,7 +102,7 @@ async def test_text(http_client: httpx.AsyncClient, tmp_path: Path, get_model: G
     assert usage.total_tokens is not None and usage.total_tokens > 0
 
 
-stream_params = [p for p in params if p.id != 'anthropic']
+stream_params = [p for p in params if p.id != 'cohere']
 
 
 @pytest.mark.parametrize('get_model', stream_params)
