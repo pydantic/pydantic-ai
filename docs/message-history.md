@@ -229,7 +229,9 @@ Since messages are defined by simple dataclasses, you can manually create and ma
 
 The message format is independent of the model used, so you can use messages in different agents, or the same agent with different models.
 
-```python
+In the example below, we reuse the message from the first agent run, which uses the `openai:gpt-4o` model, in a second agent run using the `google-gla:gemini-1.5-pro` model.
+
+```python {title="Reusing messages with a different model" hl_lines="11"}
 from pydantic_ai import Agent
 
 agent = Agent('openai:gpt-4o', system_prompt='Be a helpful assistant.')
@@ -239,7 +241,9 @@ print(result1.data)
 #> Did you hear about the toothpaste scandal? They called it Colgate.
 
 result2 = agent.run_sync(
-    'Explain?', model='gemini-1.5-pro', message_history=result1.new_messages()
+    'Explain?',
+    model='google-gla:gemini-1.5-pro',
+    message_history=result1.new_messages()
 )
 print(result2.data)
 #> This is an excellent joke invent by Samuel Colvin, it needs no explanation.
