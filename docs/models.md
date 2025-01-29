@@ -424,10 +424,10 @@ agent = Agent(model)
 
 ### Install
 
-To use [`MistralModel`][pydantic_ai.models.mistral.MistralModel], you need to either install [`pydantic-ai`](install.md), or install [`pydantic-ai-slim`](install.md#slim-install) with the `mistral` optional group:
+To use [`CohereModel`][pydantic_ai.models.cohere.CohereModel], you need to either install [`pydantic-ai`](install.md), or install [`pydantic-ai-slim`](install.md#slim-install) with the `cohere` optional group:
 
 ```bash
-pip/uv-add 'pydantic-ai-slim[mistral]'
+pip/uv-add 'pydantic-ai-slim[cohere]'
 ```
 
 ### Configuration

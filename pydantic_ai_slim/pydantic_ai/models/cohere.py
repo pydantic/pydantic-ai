@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from itertools import chain
-from typing import Literal, TypeAlias, Union, cast
+from typing import Literal, Union, cast
 
 from cohere import TextAssistantMessageContentItem
 from typing_extensions import assert_never
@@ -51,24 +51,24 @@ except ImportError as _import_error:
         "you can use the `cohere` optional group — `pip install 'pydantic-ai-slim[cohere]'`"
     ) from _import_error
 
-CohereModelName: TypeAlias = Union[
-    str,
-    Literal[
-        'c4ai-aya-expanse-32b',
-        'c4ai-aya-expanse-8b',
-        'command',
-        'command-light',
-        'command-light-nightly',
-        'command-nightly',
-        'command-r',
-        'command-r-03-2024',
-        'command-r-08-2024',
-        'command-r-plus',
-        'command-r-plus-04-2024',
-        'command-r-plus-08-2024',
-        'command-r7b-12-2024',
-    ],
+NamedCohereModels = Literal[
+    'c4ai-aya-expanse-32b',
+    'c4ai-aya-expanse-8b',
+    'command',
+    'command-light',
+    'command-light-nightly',
+    'command-nightly',
+    'command-r',
+    'command-r-03-2024',
+    'command-r-08-2024',
+    'command-r-plus',
+    'command-r-plus-04-2024',
+    'command-r-plus-08-2024',
+    'command-r7b-12-2024',
 ]
+"""Latest / most popular named Cohere models."""
+
+CohereModelName = Union[NamedCohereModels, str]
 
 
 class CohereModelSettings(ModelSettings):
