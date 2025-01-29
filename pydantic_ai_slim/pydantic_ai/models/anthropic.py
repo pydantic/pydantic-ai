@@ -137,20 +137,6 @@ class AnthropicModel(Model):
     def name(self) -> str:
         return f'anthropic:{self.model_name}'
 
-    @staticmethod
-    def _map_tool_definition(f: ToolDefinition) -> ToolParam:
-        return {
-            'name': f.name,
-            'description': f.description,
-            'input_schema': f.parameters_json_schema,
-        }
-
-    def _get_tools(self, agent_request_config: AgentRequestConfig) -> list[ToolParam]:
-        tools = [self._map_tool_definition(r) for r in agent_request_config.function_tools]
-        if agent_request_config.result_tools:
-            tools += [self._map_tool_definition(r) for r in agent_request_config.result_tools]
-        return tools
-
     async def request(
         self,
         messages: list[ModelMessage],
@@ -263,8 +249,13 @@ class AnthropicModel(Model):
         timestamp = datetime.now(tz=timezone.utc)
         return AnthropicStreamedResponse(_model_name=self.model_name, _response=peekable_response, _timestamp=timestamp)
 
-    @staticmethod
-    def _map_message(messages: list[ModelMessage]) -> tuple[str, list[MessageParam]]:
+    def _get_tools(self, agent_request_config: AgentRequestConfig) -> list[ToolParam]:
+        tools = [self._map_tool_definition(r) for r in agent_request_config.function_tools]
+        if agent_request_config.result_tools:
+            tools += [self._map_tool_definition(r) for r in agent_request_config.result_tools]
+        return tools
+
+    def _map_message(self, messages: list[ModelMessage]) -> tuple[str, list[MessageParam]]:
         """Just maps a `pydantic_ai.Message` to a `anthropic.types.MessageParam`."""
         system_prompt: str = ''
         anthropic_messages: list[MessageParam] = []
@@ -313,20 +304,28 @@ class AnthropicModel(Model):
                         content.append(TextBlockParam(text=item.content, type='text'))
                     else:
                         assert isinstance(item, ToolCallPart)
-                        content.append(_map_tool_call(item))
+                        content.append(self._map_tool_call(item))
                 anthropic_messages.append(MessageParam(role='assistant', content=content))
             else:
                 assert_never(m)
         return system_prompt, anthropic_messages
 
+    @staticmethod
+    def _map_tool_call(t: ToolCallPart) -> ToolUseBlockParam:
+        return ToolUseBlockParam(
+            id=_guard_tool_call_id(t=t, model_source='Anthropic'),
+            type='tool_use',
+            name=t.tool_name,
+            input=t.args_as_dict(),
+        )
 
-def _map_tool_call(t: ToolCallPart) -> ToolUseBlockParam:
-    return ToolUseBlockParam(
-        id=_guard_tool_call_id(t=t, model_source='Anthropic'),
-        type='tool_use',
-        name=t.tool_name,
-        input=t.args_as_dict(),
-    )
+    @staticmethod
+    def _map_tool_definition(f: ToolDefinition) -> ToolParam:
+        return {
+            'name': f.name,
+            'description': f.description,
+            'input_schema': f.parameters_json_schema,
+        }
 
 
 def _map_usage(message: AnthropicMessage | RawMessageStreamEvent) -> usage.Usage:

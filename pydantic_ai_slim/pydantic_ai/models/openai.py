@@ -115,17 +115,6 @@ class OpenAIModel(Model):
     def name(self) -> str:
         return f'openai:{self.model_name}'
 
-    @staticmethod
-    def _map_tool_definition(f: ToolDefinition) -> chat.ChatCompletionToolParam:
-        return {
-            'type': 'function',
-            'function': {
-                'name': f.name,
-                'description': f.description,
-                'parameters': f.parameters_json_schema,
-            },
-        }
-
     async def request(
         self,
         messages: list[ModelMessage],
@@ -137,12 +126,6 @@ class OpenAIModel(Model):
             messages, False, cast(OpenAIModelSettings, model_settings or {}), agent_request_config
         )
         return self._process_response(response), _map_usage(response)
-
-    def _get_tools(self, agent_request_config: AgentRequestConfig) -> list[chat.ChatCompletionToolParam]:
-        tools = [self._map_tool_definition(r) for r in agent_request_config.function_tools]
-        if agent_request_config.result_tools:
-            tools += [self._map_tool_definition(r) for r in agent_request_config.result_tools]
-        return tools
 
     @asynccontextmanager
     async def request_stream(
@@ -241,6 +224,12 @@ class OpenAIModel(Model):
             _timestamp=datetime.fromtimestamp(first_chunk.created, tz=timezone.utc),
         )
 
+    def _get_tools(self, agent_request_config: AgentRequestConfig) -> list[chat.ChatCompletionToolParam]:
+        tools = [self._map_tool_definition(r) for r in agent_request_config.function_tools]
+        if agent_request_config.result_tools:
+            tools += [self._map_tool_definition(r) for r in agent_request_config.result_tools]
+        return tools
+
     def _map_message(self, message: ModelMessage) -> Iterable[chat.ChatCompletionMessageParam]:
         """Just maps a `pydantic_ai.Message` to a `openai.types.ChatCompletionMessageParam`."""
         if isinstance(message, ModelRequest):
@@ -252,7 +241,7 @@ class OpenAIModel(Model):
                 if isinstance(item, TextPart):
                     texts.append(item.content)
                 elif isinstance(item, ToolCallPart):
-                    tool_calls.append(_map_tool_call(item))
+                    tool_calls.append(self._map_tool_call(item))
                 else:
                     assert_never(item)
             message_param = chat.ChatCompletionAssistantMessageParam(role='assistant')
@@ -265,6 +254,25 @@ class OpenAIModel(Model):
             yield message_param
         else:
             assert_never(message)
+
+    @staticmethod
+    def _map_tool_call(t: ToolCallPart) -> chat.ChatCompletionMessageToolCallParam:
+        return chat.ChatCompletionMessageToolCallParam(
+            id=_guard_tool_call_id(t=t, model_source='OpenAI'),
+            type='function',
+            function={'name': t.tool_name, 'arguments': t.args_as_json_str()},
+        )
+
+    @staticmethod
+    def _map_tool_definition(f: ToolDefinition) -> chat.ChatCompletionToolParam:
+        return {
+            'type': 'function',
+            'function': {
+                'name': f.name,
+                'description': f.description,
+                'parameters': f.parameters_json_schema,
+            },
+        }
 
     def _map_user_message(self, message: ModelRequest) -> Iterable[chat.ChatCompletionMessageParam]:
         for part in message.parts:
@@ -329,14 +337,6 @@ class OpenAIStreamedResponse(StreamedResponse):
 
     def timestamp(self) -> datetime:
         return self._timestamp
-
-
-def _map_tool_call(t: ToolCallPart) -> chat.ChatCompletionMessageToolCallParam:
-    return chat.ChatCompletionMessageToolCallParam(
-        id=_guard_tool_call_id(t=t, model_source='OpenAI'),
-        type='function',
-        function={'name': t.tool_name, 'arguments': t.args_as_json_str()},
-    )
 
 
 def _map_usage(response: chat.ChatCompletion | ChatCompletionChunk) -> usage.Usage:

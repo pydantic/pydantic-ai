@@ -115,23 +115,6 @@ class GroqModel(Model):
     def name(self) -> str:
         return f'groq:{self.model_name}'
 
-    @staticmethod
-    def _map_tool_definition(f: ToolDefinition) -> chat.ChatCompletionToolParam:
-        return {
-            'type': 'function',
-            'function': {
-                'name': f.name,
-                'description': f.description,
-                'parameters': f.parameters_json_schema,
-            },
-        }
-
-    def _get_tools(self, agent_request_config: AgentRequestConfig) -> list[chat.ChatCompletionToolParam]:
-        tools = [self._map_tool_definition(r) for r in agent_request_config.function_tools]
-        if agent_request_config.result_tools:
-            tools += [self._map_tool_definition(r) for r in agent_request_config.result_tools]
-        return tools
-
     async def request(
         self,
         messages: list[ModelMessage],
@@ -239,11 +222,16 @@ class GroqModel(Model):
             _timestamp=datetime.fromtimestamp(first_chunk.created, tz=timezone.utc),
         )
 
-    @classmethod
-    def _map_message(cls, message: ModelMessage) -> Iterable[chat.ChatCompletionMessageParam]:
+    def _get_tools(self, agent_request_config: AgentRequestConfig) -> list[chat.ChatCompletionToolParam]:
+        tools = [self._map_tool_definition(r) for r in agent_request_config.function_tools]
+        if agent_request_config.result_tools:
+            tools += [self._map_tool_definition(r) for r in agent_request_config.result_tools]
+        return tools
+
+    def _map_message(self, message: ModelMessage) -> Iterable[chat.ChatCompletionMessageParam]:
         """Just maps a `pydantic_ai.Message` to a `groq.types.ChatCompletionMessageParam`."""
         if isinstance(message, ModelRequest):
-            yield from cls._map_user_message(message)
+            yield from self._map_user_message(message)
         elif isinstance(message, ModelResponse):
             texts: list[str] = []
             tool_calls: list[chat.ChatCompletionMessageToolCallParam] = []
@@ -251,7 +239,7 @@ class GroqModel(Model):
                 if isinstance(item, TextPart):
                     texts.append(item.content)
                 elif isinstance(item, ToolCallPart):
-                    tool_calls.append(_map_tool_call(item))
+                    tool_calls.append(self._map_tool_call(item))
                 else:
                     assert_never(item)
             message_param = chat.ChatCompletionAssistantMessageParam(role='assistant')
@@ -264,6 +252,25 @@ class GroqModel(Model):
             yield message_param
         else:
             assert_never(message)
+
+    @staticmethod
+    def _map_tool_call(t: ToolCallPart) -> chat.ChatCompletionMessageToolCallParam:
+        return chat.ChatCompletionMessageToolCallParam(
+            id=_guard_tool_call_id(t=t, model_source='Groq'),
+            type='function',
+            function={'name': t.tool_name, 'arguments': t.args_as_json_str()},
+        )
+
+    @staticmethod
+    def _map_tool_definition(f: ToolDefinition) -> chat.ChatCompletionToolParam:
+        return {
+            'type': 'function',
+            'function': {
+                'name': f.name,
+                'description': f.description,
+                'parameters': f.parameters_json_schema,
+            },
+        }
 
     @classmethod
     def _map_user_message(cls, message: ModelRequest) -> Iterable[chat.ChatCompletionMessageParam]:
@@ -323,14 +330,6 @@ class GroqStreamedResponse(StreamedResponse):
 
     def timestamp(self) -> datetime:
         return self._timestamp
-
-
-def _map_tool_call(t: ToolCallPart) -> chat.ChatCompletionMessageToolCallParam:
-    return chat.ChatCompletionMessageToolCallParam(
-        id=_guard_tool_call_id(t=t, model_source='Groq'),
-        type='function',
-        function={'name': t.tool_name, 'arguments': t.args_as_json_str()},
-    )
 
 
 def _map_usage(completion: ChatCompletionChunk | ChatCompletion) -> usage.Usage:

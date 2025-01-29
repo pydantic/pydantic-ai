@@ -289,7 +289,7 @@ class MistralModel(Model):
 
         if isinstance(tool_calls, list):
             for tool_call in tool_calls:
-                tool = _map_mistral_to_pydantic_tool_call(tool_call=tool_call)
+                tool = self._map_mistral_to_pydantic_tool_call(tool_call=tool_call)
                 parts.append(tool)
 
         return ModelResponse(parts, model_name=self.model_name, timestamp=timestamp)
@@ -318,7 +318,15 @@ class MistralModel(Model):
         )
 
     @staticmethod
-    def _map_to_mistral_tool_call(t: ToolCallPart) -> MistralToolCall:
+    def _map_mistral_to_pydantic_tool_call(tool_call: MistralToolCall) -> ToolCallPart:
+        """Maps a MistralToolCall to a ToolCall."""
+        tool_call_id = tool_call.id or None
+        func_call = tool_call.function
+
+        return ToolCallPart(func_call.name, func_call.arguments, tool_call_id)
+
+    @staticmethod
+    def _map_pydantic_to_mistral_tool_call(t: ToolCallPart) -> MistralToolCall:
         """Maps a pydantic-ai ToolCall to a MistralToolCall."""
         return MistralToolCall(
             id=t.tool_call_id,
@@ -434,7 +442,7 @@ class MistralModel(Model):
                 if isinstance(part, TextPart):
                     content_chunks.append(MistralTextChunk(text=part.content))
                 elif isinstance(part, ToolCallPart):
-                    tool_calls.append(cls._map_to_mistral_tool_call(part))
+                    tool_calls.append(cls._map_pydantic_to_mistral_tool_call(part))
                 else:
                     assert_never(part)
             yield MistralAssistantMessage(content=content_chunks, tool_calls=tool_calls)
@@ -558,14 +566,6 @@ SIMPLE_JSON_TYPE_MAPPING = {
     'array': 'list',
     'null': 'None',
 }
-
-
-def _map_mistral_to_pydantic_tool_call(tool_call: MistralToolCall) -> ToolCallPart:
-    """Maps a MistralToolCall to a ToolCall."""
-    tool_call_id = tool_call.id or None
-    func_call = tool_call.function
-
-    return ToolCallPart(func_call.name, func_call.arguments, tool_call_id)
 
 
 def _map_usage(response: MistralChatCompletionResponse | MistralCompletionChunk) -> Usage:

@@ -117,23 +117,6 @@ class CohereModel(Model):
     def name(self) -> str:
         return f'cohere:{self.model_name}'
 
-    @staticmethod
-    def _map_tool_definition(f: ToolDefinition) -> ToolV2:
-        return ToolV2(
-            type='function',
-            function=ToolV2Function(
-                name=f.name,
-                description=f.description,
-                parameters=f.parameters_json_schema,
-            ),
-        )
-
-    def _get_tools(self, agent_request_config: AgentRequestConfig) -> list[ToolV2]:
-        tools = [self._map_tool_definition(r) for r in agent_request_config.function_tools]
-        if agent_request_config.result_tools:
-            tools += [self._map_tool_definition(r) for r in agent_request_config.result_tools]
-        return tools
-
     async def request(
         self,
         messages: list[ModelMessage],
@@ -183,11 +166,10 @@ class CohereModel(Model):
                 )
         return ModelResponse(parts=parts, model_name=self.model_name)
 
-    @classmethod
-    def _map_message(cls, message: ModelMessage) -> Iterable[ChatMessageV2]:
+    def _map_message(self, message: ModelMessage) -> Iterable[ChatMessageV2]:
         """Just maps a `pydantic_ai.Message` to a `cohere.ChatMessageV2`."""
         if isinstance(message, ModelRequest):
-            yield from cls._map_user_message(message)
+            yield from self._map_user_message(message)
         elif isinstance(message, ModelResponse):
             texts: list[str] = []
             tool_calls: list[ToolCallV2] = []
@@ -195,7 +177,7 @@ class CohereModel(Model):
                 if isinstance(item, TextPart):
                     texts.append(item.content)
                 elif isinstance(item, ToolCallPart):
-                    tool_calls.append(_map_tool_call(item))
+                    tool_calls.append(self._map_tool_call(item))
                 else:
                     assert_never(item)
             message_param = AssistantChatMessageV2(role='assistant')
@@ -206,6 +188,34 @@ class CohereModel(Model):
             yield message_param
         else:
             assert_never(message)
+
+    def _get_tools(self, agent_request_config: AgentRequestConfig) -> list[ToolV2]:
+        tools = [self._map_tool_definition(r) for r in agent_request_config.function_tools]
+        if agent_request_config.result_tools:
+            tools += [self._map_tool_definition(r) for r in agent_request_config.result_tools]
+        return tools
+
+    @staticmethod
+    def _map_tool_call(t: ToolCallPart) -> ToolCallV2:
+        return ToolCallV2(
+            id=_guard_tool_call_id(t=t, model_source='Cohere'),
+            type='function',
+            function=ToolCallV2Function(
+                name=t.tool_name,
+                arguments=t.args_as_json_str(),
+            ),
+        )
+
+    @staticmethod
+    def _map_tool_definition(f: ToolDefinition) -> ToolV2:
+        return ToolV2(
+            type='function',
+            function=ToolV2Function(
+                name=f.name,
+                description=f.description,
+                parameters=f.parameters_json_schema,
+            ),
+        )
 
     @classmethod
     def _map_user_message(cls, message: ModelRequest) -> Iterable[ChatMessageV2]:
@@ -231,17 +241,6 @@ class CohereModel(Model):
                     )
             else:
                 assert_never(part)
-
-
-def _map_tool_call(t: ToolCallPart) -> ToolCallV2:
-    return ToolCallV2(
-        id=_guard_tool_call_id(t=t, model_source='Cohere'),
-        type='function',
-        function=ToolCallV2Function(
-            name=t.tool_name,
-            arguments=t.args_as_json_str(),
-        ),
-    )
 
 
 def _map_usage(response: ChatResponse) -> result.Usage:
