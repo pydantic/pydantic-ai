@@ -336,7 +336,6 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
                 system_prompt_dynamic_functions=self._system_prompt_dynamic_functions,
             )
 
-            graph.mermaid_save('diagram.png', start_node=start_node)
             # Actually run
             end_result, _ = await graph.run(
                 start_node,
