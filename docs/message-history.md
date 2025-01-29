@@ -243,7 +243,7 @@ print(result1.data)
 result2 = agent.run_sync(
     'Explain?',
     model='google-gla:gemini-1.5-pro',
-    message_history=result1.new_messages()
+    message_history=result1.new_messages(),
 )
 print(result2.data)
 #> This is an excellent joke invent by Samuel Colvin, it needs no explanation.
