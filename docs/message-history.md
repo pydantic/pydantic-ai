@@ -166,7 +166,7 @@ print(result1.data)
 
 result2 = agent.run_sync('Explain?', message_history=result1.new_messages())
 print(result2.data)
-#> This is an excellent joke invent by Samuel Colvin, it needs no explanation.
+#> This is an excellent joke invented by Samuel Colvin, it needs no explanation.
 
 print(result2.all_messages())
 """
@@ -210,7 +210,7 @@ print(result2.all_messages())
     ModelResponse(
         parts=[
             TextPart(
-                content='This is an excellent joke invent by Samuel Colvin, it needs no explanation.',
+                content='This is an excellent joke invented by Samuel Colvin, it needs no explanation.',
                 part_kind='text',
             )
         ],
@@ -246,7 +246,7 @@ result2 = agent.run_sync(
     message_history=result1.new_messages(),
 )
 print(result2.data)
-#> This is an excellent joke invent by Samuel Colvin, it needs no explanation.
+#> This is an excellent joke invented by Samuel Colvin, it needs no explanation.
 
 print(result2.all_messages())
 """
@@ -290,7 +290,7 @@ print(result2.all_messages())
     ModelResponse(
         parts=[
             TextPart(
-                content='This is an excellent joke invent by Samuel Colvin, it needs no explanation.',
+                content='This is an excellent joke invented by Samuel Colvin, it needs no explanation.',
                 part_kind='text',
             )
         ],
