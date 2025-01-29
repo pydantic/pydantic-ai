@@ -153,49 +153,36 @@ KnownModelName = Literal[
 """
 
 
+@dataclass
+class AgentRequestConfig:
+    function_tools: list[ToolDefinition]
+    allow_text_result: bool
+    result_tools: list[ToolDefinition]
+
+
 class Model(ABC):
     """Abstract class for a model."""
-
-    @abstractmethod
-    async def agent_model(
-        self,
-        *,
-        function_tools: list[ToolDefinition],
-        allow_text_result: bool,
-        result_tools: list[ToolDefinition],
-    ) -> AgentModel:
-        """Create an agent model, this is called for each step of an agent run.
-
-        This is async in case slow/async config checks need to be performed that can't be done in `__init__`.
-
-        Args:
-            function_tools: The tools available to the agent.
-            allow_text_result: Whether a plain text final response/result is permitted.
-            result_tools: Tool definitions for the final result tool(s), if any.
-
-        Returns:
-            An agent model.
-        """
-        raise NotImplementedError()
 
     @abstractmethod
     def name(self) -> str:
         raise NotImplementedError()
 
-
-class AgentModel(ABC):
-    """Model configured for each step of an Agent run."""
-
     @abstractmethod
     async def request(
-        self, messages: list[ModelMessage], model_settings: ModelSettings | None
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        agent_request_config: AgentRequestConfig,
     ) -> tuple[ModelResponse, Usage]:
         """Make a request to the model."""
         raise NotImplementedError()
 
     @asynccontextmanager
     async def request_stream(
-        self, messages: list[ModelMessage], model_settings: ModelSettings | None
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        agent_request_config: AgentRequestConfig,
     ) -> AsyncIterator[StreamedResponse]:
         """Make a request to the model and return a streaming response."""
         # This method is not required, but you need to implement it if you want to support streamed responses

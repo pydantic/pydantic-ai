@@ -28,7 +28,7 @@ from ..messages import (
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from . import (
-    AgentModel,
+    AgentRequestConfig,
     Model,
     StreamedResponse,
     cached_async_http_client,
@@ -112,23 +112,23 @@ class GroqModel(Model):
         else:
             self.client = AsyncGroq(api_key=api_key, http_client=cached_async_http_client())
 
-    async def agent_model(
-        self,
-        *,
-        function_tools: list[ToolDefinition],
-        allow_text_result: bool,
-        result_tools: list[ToolDefinition],
-    ) -> AgentModel:
-        check_allow_model_requests()
-        tools = [self._map_tool_definition(r) for r in function_tools]
-        if result_tools:
-            tools += [self._map_tool_definition(r) for r in result_tools]
-        return GroqAgentModel(
-            self.client,
-            self.model_name,
-            allow_text_result,
-            tools,
-        )
+    # async def agent_model(
+    #     self,
+    #     *,
+    #     function_tools: list[ToolDefinition],
+    #     allow_text_result: bool,
+    #     result_tools: list[ToolDefinition],
+    # ) -> AgentModel:
+    #     check_allow_model_requests()
+    #     # tools = [self._map_tool_definition(r) for r in function_tools]
+    #     # if result_tools:
+    #     #     tools += [self._map_tool_definition(r) for r in result_tools]
+    #     return GroqAgentModel(
+    #         self.client,
+    #         self.model_name,
+    #         allow_text_result,
+    #         tools,
+    #     )
 
     def name(self) -> str:
         return f'groq:{self.model_name}'
@@ -144,49 +144,78 @@ class GroqModel(Model):
             },
         }
 
-
-@dataclass
-class GroqAgentModel(AgentModel):
-    """Implementation of `AgentModel` for Groq models."""
-
-    client: AsyncGroq
-    model_name: str
-    allow_text_result: bool
-    tools: list[chat.ChatCompletionToolParam]
+    # @dataclass
+    # class GroqAgentModel(AgentModel):
+    #     """Implementation of `AgentModel` for Groq models."""
+    #
+    #     client: AsyncGroq
+    #     model_name: str
+    #     allow_text_result: bool
+    #     tools: list[chat.ChatCompletionToolParam]
+    def _get_tools(self, agent_request_config: AgentRequestConfig) -> list[chat.ChatCompletionToolParam]:
+        tools = [self._map_tool_definition(r) for r in agent_request_config.function_tools]
+        if agent_request_config.result_tools:
+            tools += [self._map_tool_definition(r) for r in agent_request_config.result_tools]
+        return tools
 
     async def request(
-        self, messages: list[ModelMessage], model_settings: ModelSettings | None
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        agent_request_config: AgentRequestConfig,
     ) -> tuple[ModelResponse, usage.Usage]:
-        response = await self._completions_create(messages, False, cast(GroqModelSettings, model_settings or {}))
+        check_allow_model_requests()
+        response = await self._completions_create(
+            messages, False, cast(GroqModelSettings, model_settings or {}), agent_request_config
+        )
         return self._process_response(response), _map_usage(response)
 
     @asynccontextmanager
     async def request_stream(
-        self, messages: list[ModelMessage], model_settings: ModelSettings | None
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        agent_request_config: AgentRequestConfig,
     ) -> AsyncIterator[StreamedResponse]:
-        response = await self._completions_create(messages, True, cast(GroqModelSettings, model_settings or {}))
+        check_allow_model_requests()
+        response = await self._completions_create(
+            messages, True, cast(GroqModelSettings, model_settings or {}), agent_request_config
+        )
         async with response:
             yield await self._process_streamed_response(response)
 
     @overload
     async def _completions_create(
-        self, messages: list[ModelMessage], stream: Literal[True], model_settings: GroqModelSettings
+        self,
+        messages: list[ModelMessage],
+        stream: Literal[True],
+        model_settings: GroqModelSettings,
+        agent_request_config: AgentRequestConfig,
     ) -> AsyncStream[ChatCompletionChunk]:
         pass
 
     @overload
     async def _completions_create(
-        self, messages: list[ModelMessage], stream: Literal[False], model_settings: GroqModelSettings
+        self,
+        messages: list[ModelMessage],
+        stream: Literal[False],
+        model_settings: GroqModelSettings,
+        agent_request_config: AgentRequestConfig,
     ) -> chat.ChatCompletion:
         pass
 
     async def _completions_create(
-        self, messages: list[ModelMessage], stream: bool, model_settings: GroqModelSettings
+        self,
+        messages: list[ModelMessage],
+        stream: bool,
+        model_settings: GroqModelSettings,
+        agent_request_config: AgentRequestConfig,
     ) -> chat.ChatCompletion | AsyncStream[ChatCompletionChunk]:
+        tools = self._get_tools(agent_request_config)
         # standalone function to make it easier to override
-        if not self.tools:
+        if not tools:
             tool_choice: Literal['none', 'required', 'auto'] | None = None
-        elif not self.allow_text_result:
+        elif not agent_request_config.allow_text_result:
             tool_choice = 'required'
         else:
             tool_choice = 'auto'
@@ -198,7 +227,7 @@ class GroqAgentModel(AgentModel):
             messages=groq_messages,
             n=1,
             parallel_tool_calls=model_settings.get('parallel_tool_calls', NOT_GIVEN),
-            tools=self.tools or NOT_GIVEN,
+            tools=tools or NOT_GIVEN,
             tool_choice=tool_choice or NOT_GIVEN,
             stream=stream,
             max_tokens=model_settings.get('max_tokens', NOT_GIVEN),

@@ -31,7 +31,7 @@ from ..messages import (
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from . import (
-    AgentModel,
+    AgentRequestConfig,
     Model,
     StreamedResponse,
     cached_async_http_client,
@@ -65,9 +65,10 @@ class GeminiModel(Model):
     """
 
     model_name: GeminiModelName
-    auth: AuthProtocol
     http_client: AsyncHTTPClient
-    url: str
+
+    _auth: AuthProtocol | None
+    _url: str | None
 
     def __init__(
         self,
@@ -94,115 +95,84 @@ class GeminiModel(Model):
                 api_key = env_api_key
             else:
                 raise exceptions.UserError('API key must be provided or set in the GEMINI_API_KEY environment variable')
-        self.auth = ApiKeyAuth(api_key)
         self.http_client = http_client or cached_async_http_client()
-        self.url = url_template.format(model=model_name)
+        self._auth = ApiKeyAuth(api_key)
+        self._url = url_template.format(model=model_name)
 
-    async def agent_model(
-        self,
-        *,
-        function_tools: list[ToolDefinition],
-        allow_text_result: bool,
-        result_tools: list[ToolDefinition],
-    ) -> GeminiAgentModel:
-        check_allow_model_requests()
-        return GeminiAgentModel(
-            http_client=self.http_client,
-            model_name=self.model_name,
-            auth=self.auth,
-            url=self.url,
-            function_tools=function_tools,
-            allow_text_result=allow_text_result,
-            result_tools=result_tools,
-        )
+    @property
+    def auth(self) -> AuthProtocol:
+        assert self._auth is not None, 'Auth not initialized'
+        return self._auth
+
+    @property
+    def url(self) -> str:
+        assert self._url is not None, 'URL not initialized'
+        return self._url
 
     def name(self) -> str:
         return f'google-gla:{self.model_name}'
 
-
-class AuthProtocol(Protocol):
-    """Abstract definition for Gemini authentication."""
-
-    async def headers(self) -> dict[str, str]: ...
-
-
-@dataclass
-class ApiKeyAuth:
-    """Authentication using an API key for the `X-Goog-Api-Key` header."""
-
-    api_key: str
-
-    async def headers(self) -> dict[str, str]:
-        # https://cloud.google.com/docs/authentication/api-keys-use#using-with-rest
-        return {'X-Goog-Api-Key': self.api_key}
-
-
-@dataclass(init=False)
-class GeminiAgentModel(AgentModel):
-    """Implementation of `AgentModel` for Gemini models."""
-
-    http_client: AsyncHTTPClient
-    model_name: GeminiModelName
-    auth: AuthProtocol
-    tools: _GeminiTools | None
-    tool_config: _GeminiToolConfig | None
-    url: str
-
-    def __init__(
-        self,
-        http_client: AsyncHTTPClient,
-        model_name: GeminiModelName,
-        auth: AuthProtocol,
-        url: str,
-        function_tools: list[ToolDefinition],
-        allow_text_result: bool,
-        result_tools: list[ToolDefinition],
-    ):
-        tools = [_function_from_abstract_tool(t) for t in function_tools]
-        if result_tools:
-            tools += [_function_from_abstract_tool(t) for t in result_tools]
-
-        if allow_text_result:
-            tool_config = None
-        else:
-            tool_config = _tool_config([t['name'] for t in tools])
-
-        self.http_client = http_client
-        self.model_name = model_name
-        self.auth = auth
-        self.tools = _GeminiTools(function_declarations=tools) if tools else None
-        self.tool_config = tool_config
-        self.url = url
-
     async def request(
-        self, messages: list[ModelMessage], model_settings: ModelSettings | None
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        agent_request_config: AgentRequestConfig,
     ) -> tuple[ModelResponse, usage.Usage]:
+        check_allow_model_requests()
         async with self._make_request(
-            messages, False, cast(GeminiModelSettings, model_settings or {})
+            messages, False, cast(GeminiModelSettings, model_settings or {}), agent_request_config
         ) as http_response:
             response = _gemini_response_ta.validate_json(await http_response.aread())
         return self._process_response(response), _metadata_as_usage(response)
 
     @asynccontextmanager
     async def request_stream(
-        self, messages: list[ModelMessage], model_settings: ModelSettings | None
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        agent_request_config: AgentRequestConfig,
     ) -> AsyncIterator[StreamedResponse]:
-        async with self._make_request(messages, True, cast(GeminiModelSettings, model_settings or {})) as http_response:
+        check_allow_model_requests()
+        async with self._make_request(
+            messages, True, cast(GeminiModelSettings, model_settings or {}), agent_request_config
+        ) as http_response:
             yield await self._process_streamed_response(http_response)
+
+    def _get_tools(self, agent_request_config: AgentRequestConfig) -> _GeminiTools | None:
+        tools = [_function_from_abstract_tool(t) for t in agent_request_config.function_tools]
+        if agent_request_config.result_tools:
+            tools += [_function_from_abstract_tool(t) for t in agent_request_config.result_tools]
+        return _GeminiTools(function_declarations=tools) if tools else None
+
+    def _get_tool_config(
+        self, agent_request_config: AgentRequestConfig, tools: _GeminiTools | None
+    ) -> _GeminiToolConfig | None:
+        if agent_request_config.allow_text_result:
+            return None
+        elif tools:
+            return _tool_config([t['name'] for t in tools['function_declarations']])
+        else:
+            return _tool_config([])
 
     @asynccontextmanager
     async def _make_request(
-        self, messages: list[ModelMessage], streamed: bool, model_settings: GeminiModelSettings
+        self,
+        messages: list[ModelMessage],
+        streamed: bool,
+        model_settings: GeminiModelSettings,
+        agent_request_config: AgentRequestConfig,
     ) -> AsyncIterator[HTTPResponse]:
+        tools = self._get_tools(agent_request_config)
+        tool_config = self._get_tool_config(agent_request_config, tools)
         sys_prompt_parts, contents = self._message_to_gemini_content(messages)
 
         request_data = _GeminiRequest(contents=contents)
         if sys_prompt_parts:
             request_data['system_instruction'] = _GeminiTextContent(role='user', parts=sys_prompt_parts)
-        if self.tools is not None:
-            request_data['tools'] = self.tools
-        if self.tool_config is not None:
-            request_data['tool_config'] = self.tool_config
+        if tools is not None:
+            request_data['tools'] = tools
+        if tool_config is not None:
+            request_data['tool_config'] = tool_config
 
         generation_config: _GeminiGenerationConfig = {}
         if model_settings:
@@ -304,6 +274,23 @@ class GeminiAgentModel(AgentModel):
                 assert_never(m)
 
         return sys_prompt_parts, contents
+
+
+class AuthProtocol(Protocol):
+    """Abstract definition for Gemini authentication."""
+
+    async def headers(self) -> dict[str, str]: ...
+
+
+@dataclass
+class ApiKeyAuth:
+    """Authentication using an API key for the `X-Goog-Api-Key` header."""
+
+    api_key: str
+
+    async def headers(self) -> dict[str, str]:
+        # https://cloud.google.com/docs/authentication/api-keys-use#using-with-rest
+        return {'X-Goog-Api-Key': self.api_key}
 
 
 @dataclass

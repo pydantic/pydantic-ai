@@ -25,7 +25,7 @@ from ..messages import (
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from . import (
-    AgentModel,
+    AgentRequestConfig,
     Model,
     check_allow_model_requests,
 )
@@ -114,24 +114,6 @@ class CohereModel(Model):
         else:
             self.client = AsyncClientV2(api_key=api_key)  # type: ignore
 
-    async def agent_model(
-        self,
-        *,
-        function_tools: list[ToolDefinition],
-        allow_text_result: bool,
-        result_tools: list[ToolDefinition],
-    ) -> AgentModel:
-        check_allow_model_requests()
-        tools = [self._map_tool_definition(r) for r in function_tools]
-        if result_tools:
-            tools += [self._map_tool_definition(r) for r in result_tools]
-        return CohereAgentModel(
-            self.client,
-            self.model_name,
-            allow_text_result,
-            tools,
-        )
-
     def name(self) -> str:
         return f'cohere:{self.model_name}'
 
@@ -146,32 +128,34 @@ class CohereModel(Model):
             ),
         )
 
-
-@dataclass
-class CohereAgentModel(AgentModel):
-    """Implementation of `AgentModel` for Cohere models."""
-
-    client: AsyncClientV2
-    model_name: CohereModelName
-    allow_text_result: bool
-    tools: list[ToolV2]
+    def _get_tools(self, agent_request_config: AgentRequestConfig) -> list[ToolV2]:
+        tools = [self._map_tool_definition(r) for r in agent_request_config.function_tools]
+        if agent_request_config.result_tools:
+            tools += [self._map_tool_definition(r) for r in agent_request_config.result_tools]
+        return tools
 
     async def request(
-        self, messages: list[ModelMessage], model_settings: ModelSettings | None
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        agent_request_config: AgentRequestConfig,
     ) -> tuple[ModelResponse, result.Usage]:
-        response = await self._chat(messages, cast(CohereModelSettings, model_settings or {}))
+        check_allow_model_requests()
+        response = await self._chat(messages, cast(CohereModelSettings, model_settings or {}), agent_request_config)
         return self._process_response(response), _map_usage(response)
 
     async def _chat(
         self,
         messages: list[ModelMessage],
         model_settings: CohereModelSettings,
+        agent_request_config: AgentRequestConfig,
     ) -> ChatResponse:
+        tools = self._get_tools(agent_request_config)
         cohere_messages = list(chain(*(self._map_message(m) for m in messages)))
         return await self.client.chat(
             model=self.model_name,
             messages=cohere_messages,
-            tools=self.tools or OMIT,
+            tools=tools or OMIT,
             max_tokens=model_settings.get('max_tokens', OMIT),
             temperature=model_settings.get('temperature', OMIT),
             p=model_settings.get('top_p', OMIT),

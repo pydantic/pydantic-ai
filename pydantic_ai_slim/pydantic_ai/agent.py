@@ -296,10 +296,12 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
 
                 run_context.run_step += 1
                 with _logfire.span('preparing model and tools {run_step=}', run_step=run_context.run_step):
-                    agent_model = await self._prepare_model(run_context, result_schema)
+                    agent_request_config = await self._prepare_agent_request_config(run_context, result_schema)
 
                 with _logfire.span('model request', run_step=run_context.run_step) as model_req_span:
-                    model_response, request_usage = await agent_model.request(messages, model_settings)
+                    model_response, request_usage = await model_used.request(
+                        messages, model_settings, agent_request_config
+                    )
                     model_req_span.set_attribute('response', model_response)
                     model_req_span.set_attribute('usage', request_usage)
 
@@ -527,10 +529,12 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
                 usage_limits.check_before_request(run_context.usage)
 
                 with _logfire.span('preparing model and tools {run_step=}', run_step=run_context.run_step):
-                    agent_model = await self._prepare_model(run_context, result_schema)
+                    agent_request_config = await self._prepare_agent_request_config(run_context, result_schema)
 
                 with _logfire.span('model request {run_step=}', run_step=run_context.run_step) as model_req_span:
-                    async with agent_model.request_stream(messages, model_settings) as model_response:
+                    async with model_used.request_stream(
+                        messages, model_settings, agent_request_config
+                    ) as model_response:
                         run_context.usage.requests += 1
                         model_req_span.set_attribute('response_type', model_response.__class__.__name__)
                         # We want to end the "model request" span here, but we can't exit the context manager
@@ -998,9 +1002,9 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
 
         return model_
 
-    async def _prepare_model(
+    async def _prepare_agent_request_config(
         self, run_context: RunContext[AgentDepsT], result_schema: _result.ResultSchema[RunResultDataT] | None
-    ) -> models.AgentModel:
+    ) -> models.AgentRequestConfig:
         """Build tools and create an agent model."""
         function_tools: list[ToolDefinition] = []
 
@@ -1011,7 +1015,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
 
         await asyncio.gather(*map(add_tool, self._function_tools.values()))
 
-        return await run_context.model.agent_model(
+        return models.AgentRequestConfig(
             function_tools=function_tools,
             allow_text_result=self._allow_text_result(result_schema),
             result_tools=result_schema.tool_defs() if result_schema is not None else [],

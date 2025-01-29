@@ -31,7 +31,7 @@ from ..result import Usage
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from . import (
-    AgentModel,
+    AgentRequestConfig,
     Model,
     StreamedResponse,
     cached_async_http_client,
@@ -101,6 +101,7 @@ class MistralModel(Model):
 
     model_name: MistralModelName
     client: Mistral = field(repr=False)
+    json_mode_schema_prompt: str = """Answer in JSON Object, respect the format:\n```\n{schema}\n```\n"""
 
     def __init__(
         self,
@@ -109,6 +110,7 @@ class MistralModel(Model):
         api_key: str | Callable[[], str | None] | None = None,
         client: Mistral | None = None,
         http_client: AsyncHTTPClient | None = None,
+        json_mode_schema_prompt: str = """Answer in JSON Object, respect the format:\n```\n{schema}\n```\n""",
     ):
         """Initialize a Mistral model.
 
@@ -117,8 +119,10 @@ class MistralModel(Model):
             api_key: The API key to use for authentication, if unset uses `MISTRAL_API_KEY` environment variable.
             client: An existing `Mistral` client to use, if provided, `api_key` and `http_client` must be `None`.
             http_client: An existing `httpx.AsyncClient` to use for making HTTP requests.
+            json_mode_schema_prompt: The prompt to show when the model expects a JSON object as input.
         """
         self.model_name = model_name
+        self.json_mode_schema_prompt = json_mode_schema_prompt
 
         if client is not None:
             assert http_client is None, 'Cannot provide both `mistral_client` and `http_client`'
@@ -128,64 +132,77 @@ class MistralModel(Model):
             api_key = os.getenv('MISTRAL_API_KEY') if api_key is None else api_key
             self.client = Mistral(api_key=api_key, async_client=http_client or cached_async_http_client())
 
-    async def agent_model(
-        self,
-        *,
-        function_tools: list[ToolDefinition],
-        allow_text_result: bool,
-        result_tools: list[ToolDefinition],
-    ) -> AgentModel:
-        """Create an agent model, this is called for each step of an agent run from Pydantic AI call."""
-        check_allow_model_requests()
-        return MistralAgentModel(
-            self.client,
-            self.model_name,
-            allow_text_result,
-            function_tools,
-            result_tools,
-        )
+    # async def agent_model(
+    #     self,
+    #     *,
+    #     function_tools: list[ToolDefinition],
+    #     allow_text_result: bool,
+    #     result_tools: list[ToolDefinition],
+    # ) -> AgentModel:
+    #     """Create an agent model, this is called for each step of an agent run from Pydantic AI call."""
+    #     check_allow_model_requests()
+    #     return MistralAgentModel(
+    #         self.client,
+    #         self.model_name,
+    #         allow_text_result,
+    #         function_tools,
+    #         result_tools,
+    #     )
 
     def name(self) -> str:
         return f'mistral:{self.model_name}'
 
-
-@dataclass
-class MistralAgentModel(AgentModel):
-    """Implementation of `AgentModel` for Mistral models."""
-
-    client: Mistral
-    model_name: MistralModelName
-    allow_text_result: bool
-    function_tools: list[ToolDefinition]
-    result_tools: list[ToolDefinition]
-    json_mode_schema_prompt: str = """Answer in JSON Object, respect the format:\n```\n{schema}\n```\n"""
+    # @dataclass
+    # class MistralAgentModel(AgentModel):
+    #     """Implementation of `AgentModel` for Mistral models."""
+    #
+    #     client: Mistral
+    #     model_name: MistralModelName
+    #     allow_text_result: bool
+    #     function_tools: list[ToolDefinition]
+    #     result_tools: list[ToolDefinition]
 
     async def request(
-        self, messages: list[ModelMessage], model_settings: ModelSettings | None
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        agent_request_config: AgentRequestConfig,
     ) -> tuple[ModelResponse, Usage]:
         """Make a non-streaming request to the model from Pydantic AI call."""
-        response = await self._completions_create(messages, cast(MistralModelSettings, model_settings or {}))
+        check_allow_model_requests()
+        response = await self._completions_create(
+            messages, cast(MistralModelSettings, model_settings or {}), agent_request_config
+        )
         return self._process_response(response), _map_usage(response)
 
     @asynccontextmanager
     async def request_stream(
-        self, messages: list[ModelMessage], model_settings: ModelSettings | None
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        agent_request_config: AgentRequestConfig,
     ) -> AsyncIterator[StreamedResponse]:
         """Make a streaming request to the model from Pydantic AI call."""
-        response = await self._stream_completions_create(messages, cast(MistralModelSettings, model_settings or {}))
+        check_allow_model_requests()
+        response = await self._stream_completions_create(
+            messages, cast(MistralModelSettings, model_settings or {}), agent_request_config
+        )
         async with response:
-            yield await self._process_streamed_response(self.result_tools, response)
+            yield await self._process_streamed_response(agent_request_config.result_tools, response)
 
     async def _completions_create(
-        self, messages: list[ModelMessage], model_settings: MistralModelSettings
+        self,
+        messages: list[ModelMessage],
+        model_settings: MistralModelSettings,
+        agent_request_config: AgentRequestConfig,
     ) -> MistralChatCompletionResponse:
         """Make a non-streaming request to the model."""
         response = await self.client.chat.complete_async(
             model=str(self.model_name),
             messages=list(chain(*(self._map_message(m) for m in messages))),
             n=1,
-            tools=self._map_function_and_result_tools_definition() or UNSET,
-            tool_choice=self._get_tool_choice(),
+            tools=self._map_function_and_result_tools_definition(agent_request_config) or UNSET,
+            tool_choice=self._get_tool_choice(agent_request_config),
             stream=False,
             max_tokens=model_settings.get('max_tokens', UNSET),
             temperature=model_settings.get('temperature', UNSET),
@@ -200,19 +217,24 @@ class MistralAgentModel(AgentModel):
         self,
         messages: list[ModelMessage],
         model_settings: MistralModelSettings,
+        agent_request_config: AgentRequestConfig,
     ) -> MistralEventStreamAsync[MistralCompletionEvent]:
         """Create a streaming completion request to the Mistral model."""
         response: MistralEventStreamAsync[MistralCompletionEvent] | None
         mistral_messages = list(chain(*(self._map_message(m) for m in messages)))
 
-        if self.result_tools and self.function_tools or self.function_tools:
+        if (
+            agent_request_config.result_tools
+            and agent_request_config.function_tools
+            or agent_request_config.function_tools
+        ):
             # Function Calling
             response = await self.client.chat.stream_async(
                 model=str(self.model_name),
                 messages=mistral_messages,
                 n=1,
-                tools=self._map_function_and_result_tools_definition() or UNSET,
-                tool_choice=self._get_tool_choice(),
+                tools=self._map_function_and_result_tools_definition(agent_request_config) or UNSET,
+                tool_choice=self._get_tool_choice(agent_request_config),
                 temperature=model_settings.get('temperature', UNSET),
                 top_p=model_settings.get('top_p', 1),
                 max_tokens=model_settings.get('max_tokens', UNSET),
@@ -221,9 +243,9 @@ class MistralAgentModel(AgentModel):
                 frequency_penalty=model_settings.get('frequency_penalty'),
             )
 
-        elif self.result_tools:
+        elif agent_request_config.result_tools:
             # Json Mode
-            parameters_json_schemas = [tool.parameters_json_schema for tool in self.result_tools]
+            parameters_json_schemas = [tool.parameters_json_schema for tool in agent_request_config.result_tools]
             user_output_format_message = self._generate_user_output_format(parameters_json_schemas)
             mistral_messages.append(user_output_format_message)
 
@@ -244,7 +266,7 @@ class MistralAgentModel(AgentModel):
         assert response, 'A unexpected empty response from Mistral.'
         return response
 
-    def _get_tool_choice(self) -> MistralToolChoiceEnum | None:
+    def _get_tool_choice(self, agent_request_config: AgentRequestConfig) -> MistralToolChoiceEnum | None:
         """Get tool choice for the model.
 
         - "auto": Default mode. Model decides if it uses the tool or not.
@@ -252,19 +274,21 @@ class MistralAgentModel(AgentModel):
         - "none": Prevents tool use.
         - "required": Forces tool use.
         """
-        if not self.function_tools and not self.result_tools:
+        if not agent_request_config.function_tools and not agent_request_config.result_tools:
             return None
-        elif not self.allow_text_result:
+        elif not agent_request_config.allow_text_result:
             return 'required'
         else:
             return 'auto'
 
-    def _map_function_and_result_tools_definition(self) -> list[MistralTool] | None:
+    def _map_function_and_result_tools_definition(
+        self, agent_request_config: AgentRequestConfig
+    ) -> list[MistralTool] | None:
         """Map function and result tools to MistralTool format.
 
         Returns None if both function_tools and result_tools are empty.
         """
-        all_tools: list[ToolDefinition] = self.function_tools + self.result_tools
+        all_tools: list[ToolDefinition] = agent_request_config.function_tools + agent_request_config.result_tools
         tools = [
             MistralTool(
                 function=MistralFunction(name=r.name, parameters=r.parameters_json_schema, description=r.description)
