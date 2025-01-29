@@ -54,10 +54,10 @@ allows this model to be used more easily with other model types (ie, Ollama)
 OpenAISystemPromptRole = Literal['system', 'developer', 'user']
 
 
-class OpenAIModelSettings(ModelSettings):
+class OpenAIModelSettings(ModelSettings, total=False):
     """Settings used for an OpenAI model request."""
 
-    # This class is a placeholder for any future openai-specific settings
+    use_structured_response_format: bool
 
 
 @dataclass(init=False)
@@ -187,6 +187,19 @@ class OpenAIModel(Model):
     ) -> chat.ChatCompletion | AsyncStream[ChatCompletionChunk]:
         tools = self._get_tools(agent_request_config)
 
+        if model_settings.get('use_structured_response_format'):
+            tools = []
+            result_tools = agent_request_config.result_tools
+            if len(result_tools) == 0:
+                raise ValueError('structured response_format requires at least one result tool')
+            elif len(result_tools) == 1:
+                json_schema = agent_request_config.result_tools[0].parameters_json_schema
+            else:
+                json_schema = {'anyOf': [tool.parameters_json_schema for tool in result_tools]}
+            response_format = {'type': 'json_schema', 'json_schema': json_schema}
+        else:
+            response_format = NOT_GIVEN
+
         # standalone function to make it easier to override
         if not tools:
             tool_choice: Literal['none', 'required', 'auto'] | None = None
@@ -205,6 +218,7 @@ class OpenAIModel(Model):
             tools=tools or NOT_GIVEN,
             tool_choice=tool_choice or NOT_GIVEN,
             stream=stream,
+            response_format=response_format,
             stream_options={'include_usage': True} if stream else NOT_GIVEN,
             max_tokens=model_settings.get('max_tokens', NOT_GIVEN),
             temperature=model_settings.get('temperature', NOT_GIVEN),
