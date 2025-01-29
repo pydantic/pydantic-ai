@@ -190,7 +190,8 @@ stateDiagram-v2
   Increment --> DivisibleBy5
 ```
 
-In order to visualize a graph within a `jupyter-notebook`, `IPython.display` needs to be used
+In order to visualize a graph within a `jupyter-notebook`, `IPython.display` needs to be used:
+
 ```python {title="jupyter_display_mermaid.py"  test="skip"}
 from graph_example import DivisibleBy5, fives_graph
 from IPython.display import Image, display
