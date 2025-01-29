@@ -4,10 +4,11 @@ PydanticAI is Model-agnostic and has built in support for the following model pr
 * [Anthropic](#anthropic)
 * Gemini via two different APIs: [Generative Language API](#gemini) and [VertexAI API](#gemini-via-vertexai)
 * [Ollama](#ollama)
+* [Deepseek](#deepseek)
 * [Groq](#groq)
 * [Mistral](#mistral)
 
-See [OpenAI-compatible models](#openai-compatible-models) for more examples on how to use models such as [OpenRouter](#openrouter), [Grok (xAI)](#grok-xai) and [DeepSeek](#deepseek) that support the OpenAI SDK.
+See [OpenAI-compatible models](#openai-compatible-models) for more examples on how to use models such as [OpenRouter](#openrouter), and [Grok (xAI)](#grok-xai) that support the OpenAI SDK.
 
 You can also [add support for other models](#implementing-custom-models).
 
@@ -304,26 +305,6 @@ agent = Agent(model)
 
 [`VertexAiRegion`][pydantic_ai.models.vertexai.VertexAiRegion] contains a list of available regions.
 
-## Ollama
-
-### Install
-
-To use [`OllamaModel`][pydantic_ai.models.ollama.OllamaModel], you need to either install [`pydantic-ai`](install.md), or install [`pydantic-ai-slim`](install.md#slim-install) with the `openai` optional group:
-
-```bash
-pip/uv-add 'pydantic-ai-slim[openai]'
-```
-
-**This is because internally, `OllamaModel` uses the OpenAI API.**
-
-### Configuration
-
-To use [Ollama](https://ollama.com/), you must first download the Ollama client, and then download a model using the [Ollama model library](https://ollama.com/library).
-
-You must also ensure the Ollama server is running when trying to make requests to it. For more information, please see the [Ollama documentation](https://github.com/ollama/ollama/tree/main/docs).
-
-For detailed setup and example, please see the [Ollama setup documentation](https://github.com/pydantic/pydantic-ai/blob/main/docs/api/models/ollama.md).
-
 ## Groq
 
 ### Install
@@ -455,6 +436,80 @@ model = OpenAIModel(
 )
 ...
 ```
+
+### Ollama
+
+To use [Ollama](https://ollama.com/), you must first download the Ollama client, and then download a model using the [Ollama model library](https://ollama.com/library).
+
+You must also ensure the Ollama server is running when trying to make requests to it. For more information, please see the [Ollama documentation](https://github.com/ollama/ollama/tree/main/docs).
+
+#### Example local usage
+
+With `ollama` installed, you can run the server with the model you want to use:
+
+```bash {title="terminal-run-ollama"}
+ollama run llama3.2
+```
+(this will pull the `llama3.2` model if you don't already have it downloaded)
+
+Then run your code, here's a minimal example:
+
+```python {title="ollama_example.py"}
+from pydantic import BaseModel
+
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIModel
+
+
+class CityLocation(BaseModel):
+    city: str
+    country: str
+
+
+ollama_model = OpenAIModel(model_name='llama3.2', base_url='http://localhost:11434/v1')
+agent = Agent(ollama_model, result_type=CityLocation)
+
+result = agent.run_sync('Where were the olympics held in 2012?')
+print(result.data)
+#> city='London' country='United Kingdom'
+print(result.usage())
+"""
+Usage(requests=1, request_tokens=57, response_tokens=8, total_tokens=65, details=None)
+"""
+```
+
+#### Example using a remote server
+
+```python {title="ollama_example_with_remote_server.py"}
+from pydantic import BaseModel
+
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIModel
+
+ollama_model = OpenAIModel(
+    model_name='qwen2.5-coder:7b',  # (1)!
+    base_url='http://192.168.1.74:11434/v1',  # (2)!
+)
+
+
+class CityLocation(BaseModel):
+    city: str
+    country: str
+
+
+agent = Agent(model=ollama_model, result_type=CityLocation)
+
+result = agent.run_sync('Where were the olympics held in 2012?')
+print(result.data)
+#> city='London' country='United Kingdom'
+print(result.usage())
+"""
+Usage(requests=1, request_tokens=57, response_tokens=8, total_tokens=65, details=None)
+"""
+```
+
+1. The name of the model running on the remote server
+2. The url of the remote server
 
 ### OpenRouter
 

@@ -13,7 +13,6 @@ with try_import() as imports_successful:
     from pydantic_ai.models.gemini import GeminiModelName
     from pydantic_ai.models.groq import GroqModelName
     from pydantic_ai.models.mistral import MistralModelName
-    from pydantic_ai.models.ollama import OllamaModelName
     from pydantic_ai.models.openai import OpenAIModelName
 
 pytestmark = [
@@ -38,22 +37,14 @@ def test_known_model_names():
     ]
     groq_names = [f'groq:{n}' for n in get_model_names(GroqModelName)]
     mistral_names = [f'mistral:{n}' for n in get_model_names(MistralModelName)]
-    ollama_names = [f'ollama:{n}' for n in get_model_names(OllamaModelName)]
     openai_names = [f'openai:{n}' for n in get_model_names(OpenAIModelName)] + [
         n for n in get_model_names(OpenAIModelName) if n.startswith('o1') or n.startswith('gpt')
     ]
     extra_names = ['test']
 
     generated_names = sorted(
-        anthropic_names
-        + cohere_names
-        + google_names
-        + groq_names
-        + mistral_names
-        + ollama_names
-        + openai_names
-        + extra_names
+        anthropic_names + cohere_names + google_names + groq_names + mistral_names + openai_names + extra_names
     )
-    known_model_names = sorted(get_args(KnownModelName))
 
+    known_model_names = sorted(get_args(KnownModelName))
     assert generated_names == known_model_names
