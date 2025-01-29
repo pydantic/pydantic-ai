@@ -170,6 +170,7 @@ class AnthropicModel(Model):
         model_settings: ModelSettings | None,
         agent_request_config: AgentRequestConfig,
     ) -> AsyncIterator[StreamedResponse]:
+        check_allow_model_requests()
         response = await self._messages_create(
             messages, True, cast(AnthropicModelSettings, model_settings or {}), agent_request_config
         )

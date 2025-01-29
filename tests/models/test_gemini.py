@@ -76,9 +76,8 @@ def test_api_key_empty(env: TestEnv):
         GeminiModel('gemini-1.5-flash')
 
 
-async def test_agent_model_simple(allow_model_requests: None):
+async def test_model_simple(allow_model_requests: None):
     m = GeminiModel('gemini-1.5-flash', api_key='via-arg')
-    # agent_model = await m.agent_model(function_tools=[], allow_text_result=True, result_tools=[])
     assert isinstance(m.http_client, httpx.AsyncClient)
     assert m.model_name == 'gemini-1.5-flash'
     assert isinstance(m.auth, ApiKeyAuth)
@@ -91,7 +90,7 @@ async def test_agent_model_simple(allow_model_requests: None):
     assert tool_config is None
 
 
-async def test_agent_model_tools(allow_model_requests: None):
+async def test_model_tools(allow_model_requests: None):
     m = GeminiModel('gemini-1.5-flash', api_key='via-arg')
     tools = [
         ToolDefinition(

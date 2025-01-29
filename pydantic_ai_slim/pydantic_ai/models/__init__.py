@@ -255,7 +255,7 @@ def check_allow_model_requests() -> None:
     """Check if model requests are allowed.
 
     If you're defining your own models that have costs or latency associated with their use, you should call this in
-    [`Model.agent_model`][pydantic_ai.models.Model.agent_model].
+    [`Model.request`][pydantic_ai.models.Model.request] and [`Model.request_stream`][pydantic_ai.models.Model.request_stream].
 
     Raises:
         RuntimeError: If model requests are not allowed.
