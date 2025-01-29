@@ -75,7 +75,7 @@ from pydantic_ai import Agent
 
 # Define a very simple agent including the model to use, you can also set the model when running the agent.
 agent = Agent(
-    'gemini-1.5-flash',
+    'google-gla:gemini-1.5-flash',
     # Register a static system prompt using a keyword argument to the agent.
     # For more complex dynamically-generated system prompts, see the example below.
     system_prompt='Be concise, reply with one sentence.',
