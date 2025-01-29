@@ -56,7 +56,7 @@ TEST_CASES = [
         'MistralModel',
     ),
     (
-        'COHERE_API_KEY',
+        'CO_API_KEY',
         'cohere:command',
         'cohere:command',
         'cohere',

@@ -66,6 +66,12 @@ def mistral(http_client: httpx.AsyncClient, _tmp_path: Path) -> Model:
     return MistralModel('mistral-small-latest', http_client=http_client)
 
 
+def cohere(http_client: httpx.AsyncClient, _tmp_path: Path) -> Model:
+    from pydantic_ai.models.cohere import CohereModel
+
+    return CohereModel('command-r7b-12-2024', http_client=http_client)
+
+
 params = [
     pytest.param(openai, id='openai'),
     pytest.param(gemini, marks=pytest.mark.skip(reason='API seems very flaky'), id='gemini'),
@@ -74,6 +80,7 @@ params = [
     pytest.param(anthropic, id='anthropic'),
     pytest.param(ollama, id='ollama'),
     pytest.param(mistral, id='mistral'),
+    pytest.param(cohere, id='cohere'),
 ]
 GetModel = Callable[[httpx.AsyncClient, Path], Model]
 
@@ -95,7 +102,7 @@ async def test_text(http_client: httpx.AsyncClient, tmp_path: Path, get_model: G
     assert usage.total_tokens is not None and usage.total_tokens > 0
 
 
-stream_params = [p for p in params if p.id != 'anthropic']
+stream_params = [p for p in params if p.id != 'cohere']
 
 
 @pytest.mark.parametrize('get_model', stream_params)
