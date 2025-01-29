@@ -93,7 +93,6 @@ jobs:
       - run: >
           uv run
           --package pydantic-ai-slim
-          --extra graph
           --extra openai
           --extra vertexai
           --extra groq
@@ -129,8 +128,8 @@ jobs:
 
       - run: mkdir coverage
 
-      # run tests with just `pydantic-ai-slim` and `pydantic-graph` dependencies
-      - run: uv run --package pydantic-ai-slim --extra graph coverage run -m pytest
+      # run tests with just `pydantic-ai-slim` dependencies
+      - run: uv run --package pydantic-ai-slim coverage run -m pytest
         env:
           COVERAGE_FILE: coverage/.coverage.${{ runner.os }}-py${{ matrix.python-version }}-slim
 
