@@ -67,9 +67,9 @@ def mistral(http_client: httpx.AsyncClient, _tmp_path: Path) -> Model:
 
 
 def cohere(http_client: httpx.AsyncClient, _tmp_path: Path) -> Model:
-    from pydantic_ai.models.cohere import AsyncClientV2, CohereModel
+    from pydantic_ai.models.cohere import CohereModel
 
-    return CohereModel('command-r7b-12-2024', cohere_client=AsyncClientV2(httpx_client=http_client))  # type: ignore
+    return CohereModel('command-r7b-12-2024', http_client=http_client)
 
 
 params = [
