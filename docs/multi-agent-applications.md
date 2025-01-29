@@ -31,7 +31,7 @@ joke_selection_agent = Agent(  # (1)!
         'You must return just a single joke.'
     ),
 )
-joke_generation_agent = Agent('gemini-1.5-flash', result_type=list[str])  # (2)!
+joke_generation_agent = Agent('google-gla:gemini-1.5-flash', result_type=list[str])  # (2)!
 
 
 @joke_selection_agent.tool

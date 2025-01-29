@@ -123,7 +123,7 @@ You can then use [`AnthropicModel`][pydantic_ai.models.anthropic.AnthropicModel]
 ```py title="anthropic_model_by_name.py"
 from pydantic_ai import Agent
 
-agent = Agent('claude-3-5-sonnet-latest')
+agent = Agent('anthropic:claude-3-5-sonnet-latest')
 ...
 ```
 
