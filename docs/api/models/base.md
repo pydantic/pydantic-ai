@@ -5,7 +5,6 @@
       members:
         - KnownModelName
         - Model
-        - AgentModel
         - AbstractToolDefinition
         - StreamedResponse
         - ALLOW_MODEL_REQUESTS

@@ -112,25 +112,6 @@ class OpenAIModel(Model):
             self.client = AsyncOpenAI(base_url=base_url, api_key=api_key, http_client=cached_async_http_client())
         self.system_prompt_role = system_prompt_role
 
-    # async def agent_model(
-    #     self,
-    #     *,
-    #     function_tools: list[ToolDefinition],
-    #     allow_text_result: bool,
-    #     result_tools: list[ToolDefinition],
-    # ) -> AgentModel:
-    #     check_allow_model_requests()
-    #     tools = [self._map_tool_definition(r) for r in function_tools]
-    #     if result_tools:
-    #         tools += [self._map_tool_definition(r) for r in result_tools]
-    #     return OpenAIAgentModel(
-    #         self.client,
-    #         self.model_name,
-    #         allow_text_result,
-    #         tools,
-    #         self.system_prompt_role,
-    #     )
-
     def name(self) -> str:
         return f'openai:{self.model_name}'
 
@@ -144,16 +125,6 @@ class OpenAIModel(Model):
                 'parameters': f.parameters_json_schema,
             },
         }
-
-    # @dataclass
-    # class OpenAIAgentModel(AgentModel):
-    #     """Implementation of `AgentModel` for OpenAI models."""
-    #
-    #     client: AsyncOpenAI
-    #     model_name: OpenAIModelName
-    #     allow_text_result: bool
-    #     tools: list[chat.ChatCompletionToolParam]
-    #     system_prompt_role: OpenAISystemPromptRole | None
 
     async def request(
         self,

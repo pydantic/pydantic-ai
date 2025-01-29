@@ -132,35 +132,8 @@ class MistralModel(Model):
             api_key = os.getenv('MISTRAL_API_KEY') if api_key is None else api_key
             self.client = Mistral(api_key=api_key, async_client=http_client or cached_async_http_client())
 
-    # async def agent_model(
-    #     self,
-    #     *,
-    #     function_tools: list[ToolDefinition],
-    #     allow_text_result: bool,
-    #     result_tools: list[ToolDefinition],
-    # ) -> AgentModel:
-    #     """Create an agent model, this is called for each step of an agent run from Pydantic AI call."""
-    #     check_allow_model_requests()
-    #     return MistralAgentModel(
-    #         self.client,
-    #         self.model_name,
-    #         allow_text_result,
-    #         function_tools,
-    #         result_tools,
-    #     )
-
     def name(self) -> str:
         return f'mistral:{self.model_name}'
-
-    # @dataclass
-    # class MistralAgentModel(AgentModel):
-    #     """Implementation of `AgentModel` for Mistral models."""
-    #
-    #     client: Mistral
-    #     model_name: MistralModelName
-    #     allow_text_result: bool
-    #     function_tools: list[ToolDefinition]
-    #     result_tools: list[ToolDefinition]
 
     async def request(
         self,

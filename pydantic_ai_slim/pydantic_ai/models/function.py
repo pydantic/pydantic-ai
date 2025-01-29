@@ -63,19 +63,6 @@ class FunctionModel(Model):
         self.function = function
         self.stream_function = stream_function
 
-    # async def agent_model(
-    #     self,
-    #     *,
-    #     function_tools: list[ToolDefinition],
-    #     allow_text_result: bool,
-    #     result_tools: list[ToolDefinition],
-    # ) -> AgentModel:
-    #     return FunctionAgentModel(
-    #         self.function,
-    #         self.stream_function,
-    #         AgentInfo(function_tools, allow_text_result, result_tools, None),
-    #     )
-
     def name(self) -> str:
         function_name = self.function.__name__ if self.function is not None else ''
         stream_function_name = self.stream_function.__name__ if self.stream_function is not None else ''

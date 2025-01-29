@@ -134,20 +134,6 @@ class AnthropicModel(Model):
         else:
             self.client = AsyncAnthropic(api_key=api_key, http_client=cached_async_http_client())
 
-    # async def agent_model(
-    #     self,
-    #     *,
-    #     function_tools: list[ToolDefinition],
-    #     allow_text_result: bool,
-    #     result_tools: list[ToolDefinition],
-    # ) -> AgentModel:
-    #     return AnthropicAgentModel(
-    #         self.client,
-    #         self.model_name,
-    #         allow_text_result,
-    #         tools,
-    #     )
-
     def name(self) -> str:
         return f'anthropic:{self.model_name}'
 
@@ -158,15 +144,6 @@ class AnthropicModel(Model):
             'description': f.description,
             'input_schema': f.parameters_json_schema,
         }
-
-    # @dataclass
-    # class AnthropicAgentModel(AgentModel):
-    #     """Implementation of `AgentModel` for Anthropic models."""
-    #
-    #     client: AsyncAnthropic
-    #     model_name: AnthropicModelName
-    #     allow_text_result: bool
-    #     tools: list[ToolParam]
 
     def _get_tools(self, agent_request_config: AgentRequestConfig) -> list[ToolParam]:
         tools = [self._map_tool_definition(r) for r in agent_request_config.function_tools]

@@ -112,24 +112,6 @@ class GroqModel(Model):
         else:
             self.client = AsyncGroq(api_key=api_key, http_client=cached_async_http_client())
 
-    # async def agent_model(
-    #     self,
-    #     *,
-    #     function_tools: list[ToolDefinition],
-    #     allow_text_result: bool,
-    #     result_tools: list[ToolDefinition],
-    # ) -> AgentModel:
-    #     check_allow_model_requests()
-    #     # tools = [self._map_tool_definition(r) for r in function_tools]
-    #     # if result_tools:
-    #     #     tools += [self._map_tool_definition(r) for r in result_tools]
-    #     return GroqAgentModel(
-    #         self.client,
-    #         self.model_name,
-    #         allow_text_result,
-    #         tools,
-    #     )
-
     def name(self) -> str:
         return f'groq:{self.model_name}'
 
@@ -144,14 +126,6 @@ class GroqModel(Model):
             },
         }
 
-    # @dataclass
-    # class GroqAgentModel(AgentModel):
-    #     """Implementation of `AgentModel` for Groq models."""
-    #
-    #     client: AsyncGroq
-    #     model_name: str
-    #     allow_text_result: bool
-    #     tools: list[chat.ChatCompletionToolParam]
     def _get_tools(self, agent_request_config: AgentRequestConfig) -> list[chat.ChatCompletionToolParam]:
         tools = [self._map_tool_definition(r) for r in agent_request_config.function_tools]
         if agent_request_config.result_tools:
