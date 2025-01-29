@@ -148,11 +148,6 @@ class VertexAIModel(Model):
                 raise UserError(f'No project_id provided and none found in {creds_source}')
             project_id = creds_project_id
         else:
-            if creds_project_id is not None and self.project_id != creds_project_id:
-                raise UserError(
-                    f'The project_id you provided does not match the one from {creds_source}: '
-                    f'{self.project_id!r} != {creds_project_id!r}'
-                )
             project_id = self.project_id
 
         self.url = url = self.url_template.format(
