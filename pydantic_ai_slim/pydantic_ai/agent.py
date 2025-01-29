@@ -65,8 +65,8 @@ RunResultDataT = TypeVar('RunResultDataT')
 class Agent(Generic[AgentDepsT, ResultDataT]):
     """Class for defining "agents" - a way to have a specific type of "conversation" with an LLM.
 
-    Agents are generic in the dependency type they take [`AgentDeps`][pydantic_ai.tools.AgentDepsT]
-    and the result data type they return, [`ResultData`][pydantic_ai.result.ResultDataT].
+    Agents are generic in the dependency type they take [`AgentDepsT`][pydantic_ai.tools.AgentDepsT]
+    and the result data type they return, [`ResultDataT`][pydantic_ai.result.ResultDataT].
 
     By default, if neither generic parameter is customised, agents have type `Agent[None, str]`.
 
