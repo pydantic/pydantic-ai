@@ -7,6 +7,7 @@ PydanticAI is Model-agnostic and has built in support for the following model pr
 * [Deepseek](#deepseek)
 * [Groq](#groq)
 * [Mistral](#mistral)
+* [Cohere](#cohere)
 
 See [OpenAI-compatible models](#openai-compatible-models) for more examples on how to use models such as [OpenRouter](#openrouter), and [Grok (xAI)](#grok-xai) that support the OpenAI SDK.
 
@@ -415,6 +416,63 @@ from pydantic_ai import Agent
 from pydantic_ai.models.mistral import MistralModel
 
 model = MistralModel('mistral-small-latest', api_key='your-api-key')
+agent = Agent(model)
+...
+```
+
+## Cohere
+
+### Install
+
+To use [`MistralModel`][pydantic_ai.models.mistral.MistralModel], you need to either install [`pydantic-ai`](install.md), or install [`pydantic-ai-slim`](install.md#slim-install) with the `mistral` optional group:
+
+```bash
+pip/uv-add 'pydantic-ai-slim[mistral]'
+```
+
+### Configuration
+
+To use [Cohere](https://cohere.com/) through their API, go to [dashboard.cohere.com/api-keys](https://dashboard.cohere.com/api-keys) and follow your nose until you find the place to generate an API key.
+
+[`CohereModelName`][pydantic_ai.models.cohere.CohereModelName] contains a list of the most popular Cohere models.
+
+### Environment variable
+
+Once you have the API key, you can set it as an environment variable:
+
+```bash
+export COHERE_API_KEY='your-api-key'
+```
+
+You can then use [`CohereModel`][pydantic_ai.models.cohere.CohereModel] by name:
+
+```python {title="cohere_model_by_name.py"}
+from pydantic_ai import Agent
+
+agent = Agent('cohere:command')
+...
+```
+
+Or initialise the model directly with just the model name:
+
+```python {title="cohere_model_init.py"}
+from pydantic_ai import Agent
+from pydantic_ai.models.cohere import CohereModel
+
+model = CohereModel('command')
+agent = Agent(model)
+...
+```
+
+### `api_key` argument
+
+If you don't want to or can't set the environment variable, you can pass it at runtime via the [`api_key` argument][pydantic_ai.models.cohere.CohereModel.__init__]:
+
+```python {title="cohere_model_api_key.py"}
+from pydantic_ai import Agent
+from pydantic_ai.models.cohere import CohereModel
+
+model = CohereModel('command', api_key='your-api-key')
 agent = Agent(model)
 ...
 ```
