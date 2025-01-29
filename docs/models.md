@@ -441,7 +441,7 @@ To use [Cohere](https://cohere.com/) through their API, go to [dashboard.cohere.
 Once you have the API key, you can set it as an environment variable:
 
 ```bash
-export COHERE_API_KEY='your-api-key'
+export CO_API_KEY='your-api-key'
 ```
 
 You can then use [`CohereModel`][pydantic_ai.models.cohere.CohereModel] by name:

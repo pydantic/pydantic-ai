@@ -103,7 +103,7 @@ class CohereModel(Model):
             model_name: The name of the Cohere model to use. List of model names
                 available [here](https://docs.cohere.com/docs/models#command).
             api_key: The API key to use for authentication, if not provided, the
-                `COHERE_API_KEY` environment variable will be used if available.
+                `CO_API_KEY` environment variable will be used if available.
             cohere_client: An existing Cohere async client to use. If provided,
                 `api_key` must be `None`.
         """
