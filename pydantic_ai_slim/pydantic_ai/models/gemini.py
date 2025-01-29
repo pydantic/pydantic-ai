@@ -52,7 +52,7 @@ class GeminiModelSettings(ModelSettings):
     """Settings used for a Gemini model request."""
 
     # This class is a placeholder for any future gemini-specific settings
-    gemini_safety_settings: list[GeminiSafetySettings]  # are duplicates a problem?
+    gemini_safety_settings: list[GeminiSafetySettings]
 
 
 @dataclass(init=False)
@@ -610,7 +610,7 @@ class _GeminiCandidates(TypedDict):
     """See <https://ai.google.dev/api/generate-content#v1beta.Candidate>."""
 
     content: _GeminiContent
-    finish_reason: NotRequired[Annotated[Literal['STOP', 'MAX_TOKENS'], pydantic.Field(alias='finishReason')]]
+    finish_reason: NotRequired[Annotated[Literal['STOP', 'MAX_TOKENS', 'SAFETY'], pydantic.Field(alias='finishReason')]]
     """
     See <https://ai.google.dev/api/generate-content#FinishReason>, lots of other values are possible,
     but let's wait until we see them and know what they mean to add them here.
@@ -658,6 +658,7 @@ class _GeminiSafetyRating(TypedDict):
         'HARM_CATEGORY_CIVIC_INTEGRITY',
     ]
     probability: Literal['NEGLIGIBLE', 'LOW', 'MEDIUM', 'HIGH']
+    blocked: NotRequired[bool]
 
 
 class _GeminiPromptFeedback(TypedDict):
