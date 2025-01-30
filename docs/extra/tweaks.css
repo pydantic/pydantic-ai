@@ -51,8 +51,7 @@ img.index-header {
   font-style: italic;
 }
 
-#version-warning {
-  min-height: 120px;
+#version-notice {
   margin-bottom: 10px;
 }
 

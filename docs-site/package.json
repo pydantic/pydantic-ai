@@ -1,0 +1,16 @@
+{
+  "name": "my-static-site",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "typegen": "wrangler types worker-configuration.d.ts",
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev"
+  },
+  "dependencies": {
+    "@cloudflare/workers-types": "^4.20250129.0",
+    "typescript": "^5.7.3",
+    "wrangler": "^3.106.0"
+  }
+}
