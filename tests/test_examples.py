@@ -179,7 +179,7 @@ text_responses: dict[str, str | ToolCallPart] = {
         'The weather in West London is raining, while in Wiltshire it is sunny.'
     ),
     'Tell me a joke.': 'Did you hear about the toothpaste scandal? They called it Colgate.',
-    'Explain?': 'This is an excellent joke invent by Samuel Colvin, it needs no explanation.',
+    'Explain?': 'This is an excellent joke invented by Samuel Colvin, it needs no explanation.',
     'What is the capital of France?': 'Paris',
     'What is the capital of Italy?': 'Rome',
     'What is the capital of the UK?': 'London',

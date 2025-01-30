@@ -13,32 +13,32 @@ We built PydanticAI with one simple aim: to bring that FastAPI feeling to GenAI 
 
 ## Why use PydanticAI
 
-:material-account-group:{ .md .middle .team-blue }&nbsp;<strong class="vertical-middle">Built by the Pydantic Team</strong><br>
+* __Built by the Pydantic Team__:
 Built by the team behind [Pydantic](https://docs.pydantic.dev/latest/) (the validation layer of the OpenAI SDK, the Anthropic SDK, LangChain, LlamaIndex, AutoGPT, Transformers, CrewAI, Instructor and many more).
 
-:fontawesome-solid-shapes:{ .md .middle .shapes-orange }&nbsp;<strong class="vertical-middle">Model-agnostic</strong><br>
+* __Model-agnostic__:
 Supports OpenAI, Anthropic, Gemini, Deepseek, Ollama, Groq, Cohere, and Mistral, and there is a simple interface to implement support for [other models](models.md).
 
-:logfire-logo:{ .md .middle }&nbsp;<strong class="vertical-middle">Pydantic Logfire Integration</strong><br>
+* __Pydantic Logfire Integration__:
 Seamlessly [integrates](logfire.md) with [Pydantic Logfire](https://pydantic.dev/logfire) for real-time debugging, performance monitoring, and behavior tracking of your LLM-powered applications.
 
-:material-shield-check:{ .md .middle .secure-green }&nbsp;<strong class="vertical-middle">Type-safe</strong><br>
+* __Type-safe__:
 Designed to make [type checking](agents.md#static-type-checking) as powerful and informative as possible for you.
 
-:snake:{ .md .middle }&nbsp;<strong class="vertical-middle">Python-centric Design</strong><br>
+* __Python-centric Design__:
 Leverages Python's familiar control flow and agent composition to build your AI-driven projects, making it easy to apply standard Python best practices you'd use in any other (non-AI) project.
 
-:simple-pydantic:{ .md .middle .pydantic-pink }&nbsp;<strong class="vertical-middle">Structured Responses</strong><br>
+* __Structured Responses__:
 Harnesses the power of [Pydantic](https://docs.pydantic.dev/latest/) to [validate and structure](results.md#structured-result-validation) model outputs, ensuring responses are consistent across runs.
 
-:material-puzzle-plus:{ .md .middle .puzzle-purple }&nbsp;<strong class="vertical-middle">Dependency Injection System</strong><br>
+* __Dependency Injection System__:
 Offers an optional [dependency injection](dependencies.md) system to provide data and services to your agent's [system prompts](agents.md#system-prompts), [tools](tools.md) and [result validators](results.md#result-validators-functions).
 This is useful for testing and eval-driven iterative development.
 
-:material-sine-wave:{ .md .middle }&nbsp;<strong class="vertical-middle">Streamed Responses</strong><br>
+* __Streamed Responses__:
 Provides the ability to [stream](results.md#streamed-results) LLM outputs continuously, with immediate validation, ensuring rapid and accurate results.
 
-:material-graph:{ .md .middle .graph-green }&nbsp;<strong class="vertical-middle">Graph Support</strong><br>
+* __Graph Support__:
 [Pydantic Graph](graph.md) provides a powerful way to define graphs using typing hints, this is useful in complex applications where standard control flow can degrade to spaghetti code.
 
 !!! example "In Beta"
