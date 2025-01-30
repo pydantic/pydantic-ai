@@ -48,7 +48,6 @@ TEST_CASES = [
         'groq',
         'GroqModel',
     ),
-    ('OLLAMA_API_KEY', 'ollama:llama3', 'ollama:llama3', 'ollama', 'OllamaModel'),
     (
         'MISTRAL_API_KEY',
         'mistral:mistral-small-latest',
@@ -57,7 +56,7 @@ TEST_CASES = [
         'MistralModel',
     ),
     (
-        'COHERE_API_KEY',
+        'CO_API_KEY',
         'cohere:command',
         'cohere:command',
         'cohere',

@@ -110,7 +110,7 @@ from pydantic_ai import Agent
 from pydantic_ai.exceptions import UsageLimitExceeded
 from pydantic_ai.usage import UsageLimits
 
-agent = Agent('claude-3-5-sonnet-latest')
+agent = Agent('anthropic:claude-3-5-sonnet-latest')
 
 result_sync = agent.run_sync(
     'What is the capital of Italy? Answer with just the city.',
@@ -152,7 +152,7 @@ class NeverResultType(TypedDict):
 
 
 agent = Agent(
-    'claude-3-5-sonnet-latest',
+    'anthropic:claude-3-5-sonnet-latest',
     retries=3,
     result_type=NeverResultType,
     system_prompt='Any time you get a response, call the `infinite_retry_tool` to produce another response.',

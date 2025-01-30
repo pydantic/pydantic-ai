@@ -50,11 +50,11 @@ nav:
     - api/models/base.md
     - api/models/openai.md
     - api/models/anthropic.md
+    - api/models/cohere.md
     - api/models/gemini.md
     - api/models/vertexai.md
     - api/models/groq.md
     - api/models/mistral.md
-    - api/models/ollama.md
     - api/models/test.md
     - api/models/function.md
     - api/pydantic_graph/graph.md

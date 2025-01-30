@@ -37,7 +37,7 @@ We built PydanticAI with one simple aim: to bring that FastAPI feeling to GenAI 
 Built by the team behind [Pydantic](https://docs.pydantic.dev/latest/) (the validation layer of the OpenAI SDK, the Anthropic SDK, LangChain, LlamaIndex, AutoGPT, Transformers, CrewAI, Instructor and many more).
 
 * __Model-agnostic__
-Supports OpenAI, Anthropic, Gemini, Ollama, Groq, and Mistral, and there is a simple interface to implement support for [other models](https://ai.pydantic.dev/models/).
+Supports OpenAI, Anthropic, Gemini, Deepseek, Ollama, Groq, Cohere, and Mistral, and there is a simple interface to implement support for [other models](https://ai.pydantic.dev/models/).
 
 * __Pydantic Logfire Integration__
 Seamlessly [integrates](https://ai.pydantic.dev/logfire/) with [Pydantic Logfire](https://pydantic.dev/logfire) for real-time debugging, performance monitoring, and behavior tracking of your LLM-powered applications.
@@ -75,7 +75,7 @@ from pydantic_ai import Agent
 
 # Define a very simple agent including the model to use, you can also set the model when running the agent.
 agent = Agent(
-    'gemini-1.5-flash',
+    'google-gla:gemini-1.5-flash',
     # Register a static system prompt using a keyword argument to the agent.
     # For more complex dynamically-generated system prompts, see the example below.
     system_prompt='Be concise, reply with one sentence.',

@@ -3,9 +3,10 @@ from __future__ import annotations as _annotations
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from itertools import chain
-from typing import Literal, TypeAlias, Union, cast
+from typing import Literal, Union, cast
 
 from cohere import TextAssistantMessageContentItem
+from httpx import AsyncClient as AsyncHTTPClient
 from typing_extensions import assert_never
 
 from .. import result
@@ -51,24 +52,24 @@ except ImportError as _import_error:
         "you can use the `cohere` optional group — `pip install 'pydantic-ai-slim[cohere]'`"
     ) from _import_error
 
-CohereModelName: TypeAlias = Union[
-    str,
-    Literal[
-        'c4ai-aya-expanse-32b',
-        'c4ai-aya-expanse-8b',
-        'command',
-        'command-light',
-        'command-light-nightly',
-        'command-nightly',
-        'command-r',
-        'command-r-03-2024',
-        'command-r-08-2024',
-        'command-r-plus',
-        'command-r-plus-04-2024',
-        'command-r-plus-08-2024',
-        'command-r7b-12-2024',
-    ],
+NamedCohereModels = Literal[
+    'c4ai-aya-expanse-32b',
+    'c4ai-aya-expanse-8b',
+    'command',
+    'command-light',
+    'command-light-nightly',
+    'command-nightly',
+    'command-r',
+    'command-r-03-2024',
+    'command-r-08-2024',
+    'command-r-plus',
+    'command-r-plus-04-2024',
+    'command-r-plus-08-2024',
+    'command-r7b-12-2024',
 ]
+"""Latest / most popular named Cohere models."""
+
+CohereModelName = Union[NamedCohereModels, str]
 
 
 class CohereModelSettings(ModelSettings):
@@ -96,6 +97,7 @@ class CohereModel(Model):
         *,
         api_key: str | None = None,
         cohere_client: AsyncClientV2 | None = None,
+        http_client: AsyncHTTPClient | None = None,
     ):
         """Initialize an Cohere model.
 
@@ -103,16 +105,18 @@ class CohereModel(Model):
             model_name: The name of the Cohere model to use. List of model names
                 available [here](https://docs.cohere.com/docs/models#command).
             api_key: The API key to use for authentication, if not provided, the
-                `COHERE_API_KEY` environment variable will be used if available.
+                `CO_API_KEY` environment variable will be used if available.
             cohere_client: An existing Cohere async client to use. If provided,
-                `api_key` must be `None`.
+                `api_key` and `http_client` must be `None`.
+            http_client: An existing `httpx.AsyncClient` to use for making HTTP requests.
         """
         self.model_name: CohereModelName = model_name
         if cohere_client is not None:
+            assert http_client is None, 'Cannot provide both `cohere_client` and `http_client`'
             assert api_key is None, 'Cannot provide both `cohere_client` and `api_key`'
             self.client = cohere_client
         else:
-            self.client = AsyncClientV2(api_key=api_key)  # type: ignore
+            self.client = AsyncClientV2(api_key=api_key, httpx_client=http_client)  # type: ignore
 
     async def agent_model(
         self,
