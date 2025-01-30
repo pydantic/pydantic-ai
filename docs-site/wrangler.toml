@@ -1,7 +1,7 @@
 #:schema node_modules/wrangler/config-schema.json
 name = "pydantic-ai"
 compatibility_date = "2025-01-29"
-routes = ["testing-ai.pydantic.dev/*"]
+routes = ["ai.pydantic.dev/*"]
 main = "src/index.ts"
 workers_dev = false
 

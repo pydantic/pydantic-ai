@@ -234,7 +234,7 @@ jobs:
     needs: [check]
     environment:
       name: deploy-docs
-      url: https://testing-ai.pydantic.dev
+      url: https://ai.pydantic.dev
 
     steps:
       - uses: actions/checkout@v4
