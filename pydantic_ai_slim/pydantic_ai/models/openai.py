@@ -1,11 +1,12 @@
 from __future__ import annotations as _annotations
 
+import os
 from collections.abc import AsyncIterable, AsyncIterator, Iterable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from itertools import chain
-from typing import Literal, Union, cast, overload
+from typing import Literal, Union, cast, get_args, overload
 
 from httpx import AsyncClient as AsyncHTTPClient
 from typing_extensions import assert_never
@@ -101,7 +102,17 @@ class OpenAIModel(Model):
                 In the future, this may be inferred from the model name.
         """
         self.model_name: OpenAIModelName = model_name
-        if openai_client is not None:
+        # # This is a workaround for the OpenAI client requiring an API key, but locally served,
+        # # openai compatible models models not always needing an API key.
+        if (
+            api_key is None
+            and os.environ.get('OPENAI_API_KEY') is None
+            and model_name not in get_args(ChatModel)
+            and openai_client is None
+        ):
+            assert base_url is not None, 'A base_url must be provided if not using an openai model'
+            api_key = ''
+        elif openai_client is not None:
             assert http_client is None, 'Cannot provide both `openai_client` and `http_client`'
             assert base_url is None, 'Cannot provide both `openai_client` and `base_url`'
             assert api_key is None, 'Cannot provide both `openai_client` and `api_key`'
