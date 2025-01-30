@@ -51,7 +51,6 @@ See [the Gemini API docs](https://ai.google.dev/gemini-api/docs/models/gemini#mo
 class GeminiModelSettings(ModelSettings):
     """Settings used for a Gemini model request."""
 
-    # This class is a placeholder for any future gemini-specific settings
     gemini_safety_settings: list[GeminiSafetySettings]
 
 
@@ -247,6 +246,11 @@ class GeminiAgentModel(AgentModel):
     def _process_response(self, response: _GeminiResponse) -> ModelResponse:
         if len(response['candidates']) != 1:
             raise UnexpectedModelBehavior('Expected exactly one candidate in Gemini response')
+        if 'content' not in response['candidates'][0]:
+            if response['candidates'][0].get('finish_reason') == 'SAFETY':
+                raise UnexpectedModelBehavior('Safety settings triggered', str(response))
+            else:
+                raise UnexpectedModelBehavior('Content field missing from Gemini response', str(response))
         parts = response['candidates'][0]['content']['parts']
         return _process_response_from_parts(parts, model_name=self.model_name)
 
@@ -404,7 +408,10 @@ class _GeminiRequest(TypedDict):
 
 
 class GeminiSafetySettings(TypedDict):
-    """Individual safety settings fields for Gemini."""
+    """Individual safety settings fields for Gemini.
+
+    See <https://ai.google.dev/gemini-api/docs/safety-settings> for API docs.
+    """
 
     category: Literal[
         'HARM_CATEGORY_UNSPECIFIED',
@@ -609,7 +616,7 @@ class _GeminiResponse(TypedDict):
 class _GeminiCandidates(TypedDict):
     """See <https://ai.google.dev/api/generate-content#v1beta.Candidate>."""
 
-    content: _GeminiContent
+    content: NotRequired[_GeminiContent]
     finish_reason: NotRequired[Annotated[Literal['STOP', 'MAX_TOKENS', 'SAFETY'], pydantic.Field(alias='finishReason')]]
     """
     See <https://ai.google.dev/api/generate-content#FinishReason>, lots of other values are possible,
