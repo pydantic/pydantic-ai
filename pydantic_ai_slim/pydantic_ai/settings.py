@@ -80,6 +80,7 @@ class ModelSettings(TypedDict, total=False):
     """Whether to allow parallel tool calls.
 
     Supported by:
+
     * OpenAI (some models, not o1)
     * Groq
     * Anthropic
@@ -89,6 +90,7 @@ class ModelSettings(TypedDict, total=False):
     """The random seed to use for the model, theoretically allowing for deterministic results.
 
     Supported by:
+
     * OpenAI
     * Groq
     * Cohere
@@ -99,6 +101,7 @@ class ModelSettings(TypedDict, total=False):
     """Penalize new tokens based on whether they have appeared in the text so far.
 
     Supported by:
+
     * OpenAI
     * Groq
     * Cohere
@@ -110,6 +113,7 @@ class ModelSettings(TypedDict, total=False):
     """Penalize new tokens based on their existing frequency in the text so far.
 
     Supported by:
+
     * OpenAI
     * Groq
     * Cohere
@@ -121,6 +125,7 @@ class ModelSettings(TypedDict, total=False):
     """Modify the likelihood of specified tokens appearing in the completion.
 
     Supported by:
+
     * OpenAI
     * Groq
     """
