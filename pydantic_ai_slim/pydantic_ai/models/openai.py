@@ -102,8 +102,8 @@ class OpenAIModel(Model):
                 In the future, this may be inferred from the model name.
         """
         self.model_name: OpenAIModelName = model_name
-        # # This is a workaround for the OpenAI client requiring an API key, but locally served,
-        # # openai compatible models models not always needing an API key.
+        # This is a workaround for the OpenAI client requiring an API key, but locally served,
+        # openai compatible models models not always needing an API key.
         if (
             api_key is None
             and os.environ.get('OPENAI_API_KEY') is None
