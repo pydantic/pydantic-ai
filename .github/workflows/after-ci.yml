@@ -56,9 +56,6 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-      - run: npm install
-        working-directory: docs-site
 
       - uses: dawidd6/action-download-artifact@v6
         with:
@@ -67,15 +64,8 @@ jobs:
           commit: ${{ github.event.workflow_run.head_sha }}
           allow_forks: true
           workflow_conclusion: completed
-          if_no_artifact_found: warn
 
-      - run: 'echo head_sha $VAR'
-        env:
-          VAR: ${{ github.event.workflow_run.head_sha }}
-
-      - run: 'echo head_branch $VAR'
-        env:
-          VAR: ${{ github.event.workflow_run.head_branch }}
+      - run: ls -lha
 
       - uses: cloudflare/wrangler-action@v3
         id: deploy
