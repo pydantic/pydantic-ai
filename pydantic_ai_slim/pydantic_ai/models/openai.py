@@ -72,6 +72,7 @@ class OpenAIModel(Model):
     model_name: OpenAIModelName
     client: AsyncOpenAI = field(repr=False)
     system_prompt_role: OpenAISystemPromptRole | None = field(default=None)
+    supports_parallel_tools: bool = field(default=True)
 
     def __init__(
         self,
@@ -82,6 +83,7 @@ class OpenAIModel(Model):
         openai_client: AsyncOpenAI | None = None,
         http_client: AsyncHTTPClient | None = None,
         system_prompt_role: OpenAISystemPromptRole | None = None,
+        supports_parallel_tools: bool = True,
     ):
         """Initialize an OpenAI model.
 
@@ -99,6 +101,8 @@ class OpenAIModel(Model):
             http_client: An existing `httpx.AsyncClient` to use for making HTTP requests.
             system_prompt_role: The role to use for the system prompt message. If not provided, defaults to `'system'`.
                 In the future, this may be inferred from the model name.
+            supports_parallel_tools: Whether the model supports parallel tool calls. Set to False for models
+                that don't support this parameter (e.g. some third-party models).
         """
         self.model_name: OpenAIModelName = model_name
         if openai_client is not None:
@@ -111,6 +115,7 @@ class OpenAIModel(Model):
         else:
             self.client = AsyncOpenAI(base_url=base_url, api_key=api_key, http_client=cached_async_http_client())
         self.system_prompt_role = system_prompt_role
+        self.supports_parallel_tools = supports_parallel_tools
 
     async def agent_model(
         self,
@@ -129,6 +134,8 @@ class OpenAIModel(Model):
             allow_text_result,
             tools,
             self.system_prompt_role,
+            self.supports_parallel_tools,
+
         )
 
     def name(self) -> str:
@@ -155,6 +162,7 @@ class OpenAIAgentModel(AgentModel):
     allow_text_result: bool
     tools: list[chat.ChatCompletionToolParam]
     system_prompt_role: OpenAISystemPromptRole | None
+    supports_parallel_tools: bool = True
 
     async def request(
         self, messages: list[ModelMessage], model_settings: ModelSettings | None
@@ -195,24 +203,43 @@ class OpenAIAgentModel(AgentModel):
 
         openai_messages = list(chain(*(self._map_message(m) for m in messages)))
 
-        return await self.client.chat.completions.create(
-            model=self.model_name,
-            messages=openai_messages,
-            n=1,
-            parallel_tool_calls=model_settings.get('parallel_tool_calls', NOT_GIVEN),
-            tools=self.tools or NOT_GIVEN,
-            tool_choice=tool_choice or NOT_GIVEN,
-            stream=stream,
-            stream_options={'include_usage': True} if stream else NOT_GIVEN,
-            max_tokens=model_settings.get('max_tokens', NOT_GIVEN),
-            temperature=model_settings.get('temperature', NOT_GIVEN),
-            top_p=model_settings.get('top_p', NOT_GIVEN),
-            timeout=model_settings.get('timeout', NOT_GIVEN),
-            seed=model_settings.get('seed', NOT_GIVEN),
-            presence_penalty=model_settings.get('presence_penalty', NOT_GIVEN),
-            frequency_penalty=model_settings.get('frequency_penalty', NOT_GIVEN),
-            logit_bias=model_settings.get('logit_bias', NOT_GIVEN),
-        )
+        if self.supports_parallel_tools:
+            return await self.client.chat.completions.create(
+                model=self.model_name,
+                messages=openai_messages,
+                n=1,
+                parallel_tool_calls=model_settings.get('parallel_tool_calls', True if self.tools else NOT_GIVEN),
+                tools=self.tools or NOT_GIVEN,
+                tool_choice=tool_choice or NOT_GIVEN,
+                stream=stream,
+                stream_options={'include_usage': True} if stream else NOT_GIVEN,
+                max_tokens=model_settings.get('max_tokens', NOT_GIVEN),
+                temperature=model_settings.get('temperature', NOT_GIVEN),
+                top_p=model_settings.get('top_p', NOT_GIVEN),
+                timeout=model_settings.get('timeout', NOT_GIVEN),
+                seed=model_settings.get('seed', NOT_GIVEN),
+                presence_penalty=model_settings.get('presence_penalty', NOT_GIVEN),
+                frequency_penalty=model_settings.get('frequency_penalty', NOT_GIVEN),
+                logit_bias=model_settings.get('logit_bias', NOT_GIVEN),
+            )
+        else:
+            return await self.client.chat.completions.create(
+                model=self.model_name,
+                messages=openai_messages,
+                n=1,
+                tools=self.tools or NOT_GIVEN,
+                tool_choice=tool_choice or NOT_GIVEN,
+                stream=stream,
+                stream_options={'include_usage': True} if stream else NOT_GIVEN,
+                max_tokens=model_settings.get('max_tokens', NOT_GIVEN),
+                temperature=model_settings.get('temperature', NOT_GIVEN),
+                top_p=model_settings.get('top_p', NOT_GIVEN),
+                timeout=model_settings.get('timeout', NOT_GIVEN),
+                seed=model_settings.get('seed', NOT_GIVEN),
+                presence_penalty=model_settings.get('presence_penalty', NOT_GIVEN),
+                frequency_penalty=model_settings.get('frequency_penalty', NOT_GIVEN),
+                logit_bias=model_settings.get('logit_bias', NOT_GIVEN),
+            )
 
     def _process_response(self, response: chat.ChatCompletion) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""

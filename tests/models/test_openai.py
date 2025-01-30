@@ -563,3 +563,38 @@ async def test_parallel_tool_calls(allow_model_requests: None, parallel_tool_cal
 
     await agent.run('Hello')
     assert get_mock_chat_completion_kwargs(mock_client)[0]['parallel_tool_calls'] == parallel_tool_calls
+
+async def test_supports_parallel_tools(allow_model_requests: None):
+    """Test that parallel_tool_calls parameter is only included when supports_parallel_tools is True."""
+    c = completion_message(
+        ChatCompletionMessage(
+            content=None,
+            role='assistant',
+            tool_calls=[
+                chat.ChatCompletionMessageToolCall(
+                    id='123',
+                    function=Function(arguments='{"response": [1, 2, 3]}', name='final_result'),
+                    type='function',
+                )
+            ],
+        )
+    )
+
+    # Test with supports_parallel_tools=True (default)
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIModel('gpt-4o', openai_client=mock_client)
+    agent = Agent(m, result_type=list[int])
+    await agent.run('Hello')
+    
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert 'parallel_tool_calls' in kwargs
+    assert kwargs['parallel_tool_calls'] is True
+
+    # Test with supports_parallel_tools=False
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIModel('gpt-4o', openai_client=mock_client, supports_parallel_tools=False)
+    agent = Agent(m, result_type=list[int])
+    await agent.run('Hello')
+    
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert 'parallel_tool_calls' not in kwargs
