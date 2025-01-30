@@ -1,4 +1,4 @@
-name: Smokeshow
+name: After CI
 
 on:
   workflow_run:
@@ -45,3 +45,49 @@ jobs:
           SMOKESHOW_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SMOKESHOW_GITHUB_PR_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
           SMOKESHOW_AUTH_KEY: ${{ secrets.SMOKESHOW_AUTH_KEY }}
+
+  deploy-docs-preview:
+    runs-on: ubuntu-latest
+    needs: [check]
+    environment:
+      name: deploy-preview
+      url: ${{ steps.get_preview_url.outputs.preview_url }}
+
+    steps:
+      - uses: dawidd6/action-download-artifact@v6
+        with:
+          workflow: ci.yml
+          name: docs-site
+          commit: ${{ github.event.workflow_run.head_sha }}
+          allow_forks: true
+          workflow_conclusion: completed
+          if_no_artifact_found: warn
+
+      - uses: actions/setup-node@v4
+      - run: npm install
+
+      - run: 'echo head_sha $VAR'
+        env:
+          VAR: ${{ github.event.workflow_run.head_sha }}
+
+      - run: 'echo head_branch $VAR'
+        env:
+          VAR: ${{ github.event.workflow_run.head_branch }}
+
+      - uses: cloudflare/wrangler-action@v3
+        name: Deploy docs-preview
+        id: deploy
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          environment: previews
+          workingDirectory: docs-site
+          command: >
+            deploy
+            --var GIT_COMMIT_SHA:${{ github.event.workflow_run.head_sha }}
+            --var GIT_BRANCH:${{ github.event.workflow_run.head_branch }}
+
+      - name: get preview URL
+        id: get_preview_url
+        run: python .github/get_preview_url.py >> $GITHUB_OUTPUT
+        env:
+          DEPLOY_OUTPUT: ${{ steps.deploy.outputs.command-output }}
