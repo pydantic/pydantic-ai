@@ -6,6 +6,7 @@ import httpx
 DEPLOY_OUTPUT = os.environ['DEPLOY_OUTPUT']
 GITHUB_TOKEN = os.environ['GITHUB_TOKEN']
 REPOSITORY = os.environ['REPOSITORY']
+REF = os.environ['REF']
 ENVIRONMENT = os.environ['ENVIRONMENT']
 
 m = re.search(r'https://(\S+)\.workers\.dev', DEPLOY_OUTPUT)
@@ -26,7 +27,7 @@ gh_headers = {
 
 deployment_url = f'https://api.github.com/repos/{REPOSITORY}/deployments'
 deployment_data = {
-    'ref': '9616d25acd9d73e36b8e57032fc6bec7e9bb42f1',
+    'ref': REF,
     'task': 'docs preview',
     'environment': ENVIRONMENT,
 }
