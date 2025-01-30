@@ -21,6 +21,8 @@ jobs:
       - uses: dawidd6/action-download-artifact@v6
         with:
           workflow: ci.yml
+          name: '(diff-)?coverage-html.*'
+          name_is_regexp: true
           commit: ${{ github.event.workflow_run.head_sha }}
           allow_forks: true
           workflow_conclusion: completed
@@ -53,6 +55,7 @@ jobs:
       url: ${{ steps.get_preview_url.outputs.preview_url }}
 
     steps:
+      - uses: actions/checkout@v4
       - uses: dawidd6/action-download-artifact@v6
         with:
           workflow: ci.yml
