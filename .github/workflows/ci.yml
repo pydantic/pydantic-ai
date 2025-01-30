@@ -72,7 +72,7 @@ jobs:
         env:
           PPPR_TOKEN: ${{ secrets.PPPR_TOKEN }}
 
-      - run: tree site
+      - run: tree -sh site
       - uses: actions/setup-node@v4
       - run: npm install
         working-directory: docs-site
