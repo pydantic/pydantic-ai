@@ -62,10 +62,6 @@ jobs:
           workflow_conclusion: completed
           if_no_artifact_found: warn
 
-      - uses: actions/setup-node@v4
-      - run: npm install
-        working-directory: docs-site
-
       - run: 'echo head_sha $VAR'
         env:
           VAR: ${{ github.event.workflow_run.head_sha }}
@@ -86,8 +82,22 @@ jobs:
             --var GIT_COMMIT_SHA:${{ github.event.workflow_run.head_sha }}
             --var GIT_BRANCH:${{ github.event.workflow_run.head_branch }}
 
+      # work around for https://github.com/cloudflare/wrangler-action/issues/349
       - name: get preview URL
         id: get_preview_url
-        run: python .github/get_preview_url.py >> $GITHUB_OUTPUT
+        shell: python
+        run: |
+          import os
+          import re
+          deploy_output = os.environ['DEPLOY_OUTPUT']
+          m = re.search(r'https://(\S+)\.workers\.dev', deploy_output)
+          assert m, f'Could not find worker URL in {deploy_output!r}'
+          worker_name = m.group(1)
+          m = re.search(r'Current Version ID: ([^-]+)', deploy_output)
+          assert m, f'Could not find version ID in {deploy_output!r}'
+          version_id = m.group(1)
+          preview_url = f'https://{version_id}-{worker_name}.workers.dev'
+          with open(os.environ['GITHUB_OUTPUT'], 'w') as f:
+              f.write(f'preview_url={preview_url}\n')
         env:
           DEPLOY_OUTPUT: ${{ steps.deploy.outputs.command-output }}
