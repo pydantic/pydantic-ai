@@ -74,6 +74,11 @@ jobs:
           ALGOLIA_WRITE_API_KEY: ${{ secrets.ALGOLIA_WRITE_API_KEY }}
 
       - run: tree site
+      - uses: actions/setup-node@v4
+      - run: npm install
+        working-directory: docs-site
+      - run: npm run typecheck
+        working-directory: docs-site
 
       - name: Store docs
         uses: actions/upload-artifact@v4
