@@ -229,7 +229,7 @@ jobs:
           allowed-skips: test-live
 
   deploy-docs:
-    if: "success() && github.ref == 'refs/heads/main'"
+#    if: "success() && github.ref == 'refs/heads/main'"
     runs-on: ubuntu-latest
     needs: [check]
     environment:
@@ -238,10 +238,6 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-      - run: npm install
-        working-directory: docs-site
-
       - uses: actions/download-artifact@v4
         with:
           name: docs-site
