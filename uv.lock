@@ -2535,7 +2535,6 @@ logfire = [
 
 [package.dev-dependencies]
 docs = [
-    { name = "algoliasearch" },
     { name = "black" },
     { name = "bs4" },
     { name = "markdownify" },
@@ -2543,6 +2542,10 @@ docs = [
     { name = "mkdocs-glightbox" },
     { name = "mkdocs-material", extra = ["imaging"] },
     { name = "mkdocstrings-python" },
+]
+docs-upload = [
+    { name = "algoliasearch" },
+    { name = "pydantic" },
 ]
 lint = [
     { name = "mypy" },
@@ -2559,7 +2562,6 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 docs = [
-    { name = "algoliasearch", specifier = ">=4.12.0" },
     { name = "black", specifier = ">=24.10.0" },
     { name = "bs4", specifier = ">=0.0.2" },
     { name = "markdownify", specifier = ">=0.14.1" },
@@ -2567,6 +2569,10 @@ docs = [
     { name = "mkdocs-glightbox", specifier = ">=0.4.0" },
     { name = "mkdocs-material", extras = ["imaging"], specifier = ">=9.5.45" },
     { name = "mkdocstrings-python", specifier = ">=1.12.2" },
+]
+docs-upload = [
+    { name = "algoliasearch", specifier = ">=4.12.0" },
+    { name = "pydantic", specifier = ">=2.10.1" },
 ]
 lint = [
     { name = "mypy", specifier = ">=1.11.2" },

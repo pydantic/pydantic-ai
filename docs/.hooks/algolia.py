@@ -2,13 +2,16 @@
 from __future__ import annotations as _annotations
 
 import os
-from typing import TypedDict, cast
+import sys
+from pathlib import Path
+from typing import TYPE_CHECKING, TypedDict, cast
 
-from algoliasearch.search.client import SearchClientSync
-from bs4 import BeautifulSoup
-from mkdocs.config import Config
-from mkdocs.structure.files import Files
-from mkdocs.structure.pages import Page
+from pydantic import TypeAdapter
+
+if TYPE_CHECKING:
+    from mkdocs.config import Config
+    from mkdocs.structure.files import Files
+    from mkdocs.structure.pages import Page
 
 
 class AlgoliaRecord(TypedDict):
@@ -20,10 +23,10 @@ class AlgoliaRecord(TypedDict):
 
 
 records: list[AlgoliaRecord] = []
+records_ta = TypeAdapter(list[AlgoliaRecord])
 # these values should match docs/javascripts/search-worker.js.
 ALGOLIA_APP_ID = 'KPPUDTIAVX'
 ALGOLIA_INDEX_NAME = 'pydantic-ai-docs'
-ALGOLIA_WRITE_API_KEY = os.environ.get('ALGOLIA_WRITE_API_KEY')
 
 # Algolia has a limit of 100kb per record in the paid plan,
 # leave some space for the other fields as well.
@@ -31,8 +34,7 @@ MAX_CONTENT_LENGTH = 90_000
 
 
 def on_page_content(html: str, page: Page, config: Config, files: Files) -> str:
-    if not ALGOLIA_WRITE_API_KEY:
-        return html
+    from bs4 import BeautifulSoup
 
     assert page.title is not None, 'Page title must not be None'
     title = cast(str, page.title)
@@ -93,22 +95,40 @@ def on_page_content(html: str, page: Page, config: Config, files: Files) -> str:
     return html
 
 
+ALGOLIA_RECORDS_FILE = 'algolia_records.json'
+
+
 def on_post_build(config: Config) -> None:
-    if not ALGOLIA_WRITE_API_KEY:
-        return
+    if records:
+        algolia_records_path = Path(config['site_dir']) / ALGOLIA_RECORDS_FILE
+        with algolia_records_path.open('wb') as f:
+            f.write(records_ta.dump_json(records))
 
-    client = SearchClientSync(ALGOLIA_APP_ID, ALGOLIA_WRITE_API_KEY)
 
-    for record in records:
-        if len(record['content']) > MAX_CONTENT_LENGTH:
+def algolia_upload() -> None:
+    from algoliasearch.search.client import SearchClientSync
+
+    algolia_write_api_key = os.environ['ALGOLIA_WRITE_API_KEY']
+
+    client = SearchClientSync(ALGOLIA_APP_ID, algolia_write_api_key)
+    filtered_records: list[AlgoliaRecord] = []
+
+    algolia_records_path = Path.cwd() / 'site' / ALGOLIA_RECORDS_FILE
+
+    with algolia_records_path.open('rb') as f:
+        all_records = records_ta.validate_json(f.read())
+
+    for record in all_records:
+        content = record['content']
+        if len(content) > MAX_CONTENT_LENGTH:
             print(
-                f"Record with title '{record['title']}' has more than {MAX_CONTENT_LENGTH} characters, {len(record['content'])}."
+                f"Record with title '{record['title']}' has more than {MAX_CONTENT_LENGTH} characters, {len(content)}."
             )
-            print(record['content'])
+            print(content)
+        else:
+            filtered_records.append(record)
 
-    # Filter the records from the index if the content is bigger than 100kb, Algolia limit
-    filtered_records = list(filter(lambda record: len(record['content']) < MAX_CONTENT_LENGTH, records))
-    print(f'Uploading {len(filtered_records)} out of {len(records)} records to Algolia...')
+    print(f'Uploading {len(filtered_records)} out of {len(all_records)} records to Algolia...')
 
     client.clear_objects(index_name=ALGOLIA_INDEX_NAME)
 
@@ -116,3 +136,11 @@ def on_post_build(config: Config) -> None:
         index_name=ALGOLIA_INDEX_NAME,
         batch_write_params={'requests': [{'action': 'addObject', 'body': record} for record in filtered_records]},
     )
+
+
+if __name__ == '__main__':
+    if sys.argv[-1] == 'upload':
+        algolia_upload()
+    else:
+        print('Run with "upload" argument to upload records to Algolia.')
+        exit(1)
