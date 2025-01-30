@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "pydantic-ai-slim"
-version = "0.0.20"
+version = "0.0.21"
 description = "Agent Framework / shim to use Pydantic with LLMs, slim package"
 authors = [
     { name = "Samuel Colvin", email = "samuel@pydantic.dev" },
@@ -44,7 +44,7 @@ dependencies = [
 [project.optional-dependencies]
 # WARNING if you add optional groups, please update docs/install.md
 logfire = ["logfire>=2.3"]
-graph = ["pydantic-graph==0.0.20"]
+graph = ["pydantic-graph==0.0.21"]
 openai = ["openai>=1.59.0"]
 cohere = ["cohere>=5.13.11"]
 vertexai = ["google-auth>=2.36.0", "requests>=2.32.3"]
