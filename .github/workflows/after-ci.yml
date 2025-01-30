@@ -7,6 +7,7 @@ on:
 
 permissions:
   statuses: write
+  deployments: write
 
 jobs:
   smokeshow:
@@ -52,10 +53,13 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: deploy-preview
-      url: ${{ steps.get_preview_url.outputs.preview_url }}
 
     steps:
       - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          python-version: '3.12'
 
       - uses: dawidd6/action-download-artifact@v6
         with:
@@ -65,8 +69,6 @@ jobs:
           commit: ${{ github.event.workflow_run.head_sha }}
           allow_forks: true
           workflow_conclusion: completed
-
-      - run: ls -lha
 
       - uses: cloudflare/wrangler-action@v3
         id: deploy
@@ -80,21 +82,10 @@ jobs:
             --var GIT_BRANCH:${{ github.event.workflow_run.head_branch }}
 
       # work around for https://github.com/cloudflare/wrangler-action/issues/349
-      - name: get preview URL
-        id: get_preview_url
-        shell: python
-        run: |
-          import os
-          import re
-          deploy_output = os.environ['DEPLOY_OUTPUT']
-          m = re.search(r'https://(\S+)\.workers\.dev', deploy_output)
-          assert m, f'Could not find worker URL in {deploy_output!r}'
-          worker_name = m.group(1)
-          m = re.search(r'Current Version ID: ([^-]+)', deploy_output)
-          assert m, f'Could not find version ID in {deploy_output!r}'
-          version_id = m.group(1)
-          preview_url = f'https://{version_id}-{worker_name}.workers.dev'
-          with open(os.environ['GITHUB_OUTPUT'], 'w') as f:
-              f.write(f'preview_url={preview_url}\n')
+      - name: Set preview URL
+        run: uv run --with httpx .github/set_docs_preview_url.py
         env:
           DEPLOY_OUTPUT: ${{ steps.deploy.outputs.command-output }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPOSITORY: ${{ github.repository }}
+          ENVIRONMENT: deploy-preview
