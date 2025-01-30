@@ -40,7 +40,7 @@ deployment_data = {
     })
 }
 r = httpx.post(deployment_url, headers=gh_headers, json=deployment_data)
-print(f'POST {deployment_url}: {r.status_code} {r.text}')
+print(f'POST {deployment_url}: {r.status_code}')  # {r.text}
 r.raise_for_status()
 deployment_id = r.json()['id']
 
@@ -51,5 +51,5 @@ status_data = {
     'state': 'success',
 }
 r = httpx.post(status_url, headers=gh_headers, json=status_data)
-print(f'POST {status_url}: {r.status_code} {r.text}')
+print(f'POST {status_url}: {r.status_code}')  # {r.text}
 r.raise_for_status()
