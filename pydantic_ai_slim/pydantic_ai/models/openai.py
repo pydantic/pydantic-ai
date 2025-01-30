@@ -106,7 +106,7 @@ class OpenAIModel(Model):
         # openai compatible models models not always needing an API key.
         if (
             api_key is None
-            and os.environ.get('OPENAI_API_KEY') is None
+            and 'OPENAI_API_KEY' not in os.environ
             and model_name not in get_args(ChatModel)
             and openai_client is None
         ):
