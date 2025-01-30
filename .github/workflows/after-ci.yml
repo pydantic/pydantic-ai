@@ -61,6 +61,7 @@ jobs:
         with:
           workflow: ci.yml
           name: site
+          path: site
           commit: ${{ github.event.workflow_run.head_sha }}
           allow_forks: true
           workflow_conclusion: completed
