@@ -19,6 +19,17 @@ from . import _utils, exceptions, mermaid
 from .nodes import BaseNode, DepsT, End, GraphRunContext, NodeDef, RunEndT
 from .state import EndStep, HistoryStep, NodeStep, StateT, deep_copy_state, nodes_schema_var
 
+# while waiting for https://github.com/pydantic/logfire/issues/745
+try:
+    import logfire._internal.stack_info
+except ImportError:
+    pass
+else:
+    from pathlib import Path
+
+    logfire._internal.stack_info.NON_USER_CODE_PREFIXES += (str(Path(__file__).parent.absolute()),)
+
+
 __all__ = ('Graph',)
 
 _logfire = logfire_api.Logfire(otel_scope='pydantic-graph')
