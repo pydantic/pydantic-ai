@@ -30,6 +30,7 @@ deployment_data = {
     'ref': REF,
     'task': 'docs preview',
     'environment': ENVIRONMENT,
+    'auto_merge': False,
 }
 r = httpx.post(deployment_url, headers=gh_headers, json=deployment_data)
 print(f'POST {deployment_url}: {r.status_code} {r.text}')
