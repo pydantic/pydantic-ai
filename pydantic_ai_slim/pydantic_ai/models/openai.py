@@ -104,7 +104,7 @@ class OpenAIModel(Model):
         self.model_name: OpenAIModelName = model_name
         # This is a workaround for the OpenAI client requiring an API key, whilst locally served,
         # openai compatible models do not always need an API key.
-        if api_key is None and 'OPENAI_API_KEY' not in os.environ and base_url is not None:
+        if api_key is None and 'OPENAI_API_KEY' not in os.environ and base_url is not None and openai_client is None:
             api_key = ''
         elif openai_client is not None:
             assert http_client is None, 'Cannot provide both `openai_client` and `http_client`'
