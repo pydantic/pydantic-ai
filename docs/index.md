@@ -2,6 +2,8 @@
 
 --8<-- "docs/.partials/index-header.html"
 
+TEST
+
 PydanticAI is a Python Agent Framework designed to make it less painful to
 build production grade applications with Generative AI.
 
