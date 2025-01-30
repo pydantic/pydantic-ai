@@ -63,7 +63,7 @@ jobs:
       - uses: dawidd6/action-download-artifact@v6
         with:
           workflow: ci.yml
-          name: docs-site
+          name: site
           commit: ${{ github.event.workflow_run.head_sha }}
           allow_forks: true
           workflow_conclusion: completed
@@ -78,7 +78,6 @@ jobs:
           VAR: ${{ github.event.workflow_run.head_branch }}
 
       - uses: cloudflare/wrangler-action@v3
-        name: Deploy docs-preview
         id: deploy
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
