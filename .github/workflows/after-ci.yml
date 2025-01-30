@@ -56,6 +56,10 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+      - run: npm install
+        working-directory: docs-site
+
       - uses: dawidd6/action-download-artifact@v6
         with:
           workflow: ci.yml
