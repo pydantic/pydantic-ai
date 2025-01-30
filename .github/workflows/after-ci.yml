@@ -48,7 +48,6 @@ jobs:
 
   deploy-docs-preview:
     runs-on: ubuntu-latest
-    needs: [check]
     environment:
       name: deploy-preview
       url: ${{ steps.get_preview_url.outputs.preview_url }}
