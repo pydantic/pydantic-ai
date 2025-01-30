@@ -1,3 +1,4 @@
+import json
 import os
 import re
 
@@ -31,6 +32,12 @@ deployment_data = {
     'task': 'docs preview',
     'environment': ENVIRONMENT,
     'auto_merge': False,
+    'required_contexts': [],
+    'payload': json.dumps({
+        'preview_url': preview_url,
+        'worker_name': worker_name,
+        'version_id': version_id,
+    })
 }
 r = httpx.post(deployment_url, headers=gh_headers, json=deployment_data)
 print(f'POST {deployment_url}: {r.status_code} {r.text}')
