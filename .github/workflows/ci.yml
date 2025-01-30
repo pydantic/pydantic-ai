@@ -83,7 +83,7 @@ jobs:
       - name: Store docs
         uses: actions/upload-artifact@v4
         with:
-          name: docs-site
+          name: site
           path: site
 
   test-live:
