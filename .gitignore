@@ -3,7 +3,8 @@ site
 .venv
 dist
 __pycache__
-*.env
+.env
+.dev.vars
 /scratch/
 /.coverage
 env*/
@@ -14,3 +15,4 @@ examples/pydantic_ai_examples/.chat_app_messages.sqlite
 .cache/
 .vscode/
 /question_graph_history.json
+/docs-site/.wrangler/

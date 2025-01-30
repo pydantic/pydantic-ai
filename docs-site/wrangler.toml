@@ -1,0 +1,24 @@
+#:schema node_modules/wrangler/config-schema.json
+name = "pydantic-ai"
+compatibility_date = "2025-01-29"
+routes = ["testing-ai.pydantic.dev/*"]
+main = "src/index.ts"
+workers_dev = false
+
+[assets]
+directory = "../site"
+binding = "ASSETS"
+# so we can rewrite the HTML to insert the version notice
+experimental_serve_directly = false
+
+[[kv_namespaces]]
+binding = "VERSION_NOTICE_CACHE"
+id = "4e49a275426244488a79d572da40eb69"
+
+[env.previews]
+workers_dev = true
+routes = []
+
+[[env.previews.kv_namespaces]]
+binding = "VERSION_NOTICE_CACHE"
+id = "95eb127177234122896b4f0a80412f1b"
