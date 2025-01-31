@@ -43,6 +43,7 @@ dependencies = [
     "uvicorn>=0.32.0",
     "devtools>=0.12.2",
     "gradio>=5.9.0; python_version>'3.9'",
+    "streamlit>=1.41.1",
 ]
 
 [tool.hatch.build.targets.wheel]

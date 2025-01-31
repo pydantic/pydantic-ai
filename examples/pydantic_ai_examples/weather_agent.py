@@ -44,6 +44,7 @@ weather_agent = Agent(
     ),
     deps_type=Deps,
     retries=2,
+    defer_model_check=True,
 )
 
 
