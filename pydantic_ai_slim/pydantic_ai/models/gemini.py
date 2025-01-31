@@ -408,9 +408,10 @@ class _GeminiRequest(TypedDict):
 
 
 class GeminiSafetySettings(TypedDict):
-    """Individual safety settings fields for Gemini.
+    """Safety settings options for Gemini model request.
 
-    See <https://ai.google.dev/gemini-api/docs/safety-settings> for API docs.
+    See [Gemini API docs](https://ai.google.dev/gemini-api/docs/safety-settings) for safety category and threshold descriptions.
+    For an example on how to use `GeminiSafetySettings`, see [here](../../agents.md#model-specific-settings).
     """
 
     category: Literal[
@@ -422,8 +423,9 @@ class GeminiSafetySettings(TypedDict):
         'HARM_CATEGORY_CIVIC_INTEGRITY',
     ]
     """
-    See <https://ai.google.dev/api/generate-content#v1beta.HarmCategory> for HarmCategory API docs.
+    Safety settings category.
     """
+
     threshold: Literal[
         'HARM_BLOCK_THRESHOLD_UNSPECIFIED',
         'BLOCK_LOW_AND_ABOVE',
@@ -433,10 +435,7 @@ class GeminiSafetySettings(TypedDict):
         'OFF',
     ]
     """
-    See <https://ai.google.dev/api/generate-content#HarmBlockThreshold> for HarmBlockThreshold API docs.
-
-    Note: there are some restrictions on who has access to BLOCK_NONE and OFF.
-    See <https://cloud.google.com/vertex-ai/generative-ai/docs/multimodal/configure-safety-filters> for more details.
+    Safety settings threshold.
     """
 
 

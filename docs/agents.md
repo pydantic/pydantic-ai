@@ -226,6 +226,29 @@ print(result_sync.data)
 #> Rome
 ```
 
+For Gemini models, safety settings for requests can be specified via [`GeminiModelSettings`][pydantic_ai.models.gemini.GeminiModelSettings]. For example:
+```py
+from pydantic_ai import Agent
+from pydantic_ai.models.gemini import GeminiModel, GeminiModelSettings
+
+agent = Agent('google-gla:gemini-1.5-flash')
+
+result = agent.run_sync(
+    'Write a list of 5 very rude things that I might say to the universe after stubbing my toe in the dark:',
+    model_settings=GeminiModelSettings(
+        temperature = 0.0, # general model settings can also be specified
+        gemini_safety_settings=[
+            {'category': 'HARM_CATEGORY_HARASSMENT', 'threshold': 'BLOCK_LOW_AND_ABOVE'},
+            {'category': 'HARM_CATEGORY_HATE_SPEECH', 'threshold': 'BLOCK_LOW_AND_ABOVE'}
+        ],
+    ),
+)
+print(result.data)
+#> raises an UnexpectedModelBehavior since safety thresholds exceeded (note: returns a normal response if within thresholds)
+```
+
+Credit for the above prompt goes to Hussain Chinoy and Google.
+
 ## Runs vs. Conversations
 
 An agent **run** might represent an entire conversation — there's no limit to how many messages can be exchanged in a single run. However, a **conversation** might also be composed of multiple runs, especially if you need to maintain state between separate interactions or API calls.
