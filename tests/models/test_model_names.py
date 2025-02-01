@@ -38,9 +38,16 @@ def test_known_model_names():
     groq_names = [f'groq:{n}' for n in get_model_names(GroqModelName)]
     mistral_names = [f'mistral:{n}' for n in get_model_names(MistralModelName)]
     openai_names = [f'openai:{n}' for n in get_model_names(OpenAIModelName)] + [
-        n for n in get_model_names(OpenAIModelName) if n.startswith('o1') or n.startswith('gpt')
+        n for n in get_model_names(OpenAIModelName) if n.startswith('o1') or n.startswith('gpt') or n.startswith('o3')
     ]
+
     extra_names = ['test']
+
+    # adding latest openai names for o3. Temporary patch until o3 is available in OpenAIModelName
+    latest_openai_model_names = ['o3-mini', 'o3-mini-2025-01-31', 'openai:o3-mini', 'openai:o3-mini-2025-01-31']
+
+    if not all(openai_model_name in openai_names for openai_model_name in latest_openai_model_names):
+        extra_names += latest_openai_model_names
 
     generated_names = sorted(
         anthropic_names + cohere_names + google_names + groq_names + mistral_names + openai_names + extra_names
