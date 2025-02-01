@@ -282,7 +282,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         result_schema: _result.ResultSchema[RunResultDataT] | None = self._prepare_result_schema(result_type)
 
         # Build the graph
-        graph = _agent_graph.build_agent_graph(self.name, self._deps_type, result_type or self.result_type)
+        graph = self._build_graph(result_type)
 
         # Build the initial state
         state = _agent_graph.GraphAgentState(
