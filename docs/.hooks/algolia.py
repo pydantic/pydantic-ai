@@ -4,9 +4,10 @@ from __future__ import annotations as _annotations
 import os
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING, TypedDict, cast
+from typing import TYPE_CHECKING, cast
 
 from pydantic import TypeAdapter
+from typing_extensions import TypedDict
 
 if TYPE_CHECKING:
     from mkdocs.config import Config
