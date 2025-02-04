@@ -19,6 +19,17 @@ from . import _utils, exceptions, mermaid
 from .nodes import BaseNode, DepsT, End, GraphRunContext, NodeDef, RunEndT
 from .state import EndStep, HistoryStep, NodeStep, StateT, deep_copy_state, nodes_schema_var
 
+# while waiting for https://github.com/pydantic/logfire/issues/745
+try:
+    import logfire._internal.stack_info
+except ImportError:
+    pass
+else:
+    from pathlib import Path
+
+    logfire._internal.stack_info.NON_USER_CODE_PREFIXES += (str(Path(__file__).parent.absolute()),)
+
+
 __all__ = ('Graph',)
 
 _logfire = logfire_api.Logfire(otel_scope='pydantic-graph')
@@ -170,22 +181,22 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
                         start=start_node,
                     )
                 )
-        while True:
-            next_node = await self.next(start_node, history, state=state, deps=deps, infer_name=False)
-            if isinstance(next_node, End):
-                history.append(EndStep(result=next_node))
-                if run_span is not None:
-                    run_span.set_attribute('history', history)
-                return next_node.data, history
-            elif isinstance(next_node, BaseNode):
-                start_node = next_node
-            else:
-                if TYPE_CHECKING:
-                    typing_extensions.assert_never(next_node)
-                else:
-                    raise exceptions.GraphRuntimeError(
-                        f'Invalid node return type: `{type(next_node).__name__}`. Expected `BaseNode` or `End`.'
-                    )
+
+            next_node = start_node
+            while True:
+                next_node = await self.next(next_node, history, state=state, deps=deps, infer_name=False)
+                if isinstance(next_node, End):
+                    history.append(EndStep(result=next_node))
+                    if run_span is not None:
+                        run_span.set_attribute('history', history)
+                    return next_node.data, history
+                elif not isinstance(next_node, BaseNode):
+                    if TYPE_CHECKING:
+                        typing_extensions.assert_never(next_node)
+                    else:
+                        raise exceptions.GraphRuntimeError(
+                            f'Invalid node return type: `{type(next_node).__name__}`. Expected `BaseNode` or `End`.'
+                        )
 
     def run_sync(
         self: Graph[StateT, DepsT, T],

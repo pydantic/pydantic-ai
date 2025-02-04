@@ -346,7 +346,7 @@ CREATE TABLE records (
 
 
 sql_agent = Agent(
-    'gemini-1.5-flash',
+    'google-gla:gemini-1.5-flash',
     deps_type=SqlSystemPrompt,
 )
 

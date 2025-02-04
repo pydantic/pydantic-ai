@@ -25,7 +25,7 @@ import random
 from pydantic_ai import Agent, RunContext
 
 agent = Agent(
-    'gemini-1.5-flash',  # (1)!
+    'google-gla:gemini-1.5-flash',  # (1)!
     deps_type=str,  # (2)!
     system_prompt=(
         "You're a dice game, you should roll the die and see if the number "
@@ -202,12 +202,12 @@ def get_player_name(ctx: RunContext[str]) -> str:
 
 
 agent_a = Agent(
-    'gemini-1.5-flash',
+    'google-gla:gemini-1.5-flash',
     deps_type=str,
     tools=[roll_die, get_player_name],  # (1)!
 )
 agent_b = Agent(
-    'gemini-1.5-flash',
+    'google-gla:gemini-1.5-flash',
     deps_type=str,
     tools=[  # (2)!
         Tool(roll_die, takes_ctx=False),

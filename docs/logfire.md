@@ -59,7 +59,9 @@ import logfire
 logfire.configure()
 ```
 
-The [logfire documentation](https://logfire.pydantic.dev/docs/) has more details on how to use logfire, including how to instrument other libraries like Pydantic, HTTPX and FastAPI.
+The [logfire documentation](https://logfire.pydantic.dev/docs/) has more details on how to use logfire,
+including how to instrument other libraries like [Pydantic](https://logfire.pydantic.dev/docs/integrations/pydantic/),
+[HTTPX](https://logfire.pydantic.dev/docs/integrations/http-clients/httpx/) and [FastAPI](https://logfire.pydantic.dev/docs/integrations/web-frameworks/fastapi/).
 
 Since Logfire is build on [OpenTelemetry](https://opentelemetry.io/), you can use the Logfire Python SDK to send data to any OpenTelemetry collector.
 
@@ -79,3 +81,21 @@ To demonstrate how Logfire can let you visualise the flow of a PydanticAI run, h
 We can also query data with SQL in Logfire to monitor the performance of an application. Here's a real world example of using Logfire to monitor PydanticAI runs inside Logfire itself:
 
 ![Logfire monitoring PydanticAI](img/logfire-monitoring-pydanticai.png)
+
+### Monitoring HTTPX Requests
+
+In order to monitor HTTPX requests made by models, you can use `logfire`'s [HTTPX](https://logfire.pydantic.dev/docs/integrations/http-clients/httpx/) integration.
+
+Instrumentation is as easy as adding the following three lines to your application:
+
+```py {title="instrument_httpx.py" test="skip" lint="skip"}
+...
+import logfire
+logfire.configure()  # (1)!
+logfire.instrument_httpx()  # (2)!
+...
+```
+```
+
+In particular, this can help you to trace specific requests, responses, and headers which might be of particular interest
+if you're using a custom `httpx` client in your model.

@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+import os
 from collections.abc import AsyncIterable, AsyncIterator, Iterable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -101,7 +102,11 @@ class OpenAIModel(Model):
                 In the future, this may be inferred from the model name.
         """
         self.model_name: OpenAIModelName = model_name
-        if openai_client is not None:
+        # This is a workaround for the OpenAI client requiring an API key, whilst locally served,
+        # openai compatible models do not always need an API key.
+        if api_key is None and 'OPENAI_API_KEY' not in os.environ and base_url is not None and openai_client is None:
+            api_key = ''
+        elif openai_client is not None:
             assert http_client is None, 'Cannot provide both `openai_client` and `http_client`'
             assert base_url is None, 'Cannot provide both `openai_client` and `base_url`'
             assert api_key is None, 'Cannot provide both `openai_client` and `api_key`'

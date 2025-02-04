@@ -1,2 +1,0 @@
-# this file is a hack to work around CloudFlare Pages default build script that can't be avoided
-# TODO remove once clouflare fix the bug

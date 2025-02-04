@@ -53,6 +53,7 @@ pip/uv-add 'pydantic-ai-slim[openai]'
 * `anthropic` — installs `anthropic` [PyPI ↗](https://pypi.org/project/anthropic){:target="_blank"}
 * `groq` — installs `groq` [PyPI ↗](https://pypi.org/project/groq){:target="_blank"}
 * `mistral` — installs `mistralai` [PyPI ↗](https://pypi.org/project/mistralai){:target="_blank"}
+* `cohere` - installs `cohere` [PyPI ↗](https://pypi.org/project/cohere){:target="_blank"}
 
 See the [models](models.md) documentation for information on which optional dependencies are required for each model.
 

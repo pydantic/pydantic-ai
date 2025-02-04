@@ -2519,10 +2519,10 @@ wheels = [
 
 [[package]]
 name = "pydantic-ai"
-version = "0.0.20"
+version = "0.0.21"
 source = { editable = "." }
 dependencies = [
-    { name = "pydantic-ai-slim", extra = ["anthropic", "cohere", "graph", "groq", "mistral", "openai", "vertexai"] },
+    { name = "pydantic-ai-slim", extra = ["anthropic", "cohere", "groq", "mistral", "openai", "vertexai"] },
 ]
 
 [package.optional-dependencies]
@@ -2535,7 +2535,6 @@ logfire = [
 
 [package.dev-dependencies]
 docs = [
-    { name = "algoliasearch" },
     { name = "black" },
     { name = "bs4" },
     { name = "markdownify" },
@@ -2543,6 +2542,10 @@ docs = [
     { name = "mkdocs-glightbox" },
     { name = "mkdocs-material", extra = ["imaging"] },
     { name = "mkdocstrings-python" },
+]
+docs-upload = [
+    { name = "algoliasearch" },
+    { name = "pydantic" },
 ]
 lint = [
     { name = "mypy" },
@@ -2559,7 +2562,6 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 docs = [
-    { name = "algoliasearch", specifier = ">=4.12.0" },
     { name = "black", specifier = ">=24.10.0" },
     { name = "bs4", specifier = ">=0.0.2" },
     { name = "markdownify", specifier = ">=0.14.1" },
@@ -2567,6 +2569,10 @@ docs = [
     { name = "mkdocs-glightbox", specifier = ">=0.4.0" },
     { name = "mkdocs-material", extras = ["imaging"], specifier = ">=9.5.45" },
     { name = "mkdocstrings-python", specifier = ">=1.12.2" },
+]
+docs-upload = [
+    { name = "algoliasearch", specifier = ">=4.12.0" },
+    { name = "pydantic", specifier = ">=2.10.1" },
 ]
 lint = [
     { name = "mypy", specifier = ">=1.11.2" },
@@ -2576,7 +2582,7 @@ lint = [
 
 [[package]]
 name = "pydantic-ai-examples"
-version = "0.0.20"
+version = "0.0.21"
 source = { editable = "examples" }
 dependencies = [
     { name = "asyncpg" },
@@ -2606,7 +2612,7 @@ requires-dist = [
 
 [[package]]
 name = "pydantic-ai-slim"
-version = "0.0.20"
+version = "0.0.21"
 source = { editable = "pydantic_ai_slim" }
 dependencies = [
     { name = "eval-type-backport" },
@@ -2614,6 +2620,7 @@ dependencies = [
     { name = "httpx" },
     { name = "logfire-api" },
     { name = "pydantic" },
+    { name = "pydantic-graph" },
 ]
 
 [package.optional-dependencies]
@@ -2622,9 +2629,6 @@ anthropic = [
 ]
 cohere = [
     { name = "cohere" },
-]
-graph = [
-    { name = "pydantic-graph" },
 ]
 groq = [
     { name = "groq" },
@@ -2672,7 +2676,7 @@ requires-dist = [
     { name = "mistralai", marker = "extra == 'mistral'", specifier = ">=1.2.5" },
     { name = "openai", marker = "extra == 'openai'", specifier = ">=1.59.0" },
     { name = "pydantic", specifier = ">=2.10" },
-    { name = "pydantic-graph", marker = "extra == 'graph'", editable = "pydantic_graph" },
+    { name = "pydantic-graph", editable = "pydantic_graph" },
     { name = "requests", marker = "extra == 'vertexai'", specifier = ">=2.32.3" },
 ]
 
@@ -2789,7 +2793,7 @@ wheels = [
 
 [[package]]
 name = "pydantic-graph"
-version = "0.0.20"
+version = "0.0.21"
 source = { editable = "pydantic_graph" }
 dependencies = [
     { name = "httpx" },
