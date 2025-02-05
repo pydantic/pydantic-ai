@@ -58,7 +58,12 @@ OpenAISystemPromptRole = Literal['system', 'developer', 'user']
 class OpenAIModelSettings(ModelSettings):
     """Settings used for an OpenAI model request."""
 
-    # This class is a placeholder for any future openai-specific settings
+    openai_reasoning_effort: chat.ChatCompletionReasoningEffort
+    """
+    Constrains effort on reasoning for [reasoning models](https://platform.openai.com/docs/guides/reasoning).
+    Currently supported values are `low`, `medium`, and `high`. Reducing reasoning effort can
+    result in faster responses and fewer tokens used on reasoning in a response.
+    """
 
 
 @dataclass(init=False)
@@ -217,6 +222,7 @@ class OpenAIAgentModel(AgentModel):
             presence_penalty=model_settings.get('presence_penalty', NOT_GIVEN),
             frequency_penalty=model_settings.get('frequency_penalty', NOT_GIVEN),
             logit_bias=model_settings.get('logit_bias', NOT_GIVEN),
+            reasoning_effort=model_settings.get('openai_reasoning_effort', NOT_GIVEN),
         )
 
     def _process_response(self, response: chat.ChatCompletion) -> ModelResponse:
