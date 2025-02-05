@@ -161,49 +161,38 @@ KnownModelName = Literal[
 """
 
 
+@dataclass
+class ModelRequestParameters:
+    """Configuration for an agent's request to a model, specifically related to tools and result handling."""
+
+    function_tools: list[ToolDefinition]
+    allow_text_result: bool
+    result_tools: list[ToolDefinition]
+
+
 class Model(ABC):
     """Abstract class for a model."""
-
-    @abstractmethod
-    async def agent_model(
-        self,
-        *,
-        function_tools: list[ToolDefinition],
-        allow_text_result: bool,
-        result_tools: list[ToolDefinition],
-    ) -> AgentModel:
-        """Create an agent model, this is called for each step of an agent run.
-
-        This is async in case slow/async config checks need to be performed that can't be done in `__init__`.
-
-        Args:
-            function_tools: The tools available to the agent.
-            allow_text_result: Whether a plain text final response/result is permitted.
-            result_tools: Tool definitions for the final result tool(s), if any.
-
-        Returns:
-            An agent model.
-        """
-        raise NotImplementedError()
 
     @abstractmethod
     def name(self) -> str:
         raise NotImplementedError()
 
-
-class AgentModel(ABC):
-    """Model configured for each step of an Agent run."""
-
     @abstractmethod
     async def request(
-        self, messages: list[ModelMessage], model_settings: ModelSettings | None
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
     ) -> tuple[ModelResponse, Usage]:
         """Make a request to the model."""
         raise NotImplementedError()
 
     @asynccontextmanager
     async def request_stream(
-        self, messages: list[ModelMessage], model_settings: ModelSettings | None
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
     ) -> AsyncIterator[StreamedResponse]:
         """Make a request to the model and return a streaming response."""
         # This method is not required, but you need to implement it if you want to support streamed responses
@@ -274,7 +263,7 @@ def check_allow_model_requests() -> None:
     """Check if model requests are allowed.
 
     If you're defining your own models that have costs or latency associated with their use, you should call this in
-    [`Model.agent_model`][pydantic_ai.models.Model.agent_model].
+    [`Model.request`][pydantic_ai.models.Model.request] and [`Model.request_stream`][pydantic_ai.models.Model.request_stream].
 
     Raises:
         RuntimeError: If model requests are not allowed.

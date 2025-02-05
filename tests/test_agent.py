@@ -326,13 +326,13 @@ def test_response_tuple():
     result = agent.run_sync('Hello')
     assert result.data == snapshot(('a', 'a'))
 
-    assert m.agent_model_function_tools == snapshot([])
-    assert m.agent_model_allow_text_result is False
+    assert m.last_model_request_parameters is not None
+    assert m.last_model_request_parameters.function_tools == snapshot([])
+    assert m.last_model_request_parameters.allow_text_result is False
 
-    assert m.agent_model_result_tools is not None
-    assert len(m.agent_model_result_tools) == 1
-
-    assert m.agent_model_result_tools == snapshot(
+    assert m.last_model_request_parameters.result_tools is not None
+    assert len(m.last_model_request_parameters.result_tools) == 1
+    assert m.last_model_request_parameters.result_tools == snapshot(
         [
             ToolDefinition(
                 name='final_result',
@@ -384,13 +384,14 @@ def test_response_union_allow_str(input_union_callable: Callable[[], Any]):
     assert result.data == snapshot('success (no tool calls)')
     assert got_tool_call_name == snapshot(None)
 
-    assert m.agent_model_function_tools == snapshot([])
-    assert m.agent_model_allow_text_result is True
+    assert m.last_model_request_parameters is not None
+    assert m.last_model_request_parameters.function_tools == snapshot([])
+    assert m.last_model_request_parameters.allow_text_result is True
 
-    assert m.agent_model_result_tools is not None
-    assert len(m.agent_model_result_tools) == 1
+    assert m.last_model_request_parameters.result_tools is not None
+    assert len(m.last_model_request_parameters.result_tools) == 1
 
-    assert m.agent_model_result_tools == snapshot(
+    assert m.last_model_request_parameters.result_tools == snapshot(
         [
             ToolDefinition(
                 name='final_result',
@@ -459,13 +460,14 @@ class Bar(BaseModel):
     assert result.data == mod.Foo(a=0, b='a')
     assert got_tool_call_name == snapshot('final_result_Foo')
 
-    assert m.agent_model_function_tools == snapshot([])
-    assert m.agent_model_allow_text_result is False
+    assert m.last_model_request_parameters is not None
+    assert m.last_model_request_parameters.function_tools == snapshot([])
+    assert m.last_model_request_parameters.allow_text_result is False
 
-    assert m.agent_model_result_tools is not None
-    assert len(m.agent_model_result_tools) == 2
+    assert m.last_model_request_parameters.result_tools is not None
+    assert len(m.last_model_request_parameters.result_tools) == 2
 
-    assert m.agent_model_result_tools == snapshot(
+    assert m.last_model_request_parameters.result_tools == snapshot(
         [
             ToolDefinition(
                 name='final_result_Foo',

@@ -204,9 +204,9 @@ class StreamUserPromptNode(BaseUserPromptNode[DepsT, NodeRunEndT]):
         return StreamModelRequestNode[DepsT, NodeRunEndT](request=await self._get_first_message(ctx))
 
 
-async def _prepare_model(
+async def _prepare_request_parameters(
     ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
-) -> models.AgentModel:
+) -> models.ModelRequestParameters:
     """Build tools and create an agent model."""
     function_tool_defs: list[ToolDefinition] = []
 
@@ -220,7 +220,7 @@ async def _prepare_model(
     await asyncio.gather(*map(add_tool, ctx.deps.function_tools.values()))
 
     result_schema = ctx.deps.result_schema
-    return await run_context.model.agent_model(
+    return models.ModelRequestParameters(
         function_tools=function_tool_defs,
         allow_text_result=_allow_text_result(result_schema),
         result_tools=result_schema.tool_defs() if result_schema is not None else [],
@@ -245,13 +245,15 @@ class ModelRequestNode(BaseNode[GraphAgentState, GraphAgentDeps[DepsT, Any], Nod
         # Increment run_step
         ctx.state.run_step += 1
 
-        with _logfire.span('preparing model and tools {run_step=}', run_step=ctx.state.run_step):
-            agent_model = await _prepare_model(ctx)
+        with _logfire.span('preparing model request params {run_step=}', run_step=ctx.state.run_step):
+            model_request_parameters = await _prepare_request_parameters(ctx)
 
         # Actually make the model request
         model_settings = merge_model_settings(ctx.deps.model_settings, None)
         with _logfire.span('model request') as span:
-            model_response, request_usage = await agent_model.request(ctx.state.message_history, model_settings)
+            model_response, request_usage = await ctx.deps.model.request(
+                ctx.state.message_history, model_settings, model_request_parameters
+            )
             span.set_attribute('response', model_response)
             span.set_attribute('usage', request_usage)
 
@@ -405,12 +407,14 @@ class StreamModelRequestNode(BaseNode[GraphAgentState, GraphAgentDeps[DepsT, Any
         ctx.state.run_step += 1
 
         with _logfire.span('preparing model and tools {run_step=}', run_step=ctx.state.run_step):
-            agent_model = await _prepare_model(ctx)
+            model_request_parameters = await _prepare_request_parameters(ctx)
 
         # Actually make the model request
         model_settings = merge_model_settings(ctx.deps.model_settings, None)
         with _logfire.span('model request {run_step=}', run_step=ctx.state.run_step) as model_req_span:
-            async with agent_model.request_stream(ctx.state.message_history, model_settings) as streamed_response:
+            async with ctx.deps.model.request_stream(
+                ctx.state.message_history, model_settings, model_request_parameters
+            ) as streamed_response:
                 ctx.state.usage.requests += 1
                 model_req_span.set_attribute('response_type', streamed_response.__class__.__name__)
                 # We want to end the "model request" span here, but we can't exit the context manager

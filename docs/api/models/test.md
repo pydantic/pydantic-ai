@@ -17,7 +17,7 @@ async def test_my_agent():
     with my_agent.override(model=m):
         result = await my_agent.run('Testing my agent...')
         assert result.data == 'success (no tool calls)'
-    assert m.agent_model_function_tools == []
+    assert m.last_model_request_parameters.function_tools == []
 ```
 
 See [Unit testing with `TestModel`](../../testing-evals.md#unit-testing-with-testmodel) for detailed documentation.

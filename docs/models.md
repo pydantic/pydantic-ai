@@ -628,9 +628,8 @@ agent = Agent(model)
 
 To implement support for models not already supported, you will need to subclass the [`Model`][pydantic_ai.models.Model] abstract base class.
 
-This in turn will require you to implement the following other abstract base classes:
+For streaming, you'll also need to implement the following abstract base class:
 
-* [`AgentModel`][pydantic_ai.models.AgentModel]
 * [`StreamedResponse`][pydantic_ai.models.StreamedResponse]
 
 The best place to start is to review the source code for existing implementations, e.g. [`OpenAIModel`](https://github.com/pydantic/pydantic-ai/blob/main/pydantic_ai_slim/pydantic_ai/models/openai.py).

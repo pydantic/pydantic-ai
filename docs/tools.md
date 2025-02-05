@@ -292,7 +292,7 @@ The return type of tool can be anything which Pydantic can serialize to JSON as 
 
 If a tool has a single parameter that can be represented as an object in JSON schema (e.g. dataclass, TypedDict, pydantic model), the schema for the tool is simplified to be just that object.
 
-Here's an example, we use [`TestModel.agent_model_function_tools`][pydantic_ai.models.test.TestModel.agent_model_function_tools] to inspect the tool schema that would be passed to the model.
+Here's an example where we use [`TestModel.last_model_request_parameters`][pydantic_ai.models.test.TestModel.last_model_request_parameters] to inspect the tool schema that would be passed to the model.
 
 ```python {title="single_parameter_tool.py"}
 from pydantic import BaseModel
@@ -320,7 +320,7 @@ test_model = TestModel()
 result = agent.run_sync('hello', model=test_model)
 print(result.data)
 #> {"foobar":"x=0 y='a' z=3.14"}
-print(test_model.agent_model_function_tools)
+print(test_model.last_model_request_parameters.function_tools)
 """
 [
     ToolDefinition(
@@ -425,7 +425,7 @@ agent = Agent(test_model, tools=[greet_tool], deps_type=Literal['human', 'machin
 result = agent.run_sync('testing...', deps='human')
 print(result.data)
 #> {"greet":"hello a"}
-print(test_model.agent_model_function_tools)
+print(test_model.last_model_request_parameters.function_tools)
 """
 [
     ToolDefinition(

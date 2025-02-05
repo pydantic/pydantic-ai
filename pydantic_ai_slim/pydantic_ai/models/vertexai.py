@@ -1,5 +1,7 @@
 from __future__ import annotations as _annotations
 
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -7,11 +9,13 @@ from typing import Literal
 
 from httpx import AsyncClient as AsyncHTTPClient
 
+from .. import usage
 from .._utils import run_in_executor
 from ..exceptions import UserError
-from ..tools import ToolDefinition
-from . import Model, cached_async_http_client, check_allow_model_requests
-from .gemini import GeminiAgentModel, GeminiModelName
+from ..messages import ModelMessage, ModelResponse
+from ..settings import ModelSettings
+from . import ModelRequestParameters, StreamedResponse, cached_async_http_client
+from .gemini import GeminiModel, GeminiModelName
 
 try:
     import google.auth
@@ -52,19 +56,14 @@ The template is used thus:
 
 
 @dataclass(init=False)
-class VertexAIModel(Model):
+class VertexAIModel(GeminiModel):
     """A model that uses Gemini via the `*-aiplatform.googleapis.com` VertexAI API."""
 
-    model_name: GeminiModelName
     service_account_file: Path | str | None
     project_id: str | None
     region: VertexAiRegion
     model_publisher: Literal['google']
-    http_client: AsyncHTTPClient
     url_template: str
-
-    auth: BearerTokenAuth | None
-    url: str | None
 
     # TODO __init__ can be removed once we drop 3.9 and we can set kw_only correctly on the dataclass
     def __init__(
@@ -104,35 +103,16 @@ class VertexAIModel(Model):
         self.http_client = http_client or cached_async_http_client()
         self.url_template = url_template
 
-        self.auth = None
-        self.url = None
+        self._auth = None
+        self._url = None
 
-    async def agent_model(
-        self,
-        *,
-        function_tools: list[ToolDefinition],
-        allow_text_result: bool,
-        result_tools: list[ToolDefinition],
-    ) -> GeminiAgentModel:
-        check_allow_model_requests()
-        url, auth = await self.ainit()
-        return GeminiAgentModel(
-            http_client=self.http_client,
-            model_name=self.model_name,
-            auth=auth,
-            url=url,
-            function_tools=function_tools,
-            allow_text_result=allow_text_result,
-            result_tools=result_tools,
-        )
-
-    async def ainit(self) -> tuple[str, BearerTokenAuth]:
+    async def ainit(self) -> None:
         """Initialize the model, setting the URL and auth.
 
         This will raise an error if authentication fails.
         """
-        if self.url is not None and self.auth is not None:
-            return self.url, self.auth
+        if self._url is not None and self._auth is not None:
+            return
 
         if self.service_account_file is not None:
             creds: BaseCredentials | ServiceAccountCredentials = _creds_from_file(self.service_account_file)
@@ -155,17 +135,36 @@ class VertexAIModel(Model):
                 )
             project_id = self.project_id
 
-        self.url = url = self.url_template.format(
+        self._url = self.url_template.format(
             region=self.region,
             project_id=project_id,
             model_publisher=self.model_publisher,
             model=self.model_name,
         )
-        self.auth = auth = BearerTokenAuth(creds)
-        return url, auth
+        self._auth = BearerTokenAuth(creds)
 
     def name(self) -> str:
         return f'google-vertex:{self.model_name}'
+
+    async def request(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> tuple[ModelResponse, usage.Usage]:
+        await self.ainit()
+        return await super().request(messages, model_settings, model_request_parameters)
+
+    @asynccontextmanager
+    async def request_stream(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> AsyncIterator[StreamedResponse]:
+        await self.ainit()
+        async with super().request_stream(messages, model_settings, model_request_parameters) as value:
+            yield value
 
 
 # pyright: reportUnknownMemberType=false

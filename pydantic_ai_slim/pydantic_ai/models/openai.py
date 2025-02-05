@@ -29,8 +29,8 @@ from ..messages import (
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from . import (
-    AgentModel,
     Model,
+    ModelRequestParameters,
     StreamedResponse,
     cached_async_http_client,
     check_allow_model_requests,
@@ -117,83 +117,68 @@ class OpenAIModel(Model):
             self.client = AsyncOpenAI(base_url=base_url, api_key=api_key, http_client=cached_async_http_client())
         self.system_prompt_role = system_prompt_role
 
-    async def agent_model(
-        self,
-        *,
-        function_tools: list[ToolDefinition],
-        allow_text_result: bool,
-        result_tools: list[ToolDefinition],
-    ) -> AgentModel:
-        check_allow_model_requests()
-        tools = [self._map_tool_definition(r) for r in function_tools]
-        if result_tools:
-            tools += [self._map_tool_definition(r) for r in result_tools]
-        return OpenAIAgentModel(
-            self.client,
-            self.model_name,
-            allow_text_result,
-            tools,
-            self.system_prompt_role,
-        )
-
     def name(self) -> str:
         return f'openai:{self.model_name}'
 
-    @staticmethod
-    def _map_tool_definition(f: ToolDefinition) -> chat.ChatCompletionToolParam:
-        return {
-            'type': 'function',
-            'function': {
-                'name': f.name,
-                'description': f.description,
-                'parameters': f.parameters_json_schema,
-            },
-        }
-
-
-@dataclass
-class OpenAIAgentModel(AgentModel):
-    """Implementation of `AgentModel` for OpenAI models."""
-
-    client: AsyncOpenAI
-    model_name: OpenAIModelName
-    allow_text_result: bool
-    tools: list[chat.ChatCompletionToolParam]
-    system_prompt_role: OpenAISystemPromptRole | None
-
     async def request(
-        self, messages: list[ModelMessage], model_settings: ModelSettings | None
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
     ) -> tuple[ModelResponse, usage.Usage]:
-        response = await self._completions_create(messages, False, cast(OpenAIModelSettings, model_settings or {}))
+        check_allow_model_requests()
+        response = await self._completions_create(
+            messages, False, cast(OpenAIModelSettings, model_settings or {}), model_request_parameters
+        )
         return self._process_response(response), _map_usage(response)
 
     @asynccontextmanager
     async def request_stream(
-        self, messages: list[ModelMessage], model_settings: ModelSettings | None
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
     ) -> AsyncIterator[StreamedResponse]:
-        response = await self._completions_create(messages, True, cast(OpenAIModelSettings, model_settings or {}))
+        check_allow_model_requests()
+        response = await self._completions_create(
+            messages, True, cast(OpenAIModelSettings, model_settings or {}), model_request_parameters
+        )
         async with response:
             yield await self._process_streamed_response(response)
 
     @overload
     async def _completions_create(
-        self, messages: list[ModelMessage], stream: Literal[True], model_settings: OpenAIModelSettings
+        self,
+        messages: list[ModelMessage],
+        stream: Literal[True],
+        model_settings: OpenAIModelSettings,
+        model_request_parameters: ModelRequestParameters,
     ) -> AsyncStream[ChatCompletionChunk]:
         pass
 
     @overload
     async def _completions_create(
-        self, messages: list[ModelMessage], stream: Literal[False], model_settings: OpenAIModelSettings
+        self,
+        messages: list[ModelMessage],
+        stream: Literal[False],
+        model_settings: OpenAIModelSettings,
+        model_request_parameters: ModelRequestParameters,
     ) -> chat.ChatCompletion:
         pass
 
     async def _completions_create(
-        self, messages: list[ModelMessage], stream: bool, model_settings: OpenAIModelSettings
+        self,
+        messages: list[ModelMessage],
+        stream: bool,
+        model_settings: OpenAIModelSettings,
+        model_request_parameters: ModelRequestParameters,
     ) -> chat.ChatCompletion | AsyncStream[ChatCompletionChunk]:
+        tools = self._get_tools(model_request_parameters)
+
         # standalone function to make it easier to override
-        if not self.tools:
+        if not tools:
             tool_choice: Literal['none', 'required', 'auto'] | None = None
-        elif not self.allow_text_result:
+        elif not model_request_parameters.allow_text_result:
             tool_choice = 'required'
         else:
             tool_choice = 'auto'
@@ -205,7 +190,7 @@ class OpenAIAgentModel(AgentModel):
             messages=openai_messages,
             n=1,
             parallel_tool_calls=model_settings.get('parallel_tool_calls', NOT_GIVEN),
-            tools=self.tools or NOT_GIVEN,
+            tools=tools or NOT_GIVEN,
             tool_choice=tool_choice or NOT_GIVEN,
             stream=stream,
             stream_options={'include_usage': True} if stream else NOT_GIVEN,
@@ -244,6 +229,12 @@ class OpenAIAgentModel(AgentModel):
             _timestamp=datetime.fromtimestamp(first_chunk.created, tz=timezone.utc),
         )
 
+    def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[chat.ChatCompletionToolParam]:
+        tools = [self._map_tool_definition(r) for r in model_request_parameters.function_tools]
+        if model_request_parameters.result_tools:
+            tools += [self._map_tool_definition(r) for r in model_request_parameters.result_tools]
+        return tools
+
     def _map_message(self, message: ModelMessage) -> Iterable[chat.ChatCompletionMessageParam]:
         """Just maps a `pydantic_ai.Message` to a `openai.types.ChatCompletionMessageParam`."""
         if isinstance(message, ModelRequest):
@@ -255,7 +246,7 @@ class OpenAIAgentModel(AgentModel):
                 if isinstance(item, TextPart):
                     texts.append(item.content)
                 elif isinstance(item, ToolCallPart):
-                    tool_calls.append(_map_tool_call(item))
+                    tool_calls.append(self._map_tool_call(item))
                 else:
                     assert_never(item)
             message_param = chat.ChatCompletionAssistantMessageParam(role='assistant')
@@ -268,6 +259,25 @@ class OpenAIAgentModel(AgentModel):
             yield message_param
         else:
             assert_never(message)
+
+    @staticmethod
+    def _map_tool_call(t: ToolCallPart) -> chat.ChatCompletionMessageToolCallParam:
+        return chat.ChatCompletionMessageToolCallParam(
+            id=_guard_tool_call_id(t=t, model_source='OpenAI'),
+            type='function',
+            function={'name': t.tool_name, 'arguments': t.args_as_json_str()},
+        )
+
+    @staticmethod
+    def _map_tool_definition(f: ToolDefinition) -> chat.ChatCompletionToolParam:
+        return {
+            'type': 'function',
+            'function': {
+                'name': f.name,
+                'description': f.description,
+                'parameters': f.parameters_json_schema,
+            },
+        }
 
     def _map_user_message(self, message: ModelRequest) -> Iterable[chat.ChatCompletionMessageParam]:
         for part in message.parts:
@@ -332,14 +342,6 @@ class OpenAIStreamedResponse(StreamedResponse):
 
     def timestamp(self) -> datetime:
         return self._timestamp
-
-
-def _map_tool_call(t: ToolCallPart) -> chat.ChatCompletionMessageToolCallParam:
-    return chat.ChatCompletionMessageToolCallParam(
-        id=_guard_tool_call_id(t=t, model_source='OpenAI'),
-        type='function',
-        function={'name': t.tool_name, 'arguments': t.args_as_json_str()},
-    )
 
 
 def _map_usage(response: chat.ChatCompletion | ChatCompletionChunk) -> usage.Usage:

@@ -28,8 +28,8 @@ from ..messages import (
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from . import (
-    AgentModel,
     Model,
+    ModelRequestParameters,
     StreamedResponse,
     cached_async_http_client,
     check_allow_model_requests,
@@ -112,81 +112,67 @@ class GroqModel(Model):
         else:
             self.client = AsyncGroq(api_key=api_key, http_client=cached_async_http_client())
 
-    async def agent_model(
-        self,
-        *,
-        function_tools: list[ToolDefinition],
-        allow_text_result: bool,
-        result_tools: list[ToolDefinition],
-    ) -> AgentModel:
-        check_allow_model_requests()
-        tools = [self._map_tool_definition(r) for r in function_tools]
-        if result_tools:
-            tools += [self._map_tool_definition(r) for r in result_tools]
-        return GroqAgentModel(
-            self.client,
-            self.model_name,
-            allow_text_result,
-            tools,
-        )
-
     def name(self) -> str:
         return f'groq:{self.model_name}'
 
-    @staticmethod
-    def _map_tool_definition(f: ToolDefinition) -> chat.ChatCompletionToolParam:
-        return {
-            'type': 'function',
-            'function': {
-                'name': f.name,
-                'description': f.description,
-                'parameters': f.parameters_json_schema,
-            },
-        }
-
-
-@dataclass
-class GroqAgentModel(AgentModel):
-    """Implementation of `AgentModel` for Groq models."""
-
-    client: AsyncGroq
-    model_name: str
-    allow_text_result: bool
-    tools: list[chat.ChatCompletionToolParam]
-
     async def request(
-        self, messages: list[ModelMessage], model_settings: ModelSettings | None
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
     ) -> tuple[ModelResponse, usage.Usage]:
-        response = await self._completions_create(messages, False, cast(GroqModelSettings, model_settings or {}))
+        check_allow_model_requests()
+        response = await self._completions_create(
+            messages, False, cast(GroqModelSettings, model_settings or {}), model_request_parameters
+        )
         return self._process_response(response), _map_usage(response)
 
     @asynccontextmanager
     async def request_stream(
-        self, messages: list[ModelMessage], model_settings: ModelSettings | None
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
     ) -> AsyncIterator[StreamedResponse]:
-        response = await self._completions_create(messages, True, cast(GroqModelSettings, model_settings or {}))
+        check_allow_model_requests()
+        response = await self._completions_create(
+            messages, True, cast(GroqModelSettings, model_settings or {}), model_request_parameters
+        )
         async with response:
             yield await self._process_streamed_response(response)
 
     @overload
     async def _completions_create(
-        self, messages: list[ModelMessage], stream: Literal[True], model_settings: GroqModelSettings
+        self,
+        messages: list[ModelMessage],
+        stream: Literal[True],
+        model_settings: GroqModelSettings,
+        model_request_parameters: ModelRequestParameters,
     ) -> AsyncStream[ChatCompletionChunk]:
         pass
 
     @overload
     async def _completions_create(
-        self, messages: list[ModelMessage], stream: Literal[False], model_settings: GroqModelSettings
+        self,
+        messages: list[ModelMessage],
+        stream: Literal[False],
+        model_settings: GroqModelSettings,
+        model_request_parameters: ModelRequestParameters,
     ) -> chat.ChatCompletion:
         pass
 
     async def _completions_create(
-        self, messages: list[ModelMessage], stream: bool, model_settings: GroqModelSettings
+        self,
+        messages: list[ModelMessage],
+        stream: bool,
+        model_settings: GroqModelSettings,
+        model_request_parameters: ModelRequestParameters,
     ) -> chat.ChatCompletion | AsyncStream[ChatCompletionChunk]:
+        tools = self._get_tools(model_request_parameters)
         # standalone function to make it easier to override
-        if not self.tools:
+        if not tools:
             tool_choice: Literal['none', 'required', 'auto'] | None = None
-        elif not self.allow_text_result:
+        elif not model_request_parameters.allow_text_result:
             tool_choice = 'required'
         else:
             tool_choice = 'auto'
@@ -198,7 +184,7 @@ class GroqAgentModel(AgentModel):
             messages=groq_messages,
             n=1,
             parallel_tool_calls=model_settings.get('parallel_tool_calls', NOT_GIVEN),
-            tools=self.tools or NOT_GIVEN,
+            tools=tools or NOT_GIVEN,
             tool_choice=tool_choice or NOT_GIVEN,
             stream=stream,
             max_tokens=model_settings.get('max_tokens', NOT_GIVEN),
@@ -236,11 +222,16 @@ class GroqAgentModel(AgentModel):
             _timestamp=datetime.fromtimestamp(first_chunk.created, tz=timezone.utc),
         )
 
-    @classmethod
-    def _map_message(cls, message: ModelMessage) -> Iterable[chat.ChatCompletionMessageParam]:
+    def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[chat.ChatCompletionToolParam]:
+        tools = [self._map_tool_definition(r) for r in model_request_parameters.function_tools]
+        if model_request_parameters.result_tools:
+            tools += [self._map_tool_definition(r) for r in model_request_parameters.result_tools]
+        return tools
+
+    def _map_message(self, message: ModelMessage) -> Iterable[chat.ChatCompletionMessageParam]:
         """Just maps a `pydantic_ai.Message` to a `groq.types.ChatCompletionMessageParam`."""
         if isinstance(message, ModelRequest):
-            yield from cls._map_user_message(message)
+            yield from self._map_user_message(message)
         elif isinstance(message, ModelResponse):
             texts: list[str] = []
             tool_calls: list[chat.ChatCompletionMessageToolCallParam] = []
@@ -248,7 +239,7 @@ class GroqAgentModel(AgentModel):
                 if isinstance(item, TextPart):
                     texts.append(item.content)
                 elif isinstance(item, ToolCallPart):
-                    tool_calls.append(_map_tool_call(item))
+                    tool_calls.append(self._map_tool_call(item))
                 else:
                     assert_never(item)
             message_param = chat.ChatCompletionAssistantMessageParam(role='assistant')
@@ -261,6 +252,25 @@ class GroqAgentModel(AgentModel):
             yield message_param
         else:
             assert_never(message)
+
+    @staticmethod
+    def _map_tool_call(t: ToolCallPart) -> chat.ChatCompletionMessageToolCallParam:
+        return chat.ChatCompletionMessageToolCallParam(
+            id=_guard_tool_call_id(t=t, model_source='Groq'),
+            type='function',
+            function={'name': t.tool_name, 'arguments': t.args_as_json_str()},
+        )
+
+    @staticmethod
+    def _map_tool_definition(f: ToolDefinition) -> chat.ChatCompletionToolParam:
+        return {
+            'type': 'function',
+            'function': {
+                'name': f.name,
+                'description': f.description,
+                'parameters': f.parameters_json_schema,
+            },
+        }
 
     @classmethod
     def _map_user_message(cls, message: ModelRequest) -> Iterable[chat.ChatCompletionMessageParam]:
@@ -320,14 +330,6 @@ class GroqStreamedResponse(StreamedResponse):
 
     def timestamp(self) -> datetime:
         return self._timestamp
-
-
-def _map_tool_call(t: ToolCallPart) -> chat.ChatCompletionMessageToolCallParam:
-    return chat.ChatCompletionMessageToolCallParam(
-        id=_guard_tool_call_id(t=t, model_source='Groq'),
-        type='function',
-        function={'name': t.tool_name, 'arguments': t.args_as_json_str()},
-    )
 
 
 def _map_usage(completion: ChatCompletionChunk | ChatCompletion) -> usage.Usage:

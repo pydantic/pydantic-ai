@@ -48,7 +48,6 @@ with try_import() as imports_successful:
     from mistralai.types.basemodel import Unset as MistralUnset
 
     from pydantic_ai.models.mistral import (
-        MistralAgentModel,
         MistralModel,
         MistralStreamedResponse,
     )
@@ -1668,8 +1667,8 @@ def test_generate_user_output_format_complex():
             'prop_unrecognized_type': {'type': 'customSomething'},
         }
     }
-    mam = MistralAgentModel(Mistral(api_key=''), '', False, [], [], '{schema}')
-    result = mam._generate_user_output_format([schema])  # pyright: ignore[reportPrivateUsage]
+    m = MistralModel('', json_mode_schema_prompt='{schema}')
+    result = m._generate_user_output_format([schema])  # pyright: ignore[reportPrivateUsage]
     assert result.content == (
         "{'prop_anyOf': 'Optional[str]', "
         "'prop_no_type': 'Any', "
@@ -1685,8 +1684,8 @@ def test_generate_user_output_format_complex():
 
 def test_generate_user_output_format_multiple():
     schema = {'properties': {'prop_anyOf': {'anyOf': [{'type': 'string'}, {'type': 'integer'}]}}}
-    mam = MistralAgentModel(Mistral(api_key=''), '', False, [], [], '{schema}')
-    result = mam._generate_user_output_format([schema, schema])  # pyright: ignore[reportPrivateUsage]
+    m = MistralModel('', json_mode_schema_prompt='{schema}')
+    result = m._generate_user_output_format([schema, schema])  # pyright: ignore[reportPrivateUsage]
     assert result.content == "[{'prop_anyOf': 'Optional[str]'}, {'prop_anyOf': 'Optional[str]'}]"
 
 

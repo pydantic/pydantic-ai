@@ -4,8 +4,8 @@
     options:
       members:
         - KnownModelName
+        - ModelRequestParameters
         - Model
-        - AgentModel
         - AbstractToolDefinition
         - StreamedResponse
         - ALLOW_MODEL_REQUESTS

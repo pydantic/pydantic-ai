@@ -28,8 +28,8 @@ from ..messages import (
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from . import (
-    AgentModel,
     Model,
+    ModelRequestParameters,
     StreamedResponse,
     cached_async_http_client,
     check_allow_model_requests,
@@ -134,81 +134,70 @@ class AnthropicModel(Model):
         else:
             self.client = AsyncAnthropic(api_key=api_key, http_client=cached_async_http_client())
 
-    async def agent_model(
-        self,
-        *,
-        function_tools: list[ToolDefinition],
-        allow_text_result: bool,
-        result_tools: list[ToolDefinition],
-    ) -> AgentModel:
-        check_allow_model_requests()
-        tools = [self._map_tool_definition(r) for r in function_tools]
-        if result_tools:
-            tools += [self._map_tool_definition(r) for r in result_tools]
-        return AnthropicAgentModel(
-            self.client,
-            self.model_name,
-            allow_text_result,
-            tools,
-        )
-
     def name(self) -> str:
         return f'anthropic:{self.model_name}'
 
-    @staticmethod
-    def _map_tool_definition(f: ToolDefinition) -> ToolParam:
-        return {
-            'name': f.name,
-            'description': f.description,
-            'input_schema': f.parameters_json_schema,
-        }
-
-
-@dataclass
-class AnthropicAgentModel(AgentModel):
-    """Implementation of `AgentModel` for Anthropic models."""
-
-    client: AsyncAnthropic
-    model_name: AnthropicModelName
-    allow_text_result: bool
-    tools: list[ToolParam]
-
     async def request(
-        self, messages: list[ModelMessage], model_settings: ModelSettings | None
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
     ) -> tuple[ModelResponse, usage.Usage]:
-        response = await self._messages_create(messages, False, cast(AnthropicModelSettings, model_settings or {}))
+        check_allow_model_requests()
+        response = await self._messages_create(
+            messages, False, cast(AnthropicModelSettings, model_settings or {}), model_request_parameters
+        )
         return self._process_response(response), _map_usage(response)
 
     @asynccontextmanager
     async def request_stream(
-        self, messages: list[ModelMessage], model_settings: ModelSettings | None
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
     ) -> AsyncIterator[StreamedResponse]:
-        response = await self._messages_create(messages, True, cast(AnthropicModelSettings, model_settings or {}))
+        check_allow_model_requests()
+        response = await self._messages_create(
+            messages, True, cast(AnthropicModelSettings, model_settings or {}), model_request_parameters
+        )
         async with response:
             yield await self._process_streamed_response(response)
 
     @overload
     async def _messages_create(
-        self, messages: list[ModelMessage], stream: Literal[True], model_settings: AnthropicModelSettings
+        self,
+        messages: list[ModelMessage],
+        stream: Literal[True],
+        model_settings: AnthropicModelSettings,
+        model_request_parameters: ModelRequestParameters,
     ) -> AsyncStream[RawMessageStreamEvent]:
         pass
 
     @overload
     async def _messages_create(
-        self, messages: list[ModelMessage], stream: Literal[False], model_settings: AnthropicModelSettings
+        self,
+        messages: list[ModelMessage],
+        stream: Literal[False],
+        model_settings: AnthropicModelSettings,
+        model_request_parameters: ModelRequestParameters,
     ) -> AnthropicMessage:
         pass
 
     async def _messages_create(
-        self, messages: list[ModelMessage], stream: bool, model_settings: AnthropicModelSettings
+        self,
+        messages: list[ModelMessage],
+        stream: bool,
+        model_settings: AnthropicModelSettings,
+        model_request_parameters: ModelRequestParameters,
     ) -> AnthropicMessage | AsyncStream[RawMessageStreamEvent]:
         # standalone function to make it easier to override
+        tools = self._get_tools(model_request_parameters)
         tool_choice: ToolChoiceParam | None
 
-        if not self.tools:
+        if not tools:
             tool_choice = None
         else:
-            if not self.allow_text_result:
+            if not model_request_parameters.allow_text_result:
                 tool_choice = {'type': 'any'}
             else:
                 tool_choice = {'type': 'auto'}
@@ -223,7 +212,7 @@ class AnthropicAgentModel(AgentModel):
             system=system_prompt or NOT_GIVEN,
             messages=anthropic_messages,
             model=self.model_name,
-            tools=self.tools or NOT_GIVEN,
+            tools=tools or NOT_GIVEN,
             tool_choice=tool_choice or NOT_GIVEN,
             stream=stream,
             temperature=model_settings.get('temperature', NOT_GIVEN),
@@ -260,8 +249,13 @@ class AnthropicAgentModel(AgentModel):
         timestamp = datetime.now(tz=timezone.utc)
         return AnthropicStreamedResponse(_model_name=self.model_name, _response=peekable_response, _timestamp=timestamp)
 
-    @staticmethod
-    def _map_message(messages: list[ModelMessage]) -> tuple[str, list[MessageParam]]:
+    def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[ToolParam]:
+        tools = [self._map_tool_definition(r) for r in model_request_parameters.function_tools]
+        if model_request_parameters.result_tools:
+            tools += [self._map_tool_definition(r) for r in model_request_parameters.result_tools]
+        return tools
+
+    def _map_message(self, messages: list[ModelMessage]) -> tuple[str, list[MessageParam]]:
         """Just maps a `pydantic_ai.Message` to a `anthropic.types.MessageParam`."""
         system_prompt: str = ''
         anthropic_messages: list[MessageParam] = []
@@ -310,20 +304,28 @@ class AnthropicAgentModel(AgentModel):
                         content.append(TextBlockParam(text=item.content, type='text'))
                     else:
                         assert isinstance(item, ToolCallPart)
-                        content.append(_map_tool_call(item))
+                        content.append(self._map_tool_call(item))
                 anthropic_messages.append(MessageParam(role='assistant', content=content))
             else:
                 assert_never(m)
         return system_prompt, anthropic_messages
 
+    @staticmethod
+    def _map_tool_call(t: ToolCallPart) -> ToolUseBlockParam:
+        return ToolUseBlockParam(
+            id=_guard_tool_call_id(t=t, model_source='Anthropic'),
+            type='tool_use',
+            name=t.tool_name,
+            input=t.args_as_dict(),
+        )
 
-def _map_tool_call(t: ToolCallPart) -> ToolUseBlockParam:
-    return ToolUseBlockParam(
-        id=_guard_tool_call_id(t=t, model_source='Anthropic'),
-        type='tool_use',
-        name=t.tool_name,
-        input=t.args_as_dict(),
-    )
+    @staticmethod
+    def _map_tool_definition(f: ToolDefinition) -> ToolParam:
+        return {
+            'name': f.name,
+            'description': f.description,
+            'input_schema': f.parameters_json_schema,
+        }
 
 
 def _map_usage(message: AnthropicMessage | RawMessageStreamEvent) -> usage.Usage:

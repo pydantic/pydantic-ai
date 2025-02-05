@@ -30,10 +30,10 @@ async def test_init_service_account(tmp_path: Path, allow_model_requests: None):
     save_service_account(service_account_path, 'my-project-id')
 
     model = VertexAIModel('gemini-1.5-flash', service_account_file=service_account_path)
-    assert model.url is None
-    assert model.auth is None
+    assert model._url is None
+    assert model._auth is None
 
-    await model.agent_model(function_tools=[], allow_text_result=True, result_tools=[])
+    await model.ainit()
 
     assert model.url == snapshot(
         'https://us-central1-aiplatform.googleapis.com/v1/projects/my-project-id/locations/us-central1/'
@@ -53,12 +53,12 @@ async def test_init_env(mocker: MockerFixture, allow_model_requests: None):
         return_value=(NoOpCredentials(), 'my-project-id'),
     )
     model = VertexAIModel('gemini-1.5-flash')
-    assert model.url is None
-    assert model.auth is None
+    assert model._url is None
+    assert model._auth is None
 
     assert patch.call_count == 0
 
-    await model.agent_model(function_tools=[], allow_text_result=True, result_tools=[])
+    await model.ainit()
 
     assert patch.call_count == 1
 
@@ -69,7 +69,7 @@ async def test_init_env(mocker: MockerFixture, allow_model_requests: None):
     assert model.auth is not None
     assert model.name() == snapshot('google-vertex:gemini-1.5-flash')
 
-    await model.agent_model(function_tools=[], allow_text_result=True, result_tools=[])
+    await model.ainit()
     assert model.url is not None
     assert model.auth is not None
     assert patch.call_count == 1
@@ -80,10 +80,10 @@ async def test_init_right_project_id(tmp_path: Path, allow_model_requests: None)
     save_service_account(service_account_path, 'my-project-id')
 
     model = VertexAIModel('gemini-1.5-flash', service_account_file=service_account_path, project_id='my-project-id')
-    assert model.url is None
-    assert model.auth is None
+    assert model._url is None
+    assert model._auth is None
 
-    await model.agent_model(function_tools=[], allow_text_result=True, result_tools=[])
+    await model.ainit()
 
     assert model.url == snapshot(
         'https://us-central1-aiplatform.googleapis.com/v1/projects/my-project-id/locations/us-central1/'
@@ -99,7 +99,7 @@ async def test_init_service_account_wrong_project_id(tmp_path: Path, allow_model
     model = VertexAIModel('gemini-1.5-flash', service_account_file=service_account_path, project_id='different')
 
     with pytest.raises(UserError) as exc_info:
-        await model.agent_model(function_tools=[], allow_text_result=True, result_tools=[])
+        await model.ainit()
     assert str(exc_info.value) == snapshot(
         "The project_id you provided does not match the one from service account file: 'different' != 'my-project-id'"
     )
@@ -110,7 +110,7 @@ async def test_init_env_wrong_project_id(mocker: MockerFixture, allow_model_requ
     model = VertexAIModel('gemini-1.5-flash', project_id='different')
 
     with pytest.raises(UserError) as exc_info:
-        await model.agent_model(function_tools=[], allow_text_result=True, result_tools=[])
+        await model.ainit()
     assert str(exc_info.value) == snapshot(
         "The project_id you provided does not match the one from `google.auth.default()`: 'different' != 'my-project-id'"
     )
@@ -124,7 +124,7 @@ async def test_init_env_no_project_id(mocker: MockerFixture, allow_model_request
     model = VertexAIModel('gemini-1.5-flash')
 
     with pytest.raises(UserError) as exc_info:
-        await model.agent_model(function_tools=[], allow_text_result=True, result_tools=[])
+        await model.ainit()
     assert str(exc_info.value) == snapshot('No project_id provided and none found in `google.auth.default()`')
 
 
