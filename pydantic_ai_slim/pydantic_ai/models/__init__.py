@@ -112,6 +112,8 @@ KnownModelName = Literal[
     'o1-mini-2024-09-12',
     'o1-preview',
     'o1-preview-2024-09-12',
+    'o3-mini',
+    'o3-mini-2025-01-31',
     'openai:chatgpt-4o-latest',
     'openai:gpt-3.5-turbo',
     'openai:gpt-3.5-turbo-0125',
@@ -149,6 +151,8 @@ KnownModelName = Literal[
     'openai:o1-mini-2024-09-12',
     'openai:o1-preview',
     'openai:o1-preview-2024-09-12',
+    'openai:o3-mini',
+    'openai:o3-mini-2025-01-31',
     'test',
 ]
 """Known model names that can be used with the `model` parameter of [`Agent`][pydantic_ai.Agent].
@@ -311,7 +315,7 @@ def infer_model(model: Model | KnownModelName) -> Model:
         from .openai import OpenAIModel
 
         return OpenAIModel(model[7:])
-    elif model.startswith(('gpt', 'o1')):
+    elif model.startswith(('gpt', 'o1', 'o3')):
         from .openai import OpenAIModel
 
         return OpenAIModel(model)
