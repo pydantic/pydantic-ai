@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from httpx import Timeout
 from typing_extensions import TypedDict
@@ -130,6 +130,19 @@ class ModelSettings(TypedDict, total=False):
     * Groq
     """
 
+    tool_choice: Literal['none', 'required', 'auto']
+    """Whether to require a specific tool to be used.
+
+    Supported by:
+
+    * Gemini
+    * Anthropic
+    * OpenAI
+    * Groq
+    * Cohere
+    * Mistral
+    
+    """
 
 def merge_model_settings(base: ModelSettings | None, overrides: ModelSettings | None) -> ModelSettings | None:
     """Merge two sets of model settings, preferring the overrides.

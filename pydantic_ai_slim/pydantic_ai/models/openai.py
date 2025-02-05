@@ -191,12 +191,16 @@ class OpenAIAgentModel(AgentModel):
         self, messages: list[ModelMessage], stream: bool, model_settings: OpenAIModelSettings
     ) -> chat.ChatCompletion | AsyncStream[ChatCompletionChunk]:
         # standalone function to make it easier to override
-        if not self.tools:
-            tool_choice: Literal['none', 'required', 'auto'] | None = None
-        elif not self.allow_text_result:
-            tool_choice = 'required'
-        else:
-            tool_choice = 'auto'
+        tool_choice = model_settings.get('tool_choice', None)
+
+        # If the user did NOT provide a tool_choice, figure it out from our fallback logic:
+        if tool_choice is None:
+            if not self.tools:
+                tool_choice = None
+            elif not self.allow_text_result:
+                tool_choice = 'required'
+            else:
+                tool_choice = 'auto'
 
         openai_messages = list(chain(*(self._map_message(m) for m in messages)))
 
