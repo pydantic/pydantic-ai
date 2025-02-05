@@ -38,7 +38,7 @@ def test_known_model_names():
     groq_names = [f'groq:{n}' for n in get_model_names(GroqModelName)]
     mistral_names = [f'mistral:{n}' for n in get_model_names(MistralModelName)]
     openai_names = [f'openai:{n}' for n in get_model_names(OpenAIModelName)] + [
-        n for n in get_model_names(OpenAIModelName) if n.startswith('o1') or n.startswith('gpt')
+        n for n in get_model_names(OpenAIModelName) if n.startswith('o1') or n.startswith('gpt') or n.startswith('o3')
     ]
     extra_names = ['test']
 
