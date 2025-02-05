@@ -27,7 +27,7 @@ from ..messages import (
 )
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
-from . import Model, ModelRequestParams, StreamedResponse
+from . import Model, ModelRequestParameters, StreamedResponse
 
 
 @dataclass(init=False)
@@ -72,12 +72,12 @@ class FunctionModel(Model):
         self,
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
-        model_request_params: ModelRequestParams,
+        model_request_parameters: ModelRequestParameters,
     ) -> tuple[ModelResponse, usage.Usage]:
         agent_info = AgentInfo(
-            model_request_params.function_tools,
-            model_request_params.allow_text_result,
-            model_request_params.result_tools,
+            model_request_parameters.function_tools,
+            model_request_parameters.allow_text_result,
+            model_request_parameters.result_tools,
             model_settings,
         )
 
@@ -99,12 +99,12 @@ class FunctionModel(Model):
         self,
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
-        model_request_params: ModelRequestParams,
+        model_request_parameters: ModelRequestParameters,
     ) -> AsyncIterator[StreamedResponse]:
         agent_info = AgentInfo(
-            model_request_params.function_tools,
-            model_request_params.allow_text_result,
-            model_request_params.result_tools,
+            model_request_parameters.function_tools,
+            model_request_parameters.allow_text_result,
+            model_request_parameters.result_tools,
             model_settings,
         )
 
@@ -159,7 +159,7 @@ class DeltaToolCall:
 DeltaToolCalls: TypeAlias = dict[int, DeltaToolCall]
 """A mapping of tool call IDs to incremental changes."""
 
-# TODO: Change the signature to Callable[[list[ModelMessage], ModelSettings, ModelRequestParams], ...]
+# TODO: Change the signature to Callable[[list[ModelMessage], ModelSettings, ModelRequestParameters], ...]
 FunctionDef: TypeAlias = Callable[[list[ModelMessage], AgentInfo], Union[ModelResponse, Awaitable[ModelResponse]]]
 """A function used to generate a non-streamed response."""
 

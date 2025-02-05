@@ -4,7 +4,7 @@
     options:
       members:
         - KnownModelName
-        - ModelRequestParams
+        - ModelRequestParameters
         - Model
         - AbstractToolDefinition
         - StreamedResponse

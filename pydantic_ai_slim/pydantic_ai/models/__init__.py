@@ -158,7 +158,7 @@ KnownModelName = Literal[
 
 
 @dataclass
-class ModelRequestParams:
+class ModelRequestParameters:
     """Configuration for an agent's request to a model, specifically related to tools and result handling."""
 
     function_tools: list[ToolDefinition]
@@ -178,7 +178,7 @@ class Model(ABC):
         self,
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
-        model_request_params: ModelRequestParams,
+        model_request_parameters: ModelRequestParameters,
     ) -> tuple[ModelResponse, Usage]:
         """Make a request to the model."""
         raise NotImplementedError()
@@ -188,7 +188,7 @@ class Model(ABC):
         self,
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
-        model_request_params: ModelRequestParams,
+        model_request_parameters: ModelRequestParameters,
     ) -> AsyncIterator[StreamedResponse]:
         """Make a request to the model and return a streaming response."""
         # This method is not required, but you need to implement it if you want to support streamed responses

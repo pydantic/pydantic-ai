@@ -29,7 +29,7 @@ from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from . import (
     Model,
-    ModelRequestParams,
+    ModelRequestParameters,
     StreamedResponse,
     cached_async_http_client,
     check_allow_model_requests,
@@ -119,11 +119,11 @@ class GroqModel(Model):
         self,
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
-        model_request_params: ModelRequestParams,
+        model_request_parameters: ModelRequestParameters,
     ) -> tuple[ModelResponse, usage.Usage]:
         check_allow_model_requests()
         response = await self._completions_create(
-            messages, False, cast(GroqModelSettings, model_settings or {}), model_request_params
+            messages, False, cast(GroqModelSettings, model_settings or {}), model_request_parameters
         )
         return self._process_response(response), _map_usage(response)
 
@@ -132,11 +132,11 @@ class GroqModel(Model):
         self,
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
-        model_request_params: ModelRequestParams,
+        model_request_parameters: ModelRequestParameters,
     ) -> AsyncIterator[StreamedResponse]:
         check_allow_model_requests()
         response = await self._completions_create(
-            messages, True, cast(GroqModelSettings, model_settings or {}), model_request_params
+            messages, True, cast(GroqModelSettings, model_settings or {}), model_request_parameters
         )
         async with response:
             yield await self._process_streamed_response(response)
@@ -147,7 +147,7 @@ class GroqModel(Model):
         messages: list[ModelMessage],
         stream: Literal[True],
         model_settings: GroqModelSettings,
-        model_request_params: ModelRequestParams,
+        model_request_parameters: ModelRequestParameters,
     ) -> AsyncStream[ChatCompletionChunk]:
         pass
 
@@ -157,7 +157,7 @@ class GroqModel(Model):
         messages: list[ModelMessage],
         stream: Literal[False],
         model_settings: GroqModelSettings,
-        model_request_params: ModelRequestParams,
+        model_request_parameters: ModelRequestParameters,
     ) -> chat.ChatCompletion:
         pass
 
@@ -166,13 +166,13 @@ class GroqModel(Model):
         messages: list[ModelMessage],
         stream: bool,
         model_settings: GroqModelSettings,
-        model_request_params: ModelRequestParams,
+        model_request_parameters: ModelRequestParameters,
     ) -> chat.ChatCompletion | AsyncStream[ChatCompletionChunk]:
-        tools = self._get_tools(model_request_params)
+        tools = self._get_tools(model_request_parameters)
         # standalone function to make it easier to override
         if not tools:
             tool_choice: Literal['none', 'required', 'auto'] | None = None
-        elif not model_request_params.allow_text_result:
+        elif not model_request_parameters.allow_text_result:
             tool_choice = 'required'
         else:
             tool_choice = 'auto'
@@ -222,10 +222,10 @@ class GroqModel(Model):
             _timestamp=datetime.fromtimestamp(first_chunk.created, tz=timezone.utc),
         )
 
-    def _get_tools(self, model_request_params: ModelRequestParams) -> list[chat.ChatCompletionToolParam]:
-        tools = [self._map_tool_definition(r) for r in model_request_params.function_tools]
-        if model_request_params.result_tools:
-            tools += [self._map_tool_definition(r) for r in model_request_params.result_tools]
+    def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[chat.ChatCompletionToolParam]:
+        tools = [self._map_tool_definition(r) for r in model_request_parameters.function_tools]
+        if model_request_parameters.result_tools:
+            tools += [self._map_tool_definition(r) for r in model_request_parameters.result_tools]
         return tools
 
     def _map_message(self, message: ModelMessage) -> Iterable[chat.ChatCompletionMessageParam]:

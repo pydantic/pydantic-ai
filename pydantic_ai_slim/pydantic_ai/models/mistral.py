@@ -32,7 +32,7 @@ from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from . import (
     Model,
-    ModelRequestParams,
+    ModelRequestParameters,
     StreamedResponse,
     cached_async_http_client,
     check_allow_model_requests,
@@ -139,12 +139,12 @@ class MistralModel(Model):
         self,
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
-        model_request_params: ModelRequestParams,
+        model_request_parameters: ModelRequestParameters,
     ) -> tuple[ModelResponse, Usage]:
         """Make a non-streaming request to the model from Pydantic AI call."""
         check_allow_model_requests()
         response = await self._completions_create(
-            messages, cast(MistralModelSettings, model_settings or {}), model_request_params
+            messages, cast(MistralModelSettings, model_settings or {}), model_request_parameters
         )
         return self._process_response(response), _map_usage(response)
 
@@ -153,29 +153,29 @@ class MistralModel(Model):
         self,
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
-        model_request_params: ModelRequestParams,
+        model_request_parameters: ModelRequestParameters,
     ) -> AsyncIterator[StreamedResponse]:
         """Make a streaming request to the model from Pydantic AI call."""
         check_allow_model_requests()
         response = await self._stream_completions_create(
-            messages, cast(MistralModelSettings, model_settings or {}), model_request_params
+            messages, cast(MistralModelSettings, model_settings or {}), model_request_parameters
         )
         async with response:
-            yield await self._process_streamed_response(model_request_params.result_tools, response)
+            yield await self._process_streamed_response(model_request_parameters.result_tools, response)
 
     async def _completions_create(
         self,
         messages: list[ModelMessage],
         model_settings: MistralModelSettings,
-        model_request_params: ModelRequestParams,
+        model_request_parameters: ModelRequestParameters,
     ) -> MistralChatCompletionResponse:
         """Make a non-streaming request to the model."""
         response = await self.client.chat.complete_async(
             model=str(self.model_name),
             messages=list(chain(*(self._map_message(m) for m in messages))),
             n=1,
-            tools=self._map_function_and_result_tools_definition(model_request_params) or UNSET,
-            tool_choice=self._get_tool_choice(model_request_params),
+            tools=self._map_function_and_result_tools_definition(model_request_parameters) or UNSET,
+            tool_choice=self._get_tool_choice(model_request_parameters),
             stream=False,
             max_tokens=model_settings.get('max_tokens', UNSET),
             temperature=model_settings.get('temperature', UNSET),
@@ -190,24 +190,24 @@ class MistralModel(Model):
         self,
         messages: list[ModelMessage],
         model_settings: MistralModelSettings,
-        model_request_params: ModelRequestParams,
+        model_request_parameters: ModelRequestParameters,
     ) -> MistralEventStreamAsync[MistralCompletionEvent]:
         """Create a streaming completion request to the Mistral model."""
         response: MistralEventStreamAsync[MistralCompletionEvent] | None
         mistral_messages = list(chain(*(self._map_message(m) for m in messages)))
 
         if (
-            model_request_params.result_tools
-            and model_request_params.function_tools
-            or model_request_params.function_tools
+            model_request_parameters.result_tools
+            and model_request_parameters.function_tools
+            or model_request_parameters.function_tools
         ):
             # Function Calling
             response = await self.client.chat.stream_async(
                 model=str(self.model_name),
                 messages=mistral_messages,
                 n=1,
-                tools=self._map_function_and_result_tools_definition(model_request_params) or UNSET,
-                tool_choice=self._get_tool_choice(model_request_params),
+                tools=self._map_function_and_result_tools_definition(model_request_parameters) or UNSET,
+                tool_choice=self._get_tool_choice(model_request_parameters),
                 temperature=model_settings.get('temperature', UNSET),
                 top_p=model_settings.get('top_p', 1),
                 max_tokens=model_settings.get('max_tokens', UNSET),
@@ -216,9 +216,9 @@ class MistralModel(Model):
                 frequency_penalty=model_settings.get('frequency_penalty'),
             )
 
-        elif model_request_params.result_tools:
+        elif model_request_parameters.result_tools:
             # Json Mode
-            parameters_json_schemas = [tool.parameters_json_schema for tool in model_request_params.result_tools]
+            parameters_json_schemas = [tool.parameters_json_schema for tool in model_request_parameters.result_tools]
             user_output_format_message = self._generate_user_output_format(parameters_json_schemas)
             mistral_messages.append(user_output_format_message)
 
@@ -239,7 +239,7 @@ class MistralModel(Model):
         assert response, 'A unexpected empty response from Mistral.'
         return response
 
-    def _get_tool_choice(self, model_request_params: ModelRequestParams) -> MistralToolChoiceEnum | None:
+    def _get_tool_choice(self, model_request_parameters: ModelRequestParameters) -> MistralToolChoiceEnum | None:
         """Get tool choice for the model.
 
         - "auto": Default mode. Model decides if it uses the tool or not.
@@ -247,21 +247,23 @@ class MistralModel(Model):
         - "none": Prevents tool use.
         - "required": Forces tool use.
         """
-        if not model_request_params.function_tools and not model_request_params.result_tools:
+        if not model_request_parameters.function_tools and not model_request_parameters.result_tools:
             return None
-        elif not model_request_params.allow_text_result:
+        elif not model_request_parameters.allow_text_result:
             return 'required'
         else:
             return 'auto'
 
     def _map_function_and_result_tools_definition(
-        self, model_request_params: ModelRequestParams
+        self, model_request_parameters: ModelRequestParameters
     ) -> list[MistralTool] | None:
         """Map function and result tools to MistralTool format.
 
         Returns None if both function_tools and result_tools are empty.
         """
-        all_tools: list[ToolDefinition] = model_request_params.function_tools + model_request_params.result_tools
+        all_tools: list[ToolDefinition] = (
+            model_request_parameters.function_tools + model_request_parameters.result_tools
+        )
         tools = [
             MistralTool(
                 function=MistralFunction(name=r.name, parameters=r.parameters_json_schema, description=r.description)

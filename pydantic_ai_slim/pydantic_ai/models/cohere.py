@@ -27,7 +27,7 @@ from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from . import (
     Model,
-    ModelRequestParams,
+    ModelRequestParameters,
     check_allow_model_requests,
 )
 
@@ -125,19 +125,19 @@ class CohereModel(Model):
         self,
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
-        model_request_params: ModelRequestParams,
+        model_request_parameters: ModelRequestParameters,
     ) -> tuple[ModelResponse, result.Usage]:
         check_allow_model_requests()
-        response = await self._chat(messages, cast(CohereModelSettings, model_settings or {}), model_request_params)
+        response = await self._chat(messages, cast(CohereModelSettings, model_settings or {}), model_request_parameters)
         return self._process_response(response), _map_usage(response)
 
     async def _chat(
         self,
         messages: list[ModelMessage],
         model_settings: CohereModelSettings,
-        model_request_params: ModelRequestParams,
+        model_request_parameters: ModelRequestParameters,
     ) -> ChatResponse:
-        tools = self._get_tools(model_request_params)
+        tools = self._get_tools(model_request_parameters)
         cohere_messages = list(chain(*(self._map_message(m) for m in messages)))
         return await self.client.chat(
             model=self.model_name,
@@ -193,10 +193,10 @@ class CohereModel(Model):
         else:
             assert_never(message)
 
-    def _get_tools(self, model_request_params: ModelRequestParams) -> list[ToolV2]:
-        tools = [self._map_tool_definition(r) for r in model_request_params.function_tools]
-        if model_request_params.result_tools:
-            tools += [self._map_tool_definition(r) for r in model_request_params.result_tools]
+    def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[ToolV2]:
+        tools = [self._map_tool_definition(r) for r in model_request_parameters.function_tools]
+        if model_request_parameters.result_tools:
+            tools += [self._map_tool_definition(r) for r in model_request_parameters.result_tools]
         return tools
 
     @staticmethod

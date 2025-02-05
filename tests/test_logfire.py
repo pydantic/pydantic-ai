@@ -102,7 +102,7 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary]) -> None:
                         'custom_result_text': None,
                         'custom_result_args': None,
                         'seed': 0,
-                        'last_model_request_params': None,
+                        'last_model_request_parameters': None,
                     },
                     'name': 'my_agent',
                     'end_strategy': 'early',
