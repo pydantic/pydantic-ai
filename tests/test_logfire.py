@@ -75,14 +75,14 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary]) -> None:
                 'id': 0,
                 'message': 'my_agent run prompt=Hello',
                 'children': [
-                    {'id': 1, 'message': 'preparing agent request config run_step=1'},
+                    {'id': 1, 'message': 'preparing model request params run_step=1'},
                     {'id': 2, 'message': 'model request'},
                     {
                         'id': 3,
                         'message': 'handle model response -> tool-return',
                         'children': [{'id': 4, 'message': "running tools=['my_ret']"}],
                     },
-                    {'id': 5, 'message': 'preparing agent request config run_step=2'},
+                    {'id': 5, 'message': 'preparing model request params run_step=2'},
                     {'id': 6, 'message': 'model request'},
                     {'id': 7, 'message': 'handle model response -> final result'},
                 ],
@@ -102,7 +102,7 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary]) -> None:
                         'custom_result_text': None,
                         'custom_result_args': None,
                         'seed': 0,
-                        'last_agent_request_config': None,
+                        'last_model_request_params': None,
                     },
                     'name': 'my_agent',
                     'end_strategy': 'early',
@@ -253,9 +253,9 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary]) -> None:
             'code.function': 'test_logfire',
             'code.lineno': IsInt(),
             'run_step': 1,
-            'logfire.msg_template': 'preparing agent request config {run_step=}',
+            'logfire.msg_template': 'preparing model request params {run_step=}',
             'logfire.span_type': 'span',
-            'logfire.msg': 'preparing agent request config run_step=1',
+            'logfire.msg': 'preparing model request params run_step=1',
             'logfire.json_schema': '{"type":"object","properties":{"run_step":{}}}',
         }
     )

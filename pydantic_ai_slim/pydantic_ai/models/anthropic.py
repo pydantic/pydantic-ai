@@ -28,8 +28,8 @@ from ..messages import (
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from . import (
-    AgentRequestConfig,
     Model,
+    ModelRequestParams,
     StreamedResponse,
     cached_async_http_client,
     check_allow_model_requests,
@@ -141,11 +141,11 @@ class AnthropicModel(Model):
         self,
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
-        agent_request_config: AgentRequestConfig,
+        model_request_params: ModelRequestParams,
     ) -> tuple[ModelResponse, usage.Usage]:
         check_allow_model_requests()
         response = await self._messages_create(
-            messages, False, cast(AnthropicModelSettings, model_settings or {}), agent_request_config
+            messages, False, cast(AnthropicModelSettings, model_settings or {}), model_request_params
         )
         return self._process_response(response), _map_usage(response)
 
@@ -154,11 +154,11 @@ class AnthropicModel(Model):
         self,
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
-        agent_request_config: AgentRequestConfig,
+        model_request_params: ModelRequestParams,
     ) -> AsyncIterator[StreamedResponse]:
         check_allow_model_requests()
         response = await self._messages_create(
-            messages, True, cast(AnthropicModelSettings, model_settings or {}), agent_request_config
+            messages, True, cast(AnthropicModelSettings, model_settings or {}), model_request_params
         )
         async with response:
             yield await self._process_streamed_response(response)
@@ -169,7 +169,7 @@ class AnthropicModel(Model):
         messages: list[ModelMessage],
         stream: Literal[True],
         model_settings: AnthropicModelSettings,
-        agent_request_config: AgentRequestConfig,
+        model_request_params: ModelRequestParams,
     ) -> AsyncStream[RawMessageStreamEvent]:
         pass
 
@@ -179,7 +179,7 @@ class AnthropicModel(Model):
         messages: list[ModelMessage],
         stream: Literal[False],
         model_settings: AnthropicModelSettings,
-        agent_request_config: AgentRequestConfig,
+        model_request_params: ModelRequestParams,
     ) -> AnthropicMessage:
         pass
 
@@ -188,16 +188,16 @@ class AnthropicModel(Model):
         messages: list[ModelMessage],
         stream: bool,
         model_settings: AnthropicModelSettings,
-        agent_request_config: AgentRequestConfig,
+        model_request_params: ModelRequestParams,
     ) -> AnthropicMessage | AsyncStream[RawMessageStreamEvent]:
         # standalone function to make it easier to override
-        tools = self._get_tools(agent_request_config)
+        tools = self._get_tools(model_request_params)
         tool_choice: ToolChoiceParam | None
 
         if not tools:
             tool_choice = None
         else:
-            if not agent_request_config.allow_text_result:
+            if not model_request_params.allow_text_result:
                 tool_choice = {'type': 'any'}
             else:
                 tool_choice = {'type': 'auto'}
@@ -249,10 +249,10 @@ class AnthropicModel(Model):
         timestamp = datetime.now(tz=timezone.utc)
         return AnthropicStreamedResponse(_model_name=self.model_name, _response=peekable_response, _timestamp=timestamp)
 
-    def _get_tools(self, agent_request_config: AgentRequestConfig) -> list[ToolParam]:
-        tools = [self._map_tool_definition(r) for r in agent_request_config.function_tools]
-        if agent_request_config.result_tools:
-            tools += [self._map_tool_definition(r) for r in agent_request_config.result_tools]
+    def _get_tools(self, model_request_params: ModelRequestParams) -> list[ToolParam]:
+        tools = [self._map_tool_definition(r) for r in model_request_params.function_tools]
+        if model_request_params.result_tools:
+            tools += [self._map_tool_definition(r) for r in model_request_params.result_tools]
         return tools
 
     def _map_message(self, messages: list[ModelMessage]) -> tuple[str, list[MessageParam]]:

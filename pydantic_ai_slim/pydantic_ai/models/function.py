@@ -27,7 +27,7 @@ from ..messages import (
 )
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
-from . import AgentRequestConfig, Model, StreamedResponse
+from . import Model, ModelRequestParams, StreamedResponse
 
 
 @dataclass(init=False)
@@ -72,12 +72,12 @@ class FunctionModel(Model):
         self,
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
-        agent_request_config: AgentRequestConfig,
+        model_request_params: ModelRequestParams,
     ) -> tuple[ModelResponse, usage.Usage]:
         agent_info = AgentInfo(
-            agent_request_config.function_tools,
-            agent_request_config.allow_text_result,
-            agent_request_config.result_tools,
+            model_request_params.function_tools,
+            model_request_params.allow_text_result,
+            model_request_params.result_tools,
             model_settings,
         )
 
@@ -99,12 +99,12 @@ class FunctionModel(Model):
         self,
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
-        agent_request_config: AgentRequestConfig,
+        model_request_params: ModelRequestParams,
     ) -> AsyncIterator[StreamedResponse]:
         agent_info = AgentInfo(
-            agent_request_config.function_tools,
-            agent_request_config.allow_text_result,
-            agent_request_config.result_tools,
+            model_request_params.function_tools,
+            model_request_params.allow_text_result,
+            model_request_params.result_tools,
             model_settings,
         )
 
@@ -159,7 +159,7 @@ class DeltaToolCall:
 DeltaToolCalls: TypeAlias = dict[int, DeltaToolCall]
 """A mapping of tool call IDs to incremental changes."""
 
-# TODO: Change the signature to Callable[[list[ModelMessage], ModelSettings, AgentRequestConfig], ...]
+# TODO: Change the signature to Callable[[list[ModelMessage], ModelSettings, ModelRequestParams], ...]
 FunctionDef: TypeAlias = Callable[[list[ModelMessage], AgentInfo], Union[ModelResponse, Awaitable[ModelResponse]]]
 """A function used to generate a non-streamed response."""
 

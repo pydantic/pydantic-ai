@@ -31,8 +31,8 @@ from ..messages import (
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from . import (
-    AgentRequestConfig,
     Model,
+    ModelRequestParams,
     StreamedResponse,
     cached_async_http_client,
     check_allow_model_requests,
@@ -122,11 +122,11 @@ class GeminiModel(Model):
         self,
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
-        agent_request_config: AgentRequestConfig,
+        model_request_params: ModelRequestParams,
     ) -> tuple[ModelResponse, usage.Usage]:
         check_allow_model_requests()
         async with self._make_request(
-            messages, False, cast(GeminiModelSettings, model_settings or {}), agent_request_config
+            messages, False, cast(GeminiModelSettings, model_settings or {}), model_request_params
         ) as http_response:
             response = _gemini_response_ta.validate_json(await http_response.aread())
         return self._process_response(response), _metadata_as_usage(response)
@@ -136,24 +136,24 @@ class GeminiModel(Model):
         self,
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
-        agent_request_config: AgentRequestConfig,
+        model_request_params: ModelRequestParams,
     ) -> AsyncIterator[StreamedResponse]:
         check_allow_model_requests()
         async with self._make_request(
-            messages, True, cast(GeminiModelSettings, model_settings or {}), agent_request_config
+            messages, True, cast(GeminiModelSettings, model_settings or {}), model_request_params
         ) as http_response:
             yield await self._process_streamed_response(http_response)
 
-    def _get_tools(self, agent_request_config: AgentRequestConfig) -> _GeminiTools | None:
-        tools = [_function_from_abstract_tool(t) for t in agent_request_config.function_tools]
-        if agent_request_config.result_tools:
-            tools += [_function_from_abstract_tool(t) for t in agent_request_config.result_tools]
+    def _get_tools(self, model_request_params: ModelRequestParams) -> _GeminiTools | None:
+        tools = [_function_from_abstract_tool(t) for t in model_request_params.function_tools]
+        if model_request_params.result_tools:
+            tools += [_function_from_abstract_tool(t) for t in model_request_params.result_tools]
         return _GeminiTools(function_declarations=tools) if tools else None
 
     def _get_tool_config(
-        self, agent_request_config: AgentRequestConfig, tools: _GeminiTools | None
+        self, model_request_params: ModelRequestParams, tools: _GeminiTools | None
     ) -> _GeminiToolConfig | None:
-        if agent_request_config.allow_text_result:
+        if model_request_params.allow_text_result:
             return None
         elif tools:
             return _tool_config([t['name'] for t in tools['function_declarations']])
@@ -166,10 +166,10 @@ class GeminiModel(Model):
         messages: list[ModelMessage],
         streamed: bool,
         model_settings: GeminiModelSettings,
-        agent_request_config: AgentRequestConfig,
+        model_request_params: ModelRequestParams,
     ) -> AsyncIterator[HTTPResponse]:
-        tools = self._get_tools(agent_request_config)
-        tool_config = self._get_tool_config(agent_request_config, tools)
+        tools = self._get_tools(model_request_params)
+        tool_config = self._get_tool_config(model_request_params, tools)
         sys_prompt_parts, contents = self._message_to_gemini_content(messages)
 
         request_data = _GeminiRequest(contents=contents)

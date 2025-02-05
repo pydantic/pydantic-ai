@@ -14,7 +14,7 @@ from .._utils import run_in_executor
 from ..exceptions import UserError
 from ..messages import ModelMessage, ModelResponse
 from ..settings import ModelSettings
-from . import AgentRequestConfig, StreamedResponse, cached_async_http_client
+from . import ModelRequestParams, StreamedResponse, cached_async_http_client
 from .gemini import GeminiModel, GeminiModelName
 
 try:
@@ -150,20 +150,20 @@ class VertexAIModel(GeminiModel):
         self,
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
-        agent_request_config: AgentRequestConfig,
+        model_request_params: ModelRequestParams,
     ) -> tuple[ModelResponse, usage.Usage]:
         await self.ainit()
-        return await super().request(messages, model_settings, agent_request_config)
+        return await super().request(messages, model_settings, model_request_params)
 
     @asynccontextmanager
     async def request_stream(
         self,
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
-        agent_request_config: AgentRequestConfig,
+        model_request_params: ModelRequestParams,
     ) -> AsyncIterator[StreamedResponse]:
         await self.ainit()
-        async with super().request_stream(messages, model_settings, agent_request_config) as value:
+        async with super().request_stream(messages, model_settings, model_request_params) as value:
             yield value
 
 

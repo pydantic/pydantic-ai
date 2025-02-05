@@ -26,8 +26,8 @@ from ..result import Usage
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from . import (
-    AgentRequestConfig,
     Model,
+    ModelRequestParams,
     StreamedResponse,
 )
 from .function import _estimate_string_tokens, _estimate_usage  # pyright: ignore[reportPrivateUsage]
@@ -71,10 +71,10 @@ class TestModel(Model):
     """If set, these args will be passed to the result tool."""
     seed: int = 0
     """Seed for generating random data."""
-    last_agent_request_config: AgentRequestConfig | None = field(default=None, init=False)
-    """The last AgentRequestConfig passed to the model in a request.
+    last_model_request_params: ModelRequestParams | None = field(default=None, init=False)
+    """The last ModelRequestParams passed to the model in a request.
 
-    The AgentRequestConfig contains information about the function and result tools available during request handling.
+    The ModelRequestParams contains information about the function and result tools available during request handling.
 
     This is set when a request is made, so will reflect the function tools from the last step of the last run.
     """
@@ -86,11 +86,11 @@ class TestModel(Model):
         self,
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
-        agent_request_config: AgentRequestConfig,
+        model_request_params: ModelRequestParams,
     ) -> tuple[ModelResponse, Usage]:
-        self.last_agent_request_config = agent_request_config
+        self.last_model_request_params = model_request_params
 
-        model_response = self._request(messages, model_settings, agent_request_config)
+        model_response = self._request(messages, model_settings, model_request_params)
         usage = _estimate_usage([*messages, model_response])
         return model_response, usage
 
@@ -99,44 +99,44 @@ class TestModel(Model):
         self,
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
-        agent_request_config: AgentRequestConfig,
+        model_request_params: ModelRequestParams,
     ) -> AsyncIterator[StreamedResponse]:
-        self.last_agent_request_config = agent_request_config
+        self.last_model_request_params = model_request_params
 
-        model_response = self._request(messages, model_settings, agent_request_config)
+        model_response = self._request(messages, model_settings, model_request_params)
         yield TestStreamedResponse(_model_name=self.name(), _structured_response=model_response, _messages=messages)
 
     def gen_tool_args(self, tool_def: ToolDefinition) -> Any:
         return _JsonSchemaTestData(tool_def.parameters_json_schema, self.seed).generate()
 
-    def _get_tool_calls(self, agent_request_config: AgentRequestConfig) -> list[tuple[str, ToolDefinition]]:
+    def _get_tool_calls(self, model_request_params: ModelRequestParams) -> list[tuple[str, ToolDefinition]]:
         if self.call_tools == 'all':
-            return [(r.name, r) for r in agent_request_config.function_tools]
+            return [(r.name, r) for r in model_request_params.function_tools]
         else:
-            function_tools_lookup = {t.name: t for t in agent_request_config.function_tools}
+            function_tools_lookup = {t.name: t for t in model_request_params.function_tools}
             tools_to_call = (function_tools_lookup[name] for name in self.call_tools)
             return [(r.name, r) for r in tools_to_call]
 
-    def _get_result(self, agent_request_config: AgentRequestConfig) -> _TextResult | _FunctionToolResult:
+    def _get_result(self, model_request_params: ModelRequestParams) -> _TextResult | _FunctionToolResult:
         if self.custom_result_text is not None:
             assert (
-                agent_request_config.allow_text_result
+                model_request_params.allow_text_result
             ), 'Plain response not allowed, but `custom_result_text` is set.'
             assert self.custom_result_args is None, 'Cannot set both `custom_result_text` and `custom_result_args`.'
             return _TextResult(self.custom_result_text)
         elif self.custom_result_args is not None:
             assert (
-                agent_request_config.result_tools is not None
+                model_request_params.result_tools is not None
             ), 'No result tools provided, but `custom_result_args` is set.'
-            result_tool = agent_request_config.result_tools[0]
+            result_tool = model_request_params.result_tools[0]
 
             if k := result_tool.outer_typed_dict_key:
                 return _FunctionToolResult({k: self.custom_result_args})
             else:
                 return _FunctionToolResult(self.custom_result_args)
-        elif agent_request_config.allow_text_result:
+        elif model_request_params.allow_text_result:
             return _TextResult(None)
-        elif agent_request_config.result_tools:
+        elif model_request_params.result_tools:
             return _FunctionToolResult(None)
         else:
             return _TextResult(None)
@@ -145,11 +145,11 @@ class TestModel(Model):
         self,
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
-        agent_request_config: AgentRequestConfig,
+        model_request_params: ModelRequestParams,
     ) -> ModelResponse:
-        tool_calls = self._get_tool_calls(agent_request_config)
-        result = self._get_result(agent_request_config)
-        result_tools = agent_request_config.result_tools
+        tool_calls = self._get_tool_calls(model_request_params)
+        result = self._get_result(model_request_params)
+        result_tools = model_request_params.result_tools
 
         # if there are tools, the first thing we want to do is call all of them
         if tool_calls and not any(isinstance(m, ModelResponse) for m in messages):

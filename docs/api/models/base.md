@@ -4,7 +4,7 @@
     options:
       members:
         - KnownModelName
-        - AgentRequestConfig
+        - ModelRequestParams
         - Model
         - AbstractToolDefinition
         - StreamedResponse
