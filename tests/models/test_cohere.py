@@ -44,7 +44,8 @@ pytestmark = [
 
 def test_init():
     m = CohereModel('command-r7b-12-2024', api_key='foobar')
-    assert m.name() == 'cohere:command-r7b-12-2024'
+    assert m.model_name == 'command-r7b-12-2024'
+    assert m.system == 'cohere'
 
 
 @dataclass

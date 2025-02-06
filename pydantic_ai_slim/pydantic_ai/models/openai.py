@@ -46,10 +46,16 @@ except ImportError as _import_error:
         "you can use the `openai` optional group — `pip install 'pydantic-ai-slim[openai]'`"
     ) from _import_error
 
-OpenAIModelName = Union[ChatModel, str]
+OpenAIModelName = Union[str, ChatModel]
 """
+Possible OpenAI model names.
+
+Since OpenAI supports a variety of date-stamped models, we explicitly list the latest models but
+allow any name in the type hints.
+See [the OpenAI docs](https://platform.openai.com/docs/models) for a full list.
+
 Using this more broad type for the model name instead of the ChatModel definition
-allows this model to be used more easily with other model types (ie, Ollama, Deepseek)
+allows this model to be used more easily with other model types (ie, Ollama, Deepseek).
 """
 
 OpenAISystemPromptRole = Literal['system', 'developer', 'user']
@@ -75,9 +81,11 @@ class OpenAIModel(Model):
     Apart from `__init__`, all methods are private or match those of the base class.
     """
 
-    model_name: OpenAIModelName
     client: AsyncOpenAI = field(repr=False)
     system_prompt_role: OpenAISystemPromptRole | None = field(default=None)
+
+    _model_name: OpenAIModelName = field(repr=False)
+    _system: str | None = field(repr=False)
 
     def __init__(
         self,
@@ -88,6 +96,7 @@ class OpenAIModel(Model):
         openai_client: AsyncOpenAI | None = None,
         http_client: AsyncHTTPClient | None = None,
         system_prompt_role: OpenAISystemPromptRole | None = None,
+        system: str | None = 'openai',
     ):
         """Initialize an OpenAI model.
 
@@ -105,8 +114,10 @@ class OpenAIModel(Model):
             http_client: An existing `httpx.AsyncClient` to use for making HTTP requests.
             system_prompt_role: The role to use for the system prompt message. If not provided, defaults to `'system'`.
                 In the future, this may be inferred from the model name.
+            system: The model provider used, defaults to `openai`. This is for observability purposes, you must
+                customize the `base_url` and `api_key` to use a different provider.
         """
-        self.model_name: OpenAIModelName = model_name
+        self._model_name = model_name
         # This is a workaround for the OpenAI client requiring an API key, whilst locally served,
         # openai compatible models do not always need an API key.
         if api_key is None and 'OPENAI_API_KEY' not in os.environ and base_url is not None and openai_client is None:
@@ -121,9 +132,10 @@ class OpenAIModel(Model):
         else:
             self.client = AsyncOpenAI(base_url=base_url, api_key=api_key, http_client=cached_async_http_client())
         self.system_prompt_role = system_prompt_role
+        self._system = system
 
     def name(self) -> str:
-        return f'openai:{self.model_name}'
+        return f'openai:{self._model_name}'
 
     async def request(
         self,
@@ -191,7 +203,7 @@ class OpenAIModel(Model):
         openai_messages = list(chain(*(self._map_message(m) for m in messages)))
 
         return await self.client.chat.completions.create(
-            model=self.model_name,
+            model=self._model_name,
             messages=openai_messages,
             n=1,
             parallel_tool_calls=model_settings.get('parallel_tool_calls', NOT_GIVEN),
@@ -220,7 +232,7 @@ class OpenAIModel(Model):
         if choice.message.tool_calls is not None:
             for c in choice.message.tool_calls:
                 items.append(ToolCallPart(c.function.name, c.function.arguments, c.id))
-        return ModelResponse(items, model_name=self.model_name, timestamp=timestamp)
+        return ModelResponse(items, model_name=self._model_name, timestamp=timestamp)
 
     async def _process_streamed_response(self, response: AsyncStream[ChatCompletionChunk]) -> OpenAIStreamedResponse:
         """Process a streamed response, and prepare a streaming response to return."""
@@ -230,7 +242,7 @@ class OpenAIModel(Model):
             raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')
 
         return OpenAIStreamedResponse(
-            _model_name=self.model_name,
+            _model_name=self._model_name,
             _response=peekable_response,
             _timestamp=datetime.fromtimestamp(first_chunk.created, tz=timezone.utc),
         )

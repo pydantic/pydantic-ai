@@ -39,7 +39,7 @@ from . import (
     get_user_agent,
 )
 
-GeminiModelName = Literal[
+LatestGeminiModelNames = Literal[
     'gemini-1.5-flash',
     'gemini-1.5-flash-8b',
     'gemini-1.5-pro',
@@ -48,8 +48,13 @@ GeminiModelName = Literal[
     'gemini-2.0-flash-thinking-exp-01-21',
     'gemini-exp-1206',
 ]
-"""Named Gemini models.
+"""Latest Gemini models."""
 
+GeminiModelName = Union[str, LatestGeminiModelNames]
+"""Possible Gemini model names.
+
+Since Gemini supports a variety of date-stamped models, we explicitly list the latest models but
+allow any name in the type hints.
 See [the Gemini API docs](https://ai.google.dev/gemini-api/docs/models/gemini#model-variations) for a full list.
 """
 
@@ -70,11 +75,12 @@ class GeminiModel(Model):
     Apart from `__init__`, all methods are private or match those of the base class.
     """
 
-    model_name: GeminiModelName
-    http_client: AsyncHTTPClient
+    http_client: AsyncHTTPClient = field(repr=False)
 
-    _auth: AuthProtocol | None
-    _url: str | None
+    _model_name: GeminiModelName = field(repr=False)
+    _auth: AuthProtocol | None = field(repr=False)
+    _url: str | None = field(repr=False)
+    _system: str | None = field(default='google-gla', repr=False)
 
     def __init__(
         self,
@@ -95,7 +101,7 @@ class GeminiModel(Model):
                 docs [here](https://ai.google.dev/gemini-api/docs/quickstart?lang=rest#make-first-request),
                 `model` is substituted with the model name, and `function` is added to the end of the URL.
         """
-        self.model_name = model_name
+        self._model_name = model_name
         if api_key is None:
             if env_api_key := os.getenv('GEMINI_API_KEY'):
                 api_key = env_api_key
@@ -114,9 +120,6 @@ class GeminiModel(Model):
     def url(self) -> str:
         assert self._url is not None, 'URL not initialized'
         return self._url
-
-    def name(self) -> str:
-        return f'google-gla:{self.model_name}'
 
     async def request(
         self,
@@ -228,7 +231,7 @@ class GeminiModel(Model):
             else:
                 raise UnexpectedModelBehavior('Content field missing from Gemini response', str(response))
         parts = response['candidates'][0]['content']['parts']
-        return _process_response_from_parts(parts, model_name=self.model_name)
+        return _process_response_from_parts(parts, model_name=self._model_name)
 
     async def _process_streamed_response(self, http_response: HTTPResponse) -> StreamedResponse:
         """Process a streamed response, and prepare a streaming response to return."""
@@ -251,7 +254,7 @@ class GeminiModel(Model):
         if start_response is None:
             raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')
 
-        return GeminiStreamedResponse(_model_name=self.model_name, _content=content, _stream=aiter_bytes)
+        return GeminiStreamedResponse(_model_name=self._model_name, _content=content, _stream=aiter_bytes)
 
     @classmethod
     def _message_to_gemini_content(

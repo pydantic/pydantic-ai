@@ -65,6 +65,9 @@ class VertexAIModel(GeminiModel):
     model_publisher: Literal['google']
     url_template: str
 
+    _model_name: GeminiModelName = field(repr=False)
+    _system: str | None = field(default='google-vertex', repr=False)
+
     # TODO __init__ can be removed once we drop 3.9 and we can set kw_only correctly on the dataclass
     def __init__(
         self,
@@ -95,7 +98,7 @@ class VertexAIModel(GeminiModel):
                 [`VERTEX_AI_URL_TEMPLATE` docs][pydantic_ai.models.vertexai.VERTEX_AI_URL_TEMPLATE]
                 for more information.
         """
-        self.model_name = model_name
+        self._model_name = model_name
         self.service_account_file = service_account_file
         self.project_id = project_id
         self.region = region
@@ -134,12 +137,9 @@ class VertexAIModel(GeminiModel):
             region=self.region,
             project_id=project_id,
             model_publisher=self.model_publisher,
-            model=self.model_name,
+            model=self._model_name,
         )
         self._auth = BearerTokenAuth(creds)
-
-    def name(self) -> str:
-        return f'google-vertex:{self.model_name}'
 
     async def request(
         self,
