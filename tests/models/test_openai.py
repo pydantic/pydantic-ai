@@ -25,7 +25,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.result import Usage
 from pydantic_ai.settings import ModelSettings
 
-from ..conftest import IsNow, try_import
+from ..conftest import IsNow, TestEnv, try_import
 from .mock_async_stream import MockAsyncStream
 
 with try_import() as imports_successful:
@@ -70,7 +70,8 @@ def test_init_with_non_openai_model():
     m.name()
 
 
-def test_init_of_openai_without_api_key_raises_error():
+def test_init_of_openai_without_api_key_raises_error(env: TestEnv):
+    env.remove('OPENAI_API_KEY')
     with pytest.raises(
         OpenAIError,
         match='^The api_key client option must be set either by passing api_key to the client or by setting the OPENAI_API_KEY environment variable$',
