@@ -23,7 +23,7 @@ assert_type(typed_agent, Agent[MyDeps, str])
 
 
 @typed_agent.system_prompt
-async def system_prompt_ok1(ctx: RunContext[MyDeps]) -> str | None:
+async def system_prompt_ok1(ctx: RunContext[MyDeps]) -> Union[str, None]:
     return f'{ctx.deps}'
 
 
@@ -33,14 +33,14 @@ def system_prompt_ok2() -> str:
 
 
 @typed_agent.system_prompt
-def system_prompt_ok3() -> str | None:
+def system_prompt_ok3() -> Union[str, None]:
     return None
 
 
 # we have overloads for every possible signature of system_prompt, so the type of decorated functions is correct
-assert_type(system_prompt_ok1, Callable[[RunContext[MyDeps]], Awaitable[str | None]])
-assert_type(system_prompt_ok2, Callable[[], str | None])
-assert_type(system_prompt_ok3, Callable[[], str | None])
+assert_type(system_prompt_ok1, Callable[[RunContext[MyDeps]], Awaitable[Union[str, None]]])
+assert_type(system_prompt_ok2, Callable[[], Union[str, None]])
+assert_type(system_prompt_ok3, Callable[[], Union[str, None]])
 
 
 @contextmanager
