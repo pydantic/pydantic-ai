@@ -211,7 +211,7 @@ If you wish to further customize model behavior, you can use a subclass of [`Mod
 For example:
 
 ```py
-from pydantic_ai import Agent
+from pydantic_ai import Agent, UnexpectedModelBehavior
 from pydantic_ai.models.gemini import GeminiModelSettings
 
 agent = Agent('google-gla:gemini-1.5-flash')
@@ -233,12 +233,16 @@ try:
             ],
         ),
     )
-except Exception as e:
-    print(repr(e))
-    #> UnexpectedModelBehavior('Safety settings triggered')
-
-# Note: Result will return a normal response if within safety thresholds. Otherwise, will raise error like above.
+except UnexpectedModelBehavior as e:
+    print(e)  # (1)!
+    """
+    Safety settings triggered, body:
+    <safety settings details>
+    """
 ```
+
+1. This error is raised because the safety thresholds were exceeded.
+Generally, `result` would contain a normal `ModelResponse`.
 
 Credit for the above prompt goes to Hussain Chinoy and Google.
 

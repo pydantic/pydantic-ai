@@ -268,7 +268,7 @@ class GeminiAgentModel(AgentModel):
             )
             if responses:
                 last = responses[-1]
-               if last['candidates'] and last['candidates'][0].get('content', {}).get('parts'):
+                if last['candidates'] and last['candidates'][0].get('content', {}).get('parts'):
                     start_response = last
                     break
 

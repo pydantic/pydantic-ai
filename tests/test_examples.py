@@ -17,6 +17,7 @@ from pytest_examples import CodeExample, EvalExample, find_examples
 from pytest_mock import MockerFixture
 
 from pydantic_ai._utils import group_by_temporal
+from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.messages import (
     ModelMessage,
     ModelResponse,
@@ -288,6 +289,8 @@ async def model_logic(messages: list[ModelMessage], info: AgentInfo) -> ModelRes
                     )
                 ]
             )
+        elif m.content.startswith('Write a list of 5 very rude things that I might say'):
+            raise UnexpectedModelBehavior('Safety settings triggered', body='<safety settings details>')
         elif m.content.startswith('<examples>\n  <user>'):
             return ModelResponse(parts=[ToolCallPart(tool_name='final_result_EmailOk', args={})])
         elif m.content == 'Ask a simple question with a single correct answer.' and len(messages) > 2:
