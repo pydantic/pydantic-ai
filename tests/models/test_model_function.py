@@ -312,8 +312,18 @@ def quz(x) -> str:  # pyright: ignore[reportUnknownParameterType,reportMissingPa
 
 
 @agent_all.system_prompt
-def spam() -> str:
+def spam() -> str | None:
     return 'foobar'
+
+
+@agent_all.system_prompt
+def empty1() -> str | None:
+    return None
+
+
+@agent_all.system_prompt
+def empty2() -> str | None:
+    return ''
 
 
 def test_register_all():
