@@ -37,7 +37,7 @@ classifiers = [
 ]
 requires-python = ">=3.9"
 
-dependencies = ["pydantic-ai-slim[graph,openai,vertexai,groq,anthropic,mistral,cohere]==0.0.22"]
+dependencies = ["pydantic-ai-slim[openai,vertexai,groq,anthropic,mistral,cohere]==0.0.22"]
 
 [project.urls]
 Homepage = "https://ai.pydantic.dev"
