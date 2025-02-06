@@ -99,9 +99,11 @@ class MistralModel(Model):
     [API Documentation](https://docs.mistral.ai/)
     """
 
-    _model_name: MistralModelName
     client: Mistral = field(repr=False)
     json_mode_schema_prompt: str = """Answer in JSON Object, respect the format:\n```\n{schema}\n```\n"""
+
+    _model_name: MistralModelName
+    _system: str | None = 'mistral'
 
     def __init__(
         self,

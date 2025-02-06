@@ -59,12 +59,14 @@ The template is used thus:
 class VertexAIModel(GeminiModel):
     """A model that uses Gemini via the `*-aiplatform.googleapis.com` VertexAI API."""
 
-    _model_name: GeminiModelName
     service_account_file: Path | str | None
     project_id: str | None
     region: VertexAiRegion
     model_publisher: Literal['google']
     url_template: str
+
+    _model_name: GeminiModelName
+    _system: str | None = 'google-vertex'
 
     # TODO __init__ can be removed once we drop 3.9 and we can set kw_only correctly on the dataclass
     def __init__(
@@ -138,9 +140,6 @@ class VertexAIModel(GeminiModel):
             model=self._model_name,
         )
         self._auth = BearerTokenAuth(creds)
-
-    def name(self) -> str:
-        return f'google-vertex:{self._model_name}'
 
     async def request(
         self,

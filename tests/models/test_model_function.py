@@ -41,13 +41,13 @@ async def stream_hello(_messages: list[ModelMessage], _agent_info: AgentInfo) ->
 
 def test_init() -> None:
     m = FunctionModel(function=hello)
-    assert m.name() == 'function:hello:'
+    assert m.model_name == 'function:hello:'
 
     m1 = FunctionModel(stream_function=stream_hello)
-    assert m1.name() == 'function::stream_hello'
+    assert m1.model_name == 'function::stream_hello'
 
     m2 = FunctionModel(function=hello, stream_function=stream_hello)
-    assert m2.name() == 'function:hello:stream_hello'
+    assert m2.model_name == 'function:hello:stream_hello'
 
 
 async def return_last(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:

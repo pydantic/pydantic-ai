@@ -81,8 +81,10 @@ class GroqModel(Model):
     Apart from `__init__`, all methods are private or match those of the base class.
     """
 
-    _model_name: GroqModelName
     client: AsyncGroq = field(repr=False)
+
+    _model_name: GroqModelName
+    _system: str | None = 'groq'
 
     def __init__(
         self,
@@ -113,9 +115,6 @@ class GroqModel(Model):
             self.client = AsyncGroq(api_key=api_key, http_client=http_client)
         else:
             self.client = AsyncGroq(api_key=api_key, http_client=cached_async_http_client())
-
-    def name(self) -> str:
-        return f'groq:{self._model_name}'
 
     async def request(
         self,

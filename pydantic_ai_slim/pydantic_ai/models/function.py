@@ -39,7 +39,9 @@ class FunctionModel(Model):
 
     function: FunctionDef | None = None
     stream_function: StreamFunctionDef | None = None
+
     _model_name: str
+    _system: str | None = None
 
     @overload
     def __init__(self, function: FunctionDef) -> None: ...
@@ -66,10 +68,7 @@ class FunctionModel(Model):
 
         function_name = self.function.__name__ if self.function is not None else ''
         stream_function_name = self.stream_function.__name__ if self.stream_function is not None else ''
-        self._model_name = f'{function_name}:{stream_function_name}'
-
-    def name(self) -> str:
-        return f'function:{self._model_name}'
+        self._model_name = f'function:{function_name}:{stream_function_name}'
 
     async def request(
         self,

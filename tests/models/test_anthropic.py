@@ -60,7 +60,8 @@ T = TypeVar('T')
 def test_init():
     m = AnthropicModel('claude-3-5-haiku-latest', api_key='foobar')
     assert m.client.api_key == 'foobar'
-    assert m.name() == 'anthropic:claude-3-5-haiku-latest'
+    assert m.model_name == 'claude-3-5-haiku-latest'
+    assert m.system == 'anthropic'
 
 
 @dataclass

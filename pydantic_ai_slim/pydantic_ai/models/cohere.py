@@ -88,8 +88,10 @@ class CohereModel(Model):
     Apart from `__init__`, all methods are private or match those of the base class.
     """
 
-    _model_name: CohereModelName
     client: AsyncClientV2 = field(repr=False)
+
+    _model_name: CohereModelName
+    _system: str | None = 'cohere'
 
     def __init__(
         self,
@@ -117,9 +119,6 @@ class CohereModel(Model):
             self.client = cohere_client
         else:
             self.client = AsyncClientV2(api_key=api_key, httpx_client=http_client)  # type: ignore
-
-    def name(self) -> str:
-        return f'cohere:{self._model_name}'
 
     async def request(
         self,

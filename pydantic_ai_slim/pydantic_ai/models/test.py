@@ -79,9 +79,7 @@ class TestModel(Model):
     This is set when a request is made, so will reflect the function tools from the last step of the last run.
     """
     _model_name: str = 'test'
-
-    def name(self) -> str:
-        return 'test'
+    _system: str | None = None
 
     async def request(
         self,

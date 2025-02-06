@@ -174,6 +174,7 @@ class Model(ABC):
     """Abstract class for a model."""
 
     _model_name: str
+    _system: str | None
 
     @abstractmethod
     async def request(
@@ -203,6 +204,11 @@ class Model(ABC):
     def model_name(self) -> str:
         """The model name."""
         return self._model_name
+
+    @property
+    def system(self) -> str | None:
+        """The system / model provider, ex: openai."""
+        return self._system
 
 
 @dataclass

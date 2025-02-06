@@ -40,7 +40,8 @@ async def test_init_service_account(tmp_path: Path, allow_model_requests: None):
         'publishers/google/models/gemini-1.5-flash:'
     )
     assert model.auth is not None
-    assert model.name() == snapshot('google-vertex:gemini-1.5-flash')
+    assert model.model_name == snapshot('gemini-1.5-flash')
+    assert model.system == snapshot('google-vertex')
 
 
 class NoOpCredentials:
@@ -67,7 +68,8 @@ async def test_init_env(mocker: MockerFixture, allow_model_requests: None):
         'publishers/google/models/gemini-1.5-flash:'
     )
     assert model.auth is not None
-    assert model.name() == snapshot('google-vertex:gemini-1.5-flash')
+    assert model.model_name == snapshot('gemini-1.5-flash')
+    assert model.system == snapshot('google-vertex')
 
     await model.ainit()
     assert model.url is not None

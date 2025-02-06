@@ -75,9 +75,11 @@ class OpenAIModel(Model):
     Apart from `__init__`, all methods are private or match those of the base class.
     """
 
-    _model_name: OpenAIModelName
     client: AsyncOpenAI = field(repr=False)
     system_prompt_role: OpenAISystemPromptRole | None = field(default=None)
+
+    _model_name: OpenAIModelName
+    _system: str | None
 
     def __init__(
         self,
@@ -88,6 +90,7 @@ class OpenAIModel(Model):
         openai_client: AsyncOpenAI | None = None,
         http_client: AsyncHTTPClient | None = None,
         system_prompt_role: OpenAISystemPromptRole | None = None,
+        system: str | None = 'openai',
     ):
         """Initialize an OpenAI model.
 
@@ -105,6 +108,8 @@ class OpenAIModel(Model):
             http_client: An existing `httpx.AsyncClient` to use for making HTTP requests.
             system_prompt_role: The role to use for the system prompt message. If not provided, defaults to `'system'`.
                 In the future, this may be inferred from the model name.
+            system: The model provider used, defaults to `openai`. This is for observability purposes, you must
+                customize the `base_url` and `api_key` to use a different provider.
         """
         self._model_name = model_name
         # This is a workaround for the OpenAI client requiring an API key, whilst locally served,
@@ -121,6 +126,7 @@ class OpenAIModel(Model):
         else:
             self.client = AsyncOpenAI(base_url=base_url, api_key=api_key, http_client=cached_async_http_client())
         self.system_prompt_role = system_prompt_role
+        self._system = system
 
     def name(self) -> str:
         return f'openai:{self._model_name}'

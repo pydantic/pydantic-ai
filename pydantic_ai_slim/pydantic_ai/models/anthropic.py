@@ -101,8 +101,10 @@ class AnthropicModel(Model):
         We anticipate adding support for streaming responses in a near-term future release.
     """
 
-    _model_name: AnthropicModelName
     client: AsyncAnthropic = field(repr=False)
+
+    _model_name: AnthropicModelName
+    _system: str | None = 'anthropic'
 
     def __init__(
         self,
@@ -133,9 +135,6 @@ class AnthropicModel(Model):
             self.client = AsyncAnthropic(api_key=api_key, http_client=http_client)
         else:
             self.client = AsyncAnthropic(api_key=api_key, http_client=cached_async_http_client())
-
-    def name(self) -> str:
-        return f'anthropic:{self._model_name}'
 
     async def request(
         self,
