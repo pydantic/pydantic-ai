@@ -68,14 +68,14 @@ LatestAnthropicModelNames = Literal[
     'claude-3-5-sonnet-latest',
     'claude-3-opus-latest',
 ]
-"""Latest named Anthropic models."""
+"""Latest Anthropic models."""
 
 AnthropicModelName = Union[str, LatestAnthropicModelNames]
 """Possible Anthropic model names.
 
 Since Anthropic supports a variety of date-stamped models, we explicitly list the latest models but
 allow any name in the type hints.
-Since [the Anthropic docs](https://docs.anthropic.com/en/docs/about-claude/models) for a full list.
+See [the Anthropic docs](https://docs.anthropic.com/en/docs/about-claude/models) for a full list.
 """
 
 

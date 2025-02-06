@@ -58,12 +58,16 @@ LatestGroqModelNames = Literal[
     'mixtral-8x7b-32768',
     'gemma2-9b-it',
 ]
-"""Named Groq models.
-
-See [the Groq docs](https://console.groq.com/docs/models) for a full list.
-"""
+"""Latest Groq models."""
 
 GroqModelName = Union[str, LatestGroqModelNames]
+"""
+Possible Groq model names.
+
+Since Groq supports a variety of date-stamped models, we explicitly list the latest models but
+allow any name in the type hints.
+See [the Groq docs](https://console.groq.com/docs/models) for a full list.
+"""
 
 
 class GroqModelSettings(ModelSettings):

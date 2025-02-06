@@ -67,9 +67,15 @@ LatestCohereModelNames = Literal[
     'command-r-plus-08-2024',
     'command-r7b-12-2024',
 ]
-"""Latest / most popular named Cohere models."""
+"""Latest Cohere models."""
 
 CohereModelName = Union[str, LatestCohereModelNames]
+"""Possible Cohere model names.
+
+Since Cohere supports a variety of date-stamped models, we explicitly list the latest models but
+allow any name in the type hints.
+See [Cohere's docs](https://docs.cohere.com/v2/docs/models) for a list of all available models.
+"""
 
 
 class CohereModelSettings(ModelSettings):

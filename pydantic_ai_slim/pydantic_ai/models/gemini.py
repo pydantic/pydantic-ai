@@ -48,12 +48,15 @@ LatestGeminiModelNames = Literal[
     'gemini-2.0-flash-thinking-exp-01-21',
     'gemini-exp-1206',
 ]
-"""Named Gemini models.
-
-See [the Gemini API docs](https://ai.google.dev/gemini-api/docs/models/gemini#model-variations) for a full list.
-"""
+"""Latest Gemini models."""
 
 GeminiModelName = Union[str, LatestGeminiModelNames]
+"""Possible Gemini model names.
+
+Since Gemini supports a variety of date-stamped models, we explicitly list the latest models but
+allow any name in the type hints.
+See [the Gemini API docs](https://ai.google.dev/gemini-api/docs/models/gemini#model-variations) for a full list.
+"""
 
 
 class GeminiModelSettings(ModelSettings):

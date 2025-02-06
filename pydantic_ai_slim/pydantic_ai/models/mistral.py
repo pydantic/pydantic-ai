@@ -73,7 +73,7 @@ except ImportError as e:
 LatestMistralModelNames = Literal[
     'mistral-large-latest', 'mistral-small-latest', 'codestral-latest', 'mistral-moderation-latest'
 ]
-"""Latest / most popular named Mistral models."""
+"""Latest  Mistral models."""
 
 MistralModelName = Union[str, LatestMistralModelNames]
 """Possible Mistral model names.
