@@ -78,6 +78,7 @@ class TestModel(Model):
 
     This is set when a request is made, so will reflect the function tools from the last step of the last run.
     """
+    _model_name: str = 'test'
 
     def name(self) -> str:
         return 'test'
@@ -104,7 +105,9 @@ class TestModel(Model):
         self.last_model_request_parameters = model_request_parameters
 
         model_response = self._request(messages, model_settings, model_request_parameters)
-        yield TestStreamedResponse(_model_name=self.name(), _structured_response=model_response, _messages=messages)
+        yield TestStreamedResponse(
+            _model_name=self._model_name, _structured_response=model_response, _messages=messages
+        )
 
     def gen_tool_args(self, tool_def: ToolDefinition) -> Any:
         return _JsonSchemaTestData(tool_def.parameters_json_schema, self.seed).generate()
@@ -155,7 +158,7 @@ class TestModel(Model):
         if tool_calls and not any(isinstance(m, ModelResponse) for m in messages):
             return ModelResponse(
                 parts=[ToolCallPart(name, self.gen_tool_args(args)) for name, args in tool_calls],
-                model_name=self.name(),
+                model_name=self._model_name,
             )
 
         if messages:
@@ -184,7 +187,7 @@ class TestModel(Model):
                             if tool.name in new_retry_names
                         ]
                     )
-                return ModelResponse(parts=retry_parts, model_name=self.name())
+                return ModelResponse(parts=retry_parts, model_name=self._model_name)
 
         if isinstance(result, _TextResult):
             if (response_text := result.value) is None:
@@ -197,21 +200,23 @@ class TestModel(Model):
                                 output[part.tool_name] = part.content
                 if output:
                     return ModelResponse(
-                        parts=[TextPart(pydantic_core.to_json(output).decode())], model_name=self.name()
+                        parts=[TextPart(pydantic_core.to_json(output).decode())], model_name=self._model_name
                     )
                 else:
-                    return ModelResponse(parts=[TextPart('success (no tool calls)')], model_name=self.name())
+                    return ModelResponse(parts=[TextPart('success (no tool calls)')], model_name=self._model_name)
             else:
-                return ModelResponse(parts=[TextPart(response_text)], model_name=self.name())
+                return ModelResponse(parts=[TextPart(response_text)], model_name=self._model_name)
         else:
             assert result_tools, 'No result tools provided'
             custom_result_args = result.value
             result_tool = result_tools[self.seed % len(result_tools)]
             if custom_result_args is not None:
-                return ModelResponse(parts=[ToolCallPart(result_tool.name, custom_result_args)], model_name=self.name())
+                return ModelResponse(
+                    parts=[ToolCallPart(result_tool.name, custom_result_args)], model_name=self._model_name
+                )
             else:
                 response_args = self.gen_tool_args(result_tool)
-                return ModelResponse(parts=[ToolCallPart(result_tool.name, response_args)], model_name=self.name())
+                return ModelResponse(parts=[ToolCallPart(result_tool.name, response_args)], model_name=self._model_name)
 
 
 @dataclass

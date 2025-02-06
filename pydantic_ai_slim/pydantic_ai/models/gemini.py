@@ -39,7 +39,7 @@ from . import (
     get_user_agent,
 )
 
-GeminiModelName = Literal[
+KnownGeminiModels = Literal[
     'gemini-1.5-flash',
     'gemini-1.5-flash-8b',
     'gemini-1.5-pro',
@@ -52,6 +52,8 @@ GeminiModelName = Literal[
 
 See [the Gemini API docs](https://ai.google.dev/gemini-api/docs/models/gemini#model-variations) for a full list.
 """
+
+GeminiModelName = Union[str, KnownGeminiModels]
 
 
 class GeminiModelSettings(ModelSettings):
@@ -70,7 +72,7 @@ class GeminiModel(Model):
     Apart from `__init__`, all methods are private or match those of the base class.
     """
 
-    model_name: GeminiModelName
+    _model_name: GeminiModelName
     http_client: AsyncHTTPClient
 
     _auth: AuthProtocol | None
@@ -95,7 +97,7 @@ class GeminiModel(Model):
                 docs [here](https://ai.google.dev/gemini-api/docs/quickstart?lang=rest#make-first-request),
                 `model` is substituted with the model name, and `function` is added to the end of the URL.
         """
-        self.model_name = model_name
+        self._model_name = model_name
         if api_key is None:
             if env_api_key := os.getenv('GEMINI_API_KEY'):
                 api_key = env_api_key
@@ -116,7 +118,7 @@ class GeminiModel(Model):
         return self._url
 
     def name(self) -> str:
-        return f'google-gla:{self.model_name}'
+        return f'google-gla:{self._model_name}'
 
     async def request(
         self,
@@ -228,7 +230,7 @@ class GeminiModel(Model):
             else:
                 raise UnexpectedModelBehavior('Content field missing from Gemini response', str(response))
         parts = response['candidates'][0]['content']['parts']
-        return _process_response_from_parts(parts, model_name=self.model_name)
+        return _process_response_from_parts(parts, model_name=self._model_name)
 
     async def _process_streamed_response(self, http_response: HTTPResponse) -> StreamedResponse:
         """Process a streamed response, and prepare a streaming response to return."""
@@ -251,7 +253,7 @@ class GeminiModel(Model):
         if start_response is None:
             raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')
 
-        return GeminiStreamedResponse(_model_name=self.model_name, _content=content, _stream=aiter_bytes)
+        return GeminiStreamedResponse(_model_name=self._model_name, _content=content, _stream=aiter_bytes)
 
     @classmethod
     def _message_to_gemini_content(

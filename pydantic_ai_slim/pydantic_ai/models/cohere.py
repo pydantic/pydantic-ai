@@ -88,7 +88,7 @@ class CohereModel(Model):
     Apart from `__init__`, all methods are private or match those of the base class.
     """
 
-    model_name: CohereModelName
+    _model_name: CohereModelName
     client: AsyncClientV2 = field(repr=False)
 
     def __init__(
@@ -110,7 +110,7 @@ class CohereModel(Model):
                 `api_key` and `http_client` must be `None`.
             http_client: An existing `httpx.AsyncClient` to use for making HTTP requests.
         """
-        self.model_name: CohereModelName = model_name
+        self._model_name: CohereModelName = model_name
         if cohere_client is not None:
             assert http_client is None, 'Cannot provide both `cohere_client` and `http_client`'
             assert api_key is None, 'Cannot provide both `cohere_client` and `api_key`'
@@ -119,7 +119,7 @@ class CohereModel(Model):
             self.client = AsyncClientV2(api_key=api_key, httpx_client=http_client)  # type: ignore
 
     def name(self) -> str:
-        return f'cohere:{self.model_name}'
+        return f'cohere:{self._model_name}'
 
     async def request(
         self,
@@ -140,7 +140,7 @@ class CohereModel(Model):
         tools = self._get_tools(model_request_parameters)
         cohere_messages = list(chain(*(self._map_message(m) for m in messages)))
         return await self.client.chat(
-            model=self.model_name,
+            model=self._model_name,
             messages=cohere_messages,
             tools=tools or OMIT,
             max_tokens=model_settings.get('max_tokens', OMIT),
@@ -168,7 +168,7 @@ class CohereModel(Model):
                         tool_call_id=c.id,
                     )
                 )
-        return ModelResponse(parts=parts, model_name=self.model_name)
+        return ModelResponse(parts=parts, model_name=self._model_name)
 
     def _map_message(self, message: ModelMessage) -> Iterable[ChatMessageV2]:
         """Just maps a `pydantic_ai.Message` to a `cohere.ChatMessageV2`."""

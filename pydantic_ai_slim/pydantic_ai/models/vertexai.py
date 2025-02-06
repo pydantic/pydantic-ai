@@ -59,6 +59,7 @@ The template is used thus:
 class VertexAIModel(GeminiModel):
     """A model that uses Gemini via the `*-aiplatform.googleapis.com` VertexAI API."""
 
+    _model_name: GeminiModelName
     service_account_file: Path | str | None
     project_id: str | None
     region: VertexAiRegion
@@ -95,7 +96,7 @@ class VertexAIModel(GeminiModel):
                 [`VERTEX_AI_URL_TEMPLATE` docs][pydantic_ai.models.vertexai.VERTEX_AI_URL_TEMPLATE]
                 for more information.
         """
-        self.model_name = model_name
+        self._model_name = model_name
         self.service_account_file = service_account_file
         self.project_id = project_id
         self.region = region
@@ -134,12 +135,12 @@ class VertexAIModel(GeminiModel):
             region=self.region,
             project_id=project_id,
             model_publisher=self.model_publisher,
-            model=self.model_name,
+            model=self._model_name,
         )
         self._auth = BearerTokenAuth(creds)
 
     def name(self) -> str:
-        return f'google-vertex:{self.model_name}'
+        return f'google-vertex:{self._model_name}'
 
     async def request(
         self,

@@ -75,7 +75,7 @@ class OpenAIModel(Model):
     Apart from `__init__`, all methods are private or match those of the base class.
     """
 
-    model_name: OpenAIModelName
+    _model_name: OpenAIModelName
     client: AsyncOpenAI = field(repr=False)
     system_prompt_role: OpenAISystemPromptRole | None = field(default=None)
 
@@ -106,7 +106,7 @@ class OpenAIModel(Model):
             system_prompt_role: The role to use for the system prompt message. If not provided, defaults to `'system'`.
                 In the future, this may be inferred from the model name.
         """
-        self.model_name: OpenAIModelName = model_name
+        self._model_name = model_name
         # This is a workaround for the OpenAI client requiring an API key, whilst locally served,
         # openai compatible models do not always need an API key.
         if api_key is None and 'OPENAI_API_KEY' not in os.environ and base_url is not None and openai_client is None:
@@ -123,7 +123,7 @@ class OpenAIModel(Model):
         self.system_prompt_role = system_prompt_role
 
     def name(self) -> str:
-        return f'openai:{self.model_name}'
+        return f'openai:{self._model_name}'
 
     async def request(
         self,
@@ -191,7 +191,7 @@ class OpenAIModel(Model):
         openai_messages = list(chain(*(self._map_message(m) for m in messages)))
 
         return await self.client.chat.completions.create(
-            model=self.model_name,
+            model=self._model_name,
             messages=openai_messages,
             n=1,
             parallel_tool_calls=model_settings.get('parallel_tool_calls', NOT_GIVEN),
@@ -220,7 +220,7 @@ class OpenAIModel(Model):
         if choice.message.tool_calls is not None:
             for c in choice.message.tool_calls:
                 items.append(ToolCallPart(c.function.name, c.function.arguments, c.id))
-        return ModelResponse(items, model_name=self.model_name, timestamp=timestamp)
+        return ModelResponse(items, model_name=self._model_name, timestamp=timestamp)
 
     async def _process_streamed_response(self, response: AsyncStream[ChatCompletionChunk]) -> OpenAIStreamedResponse:
         """Process a streamed response, and prepare a streaming response to return."""
@@ -230,7 +230,7 @@ class OpenAIModel(Model):
             raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')
 
         return OpenAIStreamedResponse(
-            _model_name=self.model_name,
+            _model_name=self._model_name,
             _response=peekable_response,
             _timestamp=datetime.fromtimestamp(first_chunk.created, tz=timezone.utc),
         )

@@ -79,7 +79,7 @@ def test_infer_model(
 
     m = infer_model(model_name)  # pyright: ignore[reportArgumentType]
     assert isinstance(m, expected_model)
-    assert m.name() == expected_model_name
+    assert m.model_name == expected_model_name
 
     m2 = infer_model(m)
     assert m2 is m

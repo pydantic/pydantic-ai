@@ -99,7 +99,7 @@ class MistralModel(Model):
     [API Documentation](https://docs.mistral.ai/)
     """
 
-    model_name: MistralModelName
+    _model_name: MistralModelName
     client: Mistral = field(repr=False)
     json_mode_schema_prompt: str = """Answer in JSON Object, respect the format:\n```\n{schema}\n```\n"""
 
@@ -121,7 +121,7 @@ class MistralModel(Model):
             http_client: An existing `httpx.AsyncClient` to use for making HTTP requests.
             json_mode_schema_prompt: The prompt to show when the model expects a JSON object as input.
         """
-        self.model_name = model_name
+        self._model_name = model_name
         self.json_mode_schema_prompt = json_mode_schema_prompt
 
         if client is not None:
@@ -133,7 +133,7 @@ class MistralModel(Model):
             self.client = Mistral(api_key=api_key, async_client=http_client or cached_async_http_client())
 
     def name(self) -> str:
-        return f'mistral:{self.model_name}'
+        return f'mistral:{self._model_name}'
 
     async def request(
         self,
@@ -171,7 +171,7 @@ class MistralModel(Model):
     ) -> MistralChatCompletionResponse:
         """Make a non-streaming request to the model."""
         response = await self.client.chat.complete_async(
-            model=str(self.model_name),
+            model=str(self._model_name),
             messages=list(chain(*(self._map_message(m) for m in messages))),
             n=1,
             tools=self._map_function_and_result_tools_definition(model_request_parameters) or UNSET,
@@ -203,7 +203,7 @@ class MistralModel(Model):
         ):
             # Function Calling
             response = await self.client.chat.stream_async(
-                model=str(self.model_name),
+                model=str(self._model_name),
                 messages=mistral_messages,
                 n=1,
                 tools=self._map_function_and_result_tools_definition(model_request_parameters) or UNSET,
@@ -223,7 +223,7 @@ class MistralModel(Model):
             mistral_messages.append(user_output_format_message)
 
             response = await self.client.chat.stream_async(
-                model=str(self.model_name),
+                model=str(self._model_name),
                 messages=mistral_messages,
                 response_format={'type': 'json_object'},
                 stream=True,
@@ -232,7 +232,7 @@ class MistralModel(Model):
         else:
             # Stream Mode
             response = await self.client.chat.stream_async(
-                model=str(self.model_name),
+                model=str(self._model_name),
                 messages=mistral_messages,
                 stream=True,
             )
@@ -294,7 +294,7 @@ class MistralModel(Model):
                 tool = self._map_mistral_to_pydantic_tool_call(tool_call=tool_call)
                 parts.append(tool)
 
-        return ModelResponse(parts, model_name=self.model_name, timestamp=timestamp)
+        return ModelResponse(parts, model_name=self._model_name, timestamp=timestamp)
 
     async def _process_streamed_response(
         self,
@@ -314,7 +314,7 @@ class MistralModel(Model):
 
         return MistralStreamedResponse(
             _response=peekable_response,
-            _model_name=self.model_name,
+            _model_name=self._model_name,
             _timestamp=timestamp,
             _result_tools={c.name: c for c in result_tools},
         )

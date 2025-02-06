@@ -101,7 +101,7 @@ class AnthropicModel(Model):
         We anticipate adding support for streaming responses in a near-term future release.
     """
 
-    model_name: AnthropicModelName
+    _model_name: AnthropicModelName
     client: AsyncAnthropic = field(repr=False)
 
     def __init__(
@@ -124,7 +124,7 @@ class AnthropicModel(Model):
                 client to use, if provided, `api_key` and `http_client` must be `None`.
             http_client: An existing `httpx.AsyncClient` to use for making HTTP requests.
         """
-        self.model_name = model_name
+        self._model_name = model_name
         if anthropic_client is not None:
             assert http_client is None, 'Cannot provide both `anthropic_client` and `http_client`'
             assert api_key is None, 'Cannot provide both `anthropic_client` and `api_key`'
@@ -135,7 +135,7 @@ class AnthropicModel(Model):
             self.client = AsyncAnthropic(api_key=api_key, http_client=cached_async_http_client())
 
     def name(self) -> str:
-        return f'anthropic:{self.model_name}'
+        return f'anthropic:{self._model_name}'
 
     async def request(
         self,
@@ -211,7 +211,7 @@ class AnthropicModel(Model):
             max_tokens=model_settings.get('max_tokens', 1024),
             system=system_prompt or NOT_GIVEN,
             messages=anthropic_messages,
-            model=self.model_name,
+            model=self._model_name,
             tools=tools or NOT_GIVEN,
             tool_choice=tool_choice or NOT_GIVEN,
             stream=stream,
@@ -237,7 +237,7 @@ class AnthropicModel(Model):
                     )
                 )
 
-        return ModelResponse(items, model_name=self.model_name)
+        return ModelResponse(items, model_name=self._model_name)
 
     async def _process_streamed_response(self, response: AsyncStream[RawMessageStreamEvent]) -> StreamedResponse:
         peekable_response = _utils.PeekableAsyncStream(response)
@@ -247,7 +247,9 @@ class AnthropicModel(Model):
 
         # Since Anthropic doesn't provide a timestamp in the message, we'll use the current time
         timestamp = datetime.now(tz=timezone.utc)
-        return AnthropicStreamedResponse(_model_name=self.model_name, _response=peekable_response, _timestamp=timestamp)
+        return AnthropicStreamedResponse(
+            _model_name=self._model_name, _response=peekable_response, _timestamp=timestamp
+        )
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[ToolParam]:
         tools = [self._map_tool_definition(r) for r in model_request_parameters.function_tools]

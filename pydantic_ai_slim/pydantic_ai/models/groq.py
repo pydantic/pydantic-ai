@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from itertools import chain
-from typing import Literal, cast, overload
+from typing import Literal, Union, cast, overload
 
 from httpx import AsyncClient as AsyncHTTPClient
 from typing_extensions import assert_never
@@ -45,7 +45,7 @@ except ImportError as _import_error:
         "you can use the `groq` optional group — `pip install 'pydantic-ai-slim[groq]'`"
     ) from _import_error
 
-GroqModelName = Literal[
+KnownGroqModels = Literal[
     'llama-3.3-70b-versatile',
     'llama-3.3-70b-specdec',
     'llama-3.1-8b-instant',
@@ -63,6 +63,8 @@ GroqModelName = Literal[
 See [the Groq docs](https://console.groq.com/docs/models) for a full list.
 """
 
+GroqModelName = Union[str, KnownGroqModels]
+
 
 class GroqModelSettings(ModelSettings):
     """Settings used for a Groq model request."""
@@ -79,7 +81,7 @@ class GroqModel(Model):
     Apart from `__init__`, all methods are private or match those of the base class.
     """
 
-    model_name: GroqModelName
+    _model_name: GroqModelName
     client: AsyncGroq = field(repr=False)
 
     def __init__(
@@ -102,7 +104,7 @@ class GroqModel(Model):
                 client to use, if provided, `api_key` and `http_client` must be `None`.
             http_client: An existing `httpx.AsyncClient` to use for making HTTP requests.
         """
-        self.model_name = model_name
+        self._model_name = model_name
         if groq_client is not None:
             assert http_client is None, 'Cannot provide both `groq_client` and `http_client`'
             assert api_key is None, 'Cannot provide both `groq_client` and `api_key`'
@@ -113,7 +115,7 @@ class GroqModel(Model):
             self.client = AsyncGroq(api_key=api_key, http_client=cached_async_http_client())
 
     def name(self) -> str:
-        return f'groq:{self.model_name}'
+        return f'groq:{self._model_name}'
 
     async def request(
         self,
@@ -180,7 +182,7 @@ class GroqModel(Model):
         groq_messages = list(chain(*(self._map_message(m) for m in messages)))
 
         return await self.client.chat.completions.create(
-            model=str(self.model_name),
+            model=str(self._model_name),
             messages=groq_messages,
             n=1,
             parallel_tool_calls=model_settings.get('parallel_tool_calls', NOT_GIVEN),
@@ -207,7 +209,7 @@ class GroqModel(Model):
         if choice.message.tool_calls is not None:
             for c in choice.message.tool_calls:
                 items.append(ToolCallPart(tool_name=c.function.name, args=c.function.arguments, tool_call_id=c.id))
-        return ModelResponse(items, model_name=self.model_name, timestamp=timestamp)
+        return ModelResponse(items, model_name=self._model_name, timestamp=timestamp)
 
     async def _process_streamed_response(self, response: AsyncStream[ChatCompletionChunk]) -> GroqStreamedResponse:
         """Process a streamed response, and prepare a streaming response to return."""
@@ -218,7 +220,7 @@ class GroqModel(Model):
 
         return GroqStreamedResponse(
             _response=peekable_response,
-            _model_name=self.model_name,
+            _model_name=self._model_name,
             _timestamp=datetime.fromtimestamp(first_chunk.created, tz=timezone.utc),
         )
 

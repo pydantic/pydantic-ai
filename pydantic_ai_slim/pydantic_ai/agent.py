@@ -309,7 +309,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
             '{agent_name} run {prompt=}',
             prompt=user_prompt,
             agent=self,
-            model_name=model_used.name() if model_used else 'no-model',
+            model_name=model_used.model_name if model_used else 'no-model',
             agent_name=self.name or 'agent',
         ) as run_span:
             # Build the deps object for the graph
@@ -554,7 +554,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
             '{agent_name} run stream {prompt=}',
             prompt=user_prompt,
             agent=self,
-            model_name=model_used.name(),
+            model_name=model_used.model_name if model_used else 'no-model',
             agent_name=self.name or 'agent',
         ) as run_span:
             # Build the deps object for the graph
