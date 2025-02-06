@@ -4,7 +4,7 @@ import dataclasses
 import inspect
 from collections.abc import Awaitable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Callable, Generic, Literal, Union, cast
+from typing import TYPE_CHECKING, Any, Callable, Generic, Literal, Optional, Union, cast
 
 from pydantic import ValidationError
 from pydantic_core import SchemaValidator
@@ -72,10 +72,10 @@ ToolParams = ParamSpec('ToolParams', default=...)
 """Retrieval function param spec."""
 
 SystemPromptFunc = Union[
-    Callable[[RunContext[AgentDepsT]], str | None],
-    Callable[[RunContext[AgentDepsT]], Awaitable[str | None]],
-    Callable[[], str | None],
-    Callable[[], Awaitable[str | None]],
+    Callable[[RunContext[AgentDepsT]], Optional[str]],
+    Callable[[RunContext[AgentDepsT]], Awaitable[Optional[str]]],
+    Callable[[], Optional[str]],
+    Callable[[], Awaitable[Optional[str]]],
 ]
 """A function that may or maybe not take `RunContext` as an argument, and may or may not be async.
 
