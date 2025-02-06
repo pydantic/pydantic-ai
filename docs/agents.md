@@ -244,8 +244,6 @@ except UnexpectedModelBehavior as e:
 1. This error is raised because the safety thresholds were exceeded.
 Generally, `result` would contain a normal `ModelResponse`.
 
-Credit for the above prompt goes to Hussain Chinoy and Google.
-
 ## Runs vs. Conversations
 
 An agent **run** might represent an entire conversation — there's no limit to how many messages can be exchanged in a single run. However, a **conversation** might also be composed of multiple runs, especially if you need to maintain state between separate interactions or API calls.
