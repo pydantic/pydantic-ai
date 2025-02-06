@@ -39,7 +39,7 @@ from . import (
     get_user_agent,
 )
 
-KnownGeminiModels = Literal[
+LatestGeminiModelNames = Literal[
     'gemini-1.5-flash',
     'gemini-1.5-flash-8b',
     'gemini-1.5-pro',
@@ -53,7 +53,7 @@ KnownGeminiModels = Literal[
 See [the Gemini API docs](https://ai.google.dev/gemini-api/docs/models/gemini#model-variations) for a full list.
 """
 
-GeminiModelName = Union[str, KnownGeminiModels]
+GeminiModelName = Union[str, LatestGeminiModelNames]
 
 
 class GeminiModelSettings(ModelSettings):

@@ -45,7 +45,7 @@ except ImportError as _import_error:
         "you can use the `groq` optional group — `pip install 'pydantic-ai-slim[groq]'`"
     ) from _import_error
 
-KnownGroqModels = Literal[
+LatestGroqModelNames = Literal[
     'llama-3.3-70b-versatile',
     'llama-3.3-70b-specdec',
     'llama-3.1-8b-instant',
@@ -63,7 +63,7 @@ KnownGroqModels = Literal[
 See [the Groq docs](https://console.groq.com/docs/models) for a full list.
 """
 
-GroqModelName = Union[str, KnownGroqModels]
+GroqModelName = Union[str, LatestGroqModelNames]
 
 
 class GroqModelSettings(ModelSettings):

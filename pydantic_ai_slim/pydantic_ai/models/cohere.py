@@ -52,7 +52,7 @@ except ImportError as _import_error:
         "you can use the `cohere` optional group — `pip install 'pydantic-ai-slim[cohere]'`"
     ) from _import_error
 
-NamedCohereModels = Literal[
+LatestCohereModelNames = Literal[
     'c4ai-aya-expanse-32b',
     'c4ai-aya-expanse-8b',
     'command',
@@ -69,7 +69,7 @@ NamedCohereModels = Literal[
 ]
 """Latest / most popular named Cohere models."""
 
-CohereModelName = Union[NamedCohereModels, str]
+CohereModelName = Union[str, LatestCohereModelNames]
 
 
 class CohereModelSettings(ModelSettings):

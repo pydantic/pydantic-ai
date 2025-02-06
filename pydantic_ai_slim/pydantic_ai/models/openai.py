@@ -46,7 +46,7 @@ except ImportError as _import_error:
         "you can use the `openai` optional group — `pip install 'pydantic-ai-slim[openai]'`"
     ) from _import_error
 
-OpenAIModelName = Union[ChatModel, str]
+OpenAIModelName = Union[str, ChatModel]
 """
 Using this more broad type for the model name instead of the ChatModel definition
 allows this model to be used more easily with other model types (ie, Ollama, Deepseek)

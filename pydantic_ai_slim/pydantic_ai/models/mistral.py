@@ -70,12 +70,12 @@ except ImportError as e:
         "you can use the `mistral` optional group — `pip install 'pydantic-ai-slim[mistral]'`"
     ) from e
 
-NamedMistralModels = Literal[
+LatestMistralModelNames = Literal[
     'mistral-large-latest', 'mistral-small-latest', 'codestral-latest', 'mistral-moderation-latest'
 ]
 """Latest / most popular named Mistral models."""
 
-MistralModelName = Union[NamedMistralModels, str]
+MistralModelName = Union[str, LatestMistralModelNames]
 """Possible Mistral model names.
 
 Since Mistral supports a variety of date-stamped models, we explicitly list the most popular models but
