@@ -58,3 +58,20 @@ img.index-header {
 .mermaid {
   text-align: center;
 }
+
+.md-search__input::-webkit-search-decoration,
+.md-search__input::-webkit-search-cancel-button,
+.md-search__input::-webkit-search-results-button,
+.md-search__input::-webkit-search-results-decoration {
+  -webkit-appearance:none;
+}
+
+.md-search-result__article {
+  padding-bottom: .55em;
+}
+
+.ais-SearchBox-form {
+  display: flex;
+  flex-direction: row;
+  gap: 10px;
+}

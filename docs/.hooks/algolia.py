@@ -21,6 +21,7 @@ class AlgoliaRecord(TypedDict):
     abs_url: str
     title: str
     objectID: str
+    rank: int
 
 
 records: list[AlgoliaRecord] = []
@@ -42,6 +43,13 @@ def on_page_content(html: str, page: Page, config: Config, files: Files) -> str:
 
     soup = BeautifulSoup(html, 'html.parser')
 
+    # If the page does not start with a heading, add the h1 with the title
+    # Some examples don't have a heading. or start with h2
+    first_element = soup.find()
+
+    if not first_element or not first_element.name or first_element.name not in ['h1', 'h2', 'h3']:
+        soup.insert(0, BeautifulSoup(f'<h1 id="{title}">{title}</h1>', 'html.parser'))
+
     # Clean up presentational and UI elements
     for element in soup.find_all(['autoref']):
         element.decompose()
@@ -62,8 +70,10 @@ def on_page_content(html: str, page: Page, config: Config, files: Files) -> str:
     for extra in soup.find_all('table', attrs={'class': 'highlighttable'}):
         extra.replace_with(BeautifulSoup(f'<pre>{extra.find("code").get_text()}</pre>', 'html.parser'))
 
-    # Find all h1 and h2 headings
-    headings = soup.find_all(['h1', 'h2'])
+    headings = soup.find_all(['h1', 'h2', 'h3'])
+
+    # Use the rank to put the sections in the beginning higher in the search results
+    rank = 100
 
     # Process each section
     for current_heading in headings:
@@ -73,25 +83,40 @@ def on_page_content(html: str, page: Page, config: Config, files: Files) -> str:
         # Get content until next heading
         content: list[str] = []
         sibling = current_heading.find_next_sibling()
-        while sibling and sibling.name not in {'h1', 'h2'}:
+        while sibling and sibling.name not in {'h1', 'h2', 'h3'}:
             content.append(str(sibling))
             sibling = sibling.find_next_sibling()
 
         section_html = ''.join(content)
 
+        section_soup = BeautifulSoup(section_html, 'html.parser')
+        section_plain_text = section_soup.get_text(' ', strip=True)
+
         # Create anchor URL
         anchor_url: str = f'{page.abs_url}#{heading_id}' if heading_id else page.abs_url or ''
 
+        record_title = title
+
+        if current_heading.name == 'h2':
+            record_title = f'{title} - {section_title}'
+        elif current_heading.name == 'h3':
+            previous_heading = current_heading.find_previous(['h1', 'h2'])
+            record_title = f'{title} - {previous_heading.get_text()} - {section_title}'
+
+        # print(f'Adding record {record_title}, {rank}, {current_heading.name}')
         # Create record for this section
         records.append(
             AlgoliaRecord(
-                content=section_html,
+                content=section_plain_text,
                 pageID=title,
                 abs_url=anchor_url,
-                title=f'{title} - {section_title}',
+                title=record_title,
                 objectID=anchor_url,
+                rank=rank,
             )
         )
+
+        rank -= 5
 
     return html
 
@@ -132,6 +157,16 @@ def algolia_upload() -> None:
     print(f'Uploading {len(filtered_records)} out of {len(all_records)} records to Algolia...')
 
     client.clear_objects(index_name=ALGOLIA_INDEX_NAME)
+    client.set_settings(
+        index_name=ALGOLIA_INDEX_NAME,
+        index_settings={
+            'searchableAttributes': ['title', 'content'],
+            'attributesToSnippet': ['content:40'],
+            'customRanking': [
+                'desc(rank)',
+            ],
+        },
+    )
 
     client.batch(
         index_name=ALGOLIA_INDEX_NAME,
