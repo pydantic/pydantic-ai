@@ -277,7 +277,7 @@ async def application_code(prompt: str) -> str:  # (3)!
 
 _(This example is complete, it can be run "as is")_
 
-```python {title="test_joke_app.py" hl_lines="10-12" call_name="test_application_code"}
+```python {title="test_joke_app.py" hl_lines="10-12" call_name="test_application_code" py="3.10"}
 from joke_app import MyDeps, application_code, joke_agent
 
 
