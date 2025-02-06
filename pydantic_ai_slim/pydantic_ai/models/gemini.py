@@ -57,7 +57,7 @@ See [the Gemini API docs](https://ai.google.dev/gemini-api/docs/models/gemini#mo
 class GeminiModelSettings(ModelSettings):
     """Settings used for a Gemini model request."""
 
-    # This class is a placeholder for any future gemini-specific settings
+    gemini_safety_settings: list[GeminiSafetySettings]
 
 
 @dataclass(init=False)
@@ -192,6 +192,8 @@ class GeminiModel(Model):
                 generation_config['presence_penalty'] = presence_penalty
             if (frequency_penalty := model_settings.get('frequency_penalty')) is not None:
                 generation_config['frequency_penalty'] = frequency_penalty
+            if (gemini_safety_settings := model_settings.get('gemini_safety_settings')) != []:
+                request_data['safety_settings'] = gemini_safety_settings
         if generation_config:
             request_data['generation_config'] = generation_config
 
@@ -220,6 +222,11 @@ class GeminiModel(Model):
     def _process_response(self, response: _GeminiResponse) -> ModelResponse:
         if len(response['candidates']) != 1:
             raise UnexpectedModelBehavior('Expected exactly one candidate in Gemini response')
+        if 'content' not in response['candidates'][0]:
+            if response['candidates'][0].get('finish_reason') == 'SAFETY':
+                raise UnexpectedModelBehavior('Safety settings triggered', str(response))
+            else:
+                raise UnexpectedModelBehavior('Content field missing from Gemini response', str(response))
         parts = response['candidates'][0]['content']['parts']
         return _process_response_from_parts(parts, model_name=self.model_name)
 
@@ -237,7 +244,7 @@ class GeminiModel(Model):
             )
             if responses:
                 last = responses[-1]
-                if last['candidates'] and last['candidates'][0]['content']['parts']:
+                if last['candidates'] and last['candidates'][0].get('content', {}).get('parts'):
                     start_response = last
                     break
 
@@ -310,6 +317,8 @@ class GeminiStreamedResponse(StreamedResponse):
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         async for gemini_response in self._get_gemini_responses():
             candidate = gemini_response['candidates'][0]
+            if 'content' not in candidate:
+                raise UnexpectedModelBehavior('Streamed response has no content field')
             gemini_part: _GeminiPartUnion
             for gemini_part in candidate['content']['parts']:
                 if 'text' in gemini_part:
@@ -383,6 +392,7 @@ class _GeminiRequest(TypedDict):
     contents: list[_GeminiContent]
     tools: NotRequired[_GeminiTools]
     tool_config: NotRequired[_GeminiToolConfig]
+    safety_settings: NotRequired[list[GeminiSafetySettings]]
     # we don't implement `generationConfig`, instead we use a named tool for the response
     system_instruction: NotRequired[_GeminiTextContent]
     """
@@ -390,6 +400,38 @@ class _GeminiRequest(TypedDict):
     <https://ai.google.dev/gemini-api/docs/system-instructions?lang=rest>
     """
     generation_config: NotRequired[_GeminiGenerationConfig]
+
+
+class GeminiSafetySettings(TypedDict):
+    """Safety settings options for Gemini model request.
+
+    See [Gemini API docs](https://ai.google.dev/gemini-api/docs/safety-settings) for safety category and threshold descriptions.
+    For an example on how to use `GeminiSafetySettings`, see [here](../../agents.md#model-specific-settings).
+    """
+
+    category: Literal[
+        'HARM_CATEGORY_UNSPECIFIED',
+        'HARM_CATEGORY_HARASSMENT',
+        'HARM_CATEGORY_HATE_SPEECH',
+        'HARM_CATEGORY_SEXUALLY_EXPLICIT',
+        'HARM_CATEGORY_DANGEROUS_CONTENT',
+        'HARM_CATEGORY_CIVIC_INTEGRITY',
+    ]
+    """
+    Safety settings category.
+    """
+
+    threshold: Literal[
+        'HARM_BLOCK_THRESHOLD_UNSPECIFIED',
+        'BLOCK_LOW_AND_ABOVE',
+        'BLOCK_MEDIUM_AND_ABOVE',
+        'BLOCK_ONLY_HIGH',
+        'BLOCK_NONE',
+        'OFF',
+    ]
+    """
+    Safety settings threshold.
+    """
 
 
 class _GeminiGenerationConfig(TypedDict, total=False):
@@ -568,8 +610,8 @@ class _GeminiResponse(TypedDict):
 class _GeminiCandidates(TypedDict):
     """See <https://ai.google.dev/api/generate-content#v1beta.Candidate>."""
 
-    content: _GeminiContent
-    finish_reason: NotRequired[Annotated[Literal['STOP', 'MAX_TOKENS'], pydantic.Field(alias='finishReason')]]
+    content: NotRequired[_GeminiContent]
+    finish_reason: NotRequired[Annotated[Literal['STOP', 'MAX_TOKENS', 'SAFETY'], pydantic.Field(alias='finishReason')]]
     """
     See <https://ai.google.dev/api/generate-content#FinishReason>, lots of other values are possible,
     but let's wait until we see them and know what they mean to add them here.
@@ -617,6 +659,7 @@ class _GeminiSafetyRating(TypedDict):
         'HARM_CATEGORY_CIVIC_INTEGRITY',
     ]
     probability: Literal['NEGLIGIBLE', 'LOW', 'MEDIUM', 'HIGH']
+    blocked: NotRequired[bool]
 
 
 class _GeminiPromptFeedback(TypedDict):

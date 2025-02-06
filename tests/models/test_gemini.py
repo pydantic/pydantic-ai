@@ -28,6 +28,7 @@ from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.gemini import (
     ApiKeyAuth,
     GeminiModel,
+    GeminiModelSettings,
     _content_model_response,
     _function_call_part_from_call,
     _gemini_response_ta,
@@ -37,6 +38,7 @@ from pydantic_ai.models.gemini import (
     _GeminiFunction,
     _GeminiFunctionCallingConfig,
     _GeminiResponse,
+    _GeminiSafetyRating,
     _GeminiTextPart,
     _GeminiToolConfig,
     _GeminiTools,
@@ -863,5 +865,92 @@ async def test_model_settings(client_with_handler: ClientWithHandler, env: TestE
             'presence_penalty': 0.3,
             'frequency_penalty': 0.4,
         },
+    )
+    assert result.data == 'world'
+
+
+def gemini_no_content_response(
+    safety_ratings: list[_GeminiSafetyRating], finish_reason: Literal['SAFETY'] | None = 'SAFETY'
+) -> _GeminiResponse:
+    candidate = _GeminiCandidates(safety_ratings=safety_ratings)
+    if finish_reason:
+        candidate['finish_reason'] = finish_reason
+    return _GeminiResponse(candidates=[candidate], usage_metadata=example_usage())
+
+
+async def test_safety_settings_unsafe(
+    client_with_handler: ClientWithHandler, env: TestEnv, allow_model_requests: None
+) -> None:
+    try:
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            safety_settings = json.loads(request.content)['safety_settings']
+            assert safety_settings == [
+                {'category': 'HARM_CATEGORY_CIVIC_INTEGRITY', 'threshold': 'BLOCK_LOW_AND_ABOVE'},
+                {'category': 'HARM_CATEGORY_DANGEROUS_CONTENT', 'threshold': 'BLOCK_LOW_AND_ABOVE'},
+            ]
+
+            return httpx.Response(
+                200,
+                content=_gemini_response_ta.dump_json(
+                    gemini_no_content_response(
+                        finish_reason='SAFETY',
+                        safety_ratings=[
+                            {'category': 'HARM_CATEGORY_HARASSMENT', 'probability': 'MEDIUM', 'blocked': True}
+                        ],
+                    ),
+                    by_alias=True,
+                ),
+                headers={'Content-Type': 'application/json'},
+            )
+
+        gemini_client = client_with_handler(handler)
+        m = GeminiModel('gemini-1.5-flash', http_client=gemini_client, api_key='mock')
+        agent = Agent(m)
+
+        await agent.run(
+            'a request for something rude',
+            model_settings=GeminiModelSettings(
+                gemini_safety_settings=[
+                    {'category': 'HARM_CATEGORY_CIVIC_INTEGRITY', 'threshold': 'BLOCK_LOW_AND_ABOVE'},
+                    {'category': 'HARM_CATEGORY_DANGEROUS_CONTENT', 'threshold': 'BLOCK_LOW_AND_ABOVE'},
+                ]
+            ),
+        )
+    except UnexpectedModelBehavior as e:
+        assert repr(e) == "UnexpectedModelBehavior('Safety settings triggered')"
+
+
+async def test_safety_settings_safe(
+    client_with_handler: ClientWithHandler, env: TestEnv, allow_model_requests: None
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        safety_settings = json.loads(request.content)['safety_settings']
+        assert safety_settings == [
+            {'category': 'HARM_CATEGORY_CIVIC_INTEGRITY', 'threshold': 'BLOCK_LOW_AND_ABOVE'},
+            {'category': 'HARM_CATEGORY_DANGEROUS_CONTENT', 'threshold': 'BLOCK_LOW_AND_ABOVE'},
+        ]
+
+        return httpx.Response(
+            200,
+            content=_gemini_response_ta.dump_json(
+                gemini_response(_content_model_response(ModelResponse(parts=[TextPart('world')]))),
+                by_alias=True,
+            ),
+            headers={'Content-Type': 'application/json'},
+        )
+
+    gemini_client = client_with_handler(handler)
+    m = GeminiModel('gemini-1.5-flash', http_client=gemini_client, api_key='mock')
+    agent = Agent(m)
+
+    result = await agent.run(
+        'hello',
+        model_settings=GeminiModelSettings(
+            gemini_safety_settings=[
+                {'category': 'HARM_CATEGORY_CIVIC_INTEGRITY', 'threshold': 'BLOCK_LOW_AND_ABOVE'},
+                {'category': 'HARM_CATEGORY_DANGEROUS_CONTENT', 'threshold': 'BLOCK_LOW_AND_ABOVE'},
+            ]
+        ),
     )
     assert result.data == 'world'
