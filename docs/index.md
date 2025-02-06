@@ -78,7 +78,7 @@ Not very interesting yet, but we can easily add "tools", dynamic system prompts,
 
 Here is a concise example using PydanticAI to build a support agent for a bank:
 
-```python {title="bank_support.py"}
+```python {title="bank_support.py" py="3.10"}
 from dataclasses import dataclass
 
 from pydantic import BaseModel, Field

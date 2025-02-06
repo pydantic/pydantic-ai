@@ -54,7 +54,7 @@ _(This example is complete, it can be run "as is" — you'll need to add `asynci
 Dependencies are accessed through the [`RunContext`][pydantic_ai.tools.RunContext] type, this should be the first parameter of system prompt functions etc.
 
 
-```python {title="system_prompt_dependencies.py" hl_lines="20-27"}
+```python {title="system_prompt_dependencies.py" hl_lines="20-27" py="3.10"}
 from dataclasses import dataclass
 
 import httpx
@@ -112,7 +112,7 @@ to use `async` methods where dependencies perform IO, although synchronous depen
 
 Here's the same example as above, but with a synchronous dependency:
 
-```python {title="sync_dependencies.py"}
+```python {title="sync_dependencies.py" py="3.10"}
 from dataclasses import dataclass
 
 import httpx
@@ -160,7 +160,7 @@ _(This example is complete, it can be run "as is" — you'll need to add `asynci
 
 As well as system prompts, dependencies can be used in [tools](tools.md) and [result validators](results.md#result-validators-functions).
 
-```python {title="full_example.py" hl_lines="27-35 38-48"}
+```python {title="full_example.py" hl_lines="27-35 38-48" py="3.10"}
 from dataclasses import dataclass
 
 import httpx
@@ -233,7 +233,7 @@ while calling application code which in turn calls the agent.
 
 This is done via the [`override`][pydantic_ai.Agent.override] method on the agent.
 
-```python {title="joke_app.py"}
+```python {title="joke_app.py" py="3.10"}
 from dataclasses import dataclass
 
 import httpx

@@ -299,7 +299,7 @@ The system prompt is the developer's primary tool in controlling an agent's beha
 
 Let's assume we have the following app for running SQL generated from a user prompt (this examples omits a lot of details for brevity, see the [SQL gen](examples/sql-gen.md) example for a more complete code):
 
-```python {title="sql_app.py"}
+```python {title="sql_app.py" py="3.10"}
 import json
 from pathlib import Path
 from typing import Union
