@@ -220,10 +220,16 @@ try:
     result = agent.run_sync(
         'Write a list of 5 very rude things that I might say to the universe after stubbing my toe in the dark:',
         model_settings=GeminiModelSettings(
-            temperature = 0.0, # general model settings can also be specified
+            temperature=0.0,  # general model settings can also be specified
             gemini_safety_settings=[
-                {'category': 'HARM_CATEGORY_HARASSMENT', 'threshold': 'BLOCK_LOW_AND_ABOVE'},
-                {'category': 'HARM_CATEGORY_HATE_SPEECH', 'threshold': 'BLOCK_LOW_AND_ABOVE'}
+                {
+                    'category': 'HARM_CATEGORY_HARASSMENT',
+                    'threshold': 'BLOCK_LOW_AND_ABOVE',
+                },
+                {
+                    'category': 'HARM_CATEGORY_HATE_SPEECH',
+                    'threshold': 'BLOCK_LOW_AND_ABOVE',
+                },
             ],
         ),
     )
