@@ -72,10 +72,10 @@ ToolParams = ParamSpec('ToolParams', default=...)
 """Retrieval function param spec."""
 
 SystemPromptFunc = Union[
-    Callable[[RunContext[AgentDepsT]], str],
-    Callable[[RunContext[AgentDepsT]], Awaitable[str]],
-    Callable[[], str],
-    Callable[[], Awaitable[str]],
+    Callable[[RunContext[AgentDepsT]], str | None],
+    Callable[[RunContext[AgentDepsT]], Awaitable[str | None]],
+    Callable[[], str | None],
+    Callable[[], Awaitable[str | None]],
 ]
 """A function that may or maybe not take `RunContext` as an argument, and may or may not be async.
 
