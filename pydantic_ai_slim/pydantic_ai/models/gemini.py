@@ -216,7 +216,7 @@ class GeminiAgentModel(AgentModel):
                 generation_config['presence_penalty'] = presence_penalty
             if (frequency_penalty := model_settings.get('frequency_penalty')) is not None:
                 generation_config['frequency_penalty'] = frequency_penalty
-            if (gemini_safety_settings := model_settings.get('gemini_safety_settings')) is not None:
+            if (gemini_safety_settings := model_settings.get('gemini_safety_settings')) != []:
                 request_data['safety_settings'] = gemini_safety_settings
         if generation_config:
             request_data['generation_config'] = generation_config
@@ -268,7 +268,11 @@ class GeminiAgentModel(AgentModel):
             )
             if responses:
                 last = responses[-1]
-                if last['candidates'] and last['candidates'][0]['content']['parts']:
+                if (
+                    last['candidates']
+                    and ('content' in last['candidates'][0])
+                    and last['candidates'][0]['content']['parts']
+                ):
                     start_response = last
                     break
 
@@ -324,6 +328,8 @@ class GeminiStreamedResponse(StreamedResponse):
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         async for gemini_response in self._get_gemini_responses():
             candidate = gemini_response['candidates'][0]
+            if 'content' not in candidate:
+                raise UnexpectedModelBehavior('Streamed response has no content field')
             gemini_part: _GeminiPartUnion
             for gemini_part in candidate['content']['parts']:
                 if 'text' in gemini_part:
