@@ -75,7 +75,7 @@ agent = Agent(
 
 
 @agent.system_prompt  # (1)!
-async def get_system_prompt(ctx: RunContext[MyDeps]) -> str:  # (2)!
+async def get_system_prompt(ctx: RunContext[MyDeps]) -> str | None:  # (2)!
     response = await ctx.deps.http_client.get(  # (3)!
         'https://example.com',
         headers={'Authorization': f'Bearer {ctx.deps.api_key}'},  # (4)!
@@ -133,7 +133,7 @@ agent = Agent(
 
 
 @agent.system_prompt
-def get_system_prompt(ctx: RunContext[MyDeps]) -> str:  # (2)!
+def get_system_prompt(ctx: RunContext[MyDeps]) -> str | None:  # (2)!
     response = ctx.deps.http_client.get(
         'https://example.com', headers={'Authorization': f'Bearer {ctx.deps.api_key}'}
     )
@@ -181,7 +181,7 @@ agent = Agent(
 
 
 @agent.system_prompt
-async def get_system_prompt(ctx: RunContext[MyDeps]) -> str:
+async def get_system_prompt(ctx: RunContext[MyDeps]) -> str | None:
     response = await ctx.deps.http_client.get('https://example.com')
     response.raise_for_status()
     return f'Prompt: {response.text}'
@@ -256,7 +256,7 @@ joke_agent = Agent('openai:gpt-4o', deps_type=MyDeps)
 
 
 @joke_agent.system_prompt
-async def get_system_prompt(ctx: RunContext[MyDeps]) -> str:
+async def get_system_prompt(ctx: RunContext[MyDeps]) -> str | None:
     return await ctx.deps.system_prompt_factory()  # (2)!
 
 

@@ -111,7 +111,7 @@ support_agent = Agent(  # (1)!
 
 
 @support_agent.system_prompt  # (5)!
-async def add_customer_name(ctx: RunContext[SupportDependencies]) -> str:
+async def add_customer_name(ctx: RunContext[SupportDependencies]) -> str | None:
     customer_name = await ctx.deps.db.customer_name(id=ctx.deps.customer_id)
     return f"The customer's name is {customer_name!r}"
 

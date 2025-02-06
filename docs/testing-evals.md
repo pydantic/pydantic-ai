@@ -352,7 +352,7 @@ sql_agent = Agent(
 
 
 @sql_agent.system_prompt
-async def system_prompt(ctx: RunContext[SqlSystemPrompt]) -> str:
+async def system_prompt(ctx: RunContext[SqlSystemPrompt]) -> str | None:
     return ctx.deps.build_prompt()
 
 

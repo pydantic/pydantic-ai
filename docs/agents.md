@@ -289,7 +289,7 @@ agent = Agent(
 
 
 @agent.system_prompt
-def add_user_name(ctx: RunContext[str]) -> str:  # (2)!
+def add_user_name(ctx: RunContext[str]) -> str | None:  # (2)!
     return f"The user's name is {ctx.deps}."
 
 
@@ -309,7 +309,7 @@ Running `mypy` on this will give the following output:
 
 ```bash
 ➤ uv run mypy type_mistakes.py
-type_mistakes.py:18: error: Argument 1 to "system_prompt" of "Agent" has incompatible type "Callable[[RunContext[str]], str]"; expected "Callable[[RunContext[User]], str]"  [arg-type]
+type_mistakes.py:18: error: Argument 1 to "system_prompt" of "Agent" has incompatible type "Callable[[RunContext[str]], str | None]"; expected "Callable[[RunContext[User]], str | None]"  [arg-type]
 type_mistakes.py:28: error: Argument 1 to "foobar" has incompatible type "bool"; expected "bytes"  [arg-type]
 Found 2 errors in 1 file (checked 1 source file)
 ```
@@ -326,6 +326,7 @@ Generally, system prompts fall into two categories:
 2. **Dynamic system prompts**: These depend in some way on context that isn't known until runtime, and should be defined via functions decorated with [`@agent.system_prompt`][pydantic_ai.Agent.system_prompt].
 
 You can add both to a single agent; they're appended in the order they're defined at runtime.
+If a dynamic system prompt function returns `None`, or any empty value, its prompt part won't be added to the messages.
 
 Here's an example using both types of system prompts:
 
@@ -342,12 +343,12 @@ agent = Agent(
 
 
 @agent.system_prompt  # (3)!
-def add_the_users_name(ctx: RunContext[str]) -> str:
+def add_the_users_name(ctx: RunContext[str]) -> str | None:
     return f"The user's name is {ctx.deps}."
 
 
 @agent.system_prompt
-def add_the_date() -> str:  # (4)!
+def add_the_date() -> str | None:  # (4)!
     return f'The date is {date.today()}.'
 
 
