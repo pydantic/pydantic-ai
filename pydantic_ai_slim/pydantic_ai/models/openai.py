@@ -78,8 +78,8 @@ class OpenAIModel(Model):
     client: AsyncOpenAI = field(repr=False)
     system_prompt_role: OpenAISystemPromptRole | None = field(default=None)
 
-    _model_name: OpenAIModelName
-    _system: str | None
+    _model_name: OpenAIModelName = field(repr=False)
+    _system: str | None = field(repr=False)
 
     def __init__(
         self,

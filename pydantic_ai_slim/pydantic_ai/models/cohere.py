@@ -90,8 +90,8 @@ class CohereModel(Model):
 
     client: AsyncClientV2 = field(repr=False)
 
-    _model_name: CohereModelName
-    _system: str | None = 'cohere'
+    _model_name: CohereModelName = field(repr=False)
+    _system: str | None = field(default='cohere', repr=False)
 
     def __init__(
         self,

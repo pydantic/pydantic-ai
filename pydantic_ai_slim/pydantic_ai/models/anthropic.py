@@ -103,8 +103,8 @@ class AnthropicModel(Model):
 
     client: AsyncAnthropic = field(repr=False)
 
-    _model_name: AnthropicModelName
-    _system: str | None = 'anthropic'
+    _model_name: AnthropicModelName = field(repr=False)
+    _system: str | None = field(default='anthropic', repr=False)
 
     def __init__(
         self,

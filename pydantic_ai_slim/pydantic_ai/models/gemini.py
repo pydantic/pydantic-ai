@@ -72,12 +72,12 @@ class GeminiModel(Model):
     Apart from `__init__`, all methods are private or match those of the base class.
     """
 
-    http_client: AsyncHTTPClient
+    http_client: AsyncHTTPClient = field(repr=False)
 
-    _model_name: GeminiModelName
-    _system: str | None = 'google-gla'
-    _auth: AuthProtocol | None
-    _url: str | None
+    _model_name: GeminiModelName = field(repr=False)
+    _auth: AuthProtocol | None = field(repr=False)
+    _url: str | None = field(repr=False)
+    _system: str | None = field(default='google-gla', repr=False)
 
     def __init__(
         self,

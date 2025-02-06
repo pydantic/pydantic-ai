@@ -83,8 +83,8 @@ class GroqModel(Model):
 
     client: AsyncGroq = field(repr=False)
 
-    _model_name: GroqModelName
-    _system: str | None = 'groq'
+    _model_name: GroqModelName = field(repr=False)
+    _system: str | None = field(default='groq', repr=False)
 
     def __init__(
         self,

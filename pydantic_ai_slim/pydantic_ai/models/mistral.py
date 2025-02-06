@@ -102,8 +102,8 @@ class MistralModel(Model):
     client: Mistral = field(repr=False)
     json_mode_schema_prompt: str = """Answer in JSON Object, respect the format:\n```\n{schema}\n```\n"""
 
-    _model_name: MistralModelName
-    _system: str | None = 'mistral'
+    _model_name: MistralModelName = field(repr=False)
+    _system: str | None = field(default='mistral', repr=False)
 
     def __init__(
         self,

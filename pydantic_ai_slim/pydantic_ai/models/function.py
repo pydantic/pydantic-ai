@@ -40,8 +40,8 @@ class FunctionModel(Model):
     function: FunctionDef | None = None
     stream_function: StreamFunctionDef | None = None
 
-    _model_name: str
-    _system: str | None = None
+    _model_name: str = field(repr=False)
+    _system: str | None = field(default=None, repr=False)
 
     @overload
     def __init__(self, function: FunctionDef) -> None: ...
