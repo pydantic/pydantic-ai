@@ -37,6 +37,7 @@ from pydantic_ai.models.gemini import (
     _GeminiFunction,
     _GeminiFunctionCallingConfig,
     _GeminiResponse,
+    _GeminiSafetyRating,
     _GeminiTextPart,
     _GeminiToolConfig,
     _GeminiTools,
@@ -856,6 +857,15 @@ async def test_model_settings(client_with_handler: ClientWithHandler, env: TestE
     assert result.data == 'world'
 
 
+def gemini_no_content_response(
+    safety_ratings: list[_GeminiSafetyRating], finish_reason: Literal['SAFETY'] | None = 'SAFETY'
+) -> _GeminiResponse:
+    candidate = _GeminiCandidates(safety_ratings=safety_ratings)
+    if finish_reason:
+        candidate['finish_reason'] = finish_reason
+    return _GeminiResponse(candidates=[candidate], usage_metadata=example_usage())
+
+
 async def test_safety_settings_unsafe(
     client_with_handler: ClientWithHandler, env: TestEnv, allow_model_requests: None
 ) -> None:
@@ -871,16 +881,13 @@ async def test_safety_settings_unsafe(
             return httpx.Response(
                 200,
                 content=_gemini_response_ta.dump_json(
-                    _GeminiResponse(
-                        candidates=[
-                            _GeminiCandidates(
-                                finish_reason='SAFETY',
-                                safety_ratings=[
-                                    {'category': 'HARM_CATEGORY_HARASSMENT', 'probability': 'MEDIUM', 'blocked': True}
-                                ],
-                            )
-                        ]
-                    )
+                    gemini_no_content_response(
+                        finish_reason='SAFETY',
+                        safety_ratings=[
+                            {'category': 'HARM_CATEGORY_HARASSMENT', 'probability': 'MEDIUM', 'blocked': True}
+                        ],
+                    ),
+                    by_alias=True,
                 ),
                 headers={'Content-Type': 'application/json'},
             )
@@ -898,12 +905,8 @@ async def test_safety_settings_unsafe(
                 ]
             ),
         )
-    except UnicodeDecodeError:
-        pass
-    # except UnexpectedModelBehavior:
-    #     pass
-    # else:
-    #     assert False
+    except UnexpectedModelBehavior as e:
+        assert repr(e) == "UnexpectedModelBehavior('Safety settings triggered')"
 
 
 async def test_safety_settings_safe(
