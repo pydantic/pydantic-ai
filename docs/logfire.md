@@ -91,11 +91,37 @@ Instrumentation is as easy as adding the following three lines to your applicati
 ```py {title="instrument_httpx.py" test="skip" lint="skip"}
 ...
 import logfire
-logfire.configure()  # (1)!
-logfire.instrument_httpx()  # (2)!
+logfire.configure()
+logfire.instrument_httpx(capture_all=True)
 ...
 ```
+
+In particular, this can help you to trace specific requests, responses, and headers which might be of particular interest if you're using a custom `httpx` client in your model:
+
+```py {title="instrument_httpx_example.py", test="skip" lint="skip"}
+import logfire
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIModel
+from httpx import AsyncClient, Timeout
+
+logfire.configure()
+logfire.instrument_httpx(capture_all=True)  # (1)!
+
+httpx_client = AsyncClient(timeout=Timeout(timeout=1000, connect=5))
+openai_model = OpenAIModel('gpt-4o', http_client=httpx_client)
+
+agent = Agent(openai_model)
+result = agent.run_sync('What is the capital of France?')
+print(result.data)
+#> The capital of France is Paris.
 ```
 
-In particular, this can help you to trace specific requests, responses, and headers which might be of particular interest
-if you're using a custom `httpx` client in your model.
+1. Capture headers, request body, response body, etc.
+
+=== "With `httpx` instrumentation"
+
+    ![Logfire with HTTPX instrumentation](img/logfire-with-httpx.png)
+
+=== "Without `httpx` instrumentation"
+
+    ![Logfire without HTTPX instrumentation](img/logfire-without-httpx.png)
