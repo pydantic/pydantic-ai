@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING, Literal
 
 from httpx import Timeout
 from typing_extensions import TypedDict
+
 from pydantic_ai.exceptions import UserError
 
 if TYPE_CHECKING:
@@ -195,8 +196,8 @@ def validate_model_settings(settings: ModelSettings) -> None:
     invalid_params = set(settings.keys()) - valid_params
     if invalid_params:
         raise UserError(
-            f"Invalid model setting parameter(s): {', '.join(sorted(invalid_params))}. "
-            f"Valid parameters are: {', '.join(sorted(valid_params))}"
+            f'Invalid model setting parameter(s): {", ".join(sorted(invalid_params))}. '
+            f'Valid parameters are: {", ".join(sorted(valid_params))}'
         )
 
 

@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Annotated, Any, Literal, Protocol, Union, cast
+from typing import Annotated, Any, Literal, Protocol, Union
 from uuid import uuid4
 
 import pydantic
@@ -28,7 +28,7 @@ from ..messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from ..settings import ModelSettings
+from ..settings import GeminiSafetySettings, ModelSettings
 from ..tools import ToolDefinition
 from . import (
     Model,
@@ -57,12 +57,6 @@ Since Gemini supports a variety of date-stamped models, we explicitly list the l
 allow any name in the type hints.
 See [the Gemini API docs](https://ai.google.dev/gemini-api/docs/models/gemini#model-variations) for a full list.
 """
-
-
-class GeminiModelSettings(ModelSettings):
-    """Settings used for a Gemini model request."""
-
-    gemini_safety_settings: list[GeminiSafetySettings]
 
 
 @dataclass(init=False)
@@ -128,9 +122,7 @@ class GeminiModel(Model):
         model_request_parameters: ModelRequestParameters,
     ) -> tuple[ModelResponse, usage.Usage]:
         check_allow_model_requests()
-        async with self._make_request(
-            messages, False, cast(GeminiModelSettings, model_settings or {}), model_request_parameters
-        ) as http_response:
+        async with self._make_request(messages, False, model_settings or {}, model_request_parameters) as http_response:
             response = _gemini_response_ta.validate_json(await http_response.aread())
         return self._process_response(response), _metadata_as_usage(response)
 
@@ -142,9 +134,7 @@ class GeminiModel(Model):
         model_request_parameters: ModelRequestParameters,
     ) -> AsyncIterator[StreamedResponse]:
         check_allow_model_requests()
-        async with self._make_request(
-            messages, True, cast(GeminiModelSettings, model_settings or {}), model_request_parameters
-        ) as http_response:
+        async with self._make_request(messages, True, model_settings or {}, model_request_parameters) as http_response:
             yield await self._process_streamed_response(http_response)
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> _GeminiTools | None:
@@ -168,7 +158,7 @@ class GeminiModel(Model):
         self,
         messages: list[ModelMessage],
         streamed: bool,
-        model_settings: GeminiModelSettings,
+        model_settings: ModelSettings,
         model_request_parameters: ModelRequestParameters,
     ) -> AsyncIterator[HTTPResponse]:
         tools = self._get_tools(model_request_parameters)
@@ -195,8 +185,9 @@ class GeminiModel(Model):
                 generation_config['presence_penalty'] = presence_penalty
             if (frequency_penalty := model_settings.get('frequency_penalty')) is not None:
                 generation_config['frequency_penalty'] = frequency_penalty
-            if (gemini_safety_settings := model_settings.get('gemini_safety_settings')) != []:
-                request_data['safety_settings'] = gemini_safety_settings
+            if (gemini_safety_settings := model_settings.get('gemini_safety_settings')) is not None:
+                if gemini_safety_settings:  # Only set if non-empty list
+                    request_data['safety_settings'] = gemini_safety_settings
         if generation_config:
             request_data['generation_config'] = generation_config
 
@@ -403,38 +394,6 @@ class _GeminiRequest(TypedDict):
     <https://ai.google.dev/gemini-api/docs/system-instructions?lang=rest>
     """
     generation_config: NotRequired[_GeminiGenerationConfig]
-
-
-class GeminiSafetySettings(TypedDict):
-    """Safety settings options for Gemini model request.
-
-    See [Gemini API docs](https://ai.google.dev/gemini-api/docs/safety-settings) for safety category and threshold descriptions.
-    For an example on how to use `GeminiSafetySettings`, see [here](../../agents.md#model-specific-settings).
-    """
-
-    category: Literal[
-        'HARM_CATEGORY_UNSPECIFIED',
-        'HARM_CATEGORY_HARASSMENT',
-        'HARM_CATEGORY_HATE_SPEECH',
-        'HARM_CATEGORY_SEXUALLY_EXPLICIT',
-        'HARM_CATEGORY_DANGEROUS_CONTENT',
-        'HARM_CATEGORY_CIVIC_INTEGRITY',
-    ]
-    """
-    Safety settings category.
-    """
-
-    threshold: Literal[
-        'HARM_BLOCK_THRESHOLD_UNSPECIFIED',
-        'BLOCK_LOW_AND_ABOVE',
-        'BLOCK_MEDIUM_AND_ABOVE',
-        'BLOCK_ONLY_HIGH',
-        'BLOCK_NONE',
-        'OFF',
-    ]
-    """
-    Safety settings threshold.
-    """
 
 
 class _GeminiGenerationConfig(TypedDict, total=False):
