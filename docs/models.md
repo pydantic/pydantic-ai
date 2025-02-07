@@ -516,15 +516,22 @@ Then run your code, here's a minimal example:
 from pydantic import BaseModel
 
 from pydantic_ai import Agent
-from pydantic_ai.models.openai import OpenAIModel
-
+from pydantic_ai.models.openai import OpenAIModel, AsyncOpenAI
 
 class CityLocation(BaseModel):
     city: str
     country: str
 
+client = AsyncOpenAI(
+    base_url='http://localhost:11434/v1',
+    api_key='ollama_api_key',
+)
+# Create the agent
+ollama_model = OpenAIModel(
+    model_name='llama3.2',
+    openai_client=client,
+)
 
-ollama_model = OpenAIModel(model_name='llama3.2', base_url='http://localhost:11434/v1')
 agent = Agent(ollama_model, result_type=CityLocation)
 
 result = agent.run_sync('Where were the olympics held in 2012?')
