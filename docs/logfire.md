@@ -92,31 +92,29 @@ Instrumentation is as easy as adding the following three lines to your applicati
 ...
 import logfire
 logfire.configure()
-logfire.instrument_httpx(capture_all=True)
+logfire.instrument_httpx(capture_all=True)  # (1)!
 ...
 ```
 
-In particular, this can help you to trace specific requests, responses, and headers which might be of particular interest if you're using a custom `httpx` client in your model:
+See the [logfire docs](https://logfire.pydantic.dev/docs/integrations/http-clients/httpx/) for more `httpx` instrumentation details.
+
+In particular, this can help you to trace specific requests, responses, and headers:
 
 ```py {title="instrument_httpx_example.py", test="skip" lint="skip"}
 import logfire
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIModel
-from httpx import AsyncClient, Timeout
 
 logfire.configure()
 logfire.instrument_httpx(capture_all=True)  # (1)!
 
-httpx_client = AsyncClient(timeout=Timeout(timeout=1000, connect=5))
-openai_model = OpenAIModel('gpt-4o', http_client=httpx_client)
-
-agent = Agent(openai_model)
+agent = Agent('openai:gpt-4o')
 result = agent.run_sync('What is the capital of France?')
 print(result.data)
 #> The capital of France is Paris.
 ```
 
-1. Capture headers, request body, response body, etc.
+1. Capture all of headers, request body, and response body.
 
 === "With `httpx` instrumentation"
 
@@ -125,3 +123,6 @@ print(result.data)
 === "Without `httpx` instrumentation"
 
     ![Logfire without HTTPX instrumentation](img/logfire-without-httpx.png)
+
+!!! tip
+    `httpx` instrumentation might be of particular utility if you're using a custom `httpx` client in your model in order to get insights into your custom behaviors.
