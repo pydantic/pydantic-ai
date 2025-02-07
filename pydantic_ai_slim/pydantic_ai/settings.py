@@ -1,12 +1,26 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from httpx import Timeout
 from typing_extensions import TypedDict
+from pydantic_ai.exceptions import UserError
 
 if TYPE_CHECKING:
     pass
+
+
+class GeminiSafetySettings(TypedDict):
+    """Settings for Gemini safety features."""
+
+    category: Literal[
+        'HARM_CATEGORY_HARASSMENT',
+        'HARM_CATEGORY_HATE_SPEECH',
+        'HARM_CATEGORY_SEXUALLY_EXPLICIT',
+        'HARM_CATEGORY_DANGEROUS_CONTENT',
+        'HARM_CATEGORY_CIVIC_INTEGRITY',
+    ]
+    threshold: Literal['BLOCK_LOW_AND_ABOVE', 'BLOCK_MEDIUM_AND_ABOVE', 'BLOCK_ONLY_HIGH', 'BLOCK_NONE']
 
 
 class ModelSettings(TypedDict, total=False):
@@ -130,14 +144,74 @@ class ModelSettings(TypedDict, total=False):
     * Groq
     """
 
+    gemini_safety_settings: list[GeminiSafetySettings]
+    """Settings for Gemini safety features."""
+
+    anthropic_metadata: dict[str, str]
+    """An object describing metadata about the request.
+
+    Contains `user_id`, an external identifier for the user who is associated with the request."""
+
+    openai_metadata: dict[str, str]
+    """Metadata for OpenAI requests."""
+
+    cohere_metadata: dict[str, str]
+    """Metadata for Cohere requests."""
+
+    mistral_metadata: dict[str, str]
+    """Metadata for Mistral requests."""
+
+    vertexai_metadata: dict[str, str]
+    """Metadata for VertexAI requests."""
+
+
+def validate_model_settings(settings: ModelSettings) -> None:
+    """Validate model settings to ensure only valid parameters are used.
+
+    Args:
+        settings: Dictionary of model settings to validate
+
+    Raises:
+        UserError: If any invalid parameters are found
+    """
+    valid_params = {
+        'max_tokens',
+        'temperature',
+        'top_p',
+        'timeout',
+        'parallel_tool_calls',
+        'seed',
+        'presence_penalty',
+        'frequency_penalty',
+        'logit_bias',
+        'gemini_safety_settings',
+        'anthropic_metadata',
+        'openai_metadata',
+        'cohere_metadata',
+        'mistral_metadata',
+        'vertexai_metadata',
+    }
+
+    invalid_params = set(settings.keys()) - valid_params
+    if invalid_params:
+        raise UserError(
+            f"Invalid model setting parameter(s): {', '.join(sorted(invalid_params))}. "
+            f"Valid parameters are: {', '.join(sorted(valid_params))}"
+        )
+
 
 def merge_model_settings(base: ModelSettings | None, overrides: ModelSettings | None) -> ModelSettings | None:
     """Merge two sets of model settings, preferring the overrides.
 
     A common use case is: merge_model_settings(<agent settings>, <run settings>)
     """
+    # Validate settings before merging
+    if base:
+        validate_model_settings(base)
+    if overrides:
+        validate_model_settings(overrides)
+
     # Note: we may want merge recursively if/when we add non-primitive values
     if base and overrides:
         return base | overrides
-    else:
-        return base or overrides
+    return base or overrides
