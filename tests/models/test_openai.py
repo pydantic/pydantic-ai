@@ -65,6 +65,11 @@ def test_init_with_base_url():
     m.name()
 
 
+def test_init_with_no_api_key_will_still_setup_client():
+    m = OpenAIModel('llama3.2', base_url='http://localhost:19434/v1')
+    assert str(m.client.base_url) == 'http://localhost:19434/v1/'
+
+
 def test_init_with_non_openai_model():
     m = OpenAIModel('llama3.2-vision:latest', base_url='https://example.com/v1/')
     m.name()

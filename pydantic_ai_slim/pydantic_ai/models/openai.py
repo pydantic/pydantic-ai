@@ -122,7 +122,8 @@ class OpenAIModel(Model):
         # openai compatible models do not always need an API key.
         if api_key is None and 'OPENAI_API_KEY' not in os.environ and base_url is not None and openai_client is None:
             api_key = ''
-        elif openai_client is not None:
+
+        if openai_client is not None:
             assert http_client is None, 'Cannot provide both `openai_client` and `http_client`'
             assert base_url is None, 'Cannot provide both `openai_client` and `base_url`'
             assert api_key is None, 'Cannot provide both `openai_client` and `api_key`'
