@@ -296,7 +296,7 @@ class MistralModel(Model):
                 tool = self._map_mistral_to_pydantic_tool_call(tool_call=tool_call)
                 parts.append(tool)
 
-        return ModelResponse(parts, model_name=self._model_name, timestamp=timestamp)
+        return ModelResponse(parts, model_name=response.model, timestamp=timestamp)
 
     async def _process_streamed_response(
         self,
