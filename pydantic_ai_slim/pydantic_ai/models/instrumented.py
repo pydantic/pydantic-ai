@@ -143,7 +143,7 @@ def _response_bodies(message: ModelResponse) -> list[dict[str, Any]]:
             body.setdefault('tool_calls', []).append(
                 {
                     'id': part.tool_call_id,
-                    'type': 'function',
+                    'type': 'function',  # TODO https://github.com/pydantic/pydantic-ai/issues/888
                     'function': {
                         'name': part.tool_name,
                         'arguments': part.args,
