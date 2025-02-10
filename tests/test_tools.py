@@ -9,7 +9,7 @@ from inline_snapshot import snapshot
 from pydantic import BaseModel, Field
 from pydantic_core import PydanticSerializationError
 
-from pydantic_ai import Agent, RunContext, Tool, UserError
+from pydantic_ai import Agent, RunContext, Tool, UserError, _pydantic
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
@@ -343,6 +343,40 @@ def test_init_tool_plain():
     assert call_args == snapshot([0, 0])
     assert agent_infer._function_tools['plain_tool'].takes_ctx is False
     assert agent_infer._function_tools['plain_tool'].max_retries == 7
+
+
+def test_init_tool_with_function_schema():
+    def x_tool(x: int) -> int:
+        return x
+
+    def y_tool(y: str) -> str:
+        return y
+
+    y_fs = _pydantic.function_schema(
+        y_tool, takes_ctx=False, docstring_format='auto', require_parameter_descriptions=False
+    )
+    agent = Agent('test', tools=[Tool(x_tool, function_schema=y_fs)])
+
+    # make sure the function schema for y_tool is used instead of the default of x_tool.
+    assert 'x' not in agent._function_tools['x_tool']._parameters_json_schema['properties']
+    assert 'y' in agent._function_tools['x_tool']._parameters_json_schema['properties']
+
+
+def test_init_tool_ctx_with_function_schema():
+    def x_tool(ctx: RunContext[int], x: int) -> int:
+        return x
+
+    def y_tool(ctx: RunContext[int], y: str) -> str:
+        return y
+
+    y_fs = _pydantic.function_schema(
+        y_tool, takes_ctx=True, docstring_format='auto', require_parameter_descriptions=False
+    )
+    agent = Agent('test', tools=[Tool(x_tool, function_schema=y_fs, takes_ctx=True)], deps_type=int)
+
+    # make sure the function schema for y_tool is used instead of the default of x_tool.
+    assert 'x' not in agent._function_tools['x_tool']._parameters_json_schema['properties']
+    assert 'y' in agent._function_tools['x_tool']._parameters_json_schema['properties']
 
 
 def ctx_tool(ctx: RunContext[int], x: int) -> int:

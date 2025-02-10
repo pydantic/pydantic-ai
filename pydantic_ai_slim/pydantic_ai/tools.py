@@ -149,6 +149,7 @@ class Tool(Generic[AgentDepsT]):
     max_retries: int | None
     name: str
     description: str
+    function_schema: _pydantic.FunctionSchema | None
     prepare: ToolPrepareFunc[AgentDepsT] | None
     docstring_format: DocstringFormat
     require_parameter_descriptions: bool
@@ -171,6 +172,7 @@ class Tool(Generic[AgentDepsT]):
         max_retries: int | None = None,
         name: str | None = None,
         description: str | None = None,
+        function_schema: _pydantic.FunctionSchema | None = None,
         prepare: ToolPrepareFunc[AgentDepsT] | None = None,
         docstring_format: DocstringFormat = 'auto',
         require_parameter_descriptions: bool = False,
@@ -217,6 +219,7 @@ class Tool(Generic[AgentDepsT]):
             max_retries: Maximum number of retries allowed for this tool, set to the agent default if `None`.
             name: Name of the tool, inferred from the function if `None`.
             description: Description of the tool, inferred from the function if `None`.
+            function_schema: Function schema of the tool, inferred from the function if `None`.
             prepare: custom method to prepare the tool definition for each step, return `None` to omit this
                 tool from a given step. This is useful if you want to customise a tool at call time,
                 or omit it completely from a step. See [`ToolPrepareFunc`][pydantic_ai.tools.ToolPrepareFunc].
@@ -227,7 +230,10 @@ class Tool(Generic[AgentDepsT]):
         if takes_ctx is None:
             takes_ctx = _pydantic.takes_ctx(function)
 
-        f = _pydantic.function_schema(function, takes_ctx, docstring_format, require_parameter_descriptions)
+        f = self.function_schema = function_schema or _pydantic.function_schema(
+            function, takes_ctx, docstring_format, require_parameter_descriptions
+        )
+
         self.function = function
         self.takes_ctx = takes_ctx
         self.max_retries = max_retries
