@@ -3,7 +3,6 @@ from __future__ import annotations
 import pytest
 from dirty_equals import IsJson
 from inline_snapshot import snapshot
-from logfire.testing import CaptureLogfire
 
 from pydantic_ai.messages import (
     ModelMessage,
@@ -20,6 +19,17 @@ from pydantic_ai.models import Model, ModelRequestParameters
 from pydantic_ai.models.instrumented import InstrumentedModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import Usage
+
+from ..conftest import try_import
+
+with try_import() as imports_successful:
+    from logfire.testing import CaptureLogfire
+
+
+pytestmark = [
+    pytest.mark.skipif(not imports_successful(), reason='logfire not installed'),
+    pytest.mark.anyio,
+]
 
 
 class MyModel(Model):
