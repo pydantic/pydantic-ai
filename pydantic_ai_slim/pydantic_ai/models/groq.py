@@ -7,10 +7,11 @@ from datetime import datetime, timezone
 from itertools import chain
 from typing import Literal, Union, cast, overload
 
+from groq import APIStatusError
 from httpx import AsyncClient as AsyncHTTPClient
 from typing_extensions import assert_never
 
-from .. import UnexpectedModelBehavior, _utils, usage
+from .. import ModelStatusError, UnexpectedModelBehavior, _utils, usage
 from .._utils import guard_tool_call_id as _guard_tool_call_id
 from ..messages import (
     ModelMessage,
@@ -184,23 +185,28 @@ class GroqModel(Model):
 
         groq_messages = list(chain(*(self._map_message(m) for m in messages)))
 
-        return await self.client.chat.completions.create(
-            model=str(self._model_name),
-            messages=groq_messages,
-            n=1,
-            parallel_tool_calls=model_settings.get('parallel_tool_calls', NOT_GIVEN),
-            tools=tools or NOT_GIVEN,
-            tool_choice=tool_choice or NOT_GIVEN,
-            stream=stream,
-            max_tokens=model_settings.get('max_tokens', NOT_GIVEN),
-            temperature=model_settings.get('temperature', NOT_GIVEN),
-            top_p=model_settings.get('top_p', NOT_GIVEN),
-            timeout=model_settings.get('timeout', NOT_GIVEN),
-            seed=model_settings.get('seed', NOT_GIVEN),
-            presence_penalty=model_settings.get('presence_penalty', NOT_GIVEN),
-            frequency_penalty=model_settings.get('frequency_penalty', NOT_GIVEN),
-            logit_bias=model_settings.get('logit_bias', NOT_GIVEN),
-        )
+        try:
+            return await self.client.chat.completions.create(
+                model=str(self._model_name),
+                messages=groq_messages,
+                n=1,
+                parallel_tool_calls=model_settings.get('parallel_tool_calls', NOT_GIVEN),
+                tools=tools or NOT_GIVEN,
+                tool_choice=tool_choice or NOT_GIVEN,
+                stream=stream,
+                max_tokens=model_settings.get('max_tokens', NOT_GIVEN),
+                temperature=model_settings.get('temperature', NOT_GIVEN),
+                top_p=model_settings.get('top_p', NOT_GIVEN),
+                timeout=model_settings.get('timeout', NOT_GIVEN),
+                seed=model_settings.get('seed', NOT_GIVEN),
+                presence_penalty=model_settings.get('presence_penalty', NOT_GIVEN),
+                frequency_penalty=model_settings.get('frequency_penalty', NOT_GIVEN),
+                logit_bias=model_settings.get('logit_bias', NOT_GIVEN),
+            )
+        except APIStatusError as e:
+            if (status_code := e.status_code) >= 400:
+                raise ModelStatusError(status_code=status_code, model_name=self.model_name, body=e.body) from e
+            raise
 
     def _process_response(self, response: chat.ChatCompletion) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""

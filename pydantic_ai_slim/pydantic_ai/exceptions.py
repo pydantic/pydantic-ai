@@ -72,3 +72,28 @@ class UnexpectedModelBehavior(AgentRunError):
             return f'{self.message}, body:\n{self.body}'
         else:
             return self.message
+
+
+class ModelStatusError(AgentRunError):
+    """Raised when an model provider response has a status code of 4xx or 5xx."""
+
+    status_code: int
+    """The HTTP status code returned by the API."""
+
+    model_name: str
+    """The name of the model associated with the error."""
+
+    body: object | None
+    """The body of the response, if available."""
+
+    message: str
+    """The error message with the status code and response body, if available."""
+
+    def __init__(self, status_code: int, model_name: str, body: object | None = None):
+        self.status_code = status_code
+        self.body = body
+        if body is None:
+            message = f'status_code: {status_code}, model_name: {model_name}'
+        else:
+            message = f'status_code: {status_code}, model_name: {model_name}, body: {body}'
+        super().__init__(message)

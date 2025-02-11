@@ -1,7 +1,14 @@
 from importlib.metadata import version
 
 from .agent import Agent, capture_run_messages
-from .exceptions import AgentRunError, ModelRetry, UnexpectedModelBehavior, UsageLimitExceeded, UserError
+from .exceptions import (
+    AgentRunError,
+    ModelRetry,
+    ModelStatusError,
+    UnexpectedModelBehavior,
+    UsageLimitExceeded,
+    UserError,
+)
 from .tools import RunContext, Tool
 
 __all__ = (
@@ -11,6 +18,7 @@ __all__ = (
     'Tool',
     'AgentRunError',
     'ModelRetry',
+    'ModelStatusError',
     'UnexpectedModelBehavior',
     'UsageLimitExceeded',
     'UserError',
