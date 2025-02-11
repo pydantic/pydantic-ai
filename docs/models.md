@@ -635,3 +635,52 @@ For streaming, you'll also need to implement the following abstract base class:
 The best place to start is to review the source code for existing implementations, e.g. [`OpenAIModel`](https://github.com/pydantic/pydantic-ai/blob/main/pydantic_ai_slim/pydantic_ai/models/openai.py).
 
 For details on when we'll accept contributions adding new models to PydanticAI, see the [contributing guidelines](contributing.md#new-model-rules).
+
+
+## Fallback Models
+
+You can use [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] to try a list of models in sequence until one returns a successful result. Under the hood, PydanticAI automatically switches from one model to the next if a 4xx or 5xx status code is returned by the current model.
+
+In the following example, the agent will first make a request to the OpenAI model (which fails with an invalid API key), and then fall back to the Anthropic model. The `ModelResponse` message indicates that the
+result was returned by the Anthropic model, which is the second model provided to the `FallbackModel`.
+
+```python {title="fallback_model.py"}
+from pydantic_ai import Agent
+from pydantic_ai.models.fallback import FallbackModel
+from pydantic_ai.models.openai import OpenAIModel
+from pydantic_ai.models.anthropic import AnthropicModel
+
+openai_model = OpenAIModel('gpt-4o', api_key='not-valid')
+anthropic_model = AnthropicModel('claude-3-5-sonnet-latest')
+fallback_model = FallbackModel(openai_model, anthropic_model)
+
+agent = Agent(fallback_model)
+response = agent.run_sync('What is the capital of France?')
+print(response.data)
+#> The capital of France is Paris.
+
+print(response.all_messages())
+"""
+[
+    ModelRequest(
+        parts=[
+            UserPromptPart(
+                content='What is the capital of France?',
+                timestamp=datetime.datetime(2025, 2, 11, 21, 59, 12, 637692, tzinfo=datetime.timezone.utc),
+                part_kind='user-prompt',
+            )
+        ],
+        kind='request',
+    ),
+    ModelResponse(
+        parts=[TextPart(content='The capital of France is Paris.', part_kind='text')],
+        model_name='claude-3-5-sonnet-latest',
+        timestamp=datetime.datetime(2025, 2, 11, 21, 59, 13, 825711, tzinfo=datetime.timezone.utc),
+        kind='response',
+    ),
+]
+"""
+```
+
+!!! note
+    You should configure each of model options individually, e.g. `base_url`, `api_key`, custom clients, etc. for each model should be set on the model itself, not the `FallbackModel`.
