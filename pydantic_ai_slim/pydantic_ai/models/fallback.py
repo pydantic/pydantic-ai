@@ -76,6 +76,7 @@ class FallbackModel(Model):
             try:
                 async with model.request_stream(messages, model_settings, model_request_parameters) as response:
                     yield response
+                    return
             except ModelStatusError as exc_info:
                 errors.append(exc_info)
                 continue
