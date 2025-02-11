@@ -7,7 +7,6 @@ from datetime import datetime, timezone
 from itertools import chain
 from typing import Literal, Union, cast, overload
 
-from groq import APIStatusError
 from httpx import AsyncClient as AsyncHTTPClient
 from typing_extensions import assert_never
 
@@ -37,7 +36,7 @@ from . import (
 )
 
 try:
-    from groq import NOT_GIVEN, AsyncGroq, AsyncStream
+    from groq import NOT_GIVEN, APIStatusError, AsyncGroq, AsyncStream
     from groq.types import chat
     from groq.types.chat import ChatCompletion, ChatCompletionChunk
 except ImportError as _import_error:
