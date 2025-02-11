@@ -23,7 +23,7 @@ class FallbackModel(Model):
     models: list[Model]
 
     _model_name: str = field(repr=False)
-    _system: str | None = field(repr=False)
+    _system: str | None = field(default=None, repr=False)
 
     def __init__(
         self,
@@ -42,9 +42,7 @@ class FallbackModel(Model):
 
         self.models = [default_model_, *fallback_models_]
 
-        first_model: Model = self.models[0]
-        self._model_name = first_model.model_name
-        self._system = first_model.system
+        self._model_name = f'FallBackModel[{", ".join(model.model_name for model in self.models)}]'
 
     async def request(
         self,
@@ -56,9 +54,6 @@ class FallbackModel(Model):
         errors: list[Exception] = []
 
         for model in self.models:
-            self._model_name = model.model_name
-            self._system = model.system
-
             try:
                 return await model.request(messages, model_settings, model_request_parameters)
             except Exception as exc_info:
@@ -78,9 +73,6 @@ class FallbackModel(Model):
         errors: list[Exception] = []
 
         for model in self.models:
-            self._model_name = model.model_name
-            self._system = model.system
-
             try:
                 async with model.request_stream(messages, model_settings, model_request_parameters) as response:
                     yield response
