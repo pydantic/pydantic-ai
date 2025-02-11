@@ -346,10 +346,10 @@ def test_init_tool_plain():
 
 
 def test_init_tool_with_function_schema():
-    def x_tool(x: int) -> int:
+    def x_tool(x: int) -> None:
         pass
 
-    def y_tool(y: str) -> str:
+    def y_tool(y: str) -> None:
         pass
 
     y_fs = _pydantic.function_schema(
@@ -363,10 +363,10 @@ def test_init_tool_with_function_schema():
 
 
 def test_init_tool_ctx_with_function_schema():
-    def x_tool(ctx: RunContext[int], x: int) -> int:
+    def x_tool(ctx: RunContext[int], x: int) -> None:
         pass
 
-    def y_tool(ctx: RunContext[int], y: str) -> str:
+    def y_tool(ctx: RunContext[int], y: str) -> None:
         pass
 
     y_fs = _pydantic.function_schema(
