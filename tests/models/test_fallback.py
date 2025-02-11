@@ -33,7 +33,9 @@ failure_model = FunctionModel(failure_response)
 
 def test_fallback_model_init() -> None:
     fallback_model = FallbackModel(failure_model, success_model)
-    assert fallback_model.model_name == snapshot('FallBackModel[function:failure_response:, function:hello_response:]')
+    assert fallback_model.model_name == snapshot(
+        'FallBackModel[function:failure_response:, function:success_response:]'
+    )
 
 
 def test_fallback_model_first_successful() -> None:

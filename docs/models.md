@@ -646,9 +646,9 @@ result was returned by the Anthropic model, which is the second model provided t
 
 ```python {title="fallback_model.py"}
 from pydantic_ai import Agent
+from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.openai import OpenAIModel
-from pydantic_ai.models.anthropic import AnthropicModel
 
 openai_model = OpenAIModel('gpt-4o', api_key='not-valid')
 anthropic_model = AnthropicModel('claude-3-5-sonnet-latest')
@@ -657,7 +657,7 @@ fallback_model = FallbackModel(openai_model, anthropic_model)
 agent = Agent(fallback_model)
 response = agent.run_sync('What is the capital of France?')
 print(response.data)
-#> The capital of France is Paris.
+#> Paris
 
 print(response.all_messages())
 """
@@ -666,16 +666,16 @@ print(response.all_messages())
         parts=[
             UserPromptPart(
                 content='What is the capital of France?',
-                timestamp=datetime.datetime(2025, 2, 11, 21, 59, 12, 637692, tzinfo=datetime.timezone.utc),
+                timestamp=datetime.datetime(...),
                 part_kind='user-prompt',
             )
         ],
         kind='request',
     ),
     ModelResponse(
-        parts=[TextPart(content='The capital of France is Paris.', part_kind='text')],
-        model_name='claude-3-5-sonnet-latest',
-        timestamp=datetime.datetime(2025, 2, 11, 21, 59, 13, 825711, tzinfo=datetime.timezone.utc),
+        parts=[TextPart(content='Paris', part_kind='text')],
+        model_name='function:model_logic',
+        timestamp=datetime.datetime(...),
         kind='response',
     ),
 ]
