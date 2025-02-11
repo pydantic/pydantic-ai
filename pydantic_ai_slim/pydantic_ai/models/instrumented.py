@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from functools import partial
 from typing import Any, Literal
 
-import logfire_api as logfire
+import logfire_api
 
 from ..messages import (
     ModelMessage,
@@ -49,6 +49,11 @@ NOT_GIVEN = object()
 class InstrumentedModel(WrapperModel):
     """Model which is instrumented with logfire."""
 
+    logfire_instance = logfire_api.DEFAULT_LOGFIRE_INSTANCE
+
+    def __post_init__(self):
+        self.logfire_instance = self.logfire_instance.with_settings(custom_scope_suffix='pydantic_ai')
+
     async def request(
         self,
         messages: list[ModelMessage],
@@ -78,7 +83,7 @@ class InstrumentedModel(WrapperModel):
 
         emit_event = partial(self._emit_event, system)
 
-        with logfire.span(span_name, **attributes) as span:
+        with self.logfire_instance.span(span_name, **attributes) as span:
             for message in messages:
                 if isinstance(message, ModelRequest):
                     for part in message.parts:
@@ -116,7 +121,7 @@ class InstrumentedModel(WrapperModel):
             return response, usage
 
     def _emit_event(self, system: str, event_name: str, body: dict[str, Any]) -> None:
-        logfire.info(event_name, **{'gen_ai.system': system}, **body)
+        self.logfire_instance.info(event_name, **{'gen_ai.system': system}, **body)
 
 
 def _request_part_body(part: ModelRequestPart) -> tuple[str, dict[str, Any]]:
