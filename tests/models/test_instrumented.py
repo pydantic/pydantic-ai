@@ -23,6 +23,7 @@ from pydantic_ai.usage import Usage
 from ..conftest import try_import
 
 with try_import() as imports_successful:
+    import logfire_api
     from logfire.testing import CaptureLogfire
 
 
@@ -297,3 +298,22 @@ Fix the errors and try again.\
             },
         ]
     )
+
+
+@pytest.mark.anyio
+async def test_instrumented_model_not_recording(capfire: CaptureLogfire):
+    logfire_instance = logfire_api.DEFAULT_LOGFIRE_INSTANCE.with_trace_sample_rate(0)
+    model = InstrumentedModel(MyModel(), logfire_instance)
+
+    messages: list[ModelMessage] = [ModelRequest(parts=[SystemPromptPart('system_prompt')])]
+    await model.request(
+        messages,
+        model_settings=ModelSettings(temperature=1),
+        model_request_parameters=ModelRequestParameters(
+            function_tools=[],
+            allow_text_result=True,
+            result_tools=[],
+        ),
+    )
+
+    assert capfire.exporter.exported_spans_as_dict() == snapshot([])

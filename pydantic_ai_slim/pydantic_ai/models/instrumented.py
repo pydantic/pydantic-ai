@@ -49,7 +49,7 @@ NOT_GIVEN = object()
 class InstrumentedModel(WrapperModel):
     """Model which is instrumented with logfire."""
 
-    logfire_instance = logfire_api.DEFAULT_LOGFIRE_INSTANCE
+    logfire_instance: logfire_api.Logfire = logfire_api.DEFAULT_LOGFIRE_INSTANCE
 
     def __post_init__(self):
         self.logfire_instance = self.logfire_instance.with_settings(custom_scope_suffix='pydantic_ai')
@@ -84,40 +84,44 @@ class InstrumentedModel(WrapperModel):
         emit_event = partial(self._emit_event, system)
 
         with self.logfire_instance.span(span_name, **attributes) as span:
-            for message in messages:
-                if isinstance(message, ModelRequest):
-                    for part in message.parts:
-                        event_name, body = _request_part_body(part)
-                        if event_name:
-                            emit_event(event_name, body)
-                elif isinstance(message, ModelResponse):
-                    for body in _response_bodies(message):
-                        emit_event('gen_ai.assistant.message', body)
+            if span.is_recording():
+                for message in messages:
+                    if isinstance(message, ModelRequest):
+                        for part in message.parts:
+                            event_name, body = _request_part_body(part)
+                            if event_name:
+                                emit_event(event_name, body)
+                    elif isinstance(message, ModelResponse):
+                        for body in _response_bodies(message):
+                            emit_event('gen_ai.assistant.message', body)
 
             response, usage = await super().request(messages, model_settings, model_request_parameters)
-            for body in _response_bodies(response):
-                if body:
-                    emit_event(
-                        'gen_ai.choice',
-                        {
-                            # TODO finish_reason
-                            'index': 0,
-                            'message': body,
-                        },
-                    )
-            span.set_attributes(
-                {
-                    k: v
-                    for k, v in {
-                        # TODO finish_reason (https://github.com/open-telemetry/semantic-conventions/issues/1277), id
-                        #  https://github.com/pydantic/pydantic-ai/issues/886
-                        'gen_ai.response.model': response.model_name or model_name,
-                        'gen_ai.usage.input_tokens': usage.request_tokens,
-                        'gen_ai.usage.output_tokens': usage.response_tokens,
-                    }.items()
-                    if v is not None
-                }
-            )
+
+            if span.is_recording():
+                for body in _response_bodies(response):
+                    if body:
+                        emit_event(
+                            'gen_ai.choice',
+                            {
+                                # TODO finish_reason
+                                'index': 0,
+                                'message': body,
+                            },
+                        )
+                span.set_attributes(
+                    {
+                        k: v
+                        for k, v in {
+                            # TODO finish_reason (https://github.com/open-telemetry/semantic-conventions/issues/1277), id
+                            #  https://github.com/pydantic/pydantic-ai/issues/886
+                            'gen_ai.response.model': response.model_name or model_name,
+                            'gen_ai.usage.input_tokens': usage.request_tokens,
+                            'gen_ai.usage.output_tokens': usage.response_tokens,
+                        }.items()
+                        if v is not None
+                    }
+                )
+
             return response, usage
 
     def _emit_event(self, system: str, event_name: str, body: dict[str, Any]) -> None:
