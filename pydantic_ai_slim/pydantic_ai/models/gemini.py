@@ -149,6 +149,16 @@ class GeminiModel(Model):
         ) as http_response:
             yield await self._process_streamed_response(http_response)
 
+    @property
+    def model_name(self) -> GeminiModelName:
+        """The model name."""
+        return self._model_name
+
+    @property
+    def system(self) -> str | None:
+        """The system / model provider."""
+        return self._system
+
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> _GeminiTools | None:
         tools = [_function_from_abstract_tool(t) for t in model_request_parameters.function_tools]
         if model_request_parameters.result_tools:
@@ -315,6 +325,7 @@ class ApiKeyAuth:
 class GeminiStreamedResponse(StreamedResponse):
     """Implementation of `StreamedResponse` for the Gemini model."""
 
+    _model_name: GeminiModelName
     _content: bytearray
     _stream: AsyncIterator[bytes]
     _timestamp: datetime = field(default_factory=_utils.now_utc, init=False)
@@ -378,7 +389,14 @@ class GeminiStreamedResponse(StreamedResponse):
             self._usage += _metadata_as_usage(r)
             yield r
 
+    @property
+    def model_name(self) -> GeminiModelName:
+        """Get the model name of the response."""
+        return self._model_name
+
+    @property
     def timestamp(self) -> datetime:
+        """Get the timestamp of the response."""
         return self._timestamp
 
 

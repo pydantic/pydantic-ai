@@ -286,7 +286,7 @@ class StreamedRunResult(_BaseRunResult[ResultDataT], Generic[AgentDepsT, ResultD
                 await self._marked_completed(
                     _messages.ModelResponse(
                         parts=[_messages.TextPart(combined_validated_text)],
-                        model_name=self._stream_response.model_name(),
+                        model_name=self._stream_response.model_name,
                     )
                 )
 
@@ -347,7 +347,7 @@ class StreamedRunResult(_BaseRunResult[ResultDataT], Generic[AgentDepsT, ResultD
 
     def timestamp(self) -> datetime:
         """Get the timestamp of the response."""
-        return self._stream_response.timestamp()
+        return self._stream_response.timestamp
 
     async def validate_structured_result(
         self, message: _messages.ModelResponse, *, allow_partial: bool = False

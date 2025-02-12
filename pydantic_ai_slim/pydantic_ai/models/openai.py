@@ -164,6 +164,16 @@ class OpenAIModel(Model):
         async with response:
             yield await self._process_streamed_response(response)
 
+    @property
+    def model_name(self) -> OpenAIModelName:
+        """The model name."""
+        return self._model_name
+
+    @property
+    def system(self) -> str | None:
+        """The system / model provider."""
+        return self._system
+
     @overload
     async def _completions_create(
         self,
@@ -332,6 +342,7 @@ class OpenAIModel(Model):
 class OpenAIStreamedResponse(StreamedResponse):
     """Implementation of `StreamedResponse` for OpenAI models."""
 
+    _model_name: OpenAIModelName
     _response: AsyncIterable[ChatCompletionChunk]
     _timestamp: datetime
 
@@ -359,7 +370,14 @@ class OpenAIStreamedResponse(StreamedResponse):
                 if maybe_event is not None:
                     yield maybe_event
 
+    @property
+    def model_name(self) -> OpenAIModelName:
+        """Get the model name of the response."""
+        return self._model_name
+
+    @property
     def timestamp(self) -> datetime:
+        """Get the timestamp of the response."""
         return self._timestamp
 
 
