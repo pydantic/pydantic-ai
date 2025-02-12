@@ -122,7 +122,8 @@ class OpenAIModel(Model):
         # openai compatible models do not always need an API key.
         if api_key is None and 'OPENAI_API_KEY' not in os.environ and base_url is not None and openai_client is None:
             api_key = ''
-        elif openai_client is not None:
+
+        if openai_client is not None:
             assert http_client is None, 'Cannot provide both `openai_client` and `http_client`'
             assert base_url is None, 'Cannot provide both `openai_client` and `base_url`'
             assert api_key is None, 'Cannot provide both `openai_client` and `api_key`'
@@ -232,7 +233,7 @@ class OpenAIModel(Model):
         if choice.message.tool_calls is not None:
             for c in choice.message.tool_calls:
                 items.append(ToolCallPart(c.function.name, c.function.arguments, c.id))
-        return ModelResponse(items, model_name=self._model_name, timestamp=timestamp)
+        return ModelResponse(items, model_name=response.model, timestamp=timestamp)
 
     async def _process_streamed_response(self, response: AsyncStream[ChatCompletionChunk]) -> OpenAIStreamedResponse:
         """Process a streamed response, and prepare a streaming response to return."""
