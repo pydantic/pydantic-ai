@@ -40,7 +40,8 @@ async def test_init_service_account(tmp_path: Path, allow_model_requests: None):
         'publishers/google/models/gemini-1.5-flash:'
     )
     assert model.auth is not None
-    assert model.name() == snapshot('google-vertex:gemini-1.5-flash')
+    assert model.model_name == snapshot('gemini-1.5-flash')
+    assert model.system == snapshot('google-vertex')
 
 
 class NoOpCredentials:
@@ -67,7 +68,8 @@ async def test_init_env(mocker: MockerFixture, allow_model_requests: None):
         'publishers/google/models/gemini-1.5-flash:'
     )
     assert model.auth is not None
-    assert model.name() == snapshot('google-vertex:gemini-1.5-flash')
+    assert model.model_name == snapshot('gemini-1.5-flash')
+    assert model.system == snapshot('google-vertex')
 
     await model.ainit()
     assert model.url is not None
@@ -90,30 +92,6 @@ async def test_init_right_project_id(tmp_path: Path, allow_model_requests: None)
         'publishers/google/models/gemini-1.5-flash:'
     )
     assert model.auth is not None
-
-
-async def test_init_service_account_wrong_project_id(tmp_path: Path, allow_model_requests: None):
-    service_account_path = tmp_path / 'service_account.json'
-    save_service_account(service_account_path, 'my-project-id')
-
-    model = VertexAIModel('gemini-1.5-flash', service_account_file=service_account_path, project_id='different')
-
-    with pytest.raises(UserError) as exc_info:
-        await model.ainit()
-    assert str(exc_info.value) == snapshot(
-        "The project_id you provided does not match the one from service account file: 'different' != 'my-project-id'"
-    )
-
-
-async def test_init_env_wrong_project_id(mocker: MockerFixture, allow_model_requests: None):
-    mocker.patch('pydantic_ai.models.vertexai.google.auth.default', return_value=(NoOpCredentials(), 'my-project-id'))
-    model = VertexAIModel('gemini-1.5-flash', project_id='different')
-
-    with pytest.raises(UserError) as exc_info:
-        await model.ainit()
-    assert str(exc_info.value) == snapshot(
-        "The project_id you provided does not match the one from `google.auth.default()`: 'different' != 'my-project-id'"
-    )
 
 
 async def test_init_env_no_project_id(mocker: MockerFixture, allow_model_requests: None):

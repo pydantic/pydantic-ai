@@ -54,6 +54,8 @@ KnownModelName = Literal[
     'google-gla:gemini-2.0-flash-exp',
     'google-gla:gemini-2.0-flash-thinking-exp-01-21',
     'google-gla:gemini-exp-1206',
+    'google-gla:gemini-2.0-flash',
+    'google-gla:gemini-2.0-flash-lite-preview-02-05',
     'google-vertex:gemini-1.0-pro',
     'google-vertex:gemini-1.5-flash',
     'google-vertex:gemini-1.5-flash-8b',
@@ -61,6 +63,8 @@ KnownModelName = Literal[
     'google-vertex:gemini-2.0-flash-exp',
     'google-vertex:gemini-2.0-flash-thinking-exp-01-21',
     'google-vertex:gemini-exp-1206',
+    'google-vertex:gemini-2.0-flash',
+    'google-vertex:gemini-2.0-flash-lite-preview-02-05',
     'gpt-3.5-turbo',
     'gpt-3.5-turbo-0125',
     'gpt-3.5-turbo-0301',
@@ -173,9 +177,8 @@ class ModelRequestParameters:
 class Model(ABC):
     """Abstract class for a model."""
 
-    @abstractmethod
-    def name(self) -> str:
-        raise NotImplementedError()
+    _model_name: str
+    _system: str | None
 
     @abstractmethod
     async def request(
@@ -200,6 +203,16 @@ class Model(ABC):
         # yield is required to make this a generator for type checking
         # noinspection PyUnreachableCode
         yield  # pragma: no cover
+
+    @property
+    def model_name(self) -> str:
+        """The model name."""
+        return self._model_name
+
+    @property
+    def system(self) -> str | None:
+        """The system / model provider, ex: openai."""
+        return self._system
 
 
 @dataclass
@@ -311,26 +324,26 @@ def infer_model(model: Model | KnownModelName) -> Model:
     elif model.startswith('google-gla'):
         from .gemini import GeminiModel
 
-        return GeminiModel(model[11:])  # pyright: ignore[reportArgumentType]
+        return GeminiModel(model[11:])
     # backwards compatibility with old model names (ex, gemini-1.5-flash -> google-gla:gemini-1.5-flash)
     elif model.startswith('gemini'):
         from .gemini import GeminiModel
 
         # noinspection PyTypeChecker
-        return GeminiModel(model)  # pyright: ignore[reportArgumentType]
+        return GeminiModel(model)
     elif model.startswith('groq:'):
         from .groq import GroqModel
 
-        return GroqModel(model[5:])  # pyright: ignore[reportArgumentType]
+        return GroqModel(model[5:])
     elif model.startswith('google-vertex'):
         from .vertexai import VertexAIModel
 
-        return VertexAIModel(model[14:])  # pyright: ignore[reportArgumentType]
+        return VertexAIModel(model[14:])
     # backwards compatibility with old model names (ex, vertexai:gemini-1.5-flash -> google-vertex:gemini-1.5-flash)
     elif model.startswith('vertexai:'):
         from .vertexai import VertexAIModel
 
-        return VertexAIModel(model[9:])  # pyright: ignore[reportArgumentType]
+        return VertexAIModel(model[9:])
     elif model.startswith('mistral:'):
         from .mistral import MistralModel
 

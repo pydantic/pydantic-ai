@@ -39,7 +39,7 @@ from . import (
     get_user_agent,
 )
 
-GeminiModelName = Literal[
+LatestGeminiModelNames = Literal[
     'gemini-1.5-flash',
     'gemini-1.5-flash-8b',
     'gemini-1.5-pro',
@@ -47,9 +47,16 @@ GeminiModelName = Literal[
     'gemini-2.0-flash-exp',
     'gemini-2.0-flash-thinking-exp-01-21',
     'gemini-exp-1206',
+    'gemini-2.0-flash',
+    'gemini-2.0-flash-lite-preview-02-05',
 ]
-"""Named Gemini models.
+"""Latest Gemini models."""
 
+GeminiModelName = Union[str, LatestGeminiModelNames]
+"""Possible Gemini model names.
+
+Since Gemini supports a variety of date-stamped models, we explicitly list the latest models but
+allow any name in the type hints.
 See [the Gemini API docs](https://ai.google.dev/gemini-api/docs/models/gemini#model-variations) for a full list.
 """
 
@@ -57,7 +64,7 @@ See [the Gemini API docs](https://ai.google.dev/gemini-api/docs/models/gemini#mo
 class GeminiModelSettings(ModelSettings):
     """Settings used for a Gemini model request."""
 
-    # This class is a placeholder for any future gemini-specific settings
+    gemini_safety_settings: list[GeminiSafetySettings]
 
 
 @dataclass(init=False)
@@ -70,11 +77,12 @@ class GeminiModel(Model):
     Apart from `__init__`, all methods are private or match those of the base class.
     """
 
-    model_name: GeminiModelName
-    http_client: AsyncHTTPClient
+    http_client: AsyncHTTPClient = field(repr=False)
 
-    _auth: AuthProtocol | None
-    _url: str | None
+    _model_name: GeminiModelName = field(repr=False)
+    _auth: AuthProtocol | None = field(repr=False)
+    _url: str | None = field(repr=False)
+    _system: str | None = field(default='google-gla', repr=False)
 
     def __init__(
         self,
@@ -95,7 +103,7 @@ class GeminiModel(Model):
                 docs [here](https://ai.google.dev/gemini-api/docs/quickstart?lang=rest#make-first-request),
                 `model` is substituted with the model name, and `function` is added to the end of the URL.
         """
-        self.model_name = model_name
+        self._model_name = model_name
         if api_key is None:
             if env_api_key := os.getenv('GEMINI_API_KEY'):
                 api_key = env_api_key
@@ -114,9 +122,6 @@ class GeminiModel(Model):
     def url(self) -> str:
         assert self._url is not None, 'URL not initialized'
         return self._url
-
-    def name(self) -> str:
-        return f'google-gla:{self.model_name}'
 
     async def request(
         self,
@@ -192,6 +197,8 @@ class GeminiModel(Model):
                 generation_config['presence_penalty'] = presence_penalty
             if (frequency_penalty := model_settings.get('frequency_penalty')) is not None:
                 generation_config['frequency_penalty'] = frequency_penalty
+            if (gemini_safety_settings := model_settings.get('gemini_safety_settings')) != []:
+                request_data['safety_settings'] = gemini_safety_settings
         if generation_config:
             request_data['generation_config'] = generation_config
 
@@ -220,8 +227,13 @@ class GeminiModel(Model):
     def _process_response(self, response: _GeminiResponse) -> ModelResponse:
         if len(response['candidates']) != 1:
             raise UnexpectedModelBehavior('Expected exactly one candidate in Gemini response')
+        if 'content' not in response['candidates'][0]:
+            if response['candidates'][0].get('finish_reason') == 'SAFETY':
+                raise UnexpectedModelBehavior('Safety settings triggered', str(response))
+            else:
+                raise UnexpectedModelBehavior('Content field missing from Gemini response', str(response))
         parts = response['candidates'][0]['content']['parts']
-        return _process_response_from_parts(parts, model_name=self.model_name)
+        return _process_response_from_parts(parts, model_name=response.get('model_version', self._model_name))
 
     async def _process_streamed_response(self, http_response: HTTPResponse) -> StreamedResponse:
         """Process a streamed response, and prepare a streaming response to return."""
@@ -237,14 +249,14 @@ class GeminiModel(Model):
             )
             if responses:
                 last = responses[-1]
-                if last['candidates'] and last['candidates'][0]['content']['parts']:
+                if last['candidates'] and last['candidates'][0].get('content', {}).get('parts'):
                     start_response = last
                     break
 
         if start_response is None:
             raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')
 
-        return GeminiStreamedResponse(_model_name=self.model_name, _content=content, _stream=aiter_bytes)
+        return GeminiStreamedResponse(_model_name=self._model_name, _content=content, _stream=aiter_bytes)
 
     @classmethod
     def _message_to_gemini_content(
@@ -310,6 +322,8 @@ class GeminiStreamedResponse(StreamedResponse):
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         async for gemini_response in self._get_gemini_responses():
             candidate = gemini_response['candidates'][0]
+            if 'content' not in candidate:
+                raise UnexpectedModelBehavior('Streamed response has no content field')
             gemini_part: _GeminiPartUnion
             for gemini_part in candidate['content']['parts']:
                 if 'text' in gemini_part:
@@ -383,6 +397,7 @@ class _GeminiRequest(TypedDict):
     contents: list[_GeminiContent]
     tools: NotRequired[_GeminiTools]
     tool_config: NotRequired[_GeminiToolConfig]
+    safety_settings: NotRequired[list[GeminiSafetySettings]]
     # we don't implement `generationConfig`, instead we use a named tool for the response
     system_instruction: NotRequired[_GeminiTextContent]
     """
@@ -390,6 +405,38 @@ class _GeminiRequest(TypedDict):
     <https://ai.google.dev/gemini-api/docs/system-instructions?lang=rest>
     """
     generation_config: NotRequired[_GeminiGenerationConfig]
+
+
+class GeminiSafetySettings(TypedDict):
+    """Safety settings options for Gemini model request.
+
+    See [Gemini API docs](https://ai.google.dev/gemini-api/docs/safety-settings) for safety category and threshold descriptions.
+    For an example on how to use `GeminiSafetySettings`, see [here](../../agents.md#model-specific-settings).
+    """
+
+    category: Literal[
+        'HARM_CATEGORY_UNSPECIFIED',
+        'HARM_CATEGORY_HARASSMENT',
+        'HARM_CATEGORY_HATE_SPEECH',
+        'HARM_CATEGORY_SEXUALLY_EXPLICIT',
+        'HARM_CATEGORY_DANGEROUS_CONTENT',
+        'HARM_CATEGORY_CIVIC_INTEGRITY',
+    ]
+    """
+    Safety settings category.
+    """
+
+    threshold: Literal[
+        'HARM_BLOCK_THRESHOLD_UNSPECIFIED',
+        'BLOCK_LOW_AND_ABOVE',
+        'BLOCK_MEDIUM_AND_ABOVE',
+        'BLOCK_ONLY_HIGH',
+        'BLOCK_NONE',
+        'OFF',
+    ]
+    """
+    Safety settings threshold.
+    """
 
 
 class _GeminiGenerationConfig(TypedDict, total=False):
@@ -563,13 +610,14 @@ class _GeminiResponse(TypedDict):
     # usageMetadata appears to be required by both APIs but is omitted when streaming responses until the last response
     usage_metadata: NotRequired[Annotated[_GeminiUsageMetaData, pydantic.Field(alias='usageMetadata')]]
     prompt_feedback: NotRequired[Annotated[_GeminiPromptFeedback, pydantic.Field(alias='promptFeedback')]]
+    model_version: NotRequired[Annotated[str, pydantic.Field(alias='modelVersion')]]
 
 
 class _GeminiCandidates(TypedDict):
     """See <https://ai.google.dev/api/generate-content#v1beta.Candidate>."""
 
-    content: _GeminiContent
-    finish_reason: NotRequired[Annotated[Literal['STOP', 'MAX_TOKENS'], pydantic.Field(alias='finishReason')]]
+    content: NotRequired[_GeminiContent]
+    finish_reason: NotRequired[Annotated[Literal['STOP', 'MAX_TOKENS', 'SAFETY'], pydantic.Field(alias='finishReason')]]
     """
     See <https://ai.google.dev/api/generate-content#FinishReason>, lots of other values are possible,
     but let's wait until we see them and know what they mean to add them here.
@@ -617,6 +665,7 @@ class _GeminiSafetyRating(TypedDict):
         'HARM_CATEGORY_CIVIC_INTEGRITY',
     ]
     probability: Literal['NEGLIGIBLE', 'LOW', 'MEDIUM', 'HIGH']
+    blocked: NotRequired[bool]
 
 
 class _GeminiPromptFeedback(TypedDict):

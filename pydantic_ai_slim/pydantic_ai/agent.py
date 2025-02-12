@@ -275,7 +275,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         """
         if infer_name and self.name is None:
             self._infer_name(inspect.currentframe())
-        model_used = await self._get_model(model)
+        model_used = self._get_model(model)
 
         deps = self._get_deps(deps)
         new_message_index = len(message_history) if message_history else 0
@@ -309,7 +309,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
             '{agent_name} run {prompt=}',
             prompt=user_prompt,
             agent=self,
-            model_name=model_used.name() if model_used else 'no-model',
+            model_name=model_used.model_name if model_used else 'no-model',
             agent_name=self.name or 'agent',
         ) as run_span:
             # Build the deps object for the graph
@@ -520,7 +520,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
             # f_back because `asynccontextmanager` adds one frame
             if frame := inspect.currentframe():  # pragma: no branch
                 self._infer_name(frame.f_back)
-        model_used = await self._get_model(model)
+        model_used = self._get_model(model)
 
         deps = self._get_deps(deps)
         new_message_index = len(message_history) if message_history else 0
@@ -554,7 +554,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
             '{agent_name} run stream {prompt=}',
             prompt=user_prompt,
             agent=self,
-            model_name=model_used.name(),
+            model_name=model_used.model_name if model_used else 'no-model',
             agent_name=self.name or 'agent',
         ) as run_span:
             # Build the deps object for the graph
@@ -979,7 +979,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
 
         self._function_tools[tool.name] = tool
 
-    async def _get_model(self, model: models.Model | models.KnownModelName | None) -> models.Model:
+    def _get_model(self, model: models.Model | models.KnownModelName | None) -> models.Model:
         """Create a model configured for this agent.
 
         Args:

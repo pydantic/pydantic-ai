@@ -2519,7 +2519,7 @@ wheels = [
 
 [[package]]
 name = "pydantic-ai"
-version = "0.0.22"
+version = "0.0.23"
 source = { editable = "." }
 dependencies = [
     { name = "pydantic-ai-slim", extra = ["anthropic", "cohere", "groq", "mistral", "openai", "vertexai"] },
@@ -2557,7 +2557,7 @@ lint = [
 requires-dist = [
     { name = "logfire", marker = "extra == 'logfire'", specifier = ">=2.3" },
     { name = "pydantic-ai-examples", marker = "extra == 'examples'", editable = "examples" },
-    { name = "pydantic-ai-slim", extras = ["graph", "openai", "vertexai", "groq", "anthropic", "mistral", "cohere"], editable = "pydantic_ai_slim" },
+    { name = "pydantic-ai-slim", extras = ["openai", "vertexai", "groq", "anthropic", "mistral", "cohere"], editable = "pydantic_ai_slim" },
 ]
 
 [package.metadata.requires-dev]
@@ -2582,7 +2582,7 @@ lint = [
 
 [[package]]
 name = "pydantic-ai-examples"
-version = "0.0.22"
+version = "0.0.23"
 source = { editable = "examples" }
 dependencies = [
     { name = "asyncpg" },
@@ -2612,7 +2612,7 @@ requires-dist = [
 
 [[package]]
 name = "pydantic-ai-slim"
-version = "0.0.22"
+version = "0.0.23"
 source = { editable = "pydantic_ai_slim" }
 dependencies = [
     { name = "eval-type-backport" },
@@ -2793,7 +2793,7 @@ wheels = [
 
 [[package]]
 name = "pydantic-graph"
-version = "0.0.22"
+version = "0.0.23"
 source = { editable = "pydantic_graph" }
 dependencies = [
     { name = "httpx" },

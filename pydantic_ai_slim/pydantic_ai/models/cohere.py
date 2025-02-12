@@ -52,7 +52,7 @@ except ImportError as _import_error:
         "you can use the `cohere` optional group — `pip install 'pydantic-ai-slim[cohere]'`"
     ) from _import_error
 
-NamedCohereModels = Literal[
+LatestCohereModelNames = Literal[
     'c4ai-aya-expanse-32b',
     'c4ai-aya-expanse-8b',
     'command',
@@ -67,9 +67,15 @@ NamedCohereModels = Literal[
     'command-r-plus-08-2024',
     'command-r7b-12-2024',
 ]
-"""Latest / most popular named Cohere models."""
+"""Latest Cohere models."""
 
-CohereModelName = Union[NamedCohereModels, str]
+CohereModelName = Union[str, LatestCohereModelNames]
+"""Possible Cohere model names.
+
+Since Cohere supports a variety of date-stamped models, we explicitly list the latest models but
+allow any name in the type hints.
+See [Cohere's docs](https://docs.cohere.com/v2/docs/models) for a list of all available models.
+"""
 
 
 class CohereModelSettings(ModelSettings):
@@ -88,8 +94,10 @@ class CohereModel(Model):
     Apart from `__init__`, all methods are private or match those of the base class.
     """
 
-    model_name: CohereModelName
     client: AsyncClientV2 = field(repr=False)
+
+    _model_name: CohereModelName = field(repr=False)
+    _system: str | None = field(default='cohere', repr=False)
 
     def __init__(
         self,
@@ -110,16 +118,13 @@ class CohereModel(Model):
                 `api_key` and `http_client` must be `None`.
             http_client: An existing `httpx.AsyncClient` to use for making HTTP requests.
         """
-        self.model_name: CohereModelName = model_name
+        self._model_name: CohereModelName = model_name
         if cohere_client is not None:
             assert http_client is None, 'Cannot provide both `cohere_client` and `http_client`'
             assert api_key is None, 'Cannot provide both `cohere_client` and `api_key`'
             self.client = cohere_client
         else:
             self.client = AsyncClientV2(api_key=api_key, httpx_client=http_client)  # type: ignore
-
-    def name(self) -> str:
-        return f'cohere:{self.model_name}'
 
     async def request(
         self,
@@ -140,7 +145,7 @@ class CohereModel(Model):
         tools = self._get_tools(model_request_parameters)
         cohere_messages = list(chain(*(self._map_message(m) for m in messages)))
         return await self.client.chat(
-            model=self.model_name,
+            model=self._model_name,
             messages=cohere_messages,
             tools=tools or OMIT,
             max_tokens=model_settings.get('max_tokens', OMIT),
@@ -168,7 +173,7 @@ class CohereModel(Model):
                         tool_call_id=c.id,
                     )
                 )
-        return ModelResponse(parts=parts, model_name=self.model_name)
+        return ModelResponse(parts=parts, model_name=self._model_name)
 
     def _map_message(self, message: ModelMessage) -> Iterable[ChatMessageV2]:
         """Just maps a `pydantic_ai.Message` to a `cohere.ChatMessageV2`."""
