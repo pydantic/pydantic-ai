@@ -475,7 +475,6 @@ class MistralStreamedResponse(StreamedResponse):
     _response: AsyncIterable[MistralCompletionEvent]
     _timestamp: datetime
     _result_tools: dict[str, ToolDefinition]
-    _usage: Usage = field(default_factory=Usage, init=False)
 
     _delta_content: str = field(default='', init=False)
 
@@ -518,11 +517,6 @@ class MistralStreamedResponse(StreamedResponse):
     def model_name(self) -> MistralModelName:
         """Get the model name of the response."""
         return self._model_name
-
-    @property
-    def usage(self) -> Usage:
-        """Get the usage of the response so far. This will not be the final usage until the stream is exhausted."""
-        return self._usage
 
     @property
     def timestamp(self) -> datetime:

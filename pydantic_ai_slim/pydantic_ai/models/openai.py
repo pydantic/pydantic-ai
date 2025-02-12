@@ -345,7 +345,6 @@ class OpenAIStreamedResponse(StreamedResponse):
     _model_name: OpenAIModelName
     _response: AsyncIterable[ChatCompletionChunk]
     _timestamp: datetime
-    _usage: usage.Usage = field(default_factory=usage.Usage, init=False)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         async for chunk in self._response:
@@ -375,11 +374,6 @@ class OpenAIStreamedResponse(StreamedResponse):
     def model_name(self) -> OpenAIModelName:
         """Get the model name of the response."""
         return self._model_name
-
-    @property
-    def usage(self) -> usage.Usage:
-        """Get the usage of the response so far. This will not be the final usage until the stream is exhausted."""
-        return self._usage
 
     @property
     def timestamp(self) -> datetime:

@@ -343,7 +343,7 @@ class StreamedRunResult(_BaseRunResult[ResultDataT], Generic[AgentDepsT, ResultD
         !!! note
             This won't return the full usage until the stream is finished.
         """
-        return self._run_ctx.usage + self._stream_response.usage
+        return self._run_ctx.usage + self._stream_response.usage()
 
     def timestamp(self) -> datetime:
         """Get the timestamp of the response."""

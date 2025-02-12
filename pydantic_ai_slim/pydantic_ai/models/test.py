@@ -235,7 +235,6 @@ class TestStreamedResponse(StreamedResponse):
     _structured_response: ModelResponse
     _messages: InitVar[Iterable[ModelMessage]]
     _timestamp: datetime = field(default_factory=_utils.now_utc, init=False)
-    _usage: Usage = field(default_factory=Usage, init=False)
 
     def __post_init__(self, _messages: Iterable[ModelMessage]):
         self._usage = _estimate_usage(_messages)
@@ -264,11 +263,6 @@ class TestStreamedResponse(StreamedResponse):
     def model_name(self) -> str:
         """Get the model name of the response."""
         return self._model_name
-
-    @property
-    def usage(self) -> Usage:
-        """Get the usage of the response so far. This will not be the final usage until the stream is exhausted."""
-        return self._usage
 
     @property
     def timestamp(self) -> datetime:

@@ -220,6 +220,7 @@ class StreamedResponse(ABC):
 
     _parts_manager: ModelResponsePartsManager = field(default_factory=ModelResponsePartsManager, init=False)
     _event_iterator: AsyncIterator[ModelResponseStreamEvent] | None = field(default=None, init=False)
+    _usage: Usage = field(default_factory=Usage, init=False)
 
     def __aiter__(self) -> AsyncIterator[ModelResponseStreamEvent]:
         """Stream the response as an async iterable of [`ModelResponseStreamEvent`][pydantic_ai.messages.ModelResponseStreamEvent]s."""
@@ -244,16 +245,14 @@ class StreamedResponse(ABC):
             parts=self._parts_manager.get_parts(), model_name=self.model_name, timestamp=self.timestamp
         )
 
+    def usage(self) -> Usage:
+        """Get the usage of the response so far. This will not be the final usage until the stream is exhausted."""
+        return self._usage
+
     @property
     @abstractmethod
     def model_name(self) -> str:
         """Get the model name of the response."""
-        raise NotImplementedError()
-
-    @property
-    @abstractmethod
-    def usage(self) -> Usage:
-        """Get the usage of the response so far. This will not be the final usage until the stream is exhausted."""
         raise NotImplementedError()
 
     @property

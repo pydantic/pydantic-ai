@@ -329,7 +329,6 @@ class GeminiStreamedResponse(StreamedResponse):
     _content: bytearray
     _stream: AsyncIterator[bytes]
     _timestamp: datetime = field(default_factory=_utils.now_utc, init=False)
-    _usage: usage.Usage = field(default_factory=usage.Usage, init=False)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         async for gemini_response in self._get_gemini_responses():
@@ -394,11 +393,6 @@ class GeminiStreamedResponse(StreamedResponse):
     def model_name(self) -> GeminiModelName:
         """Get the model name of the response."""
         return self._model_name
-
-    @property
-    def usage(self) -> usage.Usage:
-        """Get the usage of the response so far. This will not be the final usage until the stream is exhausted."""
-        return self._usage
 
     @property
     def timestamp(self) -> datetime:

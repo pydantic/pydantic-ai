@@ -191,7 +191,6 @@ class FunctionStreamedResponse(StreamedResponse):
     _model_name: str
     _iter: AsyncIterator[str | DeltaToolCalls]
     _timestamp: datetime = field(default_factory=_utils.now_utc)
-    _usage: usage.Usage = field(default_factory=usage.Usage, init=False)
 
     def __post_init__(self):
         self._usage += _estimate_usage([])
@@ -221,11 +220,6 @@ class FunctionStreamedResponse(StreamedResponse):
     def model_name(self) -> str:
         """Get the model name of the response."""
         return self._model_name
-
-    @property
-    def usage(self) -> usage.Usage:
-        """Get the usage of the response so far. This will not be the final usage until the stream is exhausted."""
-        return self._usage
 
     @property
     def timestamp(self) -> datetime:

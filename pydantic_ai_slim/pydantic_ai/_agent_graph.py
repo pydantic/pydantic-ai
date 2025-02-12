@@ -495,7 +495,7 @@ class StreamModelRequestNode(BaseNode[GraphAgentState, GraphAgentDeps[DepsT, Any
                     tool_responses_str = ' '.join(r.part_kind for r in parts)
                     handle_span.message = f'handle model response -> {tool_responses_str}'
                     # the model_response should have been fully streamed by now, we can add its usage
-                    streamed_response_usage = streamed_response.usage
+                    streamed_response_usage = streamed_response.usage()
                     run_context.usage.incr(streamed_response_usage)
                     ctx.deps.usage_limits.check_tokens(run_context.usage)
                     self._result = StreamModelRequestNode[DepsT, NodeRunEndT](next_request)
