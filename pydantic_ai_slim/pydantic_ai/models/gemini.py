@@ -254,7 +254,7 @@ class GeminiModel(Model):
         async for chunk in aiter_bytes:
             content.extend(chunk)
             responses = _gemini_streamed_response_ta.validate_json(
-                content,
+                _ensure_decodeable(content),
                 experimental_allow_partial='trailing-strings',
             )
             if responses:
@@ -370,7 +370,7 @@ class GeminiStreamedResponse(StreamedResponse):
             self._content.extend(chunk)
 
             gemini_responses = _gemini_streamed_response_ta.validate_json(
-                self._content,
+                _ensure_decodeable(self._content),
                 experimental_allow_partial='trailing-strings',
             )
 
@@ -774,3 +774,19 @@ class _GeminiJsonSchema:
 
         if items_schema := schema.get('items'):  # pragma: no branch
             self._simplify(items_schema, refs_stack)
+
+
+def _ensure_decodeable(content: bytearray) -> bytearray:
+    """Trim any invalid unicode point bytes off the end of a bytearray.
+
+    This is necessary before attempting to parse streaming JSON bytes.
+
+    This is a temporary workaround until https://github.com/pydantic/pydantic-core/issues/1633 is resolved
+    """
+    while True:
+        try:
+            content.decode()
+        except UnicodeDecodeError:
+            content = content[:-1]  # this will definitely succeed before we run out of bytes
+        else:
+            return content

@@ -660,6 +660,30 @@ async def test_stream_text(get_gemini_client: GetGeminiClient):
     assert result.usage() == snapshot(Usage(requests=1, request_tokens=2, response_tokens=4, total_tokens=6))
 
 
+async def test_stream_invalid_unicode_text(get_gemini_client: GetGeminiClient):
+    # Probably safe to remove this test once https://github.com/pydantic/pydantic-core/issues/1633 is resolved
+    responses = [
+        gemini_response(_content_model_response(ModelResponse(parts=[TextPart('abc')]))),
+        gemini_response(_content_model_response(ModelResponse(parts=[TextPart('€def')]))),
+    ]
+    json_data = _gemini_streamed_response_ta.dump_json(responses, by_alias=True)
+    parts = [json_data[:307], json_data[307:]]
+
+    with pytest.raises(UnicodeDecodeError):
+        # Ensure the first part is _not_ valid unicode
+        parts[0].decode()
+
+    stream = AsyncByteStreamList(parts)
+    gemini_client = get_gemini_client(stream)
+    m = GeminiModel('gemini-1.5-flash', http_client=gemini_client)
+    agent = Agent(m)
+
+    async with agent.run_stream('Hello') as result:
+        chunks = [chunk async for chunk in result.stream(debounce_by=None)]
+        assert chunks == snapshot(['abc', 'abc€def', 'abc€def'])
+    assert result.usage() == snapshot(Usage(requests=1, request_tokens=2, response_tokens=4, total_tokens=6))
+
+
 async def test_stream_text_no_data(get_gemini_client: GetGeminiClient):
     responses = [_GeminiResponse(candidates=[], usage_metadata=example_usage())]
     json_data = _gemini_streamed_response_ta.dump_json(responses, by_alias=True)
