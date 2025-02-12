@@ -27,7 +27,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import cached_async_http_client
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.result import RunResult, Usage
+from pydantic_ai.result import Usage
 from pydantic_ai.tools import ToolDefinition
 
 from .conftest import IsNow, TestEnv
@@ -279,7 +279,7 @@ def test_plain_response_then_tuple():
             ),
         ]
     )
-    assert result._result_tool_name == 'final_result'  # pyright: ignore[reportPrivateUsage]
+    assert result.result.tool_name == 'final_result'
     assert result.all_messages(result_tool_return_content='foobar')[-1] == snapshot(
         ModelRequest(
             parts=[ToolReturnPart(tool_name='final_result', content='foobar', timestamp=IsNow(tz=timezone.utc))]
@@ -312,7 +312,7 @@ def test_result_tool_return_content_no_tool():
 
     result = agent.run_sync('Hello')
     assert result.data == 0
-    result._result_tool_name = 'wrong'  # pyright: ignore[reportPrivateUsage]
+    result.result.tool_name = 'wrong'
     with pytest.raises(LookupError, match=re.escape("No tool call found with tool name 'wrong'.")):
         result.all_messages(result_tool_return_content='foobar')
 
@@ -534,37 +534,38 @@ def test_run_with_history_new():
 
     # if we pass new_messages, system prompt is inserted before the message_history messages
     result2 = agent.run_sync('Hello again', message_history=result1.new_messages())
-    assert result2 == snapshot(
-        RunResult(
-            _all_messages=[
-                ModelRequest(
-                    parts=[
-                        SystemPromptPart(content='Foobar'),
-                        UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc)),
-                    ]
-                ),
-                ModelResponse(
-                    parts=[ToolCallPart(tool_name='ret_a', args={'x': 'a'})],
-                    model_name='test',
-                    timestamp=IsNow(tz=timezone.utc),
-                ),
-                ModelRequest(
-                    parts=[ToolReturnPart(tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc))]
-                ),
-                ModelResponse(
-                    parts=[TextPart(content='{"ret_a":"a-apple"}')], model_name='test', timestamp=IsNow(tz=timezone.utc)
-                ),
-                ModelRequest(parts=[UserPromptPart(content='Hello again', timestamp=IsNow(tz=timezone.utc))]),
-                ModelResponse(
-                    parts=[TextPart(content='{"ret_a":"a-apple"}')], model_name='test', timestamp=IsNow(tz=timezone.utc)
-                ),
-            ],
-            _new_message_index=4,
-            data='{"ret_a":"a-apple"}',
-            _result_tool_name=None,
-            _usage=Usage(requests=1, request_tokens=55, response_tokens=13, total_tokens=68, details=None),
-        )
+    assert result2.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(content='Foobar'),
+                    UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc)),
+                ]
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='ret_a', args={'x': 'a'})],
+                model_name='test',
+                timestamp=IsNow(tz=timezone.utc),
+            ),
+            ModelRequest(
+                parts=[ToolReturnPart(tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc))]
+            ),
+            ModelResponse(
+                parts=[TextPart(content='{"ret_a":"a-apple"}')], model_name='test', timestamp=IsNow(tz=timezone.utc)
+            ),
+            ModelRequest(parts=[UserPromptPart(content='Hello again', timestamp=IsNow(tz=timezone.utc))]),
+            ModelResponse(
+                parts=[TextPart(content='{"ret_a":"a-apple"}')], model_name='test', timestamp=IsNow(tz=timezone.utc)
+            ),
+        ]
     )
+    assert result2._new_message_index == snapshot(4)  # pyright: ignore[reportPrivateUsage]
+    assert result2.data == snapshot('{"ret_a":"a-apple"}')
+    assert result2._result_tool_name == snapshot(None)  # pyright: ignore[reportPrivateUsage]
+    assert result2.usage() == snapshot(
+        Usage(requests=1, request_tokens=55, response_tokens=13, total_tokens=68, details=None)
+    )
+
     new_msg_part_kinds = [(m.kind, [p.part_kind for p in m.parts]) for m in result2.all_messages()]
     assert new_msg_part_kinds == snapshot(
         [
@@ -582,36 +583,36 @@ def test_run_with_history_new():
     # so only one system prompt
     result3 = agent.run_sync('Hello again', message_history=result1.all_messages())
     # same as result2 except for datetimes
-    assert result3 == snapshot(
-        RunResult(
-            _all_messages=[
-                ModelRequest(
-                    parts=[
-                        SystemPromptPart(content='Foobar'),
-                        UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc)),
-                    ]
-                ),
-                ModelResponse(
-                    parts=[ToolCallPart(tool_name='ret_a', args={'x': 'a'})],
-                    model_name='test',
-                    timestamp=IsNow(tz=timezone.utc),
-                ),
-                ModelRequest(
-                    parts=[ToolReturnPart(tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc))]
-                ),
-                ModelResponse(
-                    parts=[TextPart(content='{"ret_a":"a-apple"}')], model_name='test', timestamp=IsNow(tz=timezone.utc)
-                ),
-                ModelRequest(parts=[UserPromptPart(content='Hello again', timestamp=IsNow(tz=timezone.utc))]),
-                ModelResponse(
-                    parts=[TextPart(content='{"ret_a":"a-apple"}')], model_name='test', timestamp=IsNow(tz=timezone.utc)
-                ),
-            ],
-            _new_message_index=4,
-            data='{"ret_a":"a-apple"}',
-            _result_tool_name=None,
-            _usage=Usage(requests=1, request_tokens=55, response_tokens=13, total_tokens=68, details=None),
-        )
+    assert result3.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(content='Foobar'),
+                    UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc)),
+                ]
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='ret_a', args={'x': 'a'})],
+                model_name='test',
+                timestamp=IsNow(tz=timezone.utc),
+            ),
+            ModelRequest(
+                parts=[ToolReturnPart(tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc))]
+            ),
+            ModelResponse(
+                parts=[TextPart(content='{"ret_a":"a-apple"}')], model_name='test', timestamp=IsNow(tz=timezone.utc)
+            ),
+            ModelRequest(parts=[UserPromptPart(content='Hello again', timestamp=IsNow(tz=timezone.utc))]),
+            ModelResponse(
+                parts=[TextPart(content='{"ret_a":"a-apple"}')], model_name='test', timestamp=IsNow(tz=timezone.utc)
+            ),
+        ]
+    )
+    assert result3._new_message_index == snapshot(4)  # pyright: ignore[reportPrivateUsage]
+    assert result3.data == snapshot('{"ret_a":"a-apple"}')
+    assert result3._result_tool_name == snapshot(None)  # pyright: ignore[reportPrivateUsage]
+    assert result3.usage() == snapshot(
+        Usage(requests=1, request_tokens=55, response_tokens=13, total_tokens=68, details=None)
     )
 
 
@@ -666,63 +667,63 @@ def test_run_with_history_new_structured():
     )
 
     result2 = agent.run_sync('Hello again', message_history=result1.new_messages())
-    assert result2 == snapshot(
-        RunResult(
-            data=Response(a=0),
-            _all_messages=[
-                ModelRequest(
-                    parts=[
-                        SystemPromptPart(content='Foobar'),
-                        UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc)),
-                    ],
-                ),
-                ModelResponse(
-                    parts=[ToolCallPart(tool_name='ret_a', args={'x': 'a'})],
-                    model_name='test',
-                    timestamp=IsNow(tz=timezone.utc),
-                ),
-                ModelRequest(
-                    parts=[ToolReturnPart(tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc))],
-                ),
-                ModelResponse(
-                    parts=[ToolCallPart(tool_name='final_result', args={'a': 0})],
-                    model_name='test',
-                    timestamp=IsNow(tz=timezone.utc),
-                ),
-                ModelRequest(
-                    parts=[
-                        ToolReturnPart(
-                            tool_name='final_result',
-                            content='Final result processed.',
-                            timestamp=IsNow(tz=timezone.utc),
-                        ),
-                    ],
-                ),
-                # second call, notice no repeated system prompt
-                ModelRequest(
-                    parts=[
-                        UserPromptPart(content='Hello again', timestamp=IsNow(tz=timezone.utc)),
-                    ],
-                ),
-                ModelResponse(
-                    parts=[ToolCallPart(tool_name='final_result', args={'a': 0})],
-                    model_name='test',
-                    timestamp=IsNow(tz=timezone.utc),
-                ),
-                ModelRequest(
-                    parts=[
-                        ToolReturnPart(
-                            tool_name='final_result',
-                            content='Final result processed.',
-                            timestamp=IsNow(tz=timezone.utc),
-                        ),
-                    ]
-                ),
-            ],
-            _new_message_index=5,
-            _result_tool_name='final_result',
-            _usage=Usage(requests=1, request_tokens=59, response_tokens=13, total_tokens=72, details=None),
-        )
+    assert result2.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(content='Foobar'),
+                    UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc)),
+                ],
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='ret_a', args={'x': 'a'})],
+                model_name='test',
+                timestamp=IsNow(tz=timezone.utc),
+            ),
+            ModelRequest(
+                parts=[ToolReturnPart(tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc))],
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='final_result', args={'a': 0})],
+                model_name='test',
+                timestamp=IsNow(tz=timezone.utc),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='final_result',
+                        content='Final result processed.',
+                        timestamp=IsNow(tz=timezone.utc),
+                    ),
+                ],
+            ),
+            # second call, notice no repeated system prompt
+            ModelRequest(
+                parts=[
+                    UserPromptPart(content='Hello again', timestamp=IsNow(tz=timezone.utc)),
+                ],
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='final_result', args={'a': 0})],
+                model_name='test',
+                timestamp=IsNow(tz=timezone.utc),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='final_result',
+                        content='Final result processed.',
+                        timestamp=IsNow(tz=timezone.utc),
+                    ),
+                ]
+            ),
+        ]
+    )
+    assert result2.data == snapshot(Response(a=0))
+    assert result2._new_message_index == snapshot(5)  # pyright: ignore[reportPrivateUsage]
+    assert result2._result_tool_name == snapshot('final_result')  # pyright: ignore[reportPrivateUsage]
+    assert result2.usage() == snapshot(
+        Usage(requests=1, request_tokens=59, response_tokens=13, total_tokens=72, details=None)
     )
     new_msg_part_kinds = [(m.kind, [p.part_kind for p in m.parts]) for m in result2.all_messages()]
     assert new_msg_part_kinds == snapshot(
@@ -1339,17 +1340,15 @@ def test_dynamic_false_no_reevaluate():
         [
             ModelRequest(
                 parts=[
-                    SystemPromptPart(content='Foobar', part_kind='system-prompt'),
-                    SystemPromptPart(content=dynamic_value, part_kind='system-prompt'),
-                    UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc), part_kind='user-prompt'),
+                    SystemPromptPart(content='Foobar'),
+                    SystemPromptPart(content=dynamic_value),
+                    UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc)),
                 ],
-                kind='request',
             ),
             ModelResponse(
-                parts=[TextPart(content='success (no tool calls)', part_kind='text')],
+                parts=[TextPart(content='success (no tool calls)')],
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
-                kind='response',
             ),
         ]
     )
@@ -1362,30 +1361,25 @@ def test_dynamic_false_no_reevaluate():
         [
             ModelRequest(
                 parts=[
-                    SystemPromptPart(content='Foobar', part_kind='system-prompt'),
+                    SystemPromptPart(content='Foobar'),
                     SystemPromptPart(
                         content='A',  # Remains the same
-                        part_kind='system-prompt',
                     ),
-                    UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc), part_kind='user-prompt'),
+                    UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc)),
                 ],
-                kind='request',
             ),
             ModelResponse(
-                parts=[TextPart(content='success (no tool calls)', part_kind='text')],
+                parts=[TextPart(content='success (no tool calls)')],
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
-                kind='response',
             ),
             ModelRequest(
-                parts=[UserPromptPart(content='World', timestamp=IsNow(tz=timezone.utc), part_kind='user-prompt')],
-                kind='request',
+                parts=[UserPromptPart(content='World', timestamp=IsNow(tz=timezone.utc))],
             ),
             ModelResponse(
-                parts=[TextPart(content='success (no tool calls)', part_kind='text')],
+                parts=[TextPart(content='success (no tool calls)')],
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
-                kind='response',
             ),
         ]
     )
@@ -1411,21 +1405,18 @@ def test_dynamic_true_reevaluate_system_prompt():
         [
             ModelRequest(
                 parts=[
-                    SystemPromptPart(content='Foobar', part_kind='system-prompt'),
+                    SystemPromptPart(content='Foobar'),
                     SystemPromptPart(
                         content=dynamic_value,
-                        part_kind='system-prompt',
                         dynamic_ref=func.__qualname__,
                     ),
-                    UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc), part_kind='user-prompt'),
+                    UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc)),
                 ],
-                kind='request',
             ),
             ModelResponse(
-                parts=[TextPart(content='success (no tool calls)', part_kind='text')],
+                parts=[TextPart(content='success (no tool calls)')],
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
-                kind='response',
             ),
         ]
     )
@@ -1438,31 +1429,26 @@ def test_dynamic_true_reevaluate_system_prompt():
         [
             ModelRequest(
                 parts=[
-                    SystemPromptPart(content='Foobar', part_kind='system-prompt'),
+                    SystemPromptPart(content='Foobar'),
                     SystemPromptPart(
                         content='B',
-                        part_kind='system-prompt',
                         dynamic_ref=func.__qualname__,
                     ),
-                    UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc), part_kind='user-prompt'),
+                    UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc)),
                 ],
-                kind='request',
             ),
             ModelResponse(
-                parts=[TextPart(content='success (no tool calls)', part_kind='text')],
+                parts=[TextPart(content='success (no tool calls)')],
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
-                kind='response',
             ),
             ModelRequest(
-                parts=[UserPromptPart(content='World', timestamp=IsNow(tz=timezone.utc), part_kind='user-prompt')],
-                kind='request',
+                parts=[UserPromptPart(content='World', timestamp=IsNow(tz=timezone.utc))],
             ),
             ModelResponse(
-                parts=[TextPart(content='success (no tool calls)', part_kind='text')],
+                parts=[TextPart(content='success (no tool calls)')],
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
-                kind='response',
             ),
         ]
     )

@@ -156,11 +156,11 @@ class Increment(BaseNode):  # (2)!
 
 
 fives_graph = Graph(nodes=[DivisibleBy5, Increment])  # (3)!
-result, history = fives_graph.run_sync(DivisibleBy5(4))  # (4)!
-print(result)
+graph_run = fives_graph.run_sync(DivisibleBy5(4))  # (4)!
+print(graph_run.result)
 #> 5
 # the full history is quite verbose (see below), so we'll just print the summary
-print([item.data_snapshot() for item in history])
+print([item.data_snapshot() for item in graph_run.history])
 #> [DivisibleBy5(foo=4), Increment(foo=4), DivisibleBy5(foo=5), End(data=5)]
 ```
 
@@ -464,8 +464,8 @@ async def main():
     )
     state = State(user)
     feedback_graph = Graph(nodes=(WriteEmail, Feedback))
-    email, _ = await feedback_graph.run(WriteEmail(), state=state)
-    print(email)
+    graph_run = await feedback_graph.run(WriteEmail(), state=state)
+    print(graph_run.result)
     """
     Email(
         subject='Welcome to our tech blog!',
@@ -606,6 +606,7 @@ async def main():
                 Ask(),
                 Answer(question='what is 1 + 1?', answer='2'),
                 Evaluate(answer='2'),
+                End(data='Well done, 1 + 1 = 2'),
             ]
             """
             return

@@ -36,9 +36,9 @@ async def test_run_graph():
     assert graph._get_state_type() is MyState
     assert graph._get_run_end_type() is str
     state = MyState(1, '')
-    result, history = await graph.run(Foo(), state=state)
-    assert result == snapshot('x=2 y=y')
-    assert history == snapshot(
+    graph_run = await graph.run(Foo(), state=state)
+    assert graph_run.result == snapshot('x=2 y=y')
+    assert graph_run.history == snapshot(
         [
             NodeStep(
                 state=MyState(x=2, y=''),

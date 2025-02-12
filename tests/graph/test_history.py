@@ -46,16 +46,16 @@ class Bar(BaseNode[MyState, None, int]):
     ],
 )
 async def test_dump_load_history(graph: Graph[MyState, None, int]):
-    result, history = await graph.run(Foo(), state=MyState(1, ''))
-    assert result == snapshot(4)
-    assert history == snapshot(
+    graph_run = await graph.run(Foo(), state=MyState(1, ''))
+    assert graph_run.result == snapshot(4)
+    assert graph_run.history == snapshot(
         [
             NodeStep(state=MyState(x=2, y=''), node=Foo(), start_ts=IsNow(tz=timezone.utc), duration=IsFloat()),
             NodeStep(state=MyState(x=2, y='y'), node=Bar(), start_ts=IsNow(tz=timezone.utc), duration=IsFloat()),
             EndStep(result=End(4), ts=IsNow(tz=timezone.utc)),
         ]
     )
-    history_json = graph.dump_history(history)
+    history_json = graph.dump_history(graph_run.history)
     assert json.loads(history_json) == snapshot(
         [
             {
@@ -76,7 +76,7 @@ async def test_dump_load_history(graph: Graph[MyState, None, int]):
         ]
     )
     history_loaded = graph.load_history(history_json)
-    assert history == history_loaded
+    assert graph_run.history == history_loaded
 
     custom_history = [
         {
