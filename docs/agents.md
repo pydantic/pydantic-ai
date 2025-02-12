@@ -288,7 +288,7 @@ In particular, agents are generic in both the type of their dependencies and the
 
 Consider the following script with type mistakes:
 
-```python {title="type_mistakes.py" hl_lines="18 28" py="3.10"}
+```python {title="type_mistakes.py" hl_lines="18 28"}
 from dataclasses import dataclass
 
 from pydantic_ai import Agent, RunContext
@@ -307,7 +307,7 @@ agent = Agent(
 
 
 @agent.system_prompt
-def add_user_name(ctx: RunContext[str]) -> str | None:  # (2)!
+def add_user_name(ctx: RunContext[str]) -> str:  # (2)!
     return f"The user's name is {ctx.deps}."
 
 
@@ -348,7 +348,7 @@ If a dynamic system prompt function returns `None`, or any empty value, its prom
 
 Here's an example using both types of system prompts:
 
-```python {title="system_prompts.py" py="3.10"}
+```python {title="system_prompts.py"}
 from datetime import date
 
 from pydantic_ai import Agent, RunContext
@@ -361,12 +361,12 @@ agent = Agent(
 
 
 @agent.system_prompt  # (3)!
-def add_the_users_name(ctx: RunContext[str]) -> str | None:
+def add_the_users_name(ctx: RunContext[str]) -> str:
     return f"The user's name is {ctx.deps}."
 
 
 @agent.system_prompt
-def add_the_date() -> str | None:  # (4)!
+def add_the_date() -> str:  # (4)!
     return f'The date is {date.today()}.'
 
 

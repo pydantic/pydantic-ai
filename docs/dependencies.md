@@ -54,7 +54,7 @@ _(This example is complete, it can be run "as is" — you'll need to add `asynci
 Dependencies are accessed through the [`RunContext`][pydantic_ai.tools.RunContext] type, this should be the first parameter of system prompt functions etc.
 
 
-```python {title="system_prompt_dependencies.py" hl_lines="20-27" py="3.10"}
+```python {title="system_prompt_dependencies.py" hl_lines="20-27"}
 from dataclasses import dataclass
 
 import httpx
@@ -75,7 +75,7 @@ agent = Agent(
 
 
 @agent.system_prompt  # (1)!
-async def get_system_prompt(ctx: RunContext[MyDeps]) -> str | None:  # (2)!
+async def get_system_prompt(ctx: RunContext[MyDeps]) -> str:  # (2)!
     response = await ctx.deps.http_client.get(  # (3)!
         'https://example.com',
         headers={'Authorization': f'Bearer {ctx.deps.api_key}'},  # (4)!
@@ -112,7 +112,7 @@ to use `async` methods where dependencies perform IO, although synchronous depen
 
 Here's the same example as above, but with a synchronous dependency:
 
-```python {title="sync_dependencies.py" py="3.10"}
+```python {title="sync_dependencies.py"}
 from dataclasses import dataclass
 
 import httpx
@@ -133,7 +133,7 @@ agent = Agent(
 
 
 @agent.system_prompt
-def get_system_prompt(ctx: RunContext[MyDeps]) -> str | None:  # (2)!
+def get_system_prompt(ctx: RunContext[MyDeps]) -> str:  # (2)!
     response = ctx.deps.http_client.get(
         'https://example.com', headers={'Authorization': f'Bearer {ctx.deps.api_key}'}
     )
@@ -160,7 +160,7 @@ _(This example is complete, it can be run "as is" — you'll need to add `asynci
 
 As well as system prompts, dependencies can be used in [tools](tools.md) and [result validators](results.md#result-validators-functions).
 
-```python {title="full_example.py" hl_lines="27-35 38-48" py="3.10"}
+```python {title="full_example.py" hl_lines="27-35 38-48"}
 from dataclasses import dataclass
 
 import httpx
@@ -181,7 +181,7 @@ agent = Agent(
 
 
 @agent.system_prompt
-async def get_system_prompt(ctx: RunContext[MyDeps]) -> str | None:
+async def get_system_prompt(ctx: RunContext[MyDeps]) -> str:
     response = await ctx.deps.http_client.get('https://example.com')
     response.raise_for_status()
     return f'Prompt: {response.text}'
@@ -233,7 +233,7 @@ while calling application code which in turn calls the agent.
 
 This is done via the [`override`][pydantic_ai.Agent.override] method on the agent.
 
-```python {title="joke_app.py" py="3.10"}
+```python {title="joke_app.py"}
 from dataclasses import dataclass
 
 import httpx
@@ -256,7 +256,7 @@ joke_agent = Agent('openai:gpt-4o', deps_type=MyDeps)
 
 
 @joke_agent.system_prompt
-async def get_system_prompt(ctx: RunContext[MyDeps]) -> str | None:
+async def get_system_prompt(ctx: RunContext[MyDeps]) -> str:
     return await ctx.deps.system_prompt_factory()  # (2)!
 
 
@@ -277,7 +277,7 @@ async def application_code(prompt: str) -> str:  # (3)!
 
 _(This example is complete, it can be run "as is")_
 
-```python {title="test_joke_app.py" hl_lines="10-12" call_name="test_application_code" py="3.10"}
+```python {title="test_joke_app.py" hl_lines="10-12" call_name="test_application_code"}
 from joke_app import MyDeps, application_code, joke_agent
 
 

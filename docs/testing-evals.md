@@ -299,7 +299,7 @@ The system prompt is the developer's primary tool in controlling an agent's beha
 
 Let's assume we have the following app for running SQL generated from a user prompt (this examples omits a lot of details for brevity, see the [SQL gen](examples/sql-gen.md) example for a more complete code):
 
-```python {title="sql_app.py" py="3.10"}
+```python {title="sql_app.py"}
 import json
 from pathlib import Path
 from typing import Union
@@ -352,7 +352,7 @@ sql_agent = Agent(
 
 
 @sql_agent.system_prompt
-async def system_prompt(ctx: RunContext[SqlSystemPrompt]) -> str | None:
+async def system_prompt(ctx: RunContext[SqlSystemPrompt]) -> str:
     return ctx.deps.build_prompt()
 
 
@@ -407,7 +407,7 @@ To get a quantitative measure of performance, we assign points to each run as fo
 
 We use 5-fold cross-validation to judge the performance of the agent using our existing set of examples.
 
-```python {title="sql_app_evals.py" py="3.10"}
+```python {title="sql_app_evals.py"}
 import json
 import statistics
 from pathlib import Path

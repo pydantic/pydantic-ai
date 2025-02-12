@@ -78,7 +78,7 @@ Not very interesting yet, but we can easily add "tools", dynamic system prompts,
 
 Here is a concise example using PydanticAI to build a support agent for a bank:
 
-```python {title="bank_support.py" py="3.10"}
+```python {title="bank_support.py"}
 from dataclasses import dataclass
 
 from pydantic import BaseModel, Field
@@ -111,7 +111,7 @@ support_agent = Agent(  # (1)!
 
 
 @support_agent.system_prompt  # (5)!
-async def add_customer_name(ctx: RunContext[SupportDependencies]) -> str | None:
+async def add_customer_name(ctx: RunContext[SupportDependencies]) -> str:
     customer_name = await ctx.deps.db.customer_name(id=ctx.deps.customer_id)
     return f"The customer's name is {customer_name!r}"
 

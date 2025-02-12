@@ -6,7 +6,7 @@ import inspect
 from collections.abc import AsyncIterator, Awaitable, Iterator, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
 from types import FrameType
-from typing import Any, Callable, Generic, Union, cast, final, overload
+from typing import Any, Callable, Generic, cast, final, overload
 
 import logfire_api
 from typing_extensions import TypeVar, deprecated
@@ -646,26 +646,26 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
     @overload
     def system_prompt(
         self,
-        func: Callable[[RunContext[AgentDepsT]], Union[str, None]],  # noqa UP007
+        func: Callable[[RunContext[AgentDepsT]], str | None],
         /,
-    ) -> Callable[[RunContext[AgentDepsT]], Union[str, None]]: ...  # noqa UP007
+    ) -> Callable[[RunContext[AgentDepsT]], str | None]: ...
 
     @overload
     def system_prompt(
         self,
-        func: Callable[[RunContext[AgentDepsT]], Awaitable[Union[str, None]]],  # noqa UP007
+        func: Callable[[RunContext[AgentDepsT]], Awaitable[str | None]],
         /,
-    ) -> Callable[[RunContext[AgentDepsT]], Awaitable[Union[str, None]]]: ...  # noqa UP007
+    ) -> Callable[[RunContext[AgentDepsT]], Awaitable[str | None]]: ...
 
     @overload
-    def system_prompt(self, func: Callable[[], Union[str, None]], /) -> Callable[[], Union[str, None]]: ...  # noqa UP007
+    def system_prompt(self, func: Callable[[], str | None], /) -> Callable[[], str | None]: ...
 
     @overload
     def system_prompt(
         self,
-        func: Callable[[], Awaitable[Union[str, None]]],  # noqa UP007
+        func: Callable[[], Awaitable[str | None]],
         /,
-    ) -> Callable[[], Awaitable[Union[str, None]]]: ...  # noqa UP007
+    ) -> Callable[[], Awaitable[str | None]]: ...
 
     @overload
     def system_prompt(
