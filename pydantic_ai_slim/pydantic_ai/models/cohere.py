@@ -137,7 +137,7 @@ class CohereModel(Model):
         return self._process_response(response), _map_usage(response)
 
     @property
-    def model_name(self) -> str:
+    def model_name(self) -> CohereModelName:
         """The model name."""
         return self._model_name
 

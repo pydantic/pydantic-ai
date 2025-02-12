@@ -166,7 +166,7 @@ class MistralModel(Model):
             yield await self._process_streamed_response(model_request_parameters.result_tools, response)
 
     @property
-    def model_name(self) -> str:
+    def model_name(self) -> MistralModelName:
         """The model name."""
         return self._model_name
 
@@ -471,9 +471,11 @@ MistralToolCallId = Union[str, None]
 class MistralStreamedResponse(StreamedResponse):
     """Implementation of `StreamedResponse` for Mistral models."""
 
+    _model_name: MistralModelName
     _response: AsyncIterable[MistralCompletionEvent]
     _timestamp: datetime
     _result_tools: dict[str, ToolDefinition]
+    _usage: Usage = field(default_factory=Usage, init=False)
 
     _delta_content: str = field(default='', init=False)
 
@@ -512,7 +514,19 @@ class MistralStreamedResponse(StreamedResponse):
                     vendor_part_id=index, tool_name=dtc.function.name, args=dtc.function.arguments, tool_call_id=dtc.id
                 )
 
+    @property
+    def model_name(self) -> MistralModelName:
+        """Get the model name of the response."""
+        return self._model_name
+
+    @property
+    def usage(self) -> Usage:
+        """Get the usage of the response so far. This will not be the final usage until the stream is exhausted."""
+        return self._usage
+
+    @property
     def timestamp(self) -> datetime:
+        """Get the timestamp of the response."""
         return self._timestamp
 
     @staticmethod

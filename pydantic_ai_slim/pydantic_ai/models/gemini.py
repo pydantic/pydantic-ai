@@ -150,7 +150,7 @@ class GeminiModel(Model):
             yield await self._process_streamed_response(http_response)
 
     @property
-    def model_name(self) -> str:
+    def model_name(self) -> GeminiModelName:
         """The model name."""
         return self._model_name
 
@@ -325,9 +325,11 @@ class ApiKeyAuth:
 class GeminiStreamedResponse(StreamedResponse):
     """Implementation of `StreamedResponse` for the Gemini model."""
 
+    _model_name: GeminiModelName
     _content: bytearray
     _stream: AsyncIterator[bytes]
     _timestamp: datetime = field(default_factory=_utils.now_utc, init=False)
+    _usage: usage.Usage = field(default_factory=usage.Usage, init=False)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         async for gemini_response in self._get_gemini_responses():
@@ -388,7 +390,19 @@ class GeminiStreamedResponse(StreamedResponse):
             self._usage += _metadata_as_usage(r)
             yield r
 
+    @property
+    def model_name(self) -> GeminiModelName:
+        """Get the model name of the response."""
+        return self._model_name
+
+    @property
+    def usage(self) -> usage.Usage:
+        """Get the usage of the response so far. This will not be the final usage until the stream is exhausted."""
+        return self._usage
+
+    @property
     def timestamp(self) -> datetime:
+        """Get the timestamp of the response."""
         return self._timestamp
 
 

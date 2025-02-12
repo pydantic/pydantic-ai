@@ -231,10 +231,11 @@ class TestModel(Model):
 class TestStreamedResponse(StreamedResponse):
     """A structured response that streams test data."""
 
+    _model_name: str
     _structured_response: ModelResponse
     _messages: InitVar[Iterable[ModelMessage]]
-
     _timestamp: datetime = field(default_factory=_utils.now_utc, init=False)
+    _usage: Usage = field(default_factory=Usage, init=False)
 
     def __post_init__(self, _messages: Iterable[ModelMessage]):
         self._usage = _estimate_usage(_messages)
@@ -259,7 +260,19 @@ class TestStreamedResponse(StreamedResponse):
                     vendor_part_id=i, tool_name=part.tool_name, args=part.args, tool_call_id=part.tool_call_id
                 )
 
+    @property
+    def model_name(self) -> str:
+        """Get the model name of the response."""
+        return self._model_name
+
+    @property
+    def usage(self) -> Usage:
+        """Get the usage of the response so far. This will not be the final usage until the stream is exhausted."""
+        return self._usage
+
+    @property
     def timestamp(self) -> datetime:
+        """Get the timestamp of the response."""
         return self._timestamp
 
 

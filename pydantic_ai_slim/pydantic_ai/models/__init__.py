@@ -218,8 +218,6 @@ class Model(ABC):
 class StreamedResponse(ABC):
     """Streamed response from an LLM when calling a tool."""
 
-    _model_name: str
-    _usage: Usage = field(default_factory=Usage, init=False)
     _parts_manager: ModelResponsePartsManager = field(default_factory=ModelResponsePartsManager, init=False)
     _event_iterator: AsyncIterator[ModelResponseStreamEvent] | None = field(default=None, init=False)
 
@@ -243,17 +241,22 @@ class StreamedResponse(ABC):
     def get(self) -> ModelResponse:
         """Build a [`ModelResponse`][pydantic_ai.messages.ModelResponse] from the data received from the stream so far."""
         return ModelResponse(
-            parts=self._parts_manager.get_parts(), model_name=self._model_name, timestamp=self.timestamp()
+            parts=self._parts_manager.get_parts(), model_name=self.model_name, timestamp=self.timestamp
         )
 
+    @property
+    @abstractmethod
     def model_name(self) -> str:
         """Get the model name of the response."""
-        return self._model_name
+        raise NotImplementedError()
 
+    @property
+    @abstractmethod
     def usage(self) -> Usage:
         """Get the usage of the response so far. This will not be the final usage until the stream is exhausted."""
-        return self._usage
+        raise NotImplementedError()
 
+    @property
     @abstractmethod
     def timestamp(self) -> datetime:
         """Get the timestamp of the response."""

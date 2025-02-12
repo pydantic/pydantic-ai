@@ -147,7 +147,7 @@ class GroqModel(Model):
             yield await self._process_streamed_response(response)
 
     @property
-    def model_name(self) -> str:
+    def model_name(self) -> GroqModelName:
         """The model name."""
         return self._model_name
 
@@ -315,8 +315,10 @@ class GroqModel(Model):
 class GroqStreamedResponse(StreamedResponse):
     """Implementation of `StreamedResponse` for Groq models."""
 
+    _model_name: GroqModelName
     _response: AsyncIterable[ChatCompletionChunk]
     _timestamp: datetime
+    _usage: usage.Usage = field(default_factory=usage.Usage, init=False)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         async for chunk in self._response:
@@ -343,7 +345,19 @@ class GroqStreamedResponse(StreamedResponse):
                 if maybe_event is not None:
                     yield maybe_event
 
+    @property
+    def model_name(self) -> GroqModelName:
+        """Get the model name of the response."""
+        return self._model_name
+
+    @property
+    def usage(self) -> usage.Usage:
+        """Get the usage of the response so far. This will not be the final usage until the stream is exhausted."""
+        return self._usage
+
+    @property
     def timestamp(self) -> datetime:
+        """Get the timestamp of the response."""
         return self._timestamp
 
 

@@ -163,7 +163,7 @@ class AnthropicModel(Model):
             yield await self._process_streamed_response(response)
 
     @property
-    def model_name(self) -> str:
+    def model_name(self) -> AnthropicModelName:
         """The model name."""
         return self._model_name
 
@@ -372,8 +372,10 @@ def _map_usage(message: AnthropicMessage | RawMessageStreamEvent) -> usage.Usage
 class AnthropicStreamedResponse(StreamedResponse):
     """Implementation of `StreamedResponse` for Anthropic models."""
 
+    _model_name: AnthropicModelName
     _response: AsyncIterable[RawMessageStreamEvent]
     _timestamp: datetime
+    _usage: usage.Usage = field(default_factory=usage.Usage, init=False)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         current_block: TextBlock | ToolUseBlock | None = None
@@ -424,5 +426,17 @@ class AnthropicStreamedResponse(StreamedResponse):
             elif isinstance(event, (RawContentBlockStopEvent, RawMessageStopEvent)):
                 current_block = None
 
+    @property
+    def model_name(self) -> AnthropicModelName:
+        """Get the model name of the response."""
+        return self._model_name
+
+    @property
+    def usage(self) -> usage.Usage:
+        """Get the usage of the response so far. This will not be the final usage until the stream is exhausted."""
+        return self._usage
+
+    @property
     def timestamp(self) -> datetime:
+        """Get the timestamp of the response."""
         return self._timestamp

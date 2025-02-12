@@ -162,7 +162,7 @@ class VertexAIModel(GeminiModel):
             yield value
 
     @property
-    def model_name(self) -> str:
+    def model_name(self) -> GeminiModelName:
         """The model name."""
         return self._model_name
 
