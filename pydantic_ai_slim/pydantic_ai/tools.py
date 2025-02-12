@@ -4,7 +4,7 @@ import dataclasses
 import inspect
 from collections.abc import Awaitable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Callable, Generic, Literal, Union, cast
+from typing import TYPE_CHECKING, Any, Callable, Generic, Literal, TypedDict, Union, cast
 
 from pydantic import ValidationError
 from pydantic_core import SchemaValidator
@@ -19,6 +19,7 @@ if TYPE_CHECKING:
 __all__ = (
     'AgentDepsT',
     'DocstringFormat',
+    'FunctionSchema',
     'RunContext',
     'SystemPromptFunc',
     'ToolFuncContext',
@@ -33,6 +34,18 @@ __all__ = (
 
 AgentDepsT = TypeVar('AgentDepsT', default=None, contravariant=True)
 """Type variable for agent dependencies."""
+
+
+class FunctionSchema(TypedDict):
+    """Internal information about a function schema."""
+
+    description: str
+    validator: SchemaValidator
+    json_schema: ObjectJsonSchema
+    # if not None, the function takes a single by that name (besides potentially `info`)
+    single_arg_name: str | None
+    positional_fields: list[str]
+    var_positional_field: str | None
 
 
 @dataclasses.dataclass
