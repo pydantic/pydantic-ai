@@ -358,8 +358,14 @@ def test_init_tool_with_function_schema():
     agent = Agent('test', tools=[Tool(x_tool, function_schema=y_fs)])
 
     # make sure the function schema for y_tool is used instead of the default of x_tool.
-    assert 'x' not in agent._function_tools['x_tool']._parameters_json_schema['properties']
-    assert 'y' in agent._function_tools['x_tool']._parameters_json_schema['properties']
+    assert agent._function_tools['x_tool']._parameters_json_schema == snapshot(
+        {
+            'additionalProperties': False,
+            'properties': {'y': {'title': 'Y', 'type': 'string'}},
+            'required': ['y'],
+            'type': 'object',
+        }
+    )
 
 
 def test_init_tool_ctx_with_function_schema():
@@ -374,9 +380,14 @@ def test_init_tool_ctx_with_function_schema():
     )
     agent = Agent('test', tools=[Tool(x_tool, function_schema=y_fs, takes_ctx=True)], deps_type=int)
 
-    # make sure the function schema for y_tool is used instead of the default of x_tool.
-    assert 'x' not in agent._function_tools['x_tool']._parameters_json_schema['properties']
-    assert 'y' in agent._function_tools['x_tool']._parameters_json_schema['properties']
+    assert agent._function_tools['x_tool']._parameters_json_schema == snapshot(
+        {
+            'additionalProperties': False,
+            'properties': {'y': {'title': 'Y', 'type': 'string'}},
+            'required': ['y'],
+            'type': 'object',
+        }
+    )
 
 
 def ctx_tool(ctx: RunContext[int], x: int) -> int:
