@@ -236,7 +236,7 @@ class AnthropicModel(Model):
                     )
                 )
 
-        return ModelResponse(items, model_name=self._model_name)
+        return ModelResponse(items, model_name=response.model)
 
     async def _process_streamed_response(self, response: AsyncStream[RawMessageStreamEvent]) -> StreamedResponse:
         peekable_response = _utils.PeekableAsyncStream(response)

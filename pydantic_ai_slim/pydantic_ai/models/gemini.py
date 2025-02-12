@@ -233,7 +233,7 @@ class GeminiModel(Model):
             else:
                 raise UnexpectedModelBehavior('Content field missing from Gemini response', str(response))
         parts = response['candidates'][0]['content']['parts']
-        return _process_response_from_parts(parts, model_name=self._model_name)
+        return _process_response_from_parts(parts, model_name=response.get('model_version', self._model_name))
 
     async def _process_streamed_response(self, http_response: HTTPResponse) -> StreamedResponse:
         """Process a streamed response, and prepare a streaming response to return."""
@@ -610,6 +610,7 @@ class _GeminiResponse(TypedDict):
     # usageMetadata appears to be required by both APIs but is omitted when streaming responses until the last response
     usage_metadata: NotRequired[Annotated[_GeminiUsageMetaData, pydantic.Field(alias='usageMetadata')]]
     prompt_feedback: NotRequired[Annotated[_GeminiPromptFeedback, pydantic.Field(alias='promptFeedback')]]
+    model_version: NotRequired[Annotated[str, pydantic.Field(alias='modelVersion')]]
 
 
 class _GeminiCandidates(TypedDict):
