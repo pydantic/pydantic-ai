@@ -146,6 +146,16 @@ class GroqModel(Model):
         async with response:
             yield await self._process_streamed_response(response)
 
+    @property
+    def model_name(self) -> str:
+        """The model name."""
+        return self._model_name
+
+    @property
+    def system(self) -> str | None:
+        """The system / model provider."""
+        return self._system
+
     @overload
     async def _completions_create(
         self,

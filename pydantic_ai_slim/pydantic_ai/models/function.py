@@ -121,6 +121,16 @@ class FunctionModel(Model):
 
         yield FunctionStreamedResponse(_model_name=f'function:{self.stream_function.__name__}', _iter=response_stream)
 
+    @property
+    def model_name(self) -> str:
+        """The model name."""
+        return self._model_name
+
+    @property
+    def system(self) -> str | None:
+        """The system / model provider."""
+        return self._system
+
 
 @dataclass(frozen=True)
 class AgentInfo:

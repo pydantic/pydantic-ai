@@ -177,9 +177,6 @@ class ModelRequestParameters:
 class Model(ABC):
     """Abstract class for a model."""
 
-    _model_name: str
-    _system: str | None
-
     @abstractmethod
     async def request(
         self,
@@ -205,14 +202,16 @@ class Model(ABC):
         yield  # pragma: no cover
 
     @property
+    @abstractmethod
     def model_name(self) -> str:
         """The model name."""
-        return self._model_name
+        raise NotImplementedError()
 
     @property
+    @abstractmethod
     def system(self) -> str | None:
         """The system / model provider, ex: openai."""
-        return self._system
+        raise NotImplementedError()
 
 
 @dataclass

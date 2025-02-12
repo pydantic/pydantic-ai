@@ -165,6 +165,16 @@ class MistralModel(Model):
         async with response:
             yield await self._process_streamed_response(model_request_parameters.result_tools, response)
 
+    @property
+    def model_name(self) -> str:
+        """The model name."""
+        return self._model_name
+
+    @property
+    def system(self) -> str | None:
+        """The system / model provider."""
+        return self._system
+
     async def _completions_create(
         self,
         messages: list[ModelMessage],
