@@ -37,10 +37,7 @@ class FallbackModel(Model):
             default_model: The name or instance of the default model to use.
             fallback_models: The names or instances of the fallback models to use upon failure.
         """
-        default_model_ = default_model if isinstance(default_model, Model) else infer_model(default_model)
-        fallback_models_ = [model if isinstance(model, Model) else infer_model(model) for model in fallback_models]
-
-        self.models = [default_model_, *fallback_models_]
+        self.models = [infer_model(model) for model in [default_model, *fallback_models]]
 
         self._model_name = f'FallBackModel[{", ".join(model.model_name for model in self.models)}]'
 
