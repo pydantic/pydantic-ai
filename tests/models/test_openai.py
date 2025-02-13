@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import json
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from functools import cached_property
@@ -85,8 +86,10 @@ def test_init_of_openai_without_api_key_raises_error(env: TestEnv):
 
 @dataclass
 class MockOpenAI:
-    completions: chat.ChatCompletion | Exception | list[chat.ChatCompletion | Exception] | None = None
-    stream: list[chat.ChatCompletionChunk | Exception] | list[list[chat.ChatCompletionChunk | Exception]] | None = None
+    completions: chat.ChatCompletion | Exception | Sequence[chat.ChatCompletion | Exception] | None = None
+    stream: (
+        Sequence[chat.ChatCompletionChunk | Exception] | Sequence[Sequence[chat.ChatCompletionChunk | Exception]] | None
+    ) = None
     index: int = 0
     chat_completion_kwargs: list[dict[str, Any]] = field(default_factory=list)
 
@@ -97,14 +100,15 @@ class MockOpenAI:
 
     @classmethod
     def create_mock(
-        cls, completions: chat.ChatCompletion | Exception | list[chat.ChatCompletion | Exception]
+        cls, completions: chat.ChatCompletion | Exception | Sequence[chat.ChatCompletion | Exception]
     ) -> AsyncOpenAI:
         return cast(AsyncOpenAI, cls(completions=completions))
 
     @classmethod
     def create_mock_stream(
         cls,
-        stream: list[chat.ChatCompletionChunk | Exception] | list[list[chat.ChatCompletionChunk | Exception]],
+        stream: Sequence[chat.ChatCompletionChunk | Exception]
+        | Sequence[Sequence[chat.ChatCompletionChunk | Exception]],
     ) -> AsyncOpenAI:
         return cast(AsyncOpenAI, cls(stream=stream))
 
@@ -116,7 +120,7 @@ class MockOpenAI:
         # note: we use `Union` in the below casts because of lacking | operator support in 3.9
         if stream:
             assert self.stream is not None, 'you can only used `stream=True` if `stream` is provided'
-            if isinstance(self.stream[0], list):
+            if isinstance(self.stream[0], Sequence):
                 response = MockAsyncStream(
                     iter(cast(list[Union[chat.ChatCompletionChunk, Exception]], self.stream[self.index]))
                 )
@@ -124,7 +128,7 @@ class MockOpenAI:
                 response = MockAsyncStream(iter(cast(list[Union[chat.ChatCompletionChunk, Exception]], self.stream)))
         else:
             assert self.completions is not None, 'you can only used `stream=False` if `completions` are provided'
-            if isinstance(self.completions, list):
+            if isinstance(self.completions, Sequence):
                 raise_if_exception(self.completions[self.index])
                 response = cast(chat.ChatCompletion, self.completions[self.index])
             else:
@@ -261,7 +265,7 @@ async def test_request_structured_response(allow_model_requests: None):
 
 
 async def test_request_tool_call(allow_model_requests: None):
-    responses: list[chat.ChatCompletion | Exception] = [
+    responses = [
         completion_message(
             ChatCompletionMessage(
                 content=None,
@@ -404,7 +408,7 @@ def text_chunk(text: str, finish_reason: FinishReason | None = None) -> chat.Cha
 
 
 async def test_stream_text(allow_model_requests: None):
-    stream: list[chat.ChatCompletionChunk | Exception] = [text_chunk('hello '), text_chunk('world'), chunk([])]
+    stream = [text_chunk('hello '), text_chunk('world'), chunk([])]
     mock_client = MockOpenAI.create_mock_stream(stream)
     m = OpenAIModel('gpt-4o', openai_client=mock_client)
     agent = Agent(m)
@@ -417,7 +421,7 @@ async def test_stream_text(allow_model_requests: None):
 
 
 async def test_stream_text_finish_reason(allow_model_requests: None):
-    stream: list[chat.ChatCompletionChunk | Exception] = [
+    stream = [
         text_chunk('hello '),
         text_chunk('world'),
         text_chunk('.', finish_reason='stop'),
@@ -457,7 +461,7 @@ class MyTypedDict(TypedDict, total=False):
 
 
 async def test_stream_structured(allow_model_requests: None):
-    stream: list[chat.ChatCompletionChunk | Exception] = [
+    stream = [
         chunk([ChoiceDelta()]),
         chunk([ChoiceDelta(tool_calls=[])]),
         chunk([ChoiceDelta(tool_calls=[ChoiceDeltaToolCall(index=0, function=None)])]),
@@ -490,7 +494,7 @@ async def test_stream_structured(allow_model_requests: None):
 
 
 async def test_stream_structured_finish_reason(allow_model_requests: None):
-    stream: list[chat.ChatCompletionChunk | Exception] = [
+    stream = [
         struc_chunk('final_result', None),
         struc_chunk(None, '{"first": "One'),
         struc_chunk(None, '", "second": "Two"'),
@@ -516,7 +520,7 @@ async def test_stream_structured_finish_reason(allow_model_requests: None):
 
 
 async def test_no_content(allow_model_requests: None):
-    stream: list[chat.ChatCompletionChunk | Exception] = [chunk([ChoiceDelta()]), chunk([ChoiceDelta()])]
+    stream = [chunk([ChoiceDelta()]), chunk([ChoiceDelta()])]
     mock_client = MockOpenAI.create_mock_stream(stream)
     m = OpenAIModel('gpt-4o', openai_client=mock_client)
     agent = Agent(m, result_type=MyTypedDict)
@@ -527,7 +531,7 @@ async def test_no_content(allow_model_requests: None):
 
 
 async def test_no_delta(allow_model_requests: None):
-    stream: list[chat.ChatCompletionChunk | Exception] = [
+    stream = [
         chunk([]),
         text_chunk('hello '),
         text_chunk('world'),

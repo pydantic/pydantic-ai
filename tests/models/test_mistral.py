@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import json
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from functools import cached_property
@@ -61,10 +62,12 @@ pytestmark = [
 
 @dataclass
 class MockMistralAI:
-    completions: MistralChatCompletionResponse | Exception | list[MistralChatCompletionResponse | Exception] | None = (
-        None
-    )
-    stream: list[MistralCompletionEvent | Exception] | list[list[MistralCompletionEvent | Exception]] | None = None
+    completions: (
+        MistralChatCompletionResponse | Exception | Sequence[MistralChatCompletionResponse | Exception] | None
+    ) = None
+    stream: (
+        Sequence[MistralCompletionEvent | Exception] | Sequence[Sequence[MistralCompletionEvent | Exception]] | None
+    ) = None
     index: int = 0
 
     @cached_property
@@ -80,14 +83,16 @@ class MockMistralAI:
 
     @classmethod
     def create_mock(
-        cls, completions: MistralChatCompletionResponse | Exception | list[MistralChatCompletionResponse | Exception]
+        cls,
+        completions: MistralChatCompletionResponse | Exception | Sequence[MistralChatCompletionResponse | Exception],
     ) -> Mistral:
         return cast(Mistral, cls(completions=completions))
 
     @classmethod
     def create_stream_mock(
         cls,
-        completions_streams: list[MistralCompletionEvent | Exception] | list[list[MistralCompletionEvent | Exception]],
+        completions_streams: Sequence[MistralCompletionEvent | Exception]
+        | Sequence[Sequence[MistralCompletionEvent | Exception]],
     ) -> Mistral:
         return cast(Mistral, cls(stream=completions_streams))
 
@@ -186,7 +191,7 @@ def test_init():
 
 
 async def test_multiple_completions(allow_model_requests: None):
-    completions: list[MistralChatCompletionResponse | Exception] = [
+    completions = [
         completion_message(
             MistralAssistantMessage(content='world'),
             usage=MistralUsageInfo(prompt_tokens=1, completion_tokens=1, total_tokens=1),
@@ -229,7 +234,7 @@ async def test_multiple_completions(allow_model_requests: None):
 
 
 async def test_three_completions(allow_model_requests: None):
-    completions: list[MistralChatCompletionResponse | Exception] = [
+    completions = [
         completion_message(
             MistralAssistantMessage(content='world'),
             usage=MistralUsageInfo(prompt_tokens=1, completion_tokens=1, total_tokens=1),
@@ -289,7 +294,7 @@ async def test_three_completions(allow_model_requests: None):
 
 
 async def test_stream_text(allow_model_requests: None):
-    stream: list[MistralCompletionEvent | Exception] = [
+    stream = [
         text_chunk('hello '),
         text_chunk('world '),
         text_chunk('welcome '),
@@ -312,7 +317,7 @@ async def test_stream_text(allow_model_requests: None):
 
 
 async def test_stream_text_finish_reason(allow_model_requests: None):
-    stream: list[MistralCompletionEvent | Exception] = [
+    stream = [
         text_chunk('hello '),
         text_chunkk('world'),
         text_chunk('.', finish_reason='stop'),
@@ -330,7 +335,7 @@ async def test_stream_text_finish_reason(allow_model_requests: None):
 
 
 async def test_no_delta(allow_model_requests: None):
-    stream: list[MistralCompletionEvent | Exception] = [
+    stream = [
         chunk([], with_created=False),
         text_chunk('hello '),
         text_chunk('world'),
@@ -543,7 +548,7 @@ async def test_stream_structured_with_all_type(allow_model_requests: None):
         dict_int_value: dict[str, int]
         dict_str_value: dict[int, str]
 
-    stream: list[MistralCompletionEvent | Exception] = [
+    stream = [
         text_chunk('{'),
         text_chunk('"first": "One'),
         text_chunk(
@@ -641,7 +646,7 @@ async def test_stream_result_type_primitif_dict(allow_model_requests: None):
         first: str
         second: str
 
-    stream: list[MistralCompletionEvent | Exception] = [
+    stream = [
         text_chunk('{'),
         text_chunk('"'),
         text_chunk('f'),
@@ -724,7 +729,7 @@ async def test_stream_result_type_primitif_dict(allow_model_requests: None):
 async def test_stream_result_type_primitif_int(allow_model_requests: None):
     """This test tests the primitif result with the pydantic ai format model response"""
 
-    stream: list[MistralCompletionEvent | Exception] = [
+    stream = [
         # {'response':
         text_chunk('{'),
         text_chunk('"resp'),
@@ -754,7 +759,7 @@ async def test_stream_result_type_primitif_int(allow_model_requests: None):
 async def test_stream_result_type_primitif_array(allow_model_requests: None):
     """This test tests the primitif result with the pydantic ai format model response"""
 
-    stream: list[MistralCompletionEvent | Exception] = [
+    stream = [
         # {'response':
         text_chunk('{'),
         text_chunk('"resp'),
@@ -849,7 +854,7 @@ async def test_stream_result_type_basemodel_with_default_params(allow_model_requ
         first: str = ''  # Note: Default, set value.
         second: str = ''  # Note: Default, set value.
 
-    stream: list[MistralCompletionEvent | Exception] = [
+    stream = [
         text_chunk('{'),
         text_chunk('"'),
         text_chunk('f'),
@@ -934,7 +939,7 @@ async def test_stream_result_type_basemodel_with_required_params(allow_model_req
         first: str  # Note: Required params
         second: str  # Note: Required params
 
-    stream: list[MistralCompletionEvent | Exception] = [
+    stream = [
         text_chunk('{'),
         text_chunk('"'),
         text_chunk('f'),
@@ -1004,7 +1009,7 @@ async def test_stream_result_type_basemodel_with_required_params(allow_model_req
 
 
 async def test_request_tool_call(allow_model_requests: None):
-    completion: list[MistralChatCompletionResponse | Exception] = [
+    completion = [
         completion_message(
             MistralAssistantMessage(
                 content=None,
@@ -1124,7 +1129,7 @@ async def test_request_tool_call_with_result_type(allow_model_requests: None):
         lat: int
         lng: int
 
-    completion: list[MistralChatCompletionResponse | Exception] = [
+    completion = [
         completion_message(
             MistralAssistantMessage(
                 content=None,
@@ -1281,7 +1286,7 @@ async def test_stream_tool_call_with_return_type(allow_model_requests: None):
     class MyTypedDict(TypedDict, total=False):
         won: bool
 
-    completion: list[list[MistralCompletionEvent | Exception]] = [
+    completion = [
         [
             chunk(
                 delta=[MistralDeltaMessage(role=MistralUnset(), content='', tool_calls=MistralUnset())],
@@ -1388,7 +1393,7 @@ async def test_stream_tool_call_with_return_type(allow_model_requests: None):
 
 
 async def test_stream_tool_call(allow_model_requests: None):
-    completion: list[list[MistralCompletionEvent | Exception]] = [
+    completion = [
         [
             chunk(
                 delta=[MistralDeltaMessage(role=MistralUnset(), content='', tool_calls=MistralUnset())],
@@ -1476,7 +1481,7 @@ async def test_stream_tool_call(allow_model_requests: None):
 
 
 async def test_stream_tool_call_with_retry(allow_model_requests: None):
-    completion: list[list[MistralCompletionEvent | Exception]] = [
+    completion = [
         [
             chunk(
                 delta=[MistralDeltaMessage(role=MistralUnset(), content='', tool_calls=MistralUnset())],

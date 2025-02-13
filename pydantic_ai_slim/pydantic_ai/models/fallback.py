@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 import json
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -69,13 +69,16 @@ class FallbackModel(Model):
         errors: list[ModelStatusError] = []
 
         for model in self.models:
-            try:
-                async with model.request_stream(messages, model_settings, model_request_parameters) as response:
-                    yield response
-                    return
-            except ModelStatusError as exc_info:
-                errors.append(exc_info)
-                continue
+            async with AsyncExitStack() as stack:
+                try:
+                    response = await stack.enter_async_context(
+                        model.request_stream(messages, model_settings, model_request_parameters)
+                    )
+                except ModelStatusError as exc_info:
+                    errors.append(exc_info)
+                    continue
+                yield response
+                return
 
         raise UnexpectedModelBehavior('All fallback models failed', body=json.dumps([e.message for e in errors]))
 

@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import json
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import timezone
 from functools import cached_property
@@ -67,8 +68,10 @@ def test_init():
 
 @dataclass
 class MockAnthropic:
-    messages_: AnthropicMessage | Exception | list[AnthropicMessage | Exception] | None = None
-    stream: list[RawMessageStreamEvent | Exception] | list[list[RawMessageStreamEvent | Exception]] | None = None
+    messages_: AnthropicMessage | Exception | Sequence[AnthropicMessage | Exception] | None = None
+    stream: (
+        Sequence[RawMessageStreamEvent | Exception] | Sequence[Sequence[RawMessageStreamEvent | Exception]] | None
+    ) = None
     index = 0
     chat_completion_kwargs: list[dict[str, Any]] = field(default_factory=list)
 
@@ -78,13 +81,13 @@ class MockAnthropic:
 
     @classmethod
     def create_mock(
-        cls, messages_: AnthropicMessage | Exception | list[AnthropicMessage | Exception]
+        cls, messages_: AnthropicMessage | Exception | Sequence[AnthropicMessage | Exception]
     ) -> AsyncAnthropic:
         return cast(AsyncAnthropic, cls(messages_=messages_))
 
     @classmethod
     def create_stream_mock(
-        cls, stream: list[RawMessageStreamEvent | Exception] | list[list[RawMessageStreamEvent | Exception]]
+        cls, stream: Sequence[RawMessageStreamEvent | Exception] | Sequence[Sequence[RawMessageStreamEvent | Exception]]
     ) -> AsyncAnthropic:
         return cast(AsyncAnthropic, cls(stream=stream))
 
@@ -95,11 +98,11 @@ class MockAnthropic:
 
         if stream:
             assert self.stream is not None, 'you can only use `stream=True` if `stream` is provided'
-            if isinstance(self.stream[0], list):
-                indexed_stream = cast(list[Union[RawMessageStreamEvent, Exception]], self.stream[self.index])
+            if isinstance(self.stream[0], Sequence):
+                indexed_stream = cast(Sequence[Union[RawMessageStreamEvent, Exception]], self.stream[self.index])
                 response = MockAsyncStream(iter(indexed_stream))
             else:
-                response = MockAsyncStream(iter(cast(list[Union[RawMessageStreamEvent, Exception]], self.stream)))
+                response = MockAsyncStream(iter(cast(Sequence[Union[RawMessageStreamEvent, Exception]], self.stream)))
         else:
             assert self.messages_ is not None, '`messages` must be provided'
             if isinstance(self.messages_, list):
@@ -212,7 +215,7 @@ async def test_request_structured_response(allow_model_requests: None):
 
 
 async def test_request_tool_call(allow_model_requests: None):
-    responses: list[AnthropicMessage | Exception] = [
+    responses = [
         completion_message(
             [ToolUseBlock(id='1', input={'loc_name': 'San Francisco'}, name='get_location', type='tool_use')],
             usage=AnthropicUsage(input_tokens=2, output_tokens=1),
@@ -308,7 +311,7 @@ def get_mock_chat_completion_kwargs(async_anthropic: AsyncAnthropic) -> list[dic
 
 @pytest.mark.parametrize('parallel_tool_calls', [True, False])
 async def test_parallel_tool_calls(allow_model_requests: None, parallel_tool_calls: bool) -> None:
-    responses: list[AnthropicMessage | Exception] = [
+    responses = [
         completion_message(
             [ToolUseBlock(id='1', input={'loc_name': 'San Francisco'}, name='get_location', type='tool_use')],
             usage=AnthropicUsage(input_tokens=2, output_tokens=1),
@@ -358,7 +361,7 @@ async def test_stream_structured(allow_model_requests: None):
     5. Update usage
     6. Message stop
     """
-    stream: list[RawMessageStreamEvent | Exception] = [
+    stream = [
         RawMessageStartEvent(
             type='message_start',
             message=AnthropicMessage(
@@ -404,7 +407,7 @@ async def test_stream_structured(allow_model_requests: None):
         RawMessageStopEvent(type='message_stop'),
     ]
 
-    done_stream: list[RawMessageStreamEvent | Exception] = [
+    done_stream = [
         RawMessageStartEvent(
             type='message_start',
             message=AnthropicMessage(

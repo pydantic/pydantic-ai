@@ -100,8 +100,9 @@ async def success_response_stream(_model_messages: list[ModelMessage], _agent_in
 
 
 async def failure_response_stream(_model_messages: list[ModelMessage], _agent_info: AgentInfo) -> AsyncIterator[str]:
-    yield 'uh oh... '
+    # Note: today we can only handle errors that are raised before the streaming begins
     raise ModelStatusError(status_code=500, model_name='test-function-model', body={'error': 'test error'})
+    yield 'uh oh... '
 
 
 success_model_stream = FunctionModel(stream_function=success_response_stream)

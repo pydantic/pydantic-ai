@@ -59,8 +59,10 @@ def test_init():
 
 @dataclass
 class MockGroq:
-    completions: chat.ChatCompletion | Exception | list[chat.ChatCompletion | Exception] | None = None
-    stream: list[chat.ChatCompletionChunk | Exception] | list[list[chat.ChatCompletionChunk | Exception]] | None = None
+    completions: chat.ChatCompletion | Exception | Sequence[chat.ChatCompletion | Exception] | None = None
+    stream: (
+        Sequence[chat.ChatCompletionChunk | Exception] | Sequence[Sequence[chat.ChatCompletionChunk | Exception]] | None
+    ) = None
     index: int = 0
 
     @cached_property
@@ -70,14 +72,15 @@ class MockGroq:
 
     @classmethod
     def create_mock(
-        cls, completions: chat.ChatCompletion | Exception | list[chat.ChatCompletion | Exception]
+        cls, completions: chat.ChatCompletion | Exception | Sequence[chat.ChatCompletion | Exception]
     ) -> AsyncGroq:
         return cast(AsyncGroq, cls(completions=completions))
 
     @classmethod
     def create_mock_stream(
         cls,
-        stream: Sequence[chat.ChatCompletionChunk | Exception] | Sequence[list[chat.ChatCompletionChunk | Exception]],
+        stream: Sequence[chat.ChatCompletionChunk | Exception]
+        | Sequence[Sequence[chat.ChatCompletionChunk | Exception]],
     ) -> AsyncGroq:
         return cast(AsyncGroq, cls(stream=list(stream)))  # pyright: ignore[reportArgumentType]
 
@@ -211,7 +214,7 @@ async def test_request_structured_response(allow_model_requests: None):
 
 
 async def test_request_tool_call(allow_model_requests: None):
-    responses: list[chat.ChatCompletion | Exception] = [
+    responses = [
         completion_message(
             ChatCompletionMessage(
                 content=None,

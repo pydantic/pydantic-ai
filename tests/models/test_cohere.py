@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import json
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import timezone
 from typing import Any, cast
@@ -51,18 +52,18 @@ def test_init():
 
 @dataclass
 class MockAsyncClientV2:
-    completions: ChatResponse | Exception | list[ChatResponse | Exception] | None = None
+    completions: ChatResponse | Exception | Sequence[ChatResponse | Exception] | None = None
     index = 0
 
     @classmethod
-    def create_mock(cls, completions: ChatResponse | Exception | list[ChatResponse | Exception]) -> AsyncClientV2:
+    def create_mock(cls, completions: ChatResponse | Exception | Sequence[ChatResponse | Exception]) -> AsyncClientV2:
         return cast(AsyncClientV2, cls(completions=completions))
 
     async def chat(  # pragma: no cover
         self, *_args: Any, **_kwargs: Any
     ) -> ChatResponse:
         assert self.completions is not None
-        if isinstance(self.completions, list):
+        if isinstance(self.completions, Sequence):
             raise_if_exception(self.completions[self.index])
             response = cast(ChatResponse, self.completions[self.index])
         else:
@@ -197,7 +198,7 @@ async def test_request_structured_response(allow_model_requests: None):
 
 
 async def test_request_tool_call(allow_model_requests: None):
-    responses: list[ChatResponse | Exception] = [
+    responses = [
         completion_message(
             AssistantMessageResponse(
                 content=None,
