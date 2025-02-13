@@ -4,7 +4,7 @@ import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from functools import cached_property
-from typing import Any, cast
+from typing import Any, Union, cast
 
 import pytest
 from inline_snapshot import snapshot
@@ -12,7 +12,7 @@ from pydantic import BaseModel
 from typing_extensions import TypedDict
 
 from pydantic_ai.agent import Agent
-from pydantic_ai.exceptions import ModelRetry
+from pydantic_ai.exceptions import ModelRetry, ModelStatusError
 from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
@@ -24,7 +24,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 
-from ..conftest import IsNow, try_import
+from ..conftest import IsNow, raise_if_exception, try_import
 from .mock_async_stream import MockAsyncStream
 
 with try_import() as imports_successful:
@@ -43,6 +43,7 @@ with try_import() as imports_successful:
     from mistralai.models import (
         ChatCompletionResponse as MistralChatCompletionResponse,
         CompletionEvent as MistralCompletionEvent,
+        SDKError,
         ToolCall as MistralToolCall,
     )
     from mistralai.types.basemodel import Unset as MistralUnset
@@ -60,9 +61,11 @@ pytestmark = [
 
 @dataclass
 class MockMistralAI:
-    completions: MistralChatCompletionResponse | list[MistralChatCompletionResponse] | None = None
-    stream: list[MistralCompletionEvent] | list[list[MistralCompletionEvent]] | None = None
-    index = 0
+    completions: MistralChatCompletionResponse | Exception | list[MistralChatCompletionResponse | Exception] | None = (
+        None
+    )
+    stream: list[MistralCompletionEvent | Exception] | list[list[MistralCompletionEvent | Exception]] | None = None
+    index: int = 0
 
     @cached_property
     def chat(self) -> Any:
@@ -76,42 +79,40 @@ class MockMistralAI:
             return type('Chat', (), {'complete_async': self.chat_completions_create})
 
     @classmethod
-    def create_mock(cls, completions: MistralChatCompletionResponse | list[MistralChatCompletionResponse]) -> Mistral:
+    def create_mock(
+        cls, completions: MistralChatCompletionResponse | Exception | list[MistralChatCompletionResponse | Exception]
+    ) -> Mistral:
         return cast(Mistral, cls(completions=completions))
 
     @classmethod
     def create_stream_mock(
-        cls, completions_streams: list[MistralCompletionEvent] | list[list[MistralCompletionEvent]]
+        cls,
+        completions_streams: list[MistralCompletionEvent | Exception] | list[list[MistralCompletionEvent | Exception]],
     ) -> Mistral:
         return cast(Mistral, cls(stream=completions_streams))
 
     async def chat_completions_create(  # pragma: no cover
         self, *_args: Any, stream: bool = False, **_kwargs: Any
-    ) -> (
-        MistralChatCompletionResponse
-        | MockAsyncStream[MistralChatCompletionResponse]
-        | list[MistralChatCompletionResponse]
-    ):
-        response: (
-            MistralChatCompletionResponse
-            | MockAsyncStream[MistralChatCompletionResponse]
-            | list[MistralChatCompletionResponse]
-        )
+    ) -> MistralChatCompletionResponse | MockAsyncStream[MistralChatCompletionResponse | Exception]:
         if stream or self.stream:
             assert self.stream is not None, 'you can only used `stream=True` if `stream` is provided'
             if isinstance(self.stream[0], list):
-                indexed_stream = cast(list[MistralChatCompletionResponse], self.stream[self.index])
+                indexed_stream = cast(list[Union[MistralChatCompletionResponse, Exception]], self.stream[self.index])
                 response = MockAsyncStream(iter(indexed_stream))
 
             else:
-                response = MockAsyncStream(iter(cast(list[MistralChatCompletionResponse], self.stream)))
+                response = MockAsyncStream(
+                    iter(cast(list[Union[MistralChatCompletionResponse, Exception]], self.stream))
+                )
 
         else:
             assert self.completions is not None, 'you can only used `stream=False` if `completions` are provided'
             if isinstance(self.completions, list):
-                response = self.completions[self.index]
+                raise_if_exception(self.completions[self.index])
+                response = cast(MistralChatCompletionResponse, self.completions[self.index])
             else:
-                response = self.completions
+                raise_if_exception(self.completions)
+                response = cast(MistralChatCompletionResponse, self.completions)
         self.index += 1
         return response
 
@@ -185,8 +186,7 @@ def test_init():
 
 
 async def test_multiple_completions(allow_model_requests: None):
-    # Given
-    completions = [
+    completions: list[MistralChatCompletionResponse | Exception] = [
         completion_message(
             MistralAssistantMessage(content='world'),
             usage=MistralUsageInfo(prompt_tokens=1, completion_tokens=1, total_tokens=1),
@@ -198,10 +198,8 @@ async def test_multiple_completions(allow_model_requests: None):
     model = MistralModel('mistral-large-latest', client=mock_client)
     agent = Agent(model=model)
 
-    # When
     result = await agent.run('hello')
 
-    # Then
     assert result.data == 'world'
     assert result.usage().request_tokens == 1
     assert result.usage().response_tokens == 1
@@ -231,8 +229,7 @@ async def test_multiple_completions(allow_model_requests: None):
 
 
 async def test_three_completions(allow_model_requests: None):
-    # Given
-    completions = [
+    completions: list[MistralChatCompletionResponse | Exception] = [
         completion_message(
             MistralAssistantMessage(content='world'),
             usage=MistralUsageInfo(prompt_tokens=1, completion_tokens=1, total_tokens=1),
@@ -244,10 +241,8 @@ async def test_three_completions(allow_model_requests: None):
     model = MistralModel('mistral-large-latest', client=mock_client)
     agent = Agent(model=model)
 
-    # When
     result = await agent.run('hello')
 
-    # Them
     assert result.data == 'world'
     assert result.usage().request_tokens == 1
     assert result.usage().response_tokens == 1
@@ -294,15 +289,18 @@ async def test_three_completions(allow_model_requests: None):
 
 
 async def test_stream_text(allow_model_requests: None):
-    # Given
-    stream = [text_chunk('hello '), text_chunk('world '), text_chunk('welcome '), text_chunkk('mistral'), chunk([])]
+    stream: list[MistralCompletionEvent | Exception] = [
+        text_chunk('hello '),
+        text_chunk('world '),
+        text_chunk('welcome '),
+        text_chunkk('mistral'),
+        chunk([]),
+    ]
     mock_client = MockMistralAI.create_stream_mock(stream)
     model = MistralModel('mistral-large-latest', client=mock_client)
     agent = Agent(model=model)
 
-    # When
     async with agent.run_stream('') as result:
-        # Then
         assert not result.is_complete
         assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(
             ['hello ', 'hello world ', 'hello world welcome ', 'hello world welcome mistral']
@@ -314,15 +312,16 @@ async def test_stream_text(allow_model_requests: None):
 
 
 async def test_stream_text_finish_reason(allow_model_requests: None):
-    # Given
-    stream = [text_chunk('hello '), text_chunkk('world'), text_chunk('.', finish_reason='stop')]
+    stream: list[MistralCompletionEvent | Exception] = [
+        text_chunk('hello '),
+        text_chunkk('world'),
+        text_chunk('.', finish_reason='stop'),
+    ]
     mock_client = MockMistralAI.create_stream_mock(stream)
     model = MistralModel('mistral-large-latest', client=mock_client)
     agent = Agent(model=model)
 
-    # When
     async with agent.run_stream('') as result:
-        # Then
         assert not result.is_complete
         assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(
             ['hello ', 'hello world', 'hello world.']
@@ -331,15 +330,16 @@ async def test_stream_text_finish_reason(allow_model_requests: None):
 
 
 async def test_no_delta(allow_model_requests: None):
-    # Given
-    stream = [chunk([], with_created=False), text_chunk('hello '), text_chunk('world')]
+    stream: list[MistralCompletionEvent | Exception] = [
+        chunk([], with_created=False),
+        text_chunk('hello '),
+        text_chunk('world'),
+    ]
     mock_client = MockMistralAI.create_stream_mock(stream)
     model = MistralModel('mistral-large-latest', client=mock_client)
     agent = Agent(model=model)
 
-    # When
     async with agent.run_stream('') as result:
-        # Then
         assert not result.is_complete
         assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(['hello ', 'hello world'])
         assert result.is_complete
@@ -358,7 +358,6 @@ async def test_request_model_structured_with_arguments_dict_response(allow_model
         city: str
         country: str
 
-    # Given
     completion = completion_message(
         MistralAssistantMessage(
             content=None,
@@ -377,10 +376,8 @@ async def test_request_model_structured_with_arguments_dict_response(allow_model
     model = MistralModel('mistral-large-latest', client=mock_client)
     agent = Agent(model=model, result_type=CityLocation)
 
-    # When
     result = await agent.run('User prompt value')
 
-    # Then
     assert result.data == CityLocation(city='paris', country='france')
     assert result.usage().request_tokens == 1
     assert result.usage().response_tokens == 2
@@ -418,7 +415,6 @@ async def test_request_model_structured_with_arguments_str_response(allow_model_
         city: str
         country: str
 
-    # Given
     completion = completion_message(
         MistralAssistantMessage(
             content=None,
@@ -438,10 +434,8 @@ async def test_request_model_structured_with_arguments_str_response(allow_model_
     model = MistralModel('mistral-large-latest', client=mock_client)
     agent = Agent(model=model, result_type=CityLocation)
 
-    # When
     result = await agent.run('User prompt value')
 
-    # Then
     assert result.data == CityLocation(city='paris', country='france')
     assert result.usage().request_tokens == 1
     assert result.usage().response_tokens == 1
@@ -476,7 +470,6 @@ async def test_request_model_structured_with_arguments_str_response(allow_model_
 
 
 async def test_request_result_type_with_arguments_str_response(allow_model_requests: None):
-    # Given
     completion = completion_message(
         MistralAssistantMessage(
             content=None,
@@ -494,10 +487,8 @@ async def test_request_result_type_with_arguments_str_response(allow_model_reque
     model = MistralModel('mistral-large-latest', client=mock_client)
     agent = Agent(model=model, result_type=int, system_prompt='System prompt value')
 
-    # When
     result = await agent.run('User prompt value')
 
-    # Then
     assert result.data == 42
     assert result.usage().request_tokens == 1
     assert result.usage().response_tokens == 1
@@ -552,8 +543,7 @@ async def test_stream_structured_with_all_type(allow_model_requests: None):
         dict_int_value: dict[str, int]
         dict_str_value: dict[int, str]
 
-    # Given
-    stream = [
+    stream: list[MistralCompletionEvent | Exception] = [
         text_chunk('{'),
         text_chunk('"first": "One'),
         text_chunk(
@@ -582,9 +572,7 @@ async def test_stream_structured_with_all_type(allow_model_requests: None):
     model = MistralModel('mistral-large-latest', client=mock_client)
     agent = Agent(model, result_type=MyTypedDict)
 
-    # When
     async with agent.run_stream('User prompt value') as result:
-        # Then
         assert not result.is_complete
         v = [dict(c) async for c in result.stream(debounce_by=None)]
         assert v == snapshot(
@@ -653,8 +641,7 @@ async def test_stream_result_type_primitif_dict(allow_model_requests: None):
         first: str
         second: str
 
-    # Given
-    stream = [
+    stream: list[MistralCompletionEvent | Exception] = [
         text_chunk('{'),
         text_chunk('"'),
         text_chunk('f'),
@@ -695,9 +682,7 @@ async def test_stream_result_type_primitif_dict(allow_model_requests: None):
     model = MistralModel('mistral-large-latest', client=mock_client)
     agent = Agent(model=model, result_type=MyTypedDict)
 
-    # When
     async with agent.run_stream('User prompt value') as result:
-        # Then
         assert not result.is_complete
         v = [c async for c in result.stream(debounce_by=None)]
         assert v == snapshot(
@@ -738,8 +723,8 @@ async def test_stream_result_type_primitif_dict(allow_model_requests: None):
 
 async def test_stream_result_type_primitif_int(allow_model_requests: None):
     """This test tests the primitif result with the pydantic ai format model response"""
-    # Given
-    stream = [
+
+    stream: list[MistralCompletionEvent | Exception] = [
         # {'response':
         text_chunk('{'),
         text_chunk('"resp'),
@@ -753,9 +738,7 @@ async def test_stream_result_type_primitif_int(allow_model_requests: None):
     model = MistralModel('mistral-large-latest', client=mock_client)
     agent = Agent(model=model, result_type=int)
 
-    # When
     async with agent.run_stream('User prompt value') as result:
-        # Then
         assert not result.is_complete
         v = [c async for c in result.stream(debounce_by=None)]
         assert v == snapshot([1, 1, 1])
@@ -770,8 +753,8 @@ async def test_stream_result_type_primitif_int(allow_model_requests: None):
 
 async def test_stream_result_type_primitif_array(allow_model_requests: None):
     """This test tests the primitif result with the pydantic ai format model response"""
-    # Given
-    stream = [
+
+    stream: list[MistralCompletionEvent | Exception] = [
         # {'response':
         text_chunk('{'),
         text_chunk('"resp'),
@@ -814,9 +797,7 @@ async def test_stream_result_type_primitif_array(allow_model_requests: None):
     model = MistralModel('mistral-large-latest', client=mock_client)
     agent = Agent(model, result_type=list[str])
 
-    # When
     async with agent.run_stream('User prompt value') as result:
-        # Then
         assert not result.is_complete
         v = [c async for c in result.stream(debounce_by=None)]
         assert v == snapshot(
@@ -868,8 +849,7 @@ async def test_stream_result_type_basemodel_with_default_params(allow_model_requ
         first: str = ''  # Note: Default, set value.
         second: str = ''  # Note: Default, set value.
 
-    # Given
-    stream = [
+    stream: list[MistralCompletionEvent | Exception] = [
         text_chunk('{'),
         text_chunk('"'),
         text_chunk('f'),
@@ -910,9 +890,7 @@ async def test_stream_result_type_basemodel_with_default_params(allow_model_requ
     model = MistralModel('mistral-large-latest', client=mock_client)
     agent = Agent(model=model, result_type=MyTypedBaseModel)
 
-    # When
     async with agent.run_stream('User prompt value') as result:
-        # Then
         assert not result.is_complete
         v = [c async for c in result.stream(debounce_by=None)]
         assert v == snapshot(
@@ -956,8 +934,7 @@ async def test_stream_result_type_basemodel_with_required_params(allow_model_req
         first: str  # Note: Required params
         second: str  # Note: Required params
 
-    # Given
-    stream = [
+    stream: list[MistralCompletionEvent | Exception] = [
         text_chunk('{'),
         text_chunk('"'),
         text_chunk('f'),
@@ -998,9 +975,7 @@ async def test_stream_result_type_basemodel_with_required_params(allow_model_req
     model = MistralModel('mistral-large-latest', client=mock_client)
     agent = Agent(model=model, result_type=MyTypedBaseModel)
 
-    # When
     async with agent.run_stream('User prompt value') as result:
-        # Then
         assert not result.is_complete
         v = [c async for c in result.stream(debounce_by=None)]
         assert v == snapshot(
@@ -1029,8 +1004,7 @@ async def test_stream_result_type_basemodel_with_required_params(allow_model_req
 
 
 async def test_request_tool_call(allow_model_requests: None):
-    # Given
-    completion = [
+    completion: list[MistralChatCompletionResponse | Exception] = [
         completion_message(
             MistralAssistantMessage(
                 content=None,
@@ -1080,10 +1054,8 @@ async def test_request_tool_call(allow_model_requests: None):
         else:
             raise ModelRetry('Wrong location, please try again')
 
-    # When
     result = await agent.run('Hello')
 
-    # Then
     assert result.data == 'final response'
     assert result.usage().request_tokens == 6
     assert result.usage().response_tokens == 4
@@ -1152,8 +1124,7 @@ async def test_request_tool_call_with_result_type(allow_model_requests: None):
         lat: int
         lng: int
 
-    # Given
-    completion = [
+    completion: list[MistralChatCompletionResponse | Exception] = [
         completion_message(
             MistralAssistantMessage(
                 content=None,
@@ -1220,10 +1191,8 @@ async def test_request_tool_call_with_result_type(allow_model_requests: None):
         else:
             raise ModelRetry('Wrong location, please try again')
 
-    # When
     result = await agent.run('Hello')
 
-    # Then
     assert result.data == {'lat': 51, 'lng': 0}
     assert result.usage().request_tokens == 7
     assert result.usage().response_tokens == 4
@@ -1312,8 +1281,7 @@ async def test_stream_tool_call_with_return_type(allow_model_requests: None):
     class MyTypedDict(TypedDict, total=False):
         won: bool
 
-    # Given
-    completion = [
+    completion: list[list[MistralCompletionEvent | Exception]] = [
         [
             chunk(
                 delta=[MistralDeltaMessage(role=MistralUnset(), content='', tool_calls=MistralUnset())],
@@ -1356,9 +1324,7 @@ async def test_stream_tool_call_with_return_type(allow_model_requests: None):
     async def get_location(loc_name: str) -> str:
         return json.dumps({'lat': 51, 'lng': 0})
 
-    # When
     async with agent.run_stream('User prompt value') as result:
-        # Then
         assert not result.is_complete
         v = [c async for c in result.stream(debounce_by=None)]
         assert v == snapshot([{'won': True}, {'won': True}])
@@ -1422,8 +1388,7 @@ async def test_stream_tool_call_with_return_type(allow_model_requests: None):
 
 
 async def test_stream_tool_call(allow_model_requests: None):
-    # Given
-    completion = [
+    completion: list[list[MistralCompletionEvent | Exception]] = [
         [
             chunk(
                 delta=[MistralDeltaMessage(role=MistralUnset(), content='', tool_calls=MistralUnset())],
@@ -1459,9 +1424,7 @@ async def test_stream_tool_call(allow_model_requests: None):
     async def get_location(loc_name: str) -> str:
         return json.dumps({'lat': 51, 'lng': 0})
 
-    # When
     async with agent.run_stream('User prompt value') as result:
-        # Then
         assert not result.is_complete
         v = [c async for c in result.stream(debounce_by=None)]
         assert v == snapshot(['final ', 'final response', 'final response'])
@@ -1513,8 +1476,7 @@ async def test_stream_tool_call(allow_model_requests: None):
 
 
 async def test_stream_tool_call_with_retry(allow_model_requests: None):
-    # Given
-    completion = [
+    completion: list[list[MistralCompletionEvent | Exception]] = [
         [
             chunk(
                 delta=[MistralDeltaMessage(role=MistralUnset(), content='', tool_calls=MistralUnset())],
@@ -1565,9 +1527,7 @@ async def test_stream_tool_call_with_retry(allow_model_requests: None):
         else:
             raise ModelRetry('Wrong location, please try again')
 
-    # When
     async with agent.run_stream('User prompt value') as result:
-        # Then
         assert not result.is_complete
         v = [c async for c in result.stream_text(debounce_by=None)]
         assert v == snapshot(['final ', 'final response'])
@@ -1779,3 +1739,18 @@ def test_generate_user_output_format_multiple():
 def test_validate_required_json_schema(desc: str, schema: dict[str, Any], data: dict[str, Any], expected: bool) -> None:
     result = MistralStreamedResponse._validate_required_json_schema(data, schema)  # pyright: ignore[reportPrivateUsage]
     assert result == expected, f'{desc} — expected {expected}, got {result}'
+
+
+def test_model_status_error(allow_model_requests: None) -> None:
+    mock_client = MockMistralAI.create_mock(
+        SDKError(
+            'test error',
+            status_code=500,
+            body='test error',
+        )
+    )
+    m = MistralModel('mistral-large-latest', client=mock_client)
+    agent = Agent(m)
+    with pytest.raises(ModelStatusError) as exc_info:
+        agent.run_sync('hello')
+    assert str(exc_info.value) == snapshot('status_code: 500, model_name: mistral-large-latest, body: test error')

@@ -5,13 +5,14 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from functools import cached_property
-from typing import Any, Literal, cast
+from typing import Any, Literal, Union, cast
 
+import httpx
 import pytest
 from inline_snapshot import snapshot
 from typing_extensions import TypedDict
 
-from pydantic_ai import Agent, ModelRetry, UnexpectedModelBehavior
+from pydantic_ai import Agent, ModelRetry, ModelStatusError, UnexpectedModelBehavior
 from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
@@ -24,11 +25,11 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.result import Usage
 
-from ..conftest import IsNow, try_import
+from ..conftest import IsNow, raise_if_exception, try_import
 from .mock_async_stream import MockAsyncStream
 
 with try_import() as imports_successful:
-    from groq import AsyncGroq
+    from groq import APIStatusError, AsyncGroq
     from groq.types import chat
     from groq.types.chat.chat_completion import Choice
     from groq.types.chat.chat_completion_chunk import (
@@ -58,9 +59,9 @@ def test_init():
 
 @dataclass
 class MockGroq:
-    completions: chat.ChatCompletion | list[chat.ChatCompletion] | None = None
-    stream: list[chat.ChatCompletionChunk] | list[list[chat.ChatCompletionChunk]] | None = None
-    index = 0
+    completions: chat.ChatCompletion | Exception | list[chat.ChatCompletion | Exception] | None = None
+    stream: list[chat.ChatCompletionChunk | Exception] | list[list[chat.ChatCompletionChunk | Exception]] | None = None
+    index: int = 0
 
     @cached_property
     def chat(self) -> Any:
@@ -68,32 +69,37 @@ class MockGroq:
         return type('Chat', (), {'completions': chat_completions})
 
     @classmethod
-    def create_mock(cls, completions: chat.ChatCompletion | list[chat.ChatCompletion]) -> AsyncGroq:
+    def create_mock(
+        cls, completions: chat.ChatCompletion | Exception | list[chat.ChatCompletion | Exception]
+    ) -> AsyncGroq:
         return cast(AsyncGroq, cls(completions=completions))
 
     @classmethod
     def create_mock_stream(
-        cls, stream: Sequence[chat.ChatCompletionChunk] | Sequence[list[chat.ChatCompletionChunk]]
+        cls,
+        stream: Sequence[chat.ChatCompletionChunk | Exception] | Sequence[list[chat.ChatCompletionChunk | Exception]],
     ) -> AsyncGroq:
         return cast(AsyncGroq, cls(stream=list(stream)))  # pyright: ignore[reportArgumentType]
 
     async def chat_completions_create(
         self, *_args: Any, stream: bool = False, **_kwargs: Any
-    ) -> chat.ChatCompletion | MockAsyncStream[chat.ChatCompletionChunk]:
+    ) -> chat.ChatCompletion | MockAsyncStream[chat.ChatCompletionChunk | Exception]:
         if stream:
             assert self.stream is not None, 'you can only used `stream=True` if `stream` is provided'
-            # noinspection PyUnresolvedReferences
-            if isinstance(self.stream[0], list):  # pragma: no cover
-                indexed_stream = cast(list[chat.ChatCompletionChunk], self.stream[self.index])
-                response = MockAsyncStream(iter(indexed_stream))
+            if isinstance(self.stream[0], list):
+                response = MockAsyncStream(
+                    iter(cast(list[Union[chat.ChatCompletionChunk, Exception]], self.stream[self.index]))
+                )
             else:
-                response = MockAsyncStream(iter(cast(list[chat.ChatCompletionChunk], self.stream)))
+                response = MockAsyncStream(iter(cast(list[Union[chat.ChatCompletionChunk, Exception]], self.stream)))
         else:
             assert self.completions is not None, 'you can only used `stream=False` if `completions` are provided'
             if isinstance(self.completions, list):
-                response = self.completions[self.index]
+                raise_if_exception(self.completions[self.index])
+                response = cast(chat.ChatCompletion, self.completions[self.index])
             else:
-                response = self.completions
+                raise_if_exception(self.completions)
+                response = cast(chat.ChatCompletion, self.completions)
         self.index += 1
         return response
 
@@ -205,7 +211,7 @@ async def test_request_structured_response(allow_model_requests: None):
 
 
 async def test_request_tool_call(allow_model_requests: None):
-    responses = [
+    responses: list[chat.ChatCompletion | Exception] = [
         completion_message(
             ChatCompletionMessage(
                 content=None,
@@ -488,3 +494,20 @@ async def test_no_delta(allow_model_requests: None):
         assert not result.is_complete
         assert [c async for c in result.stream(debounce_by=None)] == snapshot(['hello ', 'hello world', 'hello world'])
         assert result.is_complete
+
+
+def test_model_status_error(allow_model_requests: None) -> None:
+    mock_client = MockGroq.create_mock(
+        APIStatusError(
+            'test error',
+            response=httpx.Response(status_code=500, request=httpx.Request('POST', 'https://example.com/v1')),
+            body={'error': 'test error'},
+        )
+    )
+    m = GroqModel('llama-3.3-70b-versatile', groq_client=mock_client)
+    agent = Agent(m)
+    with pytest.raises(ModelStatusError) as exc_info:
+        agent.run_sync('hello')
+    assert str(exc_info.value) == snapshot(
+        "status_code: 500, model_name: llama-3.3-70b-versatile, body: {'error': 'test error'}"
+    )

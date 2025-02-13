@@ -25,7 +25,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.result import Usage
 from pydantic_ai.settings import ModelSettings
 
-from ..conftest import IsNow, TestEnv, try_import
+from ..conftest import IsNow, TestEnv, raise_if_exception, try_import
 from .mock_async_stream import MockAsyncStream
 
 with try_import() as imports_successful:
@@ -81,11 +81,6 @@ def test_init_of_openai_without_api_key_raises_error(env: TestEnv):
         match='^The api_key client option must be set either by passing api_key to the client or by setting the OPENAI_API_KEY environment variable$',
     ):
         OpenAIModel('gpt-4o')
-
-
-def raise_if_exception(e: Any) -> None:
-    if isinstance(e, Exception):
-        raise e
 
 
 @dataclass

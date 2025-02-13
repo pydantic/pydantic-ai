@@ -8,7 +8,7 @@ from typing import Any, cast
 import pytest
 from inline_snapshot import snapshot
 
-from pydantic_ai import Agent, ModelRetry
+from pydantic_ai import Agent, ModelRetry, ModelStatusError
 from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
@@ -21,7 +21,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.usage import Usage
 
-from ..conftest import IsNow, try_import
+from ..conftest import IsNow, raise_if_exception, try_import
 
 with try_import() as imports_successful:
     import cohere
@@ -33,6 +33,7 @@ with try_import() as imports_successful:
         ToolCallV2,
         ToolCallV2Function,
     )
+    from cohere.core.api_error import ApiError
 
     from pydantic_ai.models.cohere import CohereModel
 
@@ -50,11 +51,11 @@ def test_init():
 
 @dataclass
 class MockAsyncClientV2:
-    completions: ChatResponse | list[ChatResponse] | None = None
+    completions: ChatResponse | Exception | list[ChatResponse | Exception] | None = None
     index = 0
 
     @classmethod
-    def create_mock(cls, completions: ChatResponse | list[ChatResponse]) -> AsyncClientV2:
+    def create_mock(cls, completions: ChatResponse | Exception | list[ChatResponse | Exception]) -> AsyncClientV2:
         return cast(AsyncClientV2, cls(completions=completions))
 
     async def chat(  # pragma: no cover
@@ -62,9 +63,11 @@ class MockAsyncClientV2:
     ) -> ChatResponse:
         assert self.completions is not None
         if isinstance(self.completions, list):
-            response = self.completions[self.index]
+            raise_if_exception(self.completions[self.index])
+            response = cast(ChatResponse, self.completions[self.index])
         else:
-            response = self.completions
+            raise_if_exception(self.completions)
+            response = cast(ChatResponse, self.completions)
         self.index += 1
         return response
 
@@ -194,7 +197,7 @@ async def test_request_structured_response(allow_model_requests: None):
 
 
 async def test_request_tool_call(allow_model_requests: None):
-    responses = [
+    responses: list[ChatResponse | Exception] = [
         completion_message(
             AssistantMessageResponse(
                 content=None,
@@ -310,3 +313,17 @@ async def test_request_tool_call(allow_model_requests: None):
             details={'input_tokens': 4, 'output_tokens': 2},
         )
     )
+
+
+def test_model_status_error(allow_model_requests: None) -> None:
+    mock_client = MockAsyncClientV2.create_mock(
+        ApiError(
+            status_code=500,
+            body={'error': 'test error'},
+        )
+    )
+    m = CohereModel('command-r', cohere_client=mock_client)
+    agent = Agent(m)
+    with pytest.raises(ModelStatusError) as exc_info:
+        agent.run_sync('hello')
+    assert str(exc_info.value) == snapshot("status_code: 500, model_name: command-r, body: {'error': 'test error'}")

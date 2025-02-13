@@ -4,12 +4,13 @@ import json
 from dataclasses import dataclass, field
 from datetime import timezone
 from functools import cached_property
-from typing import Any, TypeVar, cast
+from typing import Any, TypeVar, Union, cast
 
+import httpx
 import pytest
 from inline_snapshot import snapshot
 
-from pydantic_ai import Agent, ModelRetry
+from pydantic_ai import Agent, ModelRetry, ModelStatusError
 from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
@@ -23,11 +24,11 @@ from pydantic_ai.messages import (
 from pydantic_ai.result import Usage
 from pydantic_ai.settings import ModelSettings
 
-from ..conftest import IsNow, try_import
+from ..conftest import IsNow, raise_if_exception, try_import
 from .mock_async_stream import MockAsyncStream
 
 with try_import() as imports_successful:
-    from anthropic import NOT_GIVEN, AsyncAnthropic
+    from anthropic import NOT_GIVEN, APIStatusError, AsyncAnthropic
     from anthropic.types import (
         ContentBlock,
         InputJSONDelta,
@@ -66,8 +67,8 @@ def test_init():
 
 @dataclass
 class MockAnthropic:
-    messages_: AnthropicMessage | list[AnthropicMessage] | None = None
-    stream: list[RawMessageStreamEvent] | list[list[RawMessageStreamEvent]] | None = None
+    messages_: AnthropicMessage | Exception | list[AnthropicMessage | Exception] | None = None
+    stream: list[RawMessageStreamEvent | Exception] | list[list[RawMessageStreamEvent | Exception]] | None = None
     index = 0
     chat_completion_kwargs: list[dict[str, Any]] = field(default_factory=list)
 
@@ -76,34 +77,37 @@ class MockAnthropic:
         return type('Messages', (), {'create': self.messages_create})
 
     @classmethod
-    def create_mock(cls, messages_: AnthropicMessage | list[AnthropicMessage]) -> AsyncAnthropic:
+    def create_mock(
+        cls, messages_: AnthropicMessage | Exception | list[AnthropicMessage | Exception]
+    ) -> AsyncAnthropic:
         return cast(AsyncAnthropic, cls(messages_=messages_))
 
     @classmethod
     def create_stream_mock(
-        cls, stream: list[RawMessageStreamEvent] | list[list[RawMessageStreamEvent]]
+        cls, stream: list[RawMessageStreamEvent | Exception] | list[list[RawMessageStreamEvent | Exception]]
     ) -> AsyncAnthropic:
         return cast(AsyncAnthropic, cls(stream=stream))
 
     async def messages_create(
         self, *_args: Any, stream: bool = False, **kwargs: Any
-    ) -> AnthropicMessage | MockAsyncStream[RawMessageStreamEvent]:
+    ) -> AnthropicMessage | MockAsyncStream[RawMessageStreamEvent | Exception]:
         self.chat_completion_kwargs.append({k: v for k, v in kwargs.items() if v is not NOT_GIVEN})
 
         if stream:
             assert self.stream is not None, 'you can only use `stream=True` if `stream` is provided'
-            # noinspection PyUnresolvedReferences
             if isinstance(self.stream[0], list):
-                indexed_stream = cast(list[RawMessageStreamEvent], self.stream[self.index])
+                indexed_stream = cast(list[Union[RawMessageStreamEvent, Exception]], self.stream[self.index])
                 response = MockAsyncStream(iter(indexed_stream))
             else:
-                response = MockAsyncStream(iter(cast(list[RawMessageStreamEvent], self.stream)))
+                response = MockAsyncStream(iter(cast(list[Union[RawMessageStreamEvent, Exception]], self.stream)))
         else:
             assert self.messages_ is not None, '`messages` must be provided'
             if isinstance(self.messages_, list):
-                response = self.messages_[self.index]
+                raise_if_exception(self.messages_[self.index])
+                response = cast(AnthropicMessage, self.messages_[self.index])
             else:
-                response = self.messages_
+                raise_if_exception(self.messages_)
+                response = cast(AnthropicMessage, self.messages_)
         self.index += 1
         return response
 
@@ -208,7 +212,7 @@ async def test_request_structured_response(allow_model_requests: None):
 
 
 async def test_request_tool_call(allow_model_requests: None):
-    responses = [
+    responses: list[AnthropicMessage | Exception] = [
         completion_message(
             [ToolUseBlock(id='1', input={'loc_name': 'San Francisco'}, name='get_location', type='tool_use')],
             usage=AnthropicUsage(input_tokens=2, output_tokens=1),
@@ -304,7 +308,7 @@ def get_mock_chat_completion_kwargs(async_anthropic: AsyncAnthropic) -> list[dic
 
 @pytest.mark.parametrize('parallel_tool_calls', [True, False])
 async def test_parallel_tool_calls(allow_model_requests: None, parallel_tool_calls: bool) -> None:
-    responses = [
+    responses: list[AnthropicMessage | Exception] = [
         completion_message(
             [ToolUseBlock(id='1', input={'loc_name': 'San Francisco'}, name='get_location', type='tool_use')],
             usage=AnthropicUsage(input_tokens=2, output_tokens=1),
@@ -354,7 +358,7 @@ async def test_stream_structured(allow_model_requests: None):
     5. Update usage
     6. Message stop
     """
-    stream: list[RawMessageStreamEvent] = [
+    stream: list[RawMessageStreamEvent | Exception] = [
         RawMessageStartEvent(
             type='message_start',
             message=AnthropicMessage(
@@ -400,7 +404,7 @@ async def test_stream_structured(allow_model_requests: None):
         RawMessageStopEvent(type='message_stop'),
     ]
 
-    done_stream: list[RawMessageStreamEvent] = [
+    done_stream: list[RawMessageStreamEvent | Exception] = [
         RawMessageStartEvent(
             type='message_start',
             message=AnthropicMessage(
@@ -450,3 +454,20 @@ async def test_stream_structured(allow_model_requests: None):
         assert result.is_complete
         assert result.usage() == snapshot(Usage(requests=2, request_tokens=20, response_tokens=5, total_tokens=25))
         assert tool_called
+
+
+def test_model_status_error(allow_model_requests: None) -> None:
+    mock_client = MockAnthropic.create_mock(
+        APIStatusError(
+            'test error',
+            response=httpx.Response(status_code=500, request=httpx.Request('POST', 'https://example.com/v1')),
+            body={'error': 'test error'},
+        )
+    )
+    m = AnthropicModel('claude-3-5-sonnet-latest', anthropic_client=mock_client)
+    agent = Agent(m)
+    with pytest.raises(ModelStatusError) as exc_info:
+        agent.run_sync('hello')
+    assert str(exc_info.value) == snapshot(
+        "status_code: 500, model_name: claude-3-5-sonnet-latest, body: {'error': 'test error'}"
+    )
