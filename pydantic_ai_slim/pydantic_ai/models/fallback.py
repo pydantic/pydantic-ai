@@ -25,7 +25,6 @@ class FallbackModel(Model):
     models: list[Model]
 
     _model_name: str = field(repr=False)
-    _system: str | None = field(default=None, repr=False)
 
     def __init__(
         self,
@@ -39,7 +38,6 @@ class FallbackModel(Model):
             fallback_models: The names or instances of the fallback models to use upon failure.
         """
         self.models = [infer_model(model) for model in [default_model, *fallback_models]]  # pyright: ignore[reportArgumentType]
-
         self._model_name = f'FallBackModel[{", ".join(model.model_name for model in self.models)}]'
 
     async def request(
@@ -80,3 +78,13 @@ class FallbackModel(Model):
                 continue
 
         raise UnexpectedModelBehavior('All fallback models failed', body=json.dumps([e.message for e in errors]))
+
+    @property
+    def model_name(self) -> str:
+        """The model name."""
+        return self._model_name
+
+    @property
+    def system(self) -> str | None:
+        """The system / model provider, n/a for fallback models."""
+        return None
