@@ -75,10 +75,15 @@ class InstrumentedModel(WrapperModel):
         model_request_parameters: ModelRequestParameters,
     ) -> AsyncIterator[StreamedResponse]:
         with self._instrument(messages, model_settings) as finish:
-            response_stream: StreamedResponse
-            async with super().request_stream(messages, model_settings, model_request_parameters) as response_stream:
-                yield response_stream
-            finish(response_stream.get(), response_stream.usage())
+            response_stream: StreamedResponse | None = None
+            try:
+                async with super().request_stream(
+                    messages, model_settings, model_request_parameters
+                ) as response_stream:
+                    yield response_stream
+            finally:
+                if response_stream:
+                    finish(response_stream.get(), response_stream.usage())
 
     @contextmanager
     def _instrument(

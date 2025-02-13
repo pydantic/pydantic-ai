@@ -82,9 +82,9 @@ class MyModel(Model):
 
 class MyResponseStream(StreamedResponse):
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
+        self._usage = Usage(request_tokens=300, response_tokens=400)
         yield self._parts_manager.handle_text_delta(vendor_part_id=0, content='text1')
         yield self._parts_manager.handle_text_delta(vendor_part_id=0, content='text2')
-        self._usage = Usage(request_tokens=300, response_tokens=400)
 
     @property
     def model_name(self) -> str:
@@ -446,6 +446,113 @@ async def test_instrumented_model_stream(capfire: CaptureLogfire):
                     'gen_ai.usage.output_tokens': 400,
                     'logfire.json_schema': '{"type":"object","properties":{"gen_ai.operation.name":{},"gen_ai.system":{},"gen_ai.request.model":{},"gen_ai.request.temperature":{},"gen_ai.response.model":{},"gen_ai.usage.input_tokens":{},"gen_ai.usage.output_tokens":{}}}',
                 },
+            },
+        ]
+    )
+
+
+@pytest.mark.anyio
+async def test_instrumented_model_stream_break(capfire: CaptureLogfire):
+    model = InstrumentedModel(MyModel())
+
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart('user_prompt'),
+            ]
+        ),
+    ]
+
+    with pytest.raises(RuntimeError):
+        async with model.request_stream(
+            messages,
+            model_settings=ModelSettings(temperature=1),
+            model_request_parameters=ModelRequestParameters(
+                function_tools=[],
+                allow_text_result=True,
+                result_tools=[],
+            ),
+        ) as response_stream:
+            async for event in response_stream:
+                assert event == PartStartEvent(index=0, part=TextPart(content='text1'))
+                raise RuntimeError
+
+    assert capfire.exporter.exported_spans_as_dict() == snapshot(
+        [
+            {
+                'name': 'gen_ai.user.message',
+                'context': {'trace_id': 1, 'span_id': 3, 'is_remote': False},
+                'parent': {'trace_id': 1, 'span_id': 1, 'is_remote': False},
+                'start_time': 2000000000,
+                'end_time': 2000000000,
+                'attributes': {
+                    'logfire.span_type': 'log',
+                    'logfire.level_num': 9,
+                    'logfire.msg_template': 'gen_ai.user.message',
+                    'logfire.msg': 'gen_ai.user.message',
+                    'code.filepath': 'test_instrumented.py',
+                    'code.function': 'test_instrumented_model_stream_break',
+                    'code.lineno': 123,
+                    'gen_ai.system': 'my_system',
+                    'content': 'user_prompt',
+                    'logfire.json_schema': '{"type":"object","properties":{"gen_ai.system":{},"content":{}}}',
+                },
+            },
+            {
+                'name': 'gen_ai.choice',
+                'context': {'trace_id': 1, 'span_id': 4, 'is_remote': False},
+                'parent': {'trace_id': 1, 'span_id': 1, 'is_remote': False},
+                'start_time': 3000000000,
+                'end_time': 3000000000,
+                'attributes': {
+                    'logfire.span_type': 'log',
+                    'logfire.level_num': 9,
+                    'logfire.msg_template': 'gen_ai.choice',
+                    'logfire.msg': 'gen_ai.choice',
+                    'code.filepath': 'test_instrumented.py',
+                    'code.function': 'test_instrumented_model_stream_break',
+                    'code.lineno': 123,
+                    'gen_ai.system': 'my_system',
+                    'index': 0,
+                    'message': '{"content":"text1"}',
+                    'logfire.json_schema': '{"type":"object","properties":{"gen_ai.system":{},"index":{},"message":{"type":"object"}}}',
+                },
+            },
+            {
+                'name': 'chat my_model',
+                'context': {'trace_id': 1, 'span_id': 1, 'is_remote': False},
+                'parent': None,
+                'start_time': 1000000000,
+                'end_time': 5000000000,
+                'attributes': {
+                    'code.filepath': 'test_instrumented.py',
+                    'code.function': 'test_instrumented_model_stream_break',
+                    'code.lineno': 123,
+                    'gen_ai.operation.name': 'chat',
+                    'gen_ai.system': 'my_system',
+                    'gen_ai.request.model': 'my_model',
+                    'gen_ai.request.temperature': 1,
+                    'logfire.msg_template': 'chat my_model',
+                    'logfire.msg': 'chat my_model',
+                    'logfire.span_type': 'span',
+                    'gen_ai.response.model': 'my_model_123',
+                    'gen_ai.usage.input_tokens': 300,
+                    'gen_ai.usage.output_tokens': 400,
+                    'logfire.level_num': 17,
+                    'logfire.json_schema': '{"type":"object","properties":{"gen_ai.operation.name":{},"gen_ai.system":{},"gen_ai.request.model":{},"gen_ai.request.temperature":{},"gen_ai.response.model":{},"gen_ai.usage.input_tokens":{},"gen_ai.usage.output_tokens":{}}}',
+                },
+                'events': [
+                    {
+                        'name': 'exception',
+                        'timestamp': 4000000000,
+                        'attributes': {
+                            'exception.type': 'RuntimeError',
+                            'exception.message': '',
+                            'exception.stacktrace': 'RuntimeError',
+                            'exception.escaped': 'True',
+                        },
+                    }
+                ],
             },
         ]
     )
