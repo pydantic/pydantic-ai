@@ -135,9 +135,6 @@ class OpenAIModel(Model):
         self.system_prompt_role = system_prompt_role
         self._system = system
 
-    def name(self) -> str:
-        return f'openai:{self._model_name}'
-
     async def request(
         self,
         messages: list[ModelMessage],
