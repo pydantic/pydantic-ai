@@ -5,7 +5,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from functools import cached_property
-from typing import Any, Literal, cast
+from typing import Any, Literal, Union, cast
 
 import httpx
 import pytest
@@ -91,8 +91,10 @@ def raise_if_exception(e: Any) -> None:
 
 @dataclass
 class MockOpenAI:
-    completions: chat.ChatCompletion | Exception | list[chat.ChatCompletion | Exception] | None = None
-    stream: list[chat.ChatCompletionChunk | Exception] | list[list[chat.ChatCompletionChunk | Exception]] | None = None
+    completions: chat.ChatCompletion | Exception | Sequence[chat.ChatCompletion | Exception] | None = None
+    stream: (
+        Sequence[chat.ChatCompletionChunk | Exception] | Sequence[Sequence[chat.ChatCompletionChunk | Exception]] | None
+    ) = None
     index: int = 0
     chat_completion_kwargs: list[dict[str, Any]] = field(default_factory=list)
 
@@ -103,14 +105,14 @@ class MockOpenAI:
 
     @classmethod
     def create_mock(
-        cls, completions: chat.ChatCompletion | Exception | list[chat.ChatCompletion | Exception]
+        cls, completions: chat.ChatCompletion | Exception | Sequence[chat.ChatCompletion | Exception]
     ) -> AsyncOpenAI:
         return cast(AsyncOpenAI, cls(completions=completions))
 
     @classmethod
     def create_mock_stream(
         cls,
-        stream: Sequence[chat.ChatCompletionChunk | Exception] | Sequence[list[chat.ChatCompletionChunk | Exception]],
+        stream: Sequence[chat.ChatCompletionChunk | Exception] | list[Sequence[chat.ChatCompletionChunk | Exception]],
     ) -> AsyncOpenAI:
         return cast(AsyncOpenAI, cls(stream=list(stream)))  # pyright: ignore[reportArgumentType]
 
@@ -123,10 +125,10 @@ class MockOpenAI:
             assert self.stream is not None, 'you can only used `stream=True` if `stream` is provided'
             # noinspection PyUnresolvedReferences
             if isinstance(self.stream[0], list):
-                indexed_stream = cast(list[chat.ChatCompletionChunk | Exception], self.stream[self.index])
+                indexed_stream = cast(list[Union[chat.ChatCompletionChunk, Exception]], self.stream[self.index])
                 response = MockAsyncStream(iter(indexed_stream))
             else:
-                response = MockAsyncStream(iter(cast(list[chat.ChatCompletionChunk | Exception], self.stream)))
+                response = MockAsyncStream(iter(cast(list[Union[chat.ChatCompletionChunk, Exception]], self.stream)))
         else:
             assert self.completions is not None, 'you can only used `stream=False` if `completions` are provided'
             if isinstance(self.completions, list):
