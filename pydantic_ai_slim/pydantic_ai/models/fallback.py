@@ -37,7 +37,7 @@ class FallbackModel(Model):
             default_model: The name or instance of the default model to use.
             fallback_models: The names or instances of the fallback models to use upon failure.
         """
-        self.models = [infer_model(model) for model in [default_model, *fallback_models]]
+        self.models = [infer_model(model) for model in [default_model, *fallback_models]]  # pyright: ignore[reportArgumentType]
 
         self._model_name = f'FallBackModel[{", ".join(model.model_name for model in self.models)}]'
 
