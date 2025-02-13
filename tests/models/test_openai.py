@@ -7,11 +7,12 @@ from datetime import datetime, timezone
 from functools import cached_property
 from typing import Any, Literal, cast
 
+import httpx
 import pytest
 from inline_snapshot import snapshot
 from typing_extensions import TypedDict
 
-from pydantic_ai import Agent, ModelRetry, UnexpectedModelBehavior
+from pydantic_ai import Agent, ModelRetry, ModelStatusError, UnexpectedModelBehavior
 from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
@@ -29,7 +30,7 @@ from ..conftest import IsNow, TestEnv, try_import
 from .mock_async_stream import MockAsyncStream
 
 with try_import() as imports_successful:
-    from openai import NOT_GIVEN, AsyncOpenAI, OpenAIError
+    from openai import NOT_GIVEN, APIStatusError, AsyncOpenAI, OpenAIError
     from openai.types import chat
     from openai.types.chat.chat_completion import Choice
     from openai.types.chat.chat_completion_chunk import (
@@ -79,10 +80,15 @@ def test_init_of_openai_without_api_key_raises_error(env: TestEnv):
         OpenAIModel('gpt-4o')
 
 
+def raise_if_exception(e: Any) -> None:
+    if isinstance(e, Exception):
+        raise e
+
+
 @dataclass
 class MockOpenAI:
-    completions: chat.ChatCompletion | list[chat.ChatCompletion] | None = None
-    stream: list[chat.ChatCompletionChunk] | list[list[chat.ChatCompletionChunk]] | None = None
+    completions: chat.ChatCompletion | Exception | list[chat.ChatCompletion | Exception] | None = None
+    stream: list[chat.ChatCompletionChunk | Exception] | list[list[chat.ChatCompletionChunk | Exception]] | None = None
     index: int = 0
     chat_completion_kwargs: list[dict[str, Any]] = field(default_factory=list)
 
@@ -92,34 +98,39 @@ class MockOpenAI:
         return type('Chat', (), {'completions': chat_completions})
 
     @classmethod
-    def create_mock(cls, completions: chat.ChatCompletion | list[chat.ChatCompletion]) -> AsyncOpenAI:
+    def create_mock(
+        cls, completions: chat.ChatCompletion | Exception | list[chat.ChatCompletion | Exception]
+    ) -> AsyncOpenAI:
         return cast(AsyncOpenAI, cls(completions=completions))
 
     @classmethod
     def create_mock_stream(
-        cls, stream: Sequence[chat.ChatCompletionChunk] | Sequence[list[chat.ChatCompletionChunk]]
+        cls,
+        stream: Sequence[chat.ChatCompletionChunk | Exception] | Sequence[list[chat.ChatCompletionChunk | Exception]],
     ) -> AsyncOpenAI:
         return cast(AsyncOpenAI, cls(stream=list(stream)))  # pyright: ignore[reportArgumentType]
 
     async def chat_completions_create(  # pragma: no cover
         self, *_args: Any, stream: bool = False, **kwargs: Any
-    ) -> chat.ChatCompletion | MockAsyncStream[chat.ChatCompletionChunk]:
+    ) -> chat.ChatCompletion | MockAsyncStream[chat.ChatCompletionChunk | Exception]:
         self.chat_completion_kwargs.append({k: v for k, v in kwargs.items() if v is not NOT_GIVEN})
 
         if stream:
             assert self.stream is not None, 'you can only used `stream=True` if `stream` is provided'
             # noinspection PyUnresolvedReferences
             if isinstance(self.stream[0], list):
-                indexed_stream = cast(list[chat.ChatCompletionChunk], self.stream[self.index])
+                indexed_stream = cast(list[chat.ChatCompletionChunk | Exception], self.stream[self.index])
                 response = MockAsyncStream(iter(indexed_stream))
             else:
-                response = MockAsyncStream(iter(cast(list[chat.ChatCompletionChunk], self.stream)))
+                response = MockAsyncStream(iter(cast(list[chat.ChatCompletionChunk | Exception], self.stream)))
         else:
             assert self.completions is not None, 'you can only used `stream=False` if `completions` are provided'
             if isinstance(self.completions, list):
-                response = self.completions[self.index]
+                raise_if_exception(self.completions[self.index])
+                response = cast(chat.ChatCompletion, self.completions[self.index])
             else:
-                response = self.completions
+                raise_if_exception(self.completions)
+                response = cast(chat.ChatCompletion, self.completions)
         self.index += 1
         return response
 
@@ -577,3 +588,18 @@ async def test_parallel_tool_calls(allow_model_requests: None, parallel_tool_cal
 
     await agent.run('Hello')
     assert get_mock_chat_completion_kwargs(mock_client)[0]['parallel_tool_calls'] == parallel_tool_calls
+
+
+def test_model_status_error(allow_model_requests: None) -> None:
+    mock_client = MockOpenAI.create_mock(
+        APIStatusError(
+            'test error',
+            response=httpx.Response(status_code=500, request=httpx.Request('POST', 'https://example.com/v1')),
+            body={'error': 'test error'},
+        )
+    )
+    m = OpenAIModel('gpt-4o', openai_client=mock_client)
+    agent = Agent(m)
+    with pytest.raises(ModelStatusError) as exc_info:
+        agent.run_sync('hello')
+    assert str(exc_info.value) == snapshot("status_code: 500, model_name: gpt-4o, body: {'error': 'test error'}")

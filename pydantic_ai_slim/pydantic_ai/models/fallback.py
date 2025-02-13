@@ -1,11 +1,12 @@
 from __future__ import annotations as _annotations
 
+import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from ..exceptions import ModelStatusError
+from ..exceptions import ModelStatusError, UnexpectedModelBehavior
 from . import KnownModelName, Model, ModelRequestParameters, StreamedResponse, infer_model
 
 if TYPE_CHECKING:
@@ -57,7 +58,7 @@ class FallbackModel(Model):
                 errors.append(exc_info)
                 continue
 
-        raise RuntimeError(f'All fallback models failed: {errors}')
+        raise UnexpectedModelBehavior('All fallback models failed', body=json.dumps([e.message for e in errors]))
 
     @asynccontextmanager
     async def request_stream(
@@ -78,4 +79,4 @@ class FallbackModel(Model):
                 errors.append(exc_info)
                 continue
 
-        raise RuntimeError(f'All fallback models failed: {errors}')
+        raise UnexpectedModelBehavior('All fallback models failed', body=json.dumps([e.message for e in errors]))

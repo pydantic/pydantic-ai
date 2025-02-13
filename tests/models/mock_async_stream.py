@@ -47,7 +47,10 @@ class MockAsyncStream(Generic[T]):
         synchronous iterator. If the iterator is exhausted, `StopAsyncIteration`
         is raised.
         """
-        return _utils.sync_anext(self._iter)
+        next = _utils.sync_anext(self._iter)
+        if isinstance(next, Exception):
+            raise
+        return next
 
     def __aiter__(self) -> MockAsyncStream[T]:
         return self
