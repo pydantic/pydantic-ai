@@ -49,7 +49,7 @@ class MockAsyncStream(Generic[T]):
         """
         next = _utils.sync_anext(self._iter)
         if isinstance(next, Exception):
-            raise
+            raise next
         return next
 
     def __aiter__(self) -> MockAsyncStream[T]:

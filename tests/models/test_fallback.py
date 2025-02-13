@@ -1,9 +1,11 @@
+from collections.abc import AsyncIterator
 from datetime import timezone
 
 import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, ModelStatusError
+from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
@@ -31,14 +33,15 @@ success_model = FunctionModel(success_response)
 failure_model = FunctionModel(failure_response)
 
 
-def test_fallback_model_init() -> None:
+def test_init() -> None:
     fallback_model = FallbackModel(failure_model, success_model)
     assert fallback_model.model_name == snapshot(
         'FallBackModel[function:failure_response:, function:success_response:]'
     )
+    assert fallback_model.system is None
 
 
-def test_fallback_model_first_successful() -> None:
+def test_first_successful() -> None:
     fallback_model = FallbackModel(success_model, failure_model)
     agent = Agent(model=fallback_model)
     result = agent.run_sync('hello')
@@ -59,7 +62,7 @@ def test_fallback_model_first_successful() -> None:
     )
 
 
-def test_fallback_model_first_failed() -> None:
+def test_first_failed() -> None:
     fallback_model = FallbackModel(failure_model, success_model)
     agent = Agent(model=fallback_model)
     result = agent.run_sync('hello')
@@ -83,9 +86,84 @@ def test_fallback_model_first_failed() -> None:
     )
 
 
-def test_fallback_model_all_failed() -> None:
+def test_all_failed() -> None:
     fallback_model = FallbackModel(failure_model, failure_model)
     agent = Agent(model=fallback_model)
-    with pytest.raises(RuntimeError) as exc_info:
+    with pytest.raises(UnexpectedModelBehavior) as exc_info:
         agent.run_sync('hello')
+    assert 'All fallback models failed' in exc_info.value.args[0]
+
+
+async def success_response_stream(_model_messages: list[ModelMessage], _agent_info: AgentInfo) -> AsyncIterator[str]:
+    yield 'hello '
+    yield 'world'
+
+
+async def failure_response_stream(_model_messages: list[ModelMessage], _agent_info: AgentInfo) -> AsyncIterator[str]:
+    yield 'uh oh... '
+    raise ModelStatusError(status_code=500, model_name='test-function-model', body={'error': 'test error'})
+
+
+success_model_stream = FunctionModel(stream_function=success_response_stream)
+failure_model_stream = FunctionModel(stream_function=failure_response_stream)
+
+
+async def test_first_success_streaming() -> None:
+    fallback_model = FallbackModel(success_model_stream, failure_model_stream)
+    agent = Agent(model=fallback_model)
+    async with agent.run_stream('input') as result:
+        assert [c async for c, _is_last in result.stream_structured(debounce_by=None)] == snapshot(
+            [
+                ModelResponse(
+                    parts=[TextPart(content='hello ')],
+                    model_name='function:success_response_stream',
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='hello world')],
+                    model_name='function:success_response_stream',
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='hello world')],
+                    model_name='function:success_response_stream',
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
+            ]
+        )
+        assert result.is_complete
+
+
+async def test_first_failed_streaming() -> None:
+    fallback_model = FallbackModel(failure_model_stream, success_model_stream)
+    agent = Agent(model=fallback_model)
+    async with agent.run_stream('input') as result:
+        assert [c async for c, _is_last in result.stream_structured(debounce_by=None)] == snapshot(
+            [
+                ModelResponse(
+                    parts=[TextPart(content='hello ')],
+                    model_name='function:success_response_stream',
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='hello world')],
+                    model_name='function:success_response_stream',
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='hello world')],
+                    model_name='function:success_response_stream',
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
+            ]
+        )
+        assert result.is_complete
+
+
+async def test_all_failed_streaming() -> None:
+    fallback_model = FallbackModel(failure_model_stream, failure_model_stream)
+    agent = Agent(model=fallback_model)
+    with pytest.raises(UnexpectedModelBehavior) as exc_info:
+        async with agent.run_stream('hello') as result:
+            [c async for c, _is_last in result.stream_structured(debounce_by=None)]
     assert 'All fallback models failed' in exc_info.value.args[0]

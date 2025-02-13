@@ -92,8 +92,5 @@ class ModelStatusError(AgentRunError):
     def __init__(self, status_code: int, model_name: str, body: object | None = None):
         self.status_code = status_code
         self.body = body
-        if body is None:
-            message = f'status_code: {status_code}, model_name: {model_name}'
-        else:
-            message = f'status_code: {status_code}, model_name: {model_name}, body: {body}'
+        message = f'status_code: {status_code}, model_name: {model_name}, body: {body}'
         super().__init__(message)
