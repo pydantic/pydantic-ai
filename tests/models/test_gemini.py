@@ -441,7 +441,7 @@ def gemini_response(content: _GeminiContent, finish_reason: Literal['STOP'] | No
     candidate = _GeminiCandidates(content=content, index=0, safety_ratings=[])
     if finish_reason:  # pragma: no cover
         candidate['finish_reason'] = finish_reason
-    return _GeminiResponse(candidates=[candidate], usage_metadata=example_usage())
+    return _GeminiResponse(candidates=[candidate], usage_metadata=example_usage(), model_version='gemini-1.5-flash-123')
 
 
 def example_usage() -> _GeminiUsageMetaData:
@@ -460,7 +460,9 @@ async def test_text_success(get_gemini_client: GetGeminiClient):
         [
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
-                parts=[TextPart(content='Hello world')], model_name='gemini-1.5-flash', timestamp=IsNow(tz=timezone.utc)
+                parts=[TextPart(content='Hello world')],
+                model_name='gemini-1.5-flash-123',
+                timestamp=IsNow(tz=timezone.utc),
             ),
         ]
     )
@@ -473,13 +475,13 @@ async def test_text_success(get_gemini_client: GetGeminiClient):
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[TextPart(content='Hello world')],
-                model_name='gemini-1.5-flash',
+                model_name='gemini-1.5-flash-123',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[TextPart(content='Hello world')],
-                model_name='gemini-1.5-flash',
+                model_name='gemini-1.5-flash-123',
                 timestamp=IsNow(tz=timezone.utc),
             ),
         ]
@@ -506,7 +508,7 @@ async def test_request_structured_response(get_gemini_client: GetGeminiClient):
                         args={'response': [1, 2, 123]},
                     )
                 ],
-                model_name='gemini-1.5-flash',
+                model_name='gemini-1.5-flash-123',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
@@ -567,7 +569,7 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
                         args={'loc_name': 'San Fransisco'},
                     )
                 ],
-                model_name='gemini-1.5-flash',
+                model_name='gemini-1.5-flash-123',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
@@ -590,7 +592,7 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
                         args={'loc_name': 'New York'},
                     ),
                 ],
-                model_name='gemini-1.5-flash',
+                model_name='gemini-1.5-flash-123',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
@@ -605,7 +607,7 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
             ),
             ModelResponse(
                 parts=[TextPart(content='final response')],
-                model_name='gemini-1.5-flash',
+                model_name='gemini-1.5-flash-123',
                 timestamp=IsNow(tz=timezone.utc),
             ),
         ]
@@ -656,6 +658,30 @@ async def test_stream_text(get_gemini_client: GetGeminiClient):
     async with agent.run_stream('Hello') as result:
         chunks = [chunk async for chunk in result.stream_text(delta=True, debounce_by=None)]
         assert chunks == snapshot(['Hello ', 'world'])
+    assert result.usage() == snapshot(Usage(requests=1, request_tokens=2, response_tokens=4, total_tokens=6))
+
+
+async def test_stream_invalid_unicode_text(get_gemini_client: GetGeminiClient):
+    # Probably safe to remove this test once https://github.com/pydantic/pydantic-core/issues/1633 is resolved
+    responses = [
+        gemini_response(_content_model_response(ModelResponse(parts=[TextPart('abc')]))),
+        gemini_response(_content_model_response(ModelResponse(parts=[TextPart('€def')]))),
+    ]
+    json_data = _gemini_streamed_response_ta.dump_json(responses, by_alias=True)
+    parts = [json_data[:307], json_data[307:]]
+
+    with pytest.raises(UnicodeDecodeError):
+        # Ensure the first part is _not_ valid unicode
+        parts[0].decode()
+
+    stream = AsyncByteStreamList(parts)
+    gemini_client = get_gemini_client(stream)
+    m = GeminiModel('gemini-1.5-flash', http_client=gemini_client)
+    agent = Agent(m)
+
+    async with agent.run_stream('Hello') as result:
+        chunks = [chunk async for chunk in result.stream(debounce_by=None)]
+        assert chunks == snapshot(['abc', 'abc€def', 'abc€def'])
     assert result.usage() == snapshot(Usage(requests=1, request_tokens=2, response_tokens=4, total_tokens=6))
 
 

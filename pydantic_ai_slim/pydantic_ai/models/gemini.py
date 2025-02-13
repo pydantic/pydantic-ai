@@ -149,6 +149,16 @@ class GeminiModel(Model):
         ) as http_response:
             yield await self._process_streamed_response(http_response)
 
+    @property
+    def model_name(self) -> GeminiModelName:
+        """The model name."""
+        return self._model_name
+
+    @property
+    def system(self) -> str | None:
+        """The system / model provider."""
+        return self._system
+
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> _GeminiTools | None:
         tools = [_function_from_abstract_tool(t) for t in model_request_parameters.function_tools]
         if model_request_parameters.result_tools:
@@ -235,7 +245,7 @@ class GeminiModel(Model):
             else:
                 raise UnexpectedModelBehavior('Content field missing from Gemini response', str(response))
         parts = response['candidates'][0]['content']['parts']
-        return _process_response_from_parts(parts, model_name=self._model_name)
+        return _process_response_from_parts(parts, model_name=response.get('model_version', self._model_name))
 
     async def _process_streamed_response(self, http_response: HTTPResponse) -> StreamedResponse:
         """Process a streamed response, and prepare a streaming response to return."""
@@ -246,7 +256,7 @@ class GeminiModel(Model):
         async for chunk in aiter_bytes:
             content.extend(chunk)
             responses = _gemini_streamed_response_ta.validate_json(
-                content,
+                _ensure_decodeable(content),
                 experimental_allow_partial='trailing-strings',
             )
             if responses:
@@ -317,6 +327,7 @@ class ApiKeyAuth:
 class GeminiStreamedResponse(StreamedResponse):
     """Implementation of `StreamedResponse` for the Gemini model."""
 
+    _model_name: GeminiModelName
     _content: bytearray
     _stream: AsyncIterator[bytes]
     _timestamp: datetime = field(default_factory=_utils.now_utc, init=False)
@@ -361,7 +372,7 @@ class GeminiStreamedResponse(StreamedResponse):
             self._content.extend(chunk)
 
             gemini_responses = _gemini_streamed_response_ta.validate_json(
-                self._content,
+                _ensure_decodeable(self._content),
                 experimental_allow_partial='trailing-strings',
             )
 
@@ -380,7 +391,14 @@ class GeminiStreamedResponse(StreamedResponse):
             self._usage += _metadata_as_usage(r)
             yield r
 
+    @property
+    def model_name(self) -> GeminiModelName:
+        """Get the model name of the response."""
+        return self._model_name
+
+    @property
     def timestamp(self) -> datetime:
+        """Get the timestamp of the response."""
         return self._timestamp
 
 
@@ -612,6 +630,7 @@ class _GeminiResponse(TypedDict):
     # usageMetadata appears to be required by both APIs but is omitted when streaming responses until the last response
     usage_metadata: NotRequired[Annotated[_GeminiUsageMetaData, pydantic.Field(alias='usageMetadata')]]
     prompt_feedback: NotRequired[Annotated[_GeminiPromptFeedback, pydantic.Field(alias='promptFeedback')]]
+    model_version: NotRequired[Annotated[str, pydantic.Field(alias='modelVersion')]]
 
 
 class _GeminiCandidates(TypedDict):
@@ -757,3 +776,19 @@ class _GeminiJsonSchema:
 
         if items_schema := schema.get('items'):  # pragma: no branch
             self._simplify(items_schema, refs_stack)
+
+
+def _ensure_decodeable(content: bytearray) -> bytearray:
+    """Trim any invalid unicode point bytes off the end of a bytearray.
+
+    This is necessary before attempting to parse streaming JSON bytes.
+
+    This is a temporary workaround until https://github.com/pydantic/pydantic-core/issues/1633 is resolved
+    """
+    while True:
+        try:
+            content.decode()
+        except UnicodeDecodeError:
+            content = content[:-1]  # this will definitely succeed before we run out of bytes
+        else:
+            return content
