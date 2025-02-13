@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass
 from functools import partial
 from typing import Any, Literal
@@ -20,7 +22,7 @@ from ..messages import (
 )
 from ..settings import ModelSettings
 from ..usage import Usage
-from . import ModelRequestParameters
+from . import ModelRequestParameters, StreamedResponse
 from .wrapper import WrapperModel
 
 MODEL_SETTING_ATTRIBUTES: tuple[
@@ -60,6 +62,30 @@ class InstrumentedModel(WrapperModel):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> tuple[ModelResponse, Usage]:
+        with self._instrument(messages, model_settings) as finish:
+            response, usage = await super().request(messages, model_settings, model_request_parameters)
+            finish(response, usage)
+            return response, usage
+
+    @asynccontextmanager
+    async def request_stream(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> AsyncIterator[StreamedResponse]:
+        with self._instrument(messages, model_settings) as finish:
+            response_stream: StreamedResponse
+            async with super().request_stream(messages, model_settings, model_request_parameters) as response_stream:
+                yield response_stream
+            finish(response_stream.get(), response_stream.usage())
+
+    @contextmanager
+    def _instrument(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+    ):
         operation = 'chat'
         model_name = self.model_name
         span_name = f'{operation} {model_name}'
@@ -95,17 +121,18 @@ class InstrumentedModel(WrapperModel):
                         for body in _response_bodies(message):
                             emit_event('gen_ai.assistant.message', body)
 
-            response, usage = await super().request(messages, model_settings, model_request_parameters)
+            def finish(response: ModelResponse, usage: Usage):
+                if not span.is_recording():
+                    return
 
-            if span.is_recording():
-                for body in _response_bodies(response):
-                    if body:
+                for response_body in _response_bodies(response):
+                    if response_body:
                         emit_event(
                             'gen_ai.choice',
                             {
                                 # TODO finish_reason
                                 'index': 0,
-                                'message': body,
+                                'message': response_body,
                             },
                         )
                 span.set_attributes(
@@ -122,7 +149,7 @@ class InstrumentedModel(WrapperModel):
                     }
                 )
 
-            return response, usage
+            yield finish
 
     def _emit_event(self, system: str, event_name: str, body: dict[str, Any]) -> None:
         self.logfire_instance.info(event_name, **{'gen_ai.system': system}, **body)

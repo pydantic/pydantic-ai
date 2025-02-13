@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from datetime import datetime
+
 import pytest
 from dirty_equals import IsJson
 from inline_snapshot import snapshot
@@ -8,14 +12,18 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    ModelResponseStreamEvent,
+    PartDeltaEvent,
+    PartStartEvent,
     RetryPromptPart,
     SystemPromptPart,
     TextPart,
+    TextPartDelta,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.models import Model, ModelRequestParameters
+from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
 from pydantic_ai.models.instrumented import InstrumentedModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import Usage
@@ -61,6 +69,30 @@ class MyModel(Model):
             ),
             Usage(request_tokens=100, response_tokens=200),
         )
+
+    @asynccontextmanager
+    async def request_stream(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> AsyncIterator[StreamedResponse]:
+        yield MyResponseStream()
+
+
+class MyResponseStream(StreamedResponse):
+    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
+        yield self._parts_manager.handle_text_delta(vendor_part_id=0, content='text1')
+        yield self._parts_manager.handle_text_delta(vendor_part_id=0, content='text2')
+        self._usage = Usage(request_tokens=300, response_tokens=400)
+
+    @property
+    def model_name(self) -> str:
+        return 'my_model_123'
+
+    @property
+    def timestamp(self) -> datetime:
+        return datetime(2022, 1, 1)
 
 
 @pytest.mark.anyio
@@ -322,3 +354,98 @@ async def test_instrumented_model_not_recording(capfire: CaptureLogfire):
     )
 
     assert capfire.exporter.exported_spans_as_dict() == snapshot([])
+
+
+@pytest.mark.anyio
+async def test_instrumented_model_stream(capfire: CaptureLogfire):
+    model = InstrumentedModel(MyModel())
+
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart('user_prompt'),
+            ]
+        ),
+    ]
+    async with model.request_stream(
+        messages,
+        model_settings=ModelSettings(temperature=1),
+        model_request_parameters=ModelRequestParameters(
+            function_tools=[],
+            allow_text_result=True,
+            result_tools=[],
+        ),
+    ) as response_stream:
+        assert [event async for event in response_stream] == snapshot(
+            [
+                PartStartEvent(index=0, part=TextPart(content='text1')),
+                PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='text2')),
+            ]
+        )
+
+    assert capfire.exporter.exported_spans_as_dict() == snapshot(
+        [
+            {
+                'name': 'gen_ai.user.message',
+                'context': {'trace_id': 1, 'span_id': 3, 'is_remote': False},
+                'parent': {'trace_id': 1, 'span_id': 1, 'is_remote': False},
+                'start_time': 2000000000,
+                'end_time': 2000000000,
+                'attributes': {
+                    'logfire.span_type': 'log',
+                    'logfire.level_num': 9,
+                    'logfire.msg_template': 'gen_ai.user.message',
+                    'logfire.msg': 'gen_ai.user.message',
+                    'code.filepath': 'test_instrumented.py',
+                    'code.function': 'test_instrumented_model_stream',
+                    'code.lineno': 123,
+                    'gen_ai.system': 'my_system',
+                    'content': 'user_prompt',
+                    'logfire.json_schema': '{"type":"object","properties":{"gen_ai.system":{},"content":{}}}',
+                },
+            },
+            {
+                'name': 'gen_ai.choice',
+                'context': {'trace_id': 1, 'span_id': 4, 'is_remote': False},
+                'parent': {'trace_id': 1, 'span_id': 1, 'is_remote': False},
+                'start_time': 3000000000,
+                'end_time': 3000000000,
+                'attributes': {
+                    'logfire.span_type': 'log',
+                    'logfire.level_num': 9,
+                    'logfire.msg_template': 'gen_ai.choice',
+                    'logfire.msg': 'gen_ai.choice',
+                    'code.filepath': 'test_instrumented.py',
+                    'code.function': 'test_instrumented_model_stream',
+                    'code.lineno': 123,
+                    'gen_ai.system': 'my_system',
+                    'index': 0,
+                    'message': '{"content":"text1text2"}',
+                    'logfire.json_schema': '{"type":"object","properties":{"gen_ai.system":{},"index":{},"message":{"type":"object"}}}',
+                },
+            },
+            {
+                'name': 'chat my_model',
+                'context': {'trace_id': 1, 'span_id': 1, 'is_remote': False},
+                'parent': None,
+                'start_time': 1000000000,
+                'end_time': 4000000000,
+                'attributes': {
+                    'code.filepath': 'test_instrumented.py',
+                    'code.function': 'test_instrumented_model_stream',
+                    'code.lineno': 123,
+                    'gen_ai.operation.name': 'chat',
+                    'gen_ai.system': 'my_system',
+                    'gen_ai.request.model': 'my_model',
+                    'gen_ai.request.temperature': 1,
+                    'logfire.msg_template': 'chat my_model',
+                    'logfire.msg': 'chat my_model',
+                    'logfire.span_type': 'span',
+                    'gen_ai.response.model': 'my_model_123',
+                    'gen_ai.usage.input_tokens': 300,
+                    'gen_ai.usage.output_tokens': 400,
+                    'logfire.json_schema': '{"type":"object","properties":{"gen_ai.operation.name":{},"gen_ai.system":{},"gen_ai.request.model":{},"gen_ai.request.temperature":{},"gen_ai.response.model":{},"gen_ai.usage.input_tokens":{},"gen_ai.usage.output_tokens":{}}}',
+                },
+            },
+        ]
+    )
