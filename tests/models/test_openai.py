@@ -1,7 +1,6 @@
 from __future__ import annotations as _annotations
 
 import json
-from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from functools import cached_property
@@ -91,10 +90,8 @@ def raise_if_exception(e: Any) -> None:
 
 @dataclass
 class MockOpenAI:
-    completions: chat.ChatCompletion | Exception | Sequence[chat.ChatCompletion | Exception] | None = None
-    stream: (
-        Sequence[chat.ChatCompletionChunk | Exception] | Sequence[Sequence[chat.ChatCompletionChunk | Exception]] | None
-    ) = None
+    completions: chat.ChatCompletion | Exception | list[chat.ChatCompletion | Exception] | None = None
+    stream: list[chat.ChatCompletionChunk | Exception] | list[list[chat.ChatCompletionChunk | Exception]] | None = None
     index: int = 0
     chat_completion_kwargs: list[dict[str, Any]] = field(default_factory=list)
 
@@ -105,28 +102,29 @@ class MockOpenAI:
 
     @classmethod
     def create_mock(
-        cls, completions: chat.ChatCompletion | Exception | Sequence[chat.ChatCompletion | Exception]
+        cls, completions: chat.ChatCompletion | Exception | list[chat.ChatCompletion | Exception]
     ) -> AsyncOpenAI:
         return cast(AsyncOpenAI, cls(completions=completions))
 
     @classmethod
     def create_mock_stream(
         cls,
-        stream: Sequence[chat.ChatCompletionChunk | Exception] | list[Sequence[chat.ChatCompletionChunk | Exception]],
+        stream: list[chat.ChatCompletionChunk | Exception] | list[list[chat.ChatCompletionChunk | Exception]],
     ) -> AsyncOpenAI:
-        return cast(AsyncOpenAI, cls(stream=list(stream)))  # pyright: ignore[reportArgumentType]
+        return cast(AsyncOpenAI, cls(stream=stream))
 
     async def chat_completions_create(  # pragma: no cover
         self, *_args: Any, stream: bool = False, **kwargs: Any
     ) -> chat.ChatCompletion | MockAsyncStream[chat.ChatCompletionChunk | Exception]:
         self.chat_completion_kwargs.append({k: v for k, v in kwargs.items() if v is not NOT_GIVEN})
 
+        # note: we use `Union` in the below casts because of lacking | operator support in 3.9
         if stream:
             assert self.stream is not None, 'you can only used `stream=True` if `stream` is provided'
-            # noinspection PyUnresolvedReferences
             if isinstance(self.stream[0], list):
-                indexed_stream = cast(list[Union[chat.ChatCompletionChunk, Exception]], self.stream[self.index])
-                response = MockAsyncStream(iter(indexed_stream))
+                response = MockAsyncStream(
+                    iter(cast(list[Union[chat.ChatCompletionChunk, Exception]], self.stream[self.index]))
+                )
             else:
                 response = MockAsyncStream(iter(cast(list[Union[chat.ChatCompletionChunk, Exception]], self.stream)))
         else:
@@ -268,7 +266,7 @@ async def test_request_structured_response(allow_model_requests: None):
 
 
 async def test_request_tool_call(allow_model_requests: None):
-    responses = [
+    responses: list[chat.ChatCompletion | Exception] = [
         completion_message(
             ChatCompletionMessage(
                 content=None,
@@ -411,7 +409,7 @@ def text_chunk(text: str, finish_reason: FinishReason | None = None) -> chat.Cha
 
 
 async def test_stream_text(allow_model_requests: None):
-    stream = text_chunk('hello '), text_chunk('world'), chunk([])
+    stream: list[chat.ChatCompletionChunk | Exception] = [text_chunk('hello '), text_chunk('world'), chunk([])]
     mock_client = MockOpenAI.create_mock_stream(stream)
     m = OpenAIModel('gpt-4o', openai_client=mock_client)
     agent = Agent(m)
@@ -424,7 +422,11 @@ async def test_stream_text(allow_model_requests: None):
 
 
 async def test_stream_text_finish_reason(allow_model_requests: None):
-    stream = text_chunk('hello '), text_chunk('world'), text_chunk('.', finish_reason='stop')
+    stream: list[chat.ChatCompletionChunk | Exception] = [
+        text_chunk('hello '),
+        text_chunk('world'),
+        text_chunk('.', finish_reason='stop'),
+    ]
     mock_client = MockOpenAI.create_mock_stream(stream)
     m = OpenAIModel('gpt-4o', openai_client=mock_client)
     agent = Agent(m)
@@ -460,7 +462,7 @@ class MyTypedDict(TypedDict, total=False):
 
 
 async def test_stream_structured(allow_model_requests: None):
-    stream = (
+    stream: list[chat.ChatCompletionChunk | Exception] = [
         chunk([ChoiceDelta()]),
         chunk([ChoiceDelta(tool_calls=[])]),
         chunk([ChoiceDelta(tool_calls=[ChoiceDeltaToolCall(index=0, function=None)])]),
@@ -471,7 +473,7 @@ async def test_stream_structured(allow_model_requests: None):
         struc_chunk(None, '", "second": "Two"'),
         struc_chunk(None, '}'),
         chunk([]),
-    )
+    ]
     mock_client = MockOpenAI.create_mock_stream(stream)
     m = OpenAIModel('gpt-4o', openai_client=mock_client)
     agent = Agent(m, result_type=MyTypedDict)
@@ -493,13 +495,13 @@ async def test_stream_structured(allow_model_requests: None):
 
 
 async def test_stream_structured_finish_reason(allow_model_requests: None):
-    stream = (
+    stream: list[chat.ChatCompletionChunk | Exception] = [
         struc_chunk('final_result', None),
         struc_chunk(None, '{"first": "One'),
         struc_chunk(None, '", "second": "Two"'),
         struc_chunk(None, '}'),
         struc_chunk(None, None, finish_reason='stop'),
-    )
+    ]
     mock_client = MockOpenAI.create_mock_stream(stream)
     m = OpenAIModel('gpt-4o', openai_client=mock_client)
     agent = Agent(m, result_type=MyTypedDict)
@@ -519,7 +521,7 @@ async def test_stream_structured_finish_reason(allow_model_requests: None):
 
 
 async def test_no_content(allow_model_requests: None):
-    stream = chunk([ChoiceDelta()]), chunk([ChoiceDelta()])
+    stream: list[chat.ChatCompletionChunk | Exception] = [chunk([ChoiceDelta()]), chunk([ChoiceDelta()])]
     mock_client = MockOpenAI.create_mock_stream(stream)
     m = OpenAIModel('gpt-4o', openai_client=mock_client)
     agent = Agent(m, result_type=MyTypedDict)
@@ -530,11 +532,11 @@ async def test_no_content(allow_model_requests: None):
 
 
 async def test_no_delta(allow_model_requests: None):
-    stream = (
+    stream: list[chat.ChatCompletionChunk | Exception] = [
         chunk([]),
         text_chunk('hello '),
         text_chunk('world'),
-    )
+    ]
     mock_client = MockOpenAI.create_mock_stream(stream)
     m = OpenAIModel('gpt-4o', openai_client=mock_client)
     agent = Agent(m)
