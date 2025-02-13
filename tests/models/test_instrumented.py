@@ -34,8 +34,13 @@ pytestmark = [
 
 
 class MyModel(Model):
-    _system = 'my_system'
-    _model_name = 'my_model'
+    @property
+    def system(self) -> str:
+        return 'my_system'
+
+    @property
+    def model_name(self) -> str:
+        return 'my_model'
 
     async def request(
         self,
