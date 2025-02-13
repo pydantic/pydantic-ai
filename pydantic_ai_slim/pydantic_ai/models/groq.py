@@ -146,6 +146,16 @@ class GroqModel(Model):
         async with response:
             yield await self._process_streamed_response(response)
 
+    @property
+    def model_name(self) -> GroqModelName:
+        """The model name."""
+        return self._model_name
+
+    @property
+    def system(self) -> str | None:
+        """The system / model provider."""
+        return self._system
+
     @overload
     async def _completions_create(
         self,
@@ -212,7 +222,7 @@ class GroqModel(Model):
         if choice.message.tool_calls is not None:
             for c in choice.message.tool_calls:
                 items.append(ToolCallPart(tool_name=c.function.name, args=c.function.arguments, tool_call_id=c.id))
-        return ModelResponse(items, model_name=self._model_name, timestamp=timestamp)
+        return ModelResponse(items, model_name=response.model, timestamp=timestamp)
 
     async def _process_streamed_response(self, response: AsyncStream[ChatCompletionChunk]) -> GroqStreamedResponse:
         """Process a streamed response, and prepare a streaming response to return."""
@@ -305,6 +315,7 @@ class GroqModel(Model):
 class GroqStreamedResponse(StreamedResponse):
     """Implementation of `StreamedResponse` for Groq models."""
 
+    _model_name: GroqModelName
     _response: AsyncIterable[ChatCompletionChunk]
     _timestamp: datetime
 
@@ -333,7 +344,14 @@ class GroqStreamedResponse(StreamedResponse):
                 if maybe_event is not None:
                     yield maybe_event
 
+    @property
+    def model_name(self) -> GroqModelName:
+        """Get the model name of the response."""
+        return self._model_name
+
+    @property
     def timestamp(self) -> datetime:
+        """Get the timestamp of the response."""
         return self._timestamp
 
 

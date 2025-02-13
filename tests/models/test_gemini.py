@@ -440,7 +440,7 @@ def gemini_response(content: _GeminiContent, finish_reason: Literal['STOP'] | No
     candidate = _GeminiCandidates(content=content, index=0, safety_ratings=[])
     if finish_reason:  # pragma: no cover
         candidate['finish_reason'] = finish_reason
-    return _GeminiResponse(candidates=[candidate], usage_metadata=example_usage())
+    return _GeminiResponse(candidates=[candidate], usage_metadata=example_usage(), model_version='gemini-1.5-flash-123')
 
 
 def example_usage() -> _GeminiUsageMetaData:
@@ -459,7 +459,9 @@ async def test_text_success(get_gemini_client: GetGeminiClient):
         [
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
-                parts=[TextPart(content='Hello world')], model_name='gemini-1.5-flash', timestamp=IsNow(tz=timezone.utc)
+                parts=[TextPart(content='Hello world')],
+                model_name='gemini-1.5-flash-123',
+                timestamp=IsNow(tz=timezone.utc),
             ),
         ]
     )
@@ -472,13 +474,13 @@ async def test_text_success(get_gemini_client: GetGeminiClient):
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[TextPart(content='Hello world')],
-                model_name='gemini-1.5-flash',
+                model_name='gemini-1.5-flash-123',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[TextPart(content='Hello world')],
-                model_name='gemini-1.5-flash',
+                model_name='gemini-1.5-flash-123',
                 timestamp=IsNow(tz=timezone.utc),
             ),
         ]
@@ -505,7 +507,7 @@ async def test_request_structured_response(get_gemini_client: GetGeminiClient):
                         args={'response': [1, 2, 123]},
                     )
                 ],
-                model_name='gemini-1.5-flash',
+                model_name='gemini-1.5-flash-123',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
@@ -566,7 +568,7 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
                         args={'loc_name': 'San Fransisco'},
                     )
                 ],
-                model_name='gemini-1.5-flash',
+                model_name='gemini-1.5-flash-123',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
@@ -589,7 +591,7 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
                         args={'loc_name': 'New York'},
                     ),
                 ],
-                model_name='gemini-1.5-flash',
+                model_name='gemini-1.5-flash-123',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
@@ -604,7 +606,7 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
             ),
             ModelResponse(
                 parts=[TextPart(content='final response')],
-                model_name='gemini-1.5-flash',
+                model_name='gemini-1.5-flash-123',
                 timestamp=IsNow(tz=timezone.utc),
             ),
         ]
