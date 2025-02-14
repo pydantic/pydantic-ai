@@ -2,7 +2,15 @@ from __future__ import annotations as _annotations
 
 import json
 
-__all__ = 'ModelRetry', 'UserError', 'AgentRunError', 'UnexpectedModelBehavior', 'UsageLimitExceeded'
+__all__ = (
+    'ModelRetry',
+    'UserError',
+    'AgentRunError',
+    'UnexpectedModelBehavior',
+    'UsageLimitExceeded',
+    'ModelStatusError',
+    'FallbackModelFailure',
+)
 
 
 class ModelRetry(Exception):
@@ -101,6 +109,7 @@ class FallbackModelFailure(AgentRunError):
     """Raised when all models in a `FallbackModel` fail."""
 
     errors: list[ModelStatusError]
+    """The collection of model status errors that ultimately caused the fallback to fail."""
 
     def __init__(self, errors: list[ModelStatusError]):
         self.errors = errors
