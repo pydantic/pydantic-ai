@@ -44,6 +44,10 @@ with try_import() as imports_successful:
 
     from pydantic_ai.models.groq import GroqModel
 
+    # note: we use Union here so that casting works with Python 3.9
+    MockChatCompletion = Union[chat.ChatCompletion, Exception]
+    MockChatCompletionChunk = Union[chat.ChatCompletionChunk, Exception]
+
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='groq not installed'),
     pytest.mark.anyio,
@@ -55,10 +59,6 @@ def test_init():
     assert m.client.api_key == 'foobar'
     assert m.model_name == 'llama-3.3-70b-versatile'
     assert m.system == 'groq'
-
-
-MockChatCompletion = Union[chat.ChatCompletion, Exception]
-MockChatCompletionChunk = Union[chat.ChatCompletionChunk, Exception]
 
 
 @dataclass

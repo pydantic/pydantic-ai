@@ -54,14 +54,14 @@ with try_import() as imports_successful:
         MistralStreamedResponse,
     )
 
+    # note: we use Union here so that casting works with Python 3.9
+    MockChatCompletion = Union[MistralChatCompletionResponse, Exception]
+    MockCompletionEvent = Union[MistralCompletionEvent, Exception]
+
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='mistral not installed'),
     pytest.mark.anyio,
 ]
-
-
-MockChatCompletion = Union[MistralChatCompletionResponse, Exception]
-MockCompletionEvent = Union[MistralCompletionEvent, Exception]
 
 
 @dataclass

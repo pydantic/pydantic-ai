@@ -45,6 +45,10 @@ with try_import() as imports_successful:
 
     from pydantic_ai.models.openai import OpenAIModel, OpenAISystemPromptRole
 
+    # note: we use Union here so that casting works with Python 3.9
+    MockChatCompletion = Union[chat.ChatCompletion, Exception]
+    MockChatCompletionChunk = Union[chat.ChatCompletionChunk, Exception]
+
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
     pytest.mark.anyio,
@@ -82,10 +86,6 @@ def test_init_of_openai_without_api_key_raises_error(env: TestEnv):
         match='^The api_key client option must be set either by passing api_key to the client or by setting the OPENAI_API_KEY environment variable$',
     ):
         OpenAIModel('gpt-4o')
-
-
-MockChatCompletion = Union[chat.ChatCompletion, Exception]
-MockChatCompletionChunk = Union[chat.ChatCompletionChunk, Exception]
 
 
 @dataclass

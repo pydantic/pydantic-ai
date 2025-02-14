@@ -50,6 +50,10 @@ with try_import() as imports_successful:
 
     from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
 
+    # note: we use Union here so that casting works with Python 3.9
+    MockAnthropicMessage = Union[AnthropicMessage, Exception]
+    MockRawMessageStreamEvent = Union[RawMessageStreamEvent, Exception]
+
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='anthropic not installed'),
     pytest.mark.anyio,
@@ -64,11 +68,6 @@ def test_init():
     assert m.client.api_key == 'foobar'
     assert m.model_name == 'claude-3-5-haiku-latest'
     assert m.system == 'anthropic'
-
-
-# note: we use Union here so that casting works with Python 3.9
-MockAnthropicMessage = Union[AnthropicMessage, Exception]
-MockRawMessageStreamEvent = Union[RawMessageStreamEvent, Exception]
 
 
 @dataclass

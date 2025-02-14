@@ -38,6 +38,8 @@ with try_import() as imports_successful:
 
     from pydantic_ai.models.cohere import CohereModel
 
+    MockChatResponse = ChatResponse | Exception
+
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='cohere not installed'),
     pytest.mark.anyio,
@@ -48,9 +50,6 @@ def test_init():
     m = CohereModel('command-r7b-12-2024', api_key='foobar')
     assert m.model_name == 'command-r7b-12-2024'
     assert m.system == 'cohere'
-
-
-MockChatResponse = ChatResponse | Exception
 
 
 @dataclass
