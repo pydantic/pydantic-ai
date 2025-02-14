@@ -50,13 +50,16 @@ def test_init():
     assert m.system == 'cohere'
 
 
+MockChatResponse = ChatResponse | Exception
+
+
 @dataclass
 class MockAsyncClientV2:
-    completions: ChatResponse | Exception | Sequence[ChatResponse | Exception] | None = None
+    completions: MockChatResponse | Sequence[MockChatResponse] | None = None
     index = 0
 
     @classmethod
-    def create_mock(cls, completions: ChatResponse | Exception | Sequence[ChatResponse | Exception]) -> AsyncClientV2:
+    def create_mock(cls, completions: MockChatResponse | Sequence[MockChatResponse]) -> AsyncClientV2:
         return cast(AsyncClientV2, cls(completions=completions))
 
     async def chat(  # pragma: no cover

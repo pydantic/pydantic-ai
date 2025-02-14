@@ -57,12 +57,14 @@ def test_init():
     assert m.system == 'groq'
 
 
+MockChatCompletion = Union[chat.ChatCompletion, Exception]
+MockChatCompletionChunk = Union[chat.ChatCompletionChunk, Exception]
+
+
 @dataclass
 class MockGroq:
-    completions: chat.ChatCompletion | Exception | Sequence[chat.ChatCompletion | Exception] | None = None
-    stream: (
-        Sequence[chat.ChatCompletionChunk | Exception] | Sequence[Sequence[chat.ChatCompletionChunk | Exception]] | None
-    ) = None
+    completions: MockChatCompletion | Sequence[MockChatCompletion] | None = None
+    stream: Sequence[MockChatCompletionChunk] | Sequence[Sequence[MockChatCompletionChunk]] | None = None
     index: int = 0
 
     @cached_property
@@ -71,33 +73,28 @@ class MockGroq:
         return type('Chat', (), {'completions': chat_completions})
 
     @classmethod
-    def create_mock(
-        cls, completions: chat.ChatCompletion | Exception | Sequence[chat.ChatCompletion | Exception]
-    ) -> AsyncGroq:
+    def create_mock(cls, completions: MockChatCompletion | Sequence[MockChatCompletion]) -> AsyncGroq:
         return cast(AsyncGroq, cls(completions=completions))
 
     @classmethod
     def create_mock_stream(
         cls,
-        stream: Sequence[chat.ChatCompletionChunk | Exception]
-        | Sequence[Sequence[chat.ChatCompletionChunk | Exception]],
+        stream: Sequence[MockChatCompletionChunk] | Sequence[Sequence[MockChatCompletionChunk]],
     ) -> AsyncGroq:
-        return cast(AsyncGroq, cls(stream=list(stream)))  # pyright: ignore[reportArgumentType]
+        return cast(AsyncGroq, cls(stream=stream))
 
     async def chat_completions_create(
         self, *_args: Any, stream: bool = False, **_kwargs: Any
-    ) -> chat.ChatCompletion | MockAsyncStream[chat.ChatCompletionChunk | Exception]:
+    ) -> chat.ChatCompletion | MockAsyncStream[MockChatCompletionChunk]:
         if stream:
             assert self.stream is not None, 'you can only used `stream=True` if `stream` is provided'
-            if isinstance(self.stream[0], list):
-                response = MockAsyncStream(
-                    iter(cast(list[Union[chat.ChatCompletionChunk, Exception]], self.stream[self.index]))
-                )
+            if isinstance(self.stream[0], Sequence):
+                response = MockAsyncStream(iter(cast(list[MockChatCompletionChunk], self.stream[self.index])))
             else:
-                response = MockAsyncStream(iter(cast(list[Union[chat.ChatCompletionChunk, Exception]], self.stream)))
+                response = MockAsyncStream(iter(cast(list[MockChatCompletionChunk], self.stream)))
         else:
             assert self.completions is not None, 'you can only used `stream=False` if `completions` are provided'
-            if isinstance(self.completions, list):
+            if isinstance(self.completions, Sequence):
                 raise_if_exception(self.completions[self.index])
                 response = cast(chat.ChatCompletion, self.completions[self.index])
             else:

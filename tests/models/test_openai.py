@@ -84,12 +84,14 @@ def test_init_of_openai_without_api_key_raises_error(env: TestEnv):
         OpenAIModel('gpt-4o')
 
 
+MockChatCompletion = Union[chat.ChatCompletion, Exception]
+MockChatCompletionChunk = Union[chat.ChatCompletionChunk, Exception]
+
+
 @dataclass
 class MockOpenAI:
-    completions: chat.ChatCompletion | Exception | Sequence[chat.ChatCompletion | Exception] | None = None
-    stream: (
-        Sequence[chat.ChatCompletionChunk | Exception] | Sequence[Sequence[chat.ChatCompletionChunk | Exception]] | None
-    ) = None
+    completions: MockChatCompletion | Sequence[MockChatCompletion] | None = None
+    stream: Sequence[MockChatCompletionChunk] | Sequence[Sequence[MockChatCompletionChunk]] | None = None
     index: int = 0
     chat_completion_kwargs: list[dict[str, Any]] = field(default_factory=list)
 
@@ -99,33 +101,27 @@ class MockOpenAI:
         return type('Chat', (), {'completions': chat_completions})
 
     @classmethod
-    def create_mock(
-        cls, completions: chat.ChatCompletion | Exception | Sequence[chat.ChatCompletion | Exception]
-    ) -> AsyncOpenAI:
+    def create_mock(cls, completions: MockChatCompletion | Sequence[MockChatCompletion]) -> AsyncOpenAI:
         return cast(AsyncOpenAI, cls(completions=completions))
 
     @classmethod
     def create_mock_stream(
         cls,
-        stream: Sequence[chat.ChatCompletionChunk | Exception]
-        | Sequence[Sequence[chat.ChatCompletionChunk | Exception]],
+        stream: Sequence[MockChatCompletionChunk] | Sequence[Sequence[MockChatCompletionChunk]],
     ) -> AsyncOpenAI:
         return cast(AsyncOpenAI, cls(stream=stream))
 
     async def chat_completions_create(  # pragma: no cover
         self, *_args: Any, stream: bool = False, **kwargs: Any
-    ) -> chat.ChatCompletion | MockAsyncStream[chat.ChatCompletionChunk | Exception]:
+    ) -> chat.ChatCompletion | MockAsyncStream[MockChatCompletionChunk]:
         self.chat_completion_kwargs.append({k: v for k, v in kwargs.items() if v is not NOT_GIVEN})
 
-        # note: we use `Union` in the below casts because of lacking | operator support in 3.9
         if stream:
             assert self.stream is not None, 'you can only used `stream=True` if `stream` is provided'
             if isinstance(self.stream[0], Sequence):
-                response = MockAsyncStream(
-                    iter(cast(list[Union[chat.ChatCompletionChunk, Exception]], self.stream[self.index]))
-                )
+                response = MockAsyncStream(iter(cast(list[MockChatCompletionChunk], self.stream[self.index])))
             else:
-                response = MockAsyncStream(iter(cast(list[Union[chat.ChatCompletionChunk, Exception]], self.stream)))
+                response = MockAsyncStream(iter(cast(list[MockChatCompletionChunk], self.stream)))
         else:
             assert self.completions is not None, 'you can only used `stream=False` if `completions` are provided'
             if isinstance(self.completions, Sequence):

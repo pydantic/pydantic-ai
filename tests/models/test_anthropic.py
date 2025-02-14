@@ -66,12 +66,15 @@ def test_init():
     assert m.system == 'anthropic'
 
 
+# note: we use Union here so that casting works with Python 3.9
+MockAnthropicMessage = Union[AnthropicMessage, Exception]
+MockRawMessageStreamEvent = Union[RawMessageStreamEvent, Exception]
+
+
 @dataclass
 class MockAnthropic:
-    messages_: AnthropicMessage | Exception | Sequence[AnthropicMessage | Exception] | None = None
-    stream: (
-        Sequence[RawMessageStreamEvent | Exception] | Sequence[Sequence[RawMessageStreamEvent | Exception]] | None
-    ) = None
+    messages_: MockAnthropicMessage | Sequence[MockAnthropicMessage] | None = None
+    stream: Sequence[MockRawMessageStreamEvent] | Sequence[Sequence[MockRawMessageStreamEvent]] | None = None
     index = 0
     chat_completion_kwargs: list[dict[str, Any]] = field(default_factory=list)
 
@@ -80,32 +83,29 @@ class MockAnthropic:
         return type('Messages', (), {'create': self.messages_create})
 
     @classmethod
-    def create_mock(
-        cls, messages_: AnthropicMessage | Exception | Sequence[AnthropicMessage | Exception]
-    ) -> AsyncAnthropic:
+    def create_mock(cls, messages_: MockAnthropicMessage | Sequence[MockAnthropicMessage]) -> AsyncAnthropic:
         return cast(AsyncAnthropic, cls(messages_=messages_))
 
     @classmethod
     def create_stream_mock(
-        cls, stream: Sequence[RawMessageStreamEvent | Exception] | Sequence[Sequence[RawMessageStreamEvent | Exception]]
+        cls, stream: Sequence[MockRawMessageStreamEvent] | Sequence[Sequence[MockRawMessageStreamEvent]]
     ) -> AsyncAnthropic:
         return cast(AsyncAnthropic, cls(stream=stream))
 
     async def messages_create(
         self, *_args: Any, stream: bool = False, **kwargs: Any
-    ) -> AnthropicMessage | MockAsyncStream[RawMessageStreamEvent | Exception]:
+    ) -> AnthropicMessage | MockAsyncStream[MockRawMessageStreamEvent]:
         self.chat_completion_kwargs.append({k: v for k, v in kwargs.items() if v is not NOT_GIVEN})
 
         if stream:
             assert self.stream is not None, 'you can only use `stream=True` if `stream` is provided'
             if isinstance(self.stream[0], Sequence):
-                indexed_stream = cast(Sequence[Union[RawMessageStreamEvent, Exception]], self.stream[self.index])
-                response = MockAsyncStream(iter(indexed_stream))
+                response = MockAsyncStream(iter(cast(list[MockRawMessageStreamEvent], self.stream[self.index])))
             else:
-                response = MockAsyncStream(iter(cast(Sequence[Union[RawMessageStreamEvent, Exception]], self.stream)))
+                response = MockAsyncStream(iter(cast(list[MockRawMessageStreamEvent], self.stream)))
         else:
             assert self.messages_ is not None, '`messages` must be provided'
-            if isinstance(self.messages_, list):
+            if isinstance(self.messages_, Sequence):
                 raise_if_exception(self.messages_[self.index])
                 response = cast(AnthropicMessage, self.messages_[self.index])
             else:

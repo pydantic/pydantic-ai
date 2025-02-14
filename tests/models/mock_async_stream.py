@@ -13,6 +13,8 @@ from typing import Any, Generic, TypeVar
 
 from pydantic_ai import _utils
 
+from ..conftest import raise_if_exception
+
 T = TypeVar('T')
 
 
@@ -48,8 +50,7 @@ class MockAsyncStream(Generic[T]):
         is raised.
         """
         next = _utils.sync_anext(self._iter)
-        if isinstance(next, Exception):
-            raise next
+        raise_if_exception(next)
         return next
 
     def __aiter__(self) -> MockAsyncStream[T]:

@@ -60,14 +60,14 @@ pytestmark = [
 ]
 
 
+MockChatCompletion = Union[MistralChatCompletionResponse, Exception]
+MockCompletionEvent = Union[MistralCompletionEvent, Exception]
+
+
 @dataclass
 class MockMistralAI:
-    completions: (
-        MistralChatCompletionResponse | Exception | Sequence[MistralChatCompletionResponse | Exception] | None
-    ) = None
-    stream: (
-        Sequence[MistralCompletionEvent | Exception] | Sequence[Sequence[MistralCompletionEvent | Exception]] | None
-    ) = None
+    completions: MockChatCompletion | Sequence[MockChatCompletion] | None = None
+    stream: Sequence[MockCompletionEvent] | Sequence[Sequence[MockCompletionEvent]] | None = None
     index: int = 0
 
     @cached_property
@@ -82,37 +82,27 @@ class MockMistralAI:
             return type('Chat', (), {'complete_async': self.chat_completions_create})
 
     @classmethod
-    def create_mock(
-        cls,
-        completions: MistralChatCompletionResponse | Exception | Sequence[MistralChatCompletionResponse | Exception],
-    ) -> Mistral:
+    def create_mock(cls, completions: MockChatCompletion | Sequence[MockChatCompletion]) -> Mistral:
         return cast(Mistral, cls(completions=completions))
 
     @classmethod
     def create_stream_mock(
-        cls,
-        completions_streams: Sequence[MistralCompletionEvent | Exception]
-        | Sequence[Sequence[MistralCompletionEvent | Exception]],
+        cls, completions_streams: Sequence[MockCompletionEvent] | Sequence[Sequence[MockCompletionEvent]]
     ) -> Mistral:
         return cast(Mistral, cls(stream=completions_streams))
 
     async def chat_completions_create(  # pragma: no cover
         self, *_args: Any, stream: bool = False, **_kwargs: Any
-    ) -> MistralChatCompletionResponse | MockAsyncStream[MistralChatCompletionResponse | Exception]:
+    ) -> MistralChatCompletionResponse | MockAsyncStream[MockCompletionEvent]:
         if stream or self.stream:
             assert self.stream is not None, 'you can only used `stream=True` if `stream` is provided'
             if isinstance(self.stream[0], list):
-                indexed_stream = cast(list[Union[MistralChatCompletionResponse, Exception]], self.stream[self.index])
-                response = MockAsyncStream(iter(indexed_stream))
-
+                response = MockAsyncStream(iter(cast(list[MockCompletionEvent], self.stream[self.index])))
             else:
-                response = MockAsyncStream(
-                    iter(cast(list[Union[MistralChatCompletionResponse, Exception]], self.stream))
-                )
-
+                response = MockAsyncStream(iter(cast(list[MockCompletionEvent], self.stream)))
         else:
             assert self.completions is not None, 'you can only used `stream=False` if `completions` are provided'
-            if isinstance(self.completions, list):
+            if isinstance(self.completions, Sequence):
                 raise_if_exception(self.completions[self.index])
                 response = cast(MistralChatCompletionResponse, self.completions[self.index])
             else:
