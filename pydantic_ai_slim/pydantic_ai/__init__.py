@@ -3,6 +3,7 @@ from importlib.metadata import version
 from .agent import Agent, capture_run_messages
 from .exceptions import (
     AgentRunError,
+    FallbackModelFailure,
     ModelRetry,
     ModelStatusError,
     UnexpectedModelBehavior,
@@ -17,6 +18,7 @@ __all__ = (
     'RunContext',
     'Tool',
     'AgentRunError',
+    'FallbackModelFailure',
     'ModelRetry',
     'ModelStatusError',
     'UnexpectedModelBehavior',

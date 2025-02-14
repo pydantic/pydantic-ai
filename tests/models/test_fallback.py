@@ -5,7 +5,7 @@ import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, ModelStatusError
-from pydantic_ai.exceptions import UnexpectedModelBehavior
+from pydantic_ai.exceptions import FallbackModelFailure
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
@@ -89,9 +89,14 @@ def test_first_failed() -> None:
 def test_all_failed() -> None:
     fallback_model = FallbackModel(failure_model, failure_model)
     agent = Agent(model=fallback_model)
-    with pytest.raises(UnexpectedModelBehavior) as exc_info:
+    with pytest.raises(FallbackModelFailure) as exc_info:
         agent.run_sync('hello')
-    assert 'All fallback models failed' in exc_info.value.args[0]
+    assert 'FallbackModelFailure caused by' in exc_info.value.args[0]
+    errors = exc_info.value.errors
+    assert len(errors) == 2
+    assert errors[0].status_code == 500
+    assert errors[0].model_name == 'test-function-model'
+    assert errors[0].body == {'error': 'test error'}
 
 
 async def success_response_stream(_model_messages: list[ModelMessage], _agent_info: AgentInfo) -> AsyncIterator[str]:
@@ -164,7 +169,12 @@ async def test_first_failed_streaming() -> None:
 async def test_all_failed_streaming() -> None:
     fallback_model = FallbackModel(failure_model_stream, failure_model_stream)
     agent = Agent(model=fallback_model)
-    with pytest.raises(UnexpectedModelBehavior) as exc_info:
+    with pytest.raises(FallbackModelFailure) as exc_info:
         async with agent.run_stream('hello') as result:
             [c async for c, _is_last in result.stream_structured(debounce_by=None)]
-    assert 'All fallback models failed' in exc_info.value.args[0]
+    assert 'FallbackModelFailure caused by' in exc_info.value.args[0]
+    errors = exc_info.value.errors
+    assert len(errors) == 2
+    assert errors[0].status_code == 500
+    assert errors[0].model_name == 'test-function-model'
+    assert errors[0].body == {'error': 'test error'}
