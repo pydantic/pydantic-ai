@@ -104,5 +104,6 @@ class FallbackModelFailure(AgentRunError):
 
     def __init__(self, errors: list[ModelStatusError]):
         self.errors = errors
-        message = f'\nFallbackModelFailure caused by:\n{"\n".join(f" - {type(e).__name__}: {e}" for e in self.errors)}'
+        stringified_errors = '\n'.join(f'{type(e).__name__}: {e}' for e in errors)
+        message = f'\nFallbackModelFailure caused by:\n{stringified_errors}'
         super().__init__(message)
