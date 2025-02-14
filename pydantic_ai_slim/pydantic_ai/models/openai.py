@@ -119,9 +119,9 @@ class OpenAIModel(Model):
         """
         self._model_name = model_name
         # This is a workaround for the OpenAI client requiring an API key, whilst locally served,
-        # openai compatible models do not always need an API key.
+        # openai compatible models do not always need an API key, but a placeholder (non-empty) key is required.
         if api_key is None and 'OPENAI_API_KEY' not in os.environ and base_url is not None and openai_client is None:
-            api_key = ''
+            api_key = 'mock-placeholder'
 
         if openai_client is not None:
             assert http_client is None, 'Cannot provide both `openai_client` and `http_client`'
