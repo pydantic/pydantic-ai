@@ -4,7 +4,7 @@ import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from functools import cached_property
-from typing import Any, cast
+from typing import Any, Callable, cast
 
 import pytest
 from inline_snapshot import snapshot
@@ -1298,6 +1298,118 @@ async def test_request_tool_call_with_result_type(allow_model_requests: None):
                         timestamp=IsNow(tz=timezone.utc),
                     )
                 ]
+            ),
+        ]
+    )
+
+
+async def test_request_tool_call_with_no_id_from_model(
+    allow_model_requests: None, dummy_tool_call_id_mock: Callable[[], str]
+):
+    """Test that a tool call with no id uses a dummy tool call id.
+
+    The role of this test is to check that the tool call id is a dummy id,
+    when the tool call id is not provided by the model.
+    """
+
+    # Given
+    completion = [
+        completion_message(
+            MistralAssistantMessage(
+                content=None,
+                role='assistant',
+                tool_calls=[
+                    MistralToolCall(
+                        id=None,  # no id
+                        function=MistralFunctionCall(arguments='{"loc_name": "San Fransisco"}', name='get_location'),
+                        type='function',
+                    )
+                ],
+            ),
+        ),
+        completion_message(
+            MistralAssistantMessage(
+                content=None,
+                role='assistant',
+                tool_calls=[
+                    MistralToolCall(
+                        id=None,  # no id
+                        function=MistralFunctionCall(arguments='{"loc_name": "London"}', name='get_location'),
+                        type='function',
+                    )
+                ],
+            ),
+        ),
+        completion_message(MistralAssistantMessage(content='final response', role='assistant')),
+    ]
+    mock_client = MockMistralAI.create_mock(completion)
+    model = MistralModel('mistral-large-latest', client=mock_client)
+    agent = Agent(model)
+
+    @agent.tool_plain
+    async def get_location(loc_name: str) -> str:
+        if loc_name == 'London':
+            return json.dumps({'lat': 51, 'lng': 0})
+        else:
+            raise ModelRetry('Wrong location, please try again')
+
+    # When
+    result = await agent.run('Hello')
+
+    # Then
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc)),
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='get_location',
+                        args='{"loc_name": "San Fransisco"}',
+                        tool_call_id=dummy_tool_call_id_mock(),
+                    )
+                ],
+                model_name='mistral-large-123',
+                timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+            ),
+            ModelRequest(
+                parts=[
+                    RetryPromptPart(
+                        content='Wrong location, please try again',
+                        tool_name='get_location',
+                        tool_call_id=dummy_tool_call_id_mock(),
+                        timestamp=IsNow(tz=timezone.utc),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='get_location',
+                        args='{"loc_name": "London"}',
+                        tool_call_id=dummy_tool_call_id_mock(),
+                    )
+                ],
+                model_name='mistral-large-123',
+                timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='get_location',
+                        content='{"lat": 51, "lng": 0}',
+                        tool_call_id=dummy_tool_call_id_mock(),
+                        timestamp=IsNow(tz=timezone.utc),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[TextPart(content='final response')],
+                model_name='mistral-large-123',
+                timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
             ),
         ]
     )
