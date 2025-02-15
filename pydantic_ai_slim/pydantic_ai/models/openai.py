@@ -353,9 +353,11 @@ class OpenAIStreamedResponse(StreamedResponse):
                 continue
 
             # Handle the text part of the response
-            content = choice.delta.content
-            if content is not None:
-                yield self._parts_manager.handle_text_delta(vendor_part_id='content', content=content)
+            if (
+                    (delta := choice.delta) is not None
+                    and (content := delta.content) is not None
+            ):
+                yield self._parts_manager.handle_text_delta(vendor_part_id="content", content=content)
 
             for dtc in choice.delta.tool_calls or []:
                 maybe_event = self._parts_manager.handle_tool_call_delta(
