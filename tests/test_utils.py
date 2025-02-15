@@ -9,7 +9,13 @@ import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai import UserError
-from pydantic_ai._utils import UNSET, PeekableAsyncStream, check_object_json_schema, group_by_temporal
+from pydantic_ai._utils import (
+    UNSET,
+    PeekableAsyncStream,
+    check_object_json_schema,
+    dummy_tool_call_id,
+    group_by_temporal,
+)
 
 from .models.mock_async_stream import MockAsyncStream
 
@@ -80,3 +86,8 @@ def test_package_versions(capsys: pytest.CaptureFixture[str]):
             packages = sorted((package.metadata['Name'], package.version) for package in distributions())
             for name, version in packages:
                 print(f'{name:30} {version}')
+
+
+def test_dummy_tool_call_id():
+    assert len(dummy_tool_call_id().replace('fake_call_', '')) > 0
+    assert len(dummy_tool_call_id(length=10).replace('fake_call_', '')) == 10
