@@ -487,7 +487,9 @@ async def test_text_success(get_gemini_client: GetGeminiClient):
     )
 
 
-async def test_request_structured_response(get_gemini_client: GetGeminiClient):
+async def test_request_structured_response(
+    get_gemini_client: GetGeminiClient, dummy_tool_call_id_mock: Callable[[], str]
+):
     response = gemini_response(
         _content_model_response(ModelResponse(parts=[ToolCallPart('final_result', {'response': [1, 2, 123]})]))
     )
@@ -505,6 +507,7 @@ async def test_request_structured_response(get_gemini_client: GetGeminiClient):
                     ToolCallPart(
                         tool_name='final_result',
                         args={'response': [1, 2, 123]},
+                        tool_call_id=dummy_tool_call_id_mock(),
                     )
                 ],
                 model_name='gemini-1.5-flash-123',
@@ -513,7 +516,10 @@ async def test_request_structured_response(get_gemini_client: GetGeminiClient):
             ModelRequest(
                 parts=[
                     ToolReturnPart(
-                        tool_name='final_result', content='Final result processed.', timestamp=IsNow(tz=timezone.utc)
+                        tool_name='final_result',
+                        content='Final result processed.',
+                        timestamp=IsNow(tz=timezone.utc),
+                        tool_call_id=dummy_tool_call_id_mock(),
                     )
                 ]
             ),
@@ -521,7 +527,7 @@ async def test_request_structured_response(get_gemini_client: GetGeminiClient):
     )
 
 
-async def test_request_tool_call(get_gemini_client: GetGeminiClient):
+async def test_request_tool_call(get_gemini_client: GetGeminiClient, dummy_tool_call_id_mock: Callable[[], str]):
     responses = [
         gemini_response(
             _content_model_response(ModelResponse(parts=[ToolCallPart('get_location', {'loc_name': 'San Fransisco'})]))
@@ -566,6 +572,7 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
                     ToolCallPart(
                         tool_name='get_location',
                         args={'loc_name': 'San Fransisco'},
+                        tool_call_id=dummy_tool_call_id_mock(),
                     )
                 ],
                 model_name='gemini-1.5-flash-123',
@@ -577,6 +584,7 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
                         content='Wrong location, please try again',
                         tool_name='get_location',
                         timestamp=IsNow(tz=timezone.utc),
+                        tool_call_id=dummy_tool_call_id_mock(),
                     )
                 ]
             ),
@@ -585,10 +593,12 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
                     ToolCallPart(
                         tool_name='get_location',
                         args={'loc_name': 'London'},
+                        tool_call_id=dummy_tool_call_id_mock(),
                     ),
                     ToolCallPart(
                         tool_name='get_location',
                         args={'loc_name': 'New York'},
+                        tool_call_id=dummy_tool_call_id_mock(),
                     ),
                 ],
                 model_name='gemini-1.5-flash-123',
@@ -597,10 +607,16 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
             ModelRequest(
                 parts=[
                     ToolReturnPart(
-                        tool_name='get_location', content='{"lat": 51, "lng": 0}', timestamp=IsNow(tz=timezone.utc)
+                        tool_name='get_location',
+                        content='{"lat": 51, "lng": 0}',
+                        timestamp=IsNow(tz=timezone.utc),
+                        tool_call_id=dummy_tool_call_id_mock(),
                     ),
                     ToolReturnPart(
-                        tool_name='get_location', content='{"lat": 41, "lng": -74}', timestamp=IsNow(tz=timezone.utc)
+                        tool_name='get_location',
+                        content='{"lat": 41, "lng": -74}',
+                        timestamp=IsNow(tz=timezone.utc),
+                        tool_call_id=dummy_tool_call_id_mock(),
                     ),
                 ]
             ),
