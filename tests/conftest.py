@@ -18,6 +18,7 @@ import pytest
 from _pytest.assertion.rewrite import AssertionRewritingHook
 from typing_extensions import TypeAlias
 
+import pydantic_ai._utils
 import pydantic_ai.models
 
 __all__ = 'IsNow', 'IsFloat', 'TestEnv', 'ClientWithHandler', 'try_import'
@@ -179,3 +180,19 @@ def set_event_loop() -> Iterator[None]:
     asyncio.set_event_loop(new_loop)
     yield
     new_loop.close()
+
+
+@pytest.fixture
+def dummy_tool_call_id_mock(monkeypatch: pytest.MonkeyPatch) -> Callable[[], str]:
+    """Mock the dummy_tool_call_id function to return a fixed string."""
+
+    def _mock(*, length: int = 15) -> str:
+        return 'fake_call_123456789012345'
+
+    monkeypatch.setattr(
+        pydantic_ai._utils,
+        'dummy_tool_call_id',
+        _mock,
+    )
+
+    return _mock
