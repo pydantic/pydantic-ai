@@ -512,6 +512,7 @@ def _process_response_from_parts(
         elif 'function_call' in part:
             items.append(
                 ToolCallPart(
+                    tool_call_id=_utils.dummy_tool_call_id(),
                     tool_name=part['function_call']['name'],
                     args=part['function_call']['args'],
                 )
