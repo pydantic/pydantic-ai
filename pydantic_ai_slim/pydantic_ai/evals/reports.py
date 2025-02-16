@@ -1,0 +1,640 @@
+from __future__ import annotations as _annotations
+
+from collections.abc import Mapping
+from dataclasses import dataclass
+from typing import Any, Callable, Literal, Protocol, TypeVar
+
+from pydantic import BaseModel
+from rich.table import Table
+from typing_extensions import TypedDict
+
+from pydantic_ai._utils import UNSET, Unset
+
+from .render_numbers import (
+    default_render_duration,
+    default_render_duration_diff,
+    default_render_number,
+    default_render_number_diff,
+)
+
+__all__ = ('EvalReport', 'EvalReportCase', 'EvalRenderer', 'RenderValueConfig', 'RenderNumberConfig')
+
+MISSING_VALUE_STR = '[i]<missing>[/i]'
+
+
+class RenderValueConfig(TypedDict, total=False):
+    """A configuration for rendering a values in an Evaluation report."""
+
+    value_formatter: str | Callable[[Any], str]
+    diff_checker: Callable[[Any, Any], bool] | None
+    diff_formatter: Callable[[Any, Any], str | None] | None
+    diff_style: str
+
+
+@dataclass
+class _ValueRenderer:
+    value_formatter: str | Callable[[Any], str] = '{}'
+    diff_checker: Callable[[Any, Any], bool] | None = lambda x, y: x != y
+    diff_formatter: Callable[[Any, Any], str | None] | None = None
+    diff_style: str = 'magenta'
+
+    @staticmethod
+    def from_config(config: RenderValueConfig) -> _ValueRenderer:
+        return _ValueRenderer(
+            value_formatter=config.get('value_formatter', '{}'),
+            diff_checker=config.get('diff_checker', lambda x, y: x != y),
+            diff_formatter=config.get('diff_formatter'),
+            diff_style=config.get('diff_style', 'magenta'),
+        )
+
+    def render_value(self, name: str | None, v: Any) -> str:
+        result = self._get_value_str(v)
+        if name:
+            result = f'{name}: {result}'
+        return result
+
+    def render_diff(self, name: str | None, old: Any | None, new: Any | None) -> str:
+        old_str = self._get_value_str(old) or MISSING_VALUE_STR
+        new_str = self._get_value_str(new) or MISSING_VALUE_STR
+        if old_str == new_str:
+            result = old_str
+        else:
+            result = f'{old_str} → {new_str}'
+
+            has_diff = self.diff_checker and self.diff_checker(old, new)
+            if has_diff:
+                # If there is a diff, make the name bold and compute the diff_str
+                name = name and f'[bold]{name}[/]'
+                diff_str = self.diff_formatter and self.diff_formatter(old, new)
+                if diff_str:
+                    result += f' ({diff_str})'
+                result = f'[{self.diff_style}]{result}[/]'
+
+        # Add the name
+        if name:
+            result = f'{name}: {result}'
+
+        return result
+
+    def _get_value_str(self, value: Any) -> str:
+        if value is None:
+            return MISSING_VALUE_STR
+        if isinstance(self.value_formatter, str):
+            return self.value_formatter.format(value)
+        else:
+            return self.value_formatter(value)
+
+
+class RenderNumberConfig(TypedDict, total=False):
+    """A configuration for rendering a particular score or metric in an Evaluation report.
+
+    See the implementation of `_RenderNumber` for more clarity on how these parameters affect the rendering.
+    """
+
+    value_formatter: str | Callable[[float | int], str]
+    """The logic to use for formatting values.
+
+    * If not provided, format as ints if all values are ints, otherwise at least one decimal place and at least four significant figures.
+    * You can also use a custom string format spec, e.g. '{:.3f}'
+    * You can also use a custom function, e.g. lambda x: f'{x:.3f}'
+    """
+    diff_formatter: str | Callable[[float | int, float | int], str | None] | None
+    """The logic to use for formatting details about the diff.
+
+    The strings produced by the value_formatter will always be included in the reports, but the diff_formatter is
+    used to produce additional text about the difference between the old and new values, such as the absolute or
+    relative difference.
+
+    * If not provided, format as ints if all values are ints, otherwise at least one decimal place and at least four
+        significant figures, and will include the percentage change.
+    * You can also use a custom string format spec, e.g. '{:+.3f}'
+    * You can also use a custom function, e.g. lambda x: f'{x:+.3f}'.
+        If this function returns None, no extra diff text will be added.
+    * You can also use None to never generate extra diff text.
+    """
+    diff_atol: float
+    """The absolute tolerance for considering a difference "significant".
+
+    A difference is "significant" if `abs(new - old) < self.diff_atol + self.diff_rtol * abs(old)`.
+
+    If a difference is not significant, it will not have the diff styles applied. Note that we still show
+    both the rendered before and after values in the diff any time they differ, even if the difference is not
+    significant. (If the rendered values are exactly the same, we only show the value once.)
+
+    If not provided, use 1e-6.
+    """
+    diff_rtol: float
+    """The relative tolerance for considering a difference "significant".
+
+    See the description of `diff_atol` for more details about what makes a difference "significant".
+
+    If not provided, use 0.001 if all values are ints, otherwise 0.05.
+    """
+    diff_increase_style: str
+    """The style to apply to diffed values that have a significant increase.
+
+    See the description of `diff_atol` for more details about what makes a difference "significant".
+
+    If not provided, use green for scores and red for metrics. You can also use arbitrary `rich` styles, such as "bold red".
+    """
+    diff_decrease_style: str
+    """The style to apply to diffed values that have significant decrease.
+
+    See the description of `diff_atol` for more details about what makes a difference "significant".
+
+    If not provided, use red for scores and green for metrics. You can also use arbitrary `rich` styles, such as "bold red".
+    """
+
+
+@dataclass
+class _NumberRenderer:
+    """See documentation of `RenderNumberConfig` for more details about the parameters here."""
+
+    value_formatter: str | Callable[[float | int], str]
+    diff_formatter: str | Callable[[float | int, float | int], str | None] | None
+    diff_atol: float
+    diff_rtol: float
+    diff_increase_style: str
+    diff_decrease_style: str
+
+    def render_value(self, name: str | None, v: float | int) -> str:
+        result = self._get_value_str(v)
+        if name:
+            result = f'{name}: {result}'
+        return result
+
+    def render_diff(self, name: str | None, old: float | int | None, new: float | int | None) -> str:
+        old_str = self._get_value_str(old)
+        new_str = self._get_value_str(new)
+        if old_str == new_str:
+            result = old_str
+        else:
+            result = f'{old_str} → {new_str}'
+
+            diff_style = self._get_diff_style(old, new)
+            if diff_style:
+                # If there is a diff, make the name bold and compute the diff_str
+                name = name and f'[bold]{name}[/]'
+                diff_str = self._get_diff_str(old, new)
+                if diff_str:
+                    result += f' ({diff_str})'
+                result = f'[{diff_style}]{result}[/]'
+
+        # Add the name
+        if name:
+            result = f'{name}: {result}'
+
+        return result
+
+    @staticmethod
+    def infer_from_config(
+        config: RenderNumberConfig, kind: Literal['score', 'metric', 'duration'], values: list[float | int]
+    ) -> _NumberRenderer:
+        value_formatter = config.get('value_formatter', UNSET)
+        if isinstance(value_formatter, Unset):
+            value_formatter = default_render_number
+
+        diff_formatter = config.get('diff_formatter', UNSET)
+        if isinstance(diff_formatter, Unset):
+            diff_formatter = default_render_number_diff
+
+        diff_atol = config.get('diff_atol', UNSET)
+        if isinstance(diff_atol, Unset):
+            diff_atol = 1e-6
+
+        diff_rtol = config.get('diff_rtol', UNSET)
+        if isinstance(diff_rtol, Unset):
+            values_are_ints = all(isinstance(v, int) for v in values)
+            diff_rtol = 0.001 if values_are_ints else 0.05
+
+        diff_increase_style = config.get('diff_increase_style', UNSET)
+        if isinstance(diff_increase_style, Unset):
+            diff_increase_style = 'green' if kind == 'score' else 'red'
+
+        diff_decrease_style = config.get('diff_decrease_style', UNSET)
+        if isinstance(diff_decrease_style, Unset):
+            diff_decrease_style = 'red' if kind == 'score' else 'green'
+
+        return _NumberRenderer(
+            value_formatter=value_formatter,
+            diff_formatter=diff_formatter,
+            diff_rtol=diff_rtol,
+            diff_atol=diff_atol,
+            diff_increase_style=diff_increase_style,
+            diff_decrease_style=diff_decrease_style,
+        )
+
+    def _get_value_str(self, value: float | int | None) -> str:
+        if value is None:
+            return MISSING_VALUE_STR
+        if isinstance(self.value_formatter, str):
+            return self.value_formatter.format(value)
+        else:
+            return self.value_formatter(value)
+
+    def _get_diff_str(self, old: float | int | None, new: float | int | None) -> str | None:
+        if old is None or new is None:
+            return None
+        if isinstance(self.diff_formatter, str):
+            return self.diff_formatter.format(new - old)
+        elif self.diff_formatter is None:
+            return None
+        else:
+            return self.diff_formatter(old, new)
+
+    def _get_diff_style(self, old: float | int | None, new: float | int | None) -> str | None:
+        # 1 means new is higher, -1 means new is lower, 0 means no change
+        if old is None or new is None:
+            return None
+
+        diff = new - old
+        if abs(diff) < self.diff_atol + self.diff_rtol * abs(old):
+            return None
+        return self.diff_increase_style if diff > 0 else self.diff_decrease_style
+
+
+T_contra = TypeVar('T_contra', contravariant=True)
+
+
+class _AbstractRenderer(Protocol[T_contra]):
+    def render_value(self, name: str | None, v: T_contra) -> str: ...
+
+    def render_diff(self, name: str | None, old: T_contra | None, new: T_contra | None) -> str: ...
+
+
+_DEFAULT_NUMBER_CONFIG = RenderNumberConfig()
+_DEFAULT_VALUE_CONFIG = RenderValueConfig()
+_DEFAULT_DURATION_CONFIG = RenderNumberConfig(
+    value_formatter=default_render_duration,
+    diff_formatter=default_render_duration_diff,
+    diff_atol=1e-6,  # one microsecond
+    diff_rtol=0.1,
+    diff_increase_style='red',
+    diff_decrease_style='green',
+)
+
+
+class EvalReportCase(BaseModel):
+    """A single case in an evaluation report."""
+
+    case_id: str
+    case_input: dict[str, Any]
+    case_output: Any
+
+    task_duration: float
+    total_duration: float  # includes scoring time
+    scores: dict[str, float | int]
+    metrics: dict[str, float | int]
+    labels: dict[str, bool | str]
+
+
+class EvalReport(BaseModel):
+    """A report of the results of evaluating a model on a set of cases."""
+
+    name: str
+    cases: list[EvalReportCase]
+
+    def console_table(
+        self,
+        baseline: EvalReport | None = None,
+        include_input: bool = False,
+        include_output: bool = False,
+        include_total_duration: bool = False,
+        include_removed_cases: bool = False,
+        score_configs: dict[str, RenderNumberConfig] | None = None,
+        label_configs: dict[str, RenderValueConfig] | None = None,
+        metric_configs: dict[str, RenderNumberConfig] | None = None,
+        input_config: RenderValueConfig | None = None,
+        output_config: RenderValueConfig | None = None,
+        duration_config: RenderNumberConfig | None = None,
+    ) -> Table:
+        """Print a diff table comparing the baseline and new EvalReport.
+
+        Optionally include input and output details.
+        """
+        renderer = EvalRenderer(
+            include_input=include_input,
+            include_output=include_output,
+            include_total_duration=include_total_duration,
+            include_removed_cases=include_removed_cases,
+            score_configs=score_configs or {},
+            label_configs=label_configs or {},
+            metric_configs=metric_configs or {},
+            input_config={**_DEFAULT_VALUE_CONFIG, **(input_config or {})},
+            output_config=output_config or _DEFAULT_VALUE_CONFIG,
+            duration_config=duration_config or _DEFAULT_DURATION_CONFIG,
+        )
+        if baseline is None:
+            return renderer.build_table(self)
+        else:
+            return renderer.build_diff_table(self, baseline)
+
+
+T = TypeVar('T')
+
+
+@dataclass
+class EvalCaseRenderer:
+    include_input: bool
+    include_output: bool
+    include_scores: bool
+    include_labels: bool
+    include_metrics: bool
+    include_total_duration: bool
+
+    score_renderers: dict[str, _NumberRenderer]
+    label_renderers: dict[str, _ValueRenderer]
+    metric_renderers: dict[str, _NumberRenderer]
+
+    input_renderer: _ValueRenderer
+    output_renderer: _ValueRenderer
+    duration_renderer: _NumberRenderer
+
+    def build_base_table(self, title: str) -> Table:
+        """Build and return a Rich Table for the diff output."""
+        table = Table(title=title, show_lines=True)
+        table.add_column('Case ID', style='bold')
+        if self.include_input:
+            table.add_column('Inputs', overflow='fold')
+        if self.include_output:
+            table.add_column('Outputs', overflow='fold')
+        if self.include_scores:
+            table.add_column('Scores', overflow='fold')
+        if self.include_labels:
+            table.add_column('Labels', overflow='fold')
+        if self.include_metrics:
+            table.add_column('Metrics', overflow='fold')
+        table.add_column('Durations' if self.include_total_duration else 'Duration', justify='right')
+        return table
+
+    def build_row(self, case: EvalReportCase) -> list[str]:
+        """Build a table row for a single case."""
+        row = [case.case_id]
+
+        if self.include_input:
+            row.append(self.input_renderer.render_value(None, case.case_input) or MISSING_VALUE_STR)
+
+        if self.include_output:
+            row.append(self.output_renderer.render_value(None, case.case_output) or MISSING_VALUE_STR)
+
+        if self.include_scores:
+            row.append(self._render_dict(case.scores, self.score_renderers))
+
+        if self.include_labels:
+            row.append(self._render_dict(case.labels, self.label_renderers))
+
+        if self.include_metrics:
+            row.append(self._render_dict(case.metrics, self.metric_renderers))
+
+        row.append(self._render_durations(case))
+        return row
+
+    def build_diff_row(
+        self,
+        baseline: EvalReportCase,
+        new_case: EvalReportCase,
+    ) -> list[str]:
+        """Build a table row for a given case ID."""
+        assert baseline.case_id == new_case.case_id, 'This should only be called for matching case IDs'
+        row = [baseline.case_id]
+
+        if self.include_input:
+            input_diff = (
+                self.input_renderer.render_diff(None, baseline.case_input, new_case.case_input) or MISSING_VALUE_STR
+            )
+            row.append(input_diff)
+
+        if self.include_output:
+            output_diff = (
+                self.output_renderer.render_diff(None, baseline.case_output, new_case.case_output) or MISSING_VALUE_STR
+            )
+            row.append(output_diff)
+
+        if self.include_scores:
+            scores_diff = self._render_dicts_diff(baseline.scores, new_case.scores, self.score_renderers)
+            row.append(scores_diff)
+
+        if self.include_labels:
+            labels_diff = self._render_dicts_diff(baseline.labels, new_case.labels, self.label_renderers)
+            row.append(labels_diff)
+
+        if self.include_metrics:
+            metrics_diff = self._render_dicts_diff(baseline.metrics, new_case.metrics, self.metric_renderers)
+            row.append(metrics_diff)
+
+        row.append(self._render_durations_diff(baseline, new_case))
+
+        return row
+
+    def _render_durations(self, case: EvalReportCase) -> str:
+        """Build the diff string for a duration value."""
+        case_durations: dict[str, float] = {'task': case.task_duration}
+        if self.include_total_duration:
+            case_durations['total'] = case.total_duration
+        return self._render_dict(
+            case_durations,
+            {'task': self.duration_renderer, 'total': self.duration_renderer},
+            include_names=self.include_total_duration,
+        )
+
+    def _render_durations_diff(self, base_case: EvalReportCase, new_case: EvalReportCase) -> str:
+        """Build the diff string for a duration value."""
+        base_case_durations: dict[str, float] = {'task': base_case.task_duration}
+        new_case_durations: dict[str, float] = {'task': new_case.task_duration}
+        if self.include_total_duration:
+            base_case_durations['total'] = base_case.total_duration
+            new_case_durations['total'] = new_case.total_duration
+        return self._render_dicts_diff(
+            base_case_durations,
+            new_case_durations,
+            {'task': self.duration_renderer, 'total': self.duration_renderer},
+            include_names=self.include_total_duration,
+        )
+
+    @staticmethod
+    def _render_dicts_diff(
+        baseline_dict: dict[str, T],
+        new_dict: dict[str, T],
+        renderers: Mapping[str, _AbstractRenderer[T]],
+        *,
+        include_names: bool = True,
+    ) -> str:
+        keys: set[str] = set()
+        keys.update(baseline_dict.keys())
+        keys.update(new_dict.keys())
+        diff_lines: list[str] = []
+        for key in sorted(keys):
+            old_val = baseline_dict.get(key)
+            new_val = new_dict.get(key)
+            rendered = renderers[key].render_diff(key if include_names else None, old_val, new_val)
+            diff_lines.append(rendered)
+        return '\n'.join(diff_lines) if diff_lines else MISSING_VALUE_STR
+
+    @staticmethod
+    def _render_dict(
+        case_dict: dict[str, T],
+        renderers: Mapping[str, _AbstractRenderer[T]],
+        *,
+        include_names: bool = True,
+    ) -> str:
+        diff_lines: list[str] = []
+        for key, val in case_dict.items():
+            rendered = renderers[key].render_value(key if include_names else None, val)
+            diff_lines.append(rendered)
+        return '\n'.join(diff_lines) if diff_lines else MISSING_VALUE_STR
+
+
+@dataclass
+class EvalRenderer:
+    """A class for rendering an EvalReport or the diff between two EvalReports."""
+
+    include_input: bool
+    include_output: bool
+    include_total_duration: bool
+    include_removed_cases: bool
+
+    score_configs: dict[str, RenderNumberConfig]
+    label_configs: dict[str, RenderValueConfig]
+    metric_configs: dict[str, RenderNumberConfig]
+
+    input_config: RenderValueConfig
+    output_config: RenderValueConfig
+    duration_config: RenderNumberConfig
+
+    def include_scores(self, report: EvalReport, baseline: EvalReport | None = None):
+        return any(case.scores for case in self._all_cases(report, baseline))
+
+    def include_labels(self, report: EvalReport, baseline: EvalReport | None = None):
+        return any(case.labels for case in self._all_cases(report, baseline))
+
+    def include_metrics(self, report: EvalReport, baseline: EvalReport | None = None):
+        return any(case.metrics for case in self._all_cases(report, baseline))
+
+    def _all_cases(self, report: EvalReport, baseline: EvalReport | None) -> list[EvalReportCase]:
+        if not baseline:
+            return report.cases
+        else:
+            return report.cases + self._baseline_cases_to_include(report, baseline)
+
+    def _baseline_cases_to_include(self, report: EvalReport, baseline: EvalReport) -> list[EvalReportCase]:
+        if self.include_removed_cases:
+            return baseline.cases
+        report_case_ids = {case.case_id for case in report.cases}
+        return [case for case in baseline.cases if case.case_id in report_case_ids]
+
+    def _get_case_renderer(self, report: EvalReport, baseline: EvalReport | None = None) -> EvalCaseRenderer:
+        score_renderers = self._infer_score_renderers(report, baseline)
+        label_renderers = self._infer_label_renderers(report, baseline)
+        metric_renderers = self._infer_metric_renderers(report, baseline)
+        input_renderer = _ValueRenderer.from_config(self.input_config)
+        output_renderer = _ValueRenderer.from_config(self.output_config)
+        duration_renderer = _NumberRenderer.infer_from_config(
+            self.duration_config, 'duration', [x.task_duration for x in self._all_cases(report, baseline)]
+        )
+
+        return EvalCaseRenderer(
+            include_input=self.include_input,
+            include_output=self.include_output,
+            include_scores=self.include_scores(report, baseline),
+            include_labels=self.include_labels(report, baseline),
+            include_metrics=self.include_metrics(report, baseline),
+            include_total_duration=self.include_total_duration,
+            score_renderers=score_renderers,
+            label_renderers=label_renderers,
+            metric_renderers=metric_renderers,
+            input_renderer=input_renderer,
+            output_renderer=output_renderer,
+            duration_renderer=duration_renderer,
+        )
+
+    def build_table(self, report: EvalReport) -> Table:
+        case_renderer = self._get_case_renderer(report)
+        table = case_renderer.build_base_table(f'Evaluation Summary: {report.name}')
+        for case in report.cases:
+            table.add_row(*case_renderer.build_row(case))
+        return table
+
+    def build_diff_table(self, report: EvalReport, baseline: EvalReport) -> Table:
+        report_cases_by_id = {case.case_id: case for case in report.cases}
+        baseline_cases_by_id = {case.case_id: case for case in self._baseline_cases_to_include(report, baseline)}
+
+        diff_cases: list[tuple[EvalReportCase, EvalReportCase]] = []
+        removed_cases: list[EvalReportCase] = []
+        added_cases: list[EvalReportCase] = []
+
+        for case_id in sorted(set(baseline_cases_by_id.keys()) | set(report_cases_by_id.keys())):
+            maybe_baseline_case = baseline_cases_by_id.get(case_id)
+            maybe_report_case = report_cases_by_id.get(case_id)
+            if maybe_baseline_case and maybe_report_case:
+                diff_cases.append((maybe_baseline_case, maybe_report_case))
+            elif maybe_baseline_case:
+                removed_cases.append(maybe_baseline_case)
+            elif maybe_report_case:
+                added_cases.append(maybe_report_case)
+            else:
+                assert False, 'This should be unreachable'
+
+        case_renderer = self._get_case_renderer(report, baseline)
+        table = case_renderer.build_base_table(f'Evaluation Diff: {baseline.name} → {report.name}')
+        for baseline_case, new_case in diff_cases:
+            table.add_row(*case_renderer.build_diff_row(baseline_case, new_case))
+        for case in added_cases:
+            row = case_renderer.build_row(case)
+            row[0] = f'[green]+ Added Case[/]\n{row[0]}'
+            table.add_row(*row)
+        for case in removed_cases:
+            row = case_renderer.build_row(case)
+            row[0] = f'[red]- Removed Case[/]\n{row[0]}'
+            table.add_row(*row)
+        return table
+
+    def _infer_score_renderers(self, report: EvalReport, baseline: EvalReport | None) -> dict[str, _NumberRenderer]:
+        all_cases = self._all_cases(report, baseline)
+
+        values_by_name: dict[str, list[float | int]] = {}
+        for case in all_cases:
+            for k, v in case.scores.items():
+                values_by_name.setdefault(k, []).append(v)
+
+        all_renderers: dict[str, _NumberRenderer] = {}
+        for name, values in values_by_name.items():
+            merged_config = _DEFAULT_NUMBER_CONFIG.copy()
+            merged_config.update(self.score_configs.get(name, {}))
+            all_renderers[name] = _NumberRenderer.infer_from_config(merged_config, 'score', values)
+        return all_renderers
+
+    def _infer_label_renderers(self, report: EvalReport, baseline: EvalReport | None) -> dict[str, _ValueRenderer]:
+        all_cases = self._all_cases(report, baseline)
+        all_names: set[str] = set()
+        for case in all_cases:
+            for k in case.labels:
+                all_names.add(k)
+
+        all_renderers: dict[str, _ValueRenderer] = {}
+        for name in all_names:
+            merged_config = _DEFAULT_VALUE_CONFIG.copy()
+            merged_config.update(self.label_configs.get(name, {}))
+            all_renderers[name] = _ValueRenderer.from_config(merged_config)
+        return all_renderers
+
+    def _infer_metric_renderers(self, report: EvalReport, baseline: EvalReport | None) -> dict[str, _NumberRenderer]:
+        all_cases = self._all_cases(report, baseline)
+
+        values_by_name: dict[str, list[float | int]] = {}
+        for case in all_cases:
+            for k, v in case.metrics.items():
+                values_by_name.setdefault(k, []).append(v)
+
+        all_renderers: dict[str, _NumberRenderer] = {}
+        for name, values in values_by_name.items():
+            merged_config = _DEFAULT_NUMBER_CONFIG.copy()
+            merged_config.update(self.metric_configs.get(name, {}))
+            all_renderers[name] = _NumberRenderer.infer_from_config(merged_config, 'metric', values)
+        return all_renderers
+
+    def _infer_duration_renderer(self, report: EvalReport, baseline: EvalReport | None) -> _NumberRenderer:
+        all_cases = self._all_cases(report, baseline)
+        all_durations = [x.task_duration for x in all_cases]
+        if self.include_total_duration:
+            all_durations += [x.total_duration for x in all_cases]
+        return _NumberRenderer.infer_from_config(self.duration_config, 'duration', all_durations)
