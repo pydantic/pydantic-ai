@@ -46,7 +46,11 @@ Documentation = "https://ai.pydantic.dev"
 Changelog = "https://github.com/pydantic/pydantic-ai/releases"
 
 [project.optional-dependencies]
-examples = ["pydantic-ai-examples==0.0.24"]
+examples = [
+    "pydantic-ai-examples==0.0.24",
+    "python-dotenv==1.0.1",
+    "permit==2.7.2"
+]
 logfire = ["logfire>=2.3"]
 
 [tool.uv.sources]

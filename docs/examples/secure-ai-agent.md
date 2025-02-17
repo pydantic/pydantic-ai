@@ -13,7 +13,7 @@ Demonstrates:
 
 ### Prompt Filtering
 
-The first perimeter to secure our financial advisor agent focuses on checking user permissions for recieving AI advice before they reach the AI model. This ensures that users can only make requests within their permission scope. By implementing this perimeter, we can check if users opt-in for AI finance advice.
+The first perimeter to secure our financial advisor agent focuses on checking user permissions for receiving AI advice before they reach the AI model. This ensures that users can only make requests within their permission scope. By implementing this perimeter, we can check if users opt-in for AI finance advice.
 
 In our financial advisor example, this perimeter:
 
