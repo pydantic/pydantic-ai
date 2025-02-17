@@ -14,18 +14,22 @@ from __future__ import annotations as _annotations
 import asyncio
 import os
 
-from dotenv import load_dotenv
-from permit import Permit
+try:
+    from permit import Permit
 
-load_dotenv()
+    PERMIT_KEY = os.environ['PERMIT_KEY']
+    permit = Permit(
+        token=PERMIT_KEY,
+    )
+except ImportError:
+    pass
+
 
 # API keys
-PERMIT_KEY = os.environ['PERMIT_KEY']
+
 
 # Initialize Permit.io SDK
-permit = Permit(
-    token=PERMIT_KEY,
-)
+
 
 # Define resources for Financial Advisor security
 resources = [

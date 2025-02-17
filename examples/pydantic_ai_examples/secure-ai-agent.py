@@ -14,14 +14,15 @@ import os
 from dataclasses import dataclass
 from typing import Optional
 
-from dotenv import load_dotenv
-from permit import Permit
-from permit.exceptions import PermitApiError
 from pydantic import BaseModel, Field
 
 from pydantic_ai import Agent, RunContext
 
-load_dotenv()  # load environment variables
+try:
+    from permit import Permit
+    from permit.exceptions import PermitApiError
+except ImportError:
+    pass
 
 # Permit.io configuration from environment
 PERMIT_KEY = os.environ.get('PERMIT_KEY')
@@ -83,11 +84,11 @@ class FinancialResponse(BaseModel):
 class PermitDeps:
     """Dependencies for Permit.io integration."""
 
-    permit: Permit
+    permit: 'Permit | None'
     user_id: str
 
     def __post_init__(self):
-        if not self.permit:
+        if not self.permit and Permit is not None:
             self.permit = Permit(
                 token=PERMIT_KEY,
                 pdp=PDP_URL,
