@@ -1,17 +1,20 @@
-"""
-Permit.io configuration for Financial Advisor security perimeters.
+"""Permit.io configuration for Financial Advisor security perimeters.
+
 Sets up the complete ABAC (Attribute-Based Access Control) model including:
 - Resources and their attributes
 - Roles and their base permissions
 - Condition sets for fine-grained access control
 - User sets with their attributes
-- Resource sets based on classification levels
+- Resource sets based on classification levels.
 """
 
+from __future__ import annotations as _annotations
+
 import asyncio
-from permit import Permit
 import os
+
 from dotenv import load_dotenv
+from permit import Permit
 
 load_dotenv()
 
@@ -226,8 +229,11 @@ example_users = [
 ]
 
 
-async def create_permit_config():
-    """Create all required configurations in Permit.io"""
+async def create_permit_config():  # noqa: C901
+    """Create all required configurations in Permit.io.
+
+    This includes resources, roles, permissions, and user assignments.
+    """
     try:
         print('\n=== Starting Permit.io Configuration ===\n')
 
@@ -314,12 +320,12 @@ async def create_permit_config():
         print('\nCreating condition set rules...')
         for rule in condition_set_rules:
             try:
-                print(f'\nAttempting to create condition set rule')
+                print('\nAttempting to create condition set rule')
                 print(f'Rule config: {rule}')
                 await permit.api.condition_set_rules.create(rule)
-                print(f'✓ Successfully created condition set rule')
+                print('✓ Successfully created condition set rule')
             except Exception as e:
-                print(f'✗ Failed to create condition set rule')
+                print('✗ Failed to create condition set rule')
                 print(f'Error details: {str(e)}')
                 raise
 
@@ -358,7 +364,7 @@ async def create_permit_config():
         print('\n=== Configuration completed successfully ===\n')
 
     except Exception as e:
-        print(f'\n✗ Configuration failed')
+        print('\n✗ Configuration failed')
         print(f'Final error: {str(e)}')
         raise
 

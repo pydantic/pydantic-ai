@@ -20,7 +20,7 @@ In our financial advisor example, this perimeter:
 - Checks user opt-in status for AI-generated advice
 - Classifies query intent to apply appropriate permissions
 
-```python
+```bash
 @financial_agent.tool
 async def validate_financial_query(
 ctx: RunContext[PermitDeps],
@@ -37,7 +37,7 @@ In our financial advisor example, this perimeter:
 - Controls access to sensitive financial knowledge base and documentation
 - User clearance level verification
 
-```python
+```bash
 @financial_agent.tool
 async def access_financial_knowledge(
 ctx: RunContext[PermitDeps],
@@ -54,7 +54,7 @@ In our financial advisor example, this perimeter:
 - Controls Portfolio operation authorization
 - Manages External API access control
 
-```python
+```bash
 @financial_agent.tool
 async def check_action_permissions(
 ctx: RunContext[PermitDeps],
@@ -73,7 +73,7 @@ In our financial advisor example, this perimeter:
 - Manages risk disclosures and disclaimers
 - Prevents unauthorized advice distribution
 
-```python
+```bash
 @financial_agent.tool
 async def validate_financial_response(
 ctx: RunContext[PermitDeps],
@@ -94,16 +94,17 @@ export PDP_URL='http://localhost:7766'  # Your PDP URL (default: http://localhos
 
 The code will automatically load these environment variables:
 
-```python
-from dotenv import load_dotenv
+```bash
 import os
+from dotenv import load_dotenv
+
 
 # Load environment variables from .env file if present
 load_dotenv()
 
 # Get Permit.io configuration from environment
-PERMIT_KEY = os.environ["PERMIT_KEY"]
-PDP_URL = os.environ.get("PDP_URL", "http://localhost:7766")
+PERMIT_KEY = os.environ['PERMIT_KEY']
+PDP_URL = os.environ.get('PDP_URL', 'http://localhost:7766')
 
 # Initialize Permit client with environment configuration
 permit = Permit(

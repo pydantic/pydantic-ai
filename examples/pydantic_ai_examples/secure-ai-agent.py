@@ -1,5 +1,4 @@
-"""
-PydanticAI demonstration of the AI Access Control Four Perimeters Framework
+"""PydanticAI demonstration of the AI Access Control Four Perimeters Framework.
 
 This implementation demonstrates the four access control perimeters framework with a practical example of a financial advisor agent:
 1. Prompt Filtering: Ensures queries comply with financial advice regulations
@@ -10,15 +9,16 @@ This implementation demonstrates the four access control perimeters framework wi
 This demo uses Permit.io for fine-grained access control and PydanticAI for secure AI interactions.
 """
 
-from typing import Dict, List, Optional
-from pydantic import BaseModel, Field
-from pydantic_ai import Agent, RunContext
+import os
+from dataclasses import dataclass
+from typing import Optional
+
+from dotenv import load_dotenv
 from permit import Permit
 from permit.exceptions import PermitApiError
-import os
-from dotenv import load_dotenv
-from dataclasses import dataclass
+from pydantic import BaseModel, Field
 
+from pydantic_ai import Agent, RunContext
 
 load_dotenv()  # load environment variables
 
@@ -36,7 +36,7 @@ class SecurityError(Exception):
 
 
 class UserContext(BaseModel):
-    """User context containing identity and role information for permission checks"""
+    """User context containing identity and role information for permission checks."""
 
     user_id: str
     tier: str = Field(
@@ -45,7 +45,7 @@ class UserContext(BaseModel):
 
 
 class FinancialDocument(BaseModel):
-    """Model for financial documents with classification levels"""
+    """Model for financial documents with classification levels."""
 
     id: str
     type: str = Field(
@@ -59,15 +59,15 @@ class FinancialDocument(BaseModel):
 
 
 class FinancialQuery(BaseModel):
-    """Input model for financial queries with context for permission checks"""
+    """Input model for financial queries with context for permission checks."""
 
     question: str
     context: UserContext
-    documents: Optional[List[FinancialDocument]] = None
+    documents: Optional[list[FinancialDocument]] = None
 
 
 class FinancialResponse(BaseModel):
-    """Output model for financial advice with compliance tracking"""
+    """Output model for financial advice with compliance tracking."""
 
     answer: str
     includes_advice: bool = Field(
@@ -80,7 +80,7 @@ class FinancialResponse(BaseModel):
 
 @dataclass
 class PermitDeps:
-    """Dependencies for Permit.io integration"""
+    """Dependencies for Permit.io integration."""
 
     permit: Permit
     user_id: str
@@ -106,8 +106,8 @@ financial_agent = Agent(
 
 
 def classify_prompt_for_advice(question: str) -> bool:
-    """
-    Mock classifier that checks if the prompt is requesting financial advice.
+    """Mock classifier that checks if the prompt is requesting financial advice.
+
     In a real implementation, this would use more sophisticated NLP/ML techniques.
 
     Args:
@@ -137,7 +137,8 @@ async def validate_financial_query(
     ctx: RunContext[PermitDeps],
     query: FinancialQuery,
 ) -> bool:
-    """SECURITY PERIMETER 1: Prompt Filtering
+    """SECURITY PERIMETER 1: Prompt Filtering.
+
     Validates whether users have explicitly consented to receive AI-generated financial advice.
     Ensures compliance with financial regulations regarding automated advice systems.
 
@@ -188,9 +189,10 @@ async def validate_financial_query(
 
 @financial_agent.tool
 async def access_financial_knowledge(
-    ctx: RunContext[PermitDeps], usr: UserContext, documents: List[FinancialDocument]
-) -> List[FinancialDocument]:
-    """SECURITY PERIMETER 2: Data Protection
+    ctx: RunContext[PermitDeps], usr: UserContext, documents: list[FinancialDocument]
+) -> list[FinancialDocument]:
+    """SECURITY PERIMETER 2: Data Protection.
+
     Controls access to financial knowledge base and documentation based on user permissions
     and document classification levels. Implements information barriers and content restrictions.
 
@@ -201,6 +203,7 @@ async def access_financial_knowledge(
 
     Args:
         ctx: Context containing Permit client and user ID
+        usr: User context
         documents: List of financial documents to filter
 
     Returns:
@@ -236,7 +239,8 @@ async def access_financial_knowledge(
 async def check_action_permissions(
     ctx: RunContext[PermitDeps], action: str, context: UserContext, portfolio_id: str
 ) -> bool:
-    """SECURITY PERIMETER 3: Secure External Access
+    """SECURITY PERIMETER 3: Secure External Access.
+
     Controls permissions for sensitive financial operations, particularly portfolio
     modifications. Ensures only authorized users can perform account-level changes.
 
@@ -247,12 +251,13 @@ async def check_action_permissions(
 
     Args:
         ctx: Context containing Permit client and user ID
+        action: The type of action being verified
+        context: User context containing identity and tier information
         portfolio_id: Identifier of the portfolio to update
 
     Returns:
         bool: True if user is authorized to update portfolio, False otherwise
     """
-
     try:
         return await ctx.deps.permit.check(
             ctx.deps.user_id,
@@ -266,8 +271,8 @@ async def check_action_permissions(
 
 
 def classify_response_for_advice(response_text: str) -> bool:
-    """
-    Mock classifier that checks if the response contains financial advice.
+    """Mock classifier that checks if the response contains financial advice.
+
     In a real implementation, this would use:
     - NLP to detect advisory language patterns
     - ML models trained on financial advice datasets
@@ -301,7 +306,8 @@ def classify_response_for_advice(response_text: str) -> bool:
 async def validate_financial_response(
     ctx: RunContext[PermitDeps], response: FinancialResponse
 ) -> FinancialResponse:
-    """SECURITY PERIMETER 4: Response Enforcement
+    """SECURITY PERIMETER 4: Response Enforcement.
+
     Ensures all financial advice responses meet regulatory requirements and include
     necessary disclaimers.
 
@@ -317,7 +323,6 @@ async def validate_financial_response(
     Returns:
         FinancialResponse: Validated and compliant response
     """
-
     try:
         # Classify if response contains financial advice
         contains_advice = classify_response_for_advice(response.answer)
