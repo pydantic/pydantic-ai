@@ -624,6 +624,24 @@ agent = Agent(model)
 ...
 ```
 
+### Perplexity
+
+Follow the Perplexity [getting started](https://docs.perplexity.ai/guides/getting-started)
+guide to create an API key. Then, you can query the Perplexity API with the following:
+
+```py {title="perplexity_model_init.py"}
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIModel
+
+model = OpenAIModel(
+    'sonar-pro',
+    base_url='https://api.perplexity.ai',
+    api_key='your-perplexity-api-key',
+)
+agent = Agent(model)
+...
+```
+
 ## Implementing Custom Models
 
 To implement support for models not already supported, you will need to subclass the [`Model`][pydantic_ai.models.Model] abstract base class.
