@@ -8,11 +8,11 @@ from dataclasses import dataclass, field
 from functools import partial
 from typing import Any, Callable, Generic, ParamSpec, TypeVar
 
-import logfire
+import logfire_api
 from rich.console import Console
 
-from pydantic_ai._utils import UNSET, Unset
-from pydantic_ai.evals.reports import EvalReport, EvalReportCase, RenderNumberConfig, RenderValueConfig
+from pydantic_evals._utils import UNSET, Unset
+from pydantic_evals.reports import EvalReport, EvalReportCase, RenderNumberConfig, RenderValueConfig
 
 __all__ = ('Eval', 'EvalCase', 'evaluation', 'increment_eval_metric')
 
@@ -23,7 +23,7 @@ OutputT = TypeVar('OutputT')
 @contextmanager
 def evaluation(name: str) -> Iterator[Eval]:
     """Context manager for starting an evaluation."""
-    with logfire.span('evaluation', name=name) as eval_span:
+    with logfire_api.span('evaluation', name=name) as eval_span:
         yield Eval(name, eval_span)
 
 
@@ -35,7 +35,7 @@ class Eval:
     """
 
     name: str
-    span: logfire.LogfireSpan = field(repr=False)
+    span: logfire_api.LogfireSpan = field(repr=False)
     cases: list[EvalCase[Any]] = field(default_factory=list)
 
     def as_report(self) -> EvalReport:
@@ -126,14 +126,14 @@ class Eval:
         task_defaults = {k: v for k, v in bound_arguments.arguments.items() if k not in task_input}
         case_id = _case_id or str(len(self.cases) + 1)
 
-        with logfire.span(
+        with logfire_api.span(
             Eval.case.__name__,
             task_name=_get_task_name(f),
             case_id=case_id,
             task_input=task_input,
             task_defaults=task_defaults,
         ) as case_span:
-            task_span = logfire.span('task execution')
+            task_span = logfire_api.span('task execution')
             eval_case = EvalCase[OutputT](case_id, case_input=task_input, case_span=case_span, task_span=task_span)
             token = _CURRENT_EVAL_CASE.set(eval_case)
 
@@ -168,8 +168,8 @@ class EvalCase(Generic[OutputT]):
     metrics: dict[str, int | float] = field(init=False, default_factory=dict)
     labels: dict[str, bool | str] = field(init=False, default_factory=dict)
 
-    case_span: logfire.LogfireSpan = field(repr=False)
-    task_span: logfire.LogfireSpan = field(repr=False)
+    case_span: logfire_api.LogfireSpan = field(repr=False)
+    task_span: logfire_api.LogfireSpan = field(repr=False)
 
     @property
     def case_output(self) -> OutputT:
@@ -252,7 +252,7 @@ def _get_task_name(func: Callable[..., Any]) -> str:
     return _unwrap(func).__qualname__
 
 
-def _get_span_duration(span: logfire.LogfireSpan) -> float:
+def _get_span_duration(span: logfire_api.LogfireSpan) -> float:
     end_time = span.end_time
     start_time = span.start_time
     assert isinstance(start_time, int), 'span is not started'

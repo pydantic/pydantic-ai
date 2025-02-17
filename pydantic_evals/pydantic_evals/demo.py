@@ -1,27 +1,9 @@
-"""TODO: Remove this comment before merging..
-
-# TODO: Add commit hash, timestamp, and other metadata here (like pytest-speed does), possibly in a dedicated struct
-# TODO: Implement serialization of reports for later comparison, and add git hashes etc.
-#   Note: I made pydantic_ai.evals.reports.EvalReport a BaseModel specifically to make this easier
-# TODO: Implement a CLI with some pytest-like filtering API to make it easier to run only specific cases
-
-# TODO: Add commit hash, timestamp, and other metadata here (like pytest-speed does), possibly in a dedicated struct
-"""
-
-# TODO: Make these relative imports; I've used an absolute import for now just to make it possible to run this file directly
-from pydantic_ai.evals.evals import evaluation, increment_eval_metric
-from pydantic_ai.evals.reports import RenderNumberConfig, RenderValueConfig
-
-__all__ = (
-    'evaluation',
-    'increment_eval_metric',
-    'RenderNumberConfig',
-    'RenderValueConfig',
-)
+# TODO: Need to convert this into tests and documentation
+from pydantic_evals.evals import evaluation, increment_eval_metric
 
 
 async def main():
-    # TODO: Remove this before merging
+    """TODO: Remove this file before merging."""
     from functools import partial
 
     import logfire
@@ -68,7 +50,3 @@ if __name__ == '__main__':
     import asyncio
 
     asyncio.run(main())
-
-
-# TODO: Use span links to store scores, this provides a way to update them, add them later, etc.
-# TODO: Add some kind of `eval_function` decorator, which ensures that calls to the function send eval-review-compatible data to logfire

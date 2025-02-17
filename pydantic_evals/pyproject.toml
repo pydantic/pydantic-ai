@@ -1,0 +1,70 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pydantic-evals"
+version = "0.0.1"
+description = "Framework for evaluating stochastic code execution, especially code making use of LLMs"
+authors = [
+    { name = "David Montague", email = "david@pydantic.dev" },
+]
+license = "MIT"
+readme = "README.md"
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Information Technology",
+    "Intended Audience :: System Administrators",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: Unix",
+    "Operating System :: POSIX :: Linux",
+    "Environment :: Console",
+    "Environment :: MacOS X",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Internet",
+]
+requires-python = ">=3.9"
+dependencies = [
+    "rich>=13.9.4",
+    "logfire-api>=1.2.0",
+    "pydantic>=2.10",
+]
+
+[project.optional-dependencies]
+# WARNING if you add optional groups, please update docs/install.md
+logfire = ["logfire>=2.3"]
+openai = ["openai>=1.61.0"]
+cohere = ["cohere>=5.13.11"]
+vertexai = ["google-auth>=2.36.0", "requests>=2.32.3"]
+anthropic = ["anthropic>=0.40.0"]
+groq = ["groq>=0.12.0"]
+mistral = ["mistralai>=1.2.5"]
+
+[dependency-groups]
+dev = [
+    "anyio>=4.5.0",
+    "devtools>=0.12.2",
+    "coverage[toml]>=7.6.2",
+    "dirty-equals>=0.9.0",
+    "inline-snapshot>=0.19.3",
+    "pytest>=8.3.3",
+    "pytest-examples>=0.0.14",
+    "pytest-mock>=3.14.0",
+    "pytest-pretty>=1.2.0",
+    "diff-cover>=9.2.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["pydantic_ai"]
+
+[tool.uv.sources]
+pydantic-graph = { workspace = true }

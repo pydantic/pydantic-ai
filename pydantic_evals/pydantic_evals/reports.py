@@ -9,7 +9,7 @@ from pydantic import BaseModel
 from rich.table import Table
 from typing_extensions import TypedDict
 
-from pydantic_ai._utils import UNSET, Unset
+from pydantic_evals._utils import UNSET, Unset
 
 from .render_numbers import (
     default_render_duration,
