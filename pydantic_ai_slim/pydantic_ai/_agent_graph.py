@@ -172,15 +172,18 @@ class BaseUserPromptNode(BaseNode[GraphAgentState, GraphAgentDeps[DepsT, Any], N
                             # Look up the runner by its ref
                             if runner := self.system_prompt_dynamic_functions.get(part.dynamic_ref):
                                 updated_part_content = await runner.run(run_context)
-                                msg.parts[i] = _messages.SystemPromptPart(
-                                    updated_part_content, dynamic_ref=part.dynamic_ref
-                                )
+                                if updated_part_content:
+                                    msg.parts[i] = _messages.SystemPromptPart(
+                                        updated_part_content, dynamic_ref=part.dynamic_ref
+                                    )
 
     async def _sys_parts(self, run_context: RunContext[DepsT]) -> list[_messages.ModelRequestPart]:
         """Build the initial messages for the conversation."""
         messages: list[_messages.ModelRequestPart] = [_messages.SystemPromptPart(p) for p in self.system_prompts]
         for sys_prompt_runner in self.system_prompt_functions:
             prompt = await sys_prompt_runner.run(run_context)
+            if not prompt:
+                continue
             if sys_prompt_runner.dynamic:
                 messages.append(_messages.SystemPromptPart(prompt, dynamic_ref=sys_prompt_runner.function.__qualname__))
             else:
