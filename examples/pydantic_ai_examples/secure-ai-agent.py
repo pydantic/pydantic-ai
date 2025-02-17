@@ -1,3 +1,4 @@
+# type: ignore
 """PydanticAI demonstration of the AI Access Control Four Perimeters Framework.
 
 This implementation demonstrates the four access control perimeters framework with a practical example of a financial advisor agent:
@@ -136,7 +137,7 @@ def classify_prompt_for_advice(question: str) -> bool:
 async def validate_financial_query(
     ctx: RunContext[PermitDeps],
     query: FinancialQuery,
-) -> bool:
+) -> str | bool:
     """SECURITY PERIMETER 1: Prompt Filtering.
 
     Validates whether users have explicitly consented to receive AI-generated financial advice.

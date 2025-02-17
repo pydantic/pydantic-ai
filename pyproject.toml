@@ -140,11 +140,7 @@ venvPath = ".venv"
 executionEnvironments = [
   { root = "tests", reportUnusedFunction = false },
 ]
-exclude = [
-    "examples/pydantic_ai_examples/weather_agent_gradio.py",
-    "examples/pydantic_ai_examples/secure-ai-agent.py",
-    "examples/pydantic_ai_examples/secure-ai-config.py",
-]
+exclude = ["examples/pydantic_ai_examples/weather_agent_gradio.py"]
 
 [tool.mypy]
 files = "tests/typed_agent.py,tests/typed_graph.py"

@@ -1,3 +1,4 @@
+# type: ignore
 """Permit.io configuration for Financial Advisor security perimeters.
 
 Sets up the complete ABAC (Attribute-Based Access Control) model including:
