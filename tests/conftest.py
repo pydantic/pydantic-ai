@@ -179,3 +179,8 @@ def set_event_loop() -> Iterator[None]:
     asyncio.set_event_loop(new_loop)
     yield
     new_loop.close()
+
+
+def raise_if_exception(e: Any) -> None:
+    if isinstance(e, Exception):
+        raise e

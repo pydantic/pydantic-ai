@@ -13,6 +13,8 @@ from typing import Any, Generic, TypeVar
 
 from pydantic_ai import _utils
 
+from ..conftest import raise_if_exception
+
 T = TypeVar('T')
 
 
@@ -47,7 +49,9 @@ class MockAsyncStream(Generic[T]):
         synchronous iterator. If the iterator is exhausted, `StopAsyncIteration`
         is raised.
         """
-        return _utils.sync_anext(self._iter)
+        next = _utils.sync_anext(self._iter)
+        raise_if_exception(next)
+        return next
 
     def __aiter__(self) -> MockAsyncStream[T]:
         return self
