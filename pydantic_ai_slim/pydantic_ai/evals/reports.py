@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+from collections import defaultdict
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Callable, Literal, Protocol, TypeVar
@@ -20,6 +21,8 @@ from .render_numbers import (
 __all__ = ('EvalReport', 'EvalReportCase', 'EvalRenderer', 'RenderValueConfig', 'RenderNumberConfig')
 
 MISSING_VALUE_STR = '[i]<missing>[/i]'
+EMPTY_CELL_STR = '-'
+EMPTY_AGGREGATE_CELL_STR = ''
 
 
 class RenderValueConfig(TypedDict, total=False):
@@ -274,6 +277,46 @@ _DEFAULT_DURATION_CONFIG = RenderNumberConfig(
 )
 
 
+class EvalReportCaseAggregate(BaseModel):
+    name: str
+
+    scores: dict[str, float | int]
+    metrics: dict[str, float | int]
+    task_duration: float
+    total_duration: float
+
+    @staticmethod
+    def average(cases: list[EvalReportCase]) -> EvalReportCaseAggregate:
+        """Produce a synthetic "summary" case by averaging quantitative attributes."""
+        num_cases = len(cases)
+        if num_cases == 0:
+            raise ValueError('Cannot summarize an empty list of cases')
+
+        def _averages_by_name(values_by_name: list[dict[str, int | float]]) -> dict[str, float]:
+            counts_by_name: dict[str, int] = defaultdict(int)
+            sums_by_name: dict[str, float] = defaultdict(float)
+            for values in values_by_name:
+                for name, value in values.items():
+                    counts_by_name[name] += 1
+                    sums_by_name[name] += value
+            return {name: sums_by_name[name] / counts_by_name[name] for name in sums_by_name}
+
+        average_task_duration = sum(case.task_duration for case in cases) / num_cases
+        average_total_duration = sum(case.total_duration for case in cases) / num_cases
+
+        average_scores: dict[str, float] = _averages_by_name([case.scores for case in cases])
+        # TODO: Aggregate labels, showing the percentage occurrences of each label
+        average_metrics: dict[str, float] = _averages_by_name([case.metrics for case in cases])
+
+        return EvalReportCaseAggregate(
+            name='Averages',
+            scores=average_scores,
+            metrics=average_metrics,
+            task_duration=average_task_duration,
+            total_duration=average_total_duration,
+        )
+
+
 class EvalReportCase(BaseModel):
     """A single case in an evaluation report."""
 
@@ -281,11 +324,11 @@ class EvalReportCase(BaseModel):
     case_input: dict[str, Any]
     case_output: Any
 
-    task_duration: float
-    total_duration: float  # includes scoring time
     scores: dict[str, float | int]
     metrics: dict[str, float | int]
     labels: dict[str, bool | str]
+    task_duration: float
+    total_duration: float  # includes scoring time
 
 
 class EvalReport(BaseModel):
@@ -301,11 +344,12 @@ class EvalReport(BaseModel):
         include_output: bool = False,
         include_total_duration: bool = False,
         include_removed_cases: bool = False,
+        include_averages: bool = True,
+        input_config: RenderValueConfig | None = None,
+        output_config: RenderValueConfig | None = None,
         score_configs: dict[str, RenderNumberConfig] | None = None,
         label_configs: dict[str, RenderValueConfig] | None = None,
         metric_configs: dict[str, RenderNumberConfig] | None = None,
-        input_config: RenderValueConfig | None = None,
-        output_config: RenderValueConfig | None = None,
         duration_config: RenderNumberConfig | None = None,
     ) -> Table:
         """Print a diff table comparing the baseline and new EvalReport.
@@ -317,11 +361,12 @@ class EvalReport(BaseModel):
             include_output=include_output,
             include_total_duration=include_total_duration,
             include_removed_cases=include_removed_cases,
+            include_averages=include_averages,
+            input_config={**_DEFAULT_VALUE_CONFIG, **(input_config or {})},
+            output_config=output_config or _DEFAULT_VALUE_CONFIG,
             score_configs=score_configs or {},
             label_configs=label_configs or {},
             metric_configs=metric_configs or {},
-            input_config={**_DEFAULT_VALUE_CONFIG, **(input_config or {})},
-            output_config=output_config or _DEFAULT_VALUE_CONFIG,
             duration_config=duration_config or _DEFAULT_DURATION_CONFIG,
         )
         if baseline is None:
@@ -342,12 +387,11 @@ class EvalCaseRenderer:
     include_metrics: bool
     include_total_duration: bool
 
+    input_renderer: _ValueRenderer
+    output_renderer: _ValueRenderer
     score_renderers: dict[str, _NumberRenderer]
     label_renderers: dict[str, _ValueRenderer]
     metric_renderers: dict[str, _NumberRenderer]
-
-    input_renderer: _ValueRenderer
-    output_renderer: _ValueRenderer
     duration_renderer: _NumberRenderer
 
     def build_base_table(self, title: str) -> Table:
@@ -372,10 +416,10 @@ class EvalCaseRenderer:
         row = [case.case_id]
 
         if self.include_input:
-            row.append(self.input_renderer.render_value(None, case.case_input) or MISSING_VALUE_STR)
+            row.append(self.input_renderer.render_value(None, case.case_input) or EMPTY_CELL_STR)
 
         if self.include_output:
-            row.append(self.output_renderer.render_value(None, case.case_output) or MISSING_VALUE_STR)
+            row.append(self.output_renderer.render_value(None, case.case_output) or EMPTY_CELL_STR)
 
         if self.include_scores:
             row.append(self._render_dict(case.scores, self.score_renderers))
@@ -389,10 +433,33 @@ class EvalCaseRenderer:
         row.append(self._render_durations(case))
         return row
 
+    def build_aggregate_row(self, aggregate: EvalReportCaseAggregate) -> list[str]:
+        """Build a table row for an aggregated case."""
+        row = [f'[b i]{aggregate.name}[/]']
+
+        if self.include_input:
+            row.append(EMPTY_AGGREGATE_CELL_STR)
+
+        if self.include_output:
+            row.append(EMPTY_AGGREGATE_CELL_STR)
+
+        if self.include_scores:
+            row.append(self._render_dict(aggregate.scores, self.score_renderers))
+
+        if self.include_labels:
+            # TODO: Aggregate labels, showing the percentage occurrences of each label
+            row.append(EMPTY_AGGREGATE_CELL_STR)
+
+        if self.include_metrics:
+            row.append(self._render_dict(aggregate.metrics, self.metric_renderers))
+
+        row.append(self._render_durations(aggregate))
+        return row
+
     def build_diff_row(
         self,
-        baseline: EvalReportCase,
         new_case: EvalReportCase,
+        baseline: EvalReportCase,
     ) -> list[str]:
         """Build a table row for a given case ID."""
         assert baseline.case_id == new_case.case_id, 'This should only be called for matching case IDs'
@@ -400,13 +467,13 @@ class EvalCaseRenderer:
 
         if self.include_input:
             input_diff = (
-                self.input_renderer.render_diff(None, baseline.case_input, new_case.case_input) or MISSING_VALUE_STR
+                self.input_renderer.render_diff(None, baseline.case_input, new_case.case_input) or EMPTY_CELL_STR
             )
             row.append(input_diff)
 
         if self.include_output:
             output_diff = (
-                self.output_renderer.render_diff(None, baseline.case_output, new_case.case_output) or MISSING_VALUE_STR
+                self.output_renderer.render_diff(None, baseline.case_output, new_case.case_output) or EMPTY_CELL_STR
             )
             row.append(output_diff)
 
@@ -426,7 +493,37 @@ class EvalCaseRenderer:
 
         return row
 
-    def _render_durations(self, case: EvalReportCase) -> str:
+    def build_diff_aggregate_row(
+        self,
+        new: EvalReportCaseAggregate,
+        baseline: EvalReportCaseAggregate,
+    ) -> list[str]:
+        """Build a table row for a given case ID."""
+        assert baseline.name == new.name, 'This should only be called for aggregates with matching names'
+        row = [f'[b i]{baseline.name}[/]']
+
+        if self.include_input:
+            row.append(EMPTY_AGGREGATE_CELL_STR)
+
+        if self.include_output:
+            row.append(EMPTY_AGGREGATE_CELL_STR)
+
+        if self.include_scores:
+            scores_diff = self._render_dicts_diff(baseline.scores, new.scores, self.score_renderers)
+            row.append(scores_diff)
+
+        if self.include_labels:
+            row.append(EMPTY_AGGREGATE_CELL_STR)
+
+        if self.include_metrics:
+            metrics_diff = self._render_dicts_diff(baseline.metrics, new.metrics, self.metric_renderers)
+            row.append(metrics_diff)
+
+        row.append(self._render_durations_diff(baseline, new))
+
+        return row
+
+    def _render_durations(self, case: EvalReportCase | EvalReportCaseAggregate) -> str:
         """Build the diff string for a duration value."""
         case_durations: dict[str, float] = {'task': case.task_duration}
         if self.include_total_duration:
@@ -437,7 +534,11 @@ class EvalCaseRenderer:
             include_names=self.include_total_duration,
         )
 
-    def _render_durations_diff(self, base_case: EvalReportCase, new_case: EvalReportCase) -> str:
+    def _render_durations_diff(
+        self,
+        base_case: EvalReportCase | EvalReportCaseAggregate,
+        new_case: EvalReportCase | EvalReportCaseAggregate,
+    ) -> str:
         """Build the diff string for a duration value."""
         base_case_durations: dict[str, float] = {'task': base_case.task_duration}
         new_case_durations: dict[str, float] = {'task': new_case.task_duration}
@@ -468,7 +569,7 @@ class EvalCaseRenderer:
             new_val = new_dict.get(key)
             rendered = renderers[key].render_diff(key if include_names else None, old_val, new_val)
             diff_lines.append(rendered)
-        return '\n'.join(diff_lines) if diff_lines else MISSING_VALUE_STR
+        return '\n'.join(diff_lines) if diff_lines else EMPTY_CELL_STR
 
     @staticmethod
     def _render_dict(
@@ -481,24 +582,27 @@ class EvalCaseRenderer:
         for key, val in case_dict.items():
             rendered = renderers[key].render_value(key if include_names else None, val)
             diff_lines.append(rendered)
-        return '\n'.join(diff_lines) if diff_lines else MISSING_VALUE_STR
+        return '\n'.join(diff_lines) if diff_lines else EMPTY_CELL_STR
 
 
 @dataclass
 class EvalRenderer:
     """A class for rendering an EvalReport or the diff between two EvalReports."""
 
+    # Columns to include
     include_input: bool
     include_output: bool
     include_total_duration: bool
-    include_removed_cases: bool
 
-    score_configs: dict[str, RenderNumberConfig]
-    label_configs: dict[str, RenderValueConfig]
-    metric_configs: dict[str, RenderNumberConfig]
+    # Rows to include
+    include_removed_cases: bool
+    include_averages: bool
 
     input_config: RenderValueConfig
     output_config: RenderValueConfig
+    score_configs: dict[str, RenderNumberConfig]
+    label_configs: dict[str, RenderValueConfig]
+    metric_configs: dict[str, RenderNumberConfig]
     duration_config: RenderNumberConfig
 
     def include_scores(self, report: EvalReport, baseline: EvalReport | None = None):
@@ -523,11 +627,11 @@ class EvalRenderer:
         return [case for case in baseline.cases if case.case_id in report_case_ids]
 
     def _get_case_renderer(self, report: EvalReport, baseline: EvalReport | None = None) -> EvalCaseRenderer:
+        input_renderer = _ValueRenderer.from_config(self.input_config)
+        output_renderer = _ValueRenderer.from_config(self.output_config)
         score_renderers = self._infer_score_renderers(report, baseline)
         label_renderers = self._infer_label_renderers(report, baseline)
         metric_renderers = self._infer_metric_renderers(report, baseline)
-        input_renderer = _ValueRenderer.from_config(self.input_config)
-        output_renderer = _ValueRenderer.from_config(self.output_config)
         duration_renderer = _NumberRenderer.infer_from_config(
             self.duration_config, 'duration', [x.task_duration for x in self._all_cases(report, baseline)]
         )
@@ -539,11 +643,11 @@ class EvalRenderer:
             include_labels=self.include_labels(report, baseline),
             include_metrics=self.include_metrics(report, baseline),
             include_total_duration=self.include_total_duration,
+            input_renderer=input_renderer,
+            output_renderer=output_renderer,
             score_renderers=score_renderers,
             label_renderers=label_renderers,
             metric_renderers=metric_renderers,
-            input_renderer=input_renderer,
-            output_renderer=output_renderer,
             duration_renderer=duration_renderer,
         )
 
@@ -552,11 +656,18 @@ class EvalRenderer:
         table = case_renderer.build_base_table(f'Evaluation Summary: {report.name}')
         for case in report.cases:
             table.add_row(*case_renderer.build_row(case))
+
+        if self.include_averages:
+            average = EvalReportCaseAggregate.average(report.cases)
+            table.add_row(*case_renderer.build_aggregate_row(average))
         return table
 
     def build_diff_table(self, report: EvalReport, baseline: EvalReport) -> Table:
-        report_cases_by_id = {case.case_id: case for case in report.cases}
-        baseline_cases_by_id = {case.case_id: case for case in self._baseline_cases_to_include(report, baseline)}
+        report_cases = report.cases
+        baseline_cases = self._baseline_cases_to_include(report, baseline)
+
+        report_cases_by_id = {case.case_id: case for case in report_cases}
+        baseline_cases_by_id = {case.case_id: case for case in baseline_cases}
 
         diff_cases: list[tuple[EvalReportCase, EvalReportCase]] = []
         removed_cases: list[EvalReportCase] = []
@@ -577,7 +688,7 @@ class EvalRenderer:
         case_renderer = self._get_case_renderer(report, baseline)
         table = case_renderer.build_base_table(f'Evaluation Diff: {baseline.name} → {report.name}')
         for baseline_case, new_case in diff_cases:
-            table.add_row(*case_renderer.build_diff_row(baseline_case, new_case))
+            table.add_row(*case_renderer.build_diff_row(new_case, baseline_case))
         for case in added_cases:
             row = case_renderer.build_row(case)
             row[0] = f'[green]+ Added Case[/]\n{row[0]}'
@@ -586,6 +697,12 @@ class EvalRenderer:
             row = case_renderer.build_row(case)
             row[0] = f'[red]- Removed Case[/]\n{row[0]}'
             table.add_row(*row)
+
+        if self.include_averages:
+            report_average = EvalReportCaseAggregate.average(report_cases)
+            baseline_average = EvalReportCaseAggregate.average(baseline_cases)
+            table.add_row(*case_renderer.build_diff_aggregate_row(report_average, baseline_average))
+
         return table
 
     def _infer_score_renderers(self, report: EvalReport, baseline: EvalReport | None) -> dict[str, _NumberRenderer]:

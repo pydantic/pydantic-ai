@@ -59,9 +59,9 @@ async def main():
                 eval_case.record_label('sentiment', 'positive')
                 eval_case.record_label('new_label', 'world')
 
-    baseline_eval.print_report()
-    new_eval.print_report()
-    new_eval.print_diff(baseline=baseline_eval, include_removed_cases=True)
+    baseline_eval.print_report(include_input=True, include_output=True)
+    new_eval.print_report(include_input=True, include_output=True)
+    new_eval.print_diff(baseline=baseline_eval, include_input=True, include_output=True, include_removed_cases=True)
 
 
 if __name__ == '__main__':

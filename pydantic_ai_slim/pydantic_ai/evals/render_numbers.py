@@ -115,38 +115,35 @@ def default_render_number_diff(old: float | int, new: float | int) -> str | None
 
     # Compute the raw difference.
     delta = new - old
-    diff_str = _format_signed(delta, ABS_SIG_FIGS)
-
-    # If we cannot compute a relative change, return just the diff.
-    if old == 0:
-        return diff_str
-
-    # For very small base values with huge changes, drop the relative indicator.
-    if abs(old) < BASE_THRESHOLD and abs(delta) > MULTIPLIER_DROP_FACTOR * abs(old):
-        return diff_str
-
-    # Compute the relative change as a percentage.
-    rel_change = (delta / old) * 100
-    perc_str = f'{rel_change:+.{PERC_DECIMALS}f}%'
-    # If the percentage rounds to 0.0%, return only the absolute difference.
-    if perc_str in ('+0.0%', '-0.0%'):
-        return diff_str
-
-    # Decide whether to use percentage style or multiplier style.
-    if abs(delta) / abs(old) <= 1:
-        # Percentage style.
-        return f'{diff_str} / {perc_str}'
+    abs_diff_str = _render_signed(delta, ABS_SIG_FIGS)
+    rel_diff_str = _render_relative(new, old, BASE_THRESHOLD)
+    if rel_diff_str is None:
+        return abs_diff_str
     else:
-        # Multiplier style.
-        multiplier = new / old
-        if abs(multiplier) < MULTIPLIER_ONE_DECIMAL_THRESHOLD:
-            mult_str = f'{multiplier:+.1f}x'
-        else:
-            mult_str = f'{multiplier:+.0f}x'
-        return f'{diff_str} / {mult_str}'
+        return f'{abs_diff_str} / {rel_diff_str}'
 
 
-def _format_signed(val: float, sig_figs: int = ABS_SIG_FIGS) -> str:
+def default_render_duration(seconds: float) -> str:
+    """Format a duration given in seconds to a string.
+
+    If the duration is less than 1 millisecond, show microseconds.
+    If it's less than one second, show milliseconds.
+    Otherwise, show seconds.
+    """
+    return _render_duration(seconds, False)
+
+
+def default_render_duration_diff(old: float, new: float) -> str:
+    """Format a duration difference (in seconds) with an explicit sign."""
+    abs_diff_str = _render_duration(new - old, True)
+    rel_diff_str = _render_relative(new, old, BASE_THRESHOLD)
+    if rel_diff_str is None:
+        return abs_diff_str
+    else:
+        return f'{abs_diff_str} / {rel_diff_str}'
+
+
+def _render_signed(val: float, sig_figs: int) -> str:
     """Format a number with a fixed number of significant figures.
 
     If the result does not use scientific notation and lacks a decimal point,
@@ -158,7 +155,39 @@ def _format_signed(val: float, sig_figs: int = ABS_SIG_FIGS) -> str:
     return f"{'+' if val >= 0 else '-'}{s}"
 
 
-def default_render_duration(seconds: float) -> str:
+def _render_relative(new: float, base: float, small_base_threshold: float) -> str | None:
+    # If we cannot compute a relative change, return just the diff.
+    if base == 0:
+        return None
+
+    delta = new - base
+
+    # For very small base values with huge changes, drop the relative indicator.
+    if abs(base) < small_base_threshold and abs(delta) > MULTIPLIER_DROP_FACTOR * abs(base):
+        return None
+
+    # Compute the relative change as a percentage.
+    rel_change = (delta / base) * 100
+    perc_str = f'{rel_change:+.{PERC_DECIMALS}f}%'
+    # If the percentage rounds to 0.0%, return only the absolute difference.
+    if perc_str in ('+0.0%', '-0.0%'):
+        return None
+
+    # Decide whether to use percentage style or multiplier style.
+    if abs(delta) / abs(base) <= 1:
+        # Percentage style.
+        return perc_str
+    else:
+        # Multiplier style.
+        multiplier = new / base
+        if abs(multiplier) < MULTIPLIER_ONE_DECIMAL_THRESHOLD:
+            mult_str = f'{multiplier:.1f}x'
+        else:
+            mult_str = f'{multiplier:.0f}x'
+        return mult_str
+
+
+def _render_duration(seconds: float, signed: bool) -> str:
     """Format a duration given in seconds to a string.
 
     If the duration is less than 1 millisecond, show microseconds.
@@ -177,26 +206,7 @@ def default_render_duration(seconds: float) -> str:
     else:
         value = seconds
         unit = 's'
-    return f'{value:.{precision}f}{unit}'
-
-
-def default_render_duration_diff(old: float, new: float) -> str:
-    """Format a duration difference (in seconds) with an explicit sign.
-
-    Uses the same unit as format_duration.
-    """
-    diff = new - old
-    precision = 1
-    abs_diff = abs(diff)
-    if abs_diff < 1e-3:
-        value = diff * 1_000_000
-        unit = 'µs'
-        if abs(value) >= 1:
-            precision = 0
-    elif abs_diff < 1:
-        value = diff * 1_000
-        unit = 'ms'
+    if signed:
+        return f'{value:+.{precision}f}{unit}'
     else:
-        value = diff
-        unit = 's'
-    return f'{value:+.{precision}f}{unit}'
+        return f'{value:.{precision}f}{unit}'
