@@ -25,7 +25,7 @@ except ImportError:
     pass
 
 # Permit.io configuration from environment
-PERMIT_KEY = os.environ.get('PERMIT_KEY')
+PERMIT_KEY = os.environ.get('PERMIT_KEY', 'testkey')
 if not PERMIT_KEY:
     raise ValueError('PERMIT_KEY environment variable not set')
 PDP_URL = os.environ.get('PDP_URL', 'http://localhost:7766')
