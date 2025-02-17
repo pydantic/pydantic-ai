@@ -1,18 +1,14 @@
 from __future__ import annotations as _annotations
 
+import copy
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, is_dataclass
 from functools import cache
-from typing import TYPE_CHECKING, Any, ClassVar, Generic, get_origin, get_type_hints
+from typing import Any, ClassVar, Generic, get_origin, get_type_hints
 
-from typing_extensions import Never, TypeVar
+from typing_extensions import Never, Self, TypeVar
 
 from . import _utils, exceptions
-
-if TYPE_CHECKING:
-    from .state import StateT
-else:
-    StateT = TypeVar('StateT', default=None)
 
 __all__ = 'GraphRunContext', 'BaseNode', 'End', 'Edge', 'NodeDef', 'DepsT'
 
@@ -25,16 +21,14 @@ DepsT = TypeVar('DepsT', default=None, contravariant=True)
 
 
 @dataclass
-class GraphRunContext(Generic[StateT, DepsT]):
+class GraphRunContext(Generic[DepsT]):
     """Context for a graph."""
 
-    state: StateT
-    """The state of the graph."""
     deps: DepsT
     """Dependencies for the graph."""
 
 
-class BaseNode(ABC, Generic[StateT, DepsT, NodeRunEndT]):
+class BaseNode(ABC, Generic[DepsT, NodeRunEndT]):
     """Base class for a node."""
 
     docstring_notes: ClassVar[bool] = False
@@ -46,7 +40,7 @@ class BaseNode(ABC, Generic[StateT, DepsT, NodeRunEndT]):
     """
 
     @abstractmethod
-    async def run(self, ctx: GraphRunContext[StateT, DepsT]) -> BaseNode[StateT, DepsT, Any] | End[NodeRunEndT]:
+    async def run(self, ctx: GraphRunContext[DepsT]) -> BaseNode[DepsT, Any] | End[NodeRunEndT]:
         """Run the node.
 
         This is an abstract method that must be implemented by subclasses.
@@ -90,8 +84,11 @@ class BaseNode(ABC, Generic[StateT, DepsT, NodeRunEndT]):
             docstring = inspect.cleandoc(docstring)
         return docstring
 
+    def snapshot(self) -> Self:
+        return copy.deepcopy(self)
+
     @classmethod
-    def get_node_def(cls, local_ns: dict[str, Any] | None) -> NodeDef[StateT, DepsT, NodeRunEndT]:
+    def get_node_def(cls, local_ns: dict[str, Any] | None) -> NodeDef[DepsT, NodeRunEndT]:
         """Get the node definition."""
         type_hints = get_type_hints(cls.run, localns=local_ns, include_extras=True)
         try:
@@ -143,7 +140,7 @@ class Edge:
 
 
 @dataclass
-class NodeDef(Generic[StateT, DepsT, NodeRunEndT]):
+class NodeDef(Generic[DepsT, NodeRunEndT]):
     """Definition of a node.
 
     This is a primarily internal representation of a node; in general, it shouldn't be necessary to use it directly.
@@ -152,7 +149,7 @@ class NodeDef(Generic[StateT, DepsT, NodeRunEndT]):
     mermaid graphs.
     """
 
-    node: type[BaseNode[StateT, DepsT, NodeRunEndT]]
+    node: type[BaseNode[DepsT, NodeRunEndT]]
     """The node definition itself."""
     node_id: str
     """ID of the node."""
