@@ -23,7 +23,6 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
-from pydantic_ai.models.instrumented import InstrumentedModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import Usage
 
@@ -33,6 +32,8 @@ with try_import() as imports_successful:
     from logfire.testing import CaptureLogfire
     from opentelemetry._events import NoOpEventLogger
     from opentelemetry.trace import NoOpTracer
+
+    from pydantic_ai.models.instrumented import InstrumentedModel
 
 
 pytestmark = [
