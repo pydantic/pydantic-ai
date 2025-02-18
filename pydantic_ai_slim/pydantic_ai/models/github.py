@@ -17,20 +17,20 @@ from azure.ai.inference.models import (
     UserMessage,
 )
 
-INFERENCE_ENDPOINT = "https://models.inference.ai.azure.com"
+INFERENCE_ENDPOINT = 'https://models.inference.ai.azure.com'
+
 
 @dataclass(init=False)
 class GitHubModels(Model):
-
     client: ChatCompletionsClient = field(repr=False)
-    _model_name: str = field(default="gpt-4o", repr=False)
+    _model_name: str = field(default='gpt-4o', repr=False)
     _extra: dict[str, str] = field(default_factory=dict, repr=False)
 
     def __init__(self, model_name: str, *, api_key: str):
         self._model_name = model_name
         self._extra = {}
-        if model_name == "o3-mini":
-            self._extra["api_version"] = "2024-12-01-preview"
+        if model_name == 'o3-mini':
+            self._extra['api_version'] = '2024-12-01-preview'
 
         self.client = ChatCompletionsClient(
             endpoint=INFERENCE_ENDPOINT,
@@ -44,14 +44,22 @@ class GitHubModels(Model):
         result: list[ChatRequestMessage] = []
         for message in messages:
             if isinstance(message, ModelRequest):
-                result.append(UserMessage(content=[TextContentItem(part.content) for part in message.parts if isinstance(part, str)]))
+                result.append(
+                    UserMessage(
+                        content=[TextContentItem(part.content) for part in message.parts if isinstance(part, str)]
+                    )
+                )
             else:
-                raise ValueError(f"Unsupported message type: {type(message)}")
+                raise ValueError(f'Unsupported message type: {type(message)}')
         return result
 
     @staticmethod
     def _as_response_and_usage(response: ChatCompletions) -> tuple[ModelResponse, Usage]:
-        usage = Usage(response_tokens=response.usage.completion_tokens, request_tokens=response.usage.prompt_tokens, total_tokens=response.usage.total_tokens)
+        usage = Usage(
+            response_tokens=response.usage.completion_tokens,
+            request_tokens=response.usage.prompt_tokens,
+            total_tokens=response.usage.total_tokens,
+        )
         parts: list[ModelResponsePart] = [TextPart(content=choice.message.content) for choice in response.choices]
         model_response = ModelResponse(
             parts=parts,
@@ -74,7 +82,9 @@ class GitHubModels(Model):
             return 'auto'
 
     @staticmethod
-    def _as_tool_definition(model_request_parameters: ModelRequestParameters) -> list[ChatCompletionsToolDefinition] | None:
+    def _as_tool_definition(
+        model_request_parameters: ModelRequestParameters,
+    ) -> list[ChatCompletionsToolDefinition] | None:
         """Map function and result tools to Inferencing SDK format.
 
         Returns None if both function_tools and result_tools are empty.
@@ -91,26 +101,26 @@ class GitHubModels(Model):
         return tools if tools else None
 
     async def request(
-            self,
-            messages: list[ModelMessage],
-            model_settings: ModelSettings | None,
-            model_request_parameters: ModelRequestParameters,
-        ) -> tuple[ModelResponse, Usage]:
-            """Make a non-streaming request to the model from Pydantic AI call."""
-            check_allow_model_requests()
-            model_settings = model_settings or {}
-            response = await self.client.complete(
-                messages=self._as_chat_request_message(messages),
-                stream=False,
-                model=self._model_name,
-                tools=None, # TODO? 
-                tool_choice=self._get_tool_choice(model_request_parameters),  # TODO?
-                max_tokens=model_settings.get('max_tokens', None),
-                temperature=model_settings.get('temperature', None),
-                top_p=model_settings.get('top_p', 1),
-                seed=model_settings.get('seed', None),
-            )
-            return self._as_response_and_usage(response)
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> tuple[ModelResponse, Usage]:
+        """Make a non-streaming request to the model from Pydantic AI call."""
+        check_allow_model_requests()
+        model_settings = model_settings or {}
+        response = await self.client.complete(
+            messages=self._as_chat_request_message(messages),
+            stream=False,
+            model=self._model_name,
+            tools=None,  # TODO?
+            tool_choice=self._get_tool_choice(model_request_parameters),  # TODO?
+            max_tokens=model_settings.get('max_tokens', None),
+            temperature=model_settings.get('temperature', None),
+            top_p=model_settings.get('top_p', 1),
+            seed=model_settings.get('seed', None),
+        )
+        return self._as_response_and_usage(response)
 
     @property
     def model_name(self) -> str:
@@ -118,4 +128,4 @@ class GitHubModels(Model):
 
     @property
     def system(self) -> str:
-        return "github"
+        return 'github'
