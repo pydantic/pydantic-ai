@@ -51,6 +51,7 @@ vertexai = ["google-auth>=2.36.0", "requests>=2.32.3"]
 anthropic = ["anthropic>=0.40.0"]
 groq = ["groq>=0.12.0"]
 mistral = ["mistralai>=1.2.5"]
+github = ["azure-ai-inference>=1.0.0b8", "aiohttp"]
 
 [dependency-groups]
 dev = [
