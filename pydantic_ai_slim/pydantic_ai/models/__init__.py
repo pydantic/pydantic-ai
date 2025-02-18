@@ -358,6 +358,10 @@ def infer_model(model: Model | KnownModelName) -> Model:
         from .anthropic import AnthropicModel
 
         return AnthropicModel(model)
+    elif model.startswith('github'):
+        from .github import GitHubModels
+
+        return GitHubModels(model[7:])
     else:
         raise UserError(f'Unknown model: {model}')
 
