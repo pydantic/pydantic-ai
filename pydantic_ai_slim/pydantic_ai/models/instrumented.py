@@ -2,11 +2,13 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import partial
 from typing import Any, Literal
 
 import logfire_api
+from opentelemetry._events import Event, EventLogger
+from opentelemetry.trace import Tracer
 
 from ..messages import (
     ModelMessage,
@@ -22,7 +24,7 @@ from ..messages import (
 )
 from ..settings import ModelSettings
 from ..usage import Usage
-from . import ModelRequestParameters, StreamedResponse
+from . import Model, ModelRequestParameters, StreamedResponse
 from .wrapper import WrapperModel
 
 MODEL_SETTING_ATTRIBUTES: tuple[
@@ -51,10 +53,18 @@ NOT_GIVEN = object()
 class InstrumentedModel(WrapperModel):
     """Model which is instrumented with logfire."""
 
-    logfire_instance: logfire_api.Logfire = logfire_api.DEFAULT_LOGFIRE_INSTANCE
+    tracer: Tracer = field(repr=False)
+    event_logger: EventLogger = field(repr=False)
 
-    def __post_init__(self):
-        self.logfire_instance = self.logfire_instance.with_settings(custom_scope_suffix='pydantic_ai')
+    @classmethod
+    def from_logfire(
+        cls, wrapped: Model, logfire_instance: logfire_api.Logfire = logfire_api.DEFAULT_LOGFIRE_INSTANCE
+    ) -> InstrumentedModel:
+        return cls(
+            wrapped=wrapped,
+            tracer=logfire_instance.config.get_tracer_provider().get_tracer('pydantic-ai'),
+            event_logger=logfire_instance.config.get_event_logger_provider().get_event_logger('pydantic-ai'),
+        )
 
     async def request(
         self,
@@ -114,7 +124,7 @@ class InstrumentedModel(WrapperModel):
 
         emit_event = partial(self._emit_event, system)
 
-        with self.logfire_instance.span(span_name, **attributes) as span:
+        with self.tracer.start_as_current_span(span_name, attributes=attributes) as span:
             if span.is_recording():
                 for message in messages:
                     if isinstance(message, ModelRequest):
@@ -157,7 +167,7 @@ class InstrumentedModel(WrapperModel):
             yield finish
 
     def _emit_event(self, system: str, event_name: str, body: dict[str, Any]) -> None:
-        self.logfire_instance.info(event_name, **{'gen_ai.system': system}, **body)
+        self.event_logger.emit(Event(event_name, body=body, attributes={'gen_ai.system': system}))
 
 
 def _request_part_body(part: ModelRequestPart) -> tuple[str, dict[str, Any]]:
