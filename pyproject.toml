@@ -23,17 +23,13 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
     "Intended Audience :: Developers",
     "Intended Audience :: Information Technology",
-    "Intended Audience :: System Administrators",
     "License :: OSI Approved :: MIT License",
-    "Operating System :: Unix",
-    "Operating System :: POSIX :: Linux",
-    "Environment :: Console",
-    "Environment :: MacOS X",
-    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Operating System :: OS Independent",
     "Topic :: Internet",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Libraries :: Python Modules",
     "Framework :: Pydantic",
     "Framework :: Pydantic :: 2",
-    "Framework :: Pytest",
 ]
 requires-python = ">=3.9"
 
