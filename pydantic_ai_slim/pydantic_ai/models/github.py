@@ -113,8 +113,8 @@ class GitHubModels(Model):
             messages=self._as_chat_request_message(messages),
             stream=False,
             model=self._model_name,
-            tools=None,  # TODO?
-            tool_choice=self._get_tool_choice(model_request_parameters),  # TODO?
+            tools=self._as_tool_definition(model_request_parameters),
+            tool_choice=self._get_tool_choice(model_request_parameters),
             max_tokens=model_settings.get('max_tokens', None),
             temperature=model_settings.get('temperature', None),
             top_p=model_settings.get('top_p', 1),
