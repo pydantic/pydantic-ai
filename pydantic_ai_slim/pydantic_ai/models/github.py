@@ -4,11 +4,14 @@ from . import Model, ModelRequestParameters, ModelResponse, ModelMessage, check_
 from ..settings import ModelSettings
 from ..result import Usage
 from ..messages import TextPart, ModelResponsePart, ModelRequest
+from ..tools import ToolDefinition
 
 from azure.ai.inference.aio import ChatCompletionsClient
 from azure.core.credentials import AzureKeyCredential
 from azure.ai.inference.models import (
     ChatCompletions,
+    ChatCompletionsToolDefinition,
+    FunctionDefinition,
     ChatRequestMessage,
     TextContentItem,
     UserMessage,
@@ -55,6 +58,38 @@ class GitHubModels(Model):
         )
         return model_response, usage
 
+    @staticmethod
+    def _get_tool_choice(model_request_parameters: ModelRequestParameters) -> str | None:
+        """Get tool choice for the model.
+
+        - "auto": Default mode. Model decides if it uses the tool or not.
+        - "none": Prevents tool use.
+        - "required": Forces tool use.
+        """
+        if not model_request_parameters.function_tools and not model_request_parameters.result_tools:
+            return None
+        elif not model_request_parameters.allow_text_result:
+            return 'required'
+        else:
+            return 'auto'
+
+    @staticmethod
+    def _as_tool_definition(model_request_parameters: ModelRequestParameters) -> list[ChatCompletionsToolDefinition] | None:
+        """Map function and result tools to Inferencing SDK format.
+
+        Returns None if both function_tools and result_tools are empty.
+        """
+        all_tools: list[ToolDefinition] = (
+            model_request_parameters.function_tools + model_request_parameters.result_tools
+        )
+        tools = [
+            ChatCompletionsToolDefinition(
+                function=FunctionDefinition(name=r.name, parameters=r.parameters_json_schema, description=r.description)
+            )
+            for r in all_tools
+        ]
+        return tools if tools else None
+
     async def request(
             self,
             messages: list[ModelMessage],
@@ -69,7 +104,7 @@ class GitHubModels(Model):
                 stream=False,
                 model=self._model_name,
                 tools=None, # TODO? 
-                tool_choice=None, # TODO?
+                tool_choice=self._get_tool_choice(model_request_parameters),  # TODO?
                 max_tokens=model_settings.get('max_tokens', None),
                 temperature=model_settings.get('temperature', None),
                 top_p=model_settings.get('top_p', 1),
