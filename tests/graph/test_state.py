@@ -7,7 +7,7 @@ from datetime import timezone
 import pytest
 from inline_snapshot import snapshot
 
-from pydantic_graph import BaseNode, End, EndStep, Graph, GraphRunContext, NodeStep
+from pydantic_graph import BaseNode, End, EndSnapshot, Graph, GraphRunContext, NodeSnapshot
 
 from ..conftest import IsFloat, IsNow
 
@@ -40,19 +40,19 @@ async def test_run_graph():
     assert result == snapshot('x=2 y=y')
     assert history == snapshot(
         [
-            NodeStep(
+            NodeSnapshot(
                 state=MyState(x=2, y=''),
                 node=Foo(),
                 start_ts=IsNow(tz=timezone.utc),
                 duration=IsFloat(),
             ),
-            NodeStep(
+            NodeSnapshot(
                 state=MyState(x=2, y='y'),
                 node=Bar(),
                 start_ts=IsNow(tz=timezone.utc),
                 duration=IsFloat(),
             ),
-            EndStep(result=End('x=2 y=y'), ts=IsNow(tz=timezone.utc)),
+            EndSnapshot(result=End('x=2 y=y'), ts=IsNow(tz=timezone.utc)),
         ]
     )
     assert state == MyState(x=2, y='y')

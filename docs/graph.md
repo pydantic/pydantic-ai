@@ -576,11 +576,10 @@ In this example, an AI asks the user a question, the user provides an answer, th
 
     _(This example is complete, it can be run "as is" with Python 3.10+)_
 
-
 ```python {title="ai_q_and_a_run.py" noqa="I001" py="3.10"}
 from rich.prompt import Prompt
 
-from pydantic_graph import End, HistoryStep
+from pydantic_graph import End, Snapshot
 
 from ai_q_and_a_graph import Ask, question_graph, QuestionState, Answer
 
@@ -588,14 +587,14 @@ from ai_q_and_a_graph import Ask, question_graph, QuestionState, Answer
 async def main():
     state = QuestionState()  # (1)!
     node = Ask()  # (2)!
-    history: list[HistoryStep[QuestionState]] = []  # (3)!
+    history: list[Snapshot[QuestionState]] = []  # (3)!
     while True:
         node = await question_graph.next(node, history, state=state)  # (4)!
         if isinstance(node, Answer):
             node.answer = Prompt.ask(node.question)  # (5)!
         elif isinstance(node, End):  # (6)!
             print(f'Correct answer! {node.data}')
-            #> Correct answer! Well done, 1 + 1 = 2
+            # > Correct answer! Well done, 1 + 1 = 2
             print([e.data_snapshot() for e in history])
             """
             [

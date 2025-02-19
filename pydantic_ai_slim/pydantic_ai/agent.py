@@ -11,7 +11,7 @@ from typing import Any, Callable, Generic, cast, final, overload
 import logfire_api
 from typing_extensions import TypeVar, deprecated
 
-from pydantic_graph import Graph, GraphRunContext, HistoryStep
+from pydantic_graph import Graph, GraphRunContext, Snapshot
 from pydantic_graph.nodes import End
 
 from . import (
@@ -583,7 +583,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
 
             # Actually run
             node = start_node
-            history: list[HistoryStep[_agent_graph.GraphAgentState, RunResultDataT]] = []
+            history: list[Snapshot[_agent_graph.GraphAgentState, RunResultDataT]] = []
             while True:
                 if isinstance(node, _agent_graph.StreamModelRequestNode):
                     node = cast(
