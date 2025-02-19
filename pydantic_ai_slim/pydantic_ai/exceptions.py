@@ -2,7 +2,15 @@ from __future__ import annotations as _annotations
 
 import json
 
-__all__ = 'ModelRetry', 'UserError', 'AgentRunError', 'UnexpectedModelBehavior', 'UsageLimitExceeded'
+__all__ = (
+    'ModelRetry',
+    'UserError',
+    'AgentRunError',
+    'UnexpectedModelBehavior',
+    'UsageLimitExceeded',
+    'ModelStatusError',
+    'FallbackModelFailure',
+)
 
 
 class ModelRetry(Exception):
@@ -72,3 +80,39 @@ class UnexpectedModelBehavior(AgentRunError):
             return f'{self.message}, body:\n{self.body}'
         else:
             return self.message
+
+
+class ModelStatusError(AgentRunError):
+    """Raised when an model provider response has a status code of 4xx or 5xx."""
+
+    status_code: int
+    """The HTTP status code returned by the API."""
+
+    model_name: str
+    """The name of the model associated with the error."""
+
+    body: object | None
+    """The body of the response, if available."""
+
+    message: str
+    """The error message with the status code and response body, if available."""
+
+    def __init__(self, status_code: int, model_name: str, body: object | None = None):
+        self.status_code = status_code
+        self.model_name = model_name
+        self.body = body
+        message = f'status_code: {status_code}, model_name: {model_name}, body: {body}'
+        super().__init__(message)
+
+
+class FallbackModelFailure(AgentRunError):
+    """Raised when all models in a `FallbackModel` fail."""
+
+    errors: list[ModelStatusError]
+    """The collection of model status errors that ultimately caused the fallback to fail."""
+
+    def __init__(self, errors: list[ModelStatusError]):
+        self.errors = errors
+        stringified_errors = '\n'.join(f'{type(e).__name__}: {e}' for e in errors)
+        message = f'\nFallbackModelFailure caused by:\n{stringified_errors}'
+        super().__init__(message)
