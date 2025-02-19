@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from functools import partial
-from typing import Any, Literal
+from typing import Any, Callable, Literal
 
 import logfire_api
 from opentelemetry._events import Event, EventLogger
@@ -100,7 +100,7 @@ class InstrumentedModel(WrapperModel):
         self,
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
-    ):
+    ) -> Iterator[Callable[[ModelResponse, Usage], None]]:
         operation = 'chat'
         model_name = self.model_name
         span_name = f'{operation} {model_name}'
