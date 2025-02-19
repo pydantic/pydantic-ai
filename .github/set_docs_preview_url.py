@@ -7,6 +7,7 @@ DEPLOY_OUTPUT = os.environ['DEPLOY_OUTPUT']
 GITHUB_TOKEN = os.environ['GITHUB_TOKEN']
 REPOSITORY = os.environ['REPOSITORY']
 PULL_REQUEST_NUMBER = os.environ['PULL_REQUEST_NUMBER']
+REF = os.environ['REF']
 
 m = re.search(r'https://(\S+)\.workers\.dev', DEPLOY_OUTPUT)
 assert m, f'Could not find worker URL in {DEPLOY_OUTPUT!r}'
@@ -41,6 +42,10 @@ body = f"""\
 ## Docs Preview
 
 <table>
+<tr>
+<td><strong>commit:</strong></td>
+<td><code>{REF:.7}</code></td>
+</tr>
 <tr>
 <td><strong>Preview URL:</strong></td>
 <td><a href="{preview_url}">{preview_url}</a></td>

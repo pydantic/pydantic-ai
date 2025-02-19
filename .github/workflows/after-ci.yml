@@ -94,3 +94,4 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPOSITORY: ${{ github.repository }}
           PULL_REQUEST_NUMBER: ${{ github.event.workflow_run.pull_requests[0].number }}
+          REF: ${{ github.event.workflow_run.head_sha }}
