@@ -56,38 +56,12 @@ body = f"""\
 comment_data = {'body': body}
 
 if comment_update_url:
+    print('Updating existing comment...')
     r = httpx.patch(comment_update_url, headers=gh_headers, json=request_json)
     print(f'PATCH {comment_update_url}: {r.status_code}')
     r.raise_for_status()
 else:
+    print('Creating new comment...')
     r = httpx.post(issues_url, headers=gh_headers, json=comment_data)
     print(f'POST {issues_url}: {r.status_code}')
     r.raise_for_status()
-
-# deployment_url = f'https://api.github.com/repos/{REPOSITORY}/deployments'
-# deployment_data = {
-#     'ref': REF,
-#     'task': f'docs preview {version_id}',
-#     'environment': ENVIRONMENT,
-#     'auto_merge': False,
-#     'required_contexts': [],
-#     'payload': json.dumps({
-#         'preview_url': preview_url,
-#         'worker_name': worker_name,
-#         'version_id': version_id,
-#     })
-# }
-# r = httpx.post(deployment_url, headers=gh_headers, json=deployment_data)
-# print(f'POST {deployment_url}: {r.status_code}')  # {r.text}
-# r.raise_for_status()
-# deployment_id = r.json()['id']
-#
-# status_url = f'https://api.github.com/repos/{REPOSITORY}/deployments/{deployment_id}/statuses'
-# status_data = {
-#     'environment': ENVIRONMENT,
-#     'environment_url': preview_url,
-#     'state': 'success',
-# }
-# r = httpx.post(status_url, headers=gh_headers, json=status_data)
-# print(f'POST {status_url}: {r.status_code}')  # {r.text}
-# r.raise_for_status()
