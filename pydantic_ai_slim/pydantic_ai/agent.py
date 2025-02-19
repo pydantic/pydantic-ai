@@ -330,6 +330,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
             )
 
             start_node = _agent_graph.UserPromptNode[AgentDepsT](
+                state=state,
                 user_prompt=user_prompt,
                 system_prompts=self._system_prompts,
                 system_prompt_functions=self._system_prompt_functions,
@@ -339,7 +340,6 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
             # Actually run
             end_result, _ = await graph.run(
                 start_node,
-                state=state,
                 deps=graph_deps,
                 infer_name=False,
             )
@@ -575,6 +575,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
             )
 
             start_node = _agent_graph.StreamUserPromptNode[AgentDepsT](
+                state=graph_state,
                 user_prompt=user_prompt,
                 system_prompts=self._system_prompts,
                 system_prompt_functions=self._system_prompt_functions,
@@ -583,7 +584,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
 
             # Actually run
             node = start_node
-            history: list[HistoryStep[_agent_graph.GraphAgentState, RunResultDataT]] = []
+            history: list[HistoryStep[RunResultDataT]] = []
             while True:
                 if isinstance(node, _agent_graph.StreamModelRequestNode):
                     node = cast(
@@ -592,7 +593,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
                         ],
                         node,
                     )
-                    async with node.run_to_result(GraphRunContext(graph_state, graph_deps)) as r:
+                    async with node.run_to_result(GraphRunContext(graph_deps)) as r:
                         if isinstance(r, End):
                             yield r.data
                             break
@@ -600,7 +601,6 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
                 node = await graph.next(
                     node,
                     history,
-                    state=graph_state,
                     deps=graph_deps,
                     infer_name=False,
                 )
@@ -1039,12 +1039,12 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
 
     def _build_graph(
         self, result_type: type[RunResultDataT] | None
-    ) -> Graph[_agent_graph.GraphAgentState, _agent_graph.GraphAgentDeps[AgentDepsT, Any], Any]:
+    ) -> Graph[_agent_graph.GraphAgentDeps[AgentDepsT, Any], Any]:
         return _agent_graph.build_agent_graph(self.name, self._deps_type, result_type or self.result_type)
 
     def _build_stream_graph(
         self, result_type: type[RunResultDataT] | None
-    ) -> Graph[_agent_graph.GraphAgentState, _agent_graph.GraphAgentDeps[AgentDepsT, Any], Any]:
+    ) -> Graph[_agent_graph.GraphAgentDeps[AgentDepsT, Any], Any]:
         return _agent_graph.build_agent_stream_graph(self.name, self._deps_type, result_type or self.result_type)
 
     def _prepare_result_schema(

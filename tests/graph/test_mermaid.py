@@ -26,7 +26,7 @@ class Foo(BaseNode):
 
 
 @dataclass
-class Bar(BaseNode[None, None, None]):
+class Bar(BaseNode[None, None]):
     async def run(self, ctx: GraphRunContext) -> End[None]:
         return End(None)
 
@@ -45,7 +45,7 @@ class Spam(BaseNode):
 
 
 @dataclass
-class Eggs(BaseNode[None, None, None]):
+class Eggs(BaseNode[None, None]):
     """This is the docstring for Eggs."""
 
     docstring_notes = False
@@ -63,13 +63,11 @@ async def test_run_graph():
     assert history == snapshot(
         [
             NodeStep(
-                state=None,
                 node=Foo(),
                 start_ts=IsNow(tz=timezone.utc),
                 duration=IsFloat(),
             ),
             NodeStep(
-                state=None,
                 node=Bar(),
                 start_ts=IsNow(tz=timezone.utc),
                 duration=IsFloat(),

@@ -9,7 +9,7 @@ from __future__ import annotations as _annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Union, cast
 
 import logfire
 from devtools import debug
@@ -22,7 +22,7 @@ from pydantic_ai.messages import ModelMessage
 # 'if-token-present' means nothing will be sent (and the example will work) if you don't have logfire configured
 logfire.configure(send_to_logfire='if-token-present')
 
-ask_agent = Agent('openai:gpt-4o', result_type=str)
+ask_agent = Agent('openai:gpt-4o')
 
 
 @dataclass
@@ -33,24 +33,27 @@ class QuestionState:
 
 
 @dataclass
-class Ask(BaseNode[QuestionState]):
-    async def run(self, ctx: GraphRunContext[QuestionState]) -> Answer:
+class Ask(BaseNode):
+    state: QuestionState
+
+    async def run(self, ctx: GraphRunContext) -> Answer:
         result = await ask_agent.run(
             'Ask a simple question with a single correct answer.',
-            message_history=ctx.state.ask_agent_messages,
+            message_history=self.state.ask_agent_messages,
         )
-        ctx.state.ask_agent_messages += result.all_messages()
-        ctx.state.question = result.data
-        return Answer()
+        self.state.ask_agent_messages += result.all_messages()
+        self.state.question = result.data
+        return Answer(self.state)
 
 
 @dataclass
-class Answer(BaseNode[QuestionState]):
+class Answer(BaseNode):
+    state: QuestionState
     answer: str | None = None
 
-    async def run(self, ctx: GraphRunContext[QuestionState]) -> Evaluate:
+    async def run(self, ctx: GraphRunContext) -> Evaluate:
         assert self.answer is not None
-        return Evaluate(self.answer)
+        return Evaluate(self.state, self.answer)
 
 
 @dataclass
@@ -67,61 +70,60 @@ evaluate_agent = Agent(
 
 
 @dataclass
-class Evaluate(BaseNode[QuestionState]):
+class Evaluate(BaseNode):
+    state: QuestionState
     answer: str
 
     async def run(
         self,
-        ctx: GraphRunContext[QuestionState],
+        ctx: GraphRunContext,
     ) -> Congratulate | Reprimand:
-        assert ctx.state.question is not None
+        assert self.state.question is not None
         result = await evaluate_agent.run(
-            format_as_xml({'question': ctx.state.question, 'answer': self.answer}),
-            message_history=ctx.state.evaluate_agent_messages,
+            format_as_xml({'question': self.state.question, 'answer': self.answer}),
+            message_history=self.state.evaluate_agent_messages,
         )
-        ctx.state.evaluate_agent_messages += result.all_messages()
+        self.state.evaluate_agent_messages += result.all_messages()
         if result.data.correct:
-            return Congratulate(result.data.comment)
+            return Congratulate(self.state, result.data.comment)
         else:
-            return Reprimand(result.data.comment)
+            return Reprimand(self.state, result.data.comment)
 
 
 @dataclass
-class Congratulate(BaseNode[QuestionState, None, None]):
+class Congratulate(BaseNode[None, None]):
+    state: QuestionState
     comment: str
 
-    async def run(
-        self, ctx: GraphRunContext[QuestionState]
-    ) -> Annotated[End, Edge(label='success')]:
+    async def run(self, ctx: GraphRunContext) -> Annotated[End, Edge(label='success')]:
         print(f'Correct answer! {self.comment}')
         return End(None)
 
 
 @dataclass
-class Reprimand(BaseNode[QuestionState]):
+class Reprimand(BaseNode):
+    state: QuestionState
     comment: str
 
-    async def run(self, ctx: GraphRunContext[QuestionState]) -> Ask:
+    async def run(self, ctx: GraphRunContext) -> Ask:
         print(f'Comment: {self.comment}')
         # > Comment: Vichy is no longer the capital of France.
-        ctx.state.question = None
-        return Ask()
+        self.state.question = None
+        return Ask(self.state)
 
 
-question_graph = Graph(
-    nodes=(Ask, Answer, Evaluate, Congratulate, Reprimand), state_type=QuestionState
-)
+question_graph = Graph(nodes=(Ask, Answer, Evaluate, Congratulate, Reprimand))
 
 
 async def run_as_continuous():
     state = QuestionState()
-    node = Ask()
-    history: list[HistoryStep[QuestionState, None]] = []
+    node = Ask(state)
+    history: list[HistoryStep[None]] = []
     with logfire.span('run questions graph'):
         while True:
-            node = await question_graph.next(node, history, state=state)
+            node = await question_graph.next(node, history)
             if isinstance(node, End):
-                debug([e.data_snapshot() for e in history])
+                debug([e.data for e in history])
                 break
             elif isinstance(node, Answer):
                 assert state.question
@@ -140,19 +142,22 @@ async def run_as_cli(answer: str | None):
     if history:
         last = history[-1]
         assert last.kind == 'node', 'expected last step to be a node'
-        state = last.state
+        last_node = cast(
+            Union[Ask, Answer, Evaluate, Congratulate, Reprimand], last.node
+        )
+        state = last_node.state
         assert answer is not None, 'answer is required to continue from history'
-        node = Answer(answer)
+        node = Answer(state, answer)
     else:
         state = QuestionState()
-        node = Ask()
+        node = Ask(state)
     debug(state, node)
 
     with logfire.span('run questions graph'):
         while True:
-            node = await question_graph.next(node, history, state=state)
+            node = await question_graph.next(node, history)
             if isinstance(node, End):
-                debug([e.data_snapshot() for e in history])
+                debug([e.data for e in history])
                 print('Finished!')
                 break
             elif isinstance(node, Answer):

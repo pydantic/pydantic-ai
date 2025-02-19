@@ -37,9 +37,7 @@ pip/uv-add pydantic-graph
 
 ### GraphRunContext
 
-[`GraphRunContext`][pydantic_graph.nodes.GraphRunContext] — The context for the graph run, similar to PydanticAI's [`RunContext`][pydantic_ai.tools.RunContext]. This holds the state of the graph and dependencies and is passed to nodes when they're run.
-
-`GraphRunContext` is generic in the state type of the graph it's used in, [`StateT`][pydantic_graph.state.StateT].
+[`GraphRunContext`][pydantic_graph.nodes.GraphRunContext] — The context for the graph run, similar to PydanticAI's [`RunContext`][pydantic_ai.tools.RunContext]. This holds graph dependencies and is passed to nodes when they're run.
 
 ### End
 
@@ -59,9 +57,8 @@ Nodes, which are generally [`dataclass`es][dataclasses.dataclass], generally con
 
 Nodes are generic in:
 
-* **state**, which must have the same type as the state of graphs they're included in, [`StateT`][pydantic_graph.state.StateT] has a default of `None`, so if you're not using state you can omit this generic parameter, see [stateful graphs](#stateful-graphs) for more information
 * **deps**, which must have the same type as the deps of the graph they're included in, [`DepsT`][pydantic_graph.nodes.DepsT] has a default of `None`, so if you're not using deps you can omit this generic parameter, see [dependency injection](#dependency-injection) for more information
-* **graph return type** — this only applies if the node returns [`End`][pydantic_graph.nodes.End]. [`RunEndT`][pydantic_graph.nodes.RunEndT] has a default of [Never][typing.Never] so this generic parameter can be omitted if the node doesn't return `End`, but must be included if it does.
+* **graph return type** — this only applies if the node returns [`End`][pydantic_graph.nodes.End]. [`RunEndT`][pydantic_graph.nodes.RunEndT] has a default of [`Never`][typing.Never], so this generic parameter can be omitted if the node doesn't return [`End`][pydantic_graph.nodes.End], but must be included if it does.
 
 Here's an example of a start or intermediate node in a graph — it can't end the run as it doesn't return [`End`][pydantic_graph.nodes.End]:
 
@@ -72,21 +69,21 @@ from pydantic_graph import BaseNode, GraphRunContext
 
 
 @dataclass
-class MyNode(BaseNode[MyState]):  # (1)!
+class MyNode(BaseNode):  # (1)!
     foo: int  # (2)!
 
     async def run(
         self,
-        ctx: GraphRunContext[MyState],  # (3)!
+        ctx: GraphRunContext,  # (3)!
     ) -> AnotherNode:  # (4)!
         ...
         return AnotherNode()
 ```
 
-1. State in this example is `MyState` (not shown), hence `BaseNode` is parameterized with `MyState`. This node can't end the run, so the `RunEndT` generic parameter is omitted and defaults to `Never`.
+1. This graph doesn't take deps, so the [`DepsT`][pydantic_graph.nodes.DepsT] generic is omitted (and defaults to `None`). This node can't end the run, so the [`RunEndT`][pydantic_graph.nodes.RunEndT] generic parameter is omitted (and therefore defaults to [`Never`][typing.Never]). So in this case, both generics can be omitted when inheriting from [`BaseNode`][pydantic_graph.nodes.BaseNode].
 2. `MyNode` is a dataclass and has a single field `foo`, an `int`.
-3. The `run` method takes a `GraphRunContext` parameter, again parameterized with state `MyState`.
-4. The return type of the `run` method is `AnotherNode` (not shown), this is used to determine the outgoing edges of the node.
+3. The [`run`][pydantic_graph.nodes.BaseNode.run] method takes a [`GraphRunContext`][pydantic_graph.nodes.GraphRunContext] parameter.
+4. The return type of the [`run`][pydantic_graph.nodes.BaseNode.run] method is `AnotherNode` (not shown); this is used to determine the outgoing edges of the node.
 
 We could extend `MyNode` to optionally end the run if `foo` is divisible by 5:
 
@@ -97,12 +94,12 @@ from pydantic_graph import BaseNode, End, GraphRunContext
 
 
 @dataclass
-class MyNode(BaseNode[MyState, None, int]):  # (1)!
+class MyNode(BaseNode[None, int]):  # (1)!
     foo: int
 
     async def run(
         self,
-        ctx: GraphRunContext[MyState],
+        ctx: GraphRunContext,
     ) -> AnotherNode | End[int]:  # (2)!
         if self.foo % 5 == 0:
             return End(self.foo)
@@ -110,8 +107,8 @@ class MyNode(BaseNode[MyState, None, int]):  # (1)!
             return AnotherNode()
 ```
 
-1. We parameterize the node with the return type (`int` in this case) as well as state. Because generic parameters are positional-only, we have to include `None` as the second parameter representing deps.
-2. The return type of the `run` method is now a union of `AnotherNode` and `End[int]`, this allows the node to end the run if `foo` is divisible by 5.
+1. We parameterize the node with the graph return type (`int` in this case). Because generic parameters are positional-only, we have to include `None` as the first parameter, representing the deps type.
+2. The return type of the `run` method is now a union of `AnotherNode` and [`End[int]`][pydantic_graph.nodes.End], this allows the node to end the run if `foo` is divisible by 5.
 
 ### Graph
 
@@ -119,7 +116,6 @@ class MyNode(BaseNode[MyState, None, int]):  # (1)!
 
 `Graph` is generic in:
 
-* **state** the state type of the graph, [`StateT`][pydantic_graph.state.StateT]
 * **deps** the deps type of the graph, [`DepsT`][pydantic_graph.nodes.DepsT]
 * **graph return type** the return type of the graph run, [`RunEndT`][pydantic_graph.nodes.RunEndT]
 
@@ -134,7 +130,7 @@ from pydantic_graph import BaseNode, End, Graph, GraphRunContext
 
 
 @dataclass
-class DivisibleBy5(BaseNode[None, None, int]):  # (1)!
+class DivisibleBy5(BaseNode[None, int]):  # (1)!
     foo: int
 
     async def run(
@@ -160,7 +156,7 @@ result, history = fives_graph.run_sync(DivisibleBy5(4))  # (4)!
 print(result)
 #> 5
 # the full history is quite verbose (see below), so we'll just print the summary
-print([item.data_snapshot() for item in history])
+print([item.data for item in history])
 #> [DivisibleBy5(foo=4), Increment(foo=4), DivisibleBy5(foo=5), End(data=5)]
 ```
 
@@ -201,9 +197,16 @@ display(Image(fives_graph.mermaid_image(start_node=DivisibleBy5)))
 
 ## Stateful Graphs
 
-The "state" concept in `pydantic-graph` provides an optional way to access and mutate an object (often a `dataclass` or Pydantic model) as nodes run in a graph. If you think of Graphs as a production line, then your state is the engine being passed along the line and built up by each node as the graph is run.
+In `pydantic-graph`, the "state" of the finite state machine is encapsulated in the node instances themselves. This is in contrast with some other state machine libraries where the state exists as a separate object external to the nodes.
 
-In the future, we intend to extend `pydantic-graph` to provide state persistence with the state recorded after each node is run, see [#695](https://github.com/pydantic/pydantic-ai/issues/695).
+Note that in many scenarios, the state of the overall system may contain data well beyond the necessary inputs and outputs for the execution of any individual node. In these cases, the solution is to include a consistent `state` attribute on all nodes of the graph, and pass mutated versions of this state as an input to each subsequent node.
+
+If you think of Graphs as an automotive production line, then this state is analogous to the vehicle being passed along the line and built up by each node as the graph is run.
+
+In the future, we intend to extend `pydantic-graph` to provide persistence by recording the result of running each node; see [#695](https://github.com/pydantic/pydantic-ai/issues/695).
+
+!!! note "Removed State Generic"
+    Prior to `pydantic-graph` v0.23 graphs, had another generic parameter, `StateT`, which could be accessed via [`GraphRunContext`][pydantic_graph.nodes.GraphRunContext]. To simplify graphs and make their state easier to persist, this parameter has been removed. If you need a consistent "state" object, you should make it as a parameter to each of your nodes as shown below.
 
 Here's an example of a graph which represents a vending machine where the user may insert coins and select a product to purchase.
 
@@ -224,29 +227,32 @@ class MachineState:  # (1)!
 
 
 @dataclass
-class InsertCoin(BaseNode[MachineState]):  # (3)!
-    async def run(self, ctx: GraphRunContext[MachineState]) -> CoinsInserted:  # (16)!
-        return CoinsInserted(float(Prompt.ask('Insert coins')))  # (4)!
+class InsertCoin(BaseNode):  # (3)!
+    state: MachineState
+
+    async def run(self, ctx: GraphRunContext) -> CoinsInserted:  # (16)!
+        return CoinsInserted(self.state, float(Prompt.ask('Insert coins')))  # (4)!
 
 
 @dataclass
-class CoinsInserted(BaseNode[MachineState]):
+class CoinsInserted(BaseNode):
+    state: MachineState
     amount: float  # (5)!
 
-    async def run(
-        self, ctx: GraphRunContext[MachineState]
-    ) -> SelectProduct | Purchase:  # (17)!
-        ctx.state.user_balance += self.amount  # (6)!
-        if ctx.state.product is not None:  # (7)!
-            return Purchase(ctx.state.product)
+    async def run(self, ctx: GraphRunContext) -> SelectProduct | Purchase:  # (17)!
+        self.state.user_balance += self.amount  # (6)!
+        if self.state.product is not None:  # (7)!
+            return Purchase(self.state, self.state.product)
         else:
-            return SelectProduct()
+            return SelectProduct(self.state)
 
 
 @dataclass
-class SelectProduct(BaseNode[MachineState]):
-    async def run(self, ctx: GraphRunContext[MachineState]) -> Purchase:
-        return Purchase(Prompt.ask('Select product'))
+class SelectProduct(BaseNode):
+    state: MachineState
+
+    async def run(self, ctx: GraphRunContext) -> Purchase:
+        return Purchase(self.state, Prompt.ask('Select product'))
 
 
 PRODUCT_PRICES = {  # (2)!
@@ -258,25 +264,24 @@ PRODUCT_PRICES = {  # (2)!
 
 
 @dataclass
-class Purchase(BaseNode[MachineState, None, None]):  # (18)!
+class Purchase(BaseNode[None, None]):  # (18)!
+    state: MachineState
     product: str
 
-    async def run(
-        self, ctx: GraphRunContext[MachineState]
-    ) -> End | InsertCoin | SelectProduct:
+    async def run(self, ctx: GraphRunContext) -> End | InsertCoin | SelectProduct:
         if price := PRODUCT_PRICES.get(self.product):  # (8)!
-            ctx.state.product = self.product  # (9)!
-            if ctx.state.user_balance >= price:  # (10)!
-                ctx.state.user_balance -= price
+            self.state.product = self.product  # (9)!
+            if self.state.user_balance >= price:  # (10)!
+                self.state.user_balance -= price
                 return End(None)
             else:
-                diff = price - ctx.state.user_balance
+                diff = price - self.state.user_balance
                 print(f'Not enough money for {self.product}, need {diff:0.2f} more')
                 #> Not enough money for crisps, need 0.75 more
-                return InsertCoin()  # (11)!
+                return InsertCoin(self.state)  # (11)!
         else:
             print(f'No such product: {self.product}, try again')
-            return SelectProduct()  # (12)!
+            return SelectProduct(self.state)  # (12)!
 
 
 vending_machine_graph = Graph(  # (13)!
@@ -286,7 +291,7 @@ vending_machine_graph = Graph(  # (13)!
 
 async def main():
     state = MachineState()  # (14)!
-    await vending_machine_graph.run(InsertCoin(), state=state)  # (15)!
+    await vending_machine_graph.run(InsertCoin(state))  # (15)!
     print(f'purchase successful item={state.product} change={state.user_balance:0.2f}')
     #> purchase successful item=crisps change=0.25
 ```
@@ -358,7 +363,6 @@ stateDiagram-v2
   Feedback --> [*]
 ```
 
-
 ```python {title="genai_email_feedback.py" py="3.10"}
 from __future__ import annotations as _annotations
 
@@ -399,28 +403,29 @@ email_writer_agent = Agent(
 
 
 @dataclass
-class WriteEmail(BaseNode[State]):
+class WriteEmail(BaseNode):
+    state: State
     email_feedback: str | None = None
 
-    async def run(self, ctx: GraphRunContext[State]) -> Feedback:
+    async def run(self, ctx: GraphRunContext) -> Feedback:
         if self.email_feedback:
             prompt = (
                 f'Rewrite the email for the user:\n'
-                f'{format_as_xml(ctx.state.user)}\n'
+                f'{format_as_xml(self.state.user)}\n'
                 f'Feedback: {self.email_feedback}'
             )
         else:
             prompt = (
                 f'Write a welcome email for the user:\n'
-                f'{format_as_xml(ctx.state.user)}'
+                f'{format_as_xml(self.state.user)}'
             )
 
         result = await email_writer_agent.run(
             prompt,
-            message_history=ctx.state.write_agent_messages,
+            message_history=self.state.write_agent_messages,
         )
-        ctx.state.write_agent_messages += result.all_messages()
-        return Feedback(result.data)
+        self.state.write_agent_messages += result.all_messages()
+        return Feedback(self.state, result.data)
 
 
 class EmailRequiresWrite(BaseModel):
@@ -441,17 +446,18 @@ feedback_agent = Agent[None, EmailRequiresWrite | EmailOk](
 
 
 @dataclass
-class Feedback(BaseNode[State, None, Email]):
+class Feedback(BaseNode[None, Email]):
+    state: State
     email: Email
 
     async def run(
         self,
-        ctx: GraphRunContext[State],
+        ctx: GraphRunContext,
     ) -> WriteEmail | End[Email]:
-        prompt = format_as_xml({'user': ctx.state.user, 'email': self.email})
+        prompt = format_as_xml({'user': self.state.user, 'email': self.email})
         result = await feedback_agent.run(prompt)
         if isinstance(result.data, EmailRequiresWrite):
-            return WriteEmail(email_feedback=result.data.feedback)
+            return WriteEmail(self.state, email_feedback=result.data.feedback)
         else:
             return End(self.email)
 
@@ -464,7 +470,7 @@ async def main():
     )
     state = State(user)
     feedback_graph = Graph(nodes=(WriteEmail, Feedback))
-    email, _ = await feedback_graph.run(WriteEmail(), state=state)
+    email, _ = await feedback_graph.run(WriteEmail(state))
     print(email)
     """
     Email(
@@ -507,25 +513,28 @@ In this example, an AI asks the user a question, the user provides an answer, th
 
 
     @dataclass
-    class Ask(BaseNode[QuestionState]):
-        async def run(self, ctx: GraphRunContext[QuestionState]) -> Answer:
+    class Ask(BaseNode):
+        state: QuestionState = field(repr=False)
+
+        async def run(self, ctx: GraphRunContext) -> Answer:
             result = await ask_agent.run(
                 'Ask a simple question with a single correct answer.',
-                message_history=ctx.state.ask_agent_messages,
+                message_history=self.state.ask_agent_messages,
             )
-            ctx.state.ask_agent_messages += result.all_messages()
-            ctx.state.question = result.data
-            return Answer(result.data)
+            self.state.ask_agent_messages += result.all_messages()
+            self.state.question = result.data
+            return Answer(self.state, result.data)
 
 
     @dataclass
-    class Answer(BaseNode[QuestionState]):
+    class Answer(BaseNode):
+        state: QuestionState = field(repr=False)
         question: str
         answer: str | None = None
 
-        async def run(self, ctx: GraphRunContext[QuestionState]) -> Evaluate:
+        async def run(self, ctx: GraphRunContext) -> Evaluate:
             assert self.answer is not None
-            return Evaluate(self.answer)
+            return Evaluate(self.state, self.answer)
 
 
     @dataclass
@@ -542,33 +551,35 @@ In this example, an AI asks the user a question, the user provides an answer, th
 
 
     @dataclass
-    class Evaluate(BaseNode[QuestionState]):
+    class Evaluate(BaseNode):
+        state: QuestionState = field(repr=False)
         answer: str
 
         async def run(
             self,
-            ctx: GraphRunContext[QuestionState],
+            ctx: GraphRunContext,
         ) -> End[str] | Reprimand:
-            assert ctx.state.question is not None
+            assert self.state.question is not None
             result = await evaluate_agent.run(
-                format_as_xml({'question': ctx.state.question, 'answer': self.answer}),
-                message_history=ctx.state.evaluate_agent_messages,
+                format_as_xml({'question': self.state.question, 'answer': self.answer}),
+                message_history=self.state.evaluate_agent_messages,
             )
-            ctx.state.evaluate_agent_messages += result.all_messages()
+            self.state.evaluate_agent_messages += result.all_messages()
             if result.data.correct:
                 return End(result.data.comment)
             else:
-                return Reprimand(result.data.comment)
+                return Reprimand(self.state, result.data.comment)
 
 
     @dataclass
-    class Reprimand(BaseNode[QuestionState]):
+    class Reprimand(BaseNode):
+        state: QuestionState = field(repr=False)
         comment: str
 
-        async def run(self, ctx: GraphRunContext[QuestionState]) -> Ask:
+        async def run(self, ctx: GraphRunContext) -> Ask:
             print(f'Comment: {self.comment}')
-            ctx.state.question = None
-            return Ask()
+            self.state.question = None
+            return Ask(self.state)
 
 
     question_graph = Graph(nodes=(Ask, Answer, Evaluate, Reprimand))
@@ -587,16 +598,16 @@ from ai_q_and_a_graph import Ask, question_graph, QuestionState, Answer
 
 async def main():
     state = QuestionState()  # (1)!
-    node = Ask()  # (2)!
+    node = Ask(state)  # (2)!
     history: list[HistoryStep[QuestionState]] = []  # (3)!
     while True:
-        node = await question_graph.next(node, history, state=state)  # (4)!
+        node = await question_graph.next(node, history)  # (4)!
         if isinstance(node, Answer):
             node.answer = Prompt.ask(node.question)  # (5)!
         elif isinstance(node, End):  # (6)!
             print(f'Correct answer! {node.data}')
             #> Correct answer! Well done, 1 + 1 = 2
-            print([e.data_snapshot() for e in history])
+            print([e.data for e in history])
             """
             [
                 Ask(),
@@ -650,7 +661,7 @@ As with PydanticAI, `pydantic-graph` supports dependency injection via a generic
 
 As an example of dependency injection, let's modify the `DivisibleBy5` example [above](#graph) to use a [`ProcessPoolExecutor`][concurrent.futures.ProcessPoolExecutor] to run the compute load in a separate process (this is a contrived example, `ProcessPoolExecutor` wouldn't actually improve performance in this example):
 
-```py {title="deps_example.py" py="3.10" test="skip" hl_lines="4 10-12 35-37 48-49"}
+```py {title="deps_example.py" py="3.10" test="skip" hl_lines="4 10-12 35-38 49-50"}
 from __future__ import annotations
 
 import asyncio
@@ -666,12 +677,12 @@ class GraphDeps:
 
 
 @dataclass
-class DivisibleBy5(BaseNode[None, None, int]):
+class DivisibleBy5(BaseNode[GraphDeps, int]):
     foo: int
 
     async def run(
         self,
-        ctx: GraphRunContext,
+        ctx: GraphRunContext[GraphDeps],
     ) -> Increment | End[int]:
         if self.foo % 5 == 0:
             return End(self.foo)
@@ -683,7 +694,7 @@ class DivisibleBy5(BaseNode[None, None, int]):
 class Increment(BaseNode):
     foo: int
 
-    async def run(self, ctx: GraphRunContext) -> DivisibleBy5:
+    async def run(self, ctx: GraphRunContext[GraphDeps]) -> DivisibleBy5:
         loop = asyncio.get_running_loop()
         compute_result = await loop.run_in_executor(
             ctx.deps.executor,
@@ -705,7 +716,7 @@ async def main():
     print(result)
     #> 5
     # the full history is quite verbose (see below), so we'll just print the summary
-    print([item.data_snapshot() for item in history])
+    print([item.data for item in history])
     """
     [
         DivisibleBy5(foo=3),
@@ -747,28 +758,28 @@ Putting that together, we can edit the last [`ai_q_and_a_graph.py`](#custom-cont
 ...
 from typing import Annotated
 
-from pydantic_graph import BaseNode, End, Graph, GraphRunContext, Edge
+from pydantic_graph import BaseNode, End, GraphRunContext, Edge
 
 ...
 
 @dataclass
-class Ask(BaseNode[QuestionState]):
+class Ask(BaseNode):
     """Generate question using GPT-4o."""
     docstring_notes = True
     async def run(
-        self, ctx: GraphRunContext[QuestionState]
+        self, ctx: GraphRunContext
     ) -> Annotated[Answer, Edge(label='Ask the question')]:
         ...
 
 ...
 
 @dataclass
-class Evaluate(BaseNode[QuestionState]):
+class Evaluate(BaseNode):
     answer: str
 
     async def run(
             self,
-            ctx: GraphRunContext[QuestionState],
+            ctx: GraphRunContext,
     ) -> Annotated[End[str], Edge(label='success')] | Reprimand:
         ...
 

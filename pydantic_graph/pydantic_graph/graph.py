@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from functools import cached_property
 from pathlib import Path
 from time import perf_counter
-from typing import TYPE_CHECKING, Annotated, Any, Callable, Generic, TypeVar
+from typing import TYPE_CHECKING, Annotated, Any, Generic, TypeVar
 
 import logfire_api
 import pydantic
@@ -17,7 +17,7 @@ import typing_extensions
 
 from . import _utils, exceptions, mermaid
 from .nodes import BaseNode, DepsT, End, GraphRunContext, NodeDef, RunEndT
-from .state import EndStep, HistoryStep, NodeStep, StateT, deep_copy_state, nodes_schema_var
+from .state import EndStep, HistoryStep, NodeStep, nodes_schema_var
 
 # while waiting for https://github.com/pydantic/logfire/issues/745
 try:
@@ -25,8 +25,6 @@ try:
 except ImportError:
     pass
 else:
-    from pathlib import Path
-
     logfire._internal.stack_info.NON_USER_CODE_PREFIXES += (str(Path(__file__).parent.absolute()),)
 
 
@@ -39,7 +37,7 @@ T = TypeVar('T')
 
 
 @dataclass(init=False)
-class Graph(Generic[StateT, DepsT, RunEndT]):
+class Graph(Generic[DepsT, RunEndT]):
     """Definition of a graph.
 
     In `pydantic-graph`, a graph is a collection of nodes that can be run in sequence. The nodes define
@@ -56,22 +54,22 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
     from pydantic_graph import BaseNode, End, Graph, GraphRunContext
 
     @dataclass
-    class MyState:
+    class Increment(BaseNode):
         number: int
 
-    @dataclass
-    class Increment(BaseNode[MyState]):
         async def run(self, ctx: GraphRunContext) -> Check42:
-            ctx.state.number += 1
-            return Check42()
+            self.number += 1
+            return Check42(self.number)
 
     @dataclass
-    class Check42(BaseNode[MyState, None, int]):
+    class Check42(BaseNode[None, int]):
+        number: int
+
         async def run(self, ctx: GraphRunContext) -> Increment | End[int]:
-            if ctx.state.number == 42:
-                return Increment()
+            if self.number == 42:
+                return Increment(self.number)
             else:
-                return End(ctx.state.number)
+                return End(self.number)
 
     never_42_graph = Graph(nodes=(Increment, Check42))
     ```
@@ -83,63 +81,51 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
     """
 
     name: str | None
-    node_defs: dict[str, NodeDef[StateT, DepsT, RunEndT]]
-    snapshot_state: Callable[[StateT], StateT]
-    _state_type: type[StateT] | _utils.Unset = field(repr=False)
+    node_defs: dict[str, NodeDef[DepsT, RunEndT]]
     _run_end_type: type[RunEndT] | _utils.Unset = field(repr=False)
     _auto_instrument: bool = field(repr=False)
 
     def __init__(
         self,
         *,
-        nodes: Sequence[type[BaseNode[StateT, DepsT, RunEndT]]],
+        nodes: Sequence[type[BaseNode[DepsT, RunEndT]]],
         name: str | None = None,
-        state_type: type[StateT] | _utils.Unset = _utils.UNSET,
         run_end_type: type[RunEndT] | _utils.Unset = _utils.UNSET,
-        snapshot_state: Callable[[StateT], StateT] = deep_copy_state,
         auto_instrument: bool = True,
     ):
         """Create a graph from a sequence of nodes.
 
         Args:
             nodes: The nodes which make up the graph, nodes need to be unique and all be generic in the same
-                state type.
+                deps type.
             name: Optional name for the graph, if not provided the name will be inferred from the calling frame
                 on the first call to a graph method.
-            state_type: The type of the state for the graph, this can generally be inferred from `nodes`.
             run_end_type: The type of the result of running the graph, this can generally be inferred from `nodes`.
-            snapshot_state: A function to snapshot the state of the graph, this is used in
-                [`NodeStep`][pydantic_graph.state.NodeStep] and [`EndStep`][pydantic_graph.state.EndStep] to record
-                the state before each step.
             auto_instrument: Whether to create a span for the graph run and the execution of each node's run method.
         """
         self.name = name
-        self._state_type = state_type
         self._run_end_type = run_end_type
         self._auto_instrument = auto_instrument
-        self.snapshot_state = snapshot_state
 
         parent_namespace = _utils.get_parent_namespace(inspect.currentframe())
-        self.node_defs: dict[str, NodeDef[StateT, DepsT, RunEndT]] = {}
+        self.node_defs: dict[str, NodeDef[DepsT, RunEndT]] = {}
         for node in nodes:
             self._register_node(node, parent_namespace)
 
         self._validate_edges()
 
     async def run(
-        self: Graph[StateT, DepsT, T],
-        start_node: BaseNode[StateT, DepsT, T],
+        self: Graph[DepsT, T],
+        start_node: BaseNode[DepsT, T],
         *,
-        state: StateT = None,
         deps: DepsT = None,
         infer_name: bool = True,
-    ) -> tuple[T, list[HistoryStep[StateT, T]]]:
+    ) -> tuple[T, list[HistoryStep[T]]]:
         """Run the graph from a starting node until it ends.
 
         Args:
             start_node: the first node to run, since the graph definition doesn't define the entry point in the graph,
                 you need to provide the starting node.
-            state: The initial state of the graph.
             deps: The dependencies of the graph.
             infer_name: Whether to infer the graph name from the calling frame.
 
@@ -149,20 +135,18 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
         Here's an example of running the graph from [above][pydantic_graph.graph.Graph]:
 
         ```py {title="run_never_42.py" noqa="I001" py="3.10"}
-        from never_42 import Increment, MyState, never_42_graph
+        from never_42 import Increment, never_42_graph
 
         async def main():
-            state = MyState(1)
-            _, history = await never_42_graph.run(Increment(), state=state)
-            print(state)
-            #> MyState(number=2)
+            end, history = await never_42_graph.run(Increment(1))
+            print(end)
+            #> 2
             print(len(history))
             #> 3
 
-            state = MyState(41)
-            _, history = await never_42_graph.run(Increment(), state=state)
-            print(state)
-            #> MyState(number=43)
+            end, history = await never_42_graph.run(Increment(41))
+            print(end)
+            #> 43
             print(len(history))
             #> 5
         ```
@@ -170,7 +154,7 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
         if infer_name and self.name is None:
             self._infer_name(inspect.currentframe())
 
-        history: list[HistoryStep[StateT, T]] = []
+        history: list[HistoryStep[T]] = []
         with ExitStack() as stack:
             run_span: logfire_api.LogfireSpan | None = None
             if self._auto_instrument:
@@ -184,7 +168,7 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
 
             next_node = start_node
             while True:
-                next_node = await self.next(next_node, history, state=state, deps=deps, infer_name=False)
+                next_node = await self.next(next_node, history, deps=deps, infer_name=False)
                 if isinstance(next_node, End):
                     history.append(EndStep(result=next_node))
                     if run_span is not None:
@@ -199,13 +183,12 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
                         )
 
     def run_sync(
-        self: Graph[StateT, DepsT, T],
-        start_node: BaseNode[StateT, DepsT, T],
+        self: Graph[DepsT, T],
+        start_node: BaseNode[DepsT, T],
         *,
-        state: StateT = None,
         deps: DepsT = None,
         infer_name: bool = True,
-    ) -> tuple[T, list[HistoryStep[StateT, T]]]:
+    ) -> tuple[T, list[HistoryStep[T]]]:
         """Run the graph synchronously.
 
         This is a convenience method that wraps [`self.run`][pydantic_graph.Graph.run] with `loop.run_until_complete(...)`.
@@ -214,7 +197,6 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
         Args:
             start_node: the first node to run, since the graph definition doesn't define the entry point in the graph,
                 you need to provide the starting node.
-            state: The initial state of the graph.
             deps: The dependencies of the graph.
             infer_name: Whether to infer the graph name from the calling frame.
 
@@ -223,25 +205,21 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
         """
         if infer_name and self.name is None:
             self._infer_name(inspect.currentframe())
-        return asyncio.get_event_loop().run_until_complete(
-            self.run(start_node, state=state, deps=deps, infer_name=False)
-        )
+        return asyncio.get_event_loop().run_until_complete(self.run(start_node, deps=deps, infer_name=False))
 
     async def next(
-        self: Graph[StateT, DepsT, T],
-        node: BaseNode[StateT, DepsT, T],
-        history: list[HistoryStep[StateT, T]],
+        self: Graph[DepsT, T],
+        node: BaseNode[DepsT, T],
+        history: list[HistoryStep[T]],
         *,
-        state: StateT = None,
         deps: DepsT = None,
         infer_name: bool = True,
-    ) -> BaseNode[StateT, DepsT, Any] | End[T]:
+    ) -> BaseNode[DepsT, Any] | End[T]:
         """Run a node in the graph and return the next node to run.
 
         Args:
             node: The node to run.
             history: The history of the graph run so far. NOTE: this will be mutated to add the new step.
-            state: The current state of the graph.
             deps: The dependencies of the graph.
             infer_name: Whether to infer the graph name from the calling frame.
 
@@ -257,20 +235,16 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
         with ExitStack() as stack:
             if self._auto_instrument:
                 stack.enter_context(_logfire.span('run node {node_id}', node_id=node_id, node=node))
-            ctx = GraphRunContext(state, deps)
+            ctx = GraphRunContext(deps)
             start_ts = _utils.now_utc()
             start = perf_counter()
             next_node = await node.run(ctx)
             duration = perf_counter() - start
 
-        history.append(
-            NodeStep(state=state, node=node, start_ts=start_ts, duration=duration, snapshot_state=self.snapshot_state)
-        )
+        history.append(NodeStep(node=node.snapshot(), start_ts=start_ts, duration=duration))
         return next_node
 
-    def dump_history(
-        self: Graph[StateT, DepsT, T], history: list[HistoryStep[StateT, T]], *, indent: int | None = None
-    ) -> bytes:
+    def dump_history(self: Graph[DepsT, T], history: list[HistoryStep[T]], *, indent: int | None = None) -> bytes:
         """Dump the history of a graph run as JSON.
 
         Args:
@@ -282,7 +256,7 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
         """
         return self.history_type_adapter.dump_json(history, indent=indent)
 
-    def load_history(self, json_bytes: str | bytes | bytearray) -> list[HistoryStep[StateT, RunEndT]]:
+    def load_history(self, json_bytes: str | bytes | bytearray) -> list[HistoryStep[RunEndT]]:
         """Load the history of a graph run from JSON.
 
         Args:
@@ -294,13 +268,12 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
         return self.history_type_adapter.validate_json(json_bytes)
 
     @cached_property
-    def history_type_adapter(self) -> pydantic.TypeAdapter[list[HistoryStep[StateT, RunEndT]]]:
+    def history_type_adapter(self) -> pydantic.TypeAdapter[list[HistoryStep[RunEndT]]]:
         nodes = [node_def.node for node_def in self.node_defs.values()]
-        state_t = self._get_state_type()
         end_t = self._get_run_end_type()
         token = nodes_schema_var.set(nodes)
         try:
-            ta = pydantic.TypeAdapter(list[Annotated[HistoryStep[state_t, end_t], pydantic.Discriminator('kind')]])
+            ta = pydantic.TypeAdapter(list[Annotated[HistoryStep[end_t], pydantic.Discriminator('kind')]])
         finally:
             nodes_schema_var.reset(token)
         return ta
@@ -428,21 +401,6 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
             kwargs['title'] = self.name
         mermaid.save_image(path, self, **kwargs)
 
-    def _get_state_type(self) -> type[StateT]:
-        if _utils.is_set(self._state_type):
-            return self._state_type
-
-        for node_def in self.node_defs.values():
-            for base in typing_extensions.get_original_bases(node_def.node):
-                if typing_extensions.get_origin(base) is BaseNode:
-                    args = typing_extensions.get_args(base)
-                    if args:
-                        return args[0]
-                    # break the inner (bases) loop
-                    break
-        # state defaults to None, so use that if we can't infer it
-        return type(None)  # pyright: ignore[reportReturnType]
-
     def _get_run_end_type(self) -> type[RunEndT]:
         if _utils.is_set(self._run_end_type):
             return self._run_end_type
@@ -451,8 +409,8 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
             for base in typing_extensions.get_original_bases(node_def.node):
                 if typing_extensions.get_origin(base) is BaseNode:
                     args = typing_extensions.get_args(base)
-                    if len(args) == 3:
-                        t = args[2]
+                    if len(args) == 2:
+                        t = args[1]
                         if not _utils.is_never(t):
                             return t
                     # break the inner (bases) loop
@@ -460,8 +418,8 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
         raise exceptions.GraphSetupError('Could not infer run end type from nodes, please set `run_end_type`.')
 
     def _register_node(
-        self: Graph[StateT, DepsT, T],
-        node: type[BaseNode[StateT, DepsT, T]],
+        self: Graph[DepsT, T],
+        node: type[BaseNode[DepsT, T]],
         parent_namespace: dict[str, Any] | None,
     ) -> None:
         node_id = node.get_id()
