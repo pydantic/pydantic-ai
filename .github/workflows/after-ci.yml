@@ -56,6 +56,9 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+      - run: echo "$GITHUB_CONTEXT"
+        env:
+          GITHUB_CONTEXT: ${{ toJson(github) }}
 
       - uses: actions/setup-node@v4
       - run: npm install
@@ -94,3 +97,4 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPOSITORY: ${{ github.repository }}
           REF: ${{ github.event.workflow_run.head_sha }}
+          ENVIRONMENT: deploy-preview

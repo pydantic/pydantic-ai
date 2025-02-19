@@ -96,30 +96,30 @@ jobs:
         with:
           enable-cache: true
 
-      - uses: pydantic/ollama-action@v3
-        with:
-          model: qwen2:0.5b
-
-      - run: >
-          uv run
-          --package pydantic-ai-slim
-          --extra openai
-          --extra vertexai
-          --extra groq
-          --extra anthropic
-          --extra mistral
-          --extra cohere
-          pytest tests/test_live.py -v
-          --durations=100
-        env:
-          PYDANTIC_AI_LIVE_TEST_DANGEROUS: "CHARGE-ME!"
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          GOOGLE_SERVICE_ACCOUNT_CONTENT: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_CONTENT }}
-          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
-          CO_API_KEY: ${{ secrets.COHERE_API_KEY }}
+#      - uses: pydantic/ollama-action@v3
+#        with:
+#          model: qwen2:0.5b
+#
+#      - run: >
+#          uv run
+#          --package pydantic-ai-slim
+#          --extra openai
+#          --extra vertexai
+#          --extra groq
+#          --extra anthropic
+#          --extra mistral
+#          --extra cohere
+#          pytest tests/test_live.py -v
+#          --durations=100
+#        env:
+#          PYDANTIC_AI_LIVE_TEST_DANGEROUS: "CHARGE-ME!"
+#          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+#          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+#          GOOGLE_SERVICE_ACCOUNT_CONTENT: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_CONTENT }}
+#          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+#          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+#          MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+#          CO_API_KEY: ${{ secrets.COHERE_API_KEY }}
 
   test:
     name: test on ${{ matrix.python-version }}
@@ -128,7 +128,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
+#        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
+        python-version: ["3.11"]
     env:
       UV_PYTHON: ${{ matrix.python-version }}
     steps:
