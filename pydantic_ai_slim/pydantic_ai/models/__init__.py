@@ -262,10 +262,6 @@ class StreamedResponse(ABC):
         """Get the timestamp of the response."""
         raise NotImplementedError()
 
-    async def stream_events(self) -> AsyncIterator[ModelResponseStreamEvent]:
-        """Stream the response as an async iterable of [`ModelResponseStreamEvent`][pydantic_ai.messages.ModelResponseStreamEvent]s."""
-        return self.__aiter__()
-
     async def stream_debounced_events(
         self, *, debounce_by: float | None = 0.1
     ) -> AsyncIterator[list[ModelResponseStreamEvent]]:

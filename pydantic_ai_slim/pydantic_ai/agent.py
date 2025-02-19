@@ -636,7 +636,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
                 if isinstance(node, _agent_graph.ModelRequestNode):
                     node = cast(_agent_graph.ModelRequestNode[AgentDepsT, Any], node)
                     graph_ctx = agent_run.ctx
-                    async with node.stream(graph_ctx) as streamed_response:
+                    async with node._stream(graph_ctx) as streamed_response:  # pyright: ignore[reportPrivateUsage]
 
                         async def stream_to_final(
                             s: models.StreamedResponse,

@@ -227,10 +227,11 @@ class ModelRequestNode(BaseNode[GraphAgentState, GraphAgentDeps[DepsT, Any], Nod
         return await self._make_request(ctx)
 
     @asynccontextmanager
-    async def stream(
+    async def _stream(
         self,
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]],
     ) -> AsyncIterator[models.StreamedResponse]:
+        # TODO: Consider changing this to return something more similar to a `StreamedRunResult`, then make it public
         if self._did_stream:
             raise exceptions.AgentRunError('stream() can only be called once')
 
@@ -314,7 +315,7 @@ class HandleResponseNode(BaseNode[GraphAgentState, GraphAgentDeps[DepsT, Any], N
 
     model_response: _messages.ModelResponse
 
-    _stream: AsyncIterator[_messages.HandleResponseEvent] | None = field(default=None, repr=False)
+    _events_iterator: AsyncIterator[_messages.HandleResponseEvent] | None = field(default=None, repr=False)
     _next_node: ModelRequestNode[DepsT, NodeRunEndT] | End[result.FinalResult[NodeRunEndT]] | None = field(
         default=None, repr=False
     )
@@ -358,7 +359,7 @@ class HandleResponseNode(BaseNode[GraphAgentState, GraphAgentDeps[DepsT, Any], N
     async def _run_stream(
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]]
     ) -> AsyncIterator[_messages.HandleResponseEvent]:
-        if self._stream is None:
+        if self._events_iterator is None:
             # Ensure that the stream is only run once
 
             async def _run_stream() -> AsyncIterator[_messages.HandleResponseEvent]:
@@ -387,9 +388,9 @@ class HandleResponseNode(BaseNode[GraphAgentState, GraphAgentDeps[DepsT, Any], N
                 else:
                     raise exceptions.UnexpectedModelBehavior('Received empty model response')
 
-            self._stream = _run_stream()
+            self._events_iterator = _run_stream()
 
-        async for event in self._stream:
+        async for event in self._events_iterator:
             yield event
 
     async def _handle_tool_calls(
