@@ -94,4 +94,3 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPOSITORY: ${{ github.repository }}
           REF: ${{ github.event.workflow_run.head_sha }}
-          ENVIRONMENT: deploy-preview

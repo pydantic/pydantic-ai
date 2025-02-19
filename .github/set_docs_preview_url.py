@@ -8,7 +8,7 @@ DEPLOY_OUTPUT = os.environ['DEPLOY_OUTPUT']
 GITHUB_TOKEN = os.environ['GITHUB_TOKEN']
 REPOSITORY = os.environ['REPOSITORY']
 REF = os.environ['REF']
-ENVIRONMENT = os.environ['ENVIRONMENT']
+ENVIRONMENT = 'deploy-preview'
 
 m = re.search(r'https://(\S+)\.workers\.dev', DEPLOY_OUTPUT)
 assert m, f'Could not find worker URL in {DEPLOY_OUTPUT!r}'
@@ -29,7 +29,7 @@ gh_headers = {
 deployment_url = f'https://api.github.com/repos/{REPOSITORY}/deployments'
 deployment_data = {
     'ref': REF,
-    'task': 'docs preview',
+    'task': f'docs preview {version_id}',
     'environment': ENVIRONMENT,
     'auto_merge': False,
     'required_contexts': [],
