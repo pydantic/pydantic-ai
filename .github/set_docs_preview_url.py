@@ -29,33 +29,65 @@ gh_headers = {
 
 # now create or update a comment on the PR with the preview URL
 
-create_endpoint = f'https://api.github.com/repos/{REPOSITORY}/issues/ISSUE_NUMBER/comments'
-
-
-deployment_url = f'https://api.github.com/repos/{REPOSITORY}/deployments'
-deployment_data = {
-    'ref': REF,
-    'task': f'docs preview {version_id}',
-    'environment': ENVIRONMENT,
-    'auto_merge': False,
-    'required_contexts': [],
-    'payload': json.dumps({
-        'preview_url': preview_url,
-        'worker_name': worker_name,
-        'version_id': version_id,
-    })
-}
-r = httpx.post(deployment_url, headers=gh_headers, json=deployment_data)
-print(f'POST {deployment_url}: {r.status_code}')  # {r.text}
+issues_url = f'https://api.github.com/repos/{REPOSITORY}/issues/{ISSUE_NUMBER}/comments'
+r = httpx.get(issues_url, headers=gh_headers)
+print(f'GET {issues_url}: {r.status_code}')
+print(r.text)
 r.raise_for_status()
-deployment_id = r.json()['id']
+from pprint import pprint
+pprint(r.json())
+comment_update_url = None
 
-status_url = f'https://api.github.com/repos/{REPOSITORY}/deployments/{deployment_id}/statuses'
-status_data = {
-    'environment': ENVIRONMENT,
-    'environment_url': preview_url,
-    'state': 'success',
-}
-r = httpx.post(status_url, headers=gh_headers, json=status_data)
-print(f'POST {status_url}: {r.status_code}')  # {r.text}
-r.raise_for_status()
+for comment in r.json():
+    if comment['user']['login'] == 'github-actions[bot]' and comment['body'].startswith('## Docs Preview'):
+        comment_update_url = comment['url']
+        break
+
+body = f"""\
+## Docs Preview
+
+<table>
+<tr>
+<td><strong>Preview URL:</strong></td>
+<td><a href="{preview_url}">{preview_url}</a></td>
+</tr>
+</table>
+"""
+comment_data = {'body': body}
+
+if comment_update_url:
+    r = httpx.patch(comment_update_url, headers=gh_headers, json=request_json)
+    print(f'PATCH {comment_update_url}: {r.status_code}')
+    r.raise_for_status()
+else:
+    r = httpx.post(issues_url, headers=gh_headers, json=comment_data)
+    print(f'POST {issues_url}: {r.status_code}')
+    r.raise_for_status()
+
+# deployment_url = f'https://api.github.com/repos/{REPOSITORY}/deployments'
+# deployment_data = {
+#     'ref': REF,
+#     'task': f'docs preview {version_id}',
+#     'environment': ENVIRONMENT,
+#     'auto_merge': False,
+#     'required_contexts': [],
+#     'payload': json.dumps({
+#         'preview_url': preview_url,
+#         'worker_name': worker_name,
+#         'version_id': version_id,
+#     })
+# }
+# r = httpx.post(deployment_url, headers=gh_headers, json=deployment_data)
+# print(f'POST {deployment_url}: {r.status_code}')  # {r.text}
+# r.raise_for_status()
+# deployment_id = r.json()['id']
+#
+# status_url = f'https://api.github.com/repos/{REPOSITORY}/deployments/{deployment_id}/statuses'
+# status_data = {
+#     'environment': ENVIRONMENT,
+#     'environment_url': preview_url,
+#     'state': 'success',
+# }
+# r = httpx.post(status_url, headers=gh_headers, json=status_data)
+# print(f'POST {status_url}: {r.status_code}')  # {r.text}
+# r.raise_for_status()

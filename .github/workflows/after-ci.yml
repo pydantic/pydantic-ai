@@ -78,22 +78,11 @@ jobs:
           allow_forks: true
           workflow_conclusion: completed
 
-      - uses: cloudflare/wrangler-action@v3
-        id: deploy
-        with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          environment: previews
-          workingDirectory: docs-site
-          command: >
-            deploy
-            --var GIT_COMMIT_SHA:${{ github.event.workflow_run.head_sha }}
-            --var GIT_BRANCH:${{ github.event.workflow_run.head_branch }}
-
       # work around for https://github.com/cloudflare/wrangler-action/issues/349
       - name: Set preview URL
         run: uv run --with httpx .github/set_docs_preview_url.py
         env:
-          DEPLOY_OUTPUT: ${{ steps.deploy.outputs.command-output }}
+          DEPLOY_OUTPUT: 'https://foobar.workers.dev Current Version ID: 1234567890'
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPOSITORY: ${{ github.repository }}
           REF: ${{ github.event.workflow_run.head_sha }}
