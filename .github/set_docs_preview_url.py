@@ -29,7 +29,7 @@ gh_headers = {
 
 # now create or update a comment on the PR with the preview URL
 
-create_endpoint = 'https://api.github.com/repos/{REPOSITORY}/issues/ISSUE_NUMBER/comments'
+create_endpoint = f'https://api.github.com/repos/{REPOSITORY}/issues/ISSUE_NUMBER/comments'
 
 
 deployment_url = f'https://api.github.com/repos/{REPOSITORY}/deployments'
