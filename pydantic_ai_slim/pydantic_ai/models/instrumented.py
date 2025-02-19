@@ -184,22 +184,22 @@ class InstrumentedModel(WrapperModel):
 
 def _request_part_body(part: ModelRequestPart) -> tuple[str, dict[str, Any]]:
     if isinstance(part, SystemPromptPart):
-        return 'gen_ai.system.message', {'content': part.content}
+        return 'gen_ai.system.message', {'content': part.content, 'role': 'system'}
     elif isinstance(part, UserPromptPart):
-        return 'gen_ai.user.message', {'content': part.content}
+        return 'gen_ai.user.message', {'content': part.content, 'role': 'user'}
     elif isinstance(part, ToolReturnPart):
-        return 'gen_ai.tool.message', {'content': part.content, 'id': part.tool_call_id}
+        return 'gen_ai.tool.message', {'content': part.content, 'role': 'tool', 'id': part.tool_call_id}
     elif isinstance(part, RetryPromptPart):
         if part.tool_name is None:
-            return 'gen_ai.user.message', {'content': part.model_response()}
+            return 'gen_ai.user.message', {'content': part.model_response(), 'role': 'user'}
         else:
-            return 'gen_ai.tool.message', {'content': part.model_response(), 'id': part.tool_call_id}
+            return 'gen_ai.tool.message', {'content': part.model_response(), 'role': 'tool', 'id': part.tool_call_id}
     else:
         return '', {}
 
 
 def _response_bodies(message: ModelResponse) -> list[dict[str, Any]]:
-    body: dict[str, Any] = {}
+    body: dict[str, Any] = {'role': 'assistant'}
     result = [body]
     for part in message.parts:
         if isinstance(part, ToolCallPart):
@@ -215,7 +215,7 @@ def _response_bodies(message: ModelResponse) -> list[dict[str, Any]]:
             )
         elif isinstance(part, TextPart):
             if body.get('content'):
-                body = {}
+                body = {'role': 'assistant'}
                 result.append(body)
             body['content'] = part.content
 

@@ -155,7 +155,7 @@ async def test_instrumented_model(capfire: CaptureLogfire):
     assert capfire.log_exporter.exported_logs_as_dicts() == snapshot(
         [
             {
-                'body': {'content': 'system_prompt'},
+                'body': {'content': 'system_prompt', 'role': 'system'},
                 'severity_number': 9,
                 'severity_text': None,
                 'attributes': {
@@ -169,7 +169,7 @@ async def test_instrumented_model(capfire: CaptureLogfire):
                 'trace_flags': 1,
             },
             {
-                'body': {'content': 'user_prompt'},
+                'body': {'content': 'user_prompt', 'role': 'user'},
                 'severity_number': 9,
                 'severity_text': None,
                 'attributes': {
@@ -183,7 +183,7 @@ async def test_instrumented_model(capfire: CaptureLogfire):
                 'trace_flags': 1,
             },
             {
-                'body': {'content': 'tool_return_content', 'id': 'tool_call_3'},
+                'body': {'content': 'tool_return_content', 'role': 'tool', 'id': 'tool_call_3'},
                 'severity_number': 9,
                 'severity_text': None,
                 'attributes': {
@@ -203,6 +203,7 @@ retry_prompt1
 
 Fix the errors and try again.\
 """,
+                    'role': 'tool',
                     'id': 'tool_call_4',
                 },
                 'severity_number': 9,
@@ -223,7 +224,8 @@ Fix the errors and try again.\
 retry_prompt2
 
 Fix the errors and try again.\
-"""
+""",
+                    'role': 'user',
                 },
                 'severity_number': 9,
                 'severity_text': None,
@@ -238,7 +240,7 @@ Fix the errors and try again.\
                 'trace_flags': 1,
             },
             {
-                'body': {'content': 'text3'},
+                'body': {'role': 'assistant', 'content': 'text3'},
                 'severity_number': 9,
                 'severity_text': None,
                 'attributes': {
@@ -255,6 +257,7 @@ Fix the errors and try again.\
                 'body': {
                     'index': 0,
                     'message': {
+                        'role': 'assistant',
                         'content': 'text1',
                         'tool_calls': [
                             {
@@ -280,7 +283,7 @@ Fix the errors and try again.\
                 'trace_flags': 1,
             },
             {
-                'body': {'index': 0, 'message': {'content': 'text2'}},
+                'body': {'index': 0, 'message': {'role': 'assistant', 'content': 'text2'}},
                 'severity_number': 9,
                 'severity_text': None,
                 'attributes': {'gen_ai.system': 'my_system', 'event.name': 'gen_ai.choice'},
@@ -363,7 +366,7 @@ async def test_instrumented_model_stream(capfire: CaptureLogfire):
     assert capfire.log_exporter.exported_logs_as_dicts() == snapshot(
         [
             {
-                'body': {'content': 'user_prompt'},
+                'body': {'content': 'user_prompt', 'role': 'user'},
                 'severity_number': 9,
                 'severity_text': None,
                 'attributes': {
@@ -377,7 +380,7 @@ async def test_instrumented_model_stream(capfire: CaptureLogfire):
                 'trace_flags': 1,
             },
             {
-                'body': {'index': 0, 'message': {'content': 'text1text2'}},
+                'body': {'index': 0, 'message': {'role': 'assistant', 'content': 'text1text2'}},
                 'severity_number': 9,
                 'severity_text': None,
                 'attributes': {'gen_ai.system': 'my_system', 'event.name': 'gen_ai.choice'},
@@ -456,7 +459,7 @@ async def test_instrumented_model_stream_break(capfire: CaptureLogfire):
     assert capfire.log_exporter.exported_logs_as_dicts() == snapshot(
         [
             {
-                'body': {'content': 'user_prompt'},
+                'body': {'content': 'user_prompt', 'role': 'user'},
                 'severity_number': 9,
                 'severity_text': None,
                 'attributes': {
@@ -470,7 +473,7 @@ async def test_instrumented_model_stream_break(capfire: CaptureLogfire):
                 'trace_flags': 1,
             },
             {
-                'body': {'index': 0, 'message': {'content': 'text1'}},
+                'body': {'index': 0, 'message': {'role': 'assistant', 'content': 'text1'}},
                 'severity_number': 9,
                 'severity_text': None,
                 'attributes': {'gen_ai.system': 'my_system', 'event.name': 'gen_ai.choice'},
