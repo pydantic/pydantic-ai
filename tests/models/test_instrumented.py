@@ -30,8 +30,8 @@ from ..conftest import try_import
 
 with try_import() as imports_successful:
     from logfire.testing import CaptureLogfire
-    from opentelemetry._events import NoOpEventLogger
-    from opentelemetry.trace import NoOpTracer
+    from opentelemetry._events import NoOpEventLoggerProvider
+    from opentelemetry.trace import NoOpTracerProvider
 
     from pydantic_ai.models.instrumented import InstrumentedModel
 
@@ -296,7 +296,7 @@ Fix the errors and try again.\
 
 @pytest.mark.anyio
 async def test_instrumented_model_not_recording():
-    model = InstrumentedModel(MyModel(), NoOpTracer(), NoOpEventLogger('foo'))
+    model = InstrumentedModel(MyModel(), NoOpTracerProvider(), NoOpEventLoggerProvider())
 
     messages: list[ModelMessage] = [ModelRequest(parts=[SystemPromptPart('system_prompt')])]
     await model.request(

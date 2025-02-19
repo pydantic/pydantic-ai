@@ -8,14 +8,17 @@ from typing import Any
 from ..messages import ModelMessage, ModelResponse
 from ..settings import ModelSettings
 from ..usage import Usage
-from . import Model, ModelRequestParameters, StreamedResponse
+from . import KnownModelName, Model, ModelRequestParameters, StreamedResponse, infer_model
 
 
-@dataclass
+@dataclass(init=False)
 class WrapperModel(Model):
     """Model which wraps another model."""
 
     wrapped: Model
+
+    def __init__(self, wrapped: Model | KnownModelName):
+        self.wrapped = infer_model(wrapped)
 
     async def request(self, *args: Any, **kwargs: Any) -> tuple[ModelResponse, Usage]:
         return await self.wrapped.request(*args, **kwargs)

@@ -7,8 +7,8 @@ from functools import partial
 from typing import Any, Callable, Literal
 
 import logfire_api
-from opentelemetry._events import Event, EventLogger
-from opentelemetry.trace import Tracer
+from opentelemetry._events import Event, EventLogger, EventLoggerProvider
+from opentelemetry.trace import Tracer, TracerProvider
 
 from ..messages import (
     ModelMessage,
@@ -24,7 +24,7 @@ from ..messages import (
 )
 from ..settings import ModelSettings
 from ..usage import Usage
-from . import Model, ModelRequestParameters, StreamedResponse
+from . import KnownModelName, Model, ModelRequestParameters, StreamedResponse
 from .wrapper import WrapperModel
 
 MODEL_SETTING_ATTRIBUTES: tuple[
@@ -56,14 +56,26 @@ class InstrumentedModel(WrapperModel):
     tracer: Tracer = field(repr=False)
     event_logger: EventLogger = field(repr=False)
 
+    def __init__(
+        self,
+        wrapped: Model | KnownModelName,
+        tracer_provider: TracerProvider,
+        event_logger_provider: EventLoggerProvider,
+    ):
+        super().__init__(wrapped)
+        self.tracer = tracer_provider.get_tracer('pydantic-ai')
+        self.event_logger = event_logger_provider.get_event_logger('pydantic-ai')
+
     @classmethod
     def from_logfire(
-        cls, wrapped: Model, logfire_instance: logfire_api.Logfire = logfire_api.DEFAULT_LOGFIRE_INSTANCE
+        cls,
+        wrapped: Model | KnownModelName,
+        logfire_instance: logfire_api.Logfire = logfire_api.DEFAULT_LOGFIRE_INSTANCE,
     ) -> InstrumentedModel:
         return cls(
-            wrapped=wrapped,
-            tracer=logfire_instance.config.get_tracer_provider().get_tracer('pydantic-ai'),
-            event_logger=logfire_instance.config.get_event_logger_provider().get_event_logger('pydantic-ai'),
+            wrapped,
+            logfire_instance.config.get_tracer_provider(),
+            logfire_instance.config.get_event_logger_provider(),
         )
 
     async def request(
