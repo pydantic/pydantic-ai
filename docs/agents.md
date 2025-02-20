@@ -114,7 +114,7 @@ agent = Agent('openai:gpt-4o')
 async def main():
     nodes = []
     # Begin an AgentRun, which is an async-iterable over the nodes of the agent's graph
-    with agent.iter('What is the capital of France?') as agent_run:
+    async with agent.iter('What is the capital of France?') as agent_run:
         async for node in agent_run:
             # Each node represents a step in the agent's execution
             nodes.append(node)
@@ -163,7 +163,7 @@ agent = Agent('openai:gpt-4o')
 
 
 async def main():
-    with agent.iter('What is the capital of France?') as agent_run:
+    async with agent.iter('What is the capital of France?') as agent_run:
         node = agent_run.next_node  # (1)!
 
         all_nodes = [node]
