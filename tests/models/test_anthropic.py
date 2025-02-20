@@ -141,14 +141,36 @@ async def test_sync_request_text_response(allow_model_requests: None):
 
     result = await agent.run('hello')
     assert result.data == 'world'
-    assert result.usage() == snapshot(Usage(requests=1, request_tokens=5, response_tokens=10, total_tokens=15))
+    assert result.usage() == snapshot(
+        Usage(
+            requests=1,
+            request_tokens=5,
+            response_tokens=10,
+            total_tokens=15,
+            details={
+                'cache_creation_input_tokens': 0,
+                'cache_read_input_tokens': 0,
+            },
+        )
+    )
 
     # reset the index so we get the same response again
     mock_client.index = 0  # type: ignore
 
     result = await agent.run('hello', message_history=result.new_messages())
     assert result.data == 'world'
-    assert result.usage() == snapshot(Usage(requests=1, request_tokens=5, response_tokens=10, total_tokens=15))
+    assert result.usage() == snapshot(
+        Usage(
+            requests=1,
+            request_tokens=5,
+            response_tokens=10,
+            total_tokens=15,
+            details={
+                'cache_creation_input_tokens': 0,
+                'cache_read_input_tokens': 0,
+            },
+        )
+    )
     assert result.all_messages() == snapshot(
         [
             ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
@@ -178,7 +200,18 @@ async def test_async_request_text_response(allow_model_requests: None):
 
     result = await agent.run('hello')
     assert result.data == 'world'
-    assert result.usage() == snapshot(Usage(requests=1, request_tokens=3, response_tokens=5, total_tokens=8))
+    assert result.usage() == snapshot(
+        Usage(
+            requests=1,
+            request_tokens=3,
+            response_tokens=5,
+            total_tokens=8,
+            details={
+                'cache_creation_input_tokens': 0,
+                'cache_read_input_tokens': 0,
+            },
+        )
+    )
 
 
 async def test_request_structured_response(allow_model_requests: None):
@@ -551,7 +584,18 @@ async def test_stream_structured(allow_model_requests: None):
             ]
         )
         assert result.is_complete
-        assert result.usage() == snapshot(Usage(requests=2, request_tokens=20, response_tokens=5, total_tokens=25))
+        assert result.usage() == snapshot(
+            Usage(
+                requests=2,
+                request_tokens=20,
+                response_tokens=5,
+                total_tokens=25,
+                details={
+                    'cache_creation_input_tokens': 0,
+                    'cache_read_input_tokens': 0,
+                },
+            )
+        )
         assert tool_called
 
 

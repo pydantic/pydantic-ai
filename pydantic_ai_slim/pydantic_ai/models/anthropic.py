@@ -248,6 +248,12 @@ class AnthropicModel(Model):
                 tool_choice['disable_parallel_tool_use'] = not allow_parallel_tool_calls
 
         system_prompt, anthropic_messages = await self._map_message(messages)
+        # HACK pydantic-ai does not currently support system prompts that are JSON arrays
+        # so we need to convert them to a list of TextBlockParam objects so the Anthropic client
+        # can accept the system prompt, potentially with cache controls or other objects.
+        if system_prompt.startswith('[') and system_prompt.endswith(']'):
+            system_prompt = json_loads(system_prompt)
+            system_prompt = [TextBlockParam(**s) for s in system_prompt]
 
         try:
             return await self.client.messages.create(
@@ -442,11 +448,17 @@ def _map_usage(message: AnthropicMessage | RawMessageStreamEvent) -> usage.Usage
 
     request_tokens = getattr(response_usage, 'input_tokens', None)
 
+    anthropic_extra = {
+        'cache_creation_input_tokens': int(getattr(response_usage, 'cache_creation_input_tokens', 0)),
+        'cache_read_input_tokens': int(getattr(response_usage, 'cache_read_input_tokens', 0)),
+    }
+
     return usage.Usage(
         # Usage coming from the RawMessageDeltaEvent doesn't have input token data, hence this getattr
         request_tokens=request_tokens,
         response_tokens=response_usage.output_tokens,
         total_tokens=(request_tokens or 0) + response_usage.output_tokens,
+        details=anthropic_extra,
     )
 
 
