@@ -58,9 +58,9 @@ graph2 = Graph(nodes=(Spam, Foo, Bar, Eggs))
 
 
 async def test_run_graph():
-    graph_run = await graph1.run(Foo())
-    assert graph_run.result is None
-    assert graph_run.history == snapshot(
+    result = await graph1.run(Foo())
+    assert result.output is None
+    assert result.history == snapshot(
         [
             NodeStep(
                 state=None,

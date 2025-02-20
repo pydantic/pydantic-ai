@@ -156,11 +156,11 @@ class Increment(BaseNode):  # (2)!
 
 
 fives_graph = Graph(nodes=[DivisibleBy5, Increment])  # (3)!
-graph_run = fives_graph.run_sync(DivisibleBy5(4))  # (4)!
-print(graph_run.result)
+result = fives_graph.run_sync(DivisibleBy5(4))  # (4)!
+print(result.output)
 #> 5
 # the full history is quite verbose (see below), so we'll just print the summary
-print([item.data_snapshot() for item in graph_run.history])
+print([item.data_snapshot() for item in result.history])
 #> [DivisibleBy5(foo=4), Increment(foo=4), DivisibleBy5(foo=5), End(data=5)]
 ```
 
@@ -464,8 +464,8 @@ async def main():
     )
     state = State(user)
     feedback_graph = Graph(nodes=(WriteEmail, Feedback))
-    graph_run = await feedback_graph.run(WriteEmail(), state=state)
-    print(graph_run.result)
+    result = await feedback_graph.run(WriteEmail(), state=state)
+    print(result.output)
     """
     Email(
         subject='Welcome to our tech blog!',
@@ -686,7 +686,7 @@ async def main():
             #> Node: CountDown()
             #> Node: CountDown()
             #> Node: End(data=0)
-    print('Final result:', run.final_result.result)  # (3)!
+    print('Final result:', run.result.output)  # (3)!
     #> Final result: 0
     print('History snapshots:', [step.data_snapshot() for step in run.history])
     """
@@ -724,7 +724,7 @@ async def main():
                 break  # (3)!
             node = await run.next(node)  # (4)!
 
-        print(run.final_result)  # (5)!
+        print(run.result)  # (5)!
         #> None
 
         for step in run.history:  # (6)!
@@ -738,7 +738,7 @@ async def main():
 2. The agent run is finished once an `End` node has been produced; instances of `End` cannot be passed to `next`.
 3. If the user decides to stop early, we break out of the loop. The graph run won't have a real final result in that case (`run.final_result` remains `None`).
 4. At each step, we call `await run.next(node)` to run it and get the next node (or an `End`).
-5. Because the run was ended early, we have no final result:
+5. Because we did not continue the run until it finished, the `result` is not set.
 6. The run's history is still populated with the steps we executed so far.
 
 ## Dependency Injection
@@ -798,11 +798,11 @@ fives_graph = Graph(nodes=[DivisibleBy5, Increment])
 async def main():
     with ProcessPoolExecutor() as executor:
         deps = GraphDeps(executor)
-        graph_run = await fives_graph.run(DivisibleBy5(3), deps=deps)
-    print(graph_run.result)
+        result = await fives_graph.run(DivisibleBy5(3), deps=deps)
+    print(result.output)
     #> 5
     # the full history is quite verbose (see below), so we'll just print the summary
-    print([item.data_snapshot() for item in graph_run.history])
+    print([item.data_snapshot() for item in result.history])
     """
     [
         DivisibleBy5(foo=3),

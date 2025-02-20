@@ -134,7 +134,7 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
         deps: DepsT = None,
         infer_name: bool = True,
         span: LogfireSpan | None = None,
-    ) -> GraphRunResult[StateT, DepsT, T]:
+    ) -> GraphRunResult[StateT, T]:
         """Run the graph from a starting node until it ends.
 
         Args:
@@ -177,7 +177,7 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
             async for _node in graph_run:
                 pass
 
-        final_result = graph_run.final_result
+        final_result = graph_run.result
         assert final_result is not None, 'GraphRun should have a final result'
         return final_result
 
@@ -242,7 +242,7 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
         state: StateT = None,
         deps: DepsT = None,
         infer_name: bool = True,
-    ) -> GraphRunResult[StateT, DepsT, T]:
+    ) -> GraphRunResult[StateT, T]:
         """Synchronously run the graph.
 
         This is a convenience method that wraps [`self.run`][pydantic_graph.Graph.run] with `loop.run_until_complete(...)`.
@@ -659,12 +659,14 @@ class GraphRun(Generic[StateT, DepsT, RunEndT]):
         return self._next_node
 
     @property
-    def final_result(self) -> GraphRunResult[StateT, DepsT, RunEndT] | None:
+    def result(self) -> GraphRunResult[StateT, RunEndT] | None:
         """The final result of the graph run if the run is completed, otherwise `None`."""
         if not isinstance(self._next_node, End):
             return None  # The GraphRun has not finished running
         return GraphRunResult(
-            self._next_node.data, graph=self.graph, history=self.history, state=self.state, deps=self.deps
+            self._next_node.data,
+            state=self.state,
+            history=self.history,
         )
 
     async def next(
@@ -735,13 +737,14 @@ class GraphRun(Generic[StateT, DepsT, RunEndT]):
             raise StopAsyncIteration
         return await self.next(self._next_node)
 
+    def __repr__(self) -> str:
+        return f'<GraphRun name={self.graph.name or "<unnamed>"} step={len(self.history) + 1}>'
+
 
 @dataclass
-class GraphRunResult(Generic[StateT, DepsT, RunEndT]):
+class GraphRunResult(Generic[StateT, RunEndT]):
     """The final result of running a graph."""
 
-    result: RunEndT
-    graph: Graph[StateT, DepsT, RunEndT] = field(repr=False)
-    history: list[HistoryStep[StateT, RunEndT]]
+    output: RunEndT
     state: StateT
-    deps: DepsT
+    history: list[HistoryStep[StateT, RunEndT]] = field(repr=False)

@@ -144,7 +144,7 @@ async def main():
         End(data=FinalResult(data='Paris', tool_name=None)),
     ]
     """
-    print(agent_run.final_result.data)
+    print(agent_run.result.data)
     #> Paris
 ```
 
