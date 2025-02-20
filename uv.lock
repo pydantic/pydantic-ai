@@ -1,4 +1,5 @@
 version = 1
+revision = 1
 requires-python = ">=3.9"
 resolution-markers = [
     "python_full_version == '3.10.*'",
@@ -1344,7 +1345,7 @@ wheels = [
 
 [[package]]
 name = "logfire"
-version = "3.6.0"
+version = "3.6.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "executing" },
@@ -1356,9 +1357,9 @@ dependencies = [
     { name = "tomli", marker = "python_full_version < '3.11'" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/2b/03/3ed1bab39509c0d9bd1048387bceee75e6229c520eec9f7200ff85714b91/logfire-3.6.0.tar.gz", hash = "sha256:065a12dc727c92450bb05c0bf17b6ca36d1ee1ba99b6ca53d0f88d877ac863d9", size = 268596 }
+sdist = { url = "https://files.pythonhosted.org/packages/30/68/50cecae912663b3ff606f24ee4090794bc5a9bb55fc68f25c1a3df8e3b77/logfire-3.6.1.tar.gz", hash = "sha256:93b11d94ad1a19a8bfc1fd97b40ecc3c919a3edc6a5e51cb2a153e64cd04aa9e", size = 268682 }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/bc/7f/f1baa1f8ba5e5a8a1a892b42589a0e51878db0385893b043cf75734c3b7e/logfire-3.6.0-py3-none-any.whl", hash = "sha256:9d215ede261cb579d4bad77ff3419ee17145a2a87a9864e1fda21f3143fa2307", size = 180916 },
+    { url = "https://files.pythonhosted.org/packages/76/48/58089aba35ececf61a0dd78fd527d6c80af281c80df56ceb60c29afbc04b/logfire-3.6.1-py3-none-any.whl", hash = "sha256:de8d7d9e21b292b0fb5cc653a2d6b93be33828ba9e5b2645d09135a7ffbdbf1e", size = 180970 },
 ]
 
 [package.optional-dependencies]
@@ -2559,6 +2560,7 @@ requires-dist = [
     { name = "pydantic-ai-examples", marker = "extra == 'examples'", editable = "examples" },
     { name = "pydantic-ai-slim", extras = ["openai", "vertexai", "groq", "anthropic", "mistral", "cohere"], editable = "pydantic_ai_slim" },
 ]
+provides-extras = ["examples", "logfire"]
 
 [package.metadata.requires-dev]
 docs = [
@@ -2679,6 +2681,7 @@ requires-dist = [
     { name = "pydantic-graph", editable = "pydantic_graph" },
     { name = "requests", marker = "extra == 'vertexai'", specifier = ">=2.32.3" },
 ]
+provides-extras = ["logfire", "openai", "cohere", "vertexai", "anthropic", "groq", "mistral"]
 
 [package.metadata.requires-dev]
 dev = [
