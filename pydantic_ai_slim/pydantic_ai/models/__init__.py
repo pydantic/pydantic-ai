@@ -234,6 +234,8 @@ class StreamedResponse(ABC):
 
         This method should be implemented by subclasses to translate the vendor-specific stream of events into
         pydantic_ai-format events.
+
+        It should use the `_parts_manager` to handle deltas, and should update the `_usage` attributes as it goes.
         """
         raise NotImplementedError()
         # noinspection PyUnreachableCode

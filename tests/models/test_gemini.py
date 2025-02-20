@@ -816,6 +816,10 @@ async def test_stream_text_heterogeneous(get_gemini_client: GetGeminiClient):
     m = GeminiModel('gemini-1.5-flash', http_client=gemini_client)
     agent = Agent(m)
 
+    @agent.tool_plain()
+    def get_location(loc_name: str) -> str:
+        return f'Location for {loc_name}'
+
     async with agent.run_stream('Hello') as result:
         data = await result.get_data()
 

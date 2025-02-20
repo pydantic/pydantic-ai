@@ -189,4 +189,4 @@ skip = '.git*,*.svg,*.lock,*.css'
 check-hidden = true
 # Ignore "formatting" like **L**anguage
 ignore-regex = '\*\*[A-Z]\*\*[a-z]+\b'
-# ignore-words-list = ''
+ignore-words-list = 'asend'

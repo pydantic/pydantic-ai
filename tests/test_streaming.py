@@ -335,14 +335,18 @@ async def test_call_tool_wrong_name():
     async def stream_structured_function(_messages: list[ModelMessage], _: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
         yield {0: DeltaToolCall(name='foobar', json_args='{}')}
 
-    agent = Agent(FunctionModel(stream_function=stream_structured_function), result_type=tuple[str, int])
+    agent = Agent(
+        FunctionModel(stream_function=stream_structured_function),
+        result_type=tuple[str, int],
+        retries=0,
+    )
 
     @agent.tool_plain
     async def ret_a(x: str) -> str:  # pragma: no cover
         return x
 
     with capture_run_messages() as messages:
-        with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum retries \(1\) for result validation'):
+        with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum retries \(0\) for result validation'):
             async with agent.run_stream('hello'):
                 pass  # pragma: no cover
 
@@ -353,14 +357,6 @@ async def test_call_tool_wrong_name():
                 parts=[ToolCallPart(tool_name='foobar', args='{}')],
                 model_name='function:stream_structured_function',
                 timestamp=IsNow(tz=timezone.utc),
-            ),
-            ModelRequest(
-                parts=[
-                    RetryPromptPart(
-                        content="Unknown tool name: 'foobar'. Available tools: ret_a, final_result",
-                        timestamp=IsNow(tz=timezone.utc),
-                    )
-                ]
             ),
         ]
     )

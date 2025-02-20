@@ -16,12 +16,12 @@ Graphs and finite state machines (FSMs) are a powerful abstraction to model, exe
 
 Alongside PydanticAI, we've developed `pydantic-graph` — an async graph and state machine library for Python where nodes and edges are defined using type hints.
 
-While this library is developed as part of PydanticAI; it has no dependency on `pydantic-ai` and can be considered as a pure  graph-based state machine library. You may find it useful whether or not you're using PydanticAI or even building with GenAI.
+While this library is developed as part of PydanticAI; it has no dependency on `pydantic-ai` and can be considered as a pure graph-based state machine library. You may find it useful whether or not you're using PydanticAI or even building with GenAI.
 
-`pydantic-graph` is designed for advanced users and makes heavy use of Python generics and types hints. It is not designed to be as beginner-friendly as PydanticAI.
+`pydantic-graph` is designed for advanced users and makes heavy use of Python generics and type hints. It is not designed to be as beginner-friendly as PydanticAI.
 
 !!! note "Very Early beta"
-    Graph support was [introduced](https://github.com/pydantic/pydantic-ai/pull/528) in v0.0.19 and is in very earlier beta. The API is subject to change. The documentation is incomplete. The implementation is incomplete.
+    Graph support was [introduced](https://github.com/pydantic/pydantic-ai/pull/528) in v0.0.19 and is in a very early beta. The API is subject to change. The documentation is incomplete. The implementation is incomplete.
 
 ## Installation
 
@@ -33,7 +33,7 @@ pip/uv-add pydantic-graph
 
 ## Graph Types
 
-`pydantic-graph` made up of a few key components:
+`pydantic-graph` is made up of a few key components:
 
 ### GraphRunContext
 
@@ -156,18 +156,18 @@ class Increment(BaseNode):  # (2)!
 
 
 fives_graph = Graph(nodes=[DivisibleBy5, Increment])  # (3)!
-result, history = fives_graph.run_sync(DivisibleBy5(4))  # (4)!
-print(result)
+result = fives_graph.run_sync(DivisibleBy5(4))  # (4)!
+print(result.output)
 #> 5
 # the full history is quite verbose (see below), so we'll just print the summary
-print([item.data_snapshot() for item in history])
+print([item.data_snapshot() for item in result.history])
 #> [DivisibleBy5(foo=4), Increment(foo=4), DivisibleBy5(foo=5), End(data=5)]
 ```
 
 1. The `DivisibleBy5` node is parameterized with `None` for the state param and `None` for the deps param as this graph doesn't use state or deps, and `int` as it can end the run.
 2. The `Increment` node doesn't return `End`, so the `RunEndT` generic parameter is omitted, state can also be omitted as the graph doesn't use state.
 3. The graph is created with a sequence of nodes.
-4. The graph is run synchronously with [`run_sync`][pydantic_graph.graph.Graph.run_sync] the initial state `None` and the start node `DivisibleBy5(4)` are passed as arguments.
+4. The graph is run synchronously with [`run_sync`][pydantic_graph.graph.Graph.run_sync]. The initial node is `DivisibleBy5(4)`. Because the graph doesn't use external state or deps, we don't pass `state` or `deps`.
 
 _(This example is complete, it can be run "as is" with Python 3.10+)_
 
@@ -295,17 +295,17 @@ async def main():
 2. A dictionary of products mapped to prices.
 3. The `InsertCoin` node, [`BaseNode`][pydantic_graph.nodes.BaseNode] is parameterized with `MachineState` as that's the state used in this graph.
 4. The `InsertCoin` node prompts the user to insert coins. We keep things simple by just entering a monetary amount as a float. Before you start thinking this is a toy too since it's using [rich's `Prompt.ask`][rich.prompt.PromptBase.ask] within nodes, see [below](#custom-control-flow) for how control flow can be managed when nodes require external input.
-5. The `CoinsInserted` node; again this is a [`dataclass`][dataclasses.dataclass], in this case with one field `amount`, thus nodes calling `CoinsInserted` must provide an amount.
+5. The `CoinsInserted` node; again this is a [`dataclass`][dataclasses.dataclass] with one field `amount`.
 6. Update the user's balance with the amount inserted.
 7. If the user has already selected a product, go to `Purchase`, otherwise go to `SelectProduct`.
 8. In the `Purchase` node, look up the price of the product if the user entered a valid product.
 9. If the user did enter a valid product, set the product in the state so we don't revisit `SelectProduct`.
 10. If the balance is enough to purchase the product, adjust the balance to reflect the purchase and return [`End`][pydantic_graph.nodes.End] to end the graph. We're not using the run return type, so we call `End` with `None`.
-11. If the balance is insufficient, to go `InsertCoin` to prompt the user to insert more coins.
+11. If the balance is insufficient, go to `InsertCoin` to prompt the user to insert more coins.
 12. If the product is invalid, go to `SelectProduct` to prompt the user to select a product again.
-13. The graph is created by passing a list of nodes to [`Graph`][pydantic_graph.graph.Graph]. Order of nodes is not important, but will alter how [diagrams](#mermaid-diagrams) are displayed.
+13. The graph is created by passing a list of nodes to [`Graph`][pydantic_graph.graph.Graph]. Order of nodes is not important, but it can affect how [diagrams](#mermaid-diagrams) are displayed.
 14. Initialize the state. This will be passed to the graph run and mutated as the graph runs.
-15. Run the graph with the initial state. Since the graph can be run from any node, we must pass the start node — in this case, `InsertCoin`. [`Graph.run`][pydantic_graph.graph.Graph.run] returns a tuple of the return value (`None`) in this case, and the [history][pydantic_graph.state.HistoryStep] of the graph run.
+15. Run the graph with the initial state. Since the graph can be run from any node, we must pass the start node — in this case, `InsertCoin`. [`Graph.run`][pydantic_graph.graph.Graph.run] returns a [`GraphRunResult`][pydantic_graph.graph.GraphRunResult] that provides the final data and a history of the run.
 16. The return type of the node's [`run`][pydantic_graph.nodes.BaseNode.run] method is important as it is used to determine the outgoing edges of the node. This information in turn is used to render [mermaid diagrams](#mermaid-diagrams) and is enforced at runtime to detect misbehavior as soon as possible.
 17. The return type of `CoinsInserted`'s [`run`][pydantic_graph.nodes.BaseNode.run] method is a union, meaning multiple outgoing edges are possible.
 18. Unlike other nodes, `Purchase` can end the run, so the [`RunEndT`][pydantic_graph.nodes.RunEndT] generic parameter must be set. In this case it's `None` since the graph run return type is `None`.
@@ -464,8 +464,8 @@ async def main():
     )
     state = State(user)
     feedback_graph = Graph(nodes=(WriteEmail, Feedback))
-    email, _ = await feedback_graph.run(WriteEmail(), state=state)
-    print(email)
+    result = await feedback_graph.run(WriteEmail(), state=state)
+    print(result.output)
     """
     Email(
         subject='Welcome to our tech blog!',
@@ -606,6 +606,7 @@ async def main():
                 Ask(),
                 Answer(question='what is 1 + 1?', answer='2'),
                 Evaluate(answer='2'),
+                End(data='Well done, 1 + 1 = 2'),
             ]
             """
             return
@@ -642,11 +643,107 @@ stateDiagram-v2
   Reprimand --> Ask
 ```
 
-You maybe have noticed that although this examples transfers control flow out of the graph run, we're still using [rich's `Prompt.ask`][rich.prompt.PromptBase.ask] to get user input, with the process hanging while we wait for the user to enter a response. For an example of genuine out-of-process control flow, see the [question graph example](examples/question-graph.md).
+You maybe have noticed that although this example transfers control flow out of the graph run, we're still using [rich's `Prompt.ask`][rich.prompt.PromptBase.ask] to get user input, with the process hanging while we wait for the user to enter a response. For an example of genuine out-of-process control flow, see the [question graph example](examples/question-graph.md).
+
+## Iterating Over a Graph
+
+### Using `Graph.iter` for `async for` iteration
+
+Sometimes you want direct control or insight into each node as the graph executes. The easiest way to do that is with the [`Graph.iter`][pydantic_graph.graph.Graph.iter] method, which returns a **context manager** that yields a [`GraphRun`][pydantic_graph.graph.GraphRun] object. The `GraphRun` is an async-iterable over the nodes of your graph, allowing you to record or modify them as they execute.
+
+Here's an example:
+
+```python {title="count_down.py" noqa="I001" py="3.10"}
+from __future__ import annotations as _annotations
+
+from dataclasses import dataclass
+from pydantic_graph import Graph, BaseNode, End, GraphRunContext
+
+
+@dataclass
+class CountDownState:
+    counter: int
+
+
+@dataclass
+class CountDown(BaseNode[CountDownState]):
+    async def run(self, ctx: GraphRunContext[CountDownState]) -> CountDown | End[int]:
+        if ctx.state.counter <= 0:
+            return End(ctx.state.counter)
+        ctx.state.counter -= 1
+        return CountDown()
+
+
+count_down_graph = Graph(nodes=[CountDown])
+
+
+async def main():
+    state = CountDownState(counter=3)
+    with count_down_graph.iter(CountDown(), state=state) as run:  # (1)!
+        async for node in run:  # (2)!
+            print('Node:', node)
+            #> Node: CountDown()
+            #> Node: CountDown()
+            #> Node: CountDown()
+            #> Node: End(data=0)
+    print('Final result:', run.result.output)  # (3)!
+    #> Final result: 0
+    print('History snapshots:', [step.data_snapshot() for step in run.history])
+    """
+    History snapshots:
+    [CountDown(), CountDown(), CountDown(), CountDown(), End(data=0)]
+    """
+```
+
+1. `Graph.iter(...)` returns a [`GraphRun`][pydantic_graph.graph.GraphRun].
+2. Here, we step through each node as it is executed.
+3. Once the graph returns an [`End`][pydantic_graph.nodes.End], the loop ends, and `run.final_result` becomes a [`GraphRunResult`][pydantic_graph.graph.GraphRunResult] containing the final outcome (`0` here).
+
+### Using `GraphRun.next(node)` manually
+
+Alternatively, you can drive iteration manually with the [`GraphRun.next`][pydantic_graph.graph.GraphRun.next] method, which allows you to pass in whichever node you want to run next. You can modify or selectively skip nodes this way.
+
+Below is a contrived example that stops whenever the counter is at 2, ignoring any node runs beyond that:
+
+```python {title="count_down_next.py" noqa="I001" py="3.10"}
+from pydantic_graph import End
+from count_down import CountDown, CountDownState, count_down_graph
+
+
+async def main():
+    state = CountDownState(counter=5)
+    with count_down_graph.iter(CountDown(), state=state) as run:
+        node = run.next_node  # (1)!
+        while not isinstance(node, End):  # (2)!
+            print('Node:', node)
+            #> Node: CountDown()
+            #> Node: CountDown()
+            #> Node: CountDown()
+            #> Node: CountDown()
+            if state.counter == 2:
+                break  # (3)!
+            node = await run.next(node)  # (4)!
+
+        print(run.result)  # (5)!
+        #> None
+
+        for step in run.history:  # (6)!
+            print('History Step:', step.data_snapshot(), step.state)
+            #> History Step: CountDown() CountDownState(counter=4)
+            #> History Step: CountDown() CountDownState(counter=3)
+            #> History Step: CountDown() CountDownState(counter=2)
+```
+
+1. We start by grabbing the first node that will be run in the agent's graph.
+2. The agent run is finished once an `End` node has been produced; instances of `End` cannot be passed to `next`.
+3. If the user decides to stop early, we break out of the loop. The graph run won't have a real final result in that case (`run.final_result` remains `None`).
+4. At each step, we call `await run.next(node)` to run it and get the next node (or an `End`).
+5. Because we did not continue the run until it finished, the `result` is not set.
+6. The run's history is still populated with the steps we executed so far.
 
 ## Dependency Injection
 
-As with PydanticAI, `pydantic-graph` supports dependency injection via a generic parameter on [`Graph`][pydantic_graph.graph.Graph] and [`BaseNode`][pydantic_graph.nodes.BaseNode], and the [`GraphRunContext.deps`][pydantic_graph.nodes.GraphRunContext.deps] fields.
+As with PydanticAI, `pydantic-graph` supports dependency injection via a generic parameter on [`Graph`][pydantic_graph.graph.Graph] and [`BaseNode`][pydantic_graph.nodes.BaseNode], and the [`GraphRunContext.deps`][pydantic_graph.nodes.GraphRunContext.deps] field.
 
 As an example of dependency injection, let's modify the `DivisibleBy5` example [above](#graph) to use a [`ProcessPoolExecutor`][concurrent.futures.ProcessPoolExecutor] to run the compute load in a separate process (this is a contrived example, `ProcessPoolExecutor` wouldn't actually improve performance in this example):
 
@@ -666,12 +763,12 @@ class GraphDeps:
 
 
 @dataclass
-class DivisibleBy5(BaseNode[None, None, int]):
+class DivisibleBy5(BaseNode[None, GraphDeps, int]):
     foo: int
 
     async def run(
         self,
-        ctx: GraphRunContext,
+        ctx: GraphRunContext[None, GraphDeps],
     ) -> Increment | End[int]:
         if self.foo % 5 == 0:
             return End(self.foo)
@@ -680,10 +777,10 @@ class DivisibleBy5(BaseNode[None, None, int]):
 
 
 @dataclass
-class Increment(BaseNode):
+class Increment(BaseNode[None, GraphDeps]):
     foo: int
 
-    async def run(self, ctx: GraphRunContext) -> DivisibleBy5:
+    async def run(self, ctx: GraphRunContext[None, GraphDeps]) -> DivisibleBy5:
         loop = asyncio.get_running_loop()
         compute_result = await loop.run_in_executor(
             ctx.deps.executor,
@@ -701,11 +798,11 @@ fives_graph = Graph(nodes=[DivisibleBy5, Increment])
 async def main():
     with ProcessPoolExecutor() as executor:
         deps = GraphDeps(executor)
-        result, history = await fives_graph.run(DivisibleBy5(3), deps=deps)
-    print(result)
+        result = await fives_graph.run(DivisibleBy5(3), deps=deps)
+    print(result.output)
     #> 5
     # the full history is quite verbose (see below), so we'll just print the summary
-    print([item.data_snapshot() for item in history])
+    print([item.data_snapshot() for item in result.history])
     """
     [
         DivisibleBy5(foo=3),
@@ -779,7 +876,7 @@ question_graph.mermaid_save('image.png', highlighted_nodes=[Answer])
 
 _(This example is not complete and cannot be run directly)_
 
-Would generate and image that looks like this:
+This would generate an image that looks like this:
 
 ```mermaid
 ---
@@ -809,7 +906,7 @@ You can specify the direction of the state diagram using one of the following va
 - `'RL'`: Right to left, the diagram flows horizontally from right to left.
 - `'BT'`: Bottom to top, the diagram flows vertically from bottom to top.
 
-Here is an example of how to do this using 'Left to Right' (LR) instead of the default 'Top to Bottom' (TB)
+Here is an example of how to do this using 'Left to Right' (LR) instead of the default 'Top to Bottom' (TB):
 ```py {title="vending_machine_diagram.py" py="3.10"}
 from vending_machine import InsertCoin, vending_machine_graph
 

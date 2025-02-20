@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+import uuid
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Annotated, Any, Literal, Union, cast, overload
@@ -445,3 +446,33 @@ class PartDeltaEvent:
 
 ModelResponseStreamEvent = Annotated[Union[PartStartEvent, PartDeltaEvent], pydantic.Discriminator('event_kind')]
 """An event in the model response stream, either starting a new part or applying a delta to an existing one."""
+
+
+@dataclass
+class FunctionToolCallEvent:
+    """An event indicating the start to a call to a function tool."""
+
+    part: ToolCallPart
+    """The (function) tool call to make."""
+    call_id: str = field(init=False)
+    """An ID used for matching details about the call to its result. If present, defaults to the part's tool_call_id."""
+    event_kind: Literal['function_tool_call'] = 'function_tool_call'
+    """Event type identifier, used as a discriminator."""
+
+    def __post_init__(self):
+        self.call_id = self.part.tool_call_id or str(uuid.uuid4())
+
+
+@dataclass
+class FunctionToolResultEvent:
+    """An event indicating the result of a function tool call."""
+
+    result: ToolReturnPart | RetryPromptPart
+    """The result of the call to the function tool."""
+    call_id: str
+    """An ID used to match the result to its original call."""
+    event_kind: Literal['function_tool_result'] = 'function_tool_result'
+    """Event type identifier, used as a discriminator."""
+
+
+HandleResponseEvent = Annotated[Union[FunctionToolCallEvent, FunctionToolResultEvent], pydantic.Discriminator('kind')]

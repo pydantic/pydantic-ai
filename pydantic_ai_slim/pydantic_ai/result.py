@@ -1,8 +1,7 @@
 from __future__ import annotations as _annotations
 
-from abc import ABC, abstractmethod
 from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable
-from copy import deepcopy
+from copy import copy
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Generic, Union, cast
@@ -14,7 +13,7 @@ from . import _result, _utils, exceptions, messages as _messages, models
 from .tools import AgentDepsT, RunContext
 from .usage import Usage, UsageLimits
 
-__all__ = 'ResultDataT', 'ResultDataT_inv', 'ResultValidatorFunc', 'RunResult', 'StreamedRunResult'
+__all__ = 'ResultDataT', 'ResultDataT_inv', 'ResultValidatorFunc'
 
 
 T = TypeVar('T')
@@ -53,14 +52,33 @@ _logfire = logfire_api.Logfire(otel_scope='pydantic-ai')
 
 
 @dataclass
-class _BaseRunResult(ABC, Generic[ResultDataT]):
-    """Base type for results.
-
-    You should not import or use this type directly, instead use its subclasses `RunResult` and `StreamedRunResult`.
-    """
+class StreamedRunResult(Generic[AgentDepsT, ResultDataT]):
+    """Result of a streamed run that returns structured data via a tool call."""
 
     _all_messages: list[_messages.ModelMessage]
     _new_message_index: int
+
+    _usage_limits: UsageLimits | None
+    _stream_response: models.StreamedResponse
+    _result_schema: _result.ResultSchema[ResultDataT] | None
+    _run_ctx: RunContext[AgentDepsT]
+    _result_validators: list[_result.ResultValidator[AgentDepsT, ResultDataT]]
+    _result_tool_name: str | None
+    _on_complete: Callable[[], Awaitable[None]]
+
+    _initial_run_ctx_usage: Usage = field(init=False)
+    is_complete: bool = field(default=False, init=False)
+    """Whether the stream has all been received.
+
+    This is set to `True` when one of
+    [`stream`][pydantic_ai.result.StreamedRunResult.stream],
+    [`stream_text`][pydantic_ai.result.StreamedRunResult.stream_text],
+    [`stream_structured`][pydantic_ai.result.StreamedRunResult.stream_structured] or
+    [`get_data`][pydantic_ai.result.StreamedRunResult.get_data] completes.
+    """
+
+    def __post_init__(self):
+        self._initial_run_ctx_usage = copy(self._run_ctx.usage)
 
     def all_messages(self, *, result_tool_return_content: str | None = None) -> list[_messages.ModelMessage]:
         """Return the history of _messages.
@@ -80,7 +98,7 @@ class _BaseRunResult(ABC, Generic[ResultDataT]):
         return self._all_messages
 
     def all_messages_json(self, *, result_tool_return_content: str | None = None) -> bytes:
-        """Return all messages from [`all_messages`][pydantic_ai.result._BaseRunResult.all_messages] as JSON bytes.
+        """Return all messages from [`all_messages`][pydantic_ai.result.StreamedRunResult.all_messages] as JSON bytes.
 
         Args:
             result_tool_return_content: The return content of the tool call to set in the last message.
@@ -112,7 +130,7 @@ class _BaseRunResult(ABC, Generic[ResultDataT]):
         return self.all_messages(result_tool_return_content=result_tool_return_content)[self._new_message_index :]
 
     def new_messages_json(self, *, result_tool_return_content: str | None = None) -> bytes:
-        """Return new messages from [`new_messages`][pydantic_ai.result._BaseRunResult.new_messages] as JSON bytes.
+        """Return new messages from [`new_messages`][pydantic_ai.result.StreamedRunResult.new_messages] as JSON bytes.
 
         Args:
             result_tool_return_content: The return content of the tool call to set in the last message.
@@ -126,78 +144,6 @@ class _BaseRunResult(ABC, Generic[ResultDataT]):
         return _messages.ModelMessagesTypeAdapter.dump_json(
             self.new_messages(result_tool_return_content=result_tool_return_content)
         )
-
-    @abstractmethod
-    def usage(self) -> Usage:
-        raise NotImplementedError()
-
-
-@dataclass
-class RunResult(_BaseRunResult[ResultDataT]):
-    """Result of a non-streamed run."""
-
-    data: ResultDataT
-    """Data from the final response in the run."""
-    _result_tool_name: str | None
-    _usage: Usage
-
-    def usage(self) -> Usage:
-        """Return the usage of the whole run."""
-        return self._usage
-
-    def all_messages(self, *, result_tool_return_content: str | None = None) -> list[_messages.ModelMessage]:
-        """Return the history of _messages.
-
-        Args:
-            result_tool_return_content: The return content of the tool call to set in the last message.
-                This provides a convenient way to modify the content of the result tool call if you want to continue
-                the conversation and want to set the response to the result tool call. If `None`, the last message will
-                not be modified.
-
-        Returns:
-            List of messages.
-        """
-        if result_tool_return_content is not None:
-            return self._set_result_tool_return(result_tool_return_content)
-        else:
-            return self._all_messages
-
-    def _set_result_tool_return(self, return_content: str) -> list[_messages.ModelMessage]:
-        """Set return content for the result tool.
-
-        Useful if you want to continue the conversation and want to set the response to the result tool call.
-        """
-        if not self._result_tool_name:
-            raise ValueError('Cannot set result tool return content when the return type is `str`.')
-        messages = deepcopy(self._all_messages)
-        last_message = messages[-1]
-        for part in last_message.parts:
-            if isinstance(part, _messages.ToolReturnPart) and part.tool_name == self._result_tool_name:
-                part.content = return_content
-                return messages
-        raise LookupError(f'No tool call found with tool name {self._result_tool_name!r}.')
-
-
-@dataclass
-class StreamedRunResult(_BaseRunResult[ResultDataT], Generic[AgentDepsT, ResultDataT]):
-    """Result of a streamed run that returns structured data via a tool call."""
-
-    _usage_limits: UsageLimits | None
-    _stream_response: models.StreamedResponse
-    _result_schema: _result.ResultSchema[ResultDataT] | None
-    _run_ctx: RunContext[AgentDepsT]
-    _result_validators: list[_result.ResultValidator[AgentDepsT, ResultDataT]]
-    _result_tool_name: str | None
-    _on_complete: Callable[[], Awaitable[None]]
-    is_complete: bool = field(default=False, init=False)
-    """Whether the stream has all been received.
-
-    This is set to `True` when one of
-    [`stream`][pydantic_ai.result.StreamedRunResult.stream],
-    [`stream_text`][pydantic_ai.result.StreamedRunResult.stream_text],
-    [`stream_structured`][pydantic_ai.result.StreamedRunResult.stream_structured] or
-    [`get_data`][pydantic_ai.result.StreamedRunResult.get_data] completes.
-    """
 
     async def stream(self, *, debounce_by: float | None = 0.1) -> AsyncIterator[ResultDataT]:
         """Stream the response as an async iterable.
@@ -234,61 +180,17 @@ class StreamedRunResult(_BaseRunResult[ResultDataT], Generic[AgentDepsT, ResultD
         if self._result_schema and not self._result_schema.allow_text_result:
             raise exceptions.UserError('stream_text() can only be used with text responses')
 
-        usage_checking_stream = _get_usage_checking_stream_response(
-            self._stream_response, self._usage_limits, self.usage
-        )
-
-        # Define a "merged" version of the iterator that will yield items that have already been retrieved
-        # and items that we receive while streaming. We define a dedicated async iterator for this so we can
-        # pass the combined stream to the group_by_temporal function within `_stream_text_deltas` below.
-        async def _stream_text_deltas_ungrouped() -> AsyncIterator[tuple[str, int]]:
-            # if the response currently has any parts with content, yield those before streaming
-            msg = self._stream_response.get()
-            for i, part in enumerate(msg.parts):
-                if isinstance(part, _messages.TextPart) and part.content:
-                    yield part.content, i
-
-            async for event in usage_checking_stream:
-                if (
-                    isinstance(event, _messages.PartStartEvent)
-                    and isinstance(event.part, _messages.TextPart)
-                    and event.part.content
-                ):
-                    yield event.part.content, event.index
-                elif (
-                    isinstance(event, _messages.PartDeltaEvent)
-                    and isinstance(event.delta, _messages.TextPartDelta)
-                    and event.delta.content_delta
-                ):
-                    yield event.delta.content_delta, event.index
-
-        async def _stream_text_deltas() -> AsyncIterator[str]:
-            async with _utils.group_by_temporal(_stream_text_deltas_ungrouped(), debounce_by) as group_iter:
-                async for items in group_iter:
-                    yield ''.join([content for content, _ in items])
-
         with _logfire.span('response stream text') as lf_span:
             if delta:
-                async for text in _stream_text_deltas():
+                async for text in self._stream_response_text(delta=delta, debounce_by=debounce_by):
                     yield text
             else:
-                # a quick benchmark shows it's faster to build up a string with concat when we're
-                # yielding at each step
-                deltas: list[str] = []
                 combined_validated_text = ''
-                async for text in _stream_text_deltas():
-                    deltas.append(text)
-                    combined_text = ''.join(deltas)
-                    combined_validated_text = await self._validate_text_result(combined_text)
+                async for text in self._stream_response_text(delta=delta, debounce_by=debounce_by):
+                    combined_validated_text = await self._validate_text_result(text)
                     yield combined_validated_text
-
                 lf_span.set_attribute('combined_text', combined_validated_text)
-                await self._marked_completed(
-                    _messages.ModelResponse(
-                        parts=[_messages.TextPart(combined_validated_text)],
-                        model_name=self._stream_response.model_name,
-                    )
-                )
+            await self._marked_completed(self._stream_response.get())
 
     async def stream_structured(
         self, *, debounce_by: float | None = 0.1
@@ -303,10 +205,6 @@ class StreamedRunResult(_BaseRunResult[ResultDataT], Generic[AgentDepsT, ResultD
         Returns:
             An async iterable of the structured response message and whether that is the last message.
         """
-        usage_checking_stream = _get_usage_checking_stream_response(
-            self._stream_response, self._usage_limits, self.usage
-        )
-
         with _logfire.span('response stream structured') as lf_span:
             # if the message currently has any parts with content, yield before streaming
             msg = self._stream_response.get()
@@ -315,15 +213,14 @@ class StreamedRunResult(_BaseRunResult[ResultDataT], Generic[AgentDepsT, ResultD
                     yield msg, False
                     break
 
-            async with _utils.group_by_temporal(usage_checking_stream, debounce_by) as group_iter:
-                async for _events in group_iter:
-                    msg = self._stream_response.get()
-                    yield msg, False
-                msg = self._stream_response.get()
-                yield msg, True
-                # TODO: Should this now be `final_response` instead of `structured_response`?
-                lf_span.set_attribute('structured_response', msg)
-                await self._marked_completed(msg)
+            async for msg in self._stream_response_structured(debounce_by=debounce_by):
+                yield msg, False
+
+            msg = self._stream_response.get()
+            yield msg, True
+
+            lf_span.set_attribute('structured_response', msg)
+            await self._marked_completed(msg)
 
     async def get_data(self) -> ResultDataT:
         """Stream the whole response, validate and return it."""
@@ -343,7 +240,7 @@ class StreamedRunResult(_BaseRunResult[ResultDataT], Generic[AgentDepsT, ResultD
         !!! note
             This won't return the full usage until the stream is finished.
         """
-        return self._run_ctx.usage + self._stream_response.usage()
+        return self._initial_run_ctx_usage + self._stream_response.usage()
 
     def timestamp(self) -> datetime:
         """Get the timestamp of the response."""
@@ -390,6 +287,71 @@ class StreamedRunResult(_BaseRunResult[ResultDataT], Generic[AgentDepsT, ResultD
         self.is_complete = True
         self._all_messages.append(message)
         await self._on_complete()
+
+    async def _stream_response_structured(
+        self, *, debounce_by: float | None = 0.1
+    ) -> AsyncIterator[_messages.ModelResponse]:
+        async with _utils.group_by_temporal(self._stream_response, debounce_by) as group_iter:
+            async for _items in group_iter:
+                yield self._stream_response.get()
+
+    async def _stream_response_text(
+        self, *, delta: bool = False, debounce_by: float | None = 0.1
+    ) -> AsyncIterator[str]:
+        """Stream the response as an async iterable of text."""
+
+        # Define a "merged" version of the iterator that will yield items that have already been retrieved
+        # and items that we receive while streaming. We define a dedicated async iterator for this so we can
+        # pass the combined stream to the group_by_temporal function within `_stream_text_deltas` below.
+        async def _stream_text_deltas_ungrouped() -> AsyncIterator[tuple[str, int]]:
+            # yields tuples of (text_content, part_index)
+            # we don't currently make use of the part_index, but in principle this may be useful
+            # so we retain it here for now to make possible future refactors simpler
+            msg = self._stream_response.get()
+            for i, part in enumerate(msg.parts):
+                if isinstance(part, _messages.TextPart) and part.content:
+                    yield part.content, i
+
+            async for event in self._stream_response:
+                if (
+                    isinstance(event, _messages.PartStartEvent)
+                    and isinstance(event.part, _messages.TextPart)
+                    and event.part.content
+                ):
+                    yield event.part.content, event.index
+                elif (
+                    isinstance(event, _messages.PartDeltaEvent)
+                    and isinstance(event.delta, _messages.TextPartDelta)
+                    and event.delta.content_delta
+                ):
+                    yield event.delta.content_delta, event.index
+
+        async def _stream_text_deltas() -> AsyncIterator[str]:
+            async with _utils.group_by_temporal(_stream_text_deltas_ungrouped(), debounce_by) as group_iter:
+                async for items in group_iter:
+                    # Note: we are currently just dropping the part index on the group here
+                    yield ''.join([content for content, _ in items])
+
+        if delta:
+            async for text in _stream_text_deltas():
+                yield text
+        else:
+            # a quick benchmark shows it's faster to build up a string with concat when we're
+            # yielding at each step
+            deltas: list[str] = []
+            async for text in _stream_text_deltas():
+                deltas.append(text)
+                yield ''.join(deltas)
+
+
+@dataclass
+class FinalResult(Generic[ResultDataT]):
+    """Marker class storing the final result of an agent run and associated metadata."""
+
+    data: ResultDataT
+    """The final result data."""
+    tool_name: str | None
+    """Name of the final result tool; `None` if the result came from unstructured text content."""
 
 
 def _get_usage_checking_stream_response(
