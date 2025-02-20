@@ -69,6 +69,7 @@ class MarkFinalResult(Generic[ResultDataT]):
     """The final result data."""
     tool_name: str | None
     """Name of the final result tool, None if the result is a string."""
+    tool_call_id: str | None
 
 
 @dataclasses.dataclass
@@ -312,8 +313,7 @@ class HandleResponseNode(BaseNode[GraphAgentState, GraphAgentDeps[DepsT, Any], N
         final_result: MarkFinalResult[NodeRunEndT] | None = None
         parts: list[_messages.ModelRequestPart] = []
         if result_schema is not None:
-            if match := result_schema.find_tool(tool_calls):
-                call, result_tool = match
+            for call, result_tool in result_schema.find_tool(tool_calls):
                 try:
                     result_data = result_tool.validate(call)
                     result_data = await _validate_result(result_data, ctx, call)
@@ -323,10 +323,13 @@ class HandleResponseNode(BaseNode[GraphAgentState, GraphAgentDeps[DepsT, Any], N
                     ctx.state.increment_retries(ctx.deps.max_result_retries)
                     parts.append(e.tool_retry)
                 else:
-                    final_result = MarkFinalResult(result_data, call.tool_name)
+                    final_result = MarkFinalResult(result_data, call.tool_name, call.tool_call_id)
+                    break
 
         # Then build the other request parts based on end strategy
-        tool_responses = await _process_function_tools(tool_calls, final_result and final_result.tool_name, ctx)
+        tool_responses = await _process_function_tools(
+            tool_calls, final_result and final_result.tool_name, final_result and final_result.tool_call_id, ctx
+        )
 
         if final_result:
             handle_span.set_attribute('result', final_result.data)
@@ -359,7 +362,7 @@ class HandleResponseNode(BaseNode[GraphAgentState, GraphAgentDeps[DepsT, Any], N
             else:
                 handle_span.set_attribute('result', result_data)
                 handle_span.message = 'handle model response -> final result'
-                return FinalResultNode[DepsT, NodeRunEndT](MarkFinalResult(result_data, None))
+                return FinalResultNode[DepsT, NodeRunEndT](MarkFinalResult(result_data, None, None))
         else:
             ctx.state.increment_retries(ctx.deps.max_result_retries)
             return ModelRequestNode[DepsT, NodeRunEndT](
@@ -392,7 +395,7 @@ class StreamModelRequestNode(BaseNode[GraphAgentState, GraphAgentDeps[DepsT, Any
             return final_node
 
     @asynccontextmanager
-    async def run_to_result(
+    async def run_to_result(  # noqa C901
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
     ) -> AsyncIterator[StreamModelRequestNode[DepsT, NodeRunEndT] | End[result.StreamedRunResult[DepsT, NodeRunEndT]]]:
         result_schema = ctx.deps.result_schema
@@ -431,20 +434,21 @@ class StreamModelRequestNode(BaseNode[GraphAgentState, GraphAgentDeps[DepsT, Any
                                 received_text = True
                                 if _allow_text_result(result_schema):
                                     handle_span.message = 'handle model response -> final result'
-                                    streamed_run_result = _build_streamed_run_result(streamed_response, None, ctx)
+                                    streamed_run_result = _build_streamed_run_result(streamed_response, None, None, ctx)
                                     self._result = End(streamed_run_result)
                                     yield self._result
                                     return
                             elif isinstance(new_part, _messages.ToolCallPart):
-                                if result_schema is not None and (match := result_schema.find_tool([new_part])):
-                                    call, _ = match
-                                    handle_span.message = 'handle model response -> final result'
-                                    streamed_run_result = _build_streamed_run_result(
-                                        streamed_response, call.tool_name, ctx
-                                    )
-                                    self._result = End(streamed_run_result)
-                                    yield self._result
-                                    return
+                                if result_schema is not None:
+                                    for call, _ in result_schema.find_tool([new_part]):
+                                        # Note: this ignores anything after the first tool call
+                                        handle_span.message = 'handle model response -> final result'
+                                        streamed_run_result = _build_streamed_run_result(
+                                            streamed_response, call.tool_name, call.tool_call_id, ctx
+                                        )
+                                        self._result = End(streamed_run_result)
+                                        yield self._result
+                                        return
                             else:
                                 assert_never(new_part)
 
@@ -546,6 +550,7 @@ def _build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[Deps
 def _build_streamed_run_result(
     result_stream: models.StreamedResponse,
     result_tool_name: str | None,
+    result_tool_call_id: str | None,
     ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
 ) -> result.StreamedRunResult[DepsT, NodeRunEndT]:
     new_message_index = ctx.deps.new_message_index
@@ -567,6 +572,7 @@ def _build_streamed_run_result(
         parts = await _process_function_tools(
             tool_calls,
             result_tool_name,
+            result_tool_call_id,
             ctx,
         )
         # TODO: Should we do something here related to the retry count?
@@ -593,6 +599,7 @@ def _build_streamed_run_result(
 async def _process_function_tools(
     tool_calls: list[_messages.ToolCallPart],
     result_tool_name: str | None,
+    result_tool_call_id: str | None,
     ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
 ) -> list[_messages.ModelRequestPart]:
     """Process function (non-result) tool calls in parallel.
@@ -610,7 +617,11 @@ async def _process_function_tools(
     run_context = _build_run_context(ctx)
 
     for call in tool_calls:
-        if call.tool_name == result_tool_name and not found_used_result_tool:
+        if (
+            call.tool_name == result_tool_name
+            and call.tool_call_id == result_tool_call_id
+            and not found_used_result_tool
+        ):
             found_used_result_tool = True
             parts.append(
                 _messages.ToolReturnPart(
@@ -634,10 +645,15 @@ async def _process_function_tools(
             # if tool_name is in _result_schema, it means we found a result tool but an error occurred in
             # validation, we don't add another part here
             if result_tool_name is not None:
+                if found_used_result_tool:
+                    content = 'Result tool not used - a final result was already processed.'
+                else:
+                    # TODO: Include information about the validation failure, and/or merge this with the ModelRetry part
+                    content = 'Result tool not used - result failed validation.'
                 parts.append(
                     _messages.ToolReturnPart(
                         tool_name=call.tool_name,
-                        content='Result tool not used - a final result was already processed.',
+                        content=content,
                         tool_call_id=call.tool_call_id,
                     )
                 )
