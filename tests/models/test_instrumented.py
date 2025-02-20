@@ -28,22 +28,24 @@ from pydantic_ai.usage import Usage
 
 from ..conftest import try_import
 
-with try_import() as otel_imports_successful:
+with try_import() as imports_successful:
+    from logfire import DEFAULT_LOGFIRE_INSTANCE
+    from logfire.testing import CaptureLogfire
     from opentelemetry._events import NoOpEventLoggerProvider
     from opentelemetry.trace import NoOpTracerProvider
 
     from pydantic_ai.models.instrumented import InstrumentedModel
 
-with try_import() as logfire_imports_successful:
-    from logfire.testing import CaptureLogfire
-
 
 pytestmark = [
-    pytest.mark.skipif(not otel_imports_successful(), reason='otel not installed'),
+    pytest.mark.skipif(not imports_successful(), reason='logfire not installed'),
     pytest.mark.anyio,
 ]
 
-requires_logfire = pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
+requires_logfire_events = pytest.mark.skipif(
+    not hasattr(DEFAULT_LOGFIRE_INSTANCE.config, 'get_event_logger_provider'),
+    reason='old logfire without events/logs support',
+)
 
 
 class MyModel(Model):
@@ -101,7 +103,7 @@ class MyResponseStream(StreamedResponse):
 
 
 @pytest.mark.anyio
-@requires_logfire
+@requires_logfire_events
 async def test_instrumented_model(capfire: CaptureLogfire):
     model = InstrumentedModel.from_logfire(MyModel())
     assert model.system == 'my_system'
@@ -319,7 +321,7 @@ async def test_instrumented_model_not_recording():
 
 
 @pytest.mark.anyio
-@requires_logfire
+@requires_logfire_events
 async def test_instrumented_model_stream(capfire: CaptureLogfire):
     model = InstrumentedModel.from_logfire(MyModel())
 
@@ -401,7 +403,7 @@ async def test_instrumented_model_stream(capfire: CaptureLogfire):
 
 
 @pytest.mark.anyio
-@requires_logfire
+@requires_logfire_events
 async def test_instrumented_model_stream_break(capfire: CaptureLogfire):
     model = InstrumentedModel.from_logfire(MyModel())
 
