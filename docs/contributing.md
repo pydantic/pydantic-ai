@@ -62,3 +62,8 @@ To avoid an excessive workload for the maintainers of PydanticAI, we can't accep
 * For any other model that requires more logic, we recommend you release your own Python package `pydantic-ai-xxx`, which depends on [`pydantic-ai-slim`](install.md#slim-install) and implements a model that inherits from our [`Model`][pydantic_ai.models.Model] ABC
 
 If you're unsure about adding a model, please [create an issue](https://github.com/pydantic/pydantic-ai/issues).
+
+## Adding Examples
+
+Do you have a great example you want to share? [Open an issue](https://github.com/pydantic/pydantic-ai/issues/new?template=Blank+issue) with a link to your example and why you think it's compelling. If it makes heavy use of third
+party tools, we may add it to the [third party examples](./examples/third-party.md) page.

@@ -38,6 +38,7 @@ nav:
     - examples/stream-whales.md
     - examples/chat-app.md
     - examples/question-graph.md
+    - examples/third-party.md
   - API Reference:
     - api/agent.md
     - api/tools.md
