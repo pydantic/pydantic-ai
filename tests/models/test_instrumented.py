@@ -6,6 +6,7 @@ from datetime import datetime
 
 import pytest
 from inline_snapshot import snapshot
+from logfire_api import DEFAULT_LOGFIRE_INSTANCE
 
 from pydantic_ai.messages import (
     ModelMessage,
@@ -29,7 +30,6 @@ from pydantic_ai.usage import Usage
 from ..conftest import try_import
 
 with try_import() as imports_successful:
-    from logfire import DEFAULT_LOGFIRE_INSTANCE
     from logfire.testing import CaptureLogfire
     from opentelemetry._events import NoOpEventLoggerProvider
     from opentelemetry.trace import NoOpTracerProvider
