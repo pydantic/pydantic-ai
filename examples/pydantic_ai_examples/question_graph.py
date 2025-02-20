@@ -13,7 +13,7 @@ from typing import Annotated
 
 import logfire
 from devtools import debug
-from pydantic_graph import BaseNode, Edge, End, Graph, GraphRunContext, HistoryStep
+from pydantic_graph import BaseNode, Edge, End, Graph, GraphRunContext, Snapshot
 
 from pydantic_ai import Agent
 from pydantic_ai.format_as_xml import format_as_xml
@@ -116,7 +116,7 @@ question_graph = Graph(
 async def run_as_continuous():
     state = QuestionState()
     node = Ask()
-    history: list[HistoryStep[QuestionState, None]] = []
+    history: list[Snapshot[QuestionState, None]] = []
     with logfire.span('run questions graph'):
         while True:
             node = await question_graph.next(node, history, state=state)

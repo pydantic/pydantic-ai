@@ -1,9 +1,10 @@
 from __future__ import annotations as _annotations
 
+import copy
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, is_dataclass
 from functools import cache
-from typing import TYPE_CHECKING, Any, ClassVar, Generic, get_origin, get_type_hints
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, Self, get_origin, get_type_hints
 
 from typing_extensions import Never, TypeVar
 
@@ -14,7 +15,7 @@ if TYPE_CHECKING:
 else:
     StateT = TypeVar('StateT', default=None)
 
-__all__ = 'GraphRunContext', 'BaseNode', 'End', 'Edge', 'NodeDef', 'DepsT'
+__all__ = 'GraphRunContext', 'BaseNode', 'End', 'Edge', 'NodeDef', 'DepsT', 'RunEndT'
 
 RunEndT = TypeVar('RunEndT', covariant=True, default=None)
 """Covariant type variable for the return type of a graph [`run`][pydantic_graph.graph.Graph.run]."""
@@ -125,6 +126,10 @@ class BaseNode(ABC, Generic[StateT, DepsT, NodeRunEndT]):
             returns_base_node,
         )
 
+    def deep_copy(self) -> Self:
+        """Returns a deep copy of the node."""
+        return copy.deepcopy(self)
+
 
 @dataclass
 class End(Generic[RunEndT]):
@@ -132,6 +137,13 @@ class End(Generic[RunEndT]):
 
     data: RunEndT
     """Data to return from the graph."""
+
+    def deep_copy_data(self) -> RunEndT:
+        """Returns a deep copy of the end of the run."""
+        if self.data is None:
+            return self.data
+        else:
+            return copy.deepcopy(self.data)
 
 
 @dataclass

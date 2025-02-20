@@ -14,13 +14,13 @@ from typing_extensions import Never
 from pydantic_graph import (
     BaseNode,
     End,
-    EndStep,
+    EndSnapshot,
     Graph,
     GraphRunContext,
     GraphRuntimeError,
     GraphSetupError,
-    HistoryStep,
-    NodeStep,
+    NodeSnapshot,
+    Snapshot,
 )
 
 from ..conftest import IsFloat, IsNow
@@ -63,25 +63,25 @@ async def test_graph():
     assert my_graph.name == 'my_graph'
     assert history == snapshot(
         [
-            NodeStep(
+            NodeSnapshot(
                 state=None,
                 node=Float2String(input_data=3.14),
                 start_ts=IsNow(tz=timezone.utc),
                 duration=IsFloat(),
             ),
-            NodeStep(
+            NodeSnapshot(
                 state=None,
                 node=String2Length(input_data='3.14'),
                 start_ts=IsNow(tz=timezone.utc),
                 duration=IsFloat(),
             ),
-            NodeStep(
+            NodeSnapshot(
                 state=None,
                 node=Double(input_data=4),
                 start_ts=IsNow(tz=timezone.utc),
                 duration=IsFloat(),
             ),
-            EndStep(result=End(data=8), ts=IsNow(tz=timezone.utc)),
+            EndSnapshot(result=End(data=8), ts=IsNow(tz=timezone.utc)),
         ]
     )
     result, history = await my_graph.run(Float2String(3.14159))
@@ -89,37 +89,37 @@ async def test_graph():
     assert result == 42
     assert history == snapshot(
         [
-            NodeStep(
+            NodeSnapshot(
                 state=None,
                 node=Float2String(input_data=3.14159),
                 start_ts=IsNow(tz=timezone.utc),
                 duration=IsFloat(),
             ),
-            NodeStep(
+            NodeSnapshot(
                 state=None,
                 node=String2Length(input_data='3.14159'),
                 start_ts=IsNow(tz=timezone.utc),
                 duration=IsFloat(),
             ),
-            NodeStep(
+            NodeSnapshot(
                 state=None,
                 node=Double(input_data=7),
                 start_ts=IsNow(tz=timezone.utc),
                 duration=IsFloat(),
             ),
-            NodeStep(
+            NodeSnapshot(
                 state=None,
                 node=String2Length(input_data='xxxxxxxxxxxxxxxxxxxxx'),
                 start_ts=IsNow(tz=timezone.utc),
                 duration=IsFloat(),
             ),
-            NodeStep(
+            NodeSnapshot(
                 state=None,
                 node=Double(input_data=21),
                 start_ts=IsNow(tz=timezone.utc),
                 duration=IsFloat(),
             ),
-            EndStep(result=End(data=42), ts=IsNow(tz=timezone.utc)),
+            EndSnapshot(result=End(data=42), ts=IsNow(tz=timezone.utc)),
         ]
     )
     assert [e.data_snapshot() for e in history] == snapshot(
@@ -283,11 +283,13 @@ async def test_next():
 
     g = Graph(nodes=(Foo, Bar))
     assert g.name is None
-    history: list[HistoryStep[None, Never]] = []
+    history: list[Snapshot[None, Never]] = []
     n = await g.next(Foo(), history)
     assert n == Bar()
     assert g.name == 'g'
-    assert history == snapshot([NodeStep(state=None, node=Foo(), start_ts=IsNow(tz=timezone.utc), duration=IsFloat())])
+    assert history == snapshot(
+        [NodeSnapshot(state=None, node=Foo(), start_ts=IsNow(tz=timezone.utc), duration=IsFloat())]
+    )
 
     assert isinstance(n, Bar)
     n2 = await g.next(n, history)
@@ -295,8 +297,8 @@ async def test_next():
 
     assert history == snapshot(
         [
-            NodeStep(state=None, node=Foo(), start_ts=IsNow(tz=timezone.utc), duration=IsFloat()),
-            NodeStep(state=None, node=Bar(), start_ts=IsNow(tz=timezone.utc), duration=IsFloat()),
+            NodeSnapshot(state=None, node=Foo(), start_ts=IsNow(tz=timezone.utc), duration=IsFloat()),
+            NodeSnapshot(state=None, node=Bar(), start_ts=IsNow(tz=timezone.utc), duration=IsFloat()),
         ]
     )
 
@@ -325,8 +327,8 @@ async def test_deps():
     assert result == 123
     assert history == snapshot(
         [
-            NodeStep(state=None, node=Foo(), start_ts=IsNow(tz=timezone.utc), duration=IsFloat()),
-            NodeStep(state=None, node=Bar(), start_ts=IsNow(tz=timezone.utc), duration=IsFloat()),
-            EndStep(result=End(data=123), ts=IsNow(tz=timezone.utc)),
+            NodeSnapshot(state=None, node=Foo(), start_ts=IsNow(tz=timezone.utc), duration=IsFloat()),
+            NodeSnapshot(state=None, node=Bar(), start_ts=IsNow(tz=timezone.utc), duration=IsFloat()),
+            EndSnapshot(result=End(data=123), ts=IsNow(tz=timezone.utc)),
         ]
     )

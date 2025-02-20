@@ -2,7 +2,6 @@ from __future__ import annotations as _annotations
 
 import sys
 import types
-from datetime import datetime, timezone
 from typing import Annotated, Any, TypeVar, Union, get_args, get_origin
 
 import typing_extensions
@@ -78,10 +77,6 @@ def get_parent_namespace(frame: types.FrameType | None) -> dict[str, Any] | None
                 return get_parent_namespace(back)
             else:
                 return back.f_locals
-
-
-def now_utc() -> datetime:
-    return datetime.now(tz=timezone.utc)
 
 
 class Unset:

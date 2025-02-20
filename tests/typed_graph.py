@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 from typing_extensions import assert_type
 
-from pydantic_graph import BaseNode, End, Graph, GraphRunContext, HistoryStep
+from pydantic_graph import BaseNode, End, Graph, GraphRunContext, Snapshot
 
 
 @dataclass
@@ -111,4 +111,4 @@ def run_g5() -> None:
     g5.run_sync(A(), deps=MyDeps(y='y'))  # pyright: ignore[reportArgumentType]
     answer, history = g5.run_sync(A(), state=MyState(x=1), deps=MyDeps(y='y'))
     assert_type(answer, int)
-    assert_type(history, list[HistoryStep[MyState, int]])
+    assert_type(history, list[Snapshot[MyState, int]])

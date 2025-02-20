@@ -9,7 +9,7 @@ import pytest
 from dirty_equals import IsStr
 from inline_snapshot import snapshot
 
-from pydantic_graph import BaseNode, End, EndStep, Graph, GraphRunContext, GraphSetupError, NodeStep
+from pydantic_graph import BaseNode, End, EndSnapshot, Graph, GraphRunContext, GraphSetupError, NodeSnapshot
 
 from ..conftest import IsFloat, IsNow
 
@@ -50,9 +50,9 @@ async def test_dump_load_history(graph: Graph[MyState, None, int]):
     assert result == snapshot(4)
     assert history == snapshot(
         [
-            NodeStep(state=MyState(x=2, y=''), node=Foo(), start_ts=IsNow(tz=timezone.utc), duration=IsFloat()),
-            NodeStep(state=MyState(x=2, y='y'), node=Bar(), start_ts=IsNow(tz=timezone.utc), duration=IsFloat()),
-            EndStep(result=End(4), ts=IsNow(tz=timezone.utc)),
+            NodeSnapshot(state=MyState(x=2, y=''), node=Foo(), start_ts=IsNow(tz=timezone.utc), duration=IsFloat()),
+            NodeSnapshot(state=MyState(x=2, y='y'), node=Bar(), start_ts=IsNow(tz=timezone.utc), duration=IsFloat()),
+            EndSnapshot(result=End(4), ts=IsNow(tz=timezone.utc)),
         ]
     )
     history_json = graph.dump_history(history)
@@ -91,13 +91,13 @@ async def test_dump_load_history(graph: Graph[MyState, None, int]):
     history_loaded = graph.load_history(json.dumps(custom_history))
     assert history_loaded == snapshot(
         [
-            NodeStep(
+            NodeSnapshot(
                 state=MyState(x=2, y=''),
                 node=Foo(),
                 start_ts=datetime(2025, 1, 1, 0, 0, tzinfo=timezone.utc),
                 duration=123.0,
             ),
-            EndStep(result=End(data=42), ts=datetime(2025, 1, 1, 0, 0, tzinfo=timezone.utc)),
+            EndSnapshot(result=End(data=42), ts=datetime(2025, 1, 1, 0, 0, tzinfo=timezone.utc)),
         ]
     )
 
@@ -116,7 +116,7 @@ def test_one_node():
     history_loaded = g.load_history(json.dumps(custom_history))
     assert history_loaded == snapshot(
         [
-            EndStep(result=End(data=123), ts=datetime(2025, 1, 1, 0, 0, tzinfo=timezone.utc)),
+            EndSnapshot(result=End(data=123), ts=datetime(2025, 1, 1, 0, 0, tzinfo=timezone.utc)),
         ]
     )
 
@@ -141,6 +141,6 @@ def test_no_generic_arg():
     history_loaded = g.load_history(json.dumps(custom_history))
     assert history_loaded == snapshot(
         [
-            EndStep(result=End(data=None), ts=datetime(2025, 1, 1, 0, 0, tzinfo=timezone.utc)),
+            EndSnapshot(result=End(data=None), ts=datetime(2025, 1, 1, 0, 0, tzinfo=timezone.utc)),
         ]
     )

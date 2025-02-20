@@ -11,7 +11,7 @@ import httpx
 import pytest
 from inline_snapshot import snapshot
 
-from pydantic_graph import BaseNode, Edge, End, EndStep, Graph, GraphRunContext, GraphSetupError, NodeStep
+from pydantic_graph import BaseNode, Edge, End, EndSnapshot, Graph, GraphRunContext, GraphSetupError, NodeSnapshot
 from pydantic_graph.nodes import NodeDef
 
 from ..conftest import IsFloat, IsNow
@@ -62,19 +62,19 @@ async def test_run_graph():
     assert result is None
     assert history == snapshot(
         [
-            NodeStep(
+            NodeSnapshot(
                 state=None,
                 node=Foo(),
                 start_ts=IsNow(tz=timezone.utc),
                 duration=IsFloat(),
             ),
-            NodeStep(
+            NodeSnapshot(
                 state=None,
                 node=Bar(),
                 start_ts=IsNow(tz=timezone.utc),
                 duration=IsFloat(),
             ),
-            EndStep(result=End(data=None), ts=IsNow(tz=timezone.utc)),
+            EndSnapshot(result=End(data=None), ts=IsNow(tz=timezone.utc)),
         ]
     )
 
