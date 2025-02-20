@@ -17,7 +17,6 @@ from typing import TYPE_CHECKING
 import httpx
 from typing_extensions import Literal
 
-from .. import _utils, messages as _messages
 from .._parts_manager import ModelResponsePartsManager
 from ..exceptions import UserError
 from ..messages import ModelMessage, ModelResponse, ModelResponseStreamEvent
@@ -235,6 +234,8 @@ class StreamedResponse(ABC):
 
         This method should be implemented by subclasses to translate the vendor-specific stream of events into
         pydantic_ai-format events.
+
+        It should use the `_parts_manager` to handle deltas, and should update the `_usage` attributes as it goes.
         """
         raise NotImplementedError()
         # noinspection PyUnreachableCode
@@ -261,72 +262,6 @@ class StreamedResponse(ABC):
     def timestamp(self) -> datetime:
         """Get the timestamp of the response."""
         raise NotImplementedError()
-
-    async def stream_debounced_events(
-        self, *, debounce_by: float | None = 0.1
-    ) -> AsyncIterator[list[ModelResponseStreamEvent]]:
-        """Stream the response as an async iterable of debounced lists of [`ModelResponseStreamEvent`][pydantic_ai.messages.ModelResponseStreamEvent]s."""
-        async with _utils.group_by_temporal(self, debounce_by) as group_iter:
-            async for items in group_iter:
-                yield items
-
-    async def stream_structured(self, *, debounce_by: float | None = 0.1) -> AsyncIterator[_messages.ModelResponse]:
-        """Stream the response as an async iterable of [`ModelResponse`][pydantic_ai.messages.ModelResponse]s."""
-
-        async def _stream_structured_ungrouped() -> AsyncIterator[None]:
-            # yield None  # TODO: Might want to yield right away to ensure we can eagerly emit a ModelResponse even if we are waiting
-            async for _event in self:
-                yield None
-
-        async with _utils.group_by_temporal(_stream_structured_ungrouped(), debounce_by) as group_iter:
-            async for _items in group_iter:
-                yield self.get()  # current state of the response
-
-    async def stream_text(self, *, delta: bool = False, debounce_by: float | None = 0.1) -> AsyncIterator[str]:
-        """Stream the response as an async iterable of text."""
-
-        # Define a "merged" version of the iterator that will yield items that have already been retrieved
-        # and items that we receive while streaming. We define a dedicated async iterator for this so we can
-        # pass the combined stream to the group_by_temporal function within `_stream_text_deltas` below.
-        async def _stream_text_deltas_ungrouped() -> AsyncIterator[tuple[str, int]]:
-            # yields tuples of (text_content, part_index)
-            # we don't currently make use of the part_index, but in principle this may be useful
-            # so we retain it here for now to make possible future refactors simpler
-            msg = self.get()
-            for i, part in enumerate(msg.parts):
-                if isinstance(part, _messages.TextPart) and part.content:
-                    yield part.content, i
-
-            async for event in self:
-                if (
-                    isinstance(event, _messages.PartStartEvent)
-                    and isinstance(event.part, _messages.TextPart)
-                    and event.part.content
-                ):
-                    yield event.part.content, event.index
-                elif (
-                    isinstance(event, _messages.PartDeltaEvent)
-                    and isinstance(event.delta, _messages.TextPartDelta)
-                    and event.delta.content_delta
-                ):
-                    yield event.delta.content_delta, event.index
-
-        async def _stream_text_deltas() -> AsyncIterator[str]:
-            async with _utils.group_by_temporal(_stream_text_deltas_ungrouped(), debounce_by) as group_iter:
-                async for items in group_iter:
-                    # Note: we are currently just dropping the part index on the group here
-                    yield ''.join([content for content, _ in items])
-
-        if delta:
-            async for text in _stream_text_deltas():
-                yield text
-        else:
-            # a quick benchmark shows it's faster to build up a string with concat when we're
-            # yielding at each step
-            deltas: list[str] = []
-            async for text in _stream_text_deltas():
-                deltas.append(text)
-                yield ''.join(deltas)
 
 
 ALLOW_MODEL_REQUESTS = True

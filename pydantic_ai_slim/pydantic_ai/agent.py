@@ -25,7 +25,6 @@ from . import (
     result,
     usage as _usage,
 )
-from ._agent_graph import EndStrategy, capture_run_messages  # imported for re-export
 from .result import FinalResult, ResultDataT, StreamedRunResult
 from .settings import ModelSettings, merge_model_settings
 from .tools import (
@@ -40,7 +39,24 @@ from .tools import (
     ToolPrepareFunc,
 )
 
-__all__ = 'Agent', 'AgentRun', 'AgentRunResult', 'capture_run_messages', 'EndStrategy'
+# Re-exporting like this improves auto-import behavior in PyCharm
+capture_run_messages = _agent_graph.capture_run_messages
+EndStrategy = _agent_graph.EndStrategy
+HandleResponseNode = _agent_graph.HandleResponseNode
+ModelRequestNode = _agent_graph.ModelRequestNode
+UserPromptNode = _agent_graph.UserPromptNode
+
+
+__all__ = (
+    'Agent',
+    'AgentRun',
+    'AgentRunResult',
+    'capture_run_messages',
+    'EndStrategy',
+    'HandleResponseNode',
+    'ModelRequestNode',
+    'UserPromptNode',
+)
 
 _logfire = logfire_api.Logfire(otel_scope='pydantic-ai')
 

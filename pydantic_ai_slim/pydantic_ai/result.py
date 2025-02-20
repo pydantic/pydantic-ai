@@ -9,7 +9,7 @@ from typing import Generic, Union, cast
 import logfire_api
 from typing_extensions import TypeVar
 
-from . import _result, exceptions, messages as _messages, models
+from . import _result, _utils, exceptions, messages as _messages, models
 from .tools import AgentDepsT, RunContext
 from .usage import Usage, UsageLimits
 
@@ -160,7 +160,6 @@ class StreamedRunResult(Generic[AgentDepsT, ResultDataT]):
         Returns:
             An async iterable of the response data.
         """
-        self._stream_response.stream_structured(debounce_by=debounce_by)
         async for structured_message, is_last in self.stream_structured(debounce_by=debounce_by):
             result = await self.validate_structured_result(structured_message, allow_partial=not is_last)
             yield result
@@ -183,11 +182,11 @@ class StreamedRunResult(Generic[AgentDepsT, ResultDataT]):
 
         with _logfire.span('response stream text') as lf_span:
             if delta:
-                async for text in self._stream_response.stream_text(delta=delta, debounce_by=debounce_by):
+                async for text in self._stream_response_text(delta=delta, debounce_by=debounce_by):
                     yield text
             else:
                 combined_validated_text = ''
-                async for text in self._stream_response.stream_text(delta=delta, debounce_by=debounce_by):
+                async for text in self._stream_response_text(delta=delta, debounce_by=debounce_by):
                     combined_validated_text = await self._validate_text_result(text)
                     yield combined_validated_text
                 lf_span.set_attribute('combined_text', combined_validated_text)
@@ -214,7 +213,7 @@ class StreamedRunResult(Generic[AgentDepsT, ResultDataT]):
                     yield msg, False
                     break
 
-            async for msg in self._stream_response.stream_structured(debounce_by=debounce_by):
+            async for msg in self._stream_response_structured(debounce_by=debounce_by):
                 yield msg, False
 
             msg = self._stream_response.get()
@@ -288,6 +287,61 @@ class StreamedRunResult(Generic[AgentDepsT, ResultDataT]):
         self.is_complete = True
         self._all_messages.append(message)
         await self._on_complete()
+
+    async def _stream_response_structured(
+        self, *, debounce_by: float | None = 0.1
+    ) -> AsyncIterator[_messages.ModelResponse]:
+        async with _utils.group_by_temporal(self._stream_response, debounce_by) as group_iter:
+            async for _items in group_iter:
+                yield self._stream_response.get()
+
+    async def _stream_response_text(
+        self, *, delta: bool = False, debounce_by: float | None = 0.1
+    ) -> AsyncIterator[str]:
+        """Stream the response as an async iterable of text."""
+
+        # Define a "merged" version of the iterator that will yield items that have already been retrieved
+        # and items that we receive while streaming. We define a dedicated async iterator for this so we can
+        # pass the combined stream to the group_by_temporal function within `_stream_text_deltas` below.
+        async def _stream_text_deltas_ungrouped() -> AsyncIterator[tuple[str, int]]:
+            # yields tuples of (text_content, part_index)
+            # we don't currently make use of the part_index, but in principle this may be useful
+            # so we retain it here for now to make possible future refactors simpler
+            msg = self._stream_response.get()
+            for i, part in enumerate(msg.parts):
+                if isinstance(part, _messages.TextPart) and part.content:
+                    yield part.content, i
+
+            async for event in self._stream_response:
+                if (
+                    isinstance(event, _messages.PartStartEvent)
+                    and isinstance(event.part, _messages.TextPart)
+                    and event.part.content
+                ):
+                    yield event.part.content, event.index
+                elif (
+                    isinstance(event, _messages.PartDeltaEvent)
+                    and isinstance(event.delta, _messages.TextPartDelta)
+                    and event.delta.content_delta
+                ):
+                    yield event.delta.content_delta, event.index
+
+        async def _stream_text_deltas() -> AsyncIterator[str]:
+            async with _utils.group_by_temporal(_stream_text_deltas_ungrouped(), debounce_by) as group_iter:
+                async for items in group_iter:
+                    # Note: we are currently just dropping the part index on the group here
+                    yield ''.join([content for content, _ in items])
+
+        if delta:
+            async for text in _stream_text_deltas():
+                yield text
+        else:
+            # a quick benchmark shows it's faster to build up a string with concat when we're
+            # yielding at each step
+            deltas: list[str] = []
+            async for text in _stream_text_deltas():
+                deltas.append(text)
+                yield ''.join(deltas)
 
 
 @dataclass

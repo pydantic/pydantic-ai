@@ -32,6 +32,16 @@ from .tools import (
     ToolDefinition,
 )
 
+__all__ = (
+    'GraphAgentState',
+    'GraphAgentDeps',
+    'UserPromptNode',
+    'ModelRequestNode',
+    'HandleResponseNode',
+    'build_run_context',
+    'capture_run_messages',
+)
+
 _logfire = logfire_api.Logfire(otel_scope='pydantic-ai')
 
 # while waiting for https://github.com/pydantic/logfire/issues/745
@@ -98,12 +108,17 @@ class GraphAgentDeps(Generic[DepsT, ResultDataT]):
 
 
 @dataclasses.dataclass
-class BaseUserPromptNode(BaseNode[GraphAgentState, GraphAgentDeps[DepsT, Any], NodeRunEndT], ABC):
+class UserPromptNode(BaseNode[GraphAgentState, GraphAgentDeps[DepsT, Any], NodeRunEndT], ABC):
     user_prompt: str
 
     system_prompts: tuple[str, ...]
     system_prompt_functions: list[_system_prompt.SystemPromptRunner[DepsT]]
     system_prompt_dynamic_functions: dict[str, _system_prompt.SystemPromptRunner[DepsT]]
+
+    async def run(
+        self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]]
+    ) -> ModelRequestNode[DepsT, NodeRunEndT]:
+        return ModelRequestNode[DepsT, NodeRunEndT](request=await self._get_first_message(ctx))
 
     async def _get_first_message(
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]]
@@ -173,14 +188,6 @@ class BaseUserPromptNode(BaseNode[GraphAgentState, GraphAgentDeps[DepsT, Any], N
         return messages
 
 
-@dataclasses.dataclass
-class UserPromptNode(BaseUserPromptNode[DepsT, NodeRunEndT]):
-    async def run(
-        self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]]
-    ) -> ModelRequestNode[DepsT, NodeRunEndT]:
-        return ModelRequestNode[DepsT, NodeRunEndT](request=await self._get_first_message(ctx))
-
-
 async def _prepare_request_parameters(
     ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
 ) -> models.ModelRequestParameters:
@@ -229,11 +236,10 @@ class ModelRequestNode(BaseNode[GraphAgentState, GraphAgentDeps[DepsT, Any], Nod
     @asynccontextmanager
     async def _stream(
         self,
-        ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]],
+        ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, T]],
     ) -> AsyncIterator[models.StreamedResponse]:
         # TODO: Consider changing this to return something more similar to a `StreamedRunResult`, then make it public
-        if self._did_stream:
-            raise exceptions.AgentRunError('stream() can only be called once')
+        assert not self._did_stream, 'stream() should only be called once per node'
 
         model_settings, model_request_parameters = await self._prepare_request(ctx)
         with _logfire.span('model request', run_step=ctx.state.run_step) as span:
