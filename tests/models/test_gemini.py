@@ -9,6 +9,7 @@ from datetime import timezone
 
 import httpx
 import pytest
+from google.genai.types import Content, FunctionCall, Part
 from inline_snapshot import snapshot
 from pydantic import BaseModel, Field
 from typing_extensions import Literal, TypeAlias
@@ -30,16 +31,13 @@ from pydantic_ai.models.gemini import (
     GeminiModel,
     GeminiModelSettings,
     _content_model_response,
-    _function_call_part_from_call,
     _gemini_response_ta,
     _gemini_streamed_response_ta,
     _GeminiCandidates,
-    _GeminiContent,
     _GeminiFunction,
     _GeminiFunctionCallingConfig,
     _GeminiResponse,
     _GeminiSafetyRating,
-    _GeminiTextPart,
     _GeminiToolConfig,
     _GeminiTools,
     _GeminiUsageMetaData,
@@ -436,7 +434,7 @@ async def get_gemini_client(
     return create_client
 
 
-def gemini_response(content: _GeminiContent, finish_reason: Literal['STOP'] | None = 'STOP') -> _GeminiResponse:
+def gemini_response(content: Content, finish_reason: Literal['STOP'] | None = 'STOP') -> _GeminiResponse:
     candidate = _GeminiCandidates(content=content, index=0, safety_ratings=[])
     if finish_reason:  # pragma: no cover
         candidate['finish_reason'] = finish_reason
@@ -796,16 +794,11 @@ async def test_stream_text_heterogeneous(get_gemini_client: GetGeminiClient):
     responses = [
         gemini_response(_content_model_response(ModelResponse(parts=[TextPart('Hello ')]))),
         gemini_response(
-            _GeminiContent(
+            Content(
                 role='model',
                 parts=[
-                    _GeminiTextPart(text='foo'),
-                    _function_call_part_from_call(
-                        ToolCallPart(
-                            tool_name='get_location',
-                            args={'loc_name': 'San Fransisco'},
-                        )
-                    ),
+                    Part.from_text(text='foo'),
+                    Part.from_function_call(name='get_location', args={'loc_name': 'San Fransisco'}),
                 ],
             )
         ),
@@ -833,13 +826,13 @@ async def test_empty_text_ignored():
     )
     # text included
     assert content == snapshot(
-        {
-            'role': 'model',
-            'parts': [
-                {'function_call': {'name': 'final_result', 'args': {'response': [1, 2, 123]}}},
-                {'text': 'xxx'},
+        Content(
+            parts=[
+                Part(function_call=FunctionCall(args={'response': [1, 2, 123]}, name='final_result')),
+                Part(text='xxx'),
             ],
-        }
+            role='model',
+        )
     )
 
     content = _content_model_response(
@@ -852,10 +845,10 @@ async def test_empty_text_ignored():
     )
     # text skipped
     assert content == snapshot(
-        {
-            'role': 'model',
-            'parts': [{'function_call': {'name': 'final_result', 'args': {'response': [1, 2, 123]}}}],
-        }
+        Content(
+            parts=[Part(function_call=FunctionCall(args={'response': [1, 2, 123]}, name='final_result'))],
+            role='model',
+        )
     )
 
 

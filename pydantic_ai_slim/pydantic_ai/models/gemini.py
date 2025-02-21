@@ -270,10 +270,11 @@ class GeminiModel(Model):
             )
             if responses:
                 last = responses[-1]
-                last_content = last['candidates'][0].get('content')
-                if last['candidates'] and last_content and last_content.parts:
-                    start_response = last
-                    break
+                if last['candidates']:
+                    last_content = last['candidates'][0].get('content')
+                    if last_content and last_content.parts:
+                        start_response = last
+                        break
 
         if start_response is None:
             raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')

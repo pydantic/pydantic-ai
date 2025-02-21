@@ -89,11 +89,12 @@ def to_chat_message(m: ModelMessage) -> ChatMessage:
     first_part = m.parts[0]
     if isinstance(m, ModelRequest):
         if isinstance(first_part, UserPromptPart):
-            return {
-                'role': 'user',
-                'timestamp': first_part.timestamp.isoformat(),
-                'content': first_part.content,
-            }
+            if isinstance(first_part.content, str):
+                return {
+                    'role': 'user',
+                    'timestamp': first_part.timestamp.isoformat(),
+                    'content': first_part.content,
+                }
     elif isinstance(m, ModelResponse):
         if isinstance(first_part, TextPart):
             return {
