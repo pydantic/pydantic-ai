@@ -96,10 +96,12 @@ class BinaryContent:
     type: Literal['binary'] = 'binary'
     """Type identifier, this is available on all parts as a discriminator."""
 
+    @property
     def is_audio(self) -> bool:
         """Return `True` if the media type is an audio type."""
         return self.media_type.startswith('audio/')
 
+    @property
     def is_image(self) -> bool:
         """Return `True` if the media type is an image type."""
         return self.media_type.startswith('image/')

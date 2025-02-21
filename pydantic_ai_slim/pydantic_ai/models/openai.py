@@ -421,10 +421,10 @@ def _map_user_prompt(part: UserPromptPart) -> chat.ChatCompletionUserMessagePara
                 content.append(ChatCompletionContentPartImageParam(image_url=image_url, type='image_url'))
             elif isinstance(item, BinaryContent):
                 base64_encoded = base64.b64encode(item.data).decode('utf-8')
-                if item.is_image():
+                if item.is_image:
                     image_url = ImageURL(url=f'data:{item.media_type};base64,{base64_encoded}')
                     content.append(ChatCompletionContentPartImageParam(image_url=image_url, type='image_url'))
-                elif item.is_audio():
+                elif item.is_audio:
                     audio_url = InputAudio(data=base64_encoded, format=item.audio_format)
                     content.append(ChatCompletionContentPartInputAudioParam(input_audio=audio_url, type='input_audio'))
                 else:
