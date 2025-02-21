@@ -130,15 +130,15 @@ class TestModel(Model):
 
     def _get_result(self, model_request_parameters: ModelRequestParameters) -> _TextResult | _FunctionToolResult:
         if self.custom_result_text is not None:
-            assert (
-                model_request_parameters.allow_text_result
-            ), 'Plain response not allowed, but `custom_result_text` is set.'
+            assert model_request_parameters.allow_text_result, (
+                'Plain response not allowed, but `custom_result_text` is set.'
+            )
             assert self.custom_result_args is None, 'Cannot set both `custom_result_text` and `custom_result_args`.'
             return _TextResult(self.custom_result_text)
         elif self.custom_result_args is not None:
-            assert (
-                model_request_parameters.result_tools is not None
-            ), 'No result tools provided, but `custom_result_args` is set.'
+            assert model_request_parameters.result_tools is not None, (
+                'No result tools provided, but `custom_result_args` is set.'
+            )
             result_tool = model_request_parameters.result_tools[0]
 
             if k := result_tool.outer_typed_dict_key:

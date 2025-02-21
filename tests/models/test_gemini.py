@@ -365,7 +365,7 @@ async def test_json_def_date(allow_model_requests: None):
         _GeminiTools(
             function_declarations=[
                 _GeminiFunction(
-                    description='This is the tool for the final ' 'Result',
+                    description='This is the tool for the final Result',
                     name='result',
                     parameters={
                         'properties': {
