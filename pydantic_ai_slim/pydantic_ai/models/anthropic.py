@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+import io
 from collections.abc import AsyncIterable, AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -7,12 +8,15 @@ from datetime import datetime, timezone
 from json import JSONDecodeError, loads as json_loads
 from typing import Any, Literal, Union, cast, overload
 
+from anthropic.types import ImageBlockParam
 from httpx import AsyncClient as AsyncHTTPClient
 from typing_extensions import assert_never
 
 from .. import UnexpectedModelBehavior, _utils, usage
 from .._utils import guard_tool_call_id as _guard_tool_call_id
 from ..messages import (
+    BinaryContent,
+    ImageUrl,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -276,7 +280,7 @@ class AnthropicModel(Model):
                     if isinstance(part, SystemPromptPart):
                         system_prompt += part.content
                     elif isinstance(part, UserPromptPart):
-                        anthropic_messages.append(MessageParam(role='user', content=part.content))
+                        anthropic_messages.append(_map_user_prompt(part))
                     elif isinstance(part, ToolReturnPart):
                         anthropic_messages.append(
                             MessageParam(
@@ -366,6 +370,33 @@ def _map_usage(message: AnthropicMessage | RawMessageStreamEvent) -> usage.Usage
         response_tokens=response_usage.output_tokens,
         total_tokens=(request_tokens or 0) + response_usage.output_tokens,
     )
+
+
+def _map_user_prompt(part: UserPromptPart) -> MessageParam:
+    part_content: str | list[ImageBlockParam | TextBlockParam]
+    if isinstance(part.content, str):
+        part_content = part.content
+    else:
+        part_content = []
+        for item in part.content:
+            if isinstance(item, str):
+                part_content.append(TextBlockParam(text=item, type='text'))
+            elif isinstance(item, BinaryContent):
+                if item.media_type not in ('image/jpeg', 'image/png', 'image/gif', 'image/webp'):
+                    # TODO(Marcelo): Replace for a better exception?
+                    raise ValueError('Unsupported media type for image')
+                image_block = ImageBlockParam(
+                    source={
+                        'data': io.BytesIO(item.data),
+                        'media_type': item.media_type,
+                        'type': 'base64',
+                    },
+                    type='image',
+                )
+                part_content.append(image_block)
+            elif isinstance(item, ImageUrl):
+                raise ValueError('ImageUrl is not supported in Anthropic')
+    return MessageParam(role='user', content=part_content)
 
 
 @dataclass

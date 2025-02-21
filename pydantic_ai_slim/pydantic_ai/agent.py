@@ -204,7 +204,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
     @overload
     async def run(
         self,
-        user_prompt: str,
+        user_prompt: str | Sequence[_messages.UserContent],
         *,
         result_type: None = None,
         message_history: list[_messages.ModelMessage] | None = None,
@@ -219,7 +219,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
     @overload
     async def run(
         self,
-        user_prompt: str,
+        user_prompt: str | Sequence[_messages.UserContent],
         *,
         result_type: type[RunResultDataT],
         message_history: list[_messages.ModelMessage] | None = None,
@@ -233,7 +233,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
 
     async def run(
         self,
-        user_prompt: str,
+        user_prompt: str | Sequence[_messages.UserContent],
         *,
         message_history: list[_messages.ModelMessage] | None = None,
         model: models.Model | models.KnownModelName | None = None,
@@ -357,7 +357,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
     @overload
     def run_sync(
         self,
-        user_prompt: str,
+        user_prompt: str | Sequence[_messages.UserContent],
         *,
         message_history: list[_messages.ModelMessage] | None = None,
         model: models.Model | models.KnownModelName | None = None,
@@ -371,7 +371,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
     @overload
     def run_sync(
         self,
-        user_prompt: str,
+        user_prompt: str | Sequence[_messages.UserContent],
         *,
         result_type: type[RunResultDataT] | None,
         message_history: list[_messages.ModelMessage] | None = None,
@@ -385,7 +385,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
 
     def run_sync(
         self,
-        user_prompt: str,
+        user_prompt: str | Sequence[_messages.UserContent],
         *,
         result_type: type[RunResultDataT] | None = None,
         message_history: list[_messages.ModelMessage] | None = None,
@@ -429,7 +429,8 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         """
         if infer_name and self.name is None:
             self._infer_name(inspect.currentframe())
-        return asyncio.get_event_loop().run_until_complete(
+        event_loop = asyncio.new_event_loop()
+        result = event_loop.run_until_complete(
             self.run(
                 user_prompt,
                 result_type=result_type,
@@ -442,6 +443,8 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
                 infer_name=False,
             )
         )
+        event_loop.close()
+        return result
 
     @overload
     def run_stream(

@@ -6,9 +6,7 @@ build-backend = "hatchling.build"
 name = "pydantic-ai-slim"
 version = "0.0.24"
 description = "Agent Framework / shim to use Pydantic with LLMs, slim package"
-authors = [
-    { name = "Samuel Colvin", email = "samuel@pydantic.dev" },
-]
+authors = [{ name = "Samuel Colvin", email = "samuel@pydantic.dev" }]
 license = "MIT"
 readme = "README.md"
 classifiers = [
@@ -47,7 +45,8 @@ dependencies = [
 logfire = ["logfire>=2.3"]
 openai = ["openai>=1.61.0"]
 cohere = ["cohere>=5.13.11"]
-vertexai = ["google-auth>=2.36.0", "requests>=2.32.3"]
+vertexai = ["google-auth>=2.36.0", "requests>=2.32.3", "google-genai>=1.2.0"]
+gemini = ["google-genai>=1.2.0"]
 anthropic = ["anthropic>=0.40.0"]
 groq = ["groq>=0.12.0"]
 mistral = ["mistralai>=1.2.5"]

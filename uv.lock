@@ -1,4 +1,5 @@
 version = 1
+revision = 1
 requires-python = ">=3.9"
 resolution-markers = [
     "python_full_version == '3.10.*'",
@@ -167,7 +168,7 @@ wheels = [
 
 [[package]]
 name = "anthropic"
-version = "0.40.0"
+version = "0.46.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
@@ -178,9 +179,9 @@ dependencies = [
     { name = "sniffio" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/4d/d9/c39005f04c602607d68d48d1c917b35af8d16b687b7ca427ca787c39d8b9/anthropic-0.40.0.tar.gz", hash = "sha256:3efeca6d9e97813f93ed34322c6c7ea2279bf0824cd0aa71b59ce222665e2b87", size = 190939 }
+sdist = { url = "https://files.pythonhosted.org/packages/d4/68/3b4c045edf6dc6933895e8f279cc77c7684874c8aba46a4e6241c8b147cf/anthropic-0.46.0.tar.gz", hash = "sha256:eac3d43271d02321a57c3ca68aca84c3d58873e8e72d1433288adee2d46b745b", size = 202191 }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/cb/18/a68cfb9a11990377650c36c25b5dfb0baece900e9e505b68e1aa06ad0227/anthropic-0.40.0-py3-none-any.whl", hash = "sha256:442028ae8790ff9e3b6f8912043918755af1230d193904ae2ef78cc22995280c", size = 199484 },
+    { url = "https://files.pythonhosted.org/packages/50/6f/346beae0375df5f6907230bc63d557ef5d7659be49250ac5931a758322ae/anthropic-0.46.0-py3-none-any.whl", hash = "sha256:1445ec9be78d2de7ea51b4d5acd3574e414aea97ef903d0ecbb57bec806aaa49", size = 223228 },
 ]
 
 [[package]]
@@ -1044,6 +1045,21 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/6a/71/4c5387d8a3e46e3526a8190ae396659484377a73b33030614dd3b28e7ded/google_auth-2.36.0.tar.gz", hash = "sha256:545e9618f2df0bcbb7dcbc45a546485b1212624716975a1ea5ae8149ce769ab1", size = 268336 }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/2d/9a/3d5087d27865c2f0431b942b5c4500b7d1b744dd3262fdc973a4c39d099e/google_auth-2.36.0-py2.py3-none-any.whl", hash = "sha256:51a15d47028b66fd36e5c64a82d2d57480075bccc7da37cde257fc94177a61fb", size = 209519 },
+]
+
+[[package]]
+name = "google-genai"
+version = "1.2.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "google-auth" },
+    { name = "pydantic" },
+    { name = "requests" },
+    { name = "typing-extensions" },
+    { name = "websockets" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/0d/ed/985f2d2e2b5fbd912ab0fdb11d6dc48c22553a6c4edffabb8146d53b974a/google_genai-1.2.0-py3-none-any.whl", hash = "sha256:609d61bee73f1a6ae5b47e9c7dd4b469d50318f050c5ceacf835b0f80f79d2d9", size = 130744 },
 ]
 
 [[package]]
@@ -1924,7 +1940,7 @@ wheels = [
 
 [[package]]
 name = "openai"
-version = "1.61.1"
+version = "1.63.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
@@ -1936,9 +1952,9 @@ dependencies = [
     { name = "tqdm" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/d9/cf/61e71ce64cf0a38f029da0f9a5f10c9fa0e69a7a977b537126dac50adfea/openai-1.61.1.tar.gz", hash = "sha256:ce1851507218209961f89f3520e06726c0aa7d0512386f0f977e3ac3e4f2472e", size = 350784 }
+sdist = { url = "https://files.pythonhosted.org/packages/e6/1c/11b520deb71f9ea54ced3c52cd6a5f7131215deba63ad07f23982e328141/openai-1.63.2.tar.gz", hash = "sha256:aeabeec984a7d2957b4928ceaa339e2ead19c61cfcf35ae62b7c363368d26360", size = 356902 }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/9a/b6/2e2a011b2dc27a6711376808b4cd8c922c476ea0f1420b39892117fa8563/openai-1.61.1-py3-none-any.whl", hash = "sha256:72b0826240ce26026ac2cd17951691f046e5be82ad122d20a8e1b30ca18bd11e", size = 463126 },
+    { url = "https://files.pythonhosted.org/packages/15/64/db3462b358072387b8e93e6e6a38d3c741a17b4a84171ef01d6c85c63f25/openai-1.63.2-py3-none-any.whl", hash = "sha256:1f38b27b5a40814c2b7d8759ec78110df58c4a614c25f182809ca52b080ff4d4", size = 472282 },
 ]
 
 [[package]]
@@ -2559,6 +2575,7 @@ requires-dist = [
     { name = "pydantic-ai-examples", marker = "extra == 'examples'", editable = "examples" },
     { name = "pydantic-ai-slim", extras = ["openai", "vertexai", "groq", "anthropic", "mistral", "cohere"], editable = "pydantic_ai_slim" },
 ]
+provides-extras = ["examples", "logfire"]
 
 [package.metadata.requires-dev]
 docs = [
@@ -2630,6 +2647,9 @@ anthropic = [
 cohere = [
     { name = "cohere" },
 ]
+gemini = [
+    { name = "google-genai" },
+]
 groq = [
     { name = "groq" },
 ]
@@ -2644,6 +2664,7 @@ openai = [
 ]
 vertexai = [
     { name = "google-auth" },
+    { name = "google-genai" },
     { name = "requests" },
 ]
 
@@ -2668,6 +2689,8 @@ requires-dist = [
     { name = "cohere", marker = "extra == 'cohere'", specifier = ">=5.13.11" },
     { name = "eval-type-backport", specifier = ">=0.2.0" },
     { name = "google-auth", marker = "extra == 'vertexai'", specifier = ">=2.36.0" },
+    { name = "google-genai", marker = "extra == 'gemini'", specifier = ">=1.2.0" },
+    { name = "google-genai", marker = "extra == 'vertexai'", specifier = ">=1.2.0" },
     { name = "griffe", specifier = ">=1.3.2" },
     { name = "groq", marker = "extra == 'groq'", specifier = ">=0.12.0" },
     { name = "httpx", specifier = ">=0.27" },
@@ -2679,6 +2702,7 @@ requires-dist = [
     { name = "pydantic-graph", editable = "pydantic_graph" },
     { name = "requests", marker = "extra == 'vertexai'", specifier = ">=2.32.3" },
 ]
+provides-extras = ["logfire", "openai", "cohere", "vertexai", "gemini", "anthropic", "groq", "mistral"]
 
 [package.metadata.requires-dev]
 dev = [
