@@ -183,19 +183,31 @@ class GeminiModel(Model):
         model_settings: GeminiModelSettings,
         model_request_parameters: ModelRequestParameters,
     ) -> AsyncIterator[HTTPResponse]:
-        tools = self._get_tools(model_request_parameters)
-        tool_config = self._get_tool_config(model_request_parameters, tools)
         sys_prompt_parts, contents = self._message_to_gemini_content(messages)
-
         request_data = _GeminiRequest(contents=contents)
         if sys_prompt_parts:
             request_data['system_instruction'] = _GeminiTextContent(role='user', parts=sys_prompt_parts)
-        if tools is not None:
-            request_data['tools'] = tools
-        if tool_config is not None:
-            request_data['tool_config'] = tool_config
 
         generation_config: _GeminiGenerationConfig = {}
+        if model_settings.get('force_response_format', False):
+            if (n_result_tools := len(model_request_parameters.result_tools)) == 0:
+                generation_config['response_mimetype'] = 'text/plain'
+            elif n_result_tools == 1 and not model_request_parameters.allow_text_result:
+                generation_config['response_mimetype'] = 'application/json'
+                generation_config['response_schema'] = model_request_parameters.result_tools[0].parameters_json_schema
+            else:
+                json_schemas = [t.parameters_json_schema for t in model_request_parameters.result_tools]
+                if model_request_parameters.allow_text_result:
+                    json_schemas.append({'type': 'string'})
+                generation_config['response_schema'] = {'anyOf': json_schemas}
+        else:
+            tools = self._get_tools(model_request_parameters)
+            tool_config = self._get_tool_config(model_request_parameters, tools)
+            if tools is not None:
+                request_data['tools'] = tools
+            if tool_config is not None:
+                request_data['tool_config'] = tool_config
+
         if model_settings:
             if (max_tokens := model_settings.get('max_tokens')) is not None:
                 generation_config['max_output_tokens'] = max_tokens
@@ -203,6 +215,8 @@ class GeminiModel(Model):
                 generation_config['temperature'] = temperature
             if (top_p := model_settings.get('top_p')) is not None:
                 generation_config['top_p'] = top_p
+            if (seed := model_settings.get('seed')) is not None:
+                generation_config['seed'] = seed
             if (presence_penalty := model_settings.get('presence_penalty')) is not None:
                 generation_config['presence_penalty'] = presence_penalty
             if (frequency_penalty := model_settings.get('frequency_penalty')) is not None:
@@ -465,9 +479,12 @@ class _GeminiGenerationConfig(TypedDict, total=False):
     See <https://ai.google.dev/api/generate-content#generationconfig> for API docs.
     """
 
+    response_mimetype: Literal['text/plain', 'application/json']
+    response_schema: dict[str, Any]
     max_output_tokens: int
     temperature: float
     top_p: float
+    seed: int
     presence_penalty: float
     frequency_penalty: float
 

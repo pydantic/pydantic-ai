@@ -202,6 +202,7 @@ class GroqModel(Model):
             tools=tools or NOT_GIVEN,
             tool_choice=tool_choice or NOT_GIVEN,
             stream=stream,
+            response_format=response_format,
             max_tokens=model_settings.get('max_tokens', NOT_GIVEN),
             temperature=model_settings.get('temperature', NOT_GIVEN),
             top_p=model_settings.get('top_p', NOT_GIVEN),
