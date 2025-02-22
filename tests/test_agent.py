@@ -24,7 +24,6 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.models import cached_async_http_client
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.result import Usage
@@ -848,7 +847,7 @@ def test_run_sync_multiple():
 
     @agent.tool_plain
     async def make_request() -> str:
-        async with cached_async_http_client() as client:
+        async with httpx.AsyncClient() as client:
             # use this as I suspect it's about the fastest globally available endpoint
             try:
                 response = await client.get('https://cloudflare.com/cdn-cgi/trace')
