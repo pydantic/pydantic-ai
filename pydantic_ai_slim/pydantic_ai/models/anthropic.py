@@ -272,63 +272,55 @@ class AnthropicModel(Model):
         anthropic_messages: list[MessageParam] = []
         for m in messages:
             if isinstance(m, ModelRequest):
-                for part in m.parts:
-                    if isinstance(part, SystemPromptPart):
-                        system_prompt += part.content
-                    elif isinstance(part, UserPromptPart):
-                        anthropic_messages.append(MessageParam(role='user', content=part.content))
-                    elif isinstance(part, ToolReturnPart):
-                        anthropic_messages.append(
-                            MessageParam(
-                                role='user',
-                                content=[
-                                    ToolResultBlockParam(
-                                        tool_use_id=_guard_tool_call_id(t=part, model_source='Anthropic'),
-                                        type='tool_result',
-                                        content=part.model_response_str(),
-                                        is_error=False,
-                                    )
-                                ],
-                            )
+                user_content_params: list[ToolResultBlockParam | TextBlockParam] = []
+                for request_part in m.parts:
+                    if isinstance(request_part, SystemPromptPart):
+                        system_prompt += request_part.content
+                    elif isinstance(request_part, UserPromptPart):
+                        text_block_param = TextBlockParam(type='text', text=request_part.content)
+                        user_content_params.append(text_block_param)
+                    elif isinstance(request_part, ToolReturnPart):
+                        tool_result_block_param = ToolResultBlockParam(
+                            tool_use_id=_guard_tool_call_id(t=request_part, model_source='Anthropic'),
+                            type='tool_result',
+                            content=request_part.model_response_str(),
+                            is_error=False,
                         )
-                    elif isinstance(part, RetryPromptPart):
-                        if part.tool_name is None:
-                            anthropic_messages.append(MessageParam(role='user', content=part.model_response()))
+                        user_content_params.append(tool_result_block_param)
+                    elif isinstance(request_part, RetryPromptPart):
+                        if request_part.tool_name is None:
+                            retry_param = TextBlockParam(type='text', text=request_part.model_response())
                         else:
-                            anthropic_messages.append(
-                                MessageParam(
-                                    role='user',
-                                    content=[
-                                        ToolResultBlockParam(
-                                            tool_use_id=_guard_tool_call_id(t=part, model_source='Anthropic'),
-                                            type='tool_result',
-                                            content=part.model_response(),
-                                            is_error=True,
-                                        ),
-                                    ],
-                                )
+                            retry_param = ToolResultBlockParam(
+                                tool_use_id=_guard_tool_call_id(t=request_part, model_source='Anthropic'),
+                                type='tool_result',
+                                content=request_part.model_response(),
+                                is_error=True,
                             )
+                        user_content_params.append(retry_param)
+                anthropic_messages.append(
+                    MessageParam(
+                        role='user',
+                        content=user_content_params,
+                    )
+                )
             elif isinstance(m, ModelResponse):
-                content: list[TextBlockParam | ToolUseBlockParam] = []
-                for item in m.parts:
-                    if isinstance(item, TextPart):
-                        content.append(TextBlockParam(text=item.content, type='text'))
+                assistant_content_params: list[TextBlockParam | ToolUseBlockParam] = []
+                for response_part in m.parts:
+                    if isinstance(response_part, TextPart):
+                        assistant_content_params.append(TextBlockParam(text=response_part.content, type='text'))
                     else:
-                        assert isinstance(item, ToolCallPart)
-                        content.append(self._map_tool_call(item))
-                anthropic_messages.append(MessageParam(role='assistant', content=content))
+                        tool_use_block_param = ToolUseBlockParam(
+                            id=_guard_tool_call_id(t=response_part, model_source='Anthropic'),
+                            type='tool_use',
+                            name=response_part.tool_name,
+                            input=response_part.args_as_dict(),
+                        )
+                        assistant_content_params.append(tool_use_block_param)
+                anthropic_messages.append(MessageParam(role='assistant', content=assistant_content_params))
             else:
                 assert_never(m)
         return system_prompt, anthropic_messages
-
-    @staticmethod
-    def _map_tool_call(t: ToolCallPart) -> ToolUseBlockParam:
-        return ToolUseBlockParam(
-            id=_guard_tool_call_id(t=t, model_source='Anthropic'),
-            type='tool_use',
-            name=t.tool_name,
-            input=t.args_as_dict(),
-        )
 
     @staticmethod
     def _map_tool_definition(f: ToolDefinition) -> ToolParam:
