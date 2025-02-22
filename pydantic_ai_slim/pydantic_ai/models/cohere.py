@@ -124,7 +124,7 @@ class CohereModel(Model):
             assert api_key is None, 'Cannot provide both `cohere_client` and `api_key`'
             self.client = cohere_client
         else:
-            self.client = AsyncClientV2(api_key=api_key, httpx_client=http_client)  # type: ignore
+            self.client = AsyncClientV2(api_key=api_key, httpx_client=http_client)
 
     async def request(
         self,

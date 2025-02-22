@@ -848,15 +848,14 @@ def test_run_sync_multiple():
 
     @agent.tool_plain
     async def make_request() -> str:
-        # raised a `RuntimeError: Event loop is closed` on repeat runs when we used `asyncio.run()`
-        client = cached_async_http_client()
-        # use this as I suspect it's about the fastest globally available endpoint
-        try:
-            response = await client.get('https://cloudflare.com/cdn-cgi/trace')
-        except httpx.ConnectError:
-            pytest.skip('offline')
-        else:
-            return str(response.status_code)
+        async with cached_async_http_client() as client:
+            # use this as I suspect it's about the fastest globally available endpoint
+            try:
+                response = await client.get('https://cloudflare.com/cdn-cgi/trace')
+            except httpx.ConnectError:  # pragma: no cover
+                pytest.skip('offline')
+            else:
+                return str(response.status_code)
 
     for _ in range(2):
         result = agent.run_sync('Hello')

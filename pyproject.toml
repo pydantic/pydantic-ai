@@ -57,7 +57,7 @@ members = ["pydantic_ai_slim", "pydantic_graph", "examples"]
 # dev dependencies are defined in `pydantic-ai-slim/pyproject.toml` to allow for minimal testing
 lint = [
     "mypy>=1.11.2",
-    "pyright>=1.1.388",
+    "pyright>=1.1.388,<1.1.390",
     "ruff>=0.6.9",
 ]
 docs = [

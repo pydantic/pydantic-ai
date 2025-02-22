@@ -590,7 +590,7 @@ async def test_early_strategy_with_final_result_in_middle():
             ModelRequest(
                 parts=[
                     UserPromptPart(
-                        content='test early strategy with final ' 'result in middle',
+                        content='test early strategy with final result in middle',
                         timestamp=IsNow(tz=datetime.timezone.utc),
                         part_kind='user-prompt',
                     )
@@ -632,7 +632,7 @@ async def test_early_strategy_with_final_result_in_middle():
                 parts=[
                     ToolReturnPart(
                         tool_name='regular_tool',
-                        content='Tool not executed - a final ' 'result was already processed.',
+                        content='Tool not executed - a final result was already processed.',
                         tool_call_id=None,
                         timestamp=IsNow(tz=datetime.timezone.utc),
                         part_kind='tool-return',
@@ -646,7 +646,7 @@ async def test_early_strategy_with_final_result_in_middle():
                     ),
                     ToolReturnPart(
                         tool_name='another_tool',
-                        content='Tool not executed - a final ' 'result was already processed.',
+                        content='Tool not executed - a final result was already processed.',
                         tool_call_id=None,
                         timestamp=IsNow(tz=datetime.timezone.utc),
                         part_kind='tool-return',

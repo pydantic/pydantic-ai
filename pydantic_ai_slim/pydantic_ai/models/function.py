@@ -109,9 +109,9 @@ class FunctionModel(Model):
             model_settings,
         )
 
-        assert (
-            self.stream_function is not None
-        ), 'FunctionModel must receive a `stream_function` to support streamed requests'
+        assert self.stream_function is not None, (
+            'FunctionModel must receive a `stream_function` to support streamed requests'
+        )
 
         response_stream = PeekableAsyncStream(self.stream_function(messages, agent_info))
 

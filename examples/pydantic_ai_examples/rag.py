@@ -67,9 +67,9 @@ async def retrieve(context: RunContext[Deps], search_query: str) -> str:
             model='text-embedding-3-small',
         )
 
-    assert (
-        len(embedding.data) == 1
-    ), f'Expected 1 embedding, got {len(embedding.data)}, doc query: {search_query!r}'
+    assert len(embedding.data) == 1, (
+        f'Expected 1 embedding, got {len(embedding.data)}, doc query: {search_query!r}'
+    )
     embedding = embedding.data[0].embedding
     embedding_json = pydantic_core.to_json(embedding).decode()
     rows = await context.deps.pool.fetch(
@@ -149,9 +149,9 @@ async def insert_doc_section(
                 input=section.embedding_content(),
                 model='text-embedding-3-small',
             )
-        assert (
-            len(embedding.data) == 1
-        ), f'Expected 1 embedding, got {len(embedding.data)}, doc section: {section}'
+        assert len(embedding.data) == 1, (
+            f'Expected 1 embedding, got {len(embedding.data)}, doc section: {section}'
+        )
         embedding = embedding.data[0].embedding
         embedding_json = pydantic_core.to_json(embedding).decode()
         await pool.execute(
