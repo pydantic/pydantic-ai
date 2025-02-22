@@ -59,7 +59,9 @@ import logfire
 logfire.configure()
 ```
 
-The [logfire documentation](https://logfire.pydantic.dev/docs/) has more details on how to use logfire, including how to instrument other libraries like Pydantic, HTTPX and FastAPI.
+The [logfire documentation](https://logfire.pydantic.dev/docs/) has more details on how to use logfire,
+including how to instrument other libraries like [Pydantic](https://logfire.pydantic.dev/docs/integrations/pydantic/),
+[HTTPX](https://logfire.pydantic.dev/docs/integrations/http-clients/httpx/) and [FastAPI](https://logfire.pydantic.dev/docs/integrations/web-frameworks/fastapi/).
 
 Since Logfire is build on [OpenTelemetry](https://opentelemetry.io/), you can use the Logfire Python SDK to send data to any OpenTelemetry collector.
 
@@ -79,3 +81,45 @@ To demonstrate how Logfire can let you visualise the flow of a PydanticAI run, h
 We can also query data with SQL in Logfire to monitor the performance of an application. Here's a real world example of using Logfire to monitor PydanticAI runs inside Logfire itself:
 
 ![Logfire monitoring PydanticAI](img/logfire-monitoring-pydanticai.png)
+
+### Monitoring HTTPX Requests
+
+In order to monitor HTTPX requests made by models, you can use `logfire`'s [HTTPX](https://logfire.pydantic.dev/docs/integrations/http-clients/httpx/) integration.
+
+Instrumentation is as easy as adding the following three lines to your application:
+
+```py {title="instrument_httpx.py" test="skip" lint="skip"}
+import logfire
+logfire.configure()
+logfire.instrument_httpx(capture_all=True)  # (1)!
+```
+
+1. See the [logfire docs](https://logfire.pydantic.dev/docs/integrations/http-clients/httpx/) for more `httpx` instrumentation details.
+
+In particular, this can help you to trace specific requests, responses, and headers:
+
+```py {title="instrument_httpx_example.py", test="skip" lint="skip"}
+import logfire
+from pydantic_ai import Agent
+
+logfire.configure()
+logfire.instrument_httpx(capture_all=True)  # (1)!
+
+agent = Agent('openai:gpt-4o')
+result = agent.run_sync('What is the capital of France?')
+print(result.data)
+#> The capital of France is Paris.
+```
+
+1. Capture all of headers, request body, and response body.
+
+=== "With `httpx` instrumentation"
+
+    ![Logfire with HTTPX instrumentation](img/logfire-with-httpx.png)
+
+=== "Without `httpx` instrumentation"
+
+    ![Logfire without HTTPX instrumentation](img/logfire-without-httpx.png)
+
+!!! tip
+    `httpx` instrumentation might be of particular utility if you're using a custom `httpx` client in your model in order to get insights into your custom requests.

@@ -1,8 +1,8 @@
 from __future__ import annotations as _annotations
 
 import json
-from collections.abc import Iterator, Sequence
-from dataclasses import dataclass
+from collections.abc import Sequence
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from functools import cached_property
 from typing import Any, Literal, cast
@@ -11,23 +11,25 @@ import pytest
 from inline_snapshot import snapshot
 from typing_extensions import TypedDict
 
-from pydantic_ai import Agent, ModelRetry, UnexpectedModelBehavior, _utils
+from pydantic_ai import Agent, ModelRetry, UnexpectedModelBehavior
 from pydantic_ai.messages import (
-    ArgsJson,
     ModelRequest,
     ModelResponse,
     RetryPromptPart,
     SystemPromptPart,
+    TextPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
 )
 from pydantic_ai.result import Usage
+from pydantic_ai.settings import ModelSettings
 
-from ..conftest import IsNow, try_import
+from ..conftest import IsNow, TestEnv, try_import
+from .mock_async_stream import MockAsyncStream
 
 with try_import() as imports_successful:
-    from openai import AsyncOpenAI
+    from openai import NOT_GIVEN, AsyncOpenAI, OpenAIError
     from openai.types import chat
     from openai.types.chat.chat_completion import Choice
     from openai.types.chat.chat_completion_chunk import (
@@ -40,7 +42,7 @@ with try_import() as imports_successful:
     from openai.types.chat.chat_completion_message_tool_call import Function
     from openai.types.completion_usage import CompletionUsage, PromptTokensDetails
 
-    from pydantic_ai.models.openai import OpenAIModel
+    from pydantic_ai.models.openai import OpenAIModel, OpenAISystemPromptRole
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
@@ -49,39 +51,44 @@ pytestmark = [
 
 
 def test_init():
-    m = OpenAIModel('gpt-4', api_key='foobar')
+    m = OpenAIModel('gpt-4o', api_key='foobar')
     assert str(m.client.base_url) == 'https://api.openai.com/v1/'
     assert m.client.api_key == 'foobar'
-    assert m.name() == 'openai:gpt-4'
+    assert m.model_name == 'gpt-4o'
 
 
 def test_init_with_base_url():
-    m = OpenAIModel('gpt-4', base_url='https://example.com/v1', api_key='foobar')
+    m = OpenAIModel('gpt-4o', base_url='https://example.com/v1', api_key='foobar')
     assert str(m.client.base_url) == 'https://example.com/v1/'
     assert m.client.api_key == 'foobar'
-    assert m.name() == 'openai:gpt-4'
-    m.name()
+    assert m.model_name == 'gpt-4o'
 
 
-@dataclass
-class MockAsyncStream:
-    _iter: Iterator[chat.ChatCompletionChunk]
+def test_init_with_no_api_key_will_still_setup_client():
+    m = OpenAIModel('llama3.2', base_url='http://localhost:19434/v1')
+    assert str(m.client.base_url) == 'http://localhost:19434/v1/'
 
-    async def __anext__(self) -> chat.ChatCompletionChunk:
-        return _utils.sync_anext(self._iter)
 
-    async def __aenter__(self):
-        return self
+def test_init_with_non_openai_model():
+    m = OpenAIModel('llama3.2-vision:latest', base_url='https://example.com/v1/')
+    assert m.model_name == 'llama3.2-vision:latest'
 
-    async def __aexit__(self, *_args: Any):
-        pass
+
+def test_init_of_openai_without_api_key_raises_error(env: TestEnv):
+    env.remove('OPENAI_API_KEY')
+    with pytest.raises(
+        OpenAIError,
+        match='^The api_key client option must be set either by passing api_key to the client or by setting the OPENAI_API_KEY environment variable$',
+    ):
+        OpenAIModel('gpt-4o')
 
 
 @dataclass
 class MockOpenAI:
     completions: chat.ChatCompletion | list[chat.ChatCompletion] | None = None
     stream: list[chat.ChatCompletionChunk] | list[list[chat.ChatCompletionChunk]] | None = None
-    index = 0
+    index: int = 0
+    chat_completion_kwargs: list[dict[str, Any]] = field(default_factory=list)
 
     @cached_property
     def chat(self) -> Any:
@@ -99,15 +106,18 @@ class MockOpenAI:
         return cast(AsyncOpenAI, cls(stream=list(stream)))  # pyright: ignore[reportArgumentType]
 
     async def chat_completions_create(  # pragma: no cover
-        self, *_args: Any, stream: bool = False, **_kwargs: Any
-    ) -> chat.ChatCompletion | MockAsyncStream:
+        self, *_args: Any, stream: bool = False, **kwargs: Any
+    ) -> chat.ChatCompletion | MockAsyncStream[chat.ChatCompletionChunk]:
+        self.chat_completion_kwargs.append({k: v for k, v in kwargs.items() if v is not NOT_GIVEN})
+
         if stream:
             assert self.stream is not None, 'you can only used `stream=True` if `stream` is provided'
             # noinspection PyUnresolvedReferences
             if isinstance(self.stream[0], list):
-                response = MockAsyncStream(iter(self.stream[self.index]))  # type: ignore
+                indexed_stream = cast(list[chat.ChatCompletionChunk], self.stream[self.index])
+                response = MockAsyncStream(iter(indexed_stream))
             else:
-                response = MockAsyncStream(iter(self.stream))  # type: ignore
+                response = MockAsyncStream(iter(cast(list[chat.ChatCompletionChunk], self.stream)))
         else:
             assert self.completions is not None, 'you can only used `stream=False` if `completions` are provided'
             if isinstance(self.completions, list):
@@ -118,12 +128,19 @@ class MockOpenAI:
         return response
 
 
+def get_mock_chat_completion_kwargs(async_open_ai: AsyncOpenAI) -> list[dict[str, Any]]:
+    if isinstance(async_open_ai, MockOpenAI):
+        return async_open_ai.chat_completion_kwargs
+    else:  # pragma: no cover
+        raise RuntimeError('Not a MockOpenAI instance')
+
+
 def completion_message(message: ChatCompletionMessage, *, usage: CompletionUsage | None = None) -> chat.ChatCompletion:
     return chat.ChatCompletion(
         id='123',
         choices=[Choice(finish_reason='stop', index=0, message=message)],
         created=1704067200,  # 2024-01-01
-        model='gpt-4',
+        model='gpt-4o-123',
         object='chat.completion',
         usage=usage,
     )
@@ -132,7 +149,7 @@ def completion_message(message: ChatCompletionMessage, *, usage: CompletionUsage
 async def test_request_simple_success(allow_model_requests: None):
     c = completion_message(ChatCompletionMessage(content='world', role='assistant'))
     mock_client = MockOpenAI.create_mock(c)
-    m = OpenAIModel('gpt-4', openai_client=mock_client)
+    m = OpenAIModel('gpt-4o', openai_client=mock_client)
     agent = Agent(m)
 
     result = await agent.run('hello')
@@ -148,11 +165,31 @@ async def test_request_simple_success(allow_model_requests: None):
     assert result.all_messages() == snapshot(
         [
             ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
-            ModelResponse.from_text(content='world', timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)),
+            ModelResponse(
+                parts=[TextPart(content='world')],
+                model_name='gpt-4o-123',
+                timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+            ),
             ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
-            ModelResponse.from_text(content='world', timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)),
+            ModelResponse(
+                parts=[TextPart(content='world')],
+                model_name='gpt-4o-123',
+                timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+            ),
         ]
     )
+    assert get_mock_chat_completion_kwargs(mock_client) == [
+        {'messages': [{'content': 'hello', 'role': 'user'}], 'model': 'gpt-4o', 'n': 1},
+        {
+            'messages': [
+                {'content': 'hello', 'role': 'user'},
+                {'content': 'world', 'role': 'assistant'},
+                {'content': 'hello', 'role': 'user'},
+            ],
+            'model': 'gpt-4o',
+            'n': 1,
+        },
+    ]
 
 
 async def test_request_simple_usage(allow_model_requests: None):
@@ -161,7 +198,7 @@ async def test_request_simple_usage(allow_model_requests: None):
         usage=CompletionUsage(completion_tokens=1, prompt_tokens=2, total_tokens=3),
     )
     mock_client = MockOpenAI.create_mock(c)
-    m = OpenAIModel('gpt-4', openai_client=mock_client)
+    m = OpenAIModel('gpt-4o', openai_client=mock_client)
     agent = Agent(m)
 
     result = await agent.run('Hello')
@@ -184,7 +221,7 @@ async def test_request_structured_response(allow_model_requests: None):
         )
     )
     mock_client = MockOpenAI.create_mock(c)
-    m = OpenAIModel('gpt-4', openai_client=mock_client)
+    m = OpenAIModel('gpt-4o', openai_client=mock_client)
     agent = Agent(m, result_type=list[int])
 
     result = await agent.run('Hello')
@@ -196,10 +233,11 @@ async def test_request_structured_response(allow_model_requests: None):
                 parts=[
                     ToolCallPart(
                         tool_name='final_result',
-                        args=ArgsJson(args_json='{"response": [1, 2, 123]}'),
+                        args='{"response": [1, 2, 123]}',
                         tool_call_id='123',
                     )
                 ],
+                model_name='gpt-4o-123',
                 timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc),
             ),
             ModelRequest(
@@ -259,7 +297,7 @@ async def test_request_tool_call(allow_model_requests: None):
         completion_message(ChatCompletionMessage(content='final response', role='assistant')),
     ]
     mock_client = MockOpenAI.create_mock(responses)
-    m = OpenAIModel('gpt-4', openai_client=mock_client)
+    m = OpenAIModel('gpt-4o', openai_client=mock_client)
     agent = Agent(m, system_prompt='this is the system prompt')
 
     @agent.tool_plain
@@ -283,10 +321,11 @@ async def test_request_tool_call(allow_model_requests: None):
                 parts=[
                     ToolCallPart(
                         tool_name='get_location',
-                        args=ArgsJson(args_json='{"loc_name": "San Fransisco"}'),
+                        args='{"loc_name": "San Fransisco"}',
                         tool_call_id='1',
                     )
                 ],
+                model_name='gpt-4o-123',
                 timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc),
             ),
             ModelRequest(
@@ -303,10 +342,11 @@ async def test_request_tool_call(allow_model_requests: None):
                 parts=[
                     ToolCallPart(
                         tool_name='get_location',
-                        args=ArgsJson(args_json='{"loc_name": "London"}'),
+                        args='{"loc_name": "London"}',
                         tool_call_id='2',
                     )
                 ],
+                model_name='gpt-4o-123',
                 timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc),
             ),
             ModelRequest(
@@ -319,7 +359,11 @@ async def test_request_tool_call(allow_model_requests: None):
                     )
                 ]
             ),
-            ModelResponse.from_text(content='final response', timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc)),
+            ModelResponse(
+                parts=[TextPart(content='final response')],
+                model_name='gpt-4o-123',
+                timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc),
+            ),
         ]
     )
     assert result.usage() == snapshot(
@@ -343,7 +387,7 @@ def chunk(delta: list[ChoiceDelta], finish_reason: FinishReason | None = None) -
             ChunkChoice(index=index, delta=delta, finish_reason=finish_reason) for index, delta in enumerate(delta)
         ],
         created=1704067200,  # 2024-01-01
-        model='gpt-4',
+        model='gpt-4o',
         object='chat.completion.chunk',
         usage=CompletionUsage(completion_tokens=1, prompt_tokens=2, total_tokens=3),
     )
@@ -356,13 +400,12 @@ def text_chunk(text: str, finish_reason: FinishReason | None = None) -> chat.Cha
 async def test_stream_text(allow_model_requests: None):
     stream = text_chunk('hello '), text_chunk('world'), chunk([])
     mock_client = MockOpenAI.create_mock_stream(stream)
-    m = OpenAIModel('gpt-4', openai_client=mock_client)
+    m = OpenAIModel('gpt-4o', openai_client=mock_client)
     agent = Agent(m)
 
     async with agent.run_stream('') as result:
-        assert not result.is_structured
         assert not result.is_complete
-        assert [c async for c in result.stream(debounce_by=None)] == snapshot(['hello ', 'hello world'])
+        assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(['hello ', 'hello world'])
         assert result.is_complete
         assert result.usage() == snapshot(Usage(requests=1, request_tokens=6, response_tokens=3, total_tokens=9))
 
@@ -370,13 +413,14 @@ async def test_stream_text(allow_model_requests: None):
 async def test_stream_text_finish_reason(allow_model_requests: None):
     stream = text_chunk('hello '), text_chunk('world'), text_chunk('.', finish_reason='stop')
     mock_client = MockOpenAI.create_mock_stream(stream)
-    m = OpenAIModel('gpt-4', openai_client=mock_client)
+    m = OpenAIModel('gpt-4o', openai_client=mock_client)
     agent = Agent(m)
 
     async with agent.run_stream('') as result:
-        assert not result.is_structured
         assert not result.is_complete
-        assert [c async for c in result.stream(debounce_by=None)] == snapshot(['hello ', 'hello world', 'hello world.'])
+        assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(
+            ['hello ', 'hello world', 'hello world.']
+        )
         assert result.is_complete
 
 
@@ -416,11 +460,10 @@ async def test_stream_structured(allow_model_requests: None):
         chunk([]),
     )
     mock_client = MockOpenAI.create_mock_stream(stream)
-    m = OpenAIModel('gpt-4', openai_client=mock_client)
+    m = OpenAIModel('gpt-4o', openai_client=mock_client)
     agent = Agent(m, result_type=MyTypedDict)
 
     async with agent.run_stream('') as result:
-        assert result.is_structured
         assert not result.is_complete
         assert [dict(c) async for c in result.stream(debounce_by=None)] == snapshot(
             [
@@ -445,15 +488,15 @@ async def test_stream_structured_finish_reason(allow_model_requests: None):
         struc_chunk(None, None, finish_reason='stop'),
     )
     mock_client = MockOpenAI.create_mock_stream(stream)
-    m = OpenAIModel('gpt-4', openai_client=mock_client)
+    m = OpenAIModel('gpt-4o', openai_client=mock_client)
     agent = Agent(m, result_type=MyTypedDict)
 
     async with agent.run_stream('') as result:
-        assert result.is_structured
         assert not result.is_complete
         assert [dict(c) async for c in result.stream(debounce_by=None)] == snapshot(
             [
                 {'first': 'One'},
+                {'first': 'One', 'second': 'Two'},
                 {'first': 'One', 'second': 'Two'},
                 {'first': 'One', 'second': 'Two'},
                 {'first': 'One', 'second': 'Two'},
@@ -465,10 +508,10 @@ async def test_stream_structured_finish_reason(allow_model_requests: None):
 async def test_no_content(allow_model_requests: None):
     stream = chunk([ChoiceDelta()]), chunk([ChoiceDelta()])
     mock_client = MockOpenAI.create_mock_stream(stream)
-    m = OpenAIModel('gpt-4', openai_client=mock_client)
+    m = OpenAIModel('gpt-4o', openai_client=mock_client)
     agent = Agent(m, result_type=MyTypedDict)
 
-    with pytest.raises(UnexpectedModelBehavior, match='Streamed response ended without con'):
+    with pytest.raises(UnexpectedModelBehavior, match='Received empty model response'):
         async with agent.run_stream(''):
             pass
 
@@ -480,12 +523,61 @@ async def test_no_delta(allow_model_requests: None):
         text_chunk('world'),
     )
     mock_client = MockOpenAI.create_mock_stream(stream)
-    m = OpenAIModel('gpt-4', openai_client=mock_client)
+    m = OpenAIModel('gpt-4o', openai_client=mock_client)
     agent = Agent(m)
 
     async with agent.run_stream('') as result:
-        assert not result.is_structured
         assert not result.is_complete
-        assert [c async for c in result.stream(debounce_by=None)] == snapshot(['hello ', 'hello world'])
+        assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(['hello ', 'hello world'])
         assert result.is_complete
         assert result.usage() == snapshot(Usage(requests=1, request_tokens=6, response_tokens=3, total_tokens=9))
+
+
+@pytest.mark.parametrize('system_prompt_role', ['system', 'developer', 'user', None])
+async def test_system_prompt_role(
+    allow_model_requests: None, system_prompt_role: OpenAISystemPromptRole | None
+) -> None:
+    """Testing the system prompt role for OpenAI models is properly set / inferred."""
+
+    c = completion_message(ChatCompletionMessage(content='world', role='assistant'))
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIModel('gpt-4o', system_prompt_role=system_prompt_role, openai_client=mock_client)
+    assert m.system_prompt_role == system_prompt_role
+
+    agent = Agent(m, system_prompt='some instructions')
+    result = await agent.run('hello')
+    assert result.data == 'world'
+
+    assert get_mock_chat_completion_kwargs(mock_client) == [
+        {
+            'messages': [
+                {'content': 'some instructions', 'role': system_prompt_role or 'system'},
+                {'content': 'hello', 'role': 'user'},
+            ],
+            'model': 'gpt-4o',
+            'n': 1,
+        }
+    ]
+
+
+@pytest.mark.parametrize('parallel_tool_calls', [True, False])
+async def test_parallel_tool_calls(allow_model_requests: None, parallel_tool_calls: bool) -> None:
+    c = completion_message(
+        ChatCompletionMessage(
+            content=None,
+            role='assistant',
+            tool_calls=[
+                chat.ChatCompletionMessageToolCall(
+                    id='123',
+                    function=Function(arguments='{"response": [1, 2, 3]}', name='final_result'),
+                    type='function',
+                )
+            ],
+        )
+    )
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIModel('gpt-4o', openai_client=mock_client)
+    agent = Agent(m, result_type=list[int], model_settings=ModelSettings(parallel_tool_calls=parallel_tool_calls))
+
+    await agent.run('Hello')
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['parallel_tool_calls'] == parallel_tool_calls

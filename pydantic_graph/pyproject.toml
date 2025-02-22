@@ -1,0 +1,49 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pydantic-graph"
+version = "0.0.24"
+description = "Graph and state machine library"
+authors = [
+    { name = "Samuel Colvin", email = "samuel@pydantic.dev" },
+]
+license = "MIT"
+readme = "README.md"
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Information Technology",
+    "Intended Audience :: System Administrators",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: Unix",
+    "Operating System :: POSIX :: Linux",
+    "Environment :: Console",
+    "Environment :: MacOS X",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Internet",
+]
+requires-python = ">=3.9"
+dependencies = [
+    "httpx>=0.27",
+    "logfire-api>=1.2.0",
+    "pydantic>=2.10",
+]
+
+[project.urls]
+Homepage = "https://ai.pydantic.dev/graph/tree/main/pydantic_graph"
+Source = "https://github.com/pydantic/pydantic-ai"
+Documentation = "https://ai.pydantic.dev/graph"
+Changelog = "https://github.com/pydantic/pydantic-ai/releases"
+
+[tool.hatch.build.targets.wheel]
+packages = ["pydantic_graph"]

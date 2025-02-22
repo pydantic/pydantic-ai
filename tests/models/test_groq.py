@@ -1,7 +1,7 @@
 from __future__ import annotations as _annotations
 
 import json
-from collections.abc import Iterator, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from functools import cached_property
@@ -11,13 +11,13 @@ import pytest
 from inline_snapshot import snapshot
 from typing_extensions import TypedDict
 
-from pydantic_ai import Agent, ModelRetry, UnexpectedModelBehavior, _utils
+from pydantic_ai import Agent, ModelRetry, UnexpectedModelBehavior
 from pydantic_ai.messages import (
-    ArgsJson,
     ModelRequest,
     ModelResponse,
     RetryPromptPart,
     SystemPromptPart,
+    TextPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
@@ -25,6 +25,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.result import Usage
 
 from ..conftest import IsNow, try_import
+from .mock_async_stream import MockAsyncStream
 
 with try_import() as imports_successful:
     from groq import AsyncGroq
@@ -49,23 +50,10 @@ pytestmark = [
 
 
 def test_init():
-    m = GroqModel('llama-3.1-70b-versatile', api_key='foobar')
+    m = GroqModel('llama-3.3-70b-versatile', api_key='foobar')
     assert m.client.api_key == 'foobar'
-    assert m.name() == 'groq:llama-3.1-70b-versatile'
-
-
-@dataclass
-class MockAsyncStream:
-    _iter: Iterator[chat.ChatCompletionChunk]
-
-    async def __anext__(self) -> chat.ChatCompletionChunk:
-        return _utils.sync_anext(self._iter)
-
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, *_args: Any):
-        pass
+    assert m.model_name == 'llama-3.3-70b-versatile'
+    assert m.system == 'groq'
 
 
 @dataclass
@@ -91,14 +79,15 @@ class MockGroq:
 
     async def chat_completions_create(
         self, *_args: Any, stream: bool = False, **_kwargs: Any
-    ) -> chat.ChatCompletion | MockAsyncStream:
+    ) -> chat.ChatCompletion | MockAsyncStream[chat.ChatCompletionChunk]:
         if stream:
             assert self.stream is not None, 'you can only used `stream=True` if `stream` is provided'
             # noinspection PyUnresolvedReferences
             if isinstance(self.stream[0], list):  # pragma: no cover
-                response = MockAsyncStream(iter(self.stream[self.index]))  # type: ignore
+                indexed_stream = cast(list[chat.ChatCompletionChunk], self.stream[self.index])
+                response = MockAsyncStream(iter(indexed_stream))
             else:
-                response = MockAsyncStream(iter(self.stream))  # type: ignore
+                response = MockAsyncStream(iter(cast(list[chat.ChatCompletionChunk], self.stream)))
         else:
             assert self.completions is not None, 'you can only used `stream=False` if `completions` are provided'
             if isinstance(self.completions, list):
@@ -114,7 +103,7 @@ def completion_message(message: ChatCompletionMessage, *, usage: CompletionUsage
         id='123',
         choices=[Choice(finish_reason='stop', index=0, message=message)],
         created=1704067200,  # 2024-01-01
-        model='llama-3.1-70b-versatile',
+        model='llama-3.3-70b-versatile-123',
         object='chat.completion',
         usage=usage,
     )
@@ -123,7 +112,7 @@ def completion_message(message: ChatCompletionMessage, *, usage: CompletionUsage
 async def test_request_simple_success(allow_model_requests: None):
     c = completion_message(ChatCompletionMessage(content='world', role='assistant'))
     mock_client = MockGroq.create_mock(c)
-    m = GroqModel('llama-3.1-70b-versatile', groq_client=mock_client)
+    m = GroqModel('llama-3.3-70b-versatile', groq_client=mock_client)
     agent = Agent(m)
 
     result = await agent.run('hello')
@@ -139,9 +128,17 @@ async def test_request_simple_success(allow_model_requests: None):
     assert result.all_messages() == snapshot(
         [
             ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
-            ModelResponse.from_text(content='world', timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)),
+            ModelResponse(
+                parts=[TextPart(content='world')],
+                model_name='llama-3.3-70b-versatile-123',
+                timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+            ),
             ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
-            ModelResponse.from_text(content='world', timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)),
+            ModelResponse(
+                parts=[TextPart(content='world')],
+                model_name='llama-3.3-70b-versatile-123',
+                timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+            ),
         ]
     )
 
@@ -152,7 +149,7 @@ async def test_request_simple_usage(allow_model_requests: None):
         usage=CompletionUsage(completion_tokens=1, prompt_tokens=2, total_tokens=3),
     )
     mock_client = MockGroq.create_mock(c)
-    m = GroqModel('llama-3.1-70b-versatile', groq_client=mock_client)
+    m = GroqModel('llama-3.3-70b-versatile', groq_client=mock_client)
     agent = Agent(m)
 
     result = await agent.run('Hello')
@@ -174,7 +171,7 @@ async def test_request_structured_response(allow_model_requests: None):
         )
     )
     mock_client = MockGroq.create_mock(c)
-    m = GroqModel('llama-3.1-70b-versatile', groq_client=mock_client)
+    m = GroqModel('llama-3.3-70b-versatile', groq_client=mock_client)
     agent = Agent(m, result_type=list[int])
 
     result = await agent.run('Hello')
@@ -186,10 +183,11 @@ async def test_request_structured_response(allow_model_requests: None):
                 parts=[
                     ToolCallPart(
                         tool_name='final_result',
-                        args=ArgsJson(args_json='{"response": [1, 2, 123]}'),
+                        args='{"response": [1, 2, 123]}',
                         tool_call_id='123',
                     )
                 ],
+                model_name='llama-3.3-70b-versatile-123',
                 timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc),
             ),
             ModelRequest(
@@ -247,7 +245,7 @@ async def test_request_tool_call(allow_model_requests: None):
         completion_message(ChatCompletionMessage(content='final response', role='assistant')),
     ]
     mock_client = MockGroq.create_mock(responses)
-    m = GroqModel('llama-3.1-70b-versatile', groq_client=mock_client)
+    m = GroqModel('llama-3.3-70b-versatile', groq_client=mock_client)
     agent = Agent(m, system_prompt='this is the system prompt')
 
     @agent.tool_plain
@@ -271,10 +269,11 @@ async def test_request_tool_call(allow_model_requests: None):
                 parts=[
                     ToolCallPart(
                         tool_name='get_location',
-                        args=ArgsJson(args_json='{"loc_name": "San Fransisco"}'),
+                        args='{"loc_name": "San Fransisco"}',
                         tool_call_id='1',
                     )
                 ],
+                model_name='llama-3.3-70b-versatile-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
             ),
             ModelRequest(
@@ -291,11 +290,12 @@ async def test_request_tool_call(allow_model_requests: None):
                 parts=[
                     ToolCallPart(
                         tool_name='get_location',
-                        args=ArgsJson(args_json='{"loc_name": "London"}'),
+                        args='{"loc_name": "London"}',
                         tool_call_id='2',
                     )
                 ],
-                timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc),
+                model_name='llama-3.3-70b-versatile-123',
+                timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
             ),
             ModelRequest(
                 parts=[
@@ -307,7 +307,11 @@ async def test_request_tool_call(allow_model_requests: None):
                     )
                 ]
             ),
-            ModelResponse.from_text(content='final response', timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc)),
+            ModelResponse(
+                parts=[TextPart(content='final response')],
+                model_name='llama-3.3-70b-versatile-123',
+                timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+            ),
         ]
     )
 
@@ -323,7 +327,7 @@ def chunk(delta: list[ChoiceDelta], finish_reason: FinishReason | None = None) -
         ],
         created=1704067200,  # 2024-01-01
         x_groq=None,
-        model='llama-3.1-70b-versatile',
+        model='llama-3.3-70b-versatile',
         object='chat.completion.chunk',
         usage=CompletionUsage(completion_tokens=1, prompt_tokens=2, total_tokens=3),
     )
@@ -336,26 +340,26 @@ def text_chunk(text: str, finish_reason: FinishReason | None = None) -> chat.Cha
 async def test_stream_text(allow_model_requests: None):
     stream = text_chunk('hello '), text_chunk('world'), chunk([])
     mock_client = MockGroq.create_mock_stream(stream)
-    m = GroqModel('llama-3.1-70b-versatile', groq_client=mock_client)
+    m = GroqModel('llama-3.3-70b-versatile', groq_client=mock_client)
     agent = Agent(m)
 
     async with agent.run_stream('') as result:
-        assert not result.is_structured
         assert not result.is_complete
-        assert [c async for c in result.stream(debounce_by=None)] == snapshot(['hello ', 'hello world'])
+        assert [c async for c in result.stream(debounce_by=None)] == snapshot(['hello ', 'hello world', 'hello world'])
         assert result.is_complete
 
 
 async def test_stream_text_finish_reason(allow_model_requests: None):
     stream = text_chunk('hello '), text_chunk('world'), text_chunk('.', finish_reason='stop')
     mock_client = MockGroq.create_mock_stream(stream)
-    m = GroqModel('llama-3.1-70b-versatile', groq_client=mock_client)
+    m = GroqModel('llama-3.3-70b-versatile', groq_client=mock_client)
     agent = Agent(m)
 
     async with agent.run_stream('') as result:
-        assert not result.is_structured
         assert not result.is_complete
-        assert [c async for c in result.stream(debounce_by=None)] == snapshot(['hello ', 'hello world', 'hello world.'])
+        assert [c async for c in result.stream(debounce_by=None)] == snapshot(
+            ['hello ', 'hello world', 'hello world.', 'hello world.']
+        )
         assert result.is_complete
 
 
@@ -395,11 +399,10 @@ async def test_stream_structured(allow_model_requests: None):
         chunk([]),
     )
     mock_client = MockGroq.create_mock_stream(stream)
-    m = GroqModel('llama-3.1-70b-versatile', groq_client=mock_client)
+    m = GroqModel('llama-3.3-70b-versatile', groq_client=mock_client)
     agent = Agent(m, result_type=MyTypedDict)
 
     async with agent.run_stream('') as result:
-        assert result.is_structured
         assert not result.is_complete
         assert [dict(c) async for c in result.stream(debounce_by=None)] == snapshot(
             [
@@ -417,8 +420,12 @@ async def test_stream_structured(allow_model_requests: None):
             ModelRequest(parts=[UserPromptPart(content='', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[
-                    ToolCallPart(tool_name='final_result', args=ArgsJson(args_json='{"first": "One", "second": "Two"}'))
+                    ToolCallPart(
+                        tool_name='final_result',
+                        args='{"first": "One", "second": "Two"}',
+                    )
                 ],
+                model_name='llama-3.3-70b-versatile',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
             ),
             ModelRequest(
@@ -443,15 +450,15 @@ async def test_stream_structured_finish_reason(allow_model_requests: None):
         struc_chunk(None, None, finish_reason='stop'),
     )
     mock_client = MockGroq.create_mock_stream(stream)
-    m = GroqModel('llama-3.1-70b-versatile', groq_client=mock_client)
+    m = GroqModel('llama-3.3-70b-versatile', groq_client=mock_client)
     agent = Agent(m, result_type=MyTypedDict)
 
     async with agent.run_stream('') as result:
-        assert result.is_structured
         assert not result.is_complete
         assert [dict(c) async for c in result.stream(debounce_by=None)] == snapshot(
             [
                 {'first': 'One'},
+                {'first': 'One', 'second': 'Two'},
                 {'first': 'One', 'second': 'Two'},
                 {'first': 'One', 'second': 'Two'},
                 {'first': 'One', 'second': 'Two'},
@@ -463,10 +470,10 @@ async def test_stream_structured_finish_reason(allow_model_requests: None):
 async def test_no_content(allow_model_requests: None):
     stream = chunk([ChoiceDelta()]), chunk([ChoiceDelta()])
     mock_client = MockGroq.create_mock_stream(stream)
-    m = GroqModel('llama-3.1-70b-versatile', groq_client=mock_client)
+    m = GroqModel('llama-3.3-70b-versatile', groq_client=mock_client)
     agent = Agent(m, result_type=MyTypedDict)
 
-    with pytest.raises(UnexpectedModelBehavior, match='Streamed response ended without con'):
+    with pytest.raises(UnexpectedModelBehavior, match='Received empty model response'):
         async with agent.run_stream(''):
             pass  # pragma: no cover
 
@@ -474,11 +481,10 @@ async def test_no_content(allow_model_requests: None):
 async def test_no_delta(allow_model_requests: None):
     stream = chunk([]), text_chunk('hello '), text_chunk('world')
     mock_client = MockGroq.create_mock_stream(stream)
-    m = GroqModel('llama-3.1-70b-versatile', groq_client=mock_client)
+    m = GroqModel('llama-3.3-70b-versatile', groq_client=mock_client)
     agent = Agent(m)
 
     async with agent.run_stream('') as result:
-        assert not result.is_structured
         assert not result.is_complete
-        assert [c async for c in result.stream(debounce_by=None)] == snapshot(['hello ', 'hello world'])
+        assert [c async for c in result.stream(debounce_by=None)] == snapshot(['hello ', 'hello world', 'hello world'])
         assert result.is_complete

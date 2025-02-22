@@ -1,5 +1,5 @@
 Results are the final values returned from [running an agent](agents.md#running-agents).
-The result values are wrapped in [`RunResult`][pydantic_ai.result.RunResult] and [`StreamedRunResult`][pydantic_ai.result.StreamedRunResult] so you can access other data like [usage][pydantic_ai.result.Usage] of the run and [message history](message-history.md#accessing-messages-from-results)
+The result values are wrapped in [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] and [`StreamedRunResult`][pydantic_ai.result.StreamedRunResult] so you can access other data like [usage][pydantic_ai.usage.Usage] of the run and [message history](message-history.md#accessing-messages-from-results)
 
 Both `RunResult` and `StreamedRunResult` are generic in the data they wrap, so typing information about the data returned by the agent is preserved.
 
@@ -14,7 +14,7 @@ class CityLocation(BaseModel):
     country: str
 
 
-agent = Agent('gemini-1.5-flash', result_type=CityLocation)
+agent = Agent('google-gla:gemini-1.5-flash', result_type=CityLocation)
 result = agent.run_sync('Where were the olympics held in 2012?')
 print(result.data)
 #> city='London' country='United Kingdom'
@@ -129,7 +129,7 @@ class InvalidRequest(BaseModel):
 
 Response = Union[Success, InvalidRequest]
 agent: Agent[DatabaseConn, Response] = Agent(
-    'gemini-1.5-flash',
+    'google-gla:gemini-1.5-flash',
     result_type=Response,  # type: ignore
     deps_type=DatabaseConn,
     system_prompt='Generate PostgreSQL flavored SQL queries based on user input.',
@@ -149,7 +149,7 @@ async def validate_result(ctx: RunContext[DatabaseConn], result: Response) -> Re
 
 
 result = agent.run_sync(
-    'get me uses who were last active yesterday.', deps=DatabaseConn()
+    'get me users who were last active yesterday.', deps=DatabaseConn()
 )
 print(result.data)
 #> sql_query='SELECT * FROM users WHERE last_active::date = today() - interval 1 day'
@@ -171,12 +171,12 @@ Example of streamed text result:
 ```python {title="streamed_hello_world.py" line_length="120"}
 from pydantic_ai import Agent
 
-agent = Agent('gemini-1.5-flash')  # (1)!
+agent = Agent('google-gla:gemini-1.5-flash')  # (1)!
 
 
 async def main():
     async with agent.run_stream('Where does "hello world" come from?') as result:  # (2)!
-        async for message in result.stream():  # (3)!
+        async for message in result.stream_text():  # (3)!
             print(message)
             #> The first known
             #> The first known use of "hello,
@@ -188,7 +188,7 @@ async def main():
 
 1. Streaming works with the standard [`Agent`][pydantic_ai.Agent] class, and doesn't require any special setup, just a model that supports streaming (currently all models support streaming).
 2. The [`Agent.run_stream()`][pydantic_ai.Agent.run_stream] method is used to start a streamed run, this method returns a context manager so the connection can be closed when the stream completes.
-3. Each item yield by [`StreamedRunResult.stream()`][pydantic_ai.result.StreamedRunResult.stream] is the complete text response, extended as new data is received.
+3. Each item yield by [`StreamedRunResult.stream_text()`][pydantic_ai.result.StreamedRunResult.stream_text] is the complete text response, extended as new data is received.
 
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
 
@@ -197,7 +197,7 @@ We can also stream text as deltas rather than the entire text in each item:
 ```python {title="streamed_delta_hello_world.py"}
 from pydantic_ai import Agent
 
-agent = Agent('gemini-1.5-flash')
+agent = Agent('google-gla:gemini-1.5-flash')
 
 
 async def main():

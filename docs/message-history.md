@@ -6,12 +6,12 @@ PydanticAI provides access to messages exchanged during an agent run. These mess
 
 After running an agent, you can access the messages exchanged during that run from the `result` object.
 
-Both [`RunResult`][pydantic_ai.result.RunResult]
+Both [`RunResult`][pydantic_ai.agent.AgentRunResult]
 (returned by [`Agent.run`][pydantic_ai.Agent.run], [`Agent.run_sync`][pydantic_ai.Agent.run_sync])
 and [`StreamedRunResult`][pydantic_ai.result.StreamedRunResult] (returned by [`Agent.run_stream`][pydantic_ai.Agent.run_stream]) have the following methods:
 
-* [`all_messages()`][pydantic_ai.result.RunResult.all_messages]: returns all messages, including messages from prior runs. There's also a variant that returns JSON bytes, [`all_messages_json()`][pydantic_ai.result.RunResult.all_messages_json].
-* [`new_messages()`][pydantic_ai.result.RunResult.new_messages]: returns only the messages from the current run. There's also a variant that returns JSON bytes, [`new_messages_json()`][pydantic_ai.result.RunResult.new_messages_json].
+* [`all_messages()`][pydantic_ai.agent.AgentRunResult.all_messages]: returns all messages, including messages from prior runs. There's also a variant that returns JSON bytes, [`all_messages_json()`][pydantic_ai.agent.AgentRunResult.all_messages_json].
+* [`new_messages()`][pydantic_ai.agent.AgentRunResult.new_messages]: returns only the messages from the current run. There's also a variant that returns JSON bytes, [`new_messages_json()`][pydantic_ai.agent.AgentRunResult.new_messages_json].
 
 !!! info "StreamedRunResult and complete messages"
     On [`StreamedRunResult`][pydantic_ai.result.StreamedRunResult], the messages returned from these methods will only include the final result message once the stream has finished.
@@ -25,7 +25,7 @@ and [`StreamedRunResult`][pydantic_ai.result.StreamedRunResult] (returned by [`A
 
     **Note:** The final result message will NOT be added to result messages if you use [`.stream_text(delta=True)`][pydantic_ai.result.StreamedRunResult.stream_text] since in this case the result content is never built as one string.
 
-Example of accessing methods on a [`RunResult`][pydantic_ai.result.RunResult] :
+Example of accessing methods on a [`RunResult`][pydantic_ai.agent.AgentRunResult] :
 
 ```python {title="run_result_messages.py" hl_lines="10 28"}
 from pydantic_ai import Agent
@@ -62,6 +62,7 @@ print(result.all_messages())
                 part_kind='text',
             )
         ],
+        model_name='function:model_logic',
         timestamp=datetime.datetime(...),
         kind='response',
     ),
@@ -102,7 +103,7 @@ async def main():
         ]
         """
 
-        async for text in result.stream():
+        async for text in result.stream_text():
             print(text)
             #> Did you hear
             #> Did you hear about the toothpaste
@@ -135,6 +136,7 @@ async def main():
                         part_kind='text',
                     )
                 ],
+                model_name='function:stream_model_logic',
                 timestamp=datetime.datetime(...),
                 kind='response',
             ),
@@ -164,7 +166,7 @@ print(result1.data)
 
 result2 = agent.run_sync('Explain?', message_history=result1.new_messages())
 print(result2.data)
-#> This is an excellent joke invent by Samuel Colvin, it needs no explanation.
+#> This is an excellent joke invented by Samuel Colvin, it needs no explanation.
 
 print(result2.all_messages())
 """
@@ -191,6 +193,7 @@ print(result2.all_messages())
                 part_kind='text',
             )
         ],
+        model_name='function:model_logic',
         timestamp=datetime.datetime(...),
         kind='response',
     ),
@@ -207,10 +210,11 @@ print(result2.all_messages())
     ModelResponse(
         parts=[
             TextPart(
-                content='This is an excellent joke invent by Samuel Colvin, it needs no explanation.',
+                content='This is an excellent joke invented by Samuel Colvin, it needs no explanation.',
                 part_kind='text',
             )
         ],
+        model_name='function:model_logic',
         timestamp=datetime.datetime(...),
         kind='response',
     ),
@@ -225,7 +229,9 @@ Since messages are defined by simple dataclasses, you can manually create and ma
 
 The message format is independent of the model used, so you can use messages in different agents, or the same agent with different models.
 
-```python
+In the example below, we reuse the message from the first agent run, which uses the `openai:gpt-4o` model, in a second agent run using the `google-gla:gemini-1.5-pro` model.
+
+```python {title="Reusing messages with a different model" hl_lines="11"}
 from pydantic_ai import Agent
 
 agent = Agent('openai:gpt-4o', system_prompt='Be a helpful assistant.')
@@ -235,10 +241,12 @@ print(result1.data)
 #> Did you hear about the toothpaste scandal? They called it Colgate.
 
 result2 = agent.run_sync(
-    'Explain?', model='gemini-1.5-pro', message_history=result1.new_messages()
+    'Explain?',
+    model='google-gla:gemini-1.5-pro',
+    message_history=result1.new_messages(),
 )
 print(result2.data)
-#> This is an excellent joke invent by Samuel Colvin, it needs no explanation.
+#> This is an excellent joke invented by Samuel Colvin, it needs no explanation.
 
 print(result2.all_messages())
 """
@@ -265,6 +273,7 @@ print(result2.all_messages())
                 part_kind='text',
             )
         ],
+        model_name='function:model_logic',
         timestamp=datetime.datetime(...),
         kind='response',
     ),
@@ -281,10 +290,11 @@ print(result2.all_messages())
     ModelResponse(
         parts=[
             TextPart(
-                content='This is an excellent joke invent by Samuel Colvin, it needs no explanation.',
+                content='This is an excellent joke invented by Samuel Colvin, it needs no explanation.',
                 part_kind='text',
             )
         ],
+        model_name='function:model_logic',
         timestamp=datetime.datetime(...),
         kind='response',
     ),

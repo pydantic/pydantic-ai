@@ -3,10 +3,12 @@
 from collections.abc import Awaitable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Callable, TypeAlias, Union, assert_type
+from typing import Callable, TypeAlias, Union
+
+from typing_extensions import assert_type
 
 from pydantic_ai import Agent, ModelRetry, RunContext, Tool
-from pydantic_ai.result import RunResult
+from pydantic_ai.agent import AgentRunResult
 from pydantic_ai.tools import ToolDefinition
 
 
@@ -137,7 +139,7 @@ async def result_validator_wrong(ctx: RunContext[int], result: str) -> str:
 
 def run_sync() -> None:
     result = typed_agent.run_sync('testing', deps=MyDeps(foo=1, bar=2))
-    assert_type(result, RunResult[str])
+    assert_type(result, AgentRunResult[str])
     assert_type(result.data, str)
 
 
@@ -174,7 +176,7 @@ assert_type(union_agent, Agent[None, Union[Foo, Bar]])
 
 def run_sync3() -> None:
     result = union_agent.run_sync('testing')
-    assert_type(result, RunResult[Union[Foo, Bar]])
+    assert_type(result, AgentRunResult[Union[Foo, Bar]])
     assert_type(result.data, Union[Foo, Bar])
 
 

@@ -9,8 +9,7 @@ on:
   pull_request: {}
 
 env:
-  CI: true
-  COLUMNS: 120
+  COLUMNS: 150
   UV_PYTHON: 3.12
   UV_FROZEN: '1'
 
@@ -73,7 +72,18 @@ jobs:
         env:
           PPPR_TOKEN: ${{ secrets.PPPR_TOKEN }}
 
-      - run: tree site
+      - run: tree -sh site
+      - uses: actions/setup-node@v4
+      - run: npm install
+        working-directory: docs-site
+      - run: npm run typecheck
+        working-directory: docs-site
+
+      - name: Store docs
+        uses: actions/upload-artifact@v4
+        with:
+          name: site
+          path: site
 
   test-live:
     runs-on: ubuntu-latest
@@ -98,6 +108,7 @@ jobs:
           --extra groq
           --extra anthropic
           --extra mistral
+          --extra cohere
           pytest tests/test_live.py -v
           --durations=100
         env:
@@ -108,6 +119,7 @@ jobs:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+          CO_API_KEY: ${{ secrets.COHERE_API_KEY }}
 
   test:
     name: test on ${{ matrix.python-version }}
@@ -142,6 +154,14 @@ jobs:
           COVERAGE_FILE: coverage/.coverage.${{ runner.os }}-py${{ matrix.python-version }}-all-extras
 
       - run: uv run --all-extras python tests/import_examples.py
+
+      # this must run last as it modifies the environment!
+      - name: test lowest versions
+        run: |
+          unset UV_FROZEN
+          uv run --all-extras --resolution lowest-direct coverage run -m pytest
+        env:
+          COVERAGE_FILE: coverage/.coverage.${{ runner.os }}-py${{ matrix.python-version }}-lowest-versions
 
       - name: store coverage files
         uses: actions/upload-artifact@v4
@@ -206,6 +226,44 @@ jobs:
         with:
           jobs: ${{ toJSON(needs) }}
           allowed-skips: test-live
+
+  deploy-docs:
+    if: "success() && github.ref == 'refs/heads/main'"
+    runs-on: ubuntu-latest
+    needs: [check]
+    environment:
+      name: deploy-docs
+      url: https://ai.pydantic.dev
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+      - run: npm install
+        working-directory: docs-site
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: site
+          path: site
+
+      - uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          workingDirectory: docs-site
+          command: >
+            deploy
+            --var GIT_COMMIT_SHA:${{ github.sha }}
+            --var GIT_BRANCH:main
+
+      - run: uv sync --group docs-upload
+      - run: uv run python docs/.hooks/algolia.py upload
+        env:
+          ALGOLIA_WRITE_API_KEY: ${{ secrets.ALGOLIA_WRITE_API_KEY }}
 
   release:
     needs: [check]

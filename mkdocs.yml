@@ -25,6 +25,7 @@ nav:
     - testing-evals.md
     - logfire.md
     - multi-agent-applications.md
+    - graph.md
   - Examples:
     - examples/index.md
     - examples/pydantic-model.md
@@ -36,6 +37,7 @@ nav:
     - examples/stream-markdown.md
     - examples/stream-whales.md
     - examples/chat-app.md
+    - examples/question-graph.md
   - API Reference:
     - api/agent.md
     - api/tools.md
@@ -48,13 +50,18 @@ nav:
     - api/models/base.md
     - api/models/openai.md
     - api/models/anthropic.md
+    - api/models/cohere.md
     - api/models/gemini.md
     - api/models/vertexai.md
     - api/models/groq.md
     - api/models/mistral.md
-    - api/models/ollama.md
     - api/models/test.md
     - api/models/function.md
+    - api/pydantic_graph/graph.md
+    - api/pydantic_graph/nodes.md
+    - api/pydantic_graph/state.md
+    - api/pydantic_graph/mermaid.md
+    - api/pydantic_graph/exceptions.md
 
 extra:
   # hide the "Made with Material for MkDocs" message
@@ -114,6 +121,9 @@ extra_css:
 # used for analytics
 extra_javascript:
   - "/flarelytics/client.js"
+  - "https://cdn.jsdelivr.net/npm/algoliasearch@5.20.0/dist/lite/builds/browser.umd.js"
+  - "https://cdn.jsdelivr.net/npm/instantsearch.js@4.77.3/dist/instantsearch.production.min.js"
+  - "/javascripts/algolia-search.js"
 
 markdown_extensions:
   - tables
@@ -150,6 +160,7 @@ markdown_extensions:
 
 watch:
   - pydantic_ai_slim
+  - pydantic_graph
   - examples
 
 plugins:
@@ -159,7 +170,7 @@ plugins:
   - mkdocstrings:
       handlers:
         python:
-          paths: [src/packages/pydantic_ai_slim/pydantic_ai]
+          paths: [pydantic_ai_slim/pydantic_ai]
           options:
             relative_crossrefs: true
             members_order: source
@@ -180,3 +191,5 @@ plugins:
 
 hooks:
 - 'docs/.hooks/main.py'
+- 'docs/.hooks/build_llms_txt.py'
+- 'docs/.hooks/algolia.py'

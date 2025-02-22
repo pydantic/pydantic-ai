@@ -26,7 +26,7 @@ class DatabaseConn:
 
     @classmethod
     async def customer_balance(cls, *, id: int, include_pending: bool) -> float:
-        if id == 123:
+        if id == 123 and include_pending:
             return 123.45
         else:
             raise ValueError('Customer not found')
@@ -40,7 +40,7 @@ class SupportDependencies:
 
 class SupportResult(BaseModel):
     support_advice: str = Field(description='Advice returned to the customer')
-    block_card: bool = Field(description='Whether to block their')
+    block_card: bool = Field(description='Whether to block their card or not')
     risk: int = Field(description='Risk level of query', ge=0, le=10)
 
 

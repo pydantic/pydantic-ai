@@ -115,6 +115,7 @@ def function_schema(  # noqa: C901
                 field_name,
                 field_info,
                 decorators,
+                required=p.default is Parameter.empty,
             )
             # noinspection PyTypeChecker
             td_schema.setdefault('metadata', {})['is_model_like'] = is_model_like(annotation)

@@ -4,10 +4,12 @@ PydanticAI is Model-agnostic and has built in support for the following model pr
 * [Anthropic](#anthropic)
 * Gemini via two different APIs: [Generative Language API](#gemini) and [VertexAI API](#gemini-via-vertexai)
 * [Ollama](#ollama)
+* [Deepseek](#deepseek)
 * [Groq](#groq)
 * [Mistral](#mistral)
+* [Cohere](#cohere)
 
-See [OpenAI-compatible models](#openai-compatible-models) for more examples on how to use models such as [OpenRouter](#openrouter), [Grok (xAI)](#grok-xai) and [DeepSeek](#deepseek) that support the OpenAI SDK.
+See [OpenAI-compatible models](#openai-compatible-models) for more examples on how to use models such as [OpenRouter](#openrouter), and [Grok (xAI)](#grok-xai) that support the OpenAI SDK.
 
 You can also [add support for other models](#implementing-custom-models).
 
@@ -123,7 +125,7 @@ You can then use [`AnthropicModel`][pydantic_ai.models.anthropic.AnthropicModel]
 ```py title="anthropic_model_by_name.py"
 from pydantic_ai import Agent
 
-agent = Agent('claude-3-5-sonnet-latest')
+agent = Agent('anthropic:claude-3-5-sonnet-latest')
 ...
 ```
 
@@ -264,7 +266,8 @@ agent = Agent(model)
 Internally this uses [`google.auth.default()`](https://google-auth.readthedocs.io/en/master/reference/google.auth.html) from the `google-auth` package to obtain credentials.
 
 !!! note "Won't fail until `agent.run()`"
-    Because `google.auth.default()` requires network requests and can be slow, it's not run until you call `agent.run()`. Meaning any configuration or permissions error will only be raised when you try to use the model. To for this check to be run, call [`await model.ainit()`][pydantic_ai.models.vertexai.VertexAIModel.ainit].
+
+    Because `google.auth.default()` requires network requests and can be slow, it's not run until you call `agent.run()`. Meaning any configuration or permissions error will only be raised when you try to use the model. To initialize the model for this check to be run, call [`await model.ainit()`][pydantic_ai.models.vertexai.VertexAIModel.ainit].
 
 You may also need to pass the [`project_id` argument to `VertexAIModel`][pydantic_ai.models.vertexai.VertexAIModel.__init__] if application default credentials don't set a project, if you pass `project_id` and it conflicts with the project set by application default credentials, an error is raised.
 
@@ -303,26 +306,6 @@ agent = Agent(model)
 
 [`VertexAiRegion`][pydantic_ai.models.vertexai.VertexAiRegion] contains a list of available regions.
 
-## Ollama
-
-### Install
-
-To use [`OllamaModel`][pydantic_ai.models.ollama.OllamaModel], you need to either install [`pydantic-ai`](install.md), or install [`pydantic-ai-slim`](install.md#slim-install) with the `openai` optional group:
-
-```bash
-pip/uv-add 'pydantic-ai-slim[openai]'
-```
-
-**This is because internally, `OllamaModel` uses the OpenAI API.**
-
-### Configuration
-
-To use [Ollama](https://ollama.com/), you must first download the Ollama client, and then download a model using the [Ollama model library](https://ollama.com/library).
-
-You must also ensure the Ollama server is running when trying to make requests to it. For more information, please see the [Ollama documentation](https://github.com/ollama/ollama/tree/main/docs).
-
-For detailed setup and example, please see the [Ollama setup documentation](https://github.com/pydantic/pydantic-ai/blob/main/docs/api/models/ollama.md).
-
 ## Groq
 
 ### Install
@@ -352,7 +335,7 @@ You can then use [`GroqModel`][pydantic_ai.models.groq.GroqModel] by name:
 ```python {title="groq_model_by_name.py"}
 from pydantic_ai import Agent
 
-agent = Agent('groq:llama-3.1-70b-versatile')
+agent = Agent('groq:llama-3.3-70b-versatile')
 ...
 ```
 
@@ -362,7 +345,7 @@ Or initialise the model directly with just the model name:
 from pydantic_ai import Agent
 from pydantic_ai.models.groq import GroqModel
 
-model = GroqModel('llama-3.1-70b-versatile')
+model = GroqModel('llama-3.3-70b-versatile')
 agent = Agent(model)
 ...
 ```
@@ -375,7 +358,7 @@ If you don't want to or can't set the environment variable, you can pass it at r
 from pydantic_ai import Agent
 from pydantic_ai.models.groq import GroqModel
 
-model = GroqModel('llama-3.1-70b-versatile', api_key='your-api-key')
+model = GroqModel('llama-3.3-70b-versatile', api_key='your-api-key')
 agent = Agent(model)
 ...
 ```
@@ -394,7 +377,7 @@ pip/uv-add 'pydantic-ai-slim[mistral]'
 
 To use [Mistral](https://mistral.ai) through their API, go to [console.mistral.ai/api-keys/](https://console.mistral.ai/api-keys/) and follow your nose until you find the place to generate an API key.
 
-[`NamedMistralModels`][pydantic_ai.models.mistral.NamedMistralModels] contains a list of the most popular Mistral models.
+[`MistralModelName`][pydantic_ai.models.mistral.MistralModelName] contains a list of the most popular Mistral models.
 
 ### Environment variable
 
@@ -437,6 +420,63 @@ agent = Agent(model)
 ...
 ```
 
+## Cohere
+
+### Install
+
+To use [`CohereModel`][pydantic_ai.models.cohere.CohereModel], you need to either install [`pydantic-ai`](install.md), or install [`pydantic-ai-slim`](install.md#slim-install) with the `cohere` optional group:
+
+```bash
+pip/uv-add 'pydantic-ai-slim[cohere]'
+```
+
+### Configuration
+
+To use [Cohere](https://cohere.com/) through their API, go to [dashboard.cohere.com/api-keys](https://dashboard.cohere.com/api-keys) and follow your nose until you find the place to generate an API key.
+
+[`CohereModelName`][pydantic_ai.models.cohere.CohereModelName] contains a list of the most popular Cohere models.
+
+### Environment variable
+
+Once you have the API key, you can set it as an environment variable:
+
+```bash
+export CO_API_KEY='your-api-key'
+```
+
+You can then use [`CohereModel`][pydantic_ai.models.cohere.CohereModel] by name:
+
+```python {title="cohere_model_by_name.py"}
+from pydantic_ai import Agent
+
+agent = Agent('cohere:command')
+...
+```
+
+Or initialise the model directly with just the model name:
+
+```python {title="cohere_model_init.py"}
+from pydantic_ai import Agent
+from pydantic_ai.models.cohere import CohereModel
+
+model = CohereModel('command', api_key='your-api-key')
+agent = Agent(model)
+...
+```
+
+### `api_key` argument
+
+If you don't want to or can't set the environment variable, you can pass it at runtime via the [`api_key` argument][pydantic_ai.models.cohere.CohereModel.__init__]:
+
+```python {title="cohere_model_api_key.py"}
+from pydantic_ai import Agent
+from pydantic_ai.models.cohere import CohereModel
+
+model = CohereModel('command', api_key='your-api-key')
+agent = Agent(model)
+...
+```
+
 ## OpenAI-compatible Models
 
 Many of the models are compatible with OpenAI API, and thus can be used with [`OpenAIModel`][pydantic_ai.models.openai.OpenAIModel] in PydanticAI.
@@ -454,6 +494,80 @@ model = OpenAIModel(
 )
 ...
 ```
+
+### Ollama
+
+To use [Ollama](https://ollama.com/), you must first download the Ollama client, and then download a model using the [Ollama model library](https://ollama.com/library).
+
+You must also ensure the Ollama server is running when trying to make requests to it. For more information, please see the [Ollama documentation](https://github.com/ollama/ollama/tree/main/docs).
+
+#### Example local usage
+
+With `ollama` installed, you can run the server with the model you want to use:
+
+```bash {title="terminal-run-ollama"}
+ollama run llama3.2
+```
+(this will pull the `llama3.2` model if you don't already have it downloaded)
+
+Then run your code, here's a minimal example:
+
+```python {title="ollama_example.py"}
+from pydantic import BaseModel
+
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIModel
+
+
+class CityLocation(BaseModel):
+    city: str
+    country: str
+
+
+ollama_model = OpenAIModel(model_name='llama3.2', base_url='http://localhost:11434/v1')
+agent = Agent(ollama_model, result_type=CityLocation)
+
+result = agent.run_sync('Where were the olympics held in 2012?')
+print(result.data)
+#> city='London' country='United Kingdom'
+print(result.usage())
+"""
+Usage(requests=1, request_tokens=57, response_tokens=8, total_tokens=65, details=None)
+"""
+```
+
+#### Example using a remote server
+
+```python {title="ollama_example_with_remote_server.py"}
+from pydantic import BaseModel
+
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIModel
+
+ollama_model = OpenAIModel(
+    model_name='qwen2.5-coder:7b',  # (1)!
+    base_url='http://192.168.1.74:11434/v1',  # (2)!
+)
+
+
+class CityLocation(BaseModel):
+    city: str
+    country: str
+
+
+agent = Agent(model=ollama_model, result_type=CityLocation)
+
+result = agent.run_sync('Where were the olympics held in 2012?')
+print(result.data)
+#> city='London' country='United Kingdom'
+print(result.usage())
+"""
+Usage(requests=1, request_tokens=57, response_tokens=8, total_tokens=65, details=None)
+"""
+```
+
+1. The name of the model running on the remote server
+2. The url of the remote server
 
 ### OpenRouter
 
@@ -510,15 +624,31 @@ agent = Agent(model)
 ...
 ```
 
+### Perplexity
+
+Follow the Perplexity [getting started](https://docs.perplexity.ai/guides/getting-started)
+guide to create an API key. Then, you can query the Perplexity API with the following:
+
+```py {title="perplexity_model_init.py"}
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIModel
+
+model = OpenAIModel(
+    'sonar-pro',
+    base_url='https://api.perplexity.ai',
+    api_key='your-perplexity-api-key',
+)
+agent = Agent(model)
+...
+```
+
 ## Implementing Custom Models
 
 To implement support for models not already supported, you will need to subclass the [`Model`][pydantic_ai.models.Model] abstract base class.
 
-This in turn will require you to implement the following other abstract base classes:
+For streaming, you'll also need to implement the following abstract base class:
 
-* [`AgentModel`][pydantic_ai.models.AgentModel]
-* [`StreamTextResponse`][pydantic_ai.models.StreamTextResponse]
-* [`StreamStructuredResponse`][pydantic_ai.models.StreamStructuredResponse]
+* [`StreamedResponse`][pydantic_ai.models.StreamedResponse]
 
 The best place to start is to review the source code for existing implementations, e.g. [`OpenAIModel`](https://github.com/pydantic/pydantic-ai/blob/main/pydantic_ai_slim/pydantic_ai/models/openai.py).
 

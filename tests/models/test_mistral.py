@@ -1,7 +1,6 @@
 from __future__ import annotations as _annotations
 
 import json
-from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from functools import cached_property
@@ -12,22 +11,21 @@ from inline_snapshot import snapshot
 from pydantic import BaseModel
 from typing_extensions import TypedDict
 
-from pydantic_ai import _utils
 from pydantic_ai.agent import Agent
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import (
-    ArgsDict,
-    ArgsJson,
     ModelRequest,
     ModelResponse,
     RetryPromptPart,
     SystemPromptPart,
+    TextPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
 )
 
 from ..conftest import IsNow, try_import
+from .mock_async_stream import MockAsyncStream
 
 with try_import() as imports_successful:
     from mistralai import (
@@ -50,29 +48,14 @@ with try_import() as imports_successful:
     from mistralai.types.basemodel import Unset as MistralUnset
 
     from pydantic_ai.models.mistral import (
-        MistralAgentModel,
         MistralModel,
-        MistralStreamStructuredResponse,
+        MistralStreamedResponse,
     )
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='mistral not installed'),
     pytest.mark.anyio,
 ]
-
-
-@dataclass
-class MockAsyncStream:
-    _iter: Iterator[MistralCompletionChunk]
-
-    async def __anext__(self) -> MistralCompletionChunk:
-        return _utils.sync_anext(self._iter)
-
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, *_args: Any):
-        pass
 
 
 @dataclass
@@ -104,15 +87,24 @@ class MockMistralAI:
 
     async def chat_completions_create(  # pragma: no cover
         self, *_args: Any, stream: bool = False, **_kwargs: Any
-    ) -> MistralChatCompletionResponse | MockAsyncStream | list[MistralChatCompletionResponse]:
-        response: MistralChatCompletionResponse | MockAsyncStream | list[MistralChatCompletionResponse]
+    ) -> (
+        MistralChatCompletionResponse
+        | MockAsyncStream[MistralChatCompletionResponse]
+        | list[MistralChatCompletionResponse]
+    ):
+        response: (
+            MistralChatCompletionResponse
+            | MockAsyncStream[MistralChatCompletionResponse]
+            | list[MistralChatCompletionResponse]
+        )
         if stream or self.stream:
             assert self.stream is not None, 'you can only used `stream=True` if `stream` is provided'
             if isinstance(self.stream[0], list):
-                response = MockAsyncStream(iter(self.stream[self.index]))  # pyright: ignore[reportArgumentType]
+                indexed_stream = cast(list[MistralChatCompletionResponse], self.stream[self.index])
+                response = MockAsyncStream(iter(indexed_stream))
 
             else:
-                response = MockAsyncStream(iter(self.stream))  # pyright: ignore[reportArgumentType]
+                response = MockAsyncStream(iter(cast(list[MistralChatCompletionResponse], self.stream)))
 
         else:
             assert self.completions is not None, 'you can only used `stream=False` if `completions` are provided'
@@ -131,7 +123,7 @@ def completion_message(
         id='123',
         choices=[MistralChatCompletionChoice(finish_reason='stop', index=0, message=message)],
         created=1704067200 if with_created else None,  # 2024-01-01
-        model='mistral-large-latest',
+        model='mistral-large-123',
         object='chat.completion',
         usage=usage or MistralUsageInfo(prompt_tokens=1, completion_tokens=1, total_tokens=1),
     )
@@ -177,23 +169,6 @@ def func_chunk(
     return chunk([MistralDeltaMessage(tool_calls=tool_calls, role='assistant')], finish_reason=finish_reason)
 
 
-def struc_chunk(
-    tool_name: str,
-    tool_arguments: str,
-    finish_reason: MistralCompletionResponseStreamChoiceFinishReason | None = None,
-) -> MistralCompletionEvent:
-    return chunk(
-        [
-            MistralDeltaMessage(
-                tool_calls=[
-                    MistralToolCall(id='0', function=MistralFunctionCall(name=tool_name, arguments=tool_arguments))
-                ]
-            ),
-        ],
-        finish_reason=finish_reason,
-    )
-
-
 #####################
 ## Init
 #####################
@@ -201,7 +176,7 @@ def struc_chunk(
 
 def test_init():
     m = MistralModel('mistral-large-latest', api_key='foobar')
-    assert m.name() == 'mistral:mistral-large-latest'
+    assert m.model_name == 'mistral-large-latest'
 
 
 #####################
@@ -240,9 +215,17 @@ async def test_multiple_completions(allow_model_requests: None):
     assert result.all_messages() == snapshot(
         [
             ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
-            ModelResponse.from_text(content='world', timestamp=IsNow(tz=timezone.utc)),
+            ModelResponse(
+                parts=[TextPart(content='world')],
+                model_name='mistral-large-123',
+                timestamp=IsNow(tz=timezone.utc),
+            ),
             ModelRequest(parts=[UserPromptPart(content='hello again', timestamp=IsNow(tz=timezone.utc))]),
-            ModelResponse.from_text(content='hello again', timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)),
+            ModelResponse(
+                parts=[TextPart(content='hello again')],
+                model_name='mistral-large-123',
+                timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+            ),
         ]
     )
 
@@ -284,11 +267,23 @@ async def test_three_completions(allow_model_requests: None):
     assert result.all_messages() == snapshot(
         [
             ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
-            ModelResponse.from_text(content='world', timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)),
+            ModelResponse(
+                parts=[TextPart(content='world')],
+                model_name='mistral-large-123',
+                timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+            ),
             ModelRequest(parts=[UserPromptPart(content='hello again', timestamp=IsNow(tz=timezone.utc))]),
-            ModelResponse.from_text(content='hello again', timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)),
+            ModelResponse(
+                parts=[TextPart(content='hello again')],
+                model_name='mistral-large-123',
+                timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+            ),
             ModelRequest(parts=[UserPromptPart(content='final message', timestamp=IsNow(tz=timezone.utc))]),
-            ModelResponse.from_text(content='final message', timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)),
+            ModelResponse(
+                parts=[TextPart(content='final message')],
+                model_name='mistral-large-123',
+                timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+            ),
         ]
     )
 
@@ -308,9 +303,8 @@ async def test_stream_text(allow_model_requests: None):
     # When
     async with agent.run_stream('') as result:
         # Then
-        assert not result.is_structured
         assert not result.is_complete
-        assert [c async for c in result.stream(debounce_by=None)] == snapshot(
+        assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(
             ['hello ', 'hello world ', 'hello world welcome ', 'hello world welcome mistral']
         )
         assert result.is_complete
@@ -329,9 +323,10 @@ async def test_stream_text_finish_reason(allow_model_requests: None):
     # When
     async with agent.run_stream('') as result:
         # Then
-        assert not result.is_structured
         assert not result.is_complete
-        assert [c async for c in result.stream(debounce_by=None)] == snapshot(['hello ', 'hello world', 'hello world.'])
+        assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(
+            ['hello ', 'hello world', 'hello world.']
+        )
         assert result.is_complete
 
 
@@ -345,9 +340,8 @@ async def test_no_delta(allow_model_requests: None):
     # When
     async with agent.run_stream('') as result:
         # Then
-        assert not result.is_structured
         assert not result.is_complete
-        assert [c async for c in result.stream(debounce_by=None)] == snapshot(['hello ', 'hello world'])
+        assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(['hello ', 'hello world'])
         assert result.is_complete
         assert result.usage().request_tokens == 3
         assert result.usage().response_tokens == 3
@@ -398,10 +392,11 @@ async def test_request_model_structured_with_arguments_dict_response(allow_model
                 parts=[
                     ToolCallPart(
                         tool_name='final_result',
-                        args=ArgsDict(args_dict={'city': 'paris', 'country': 'france'}),
+                        args={'city': 'paris', 'country': 'france'},
                         tool_call_id='123',
                     )
                 ],
+                model_name='mistral-large-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
             ),
             ModelRequest(
@@ -459,10 +454,11 @@ async def test_request_model_structured_with_arguments_str_response(allow_model_
                 parts=[
                     ToolCallPart(
                         tool_name='final_result',
-                        args=ArgsJson(args_json='{"city": "paris", "country": "france"}'),
+                        args='{"city": "paris", "country": "france"}',
                         tool_call_id='123',
                     )
                 ],
+                model_name='mistral-large-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
             ),
             ModelRequest(
@@ -519,10 +515,11 @@ async def test_request_result_type_with_arguments_str_response(allow_model_reque
                 parts=[
                     ToolCallPart(
                         tool_name='final_result',
-                        args=ArgsJson(args_json='{"response": 42}'),
+                        args='{"response": 42}',
                         tool_call_id='123',
                     )
                 ],
+                model_name='mistral-large-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
             ),
             ModelRequest(
@@ -588,7 +585,6 @@ async def test_stream_structured_with_all_type(allow_model_requests: None):
     # When
     async with agent.run_stream('User prompt value') as result:
         # Then
-        assert result.is_structured
         assert not result.is_complete
         v = [dict(c) async for c in result.stream(debounce_by=None)]
         assert v == snapshot(
@@ -702,7 +698,6 @@ async def test_stream_result_type_primitif_dict(allow_model_requests: None):
     # When
     async with agent.run_stream('User prompt value') as result:
         # Then
-        assert result.is_structured
         assert not result.is_complete
         v = [c async for c in result.stream(debounce_by=None)]
         assert v == snapshot(
@@ -761,7 +756,6 @@ async def test_stream_result_type_primitif_int(allow_model_requests: None):
     # When
     async with agent.run_stream('User prompt value') as result:
         # Then
-        assert result.is_structured
         assert not result.is_complete
         v = [c async for c in result.stream(debounce_by=None)]
         assert v == snapshot([1, 1, 1])
@@ -823,7 +817,6 @@ async def test_stream_result_type_primitif_array(allow_model_requests: None):
     # When
     async with agent.run_stream('User prompt value') as result:
         # Then
-        assert result.is_structured
         assert not result.is_complete
         v = [c async for c in result.stream(debounce_by=None)]
         assert v == snapshot(
@@ -920,7 +913,6 @@ async def test_stream_result_type_basemodel_with_default_params(allow_model_requ
     # When
     async with agent.run_stream('User prompt value') as result:
         # Then
-        assert result.is_structured
         assert not result.is_complete
         v = [c async for c in result.stream(debounce_by=None)]
         assert v == snapshot(
@@ -1009,7 +1001,6 @@ async def test_stream_result_type_basemodel_with_required_params(allow_model_req
     # When
     async with agent.run_stream('User prompt value') as result:
         # Then
-        assert result.is_structured
         assert not result.is_complete
         v = [c async for c in result.stream(debounce_by=None)]
         assert v == snapshot(
@@ -1109,10 +1100,11 @@ async def test_request_tool_call(allow_model_requests: None):
                 parts=[
                     ToolCallPart(
                         tool_name='get_location',
-                        args=ArgsJson(args_json='{"loc_name": "San Fransisco"}'),
+                        args='{"loc_name": "San Fransisco"}',
                         tool_call_id='1',
                     )
                 ],
+                model_name='mistral-large-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
             ),
             ModelRequest(
@@ -1129,10 +1121,11 @@ async def test_request_tool_call(allow_model_requests: None):
                 parts=[
                     ToolCallPart(
                         tool_name='get_location',
-                        args=ArgsJson(args_json='{"loc_name": "London"}'),
+                        args='{"loc_name": "London"}',
                         tool_call_id='2',
                     )
                 ],
+                model_name='mistral-large-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
             ),
             ModelRequest(
@@ -1145,8 +1138,10 @@ async def test_request_tool_call(allow_model_requests: None):
                     )
                 ]
             ),
-            ModelResponse.from_text(
-                content='final response', timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)
+            ModelResponse(
+                parts=[TextPart(content='final response')],
+                model_name='mistral-large-123',
+                timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
             ),
         ]
     )
@@ -1245,10 +1240,11 @@ async def test_request_tool_call_with_result_type(allow_model_requests: None):
                 parts=[
                     ToolCallPart(
                         tool_name='get_location',
-                        args=ArgsJson(args_json='{"loc_name": "San Fransisco"}'),
+                        args='{"loc_name": "San Fransisco"}',
                         tool_call_id='1',
                     )
                 ],
+                model_name='mistral-large-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
             ),
             ModelRequest(
@@ -1265,10 +1261,11 @@ async def test_request_tool_call_with_result_type(allow_model_requests: None):
                 parts=[
                     ToolCallPart(
                         tool_name='get_location',
-                        args=ArgsJson(args_json='{"loc_name": "London"}'),
+                        args='{"loc_name": "London"}',
                         tool_call_id='2',
                     )
                 ],
+                model_name='mistral-large-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
             ),
             ModelRequest(
@@ -1285,10 +1282,11 @@ async def test_request_tool_call_with_result_type(allow_model_requests: None):
                 parts=[
                     ToolCallPart(
                         tool_name='final_result',
-                        args=ArgsJson(args_json='{"lat": 51, "lng": 0}'),
+                        args='{"lat": 51, "lng": 0}',
                         tool_call_id='1',
                     )
                 ],
+                model_name='mistral-large-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
             ),
             ModelRequest(
@@ -1385,10 +1383,11 @@ async def test_stream_tool_call_with_return_type(allow_model_requests: None):
                 parts=[
                     ToolCallPart(
                         tool_name='get_location',
-                        args=ArgsJson(args_json='{"loc_name": "San Fransisco"}'),
+                        args='{"loc_name": "San Fransisco"}',
                         tool_call_id='1',
                     )
                 ],
+                model_name='mistral-large-latest',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
             ),
             ModelRequest(
@@ -1402,9 +1401,8 @@ async def test_stream_tool_call_with_return_type(allow_model_requests: None):
                 ]
             ),
             ModelResponse(
-                parts=[
-                    ToolCallPart(tool_name='final_result', args=ArgsJson(args_json='{"won": true}'), tool_call_id='1')
-                ],
+                parts=[ToolCallPart(tool_name='final_result', args='{"won": true}', tool_call_id='1')],
+                model_name='mistral-large-latest',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
             ),
             ModelRequest(
@@ -1466,7 +1464,7 @@ async def test_stream_tool_call(allow_model_requests: None):
         # Then
         assert not result.is_complete
         v = [c async for c in result.stream(debounce_by=None)]
-        assert v == snapshot(['final ', 'final response'])
+        assert v == snapshot(['final ', 'final response', 'final response'])
         assert result.is_complete
         assert result.timestamp() == datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)
         assert result.usage().request_tokens == 6
@@ -1488,10 +1486,11 @@ async def test_stream_tool_call(allow_model_requests: None):
                 parts=[
                     ToolCallPart(
                         tool_name='get_location',
-                        args=ArgsJson(args_json='{"loc_name": "San Fransisco"}'),
+                        args='{"loc_name": "San Fransisco"}',
                         tool_call_id='1',
                     )
                 ],
+                model_name='mistral-large-latest',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
             ),
             ModelRequest(
@@ -1504,7 +1503,11 @@ async def test_stream_tool_call(allow_model_requests: None):
                     )
                 ]
             ),
-            ModelResponse.from_text(content='final response', timestamp=IsNow(tz=timezone.utc)),
+            ModelResponse(
+                parts=[TextPart(content='final response')],
+                model_name='mistral-large-latest',
+                timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+            ),
         ]
     )
 
@@ -1566,7 +1569,7 @@ async def test_stream_tool_call_with_retry(allow_model_requests: None):
     async with agent.run_stream('User prompt value') as result:
         # Then
         assert not result.is_complete
-        v = [c async for c in result.stream(debounce_by=None)]
+        v = [c async for c in result.stream_text(debounce_by=None)]
         assert v == snapshot(['final ', 'final response'])
         assert result.is_complete
         assert result.timestamp() == datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)
@@ -1589,10 +1592,11 @@ async def test_stream_tool_call_with_retry(allow_model_requests: None):
                 parts=[
                     ToolCallPart(
                         tool_name='get_location',
-                        args=ArgsJson(args_json='{"loc_name": "San Fransisco"}'),
+                        args='{"loc_name": "San Fransisco"}',
                         tool_call_id='1',
                     )
                 ],
+                model_name='mistral-large-latest',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
             ),
             ModelRequest(
@@ -1609,10 +1613,11 @@ async def test_stream_tool_call_with_retry(allow_model_requests: None):
                 parts=[
                     ToolCallPart(
                         tool_name='get_location',
-                        args=ArgsJson(args_json='{"loc_name": "London"}'),
+                        args='{"loc_name": "London"}',
                         tool_call_id='2',
                     )
                 ],
+                model_name='mistral-large-latest',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
             ),
             ModelRequest(
@@ -1625,7 +1630,11 @@ async def test_stream_tool_call_with_retry(allow_model_requests: None):
                     )
                 ]
             ),
-            ModelResponse.from_text(content='final response', timestamp=IsNow(tz=timezone.utc)),
+            ModelResponse(
+                parts=[TextPart(content='final response')],
+                model_name='mistral-large-latest',
+                timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+            ),
         ]
     )
 
@@ -1658,8 +1667,8 @@ def test_generate_user_output_format_complex():
             'prop_unrecognized_type': {'type': 'customSomething'},
         }
     }
-    mam = MistralAgentModel(Mistral(api_key=''), '', False, [], [], '{schema}')
-    result = mam._generate_user_output_format([schema])  # pyright: ignore[reportPrivateUsage]
+    m = MistralModel('', json_mode_schema_prompt='{schema}')
+    result = m._generate_user_output_format([schema])  # pyright: ignore[reportPrivateUsage]
     assert result.content == (
         "{'prop_anyOf': 'Optional[str]', "
         "'prop_no_type': 'Any', "
@@ -1675,8 +1684,8 @@ def test_generate_user_output_format_complex():
 
 def test_generate_user_output_format_multiple():
     schema = {'properties': {'prop_anyOf': {'anyOf': [{'type': 'string'}, {'type': 'integer'}]}}}
-    mam = MistralAgentModel(Mistral(api_key=''), '', False, [], [], '{schema}')
-    result = mam._generate_user_output_format([schema, schema])  # pyright: ignore[reportPrivateUsage]
+    m = MistralModel('', json_mode_schema_prompt='{schema}')
+    result = m._generate_user_output_format([schema, schema])  # pyright: ignore[reportPrivateUsage]
     assert result.content == "[{'prop_anyOf': 'Optional[str]'}, {'prop_anyOf': 'Optional[str]'}]"
 
 
@@ -1768,5 +1777,5 @@ def test_generate_user_output_format_multiple():
     ],
 )
 def test_validate_required_json_schema(desc: str, schema: dict[str, Any], data: dict[str, Any], expected: bool) -> None:
-    result = MistralStreamStructuredResponse._validate_required_json_schema(data, schema)  # pyright: ignore[reportPrivateUsage]
+    result = MistralStreamedResponse._validate_required_json_schema(data, schema)  # pyright: ignore[reportPrivateUsage]
     assert result == expected, f'{desc} — expected {expected}, got {result}'

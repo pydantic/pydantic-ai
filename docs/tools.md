@@ -25,7 +25,7 @@ import random
 from pydantic_ai import Agent, RunContext
 
 agent = Agent(
-    'gemini-1.5-flash',  # (1)!
+    'google-gla:gemini-1.5-flash',  # (1)!
     deps_type=str,  # (2)!
     system_prompt=(
         "You're a dice game, you should roll the die and see if the number "
@@ -86,12 +86,10 @@ print(dice_result.all_messages())
     ModelResponse(
         parts=[
             ToolCallPart(
-                tool_name='roll_die',
-                args=ArgsDict(args_dict={}),
-                tool_call_id=None,
-                part_kind='tool-call',
+                tool_name='roll_die', args={}, tool_call_id=None, part_kind='tool-call'
             )
         ],
+        model_name='function:model_logic',
         timestamp=datetime.datetime(...),
         kind='response',
     ),
@@ -111,11 +109,12 @@ print(dice_result.all_messages())
         parts=[
             ToolCallPart(
                 tool_name='get_player_name',
-                args=ArgsDict(args_dict={}),
+                args={},
                 tool_call_id=None,
                 part_kind='tool-call',
             )
         ],
+        model_name='function:model_logic',
         timestamp=datetime.datetime(...),
         kind='response',
     ),
@@ -138,6 +137,7 @@ print(dice_result.all_messages())
                 part_kind='text',
             )
         ],
+        model_name='function:model_logic',
         timestamp=datetime.datetime(...),
         kind='response',
     ),
@@ -183,7 +183,7 @@ sequenceDiagram
 
 ## Registering Function Tools via kwarg
 
-As well as using the decorators, we can register tools via the `tools` argument to the [`Agent` constructor][pydantic_ai.Agent.__init__]. This is useful when you want to re-use tools, and can also give more fine-grained control over the tools.
+As well as using the decorators, we can register tools via the `tools` argument to the [`Agent` constructor][pydantic_ai.Agent.__init__]. This is useful when you want to reuse tools, and can also give more fine-grained control over the tools.
 
 ```python {title="dice_game_tool_kwarg.py"}
 import random
@@ -202,12 +202,12 @@ def get_player_name(ctx: RunContext[str]) -> str:
 
 
 agent_a = Agent(
-    'gemini-1.5-flash',
+    'google-gla:gemini-1.5-flash',
     deps_type=str,
     tools=[roll_die, get_player_name],  # (1)!
 )
 agent_b = Agent(
-    'gemini-1.5-flash',
+    'google-gla:gemini-1.5-flash',
     deps_type=str,
     tools=[  # (2)!
         Tool(roll_die, takes_ctx=False),
@@ -234,19 +234,19 @@ Function parameters are extracted from the function signature, and all parameter
 
 Even better, PydanticAI extracts the docstring from functions and (thanks to [griffe](https://mkdocstrings.github.io/griffe/)) extracts parameter descriptions from the docstring and adds them to the schema.
 
-[Griffe supports](https://mkdocstrings.github.io/griffe/reference/docstrings/#docstrings) extracting parameter descriptions from `google`, `numpy` and `sphinx` style docstrings, and PydanticAI will infer the format to use based on the docstring. We plan to add support in the future to explicitly set the style to use, and warn/error if not all parameters are documented; see [#59](https://github.com/pydantic/pydantic-ai/issues/59).
+[Griffe supports](https://mkdocstrings.github.io/griffe/reference/docstrings/#docstrings) extracting parameter descriptions from `google`, `numpy`, and `sphinx` style docstrings. PydanticAI will infer the format to use based on the docstring, but you can explicitly set it using [`docstring_format`][pydantic_ai.tools.DocstringFormat]. You can also enforce parameter requirements by setting `require_parameter_descriptions=True`. This will raise a [`UserError`][pydantic_ai.exceptions.UserError] if a parameter description is missing.
 
 To demonstrate a tool's schema, here we use [`FunctionModel`][pydantic_ai.models.function.FunctionModel] to print the schema a model would receive:
 
 ```python {title="tool_schema.py"}
 from pydantic_ai import Agent
-from pydantic_ai.messages import ModelMessage, ModelResponse
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 agent = Agent()
 
 
-@agent.tool_plain
+@agent.tool_plain(docstring_format='google', require_parameter_descriptions=True)
 def foobar(a: int, b: str, c: dict[str, list[float]]) -> str:
     """Get me foobar.
 
@@ -280,7 +280,7 @@ def print_schema(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse
         'additionalProperties': False,
     }
     """
-    return ModelResponse.from_text(content='foobar')
+    return ModelResponse(parts=[TextPart('foobar')])
 
 
 agent.run_sync('hello', model=FunctionModel(print_schema))
@@ -292,7 +292,7 @@ The return type of tool can be anything which Pydantic can serialize to JSON as 
 
 If a tool has a single parameter that can be represented as an object in JSON schema (e.g. dataclass, TypedDict, pydantic model), the schema for the tool is simplified to be just that object.
 
-Here's an example, we use [`TestModel.agent_model_function_tools`][pydantic_ai.models.test.TestModel.agent_model_function_tools] to inspect the tool schema that would be passed to the model.
+Here's an example where we use [`TestModel.last_model_request_parameters`][pydantic_ai.models.test.TestModel.last_model_request_parameters] to inspect the tool schema that would be passed to the model.
 
 ```python {title="single_parameter_tool.py"}
 from pydantic import BaseModel
@@ -320,7 +320,7 @@ test_model = TestModel()
 result = agent.run_sync('hello', model=test_model)
 print(result.data)
 #> {"foobar":"x=0 y='a' z=3.14"}
-print(test_model.agent_model_function_tools)
+print(test_model.last_model_request_parameters.function_tools)
 """
 [
     ToolDefinition(
@@ -425,7 +425,7 @@ agent = Agent(test_model, tools=[greet_tool], deps_type=Literal['human', 'machin
 result = agent.run_sync('testing...', deps='human')
 print(result.data)
 #> {"greet":"hello a"}
-print(test_model.agent_model_function_tools)
+print(test_model.last_model_request_parameters.function_tools)
 """
 [
     ToolDefinition(

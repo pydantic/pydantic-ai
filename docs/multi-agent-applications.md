@@ -5,7 +5,7 @@ There are roughly four levels of complexity when building applications with Pyda
 1. Single agent workflows — what most of the `pydantic_ai` documentation covers
 2. [Agent delegation](#agent-delegation) — agents using another agent via tools
 3. [Programmatic agent hand-off](#programmatic-agent-hand-off) — one agent runs, then application code calls another agent
-4. [Graph based control flow](#pydanticai-graphs) — for the most complex cases, a graph-based state machine can be used to control the execution of multiple agents
+4. [Graph based control flow](graph.md) — for the most complex cases, a graph-based state machine can be used to control the execution of multiple agents
 
 Of course, you can combine multiple strategies in a single application.
 
@@ -18,7 +18,7 @@ Since agents are stateless and designed to be global, you do not need to include
 You'll generally want to pass [`ctx.usage`][pydantic_ai.RunContext.usage] to the [`usage`][pydantic_ai.Agent.run] keyword argument of the delegate agent run so usage within that run counts towards the total usage of the parent agent run.
 
 !!! note "Multiple models"
-    Agent delegation doesn't need to use the same model for each agent. If you choose to use different models within a run, calculating the monetary cost from the final [`result.usage()`][pydantic_ai.result.RunResult.usage] of the run will not be possible, but you can still use [`UsageLimits`][pydantic_ai.usage.UsageLimits] to avoid unexpected costs.
+    Agent delegation doesn't need to use the same model for each agent. If you choose to use different models within a run, calculating the monetary cost from the final [`result.usage()`][pydantic_ai.agent.AgentRunResult.usage] of the run will not be possible, but you can still use [`UsageLimits`][pydantic_ai.usage.UsageLimits] to avoid unexpected costs.
 
 ```python {title="agent_delegation_simple.py"}
 from pydantic_ai import Agent, RunContext
@@ -31,7 +31,9 @@ joke_selection_agent = Agent(  # (1)!
         'You must return just a single joke.'
     ),
 )
-joke_generation_agent = Agent('gemini-1.5-flash', result_type=list[str])  # (2)!
+joke_generation_agent = Agent(  # (2)!
+    'google-gla:gemini-1.5-flash', result_type=list[str]
+)
 
 
 @joke_selection_agent.tool
@@ -60,7 +62,7 @@ Usage(
 1. The "parent" or controlling agent.
 2. The "delegate" agent, which is called from within a tool of the parent agent.
 3. Call the delegate agent from within a tool of the parent agent.
-4. Pass the usage from the parent agent to the delegate agent so the final [`result.usage()`][pydantic_ai.result.RunResult.usage] includes the usage from both agents.
+4. Pass the usage from the parent agent to the delegate agent so the final [`result.usage()`][pydantic_ai.agent.AgentRunResult.usage] includes the usage from both agents.
 5. Since the function returns `#!python list[str]`, and the `result_type` of `joke_generation_agent` is also `#!python list[str]`, we can simply return `#!python r.data` from the tool.
 
 _(This example is complete, it can be run "as is")_
@@ -148,9 +150,9 @@ async def main():
         """
         Usage(
             requests=4,
-            request_tokens=310,
+            request_tokens=309,
             response_tokens=32,
-            total_tokens=342,
+            total_tokens=341,
             details=None,
         )
         """
@@ -330,10 +332,9 @@ graph TB
   seat_preference_agent --> END
 ```
 
-## PydanticAI Graphs
+## Pydantic Graphs
 
-!!! example "Work in progress"
-    This is a work in progress and not yet documented, see [#528](https://github.com/pydantic/pydantic-ai/issues/528) and [#539](https://github.com/pydantic/pydantic-ai/issues/539)
+See the [graph](graph.md) documentation on when and how to use graphs.
 
 ## Examples
 

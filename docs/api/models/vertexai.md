@@ -2,8 +2,8 @@
 
 Custom interface to the `*-aiplatform.googleapis.com` API for Gemini models.
 
-This model uses [`GeminiAgentModel`][pydantic_ai.models.gemini.GeminiAgentModel] with just the URL and auth method
-changed from [`GeminiModel`][pydantic_ai.models.gemini.GeminiModel], it relies on the VertexAI
+This model inherits from [`GeminiModel`][pydantic_ai.models.gemini.GeminiModel] with just the URL and auth method
+changed, it relies on the VertexAI
 [`generateContent`](https://cloud.google.com/vertex-ai/docs/reference/rest/v1/projects.locations.endpoints/generateContent)
 and
 [`streamGenerateContent`](https://cloud.google.com/vertex-ai/docs/reference/rest/v1/projects.locations.endpoints/streamGenerateContent)

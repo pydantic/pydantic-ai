@@ -4,11 +4,10 @@
     options:
       members:
         - KnownModelName
+        - ModelRequestParameters
         - Model
-        - AgentModel
         - AbstractToolDefinition
-        - StreamTextResponse
-        - StreamStructuredResponse
+        - StreamedResponse
         - ALLOW_MODEL_REQUESTS
         - check_allow_model_requests
         - override_allow_model_requests

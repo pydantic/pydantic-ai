@@ -45,7 +45,7 @@ def vertexai(http_client: httpx.AsyncClient, tmp_path: Path) -> Model:
 def groq(http_client: httpx.AsyncClient, _tmp_path: Path) -> Model:
     from pydantic_ai.models.groq import GroqModel
 
-    return GroqModel('llama-3.1-70b-versatile', http_client=http_client)
+    return GroqModel('llama-3.3-70b-versatile', http_client=http_client)
 
 
 def anthropic(http_client: httpx.AsyncClient, _tmp_path: Path) -> Model:
@@ -55,9 +55,9 @@ def anthropic(http_client: httpx.AsyncClient, _tmp_path: Path) -> Model:
 
 
 def ollama(http_client: httpx.AsyncClient, _tmp_path: Path) -> Model:
-    from pydantic_ai.models.ollama import OllamaModel
+    from pydantic_ai.models.openai import OpenAIModel
 
-    return OllamaModel('qwen2:0.5b', http_client=http_client)
+    return OpenAIModel('qwen2:0.5b', base_url='http://localhost:11434/v1/', http_client=http_client)
 
 
 def mistral(http_client: httpx.AsyncClient, _tmp_path: Path) -> Model:
@@ -66,14 +66,21 @@ def mistral(http_client: httpx.AsyncClient, _tmp_path: Path) -> Model:
     return MistralModel('mistral-small-latest', http_client=http_client)
 
 
+def cohere(http_client: httpx.AsyncClient, _tmp_path: Path) -> Model:
+    from pydantic_ai.models.cohere import CohereModel
+
+    return CohereModel('command-r7b-12-2024', http_client=http_client)
+
+
 params = [
     pytest.param(openai, id='openai'),
-    pytest.param(gemini, id='gemini'),
+    pytest.param(gemini, marks=pytest.mark.skip(reason='API seems very flaky'), id='gemini'),
     pytest.param(vertexai, id='vertexai'),
     pytest.param(groq, id='groq'),
     pytest.param(anthropic, id='anthropic'),
     pytest.param(ollama, id='ollama'),
     pytest.param(mistral, id='mistral'),
+    pytest.param(cohere, id='cohere'),
 ]
 GetModel = Callable[[httpx.AsyncClient, Path], Model]
 
@@ -95,7 +102,7 @@ async def test_text(http_client: httpx.AsyncClient, tmp_path: Path, get_model: G
     assert usage.total_tokens is not None and usage.total_tokens > 0
 
 
-stream_params = [p for p in params if p.id != 'anthropic']
+stream_params = [p for p in params if p.id != 'cohere']
 
 
 @pytest.mark.parametrize('get_model', stream_params)

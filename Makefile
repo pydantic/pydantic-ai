@@ -34,7 +34,7 @@ typecheck-pyright:
 
 .PHONY: typecheck-mypy
 typecheck-mypy:
-	uv run mypy --strict tests/typed_agent.py
+	uv run mypy
 
 .PHONY: typecheck
 typecheck: typecheck-pyright ## Run static type checking
@@ -64,7 +64,7 @@ testcov: test ## Run tests and generate a coverage report
 
 .PHONY: update-examples
 update-examples: ## Update documentation examples
-	uv run -m pytest --update-examples
+	uv run -m pytest --update-examples tests/test_examples.py
 
 # `--no-strict` so you can build the docs without insiders packages
 .PHONY: docs

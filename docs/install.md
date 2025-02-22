@@ -25,7 +25,7 @@ From there, follow the [Logfire setup docs](logfire.md#using-logfire) to configu
 
 ## Running Examples
 
-We distribute the [`pydantic_ai_examples`](https://github.com/pydantic/pydantic-ai/tree/main/pydantic_ai_examples) directory as a separate PyPI package ([`pydantic-ai-examples`](https://pypi.org/project/pydantic-ai-examples/)) to make examples extremely easy to customize and run.
+We distribute the [`pydantic_ai_examples`](https://github.com/pydantic/pydantic-ai/tree/main/examples/pydantic_ai_examples) directory as a separate PyPI package ([`pydantic-ai-examples`](https://pypi.org/project/pydantic-ai-examples/)) to make examples extremely easy to customize and run.
 
 To install examples, use the `examples` optional group:
 
@@ -43,6 +43,16 @@ For example, if you're using just [`OpenAIModel`][pydantic_ai.models.openai.Open
 ```bash
 pip/uv-add 'pydantic-ai-slim[openai]'
 ```
+
+`pydantic-ai-slim` has the following optional groups:
+
+* `logfire` — installs [`logfire`](logfire.md) [PyPI ↗](https://pypi.org/project/logfire){:target="_blank"}
+* `openai` — installs `openai` [PyPI ↗](https://pypi.org/project/openai){:target="_blank"}
+* `vertexai` — installs `google-auth` [PyPI ↗](https://pypi.org/project/google-auth){:target="_blank"} and `requests` [PyPI ↗](https://pypi.org/project/requests){:target="_blank"}
+* `anthropic` — installs `anthropic` [PyPI ↗](https://pypi.org/project/anthropic){:target="_blank"}
+* `groq` — installs `groq` [PyPI ↗](https://pypi.org/project/groq){:target="_blank"}
+* `mistral` — installs `mistralai` [PyPI ↗](https://pypi.org/project/mistralai){:target="_blank"}
+* `cohere` - installs `cohere` [PyPI ↗](https://pypi.org/project/cohere){:target="_blank"}
 
 See the [models](models.md) documentation for information on which optional dependencies are required for each model.
 
