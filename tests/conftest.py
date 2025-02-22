@@ -17,20 +17,23 @@ import httpx
 import pytest
 from _pytest.assertion.rewrite import AssertionRewritingHook
 from typing_extensions import TypeAlias
+from vcr import VCR
 
 import pydantic_ai.models
 
-__all__ = 'IsNow', 'IsFloat', 'TestEnv', 'ClientWithHandler', 'try_import'
+__all__ = 'IsDatetime', 'IsFloat', 'IsNow', 'IsStr', 'TestEnv', 'ClientWithHandler', 'try_import'
 
 
 pydantic_ai.models.ALLOW_MODEL_REQUESTS = False
 
 if TYPE_CHECKING:
 
-    def IsNow(*args: Any, **kwargs: Any) -> datetime: ...
+    def IsDatetime(*args: Any, **kwargs: Any) -> datetime: ...
     def IsFloat(*args: Any, **kwargs: Any) -> float: ...
+    def IsNow(*args: Any, **kwargs: Any) -> datetime: ...
+    def IsStr(*args: Any, **kwargs: Any) -> str: ...
 else:
-    from dirty_equals import IsFloat, IsNow as _IsNow
+    from dirty_equals import IsDatetime, IsFloat, IsNow as _IsNow, IsStr
 
     def IsNow(*args: Any, **kwargs: Any):
         # Increase the default value of `delta` to 10 to reduce test flakiness on overburdened machines
@@ -179,3 +182,18 @@ def set_event_loop() -> Iterator[None]:
     asyncio.set_event_loop(new_loop)
     yield
     new_loop.close()
+
+
+def pytest_recording_configure(config: Any, vcr: VCR):
+    from . import json_body_serializer
+
+    vcr.register_serializer('yaml', json_body_serializer)
+
+
+@pytest.fixture(scope='module')
+def vcr_config():
+    return {
+        # Note: additional header filtering is done inside the serializer
+        'filter_headers': ['authorization', 'x-api-key'],
+        'decode_compressed_response': True,
+    }
