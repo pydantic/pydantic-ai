@@ -234,11 +234,29 @@ class ModelRequestNode(BaseNode[GraphAgentState, GraphAgentDeps[DepsT, Any], Nod
         return await self._make_request(ctx)
 
     @asynccontextmanager
+    async def stream(
+        self,
+        ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, T]],
+    ) -> AsyncIterator[result.AgentStream[DepsT, T]]:
+        async with self._stream(ctx) as streamed_response:
+            agent_stream = result.AgentStream[DepsT, T](
+                streamed_response,
+                ctx.deps.result_schema,
+                ctx.deps.result_validators,
+                build_run_context(ctx),
+                ctx.deps.usage_limits,
+            )
+            yield agent_stream
+            # In case the user didn't manually consume the full stream, ensure it is fully consumed here,
+            # otherwise usage won't be properly counted:
+            async for _ in agent_stream:
+                pass
+
+    @asynccontextmanager
     async def _stream(
         self,
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, T]],
     ) -> AsyncIterator[models.StreamedResponse]:
-        # TODO: Consider changing this to return something more similar to a `StreamedRunResult`, then make it public
         assert not self._did_stream, 'stream() should only be called once per node'
 
         model_settings, model_request_parameters = await self._prepare_request(ctx)
