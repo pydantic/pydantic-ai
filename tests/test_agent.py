@@ -852,7 +852,7 @@ def test_run_sync_multiple():
             # use this as I suspect it's about the fastest globally available endpoint
             try:
                 response = await client.get('https://cloudflare.com/cdn-cgi/trace')
-            except httpx.ConnectError:
+            except httpx.ConnectError:  # pragma: no cover
                 pytest.skip('offline')
             else:
                 return str(response.status_code)
