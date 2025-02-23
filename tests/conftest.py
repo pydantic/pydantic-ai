@@ -204,3 +204,8 @@ def vcr_config():
 async def close_cached_httpx_client() -> AsyncIterator[None]:
     yield
     await cached_async_http_client().aclose()
+
+
+@pytest.fixture(scope='session')
+def gemini_api_key() -> str:
+    return os.getenv('GEMINI_API_KEY', 'mock-api-key')

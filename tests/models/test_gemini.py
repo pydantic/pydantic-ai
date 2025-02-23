@@ -6,6 +6,7 @@ import json
 from collections.abc import AsyncIterator, Callable, Sequence
 from dataclasses import dataclass
 from datetime import timezone
+from pathlib import Path
 
 import httpx
 import pytest
@@ -16,6 +17,7 @@ from typing_extensions import Literal, TypeAlias
 
 from pydantic_ai import Agent, ModelRetry, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
+    BinaryContent,
     ModelRequest,
     ModelResponse,
     RetryPromptPart,
@@ -978,3 +980,16 @@ async def test_safety_settings_safe(
         ),
     )
     assert result.data == 'world'
+
+
+@pytest.mark.vcr()
+async def test_image_as_binary_content_input(allow_model_requests: None, gemini_api_key: str) -> None:
+    m = GeminiModel('gemini-2.0-flash', api_key=gemini_api_key)
+    agent = Agent(m)
+
+    kiwi_image = (Path(__file__).parent.parent / 'assets' / 'kiwi.png').read_bytes()
+
+    result = await agent.run(
+        ['What is the name of this fruit?', BinaryContent(data=kiwi_image, media_type='image/png')]
+    )
+    assert result.data == snapshot('The fruit in the image is a kiwi.')

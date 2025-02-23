@@ -68,7 +68,7 @@ class ImageUrl:
     @property
     def media_type(self) -> ImageMediaType:
         """Return the media type of the image, based on the url."""
-        if self.url.endswith('.jpg'):
+        if self.url.endswith(('.jpg', '.jpeg')):
             return 'image/jpeg'
         elif self.url.endswith('.png'):
             return 'image/png'
