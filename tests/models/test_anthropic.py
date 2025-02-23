@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import json
+import os
 from dataclasses import dataclass, field
 from datetime import timezone
 from functools import cached_property
@@ -23,7 +24,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.result import Usage
 from pydantic_ai.settings import ModelSettings
 
-from ..conftest import IsNow, try_import
+from ..conftest import IsDatetime, IsNow, IsStr, try_import
 from .mock_async_stream import MockAsyncStream
 
 with try_import() as imports_successful:
@@ -332,8 +333,8 @@ async def test_parallel_tool_calls(allow_model_requests: None, parallel_tool_cal
     )
 
 
-@pytest.mark.skip(reason='Need to finish implementing this test')  # TODO: David to finish implementing this test
-async def test_multiple_parallel_tool_calls():  # pragma: no cover  # Need to finish the test..
+@pytest.mark.vcr
+async def test_multiple_parallel_tool_calls(allow_model_requests: None):
     async def retrieve_entity_info(name: str) -> str:
         """Get the knowledge about the given entity."""
         data = {
@@ -351,15 +352,75 @@ async def test_multiple_parallel_tool_calls():  # pragma: no cover  # Need to fi
     Think step by step and then provide a single most probable concise answer.
     """
 
-    mock_client = MockAnthropic.create_mock([])
+    # If we don't provide some value for the API key, the anthropic SDK will raise an error.
+    # However, we do want to use the environment variable if present when rewriting VCR cassettes.
+    api_key = os.environ.get('ANTHROPIC_API_KEY', 'mock-value')
     agent = Agent(
-        AnthropicModel('claude-3-5-haiku-latest', anthropic_client=mock_client),
+        AnthropicModel('claude-3-5-haiku-latest', api_key=api_key),
         system_prompt=system_prompt,
         tools=[retrieve_entity_info],
     )
 
-    _result = agent.run_sync('Alice, Bob, Charlie and Daisy are a family. Who is the youngest?')
-    # assert ...
+    result = await agent.run('Alice, Bob, Charlie and Daisy are a family. Who is the youngest?')
+    assert 'Daisy is the youngest' in result.data
+
+    all_messages = result.all_messages()
+    first_response = all_messages[1]
+    second_request = all_messages[2]
+    assert first_response.parts == [
+        TextPart(
+            content='Let me retrieve the information about each family member to determine their ages.',
+            part_kind='text',
+        ),
+        ToolCallPart(
+            tool_name='retrieve_entity_info', args={'name': 'Alice'}, tool_call_id=IsStr(), part_kind='tool-call'
+        ),
+        ToolCallPart(
+            tool_name='retrieve_entity_info', args={'name': 'Bob'}, tool_call_id=IsStr(), part_kind='tool-call'
+        ),
+        ToolCallPart(
+            tool_name='retrieve_entity_info', args={'name': 'Charlie'}, tool_call_id=IsStr(), part_kind='tool-call'
+        ),
+        ToolCallPart(
+            tool_name='retrieve_entity_info', args={'name': 'Daisy'}, tool_call_id=IsStr(), part_kind='tool-call'
+        ),
+    ]
+    assert second_request.parts == [
+        ToolReturnPart(
+            tool_name='retrieve_entity_info',
+            content="alice is bob's wife",
+            tool_call_id=IsStr(),
+            timestamp=IsDatetime(),
+            part_kind='tool-return',
+        ),
+        ToolReturnPart(
+            tool_name='retrieve_entity_info',
+            content="bob is alice's husband",
+            tool_call_id=IsStr(),
+            timestamp=IsDatetime(),
+            part_kind='tool-return',
+        ),
+        ToolReturnPart(
+            tool_name='retrieve_entity_info',
+            content="charlie is alice's son",
+            tool_call_id=IsStr(),
+            timestamp=IsDatetime(),
+            part_kind='tool-return',
+        ),
+        ToolReturnPart(
+            tool_name='retrieve_entity_info',
+            content="daisy is bob's daughter and charlie's younger sister",
+            tool_call_id=IsStr(),
+            timestamp=IsDatetime(),
+            part_kind='tool-return',
+        ),
+    ]
+
+    # Ensure the tool call IDs match between the tool calls and the tool returns
+    tool_call_part_ids = [part.tool_call_id for part in first_response.parts if part.part_kind == 'tool-call']
+    tool_return_part_ids = [part.tool_call_id for part in second_request.parts if part.part_kind == 'tool-return']
+    assert len(set(tool_call_part_ids)) == 4  # ensure they are all unique
+    assert tool_call_part_ids == tool_return_part_ids
 
 
 async def test_anthropic_specific_metadata(allow_model_requests: None) -> None:
