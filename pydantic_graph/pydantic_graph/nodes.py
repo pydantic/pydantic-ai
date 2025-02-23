@@ -138,12 +138,12 @@ class End(Generic[RunEndT]):
     data: RunEndT
     """Data to return from the graph."""
 
-    def deep_copy_data(self) -> RunEndT:
+    def deep_copy_data(self) -> End[RunEndT]:
         """Returns a deep copy of the end of the run."""
         if self.data is None:
-            return self.data
+            return self
         else:
-            return copy.deepcopy(self.data)
+            return End(copy.deepcopy(self.data))
 
 
 @dataclass

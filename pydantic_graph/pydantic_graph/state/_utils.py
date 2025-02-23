@@ -1,7 +1,7 @@
 from __future__ import annotations as _annotations
 
 from collections.abc import Sequence
-from contextvars import ContextVar
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Annotated, Any, Union
 
@@ -10,24 +10,18 @@ from pydantic_core import core_schema
 
 from ..nodes import BaseNode
 
-nodes_schema_var: ContextVar[Sequence[type[BaseNode[Any, Any, Any]]]] = ContextVar('nodes_var')
 
-
+@dataclass
 class CustomNodeSchema:
+    nodes: Sequence[type[BaseNode[Any, Any, Any]]]
+
     def __get_pydantic_core_schema__(
         self, _source_type: Any, handler: pydantic.GetCoreSchemaHandler
     ) -> core_schema.CoreSchema:
-        try:
-            nodes = nodes_schema_var.get()
-        except LookupError as e:
-            raise RuntimeError(
-                'Unable to build a Pydantic schema for `NodeStep` without setting `nodes_schema_var`. '
-                'You probably want to use TODO'
-            ) from e
-        if len(nodes) == 1:
-            nodes_type = nodes[0]
+        if len(self.nodes) == 1:
+            nodes_type = self.nodes[0]
         else:
-            nodes_annotated = [Annotated[node, pydantic.Tag(node.get_id())] for node in nodes]
+            nodes_annotated = [Annotated[node, pydantic.Tag(node.get_id())] for node in self.nodes]
             nodes_type = Annotated[Union[tuple(nodes_annotated)], pydantic.Discriminator(self._node_discriminator)]
 
         schema = handler(nodes_type)

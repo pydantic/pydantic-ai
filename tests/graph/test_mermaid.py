@@ -11,7 +11,17 @@ import httpx
 import pytest
 from inline_snapshot import snapshot
 
-from pydantic_graph import BaseNode, Edge, End, EndSnapshot, Graph, GraphRunContext, GraphSetupError, NodeSnapshot
+from pydantic_graph import (
+    BaseNode,
+    Edge,
+    End,
+    EndSnapshot,
+    FullStatePersistence,
+    Graph,
+    GraphRunContext,
+    GraphSetupError,
+    NodeSnapshot,
+)
 from pydantic_graph.nodes import NodeDef
 
 from ..conftest import IsFloat, IsNow
@@ -58,9 +68,10 @@ graph2 = Graph(nodes=(Spam, Foo, Bar, Eggs))
 
 
 async def test_run_graph():
-    result, history = await graph1.run(Foo())
+    sp = FullStatePersistence()
+    result = await graph1.run(Foo(), persistence=sp)
     assert result is None
-    assert history == snapshot(
+    assert sp.history == snapshot(
         [
             NodeSnapshot(
                 state=None,
@@ -74,7 +85,7 @@ async def test_run_graph():
                 start_ts=IsNow(tz=timezone.utc),
                 duration=IsFloat(),
             ),
-            EndSnapshot(result=End(data=None), ts=IsNow(tz=timezone.utc)),
+            EndSnapshot(state=None, result=End(None), ts=IsNow(tz=timezone.utc)),
         ]
     )
 

@@ -9,18 +9,17 @@ from typing import Union
 import pytest
 from dirty_equals import IsStr
 from inline_snapshot import snapshot
-from typing_extensions import Never
 
 from pydantic_graph import (
     BaseNode,
     End,
     EndSnapshot,
+    FullStatePersistence,
     Graph,
     GraphRunContext,
     GraphRuntimeError,
     GraphSetupError,
     NodeSnapshot,
-    Snapshot,
 )
 
 from ..conftest import IsFloat, IsNow
@@ -28,40 +27,55 @@ from ..conftest import IsFloat, IsNow
 pytestmark = pytest.mark.anyio
 
 
+@dataclass
+class Float2String(BaseNode):
+    input_data: float
+
+    async def run(self, ctx: GraphRunContext) -> String2Length:
+        return String2Length(str(self.input_data))
+
+
+@dataclass
+class String2Length(BaseNode):
+    input_data: str
+
+    async def run(self, ctx: GraphRunContext) -> Double:
+        return Double(len(self.input_data))
+
+
+@dataclass
+class Double(BaseNode[None, None, int]):
+    input_data: int
+
+    async def run(self, ctx: GraphRunContext) -> Union[String2Length, End[int]]:  # noqa: UP007
+        if self.input_data == 7:
+            return String2Length('x' * 21)
+        else:
+            return End(self.input_data * 2)
+
+
 async def test_graph():
-    @dataclass
-    class Float2String(BaseNode):
-        input_data: float
+    my_graph = Graph(nodes=(Float2String, String2Length, Double))
+    assert my_graph.name is None
+    assert my_graph._get_state_type() is type(None)
+    assert my_graph._get_run_end_type() is int
+    result = await my_graph.run(Float2String(3.14))
+    # len('3.14') * 2 == 8
+    assert result == 8
+    assert my_graph.name == 'my_graph'
 
-        async def run(self, ctx: GraphRunContext) -> String2Length:
-            return String2Length(str(self.input_data))
 
-    @dataclass
-    class String2Length(BaseNode):
-        input_data: str
-
-        async def run(self, ctx: GraphRunContext) -> Double:
-            return Double(len(self.input_data))
-
-    @dataclass
-    class Double(BaseNode[None, None, int]):
-        input_data: int
-
-        async def run(self, ctx: GraphRunContext) -> Union[String2Length, End[int]]:  # noqa: UP007
-            if self.input_data == 7:
-                return String2Length('x' * 21)
-            else:
-                return End(self.input_data * 2)
-
+async def test_graph_history():
     my_graph = Graph[None, None, int](nodes=(Float2String, String2Length, Double))
     assert my_graph.name is None
     assert my_graph._get_state_type() is type(None)
     assert my_graph._get_run_end_type() is int
-    result, history = await my_graph.run(Float2String(3.14))
+    sp = FullStatePersistence()
+    result = await my_graph.run(Float2String(3.14), persistence=sp)
     # len('3.14') * 2 == 8
     assert result == 8
     assert my_graph.name == 'my_graph'
-    assert history == snapshot(
+    assert sp.history == snapshot(
         [
             NodeSnapshot(
                 state=None,
@@ -81,13 +95,14 @@ async def test_graph():
                 start_ts=IsNow(tz=timezone.utc),
                 duration=IsFloat(),
             ),
-            EndSnapshot(result=End(data=8), ts=IsNow(tz=timezone.utc)),
+            EndSnapshot(state=None, result=End(8), ts=IsNow(tz=timezone.utc)),
         ]
     )
-    result, history = await my_graph.run(Float2String(3.14159))
+    sp = FullStatePersistence()
+    result = await my_graph.run(Float2String(3.14159), persistence=sp)
     # len('3.14159') == 7, 21 * 2 == 42
     assert result == 42
-    assert history == snapshot(
+    assert sp.history == snapshot(
         [
             NodeSnapshot(
                 state=None,
@@ -119,10 +134,10 @@ async def test_graph():
                 start_ts=IsNow(tz=timezone.utc),
                 duration=IsFloat(),
             ),
-            EndSnapshot(result=End(data=42), ts=IsNow(tz=timezone.utc)),
+            EndSnapshot(state=None, result=End(42), ts=IsNow(tz=timezone.utc)),
         ]
     )
-    assert [e.data_snapshot() for e in history] == snapshot(
+    assert [e.node for e in sp.history] == snapshot(
         [
             Float2String(input_data=3.14159),
             String2Length(input_data='3.14159'),
@@ -283,19 +298,19 @@ async def test_next():
 
     g = Graph(nodes=(Foo, Bar))
     assert g.name is None
-    history: list[Snapshot[None, Never]] = []
-    n = await g.next(Foo(), history)
+    sp = FullStatePersistence()
+    n = await g.next(Foo(), persistence=sp)
     assert n == Bar()
     assert g.name == 'g'
-    assert history == snapshot(
+    assert sp.history == snapshot(
         [NodeSnapshot(state=None, node=Foo(), start_ts=IsNow(tz=timezone.utc), duration=IsFloat())]
     )
 
     assert isinstance(n, Bar)
-    n2 = await g.next(n, history)
+    n2 = await g.next(n, persistence=sp)
     assert n2 == Foo()
 
-    assert history == snapshot(
+    assert sp.history == snapshot(
         [
             NodeSnapshot(state=None, node=Foo(), start_ts=IsNow(tz=timezone.utc), duration=IsFloat()),
             NodeSnapshot(state=None, node=Bar(), start_ts=IsNow(tz=timezone.utc), duration=IsFloat()),
@@ -322,13 +337,14 @@ async def test_deps():
             return End(123)
 
     g = Graph(nodes=(Foo, Bar))
-    result, history = await g.run(Foo(), deps=Deps(1, 2))
+    sp = FullStatePersistence()
+    result = await g.run(Foo(), deps=Deps(1, 2), persistence=sp)
 
     assert result == 123
-    assert history == snapshot(
+    assert sp.history == snapshot(
         [
             NodeSnapshot(state=None, node=Foo(), start_ts=IsNow(tz=timezone.utc), duration=IsFloat()),
             NodeSnapshot(state=None, node=Bar(), start_ts=IsNow(tz=timezone.utc), duration=IsFloat()),
-            EndSnapshot(result=End(data=123), ts=IsNow(tz=timezone.utc)),
+            EndSnapshot(state=None, result=End(123), ts=IsNow(tz=timezone.utc)),
         ]
     )

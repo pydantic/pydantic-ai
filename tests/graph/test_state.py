@@ -1,4 +1,3 @@
-# pyright: reportPrivateUsage=false
 from __future__ import annotations as _annotations
 
 from dataclasses import dataclass
@@ -7,7 +6,15 @@ from datetime import timezone
 import pytest
 from inline_snapshot import snapshot
 
-from pydantic_graph import BaseNode, End, EndSnapshot, Graph, GraphRunContext, NodeSnapshot
+from pydantic_graph import (
+    BaseNode,
+    End,
+    EndSnapshot,
+    FullStatePersistence,
+    Graph,
+    GraphRunContext,
+    NodeSnapshot,
+)
 
 from ..conftest import IsFloat, IsNow
 
@@ -33,26 +40,27 @@ async def test_run_graph():
             return End(f'x={ctx.state.x} y={ctx.state.y}')
 
     graph = Graph(nodes=(Foo, Bar))
-    assert graph._get_state_type() is MyState
-    assert graph._get_run_end_type() is str
+    assert graph._get_state_type() is MyState  # pyright: ignore[reportPrivateUsage]
+    assert graph._get_run_end_type() is str  # pyright: ignore[reportPrivateUsage]
     state = MyState(1, '')
-    result, history = await graph.run(Foo(), state=state)
+    sp = FullStatePersistence.from_types(MyState, str)
+    result = await graph.run(Foo(), state=state, persistence=sp)
     assert result == snapshot('x=2 y=y')
-    assert history == snapshot(
+    assert sp.history == snapshot(
         [
             NodeSnapshot(
-                state=MyState(x=2, y=''),
+                state=MyState(x=1, y=''),
                 node=Foo(),
                 start_ts=IsNow(tz=timezone.utc),
                 duration=IsFloat(),
             ),
             NodeSnapshot(
-                state=MyState(x=2, y='y'),
+                state=MyState(x=2, y=''),
                 node=Bar(),
                 start_ts=IsNow(tz=timezone.utc),
                 duration=IsFloat(),
             ),
-            EndSnapshot(result=End('x=2 y=y'), ts=IsNow(tz=timezone.utc)),
+            EndSnapshot(state=MyState(x=2, y='y'), result=End('x=2 y=y'), ts=IsNow(tz=timezone.utc)),
         ]
     )
     assert state == MyState(x=2, y='y')
