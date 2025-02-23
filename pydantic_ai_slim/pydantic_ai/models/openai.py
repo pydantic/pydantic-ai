@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+import base64
 import os
 from collections.abc import AsyncIterable, AsyncIterator, Iterable
 from contextlib import asynccontextmanager
@@ -14,6 +15,8 @@ from typing_extensions import assert_never
 from .. import UnexpectedModelBehavior, _utils, usage
 from .._utils import guard_tool_call_id as _guard_tool_call_id
 from ..messages import (
+    BinaryContent,
+    ImageUrl,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -39,7 +42,15 @@ from . import (
 try:
     from openai import NOT_GIVEN, AsyncOpenAI, AsyncStream
     from openai.types import ChatModel, chat
-    from openai.types.chat import ChatCompletionChunk
+    from openai.types.chat import (
+        ChatCompletionChunk,
+        ChatCompletionContentPartImageParam,
+        ChatCompletionContentPartInputAudioParam,
+        ChatCompletionContentPartParam,
+        ChatCompletionContentPartTextParam,
+    )
+    from openai.types.chat.chat_completion_content_part_image_param import ImageURL
+    from openai.types.chat.chat_completion_content_part_input_audio_param import InputAudio
 except ImportError as _import_error:
     raise ImportError(
         'Please install `openai` to use the OpenAI model, '
@@ -315,7 +326,7 @@ class OpenAIModel(Model):
                 else:
                     yield chat.ChatCompletionSystemMessageParam(role='system', content=part.content)
             elif isinstance(part, UserPromptPart):
-                yield chat.ChatCompletionUserMessageParam(role='user', content=part.content)
+                yield _map_user_prompt(part)
             elif isinstance(part, ToolReturnPart):
                 yield chat.ChatCompletionToolMessageParam(
                     role='tool',
@@ -394,3 +405,30 @@ def _map_usage(response: chat.ChatCompletion | ChatCompletionChunk) -> usage.Usa
             total_tokens=response_usage.total_tokens,
             details=details,
         )
+
+
+def _map_user_prompt(part: UserPromptPart) -> chat.ChatCompletionUserMessageParam:
+    content: str | list[ChatCompletionContentPartParam]
+    if isinstance(part.content, str):
+        content = part.content
+    else:
+        content = []
+        for item in part.content:
+            if isinstance(item, str):
+                content.append(ChatCompletionContentPartTextParam(text=item, type='text'))
+            elif isinstance(item, ImageUrl):
+                image_url = ImageURL(url=item.url)
+                content.append(ChatCompletionContentPartImageParam(image_url=image_url, type='image_url'))
+            elif isinstance(item, BinaryContent):
+                base64_encoded = base64.b64encode(item.data).decode('utf-8')
+                if item.is_image:
+                    image_url = ImageURL(url=f'data:{item.media_type};base64,{base64_encoded}')
+                    content.append(ChatCompletionContentPartImageParam(image_url=image_url, type='image_url'))
+                elif item.is_audio:
+                    audio_url = InputAudio(data=base64_encoded, format=item.audio_format)
+                    content.append(ChatCompletionContentPartInputAudioParam(input_audio=audio_url, type='input_audio'))
+                else:
+                    raise ValueError(f'Unsupported binary content type: {item.media_type}')
+            else:
+                raise ValueError(f'Unsupported user prompt part type: {type(item)}')
+    return chat.ChatCompletionUserMessageParam(role='user', content=content)

@@ -10,6 +10,7 @@ from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, ModelRetry
 from pydantic_ai.messages import (
+    ImageUrl,
     ModelRequest,
     ModelResponse,
     RetryPromptPart,
@@ -310,3 +311,20 @@ async def test_request_tool_call(allow_model_requests: None):
             details={'input_tokens': 4, 'output_tokens': 2},
         )
     )
+
+
+async def test_multimodal(allow_model_requests: None):
+    c = completion_message(AssistantMessageResponse(content=[TextAssistantMessageResponseContentItem(text='world')]))
+    mock_client = MockAsyncClientV2.create_mock(c)
+    m = CohereModel('command-r7b-12-2024', cohere_client=mock_client)
+    agent = Agent(m)
+
+    with pytest.raises(ValueError, match='Only string as user prompt is supported for Cohere.'):
+        await agent.run(
+            [
+                'hello',
+                ImageUrl(
+                    url='https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg'
+                ),
+            ]
+        )

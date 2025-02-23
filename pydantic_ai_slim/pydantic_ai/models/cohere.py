@@ -242,7 +242,10 @@ class CohereModel(Model):
             if isinstance(part, SystemPromptPart):
                 yield SystemChatMessageV2(role='system', content=part.content)
             elif isinstance(part, UserPromptPart):
-                yield UserChatMessageV2(role='user', content=part.content)
+                if isinstance(part.content, str):
+                    yield UserChatMessageV2(role='user', content=part.content)
+                else:
+                    raise ValueError('Only string as user prompt is supported for Cohere.')
             elif isinstance(part, ToolReturnPart):
                 yield ToolChatMessageV2(
                     role='tool',

@@ -282,7 +282,8 @@ class GeminiModel(Model):
                     if isinstance(part, SystemPromptPart):
                         sys_prompt_parts.append(_GeminiTextPart(text=part.content))
                     elif isinstance(part, UserPromptPart):
-                        message_parts.append(_GeminiTextPart(text=part.content))
+                        # TODO(Marcelo): I'll support this.
+                        message_parts.append(_GeminiTextPart(text=part.content))  # type: ignore
                     elif isinstance(part, ToolReturnPart):
                         message_parts.append(_response_part_from_response(part.tool_name, part.model_response_object()))
                     elif isinstance(part, RetryPromptPart):

@@ -20,6 +20,7 @@ from typing_extensions import TypeAlias
 from vcr import VCR
 
 import pydantic_ai.models
+from pydantic_ai.models import cached_async_http_client
 
 __all__ = 'IsDatetime', 'IsFloat', 'IsNow', 'IsStr', 'TestEnv', 'ClientWithHandler', 'try_import'
 
@@ -199,6 +200,7 @@ def vcr_config():
     }
 
 
-@pytest.fixture(scope='session')
-def openai_key() -> str:
-    return os.getenv('OPENAI_API_KEY', 'mock-api-key')
+@pytest.fixture(autouse=True)
+async def close_cached_httpx_client() -> AsyncIterator[None]:
+    yield
+    await cached_async_http_client().aclose()

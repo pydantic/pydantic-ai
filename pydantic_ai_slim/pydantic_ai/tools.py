@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 import dataclasses
 import inspect
-from collections.abc import Awaitable
+from collections.abc import Awaitable, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Callable, Generic, Literal, Union, cast
 
@@ -45,7 +45,7 @@ class RunContext(Generic[AgentDepsT]):
     """The model used in this run."""
     usage: Usage
     """LLM usage associated with the run."""
-    prompt: str
+    prompt: str | Sequence[_messages.UserContent]
     """The original user prompt passed to the run."""
     messages: list[_messages.ModelMessage] = field(default_factory=list)
     """Messages exchanged in the conversation so far."""

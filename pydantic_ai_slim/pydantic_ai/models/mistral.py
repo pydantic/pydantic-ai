@@ -423,7 +423,8 @@ class MistralModel(Model):
             if isinstance(part, SystemPromptPart):
                 yield MistralSystemMessage(content=part.content)
             elif isinstance(part, UserPromptPart):
-                yield MistralUserMessage(content=part.content)
+                # TODO(Marcelo): I'll fix this.
+                yield MistralUserMessage(content=part.content)  # type: ignore
             elif isinstance(part, ToolReturnPart):
                 yield MistralToolMessage(
                     tool_call_id=part.tool_call_id,

@@ -8,11 +8,13 @@ from functools import cached_property
 from typing import Any, Literal, cast
 
 import pytest
-from inline_snapshot import snapshot
+from inline_snapshot import Is, snapshot
 from typing_extensions import TypedDict
 
 from pydantic_ai import Agent, ModelRetry, UnexpectedModelBehavior
 from pydantic_ai.messages import (
+    BinaryContent,
+    ImageUrl,
     ModelRequest,
     ModelResponse,
     RetryPromptPart,
@@ -595,3 +597,110 @@ async def test_parallel_tool_calls(allow_model_requests: None, parallel_tool_cal
 
     await agent.run('Hello')
     assert get_mock_chat_completion_kwargs(mock_client)[0]['parallel_tool_calls'] == parallel_tool_calls
+
+
+async def test_image_url_input(allow_model_requests: None):
+    c = completion_message(ChatCompletionMessage(content='world', role='assistant'))
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIModel('gpt-4o', openai_client=mock_client)
+    agent = Agent(m)
+
+    result = await agent.run(
+        [
+            'hello',
+            ImageUrl(url='https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg'),
+        ]
+    )
+    assert result.data == 'world'
+    assert get_mock_chat_completion_kwargs(mock_client) == snapshot(
+        [
+            {
+                'model': 'gpt-4o',
+                'messages': [
+                    {
+                        'role': 'user',
+                        'content': [
+                            {'text': 'hello', 'type': 'text'},
+                            {
+                                'image_url': {
+                                    'url': 'https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg'
+                                },
+                                'type': 'image_url',
+                            },
+                        ],
+                    }
+                ],
+                'n': 1,
+            }
+        ]
+    )
+
+
+async def test_image_as_binary_content_input(allow_model_requests: None):
+    c = completion_message(ChatCompletionMessage(content='world', role='assistant'))
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIModel('gpt-4o', openai_client=mock_client)
+    agent = Agent(m)
+
+    base64_content = (
+        b'/9j/4AAQSkZJRgABAQEAYABgAAD/4QBYRXhpZgAATU0AKgAAAAgAA1IBAAEAAAABAAAAPgIBAAEAAAABAAAARgMBAAEAAAABAAAA'
+        b'WgAAAAAAAAAE'
+    )
+
+    result = await agent.run(['hello', BinaryContent(data=base64_content, media_type='image/jpeg')])
+    assert result.data == 'world'
+    assert get_mock_chat_completion_kwargs(mock_client) == snapshot(
+        [
+            {
+                'model': 'gpt-4o',
+                'messages': [
+                    {
+                        'role': 'user',
+                        'content': [
+                            {'text': 'hello', 'type': 'text'},
+                            {
+                                'image_url': {
+                                    'url': 'data:image/jpeg;base64,LzlqLzRBQVFTa1pKUmdBQkFRRUFZQUJnQUFELzRRQllSWGhwWmdBQVRVMEFLZ0FBQUFnQUExSUJBQUVBQUFBQkFBQUFQZ0lCQUFFQUFBQUJBQUFBUmdNQkFBRUFBQUFCQUFBQVdnQUFBQUFBQUFBRQ=='
+                                },
+                                'type': 'image_url',
+                            },
+                        ],
+                    }
+                ],
+                'n': 1,
+            }
+        ]
+    )
+
+
+@pytest.mark.parametrize(('media_type', 'file_format'), [('audio/wav', 'wav'), ('audio/mpeg', 'mp3')])
+async def test_audio_as_binary_content_input(allow_model_requests: None, media_type: str, file_format: str):
+    c = completion_message(ChatCompletionMessage(content='world', role='assistant'))
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIModel('gpt-4o', openai_client=mock_client)
+    agent = Agent(m)
+
+    base64_content = b'//uQZ'
+
+    result = await agent.run(['hello', BinaryContent(data=base64_content, media_type=media_type)])
+    assert result.data == 'world'
+    assert get_mock_chat_completion_kwargs(mock_client) == snapshot(
+        [
+            {
+                'model': 'gpt-4o',
+                'messages': [
+                    {
+                        'role': 'user',
+                        'content': [
+                            {'text': 'hello', 'type': 'text'},
+                            {
+                                'input_audio': {'data': 'Ly91UVo=', 'format': Is(file_format)},
+                                'type': 'input_audio',
+                            },
+                        ],
+                    }
+                ],
+                'n': 1,
+            }
+        ]
+    )

@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+import io
 import json
 import os
 from dataclasses import dataclass, field
@@ -8,10 +9,13 @@ from functools import cached_property
 from typing import Any, TypeVar, cast
 
 import pytest
+from dirty_equals import IsInstance
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, ModelRetry
 from pydantic_ai.messages import (
+    BinaryContent,
+    ImageUrl,
     ModelRequest,
     ModelResponse,
     RetryPromptPart,
@@ -541,3 +545,47 @@ async def test_stream_structured(allow_model_requests: None):
         assert result.is_complete
         assert result.usage() == snapshot(Usage(requests=2, request_tokens=20, response_tokens=5, total_tokens=25))
         assert tool_called
+
+
+async def test_image_url_input(allow_model_requests: None):
+    c = completion_message([TextBlock(text='world', type='text')], AnthropicUsage(input_tokens=5, output_tokens=10))
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-3-5-haiku-latest', anthropic_client=mock_client)
+    agent = Agent(m)
+
+    result = await agent.run(
+        [
+            'hello',
+            ImageUrl(url='https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg'),
+        ]
+    )
+    assert result.data == 'world'
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['messages'] == [
+        {
+            'role': 'user',
+            'content': [
+                {'text': 'hello', 'type': 'text'},
+                {
+                    'source': {
+                        'data': IsInstance(io.BytesIO),
+                        'media_type': 'image/jpeg',
+                        'type': 'base64',
+                    },
+                    'type': 'image',
+                },
+            ],
+        }
+    ]
+
+
+@pytest.mark.parametrize('media_type', ('audio/wav', 'audio/mpeg'))
+async def test_audio_as_binary_content_input(allow_model_requests: None, media_type: str):
+    c = completion_message([TextBlock(text='world', type='text')], AnthropicUsage(input_tokens=5, output_tokens=10))
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-3-5-haiku-latest', anthropic_client=mock_client)
+    agent = Agent(m)
+
+    base64_content = b'//uQZ'
+
+    with pytest.raises(ValueError, match='Only images are supported for binary content'):
+        await agent.run(['hello', BinaryContent(data=base64_content, media_type=media_type)])
