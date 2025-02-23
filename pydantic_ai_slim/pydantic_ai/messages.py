@@ -4,10 +4,11 @@ import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime
-from typing import Annotated, Any, Literal, TypeAlias, Union, cast, overload
+from typing import Annotated, Any, Literal, Union, cast, overload
 
 import pydantic
 import pydantic_core
+from typing_extensions import TypeAlias
 
 from ._utils import now_utc as _now_utc
 from .exceptions import UnexpectedModelBehavior
