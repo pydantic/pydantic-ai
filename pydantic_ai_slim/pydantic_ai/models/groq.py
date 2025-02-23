@@ -393,7 +393,7 @@ def _map_user_prompt(part: UserPromptPart) -> chat.ChatCompletionUserMessagePara
                     image_url = ImageURL(url=f'data:{item.media_type};base64,{base64_encoded}')
                     content.append(chat.ChatCompletionContentPartImageParam(image_url=image_url, type='image_url'))
                 else:
-                    raise ValueError('BinaryContent is not an image')
+                    raise ValueError('Only images are supported for binary content in Groq.')
             else:
                 raise ValueError(f'Unsupported content type: {type(item)}')
     return chat.ChatCompletionUserMessageParam(role='user', content=content)

@@ -16,6 +16,9 @@ from typing_extensions import NotRequired, TypedDict, assert_never
 
 from .. import UnexpectedModelBehavior, _utils, exceptions, usage
 from ..messages import (
+    AudioUrl,
+    BinaryContent,
+    ImageUrl,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -38,6 +41,14 @@ from . import (
     check_allow_model_requests,
     get_user_agent,
 )
+
+try:
+    from google.genai.types import Content, Part
+except ImportError as _import_error:
+    raise ImportError(
+        'Please install `google-genai` to use the Gemini model, '
+        "you can use the `gemini` optional group — `pip install 'pydantic-ai-slim[gemini]'`"
+    ) from _import_error
 
 LatestGeminiModelNames = Literal[
     'gemini-1.5-flash',
@@ -189,7 +200,7 @@ class GeminiModel(Model):
 
         request_data = _GeminiRequest(contents=contents)
         if sys_prompt_parts:
-            request_data['system_instruction'] = _GeminiTextContent(role='user', parts=sys_prompt_parts)
+            request_data['system_instruction'] = Content(role='user', parts=sys_prompt_parts)
         if tools is not None:
             request_data['tools'] = tools
         if tool_config is not None:
@@ -242,7 +253,7 @@ class GeminiModel(Model):
                 raise UnexpectedModelBehavior('Safety settings triggered', str(response))
             else:
                 raise UnexpectedModelBehavior('Content field missing from Gemini response', str(response))
-        parts = response['candidates'][0]['content']['parts']
+        parts = response['candidates'][0]['content'].parts or []
         return _process_response_from_parts(parts, model_name=response.get('model_version', self._model_name))
 
     async def _process_streamed_response(self, http_response: HTTPResponse) -> StreamedResponse:
@@ -259,9 +270,11 @@ class GeminiModel(Model):
             )
             if responses:
                 last = responses[-1]
-                if last['candidates'] and last['candidates'][0].get('content', {}).get('parts'):
-                    start_response = last
-                    break
+                if last['candidates']:
+                    last_content = last['candidates'][0].get('content')
+                    if last_content and last_content.parts:
+                        start_response = last
+                        break
 
         if start_response is None:
             raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')
@@ -269,34 +282,33 @@ class GeminiModel(Model):
         return GeminiStreamedResponse(_model_name=self._model_name, _content=content, _stream=aiter_bytes)
 
     @classmethod
-    def _message_to_gemini_content(
-        cls, messages: list[ModelMessage]
-    ) -> tuple[list[_GeminiTextPart], list[_GeminiContent]]:
-        sys_prompt_parts: list[_GeminiTextPart] = []
-        contents: list[_GeminiContent] = []
+    def _message_to_gemini_content(cls, messages: list[ModelMessage]) -> tuple[list[Part], list[Content]]:
+        sys_prompt_parts: list[Part] = []
+        contents: list[Content] = []
         for m in messages:
             if isinstance(m, ModelRequest):
-                message_parts: list[_GeminiPartUnion] = []
+                message_parts: list[Part] = []
 
                 for part in m.parts:
                     if isinstance(part, SystemPromptPart):
-                        sys_prompt_parts.append(_GeminiTextPart(text=part.content))
+                        sys_prompt_parts.append(Part.from_text(text=part.content))
                     elif isinstance(part, UserPromptPart):
-                        # TODO(Marcelo): I'll support this.
-                        message_parts.append(_GeminiTextPart(text=part.content))  # type: ignore
+                        message_parts.extend(_map_user_prompt(part))
                     elif isinstance(part, ToolReturnPart):
-                        message_parts.append(_response_part_from_response(part.tool_name, part.model_response_object()))
+                        message_parts.append(
+                            Part.from_function_response(name=part.tool_name, response=part.model_response_object())
+                        )
                     elif isinstance(part, RetryPromptPart):
                         if part.tool_name is None:
-                            message_parts.append(_GeminiTextPart(text=part.model_response()))
+                            message_parts.append(Part.from_text(text=part.model_response()))
                         else:
                             response = {'call_error': part.model_response()}
-                            message_parts.append(_response_part_from_response(part.tool_name, response))
+                            message_parts.append(Part.from_function_response(name=part.tool_name, response=response))
                     else:
                         assert_never(part)
 
                 if message_parts:
-                    contents.append(_GeminiContent(role='user', parts=message_parts))
+                    contents.append(Content(role='user', parts=message_parts))
             elif isinstance(m, ModelResponse):
                 contents.append(_content_model_response(m))
             else:
@@ -336,28 +348,29 @@ class GeminiStreamedResponse(StreamedResponse):
             candidate = gemini_response['candidates'][0]
             if 'content' not in candidate:
                 raise UnexpectedModelBehavior('Streamed response has no content field')
-            gemini_part: _GeminiPartUnion
-            for gemini_part in candidate['content']['parts']:
-                if 'text' in gemini_part:
+            for gemini_part in candidate['content'].parts or []:
+                if gemini_part.text:
                     # Using vendor_part_id=None means we can produce multiple text parts if their deltas are sprinkled
                     # amongst the tool call deltas
-                    yield self._parts_manager.handle_text_delta(vendor_part_id=None, content=gemini_part['text'])
+                    yield self._parts_manager.handle_text_delta(vendor_part_id=None, content=gemini_part.text)
 
-                elif 'function_call' in gemini_part:
+                elif gemini_part.function_call:
                     # Here, we assume all function_call parts are complete and don't have deltas.
                     # We do this by assigning a unique randomly generated "vendor_part_id".
                     # We need to confirm whether this is actually true, but if it isn't, we can still handle it properly
                     # it would just be a bit more complicated. And we'd need to confirm the intended semantics.
+                    tool_name = cast(str, gemini_part.function_call.name)
+                    args = cast(dict[str, Any], gemini_part.function_call.args)
                     maybe_event = self._parts_manager.handle_tool_call_delta(
                         vendor_part_id=uuid4(),
-                        tool_name=gemini_part['function_call']['name'],
-                        args=gemini_part['function_call']['args'],
+                        tool_name=tool_name,
+                        args=args,
                         tool_call_id=None,
                     )
                     if maybe_event is not None:
                         yield maybe_event
                 else:
-                    assert 'function_response' in gemini_part, f'Unexpected part: {gemini_part}'
+                    assert gemini_part.function_response, f'Unexpected part: {gemini_part}'
 
     async def _get_gemini_responses(self) -> AsyncIterator[_GeminiResponse]:
         # This method exists to ensure we only yield completed items, so we don't need to worry about
@@ -413,12 +426,12 @@ class _GeminiRequest(TypedDict):
     See <https://ai.google.dev/api/generate-content#request-body> for API docs.
     """
 
-    contents: list[_GeminiContent]
+    contents: list[Content]
     tools: NotRequired[_GeminiTools]
     tool_config: NotRequired[_GeminiToolConfig]
     safety_settings: NotRequired[list[GeminiSafetySettings]]
     # we don't implement `generationConfig`, instead we use a named tool for the response
-    system_instruction: NotRequired[_GeminiTextContent]
+    system_instruction: NotRequired[Content]
     """
     Developer generated system instructions, see
     <https://ai.google.dev/gemini-api/docs/system-instructions?lang=rest>
@@ -473,106 +486,35 @@ class _GeminiGenerationConfig(TypedDict, total=False):
     frequency_penalty: float
 
 
-class _GeminiContent(TypedDict):
-    role: Literal['user', 'model']
-    parts: list[_GeminiPartUnion]
-
-
-def _content_model_response(m: ModelResponse) -> _GeminiContent:
-    parts: list[_GeminiPartUnion] = []
+def _content_model_response(m: ModelResponse) -> Content:
+    parts: list[Part] = []
     for item in m.parts:
         if isinstance(item, ToolCallPart):
-            parts.append(_function_call_part_from_call(item))
+            parts.append(Part.from_function_call(name=item.tool_name, args=item.args_as_dict()))
         elif isinstance(item, TextPart):
             if item.content:
-                parts.append(_GeminiTextPart(text=item.content))
+                parts.append(Part.from_text(text=item.content))
         else:
             assert_never(item)
-    return _GeminiContent(role='model', parts=parts)
-
-
-class _GeminiTextPart(TypedDict):
-    text: str
-
-
-class _GeminiFunctionCallPart(TypedDict):
-    function_call: Annotated[_GeminiFunctionCall, pydantic.Field(alias='functionCall')]
-
-
-def _function_call_part_from_call(tool: ToolCallPart) -> _GeminiFunctionCallPart:
-    return _GeminiFunctionCallPart(function_call=_GeminiFunctionCall(name=tool.tool_name, args=tool.args_as_dict()))
+    return Content(role='model', parts=parts)
 
 
 def _process_response_from_parts(
-    parts: Sequence[_GeminiPartUnion], model_name: GeminiModelName, timestamp: datetime | None = None
+    parts: Sequence[Part], model_name: GeminiModelName, timestamp: datetime | None = None
 ) -> ModelResponse:
     items: list[ModelResponsePart] = []
     for part in parts:
-        if 'text' in part:
-            items.append(TextPart(content=part['text']))
-        elif 'function_call' in part:
-            items.append(
-                ToolCallPart(
-                    tool_name=part['function_call']['name'],
-                    args=part['function_call']['args'],
-                )
-            )
-        elif 'function_response' in part:
+        if part.text:
+            items.append(TextPart(content=part.text))
+        elif part.function_call:
+            tool_name = cast(str, part.function_call.name)
+            args = cast(dict[str, Any], part.function_call.args)
+            items.append(ToolCallPart(tool_name=tool_name, args=args))
+        elif part.function_response:
             raise exceptions.UnexpectedModelBehavior(
                 f'Unsupported response from Gemini, expected all parts to be function calls or text, got: {part!r}'
             )
     return ModelResponse(parts=items, model_name=model_name, timestamp=timestamp or _utils.now_utc())
-
-
-class _GeminiFunctionCall(TypedDict):
-    """See <https://ai.google.dev/api/caching#FunctionCall>."""
-
-    name: str
-    args: dict[str, Any]
-
-
-class _GeminiFunctionResponsePart(TypedDict):
-    function_response: Annotated[_GeminiFunctionResponse, pydantic.Field(alias='functionResponse')]
-
-
-def _response_part_from_response(name: str, response: dict[str, Any]) -> _GeminiFunctionResponsePart:
-    return _GeminiFunctionResponsePart(function_response=_GeminiFunctionResponse(name=name, response=response))
-
-
-class _GeminiFunctionResponse(TypedDict):
-    """See <https://ai.google.dev/api/caching#FunctionResponse>."""
-
-    name: str
-    response: dict[str, Any]
-
-
-def _part_discriminator(v: Any) -> str:
-    if isinstance(v, dict):
-        if 'text' in v:
-            return 'text'
-        elif 'functionCall' in v or 'function_call' in v:
-            return 'function_call'
-        elif 'functionResponse' in v or 'function_response' in v:
-            return 'function_response'
-    return 'text'
-
-
-# See <https://ai.google.dev/api/caching#Part>
-# we don't currently support other part types
-# TODO discriminator
-_GeminiPartUnion = Annotated[
-    Union[
-        Annotated[_GeminiTextPart, pydantic.Tag('text')],
-        Annotated[_GeminiFunctionCallPart, pydantic.Tag('function_call')],
-        Annotated[_GeminiFunctionResponsePart, pydantic.Tag('function_response')],
-    ],
-    pydantic.Discriminator(_part_discriminator),
-]
-
-
-class _GeminiTextContent(TypedDict):
-    role: Literal['user', 'model']
-    parts: list[_GeminiTextPart]
 
 
 class _GeminiTools(TypedDict):
@@ -635,7 +577,7 @@ class _GeminiResponse(TypedDict):
 class _GeminiCandidates(TypedDict):
     """See <https://ai.google.dev/api/generate-content#v1beta.Candidate>."""
 
-    content: NotRequired[_GeminiContent]
+    content: NotRequired[Content]
     finish_reason: NotRequired[Annotated[Literal['STOP', 'MAX_TOKENS', 'SAFETY'], pydantic.Field(alias='finishReason')]]
     """
     See <https://ai.google.dev/api/generate-content#FinishReason>, lots of other values are possible,
@@ -791,3 +733,22 @@ def _ensure_decodeable(content: bytearray) -> bytearray:
             content = content[:-1]  # this will definitely succeed before we run out of bytes
         else:
             return content
+
+
+def _map_user_prompt(part: UserPromptPart) -> list[Part]:
+    if isinstance(part.content, str):
+        return [Part.from_text(text=part.content)]
+    else:
+        content: list[Part] = []
+        for item in part.content:
+            if isinstance(item, str):
+                content.append(Part.from_text(text=item))
+            elif isinstance(item, BinaryContent):
+                content.append(Part.from_bytes(data=item.data, mime_type=item.media_type))
+            elif isinstance(item, AudioUrl):
+                content.append(Part.from_uri(file_uri=item.url, mime_type=item.media_type))
+            elif isinstance(item, ImageUrl):
+                content.append(Part.from_uri(file_uri=item.url, mime_type=item.media_type))
+            else:
+                raise ValueError(f'Unsupported content type: {item}')
+    return content
