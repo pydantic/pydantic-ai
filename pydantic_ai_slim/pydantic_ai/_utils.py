@@ -1,12 +1,14 @@
 from __future__ import annotations as _annotations
 
 import asyncio
+import random
 import time
 from collections.abc import AsyncIterable, AsyncIterator, Iterator
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, is_dataclass
 from datetime import datetime, timezone
 from functools import partial
+from string import ascii_letters, digits
 from types import GenericAlias
 from typing import TYPE_CHECKING, Any, Callable, Generic, TypeVar, Union
 
@@ -199,6 +201,18 @@ def guard_tool_call_id(
     """Type guard that checks a `tool_call_id` is not None both for static typing and runtime."""
     assert t.tool_call_id is not None, f'{model_source} requires `tool_call_id` to be set: {t}'
     return t.tool_call_id
+
+
+def dummy_tool_call_id(*, length: int = 15) -> str:
+    """Generate a random tool call ID.
+
+    Args:
+        length: The length of the tool call ID to be appended to `fake_call_`. (default: 15)
+
+    Returns:
+        str: A random tool call ID. e.g. `fake_call_pgWoMcQp9F4V0qS`
+    """
+    return 'fake_call_' + ''.join(random.choices(ascii_letters + digits, k=length))
 
 
 class PeekableAsyncStream(Generic[T]):
