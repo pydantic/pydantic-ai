@@ -11,7 +11,7 @@ from typing import Any, Callable, Generic, cast, final, overload
 import logfire_api
 from typing_extensions import TypeVar, deprecated
 
-from pydantic_graph import Graph, GraphRunContext, Snapshot
+from pydantic_graph import Graph, GraphRunContext
 from pydantic_graph.nodes import End
 
 from . import (
@@ -337,7 +337,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
             )
 
             # Actually run
-            end_result, _ = await graph.run(
+            end_result = await graph.run(
                 start_node,
                 state=state,
                 deps=graph_deps,
@@ -583,7 +583,6 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
 
             # Actually run
             node = start_node
-            history: list[Snapshot[_agent_graph.GraphAgentState, RunResultDataT]] = []
             while True:
                 if isinstance(node, _agent_graph.StreamModelRequestNode):
                     node = cast(
@@ -599,7 +598,6 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
                 assert not isinstance(node, End)  # the previous line should be hit first
                 node = await graph.next(
                     node,
-                    history,
                     state=graph_state,
                     deps=graph_deps,
                     infer_name=False,

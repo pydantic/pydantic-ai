@@ -1,10 +1,11 @@
 from __future__ import annotations as _annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 from typing_extensions import assert_type
 
-from pydantic_graph import BaseNode, End, Graph, GraphRunContext, Snapshot
+from pydantic_graph import BaseNode, End, FullStatePersistence, Graph, GraphRunContext
 
 
 @dataclass
@@ -109,6 +110,28 @@ def run_g5() -> None:
     g5.run_sync(A())  # pyright: ignore[reportArgumentType]
     g5.run_sync(A(), state=MyState(x=1))  # pyright: ignore[reportArgumentType]
     g5.run_sync(A(), deps=MyDeps(y='y'))  # pyright: ignore[reportArgumentType]
-    answer, history = g5.run_sync(A(), state=MyState(x=1), deps=MyDeps(y='y'))
+    answer = g5.run_sync(A(), state=MyState(x=1), deps=MyDeps(y='y'))
     assert_type(answer, int)
-    assert_type(history, list[Snapshot[MyState, int]])
+
+
+p = FullStatePersistence()
+assert_type(p, FullStatePersistence[Any, Any])
+
+
+def run_persistence_any() -> None:
+    p = FullStatePersistence()
+    answer = g5.run_sync(A(), persistence=p, state=MyState(x=1), deps=MyDeps(y='y'))
+    assert_type(answer, int)
+    assert_type(p, FullStatePersistence[Any, Any])
+
+
+def run_persistence_right() -> None:
+    p: FullStatePersistence[MyState, int] = FullStatePersistence()
+    answer = g5.run_sync(A(), persistence=p, state=MyState(x=1), deps=MyDeps(y='y'))
+    assert_type(answer, int)
+    assert_type(p, FullStatePersistence[MyState, int])
+
+
+def run_persistence_wrong() -> None:
+    p: FullStatePersistence[str, int] = FullStatePersistence()
+    g5.run_sync(A(), persistence=p, state=MyState(x=1), deps=MyDeps(y='y'))  # type: ignore[arg-type]

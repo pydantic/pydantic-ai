@@ -156,12 +156,9 @@ class Increment(BaseNode):  # (2)!
 
 
 fives_graph = Graph(nodes=[DivisibleBy5, Increment])  # (3)!
-result, history = fives_graph.run_sync(DivisibleBy5(4))  # (4)!
+result = fives_graph.run_sync(DivisibleBy5(4))  # (4)!
 print(result)
 #> 5
-# the full history is quite verbose (see below), so we'll just print the summary
-print([item.data_snapshot() for item in history])
-#> [DivisibleBy5(foo=4), Increment(foo=4), DivisibleBy5(foo=5), End(data=5)]
 ```
 
 1. The `DivisibleBy5` node is parameterized with `None` for the state param and `None` for the deps param as this graph doesn't use state or deps, and `int` as it can end the run.
@@ -464,7 +461,7 @@ async def main():
     )
     state = State(user)
     feedback_graph = Graph(nodes=(WriteEmail, Feedback))
-    email, _ = await feedback_graph.run(WriteEmail(), state=state)
+    email = await feedback_graph.run(WriteEmail(), state=state)
     print(email)
     """
     Email(
@@ -579,7 +576,7 @@ In this example, an AI asks the user a question, the user provides an answer, th
 ```python {title="ai_q_and_a_run.py" noqa="I001" py="3.10"}
 from rich.prompt import Prompt
 
-from pydantic_graph import End, Snapshot
+from pydantic_graph import End, FullStatePersistence
 
 from ai_q_and_a_graph import Ask, question_graph, QuestionState, Answer
 
@@ -587,15 +584,17 @@ from ai_q_and_a_graph import Ask, question_graph, QuestionState, Answer
 async def main():
     state = QuestionState()  # (1)!
     node = Ask()  # (2)!
-    history: list[Snapshot[QuestionState]] = []  # (3)!
+    persistence = FullStatePersistence()  # (3)!
     while True:
-        node = await question_graph.next(node, history, state=state)  # (4)!
+        node = await question_graph.next(  # (4)!
+            node, persistence=persistence, state=state
+        )
         if isinstance(node, Answer):
             node.answer = Prompt.ask(node.question)  # (5)!
         elif isinstance(node, End):  # (6)!
             print(f'Correct answer! {node.data}')
-            # > Correct answer! Well done, 1 + 1 = 2
-            print([e.data_snapshot() for e in history])
+            #> Correct answer! Well done, 1 + 1 = 2
+            print([e.node for e in persistence.history])
             """
             [
                 Ask(),
@@ -613,7 +612,7 @@ async def main():
 
 1. Create the state object which will be mutated by [`next`][pydantic_graph.graph.Graph.next].
 2. The start node is `Ask` but will be updated by [`next`][pydantic_graph.graph.Graph.next] as the graph runs.
-3. The history of the graph run is stored in a list of [`HistoryStep`][pydantic_graph.state.HistoryStep] objects. Again [`next`][pydantic_graph.graph.Graph.next] will update this list in place.
+3. The history of the graph run is stored using [`FullStatePersistence`][pydantic_graph.state.memory.FullStatePersistence]. Again [`next`][pydantic_graph.graph.Graph.next] will update this list in place.
 4. [Run][pydantic_graph.graph.Graph.next] the graph one node at a time, updating the state, current node and history as the graph runs.
 5. If the current node is an `Answer` node, prompt the user for an answer.
 6. Since we're using [`next`][pydantic_graph.graph.Graph.next] we have to manually check for an [`End`][pydantic_graph.nodes.End] and exit the loop if we get one.

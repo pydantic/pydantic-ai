@@ -40,10 +40,9 @@ async def test_run_graph():
             return End(f'x={ctx.state.x} y={ctx.state.y}')
 
     graph = Graph(nodes=(Foo, Bar))
-    assert graph._get_state_type() is MyState  # pyright: ignore[reportPrivateUsage]
-    assert graph._get_run_end_type() is str  # pyright: ignore[reportPrivateUsage]
+    assert graph._inferred_types == (MyState, str)  # pyright: ignore[reportPrivateUsage]
     state = MyState(1, '')
-    sp = FullStatePersistence.from_types(MyState, str)
+    sp = FullStatePersistence()
     result = await graph.run(Foo(), state=state, persistence=sp)
     assert result == snapshot('x=2 y=y')
     assert sp.history == snapshot(

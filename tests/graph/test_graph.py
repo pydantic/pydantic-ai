@@ -57,8 +57,7 @@ class Double(BaseNode[None, None, int]):
 async def test_graph():
     my_graph = Graph(nodes=(Float2String, String2Length, Double))
     assert my_graph.name is None
-    assert my_graph._get_state_type() is type(None)
-    assert my_graph._get_run_end_type() is int
+    assert my_graph._inferred_types == (type(None), int)
     result = await my_graph.run(Float2String(3.14))
     # len('3.14') * 2 == 8
     assert result == 8
@@ -68,8 +67,7 @@ async def test_graph():
 async def test_graph_history():
     my_graph = Graph[None, None, int](nodes=(Float2String, String2Length, Double))
     assert my_graph.name is None
-    assert my_graph._get_state_type() is type(None)
-    assert my_graph._get_run_end_type() is int
+    assert my_graph._inferred_types == (type(None), int)
     sp = FullStatePersistence()
     result = await my_graph.run(Float2String(3.14), persistence=sp)
     # len('3.14') * 2 == 8
@@ -154,7 +152,7 @@ def test_one_bad_node():
         async def run(self, ctx: GraphRunContext) -> String2Length:
             raise NotImplementedError()
 
-    class String2Length(BaseNode[None, None, None]):
+    class String2Length(BaseNode[None, None, None]):  # pyright: ignore[reportUnusedClass]
         async def run(self, ctx: GraphRunContext) -> End[None]:
             raise NotImplementedError()
 
@@ -277,8 +275,7 @@ async def test_run_return_other():
             return 42  # type: ignore
 
     g = Graph(nodes=(Foo, Bar))
-    assert g._get_state_type() is type(None)
-    assert g._get_run_end_type() is type(None)
+    assert g._inferred_types == (type(None), type(None))
     with pytest.raises(GraphRuntimeError) as exc_info:
         await g.run(Foo())
 

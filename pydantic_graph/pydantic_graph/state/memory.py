@@ -5,10 +5,16 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from time import perf_counter
-from typing import Any, TypeVar
+from typing import Any, Callable
 
-from ..nodes import BaseNode, End, RunEndT
-from . import EndSnapshot, NodeSnapshot, Snapshot, StatePersistence, StateT, _utils
+import pydantic
+from typing_extensions import TypeVar
+
+from ..nodes import BaseNode, End
+from . import EndSnapshot, NodeSnapshot, Snapshot, StatePersistence, _utils, build_snapshots_type_adapter
+
+StateT = TypeVar('StateT', default=Any)
+RunEndT = TypeVar('RunEndT', default=Any)
 
 S = TypeVar('S')
 R = TypeVar('R')
@@ -20,11 +26,6 @@ class SimpleStatePersistence(StatePersistence[StateT, RunEndT]):
 
     deep_copy: bool = True
     last_snapshot: Snapshot[StateT, RunEndT] | None = None
-
-    @classmethod
-    def from_types(cls, state_type: type[S], run_end_type: type[R]) -> SimpleStatePersistence[S, R]:
-        """No-op init method that help type checkers."""
-        return SimpleStatePersistence()
 
     async def snapshot_node(self, state: StateT, next_node: BaseNode[StateT, Any, RunEndT]) -> None:
         self.last_snapshot = NodeSnapshot(
@@ -69,11 +70,9 @@ class FullStatePersistence(StatePersistence[StateT, RunEndT]):
 
     deep_copy: bool = True
     history: list[Snapshot[StateT, RunEndT]] = field(default_factory=list)
-
-    @classmethod
-    def from_types(cls, state_type: type[S], run_end_type: type[R]) -> FullStatePersistence[S, R]:
-        """No-op init method that help type checkers."""
-        return FullStatePersistence()
+    _snapshots_type_adapter: pydantic.TypeAdapter[list[Snapshot[StateT, RunEndT]]] | None = field(
+        default=None, init=False, repr=False
+    )
 
     async def snapshot_node(self, state: StateT, next_node: BaseNode[StateT, Any, RunEndT]) -> None:
         self.history.append(
@@ -108,6 +107,19 @@ class FullStatePersistence(StatePersistence[StateT, RunEndT]):
     async def restore(self) -> Snapshot[StateT, RunEndT] | None:
         if self.history:
             return self.history[-1]
+
+    def dump_json(self, *, indent: int | None = None) -> bytes:
+        assert self._snapshots_type_adapter is not None, 'type adapter must be set to use `dump_json`'
+        return self._snapshots_type_adapter.dump_json(self.history, indent=indent)
+
+    def load_json(self, json_data: str | bytes | bytearray) -> None:
+        assert self._snapshots_type_adapter is not None, 'type adapter must be set to use `load_json`'
+        self.history = self._snapshots_type_adapter.validate_json(json_data)
+
+    def set_types(self, get_types: Callable[[], tuple[type[StateT], type[RunEndT]]]) -> None:
+        if self._snapshots_type_adapter is None:
+            state_t, run_end_t = get_types()
+            self._snapshots_type_adapter = build_snapshots_type_adapter(state_t, run_end_t)
 
     def prep_state(self, state: StateT) -> StateT:
         """Prepare state for snapshot, uses [`copy.deepcopy`][copy.deepcopy] by default."""

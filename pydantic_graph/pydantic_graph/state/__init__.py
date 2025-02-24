@@ -1,8 +1,8 @@
 from __future__ import annotations as _annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator, Sequence
-from contextlib import asynccontextmanager
+from collections.abc import AsyncIterator, Iterator, Sequence
+from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Annotated, Any, Callable, Generic, Literal, Union
@@ -14,7 +14,7 @@ from .. import exceptions
 from ..nodes import BaseNode, End, RunEndT
 from . import _utils
 
-__all__ = 'StateT', 'NodeSnapshot', 'EndSnapshot', 'Snapshot', 'StatePersistence', 'build_nodes_type_adapter'
+__all__ = 'StateT', 'NodeSnapshot', 'EndSnapshot', 'Snapshot', 'StatePersistence', 'set_nodes_type_context'
 
 StateT = TypeVar('StateT', default=None)
 """Type variable for the state in a graph."""
@@ -26,7 +26,7 @@ class NodeSnapshot(Generic[StateT, RunEndT]):
 
     state: StateT
     """The state of the graph before the node is run."""
-    node: BaseNode[StateT, Any, RunEndT]
+    node: Annotated[BaseNode[StateT, Any, RunEndT], _utils.CustomNodeSchema()]
     """The node to run next."""
     start_ts: datetime | None = None
     """The timestamp when the node started running, `None` until the run starts."""
@@ -112,13 +112,7 @@ class StatePersistence(ABC, Generic[StateT, RunEndT]):
         """
         raise NotImplementedError
 
-    def set_type_adapters(
-        self,
-        *,
-        get_node_type_adapter: Callable[[], pydantic.TypeAdapter[BaseNode[StateT, Any, RunEndT]]],
-        get_end_data_type_adapter: Callable[[], pydantic.TypeAdapter[RunEndT]],
-        get_snapshot_type_adapter: Callable[[], pydantic.TypeAdapter[Snapshot[StateT, RunEndT]]],
-    ):
+    def set_types(self, get_types: Callable[[], tuple[type[StateT], type[RunEndT]]]) -> None:
         pass
 
     async def restore_node_snapshot(self) -> NodeSnapshot[StateT, RunEndT]:
@@ -130,10 +124,18 @@ class StatePersistence(ABC, Generic[StateT, RunEndT]):
         return snapshot
 
 
-def build_nodes_type_adapter(  # noqa: D103
-    nodes: Sequence[type[BaseNode[Any, Any, Any]]], state_t: type[StateT], end_t: type[RunEndT]
-) -> pydantic.TypeAdapter[BaseNode[StateT, Any, RunEndT]]:
+@contextmanager
+def set_nodes_type_context(nodes: Sequence[type[BaseNode[Any, Any, Any]]]) -> Iterator[None]:  # noqa: D103
+    token = _utils.nodes_type_context.set(nodes)
+    try:
+        yield
+    finally:
+        _utils.nodes_type_context.reset(token)
+
+
+def build_snapshots_type_adapter(
+    state_t: type[StateT], run_end_t: type[RunEndT]
+) -> pydantic.TypeAdapter[list[Snapshot[StateT, RunEndT]]]:
     return pydantic.TypeAdapter(
-        Annotated[BaseNode[state_t, Any, end_t], _utils.CustomNodeSchema(nodes)],
-        config=pydantic.ConfigDict(defer_build=True),
+        list[Annotated[Snapshot[state_t, run_end_t], pydantic.Discriminator('kind')]],
     )

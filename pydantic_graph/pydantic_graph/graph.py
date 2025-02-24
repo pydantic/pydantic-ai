@@ -10,13 +10,11 @@ from functools import cached_property
 from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
 import logfire_api
-import pydantic
 import typing_extensions
-from inline_snapshot import Snapshot
 
 from . import _utils, exceptions, mermaid
 from .nodes import BaseNode, DepsT, End, GraphRunContext, NodeDef, RunEndT
-from .state import StatePersistence, StateT, build_nodes_type_adapter
+from .state import StatePersistence, StateT, set_nodes_type_context
 from .state.memory import SimpleStatePersistence
 
 # while waiting for https://github.com/pydantic/logfire/issues/745
@@ -150,18 +148,14 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
 
         async def main():
             state = MyState(1)
-            _, history = await never_42_graph.run(Increment(), state=state)
+            await never_42_graph.run(Increment(), state=state)
             print(state)
             #> MyState(number=2)
-            print(len(history))
-            #> 3
 
             state = MyState(41)
-            _, history = await never_42_graph.run(Increment(), state=state)
+            await never_42_graph.run(Increment(), state=state)
             print(state)
             #> MyState(number=43)
-            print(len(history))
-            #> 5
         ```
         """
         if infer_name and self.name is None:
@@ -169,6 +163,8 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
 
         if persistence is None:
             persistence = SimpleStatePersistence()
+
+        self.set_persistence_types(persistence)
 
         with ExitStack() as stack:
             if self._auto_instrument:
@@ -178,9 +174,7 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
 
             next_node = start_node
             while True:
-                next_node = await self.next(
-                    next_node, persistence=persistence, state=state, deps=deps, infer_name=False
-                )
+                next_node = await self._next(next_node, persistence, state, deps)
                 if isinstance(next_node, End):
                     await persistence.snapshot_end(state, next_node)
                     return next_node.data
@@ -251,7 +245,17 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
 
         if persistence is None:
             persistence = SimpleStatePersistence()
+        self.set_persistence_types(persistence)
 
+        return await self._next(node, persistence, state, deps)
+
+    async def _next(
+        self: Graph[StateT, DepsT, T],
+        node: BaseNode[StateT, DepsT, T],
+        persistence: StatePersistence[StateT, T],
+        state: StateT,
+        deps: DepsT,
+    ) -> BaseNode[StateT, DepsT, Any] | End[T]:
         node_id = node.get_id()
         if node_id not in self.node_defs:
             raise exceptions.GraphRuntimeError(f'Node `{node}` is not in the graph.')
@@ -284,6 +288,10 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
             deps=deps,
             infer_name=False,
         )
+
+    def set_persistence_types(self, persistence: StatePersistence[StateT, RunEndT]) -> None:
+        with set_nodes_type_context([node_def.node for node_def in self.node_defs.values()]):
+            persistence.set_types(lambda: self._inferred_types)
 
     def mermaid_code(
         self,
@@ -409,50 +417,36 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
         mermaid.save_image(path, self, **kwargs)
 
     @cached_property
-    def _node_type_adapter(self) -> pydantic.TypeAdapter[BaseNode[StateT, Any, RunEndT]]:
-        nodes = [node_def.node for node_def in self.node_defs.values()]
-        return build_nodes_type_adapter(nodes, self._get_state_type(), self._get_run_end_type())
+    def _inferred_types(self) -> tuple[type[StateT], type[RunEndT]]:
+        if _utils.is_set(self._state_type) and _utils.is_set(self._run_end_type):
+            return self._state_type, self._run_end_type
 
-    @cached_property
-    def _end_data_type_adapter(self) -> pydantic.TypeAdapter[RunEndT]:
-        end_t = self._get_run_end_type()
-        return pydantic.TypeAdapter(end_t)
-
-    @cached_property
-    def _snapshot_type_adapter(self) -> pydantic.TypeAdapter[Snapshot[StateT, RunEndT]]:
-        pass
-
-    def _get_state_type(self) -> type[StateT]:
-        if _utils.is_set(self._state_type):
-            return self._state_type
+        state_type = self._state_type
+        run_end_type = self._run_end_type
 
         for node_def in self.node_defs.values():
             for base in typing_extensions.get_original_bases(node_def.node):
                 if typing_extensions.get_origin(base) is BaseNode:
                     args = typing_extensions.get_args(base)
-                    if args:
-                        return args[0]
-                    # break the inner (bases) loop
-                    break
-        # state defaults to None, so use that if we can't infer it
-        return type(None)  # pyright: ignore[reportReturnType]
+                    if not _utils.is_set(state_type) and args:
+                        state_type = args[0]
 
-    def _get_run_end_type(self) -> type[RunEndT]:
-        if _utils.is_set(self._run_end_type):
-            return self._run_end_type
-
-        for node_def in self.node_defs.values():
-            for base in typing_extensions.get_original_bases(node_def.node):
-                if typing_extensions.get_origin(base) is BaseNode:
-                    args = typing_extensions.get_args(base)
-                    if len(args) == 3:
+                    if not _utils.is_set(run_end_type) and len(args) == 3:
                         t = args[2]
                         if not _utils.is_never(t):
-                            return t
+                            run_end_type = t
+                    if _utils.is_set(state_type) and _utils.is_set(run_end_type):
+                        return state_type, run_end_type
                     # break the inner (bases) loop
                     break
-        # this happens if a graph has no return nodes, use None so any downstream errors a clear
-        return type(None)  # pyright: ignore[reportReturnType]
+
+        if not _utils.is_set(state_type):
+            # state defaults to None, so use that if we can't infer it
+            state_type = None
+        if not _utils.is_set(run_end_type):
+            # this happens if a graph has no return nodes, use None so any downstream errors are clear
+            run_end_type = None
+        return state_type, run_end_type  # pyright: ignore[reportReturnType]
 
     def _register_node(
         self: Graph[StateT, DepsT, T],

@@ -13,7 +13,14 @@ from typing import Annotated
 
 import logfire
 from devtools import debug
-from pydantic_graph import BaseNode, Edge, End, Graph, GraphRunContext, Snapshot
+from pydantic_graph import (
+    BaseNode,
+    Edge,
+    End,
+    FullStatePersistence,
+    Graph,
+    GraphRunContext,
+)
 
 from pydantic_ai import Agent
 from pydantic_ai.format_as_xml import format_as_xml
@@ -116,12 +123,12 @@ question_graph = Graph(
 async def run_as_continuous():
     state = QuestionState()
     node = Ask()
-    history: list[Snapshot[QuestionState, None]] = []
+    persistence = FullStatePersistence()
     with logfire.span('run questions graph'):
         while True:
-            node = await question_graph.next(node, history, state=state)
+            node = await question_graph.next(node, persistence=persistence, state=state)
             if isinstance(node, End):
-                debug([e.data_snapshot() for e in history])
+                debug([e.node for e in persistence.history])
                 break
             elif isinstance(node, Answer):
                 assert state.question
@@ -131,14 +138,14 @@ async def run_as_continuous():
 
 async def run_as_cli(answer: str | None):
     history_file = Path('question_graph_history.json')
-    history = (
-        question_graph.load_history(history_file.read_bytes())
-        if history_file.exists()
-        else []
-    )
+    persistence = FullStatePersistence()
+    question_graph.set_persistence_types(persistence)
 
-    if history:
-        last = history[-1]
+    if history_file.exists():
+        persistence.load_json(history_file.read_bytes())
+
+    if persistence.history:
+        last = persistence.history[-1]
         assert last.kind == 'node', 'expected last step to be a node'
         state = last.state
         assert answer is not None, 'answer is required to continue from history'
@@ -150,9 +157,9 @@ async def run_as_cli(answer: str | None):
 
     with logfire.span('run questions graph'):
         while True:
-            node = await question_graph.next(node, history, state=state)
+            node = await question_graph.next(node, persistence=persistence, state=state)
             if isinstance(node, End):
-                debug([e.data_snapshot() for e in history])
+                debug([e.node for e in persistence.history])
                 print('Finished!')
                 break
             elif isinstance(node, Answer):
@@ -160,7 +167,7 @@ async def run_as_cli(answer: str | None):
                 break
             # otherwise just continue
 
-    history_file.write_bytes(question_graph.dump_history(history, indent=2))
+    history_file.write_bytes(persistence.dump_json(indent=2))
 
 
 if __name__ == '__main__':
