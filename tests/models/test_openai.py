@@ -565,8 +565,9 @@ async def test_system_prompt_role(
 async def test_openai_o1_mini_system_role(
     allow_model_requests: None,
     system_prompt_role: Literal['system', 'developer'],
+    openai_key: str,
 ) -> None:
-    model = OpenAIModel('o1-mini', system_prompt_role=system_prompt_role)
+    model = OpenAIModel('o1-mini', api_key=openai_key, system_prompt_role=system_prompt_role)
     agent = Agent(model=model, system_prompt='You are a helpful assistant.')
 
     with pytest.raises(BadRequestError, match=r".*Unsupported value: 'messages\[0\]\.role' does not support.*"):

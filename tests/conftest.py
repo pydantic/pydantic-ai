@@ -197,3 +197,8 @@ def vcr_config():
         'filter_headers': ['authorization', 'x-api-key'],
         'decode_compressed_response': True,
     }
+
+
+@pytest.fixture(scope='session')
+def openai_key() -> str:
+    return os.getenv('OPENAI_API_KEY', 'mock-api-key')
