@@ -5,10 +5,11 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from itertools import chain
-from typing import Literal, Union, cast, overload
+from typing import Literal, Union, Dict, Any, cast, overload
+
 
 from httpx import AsyncClient as AsyncHTTPClient
-from typing_extensions import assert_never
+from typing_extensions import TypedDict, assert_never
 
 from .. import UnexpectedModelBehavior, _utils, usage
 from .._utils import guard_tool_call_id as _guard_tool_call_id
@@ -69,6 +70,10 @@ allow any name in the type hints.
 See [the Groq docs](https://console.groq.com/docs/models) for a full list.
 """
 
+class ChatCompletionNamedToolChoiceParam(TypedDict):
+    type: Literal["named"]
+    name: str
+    parameters: Dict[str, Any]
 
 class GroqModelSettings(ModelSettings):
     """Settings used for a Groq model request."""
@@ -176,6 +181,25 @@ class GroqModel(Model):
     ) -> chat.ChatCompletion:
         pass
 
+    def _get_tool_choice(self, model_settings: GroqModelSettings) ->  Literal['none', 'required', 'auto'] | None:
+        """Get tool choice for the model.
+
+        - "auto": Default mode. Model decides if it uses the tool or not.
+        - "none": Prevents tool use.
+        - "required": Forces tool use.
+        """
+        tool_choice: Literal['none', 'required', 'auto'] | None = getattr(model_settings, 'tool_choice', None)
+
+        if tool_choice is None:
+            if not self.tools:
+                tool_choice = None
+            elif not self.allow_text_result:
+                tool_choice = 'required'
+            else:
+                tool_choice = 'auto'
+
+        return tool_choice
+
     async def _completions_create(
         self,
         messages: list[ModelMessage],
@@ -185,12 +209,6 @@ class GroqModel(Model):
     ) -> chat.ChatCompletion | AsyncStream[ChatCompletionChunk]:
         tools = self._get_tools(model_request_parameters)
         # standalone function to make it easier to override
-        if not tools:
-            tool_choice: Literal['none', 'required', 'auto'] | None = None
-        elif not model_request_parameters.allow_text_result:
-            tool_choice = 'required'
-        else:
-            tool_choice = 'auto'
 
         groq_messages = list(chain(*(self._map_message(m) for m in messages)))
 
@@ -199,8 +217,8 @@ class GroqModel(Model):
             messages=groq_messages,
             n=1,
             parallel_tool_calls=model_settings.get('parallel_tool_calls', NOT_GIVEN),
-            tools=tools or NOT_GIVEN,
-            tool_choice=tool_choice or NOT_GIVEN,
+            tools=self.tools or NOT_GIVEN,
+            tool_choice=self._get_tool_choice(model_settings) or NOT_GIVEN,
             stream=stream,
             max_tokens=model_settings.get('max_tokens', NOT_GIVEN),
             temperature=model_settings.get('temperature', NOT_GIVEN),

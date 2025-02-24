@@ -60,9 +60,11 @@ allow any name in the type hints.
 See [the Gemini API docs](https://ai.google.dev/gemini-api/docs/models/gemini#model-variations) for a full list.
 """
 
+FunctionCallConfigMode = Literal["ANY", "NONE", "AUTO"]
 
 class GeminiModelSettings(ModelSettings):
     """Settings used for a Gemini model request."""
+    # This class is a placeholder for any future gemini-specific settings
 
     gemini_safety_settings: list[GeminiSafetySettings]
 
