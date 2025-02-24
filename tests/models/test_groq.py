@@ -8,11 +8,14 @@ from functools import cached_property
 from typing import Any, Literal, cast
 
 import pytest
+from dirty_equals import IsDatetime
 from inline_snapshot import snapshot
 from typing_extensions import TypedDict
 
 from pydantic_ai import Agent, ModelRetry, UnexpectedModelBehavior
 from pydantic_ai.messages import (
+    BinaryContent,
+    ImageUrl,
     ModelRequest,
     ModelResponse,
     RetryPromptPart,
@@ -488,3 +491,125 @@ async def test_no_delta(allow_model_requests: None):
         assert not result.is_complete
         assert [c async for c in result.stream(debounce_by=None)] == snapshot(['hello ', 'hello world', 'hello world'])
         assert result.is_complete
+
+
+# async def test_image_url_input(allow_model_requests: None):
+#     c = completion_message(ChatCompletionMessage(content='world', role='assistant'))
+#     mock_client = MockOpenAI.create_mock(c)
+#     m = OpenAIModel('gpt-4o', openai_client=mock_client)
+#     agent = Agent(m)
+
+#     result = await agent.run(
+#         [
+#             'hello',
+#             ImageUrl(url='https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg'),
+#         ]
+#     )
+#     assert result.data == 'world'
+#     assert get_mock_chat_completion_kwargs(mock_client) == snapshot(
+#         [
+#             {
+#                 'model': 'gpt-4o',
+#                 'messages': [
+#                     {
+#                         'role': 'user',
+#                         'content': [
+#                             {'text': 'hello', 'type': 'text'},
+#                             {
+#                                 'image_url': {
+#                                     'url': 'https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg'
+#                                 },
+#                                 'type': 'image_url',
+#                             },
+#                         ],
+#                     }
+#                 ],
+#                 'n': 1,
+#             }
+#         ]
+#     )
+
+
+async def test_image_url_input(allow_model_requests: None):
+    c = completion_message(ChatCompletionMessage(content='world', role='assistant'))
+    mock_client = MockGroq.create_mock(c)
+    m = GroqModel('llama-3.3-70b-versatile', groq_client=mock_client)
+    agent = Agent(m)
+
+    result = await agent.run(
+        [
+            'hello',
+            ImageUrl(url='https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg'),
+        ]
+    )
+    assert result.data == 'world'
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content=[
+                            'hello',
+                            ImageUrl(
+                                url='https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg'
+                            ),
+                        ],
+                        timestamp=IsDatetime(),  # type: ignore
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[TextPart(content='world')],
+                model_name='llama-3.3-70b-versatile-123',
+                timestamp=IsDatetime(),  # type: ignore
+            ),
+        ]
+    )
+
+
+@pytest.mark.parametrize('media_type', ['audio/wav', 'audio/mpeg'])
+async def test_audio_as_binary_content_input(allow_model_requests: None, media_type: str):
+    c = completion_message(ChatCompletionMessage(content='world', role='assistant'))
+    mock_client = MockGroq.create_mock(c)
+    m = GroqModel('llama-3.3-70b-versatile', groq_client=mock_client)
+    agent = Agent(m)
+
+    base64_content = b'//uQZ'
+
+    with pytest.raises(ValueError, match='Only images are supported for binary content in Groq.'):
+        await agent.run(['hello', BinaryContent(data=base64_content, media_type=media_type)])
+
+
+async def test_image_as_binary_content_input(allow_model_requests: None):
+    c = completion_message(ChatCompletionMessage(content='world', role='assistant'))
+    mock_client = MockGroq.create_mock(c)
+    m = GroqModel('llama-3.3-70b-versatile', groq_client=mock_client)
+    agent = Agent(m)
+
+    base64_content = (
+        b'/9j/4AAQSkZJRgABAQEAYABgAAD/4QBYRXhpZgAATU0AKgAAAAgAA1IBAAEAAAABAAAAPgIBAAEAAAABAAAARgMBAAEAAAABAAAA'
+        b'WgAAAAAAAAAE'
+    )
+
+    result = await agent.run(['hello', BinaryContent(data=base64_content, media_type='image/jpeg')])
+    assert result.data == 'world'
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content=[
+                            'hello',
+                            BinaryContent(data=base64_content, media_type='image/jpeg'),
+                        ],
+                        timestamp=IsDatetime(),  # type: ignore
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[TextPart(content='world')],
+                model_name='llama-3.3-70b-versatile-123',
+                timestamp=IsDatetime(),  # type: ignore
+            ),
+        ]
+    )

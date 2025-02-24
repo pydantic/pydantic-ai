@@ -242,7 +242,10 @@ class CohereModel(Model):
             if isinstance(part, SystemPromptPart):
                 yield SystemChatMessageV2(role='system', content=part.content)
             elif isinstance(part, UserPromptPart):
-                yield UserChatMessageV2(role='user', content=part.content)
+                if isinstance(part.content, str):
+                    yield UserChatMessageV2(role='user', content=part.content)
+                else:
+                    raise RuntimeError('Cohere does not yet support multi-modal inputs.')
             elif isinstance(part, ToolReturnPart):
                 yield ToolChatMessageV2(
                     role='tool',

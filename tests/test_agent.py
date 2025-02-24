@@ -85,7 +85,7 @@ def test_result_pydantic_model_retry():
         [
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
-                parts=[ToolCallPart('final_result', '{"a": "wrong", "b": "foo"}')],
+                parts=[ToolCallPart(tool_name='final_result', args='{"a": "wrong", "b": "foo"}')],
                 model_name='function:return_model',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -106,7 +106,7 @@ def test_result_pydantic_model_retry():
                 ]
             ),
             ModelResponse(
-                parts=[ToolCallPart('final_result', '{"a": 42, "b": "foo"}')],
+                parts=[ToolCallPart(tool_name='final_result', args='{"a": 42, "b": "foo"}')],
                 model_name='function:return_model',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -202,7 +202,7 @@ def test_result_validator():
         [
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
-                parts=[ToolCallPart('final_result', '{"a": 41, "b": "foo"}')],
+                parts=[ToolCallPart(tool_name='final_result', args='{"a": 41, "b": "foo"}')],
                 model_name='function:return_model',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -214,7 +214,7 @@ def test_result_validator():
                 ]
             ),
             ModelResponse(
-                parts=[ToolCallPart('final_result', '{"a": 42, "b": "foo"}')],
+                parts=[ToolCallPart(tool_name='final_result', args='{"a": 42, "b": "foo"}')],
                 model_name='function:return_model',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -817,6 +817,15 @@ def test_unknown_tool_fix():
     )
 
 
+try:
+    import google.genai  # type: ignore # noqa
+
+    skip_gemini_test = False
+except ImportError:
+    skip_gemini_test = True
+
+
+@pytest.mark.skipif(skip_gemini_test, reason='Need google-genai installed.')
 def test_model_requests_blocked(env: TestEnv):
     env.set('GEMINI_API_KEY', 'foobar')
     agent = Agent('google-gla:gemini-1.5-flash', result_type=tuple[str, str], defer_model_check=True)

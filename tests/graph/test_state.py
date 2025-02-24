@@ -52,7 +52,7 @@ async def test_run_graph():
                 start_ts=IsNow(tz=timezone.utc),
                 duration=IsFloat(),
             ),
-            EndStep(result=End('x=2 y=y'), ts=IsNow(tz=timezone.utc)),
+            EndStep(result=End(data='x=2 y=y'), ts=IsNow(tz=timezone.utc)),
         ]
     )
     assert state == MyState(x=2, y='y')

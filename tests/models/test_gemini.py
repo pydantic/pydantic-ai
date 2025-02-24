@@ -15,6 +15,8 @@ from typing_extensions import Literal, TypeAlias
 
 from pydantic_ai import Agent, ModelRetry, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
+    BinaryContent,
+    ImageUrl,
     ModelRequest,
     ModelResponse,
     RetryPromptPart,
@@ -25,31 +27,34 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models import ModelRequestParameters
-from pydantic_ai.models.gemini import (
-    ApiKeyAuth,
-    GeminiModel,
-    GeminiModelSettings,
-    _content_model_response,
-    _function_call_part_from_call,
-    _gemini_response_ta,
-    _gemini_streamed_response_ta,
-    _GeminiCandidates,
-    _GeminiContent,
-    _GeminiFunction,
-    _GeminiFunctionCallingConfig,
-    _GeminiResponse,
-    _GeminiSafetyRating,
-    _GeminiTextPart,
-    _GeminiToolConfig,
-    _GeminiTools,
-    _GeminiUsageMetaData,
-)
 from pydantic_ai.result import Usage
 from pydantic_ai.tools import ToolDefinition
 
-from ..conftest import ClientWithHandler, IsNow, TestEnv
+from ..conftest import ClientWithHandler, IsNow, TestEnv, try_import
 
-pytestmark = pytest.mark.anyio
+with try_import() as imports_successful:
+    from pydantic_ai.models.gemini import (
+        ApiKeyAuth,
+        GeminiModel,
+        GeminiModelSettings,
+        _Content,
+        _content_model_response,
+        _gemini_response_ta,
+        _gemini_streamed_response_ta,
+        _GeminiCandidates,
+        _GeminiFunction,
+        _GeminiFunctionCallingConfig,
+        _GeminiResponse,
+        _GeminiSafetyRating,
+        _GeminiToolConfig,
+        _GeminiTools,
+        _GeminiUsageMetaData,
+    )
+
+pytestmark = [
+    pytest.mark.skipif(not imports_successful(), reason='google-genai not installed'),
+    pytest.mark.anyio,
+]
 
 
 def test_api_key_arg(env: TestEnv):
@@ -436,7 +441,7 @@ async def get_gemini_client(
     return create_client
 
 
-def gemini_response(content: _GeminiContent, finish_reason: Literal['STOP'] | None = 'STOP') -> _GeminiResponse:
+def gemini_response(content: _Content, finish_reason: Literal['STOP'] | None = 'STOP') -> _GeminiResponse:
     candidate = _GeminiCandidates(content=content, index=0, safety_ratings=[])
     if finish_reason:  # pragma: no cover
         candidate['finish_reason'] = finish_reason
@@ -667,7 +672,15 @@ async def test_stream_invalid_unicode_text(get_gemini_client: GetGeminiClient):
         gemini_response(_content_model_response(ModelResponse(parts=[TextPart('€def')]))),
     ]
     json_data = _gemini_streamed_response_ta.dump_json(responses, by_alias=True)
-    parts = [json_data[:307], json_data[307:]]
+
+    for i in range(10, 1000):
+        parts = [json_data[:i], json_data[i:]]
+        try:
+            parts[0].decode()
+        except UnicodeDecodeError:
+            break
+    else:
+        assert False, 'failed to find a spot in payload that would break unicode parsing'
 
     with pytest.raises(UnicodeDecodeError):
         # Ensure the first part is _not_ valid unicode
@@ -796,16 +809,11 @@ async def test_stream_text_heterogeneous(get_gemini_client: GetGeminiClient):
     responses = [
         gemini_response(_content_model_response(ModelResponse(parts=[TextPart('Hello ')]))),
         gemini_response(
-            _GeminiContent(
+            _Content(
                 role='model',
                 parts=[
-                    _GeminiTextPart(text='foo'),
-                    _function_call_part_from_call(
-                        ToolCallPart(
-                            tool_name='get_location',
-                            args={'loc_name': 'San Fransisco'},
-                        )
-                    ),
+                    {'text': 'foo'},
+                    {'function_call': {'name': 'get_location', 'args': {'loc_name': 'San Fransisco'}}},
                 ],
             )
         ),
@@ -984,3 +992,25 @@ async def test_safety_settings_safe(
         ),
     )
     assert result.data == 'world'
+
+
+@pytest.mark.vcr()
+async def test_image_as_binary_content_input(
+    allow_model_requests: None, gemini_api_key: str, image_content: BinaryContent
+) -> None:
+    m = GeminiModel('gemini-2.0-flash', api_key=gemini_api_key)
+    agent = Agent(m)
+
+    result = await agent.run(['What is the name of this fruit?', image_content])
+    assert result.data == snapshot('The fruit in the image is a Kiwi.')
+
+
+@pytest.mark.vcr()
+async def test_image_url_input(allow_model_requests: None, gemini_api_key: str) -> None:
+    m = GeminiModel('gemini-2.0-flash-exp', api_key=gemini_api_key)
+    agent = Agent(m)
+
+    image_url = ImageUrl(url='https://goo.gle/instrument-img')
+
+    result = await agent.run(['What is the name of this fruit?', image_url])
+    assert result.data == snapshot('The image shows an organ, not a fruit.')
