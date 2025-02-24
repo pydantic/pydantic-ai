@@ -22,7 +22,7 @@ result = agent.run_sync(
     ]
 )
 print(result.data)
-#> This logo is from Pydantic, a Python library used for data validation and settings management using Python type annotations.
+#> This is the logo for Pydantic, a data validation and settings management library in Python.
 ```
 
 You can also use the [`BinaryContent`][pydantic_ai.BinaryContent], if you have it locally:
@@ -42,7 +42,7 @@ result = agent.run_sync(
     ]
 )
 print(result.data)
-#> The logo is for Pydantic, a popular data validation and settings management library for Python.
+#> This is the logo for Pydantic, a data validation and settings management library in Python.
 ```
 
 1. We are downloading the image to make the example runnable, but you can use `Path().read_bytes()`
