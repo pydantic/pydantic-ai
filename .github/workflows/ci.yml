@@ -109,7 +109,7 @@ jobs:
           --extra anthropic
           --extra mistral
           --extra cohere
-          pytest tests/test_live.py -vvvs
+          pytest tests/test_live.py -v
           --durations=100
         env:
           PYDANTIC_AI_LIVE_TEST_DANGEROUS: "CHARGE-ME!"
