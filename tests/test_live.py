@@ -36,9 +36,10 @@ def gemini(http_client: httpx.AsyncClient, _tmp_path: Path) -> Model:
 def vertexai(http_client: httpx.AsyncClient, tmp_path: Path) -> Model:
     from pydantic_ai.models.vertexai import VertexAIModel
 
-    service_account_content = os.environ['GOOGLE_SERVICE_ACCOUNT_CONTENT']
-    service_account_path = tmp_path / 'service_account.json'
-    service_account_path.write_text(service_account_content)
+    # service_account_content = os.environ['GOOGLE_SERVICE_ACCOUNT_CONTENT']
+    # service_account_path = tmp_path / 'service_account.json'
+    # service_account_path.write_text(service_account_content)
+    service_account_path = Path(__file__).parent.parent / 'key.json'
     return VertexAIModel('gemini-1.5-flash', service_account_file=service_account_path, http_client=http_client)
 
 

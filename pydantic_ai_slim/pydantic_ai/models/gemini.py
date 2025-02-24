@@ -13,6 +13,7 @@ from uuid import uuid4
 
 import pydantic
 from httpx import USE_CLIENT_DEFAULT, AsyncClient as AsyncHTTPClient, Response as HTTPResponse
+from pydantic.alias_generators import to_snake
 from typing_extensions import NotRequired, TypedDict, assert_never
 
 from .. import UnexpectedModelBehavior, _utils, exceptions, usage
@@ -44,7 +45,7 @@ from . import (
 )
 
 try:
-    from google.genai.types import ContentDict, PartDict
+    from google.genai.types import ContentDict
 except ImportError as _import_error:
     raise ImportError(
         'Please install `google-genai` to use the Gemini model, '
@@ -75,15 +76,48 @@ See [the Gemini API docs](https://ai.google.dev/gemini-api/docs/models/gemini#mo
 
 class _InlineData(TypedDict):
     data: str
+    mime_type: Annotated[str, pydantic.Field(alias='mimeType')]
+
+
+class _FileData(TypedDict, total=False):
+    """URI based data."""
+
+    file_uri: str
+    """Required. URI."""
+
     mime_type: str
+    """Required. The IANA standard MIME type of the source data."""
 
 
-class _Part(PartDict, total=False):
-    inline_data: _InlineData  # type: ignore
+class FunctionCall(TypedDict):
+    name: str
+    args: dict[str, Any]
 
 
-class _Content(ContentDict):
-    parts: list[_Part]  # type: ignore
+class FunctionResponse(TypedDict):
+    name: str
+    response: dict[str, Any]
+
+
+class _Part(TypedDict, total=False):
+    inline_data: Annotated[_InlineData, pydantic.Field(alias='inlineData')]
+
+    file_data: Annotated[_FileData, pydantic.Field(alias='fileData')]
+    """Optional. URI based data."""
+
+    function_call: Annotated[FunctionCall, pydantic.Field(alias='functionCall')]
+    """Optional. A predicted [FunctionCall] returned from the model that contains a string representing the [FunctionDeclaration.name] with the parameters and their values."""
+
+    function_response: Annotated[FunctionResponse, pydantic.Field(alias='functionResponse')]
+    """Optional. The result output of a [FunctionCall] that contains a string representing the [FunctionDeclaration.name] and a structured JSON object containing any output from the function call. It is used as context to the model."""
+
+    text: str
+    """Optional. Text part (can be code)."""
+
+
+class _Content(TypedDict):
+    parts: list[_Part]
+    role: Literal['user', 'model']
 
 
 class GeminiModelSettings(ModelSettings):
@@ -521,7 +555,7 @@ def _process_response_from_parts(
             assert part['text']
             items.append(TextPart(content=part['text']))
         elif 'function_call' in part:
-            items.append(ToolCallPart(tool_name=part['function_call']['name'], args=part['function_call']['args']))  # type: ignore
+            items.append(ToolCallPart(tool_name=part['function_call']['name'], args=part['function_call']['args']))
         elif 'function_response' in part:
             raise exceptions.UnexpectedModelBehavior(
                 f'Unsupported response from Gemini, expected all parts to be function calls or text, got: {part!r}'
@@ -571,7 +605,7 @@ class _GeminiFunctionCallingConfig(TypedDict):
     allowed_function_names: list[str]
 
 
-@pydantic.with_config(pydantic.ConfigDict(defer_build=True))
+@pydantic.with_config(pydantic.ConfigDict(defer_build=True, alias_generator=to_snake))
 class _GeminiResponse(TypedDict):
     """Schema for the response from the Gemini API.
 

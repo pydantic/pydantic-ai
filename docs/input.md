@@ -15,9 +15,14 @@ from pydantic_ai import Agent, ImageUrl
 image_url = ImageUrl(url='https://iili.io/3Hs4FMg.png')
 
 agent = Agent(model='openai:gpt-4o')
-result = agent.run_sync(['What company is this logo from?', image_url])
+result = agent.run_sync(
+    [
+        'What company is this logo from?',
+        ImageUrl(url='https://iili.io/3Hs4FMg.png'),
+    ]
+)
 print(result.data)
-# > This logo is from Pydantic, a Python library used for data validation and settings management using Python type annotations.
+#> This logo is from Pydantic, a Python library used for data validation and settings management using Python type annotations.
 ```
 
 You can also use the [`BinaryContent`][pydantic_ai.BinaryContent], if you have it locally:
@@ -30,12 +35,14 @@ from pydantic_ai import Agent, BinaryContent
 image_response = httpx.get('https://iili.io/3Hs4FMg.png')  # pydantic logo
 
 agent = Agent(model='openai:gpt-4o')
-result = agent.run_sync([
-    'What company is this logo from?',
-    BinaryContent(data=image_response.content, media_type='image/png')  # (1)!
-])
+result = agent.run_sync(
+    [
+        'What company is this logo from?',
+        BinaryContent(data=image_response.content, media_type='image/png'),  # (1)!
+    ]
+)
 print(result.data)
-# > The logo is for Pydantic, a popular data validation and settings management library for Python.
+#> The logo is for Pydantic, a popular data validation and settings management library for Python.
 ```
 
 1. We are downloading the image to make the example runnable, but you can use `Path().read_bytes()`
