@@ -294,7 +294,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         """
         if infer_name and self.name is None:
             self._infer_name(inspect.currentframe())
-        with self.iter(
+        async with self.iter(
             user_prompt=user_prompt,
             result_type=result_type,
             message_history=message_history,
@@ -310,8 +310,8 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         assert (final_result := agent_run.result) is not None, 'The graph run did not finish properly'
         return final_result
 
-    @contextmanager
-    def iter(
+    @asynccontextmanager
+    async def iter(
         self,
         user_prompt: str,
         *,
@@ -323,7 +323,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.Usage | None = None,
         infer_name: bool = True,
-    ) -> Iterator[AgentRun[AgentDepsT, Any]]:
+    ) -> AsyncIterator[AgentRun[AgentDepsT, Any]]:
         """A contextmanager which can be used to iterate over the agent graph's nodes as they are executed.
 
         This method builds an internal agent graph (using system prompts, tools and result schemas) and then returns an
@@ -344,7 +344,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
 
         async def main():
             nodes = []
-            with agent.iter('What is the capital of France?') as agent_run:
+            async with agent.iter('What is the capital of France?') as agent_run:
                 async for node in agent_run:
                     nodes.append(node)
             print(nodes)
@@ -454,7 +454,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
             system_prompt_dynamic_functions=self._system_prompt_dynamic_functions,
         )
 
-        with graph.iter(
+        async with graph.iter(
             start_node,
             state=state,
             deps=graph_deps,
@@ -633,7 +633,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
                 self._infer_name(frame.f_back)
 
         yielded = False
-        with self.iter(
+        async with self.iter(
             user_prompt,
             result_type=result_type,
             message_history=message_history,
@@ -1178,7 +1178,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
 class AgentRun(Generic[AgentDepsT, ResultDataT]):
     """A stateful, async-iterable run of an [`Agent`][pydantic_ai.agent.Agent].
 
-    You generally obtain an `AgentRun` instance by calling `with my_agent.iter(...) as agent_run:`.
+    You generally obtain an `AgentRun` instance by calling `async with my_agent.iter(...) as agent_run:`.
 
     Once you have an instance, you can use it to iterate through the run's nodes as they execute. When an
     [`End`][pydantic_graph.nodes.End] is reached, the run finishes and [`result`][pydantic_ai.agent.AgentRun.result]
@@ -1193,7 +1193,7 @@ class AgentRun(Generic[AgentDepsT, ResultDataT]):
     async def main():
         nodes = []
         # Iterate through the run, recording each node along the way:
-        with agent.iter('What is the capital of France?') as agent_run:
+        async with agent.iter('What is the capital of France?') as agent_run:
             async for node in agent_run:
                 nodes.append(node)
         print(nodes)
@@ -1326,7 +1326,7 @@ class AgentRun(Generic[AgentDepsT, ResultDataT]):
         agent = Agent('openai:gpt-4o')
 
         async def main():
-            with agent.iter('What is the capital of France?') as agent_run:
+            async with agent.iter('What is the capital of France?') as agent_run:
                 next_node = agent_run.next_node  # start with the first node
                 nodes = [next_node]
                 while not isinstance(next_node, End):
