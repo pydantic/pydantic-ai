@@ -493,43 +493,6 @@ async def test_no_delta(allow_model_requests: None):
         assert result.is_complete
 
 
-# async def test_image_url_input(allow_model_requests: None):
-#     c = completion_message(ChatCompletionMessage(content='world', role='assistant'))
-#     mock_client = MockOpenAI.create_mock(c)
-#     m = OpenAIModel('gpt-4o', openai_client=mock_client)
-#     agent = Agent(m)
-
-#     result = await agent.run(
-#         [
-#             'hello',
-#             ImageUrl(url='https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg'),
-#         ]
-#     )
-#     assert result.data == 'world'
-#     assert get_mock_chat_completion_kwargs(mock_client) == snapshot(
-#         [
-#             {
-#                 'model': 'gpt-4o',
-#                 'messages': [
-#                     {
-#                         'role': 'user',
-#                         'content': [
-#                             {'text': 'hello', 'type': 'text'},
-#                             {
-#                                 'image_url': {
-#                                     'url': 'https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg'
-#                                 },
-#                                 'type': 'image_url',
-#                             },
-#                         ],
-#                     }
-#                 ],
-#                 'n': 1,
-#             }
-#         ]
-#     )
-
-
 async def test_image_url_input(allow_model_requests: None):
     c = completion_message(ChatCompletionMessage(content='world', role='assistant'))
     mock_client = MockGroq.create_mock(c)
