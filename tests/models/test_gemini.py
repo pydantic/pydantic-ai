@@ -6,11 +6,9 @@ import json
 from collections.abc import AsyncIterator, Callable, Sequence
 from dataclasses import dataclass
 from datetime import timezone
-from pathlib import Path
 
 import httpx
 import pytest
-from google.genai.types import Content, FunctionCall, Part
 from inline_snapshot import snapshot
 from pydantic import BaseModel, Field
 from typing_extensions import Literal, TypeAlias
@@ -28,28 +26,35 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models import ModelRequestParameters
-from pydantic_ai.models.gemini import (
-    ApiKeyAuth,
-    GeminiModel,
-    GeminiModelSettings,
-    _content_model_response,
-    _gemini_response_ta,
-    _gemini_streamed_response_ta,
-    _GeminiCandidates,
-    _GeminiFunction,
-    _GeminiFunctionCallingConfig,
-    _GeminiResponse,
-    _GeminiSafetyRating,
-    _GeminiToolConfig,
-    _GeminiTools,
-    _GeminiUsageMetaData,
-)
 from pydantic_ai.result import Usage
 from pydantic_ai.tools import ToolDefinition
 
-from ..conftest import ClientWithHandler, IsNow, TestEnv
+from ..conftest import ClientWithHandler, IsNow, TestEnv, try_import
 
-pytestmark = pytest.mark.anyio
+with try_import() as imports_successful:
+    from google.genai.types import Content, FunctionCall, Part
+
+    from pydantic_ai.models.gemini import (
+        ApiKeyAuth,
+        GeminiModel,
+        GeminiModelSettings,
+        _content_model_response,
+        _gemini_response_ta,
+        _gemini_streamed_response_ta,
+        _GeminiCandidates,
+        _GeminiFunction,
+        _GeminiFunctionCallingConfig,
+        _GeminiResponse,
+        _GeminiSafetyRating,
+        _GeminiToolConfig,
+        _GeminiTools,
+        _GeminiUsageMetaData,
+    )
+
+pytestmark = [
+    pytest.mark.skipif(not imports_successful(), reason='google-genai not installed'),
+    pytest.mark.anyio,
+]
 
 
 def test_api_key_arg(env: TestEnv):
@@ -983,13 +988,11 @@ async def test_safety_settings_safe(
 
 
 @pytest.mark.vcr()
-async def test_image_as_binary_content_input(allow_model_requests: None, gemini_api_key: str) -> None:
+async def test_image_as_binary_content_input(
+    allow_model_requests: None, gemini_api_key: str, image_content: BinaryContent
+) -> None:
     m = GeminiModel('gemini-2.0-flash', api_key=gemini_api_key)
     agent = Agent(m)
 
-    kiwi_image = (Path(__file__).parent.parent / 'assets' / 'kiwi.png').read_bytes()
-
-    result = await agent.run(
-        ['What is the name of this fruit?', BinaryContent(data=kiwi_image, media_type='image/png')]
-    )
+    result = await agent.run(['What is the name of this fruit?', image_content])
     assert result.data == snapshot('The fruit in the image is a kiwi.')

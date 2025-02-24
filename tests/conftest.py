@@ -20,6 +20,7 @@ from typing_extensions import TypeAlias
 from vcr import VCR
 
 import pydantic_ai.models
+from pydantic_ai.messages import BinaryContent
 from pydantic_ai.models import cached_async_http_client
 
 __all__ = 'IsDatetime', 'IsFloat', 'IsNow', 'IsStr', 'TestEnv', 'ClientWithHandler', 'try_import'
@@ -204,6 +205,12 @@ def vcr_config():
 async def close_cached_httpx_client() -> AsyncIterator[None]:
     yield
     await cached_async_http_client().aclose()
+
+
+@pytest.fixture(scope='session')
+def image_content() -> BinaryContent:
+    image_bytes = (Path(__file__).parent / 'assets' / 'kiwi.png').read_bytes()
+    return BinaryContent(data=image_bytes, media_type='image/png')
 
 
 @pytest.fixture(scope='session')
