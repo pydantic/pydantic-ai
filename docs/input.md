@@ -9,7 +9,7 @@ Nowadays, some of the LLMs are also able to understand audio and image content.
 
 You can use [`ImageUrl`][pydantic_ai.ImageUrl] in case you have the URL in hands:
 
-```py
+```py {title="main.py" test="skip" lint="skip"}
 from pydantic_ai import Agent, ImageUrl
 
 image_url = ImageUrl(url='https://iili.io/3Hs4FMg.png')
@@ -27,7 +27,7 @@ print(result.data)
 
 You can also use the [`BinaryContent`][pydantic_ai.BinaryContent], if you have it locally:
 
-```py
+```py {title="main.py" test="skip" lint="skip"}
 import httpx
 
 from pydantic_ai import Agent, BinaryContent
