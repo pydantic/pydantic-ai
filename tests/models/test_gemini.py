@@ -16,6 +16,7 @@ from typing_extensions import Literal, TypeAlias
 from pydantic_ai import Agent, ModelRetry, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
     BinaryContent,
+    ImageUrl,
     ModelRequest,
     ModelResponse,
     RetryPromptPart,
@@ -32,12 +33,11 @@ from pydantic_ai.tools import ToolDefinition
 from ..conftest import ClientWithHandler, IsNow, TestEnv, try_import
 
 with try_import() as imports_successful:
-    from google.genai.types import Content, FunctionCall, Part
-
     from pydantic_ai.models.gemini import (
         ApiKeyAuth,
         GeminiModel,
         GeminiModelSettings,
+        _Content,
         _content_model_response,
         _gemini_response_ta,
         _gemini_streamed_response_ta,
@@ -441,7 +441,7 @@ async def get_gemini_client(
     return create_client
 
 
-def gemini_response(content: Content, finish_reason: Literal['STOP'] | None = 'STOP') -> _GeminiResponse:
+def gemini_response(content: _Content, finish_reason: Literal['STOP'] | None = 'STOP') -> _GeminiResponse:
     candidate = _GeminiCandidates(content=content, index=0, safety_ratings=[])
     if finish_reason:  # pragma: no cover
         candidate['finish_reason'] = finish_reason
@@ -802,11 +802,11 @@ async def test_stream_text_heterogeneous(get_gemini_client: GetGeminiClient):
     responses = [
         gemini_response(_content_model_response(ModelResponse(parts=[TextPart('Hello ')]))),
         gemini_response(
-            Content(
+            _Content(
                 role='model',
                 parts=[
-                    Part.from_text(text='foo'),
-                    Part.from_function_call(name='get_location', args={'loc_name': 'San Fransisco'}),
+                    {'text': 'foo'},
+                    {'function_call': {'name': 'get_location', 'args': {'loc_name': 'San Fransisco'}}},
                 ],
             )
         ),
@@ -838,13 +838,13 @@ async def test_empty_text_ignored():
     )
     # text included
     assert content == snapshot(
-        Content(
-            parts=[
-                Part(function_call=FunctionCall(args={'response': [1, 2, 123]}, name='final_result')),
-                Part(text='xxx'),
+        {
+            'role': 'model',
+            'parts': [
+                {'function_call': {'name': 'final_result', 'args': {'response': [1, 2, 123]}}},
+                {'text': 'xxx'},
             ],
-            role='model',
-        )
+        }
     )
 
     content = _content_model_response(
@@ -857,10 +857,10 @@ async def test_empty_text_ignored():
     )
     # text skipped
     assert content == snapshot(
-        Content(
-            parts=[Part(function_call=FunctionCall(args={'response': [1, 2, 123]}, name='final_result'))],
-            role='model',
-        )
+        {
+            'role': 'model',
+            'parts': [{'function_call': {'name': 'final_result', 'args': {'response': [1, 2, 123]}}}],
+        }
     )
 
 
@@ -996,3 +996,14 @@ async def test_image_as_binary_content_input(
 
     result = await agent.run(['What is the name of this fruit?', image_content])
     assert result.data == snapshot('The fruit in the image is a kiwi.')
+
+
+@pytest.mark.vcr()
+async def test_image_url_input(allow_model_requests: None, gemini_api_key: str) -> None:
+    m = GeminiModel('gemini-2.0-flash-exp', api_key=gemini_api_key)
+    agent = Agent(m)
+
+    image_url = ImageUrl(url='https://goo.gle/instrument-img')
+
+    result = await agent.run(['What is the name of this fruit?', image_url])
+    assert result.data == snapshot('This is not a fruit; it is a pipe organ console.')
