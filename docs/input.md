@@ -27,15 +27,13 @@ import httpx
 
 from pydantic_ai import Agent, BinaryContent
 
-response = httpx.get('https://iili.io/3Hs4FMg.png')
-# We are downloading the image to make the example runnable, but you can use `Path().read_bytes()`
-# to read the content of a file locally.
-image_bytes = response.content
-
-image_content = BinaryContent(data=image_bytes, media_type='image/png')
+image_response = httpx.get('https://iili.io/3Hs4FMg.png')  # pydantic logo
 
 agent = Agent(model='openai:gpt-4o')
-result = agent.run_sync(['What company is this logo from?', image_content])
+result = agent.run_sync([
+    'What company is this logo from?',
+    BinaryContent(data=image_response.content, media_type='image/png')  # (1)!
+])
 print(result.data)
 # > The logo is for Pydantic, a popular data validation and settings management library for Python.
 ```
