@@ -20,6 +20,7 @@ from ..messages import (
     ModelResponsePart,
     ModelResponseStreamEvent,
     RetryPromptPart,
+    StructuredOutputPart,
     SystemPromptPart,
     TextPart,
     ToolCallPart,
@@ -37,7 +38,7 @@ from . import (
 )
 
 try:
-    from openai import NOT_GIVEN, AsyncOpenAI, AsyncStream
+    from openai import NOT_GIVEN, AsyncOpenAI, AsyncStream, NotGiven
     from openai.types import ChatModel, chat
     from openai.types.chat import ChatCompletionChunk
 except ImportError as _import_error:
@@ -145,7 +146,9 @@ class OpenAIModel(Model):
         response = await self._completions_create(
             messages, False, cast(OpenAIModelSettings, model_settings or {}), model_request_parameters
         )
-        return self._process_response(response), _map_usage(response)
+        return self._process_response(response, model_settings.get('force_response_format', False)), _map_usage(
+            response
+        )
 
     @asynccontextmanager
     async def request_stream(
@@ -198,18 +201,49 @@ class OpenAIModel(Model):
         model_settings: OpenAIModelSettings,
         model_request_parameters: ModelRequestParameters,
     ) -> chat.ChatCompletion | AsyncStream[ChatCompletionChunk]:
-        tools = self._get_tools(model_request_parameters)
+        if model_settings.get('force_response_format', False):
+            tools: list[chat.ChatCompletionToolParam] | NotGiven = NOT_GIVEN
+            tool_choice: Literal['none', 'required', 'auto'] | None | NotGiven = NOT_GIVEN
+            response_format: chat.completion_create_params.ResponseFormat | NotGiven
 
-        # standalone function to make it easier to override
-        if not tools:
-            tool_choice: Literal['none', 'required', 'auto'] | None = None
-        elif not model_request_parameters.allow_text_result:
-            tool_choice = 'required'
+            if (n_result_tools := len(model_request_parameters.result_tools)) == 0:
+                response_format = chat.completion_create_params.ResponseFormatText(type='text')  # pyright: ignore[reportPrivateImportUsage]
+            elif n_result_tools == 1 and not model_request_parameters.allow_text_result:
+                result_tool = model_request_parameters.result_tools[0]
+                response_format = chat.completion_create_params.ResponseFormatJSONSchema(  # pyright: ignore[reportPrivateImportUsage]
+                    type='json_schema',
+                    json_schema={
+                        'name': result_tool.name,
+                        'description': result_tool.description,
+                        'schema': result_tool.parameters_json_schema,
+                        'strict': False,  # TODO: Expose this via a model setting?
+                    },
+                )
+            else:
+                json_schemas = [t.parameters_json_schema for t in model_request_parameters.result_tools]
+                if model_request_parameters.allow_text_result:
+                    json_schemas.append({'type': 'string'})
+                response_format = chat.completion_create_params.ResponseFormatJSONSchema(  # pyright: ignore[reportPrivateImportUsage]
+                    type='json_schema',
+                    json_schema={
+                        'name': 'final_result',
+                        'description': 'The final result of the model',
+                        'schema': {'anyOf': json_schemas},
+                        'strict': False,
+                    },
+                )
         else:
-            tool_choice = 'auto'
+            # standalone function to make it easier to override
+            tools = self._get_tools(model_request_parameters)
+            if not tools:
+                tool_choice = None
+            elif not model_request_parameters.allow_text_result:
+                tool_choice = 'required'
+            else:
+                tool_choice = 'auto'
+            response_format = NOT_GIVEN
 
         openai_messages = list(chain(*(self._map_message(m) for m in messages)))
-
         return await self.client.chat.completions.create(
             model=self._model_name,
             messages=openai_messages,
@@ -223,6 +257,7 @@ class OpenAIModel(Model):
             temperature=model_settings.get('temperature', NOT_GIVEN),
             top_p=model_settings.get('top_p', NOT_GIVEN),
             timeout=model_settings.get('timeout', NOT_GIVEN),
+            response_format=response_format,
             seed=model_settings.get('seed', NOT_GIVEN),
             presence_penalty=model_settings.get('presence_penalty', NOT_GIVEN),
             frequency_penalty=model_settings.get('frequency_penalty', NOT_GIVEN),
@@ -230,13 +265,16 @@ class OpenAIModel(Model):
             reasoning_effort=model_settings.get('openai_reasoning_effort', NOT_GIVEN),
         )
 
-    def _process_response(self, response: chat.ChatCompletion) -> ModelResponse:
+    def _process_response(self, response: chat.ChatCompletion, force_response_format: bool) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
         timestamp = datetime.fromtimestamp(response.created, tz=timezone.utc)
         choice = response.choices[0]
         items: list[ModelResponsePart] = []
         if choice.message.content is not None:
-            items.append(TextPart(choice.message.content))
+            if force_response_format:
+                items.append(StructuredOutputPart(choice.message.content))
+            else:
+                items.append(TextPart(choice.message.content))
         if choice.message.tool_calls is not None:
             for c in choice.message.tool_calls:
                 items.append(ToolCallPart(c.function.name, c.function.arguments, c.id))

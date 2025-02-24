@@ -5,7 +5,6 @@ from dataclasses import dataclass, field
 from itertools import chain
 from typing import Literal, Union, cast
 
-from cohere import TextAssistantMessageContentItem
 from httpx import AsyncClient as AsyncHTTPClient
 from typing_extensions import assert_never
 
@@ -17,6 +16,7 @@ from ..messages import (
     ModelResponse,
     ModelResponsePart,
     RetryPromptPart,
+    StructuredOutputPart,
     SystemPromptPart,
     TextPart,
     ToolCallPart,
@@ -37,7 +37,11 @@ try:
         AsyncClientV2,
         ChatMessageV2,
         ChatResponse,
+        JsonObjectResponseFormatV2,
+        ResponseFormatV2,
         SystemChatMessageV2,
+        TextAssistantMessageContentItem,
+        TextResponseFormatV2,
         ToolCallV2,
         ToolCallV2Function,
         ToolChatMessageV2,
@@ -152,7 +156,30 @@ class CohereModel(Model):
         model_settings: CohereModelSettings,
         model_request_parameters: ModelRequestParameters,
     ) -> ChatResponse:
-        tools = self._get_tools(model_request_parameters)
+        if model_settings.get('force_response_format', False):
+            tools: list[ToolV2] = OMIT
+            response_format: ResponseFormatV2
+            if (n_result_tools := len(model_request_parameters.result_tools)) == 0:
+                response_format = TextResponseFormatV2()
+            elif n_result_tools == 1 and not model_request_parameters.allow_text_result:
+                result_tool = model_request_parameters.result_tools[0]
+                response_format = JsonObjectResponseFormatV2(
+                    type='json_object',
+                    json_schema=result_tool.parameters_json_schema,
+                )
+            else:
+                json_schemas = [t.parameters_json_schema for t in model_request_parameters.result_tools]
+                if model_request_parameters.allow_text_result:
+                    json_schemas.append({'type': 'string'})
+                response_format = JsonObjectResponseFormatV2(
+                    type='json_object',
+                    json_schema={'anyOf': json_schemas},
+                )
+        else:
+            # standalone function to make it easier to override
+            tools = self._get_tools(model_request_parameters)
+            response_format = OMIT
+
         cohere_messages = list(chain(*(self._map_message(m) for m in messages)))
         return await self.client.chat(
             model=self._model_name,
@@ -162,6 +189,7 @@ class CohereModel(Model):
             temperature=model_settings.get('temperature', OMIT),
             p=model_settings.get('top_p', OMIT),
             seed=model_settings.get('seed', OMIT),
+            response_format=response_format,
             presence_penalty=model_settings.get('presence_penalty', OMIT),
             frequency_penalty=model_settings.get('frequency_penalty', OMIT),
         )
@@ -193,7 +221,7 @@ class CohereModel(Model):
             texts: list[str] = []
             tool_calls: list[ToolCallV2] = []
             for item in message.parts:
-                if isinstance(item, TextPart):
+                if isinstance(item, (TextPart, StructuredOutputPart)):
                     texts.append(item.content)
                 elif isinstance(item, ToolCallPart):
                     tool_calls.append(self._map_tool_call(item))

@@ -217,7 +217,22 @@ class ToolCallPart:
             return bool(self.args)
 
 
-ModelResponsePart = Annotated[Union[TextPart, ToolCallPart], pydantic.Discriminator('part_kind')]
+@dataclass
+class StructuredOutputPart:
+    """A structured output response from a model."""
+
+    content: str
+    """The structured content of the response as a JSON-serialized string."""
+
+    part_kind: Literal['structured-output'] = 'structured-output'
+    """Part type identifier, this is available on all parts as a discriminator."""
+
+    def has_content(self) -> bool:
+        """Return `True` if the structured content is non-empty."""
+        return bool(self.content)
+
+
+ModelResponsePart = Annotated[Union[TextPart, ToolCallPart, StructuredOutputPart], pydantic.Discriminator('part_kind')]
 """A message part returned by a model."""
 
 
@@ -271,6 +286,33 @@ class TextPartDelta:
             ValueError: If `part` is not a `TextPart`.
         """
         if not isinstance(part, TextPart):
+            raise ValueError('Cannot apply TextPartDeltas to non-TextParts')
+        return replace(part, content=part.content + self.content_delta)
+
+
+@dataclass
+class StructuredOutputPartDelta:
+    """A partial update (delta) for a `StructuredOutputPart` to append new text content."""
+
+    content_delta: str
+    """The incremental text content to add to the existing `StructuredOutputPart` content."""
+
+    part_delta_kind: Literal['structured-output'] = 'structured-output'
+    """Part delta type identifier, used as a discriminator."""
+
+    def apply(self, part: ModelResponsePart) -> StructuredOutputPart:
+        """Apply this text delta to an existing `TextPart`.
+
+        Args:
+            part: The existing model response part, which must be a `TextPart`.
+
+        Returns:
+            A new `TextPart` with updated text content.
+
+        Raises:
+            ValueError: If `part` is not a `TextPart`.
+        """
+        if not isinstance(part, StructuredOutputPart):
             raise ValueError('Cannot apply TextPartDeltas to non-TextParts')
         return replace(part, content=part.content + self.content_delta)
 
@@ -408,7 +450,9 @@ class ToolCallPartDelta:
         return part
 
 
-ModelResponsePartDelta = Annotated[Union[TextPartDelta, ToolCallPartDelta], pydantic.Discriminator('part_delta_kind')]
+ModelResponsePartDelta = Annotated[
+    Union[TextPartDelta, ToolCallPartDelta, StructuredOutputPartDelta], pydantic.Discriminator('part_delta_kind')
+]
 """A partial update (delta) for any model response part."""
 
 

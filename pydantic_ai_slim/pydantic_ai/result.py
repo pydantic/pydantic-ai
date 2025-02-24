@@ -351,7 +351,7 @@ class FinalResult(Generic[ResultDataT]):
     data: ResultDataT
     """The final result data."""
     tool_name: str | None
-    """Name of the final result tool; `None` if the result came from unstructured text content."""
+    """Name of the final result tool; `None` if the result did not come from a tool call."""
 
 
 def _get_usage_checking_stream_response(

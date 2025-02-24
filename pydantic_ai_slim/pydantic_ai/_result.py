@@ -83,6 +83,7 @@ class ResultSchema(Generic[ResultDataT]):
     Similar to `Tool` but for the final result of running an agent.
     """
 
+    structured_output_validator: TypeAdapter[ResultDataT]
     tools: dict[str, ResultTool[ResultDataT]]
     allow_text_result: bool
 

@@ -10,6 +10,7 @@ from dataclasses import field
 from typing import Any, Generic, Literal, Union, cast
 
 import logfire_api
+from pydantic import ValidationError
 from typing_extensions import TypeVar, assert_never
 
 from pydantic_graph import BaseNode, Graph, GraphRunContext
@@ -370,12 +371,16 @@ class HandleResponseNode(BaseNode[GraphAgentState, GraphAgentDeps[DepsT, Any], N
 
             async def _run_stream() -> AsyncIterator[_messages.HandleResponseEvent]:
                 texts: list[str] = []
+                structured_outputs: list[str] = []
                 tool_calls: list[_messages.ToolCallPart] = []
                 for part in self.model_response.parts:
                     if isinstance(part, _messages.TextPart):
                         # ignore empty content for text parts, see #437
                         if part.content:
                             texts.append(part.content)
+                    elif isinstance(part, _messages.StructuredOutputPart):
+                        if part.content:
+                            structured_outputs.append(part.content)
                     elif isinstance(part, _messages.ToolCallPart):
                         tool_calls.append(part)
                     else:
@@ -391,6 +396,9 @@ class HandleResponseNode(BaseNode[GraphAgentState, GraphAgentDeps[DepsT, Any], N
                 elif texts:
                     # No events are emitted during the handling of text responses, so we don't need to yield anything
                     self._next_node = await self._handle_text_response(ctx, texts)
+                elif structured_outputs:
+                    # No events are emitted during the handling of text responses, so we don't need to yield anything
+                    self._next_node = await self._handle_structured_outputs_response(ctx, texts)
                 else:
                     raise exceptions.UnexpectedModelBehavior('Received empty model response')
 
@@ -486,6 +494,41 @@ class HandleResponseNode(BaseNode[GraphAgentState, GraphAgentDeps[DepsT, Any], N
                     ]
                 )
             )
+
+    async def _handle_structured_outputs_response(
+        self,
+        ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
+        structured_outputs: list[str],
+    ) -> ModelRequestNode[DepsT, NodeRunEndT] | End[result.FinalResult[NodeRunEndT]]:
+        if len(structured_outputs) != 1:
+            raise exceptions.UnexpectedModelBehavior('Received multiple structured outputs in a single response')
+        result_schema = ctx.deps.result_schema
+        if not result_schema:
+            raise exceptions.UnexpectedModelBehavior('Must specify a non-str result_type when using structured outputs')
+
+        structured_output = structured_outputs[0]
+        try:
+            result_data_input = result_schema.structured_output_validator.validate_json(structured_output)
+        except ValidationError as e:
+            ctx.state.increment_retries(ctx.deps.max_result_retries)
+            return ModelRequestNode[DepsT, NodeRunEndT](
+                _messages.ModelRequest(
+                    parts=[
+                        _messages.RetryPromptPart(
+                            content='Structured output validation failed: ' + str(e),
+                        )
+                    ]
+                )
+            )
+
+        try:
+            result_data = await _validate_result(result_data_input, ctx, None)
+        except _result.ToolRetryError as e:
+            ctx.state.increment_retries(ctx.deps.max_result_retries)
+            return ModelRequestNode[DepsT, NodeRunEndT](_messages.ModelRequest(parts=[e.tool_retry]))
+        else:
+            # The following cast is safe because we know `str` is an allowed result type
+            return self._handle_final_result(ctx, result.FinalResult(result_data, tool_name=None), [])
 
 
 def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]]) -> RunContext[DepsT]:

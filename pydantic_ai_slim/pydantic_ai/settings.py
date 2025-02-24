@@ -92,6 +92,7 @@ class ModelSettings(TypedDict, total=False):
     Supported by:
 
     * OpenAI
+    * Gemini
     * Groq
     * Cohere
     * Mistral
@@ -129,6 +130,24 @@ class ModelSettings(TypedDict, total=False):
     * OpenAI
     * Groq
     """
+
+    force_response_format: bool
+    """Whether to force a specific response format from the model.
+
+    TODO: Add a description of what this means and the pros/cons of using this.
+    Pros: Works better than tool calling with many "dumber" models
+    Cons: Forces the model to generate structured output, so the agent cannot make use of data retrieval tool calls
+    before generating a final response.
+    # TODO: Explain that this can be set on the model if you know you want to the agent in a way that doesn't require tool calls
+
+    Supported by:
+
+    * Cohere
+    * Gemini
+    * Groq
+    * OpenAI
+    """
+    # TODO: I think Mistral should support this too, but need to confirm; that model is implemented quite differently
 
 
 def merge_model_settings(base: ModelSettings | None, overrides: ModelSettings | None) -> ModelSettings | None:
