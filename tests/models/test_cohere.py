@@ -321,7 +321,7 @@ async def test_multimodal(allow_model_requests: None):
     m = CohereModel('command-r7b-12-2024', cohere_client=mock_client)
     agent = Agent(m)
 
-    with pytest.raises(ValueError, match='Only string as user prompt is supported for Cohere.'):
+    with pytest.raises(RuntimeError, match='Cohere does not yet support multi-modal inputs.'):
         await agent.run(
             [
                 'hello',
