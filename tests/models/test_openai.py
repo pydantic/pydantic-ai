@@ -29,7 +29,7 @@ from ..conftest import IsNow, TestEnv, try_import
 from .mock_async_stream import MockAsyncStream
 
 with try_import() as imports_successful:
-    from openai import NOT_GIVEN, AsyncOpenAI, OpenAIError
+    from openai import NOT_GIVEN, AsyncOpenAI, BadRequestError, OpenAIError
     from openai.types import chat
     from openai.types.chat.chat_completion import Choice
     from openai.types.chat.chat_completion_chunk import (
@@ -558,6 +558,20 @@ async def test_system_prompt_role(
             'n': 1,
         }
     ]
+
+
+@pytest.mark.parametrize('system_prompt_role', ['system', 'developer'])
+@pytest.mark.vcr
+async def test_openai_o1_mini_system_role(
+    allow_model_requests: None,
+    system_prompt_role: Literal['system', 'developer'],
+    openai_key: str,
+) -> None:
+    model = OpenAIModel('o1-mini', api_key=openai_key, system_prompt_role=system_prompt_role)
+    agent = Agent(model=model, system_prompt='You are a helpful assistant.')
+
+    with pytest.raises(BadRequestError, match=r".*Unsupported value: 'messages\[0\]\.role' does not support.*"):
+        await agent.run('Hello')
 
 
 @pytest.mark.parametrize('parallel_tool_calls', [True, False])
