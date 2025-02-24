@@ -37,11 +37,11 @@ with try_import() as imports_successful:
         ApiKeyAuth,
         GeminiModel,
         GeminiModelSettings,
-        _Content,
         _content_model_response,
         _gemini_response_ta,
         _gemini_streamed_response_ta,
         _GeminiCandidates,
+        _GeminiContent,
         _GeminiFunction,
         _GeminiFunctionCallingConfig,
         _GeminiResponse,
@@ -441,7 +441,7 @@ async def get_gemini_client(
     return create_client
 
 
-def gemini_response(content: _Content, finish_reason: Literal['STOP'] | None = 'STOP') -> _GeminiResponse:
+def gemini_response(content: _GeminiContent, finish_reason: Literal['STOP'] | None = 'STOP') -> _GeminiResponse:
     candidate = _GeminiCandidates(content=content, index=0, safety_ratings=[])
     if finish_reason:  # pragma: no cover
         candidate['finish_reason'] = finish_reason
@@ -809,7 +809,7 @@ async def test_stream_text_heterogeneous(get_gemini_client: GetGeminiClient):
     responses = [
         gemini_response(_content_model_response(ModelResponse(parts=[TextPart('Hello ')]))),
         gemini_response(
-            _Content(
+            _GeminiContent(
                 role='model',
                 parts=[
                     {'text': 'foo'},
