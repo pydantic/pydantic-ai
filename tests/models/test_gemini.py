@@ -672,12 +672,19 @@ async def test_stream_invalid_unicode_text(get_gemini_client: GetGeminiClient):
         gemini_response(_content_model_response(ModelResponse(parts=[TextPart('€def')]))),
     ]
     json_data = _gemini_streamed_response_ta.dump_json(responses, by_alias=True)
-    parts = [json_data[:307], json_data[307:]]
 
-    # TODO(Marcelo): David, can you check this?
-    # with pytest.raises(UnicodeDecodeError):
-    #     # Ensure the first part is _not_ valid unicode
-    #     parts[0].decode()
+    for i in range(10, 1000):
+        parts = [json_data[:i], json_data[i:]]
+        try:
+            parts[0].decode()
+        except UnicodeDecodeError:
+            break
+    else:
+        assert False, 'failed to find a spot in payload that would break unicode parsing'
+
+    with pytest.raises(UnicodeDecodeError):
+        # Ensure the first part is _not_ valid unicode
+        parts[0].decode()
 
     stream = AsyncByteStreamList(parts)
     gemini_client = get_gemini_client(stream)
