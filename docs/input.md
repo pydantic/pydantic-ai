@@ -20,7 +20,7 @@ print(result.data)
 # > This logo is from Pydantic, a Python library used for data validation and settings management using Python type annotations.
 ```
 
-You can also use the `BinaryContent`, if you have it locally:
+You can also use the [`BinaryContent`][pydantic_ai.BinaryContent], if you have it locally:
 
 ```py
 import httpx
@@ -38,11 +38,13 @@ print(result.data)
 # > The logo is for Pydantic, a popular data validation and settings management library for Python.
 ```
 
+1. We are downloading the image to make the example runnable, but you can use `Path().read_bytes()`
+   to read the content of a file locally.
+
 ## Audio Input
 
 !!! info
     Some models don't support audio input. Please check the model's documentation to see if it supports audio input.
-
 
 You can either use [`AudioUrl`][pydantic_ai.AudioUrl] or [`BinaryContent`][pydantic_ai.BinaryContent] to provide the audio input.
 
