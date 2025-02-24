@@ -26,7 +26,7 @@ nav:
     - logfire.md
     - multi-agent-applications.md
     - graph.md
-    - multimodal.md
+    - input.md
   - Examples:
     - examples/index.md
     - examples/pydantic-model.md
