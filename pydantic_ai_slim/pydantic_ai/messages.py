@@ -41,7 +41,7 @@ class AudioUrl:
     url: str
     """The URL of the audio file."""
 
-    type: Literal['audio_url'] = 'audio_url'
+    type: Literal['audio-url'] = 'audio-url'
     """Type identifier, this is available on all parts as a discriminator."""
 
     @property
