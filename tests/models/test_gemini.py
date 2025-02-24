@@ -995,7 +995,7 @@ async def test_image_as_binary_content_input(
     agent = Agent(m)
 
     result = await agent.run(['What is the name of this fruit?', image_content])
-    assert result.data == snapshot('The fruit in the image is a kiwi.')
+    assert result.data == snapshot('The fruit in the image is a Kiwi.')
 
 
 @pytest.mark.vcr()
@@ -1006,4 +1006,4 @@ async def test_image_url_input(allow_model_requests: None, gemini_api_key: str) 
     image_url = ImageUrl(url='https://goo.gle/instrument-img')
 
     result = await agent.run(['What is the name of this fruit?', image_url])
-    assert result.data == snapshot('This is not a fruit; it is a pipe organ console.')
+    assert result.data == snapshot('The image shows an organ, not a fruit.')

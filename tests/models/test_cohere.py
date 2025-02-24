@@ -105,11 +105,11 @@ async def test_request_simple_success(allow_model_requests: None):
         [
             ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
-                parts=[TextPart('world')], model_name='command-r7b-12-2024', timestamp=IsNow(tz=timezone.utc)
+                parts=[TextPart(content='world')], model_name='command-r7b-12-2024', timestamp=IsNow(tz=timezone.utc)
             ),
             ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
-                parts=[TextPart('world')], model_name='command-r7b-12-2024', timestamp=IsNow(tz=timezone.utc)
+                parts=[TextPart(content='world')], model_name='command-r7b-12-2024', timestamp=IsNow(tz=timezone.utc)
             ),
         ]
     )
@@ -298,7 +298,9 @@ async def test_request_tool_call(allow_model_requests: None):
                 ]
             ),
             ModelResponse(
-                parts=[TextPart('final response')], model_name='command-r7b-12-2024', timestamp=IsNow(tz=timezone.utc)
+                parts=[TextPart(content='final response')],
+                model_name='command-r7b-12-2024',
+                timestamp=IsNow(tz=timezone.utc),
             ),
         ]
     )

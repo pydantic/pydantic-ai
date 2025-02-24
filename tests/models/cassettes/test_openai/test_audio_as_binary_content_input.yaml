@@ -43,14 +43,9 @@ interactions:
       openai-organization:
       - pydantic-28gund
       openai-processing-ms:
-      - '2297'
+      - '1394'
       openai-version:
       - '2020-10-01'
-      set-cookie:
-      - __cf_bm=rP8AztBPEqxhAE3TRB7Fla4D_zXwv2jQIaT7Y3g3pj0-1740404660-1.0.1.1-0NwCu56CMee536cuzrWAK0jCudvZQgUSavexVuZOJYXwAPYNAORfDjqhkRJkJPyfnXJMn717Ez6pGboAwpMX0Q;
-        path=/; expires=Mon, 24-Feb-25 14:14:20 GMT; domain=.api.openai.com; HttpOnly; Secure; SameSite=None
-      - _cfuvid=4Ad0BKwHbznMipdXIy3iwsFbk0Y655SooeK.3YoA6TI-1740404660673-0.0.1.1-604800000; path=/; domain=.api.openai.com;
-        HttpOnly; Secure; SameSite=None
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       transfer-encoding:
@@ -63,8 +58,8 @@ interactions:
           content: The name mentioned in the audio is Marcelo.
           refusal: null
           role: assistant
-      created: 1740404659
-      id: chatcmpl-B4T2pf07aQydY6rACSYxY6YxRiUnR
+      created: 1740408639
+      id: chatcmpl-B4U51malankDFzpReXZCXRgKQsAx1
       model: gpt-4o-audio-preview-2024-12-17
       object: chat.completion
       service_tier: default

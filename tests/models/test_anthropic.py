@@ -373,7 +373,7 @@ async def test_multiple_parallel_tool_calls(allow_model_requests: None):
     second_request = all_messages[2]
     assert first_response.parts == [
         TextPart(
-            content='Let me retrieve the information about each family member to determine their ages.',
+            content="I'll retrieve the information about each family member to determine their ages.",
             part_kind='text',
         ),
         ToolCallPart(

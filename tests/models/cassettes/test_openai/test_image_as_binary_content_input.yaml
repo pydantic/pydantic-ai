@@ -42,14 +42,9 @@ interactions:
       openai-organization:
       - pydantic-28gund
       openai-processing-ms:
-      - '3418'
+      - '3988'
       openai-version:
       - '2020-10-01'
-      set-cookie:
-      - __cf_bm=5XjEYmT9KT6Tv7RprSgBbFKwFcMWwa1_SE8XTqM2AYY-1740404985-1.0.1.1-vK0qifgk8KJQBmoZHOS0QUCMELmaE7SeAAEKuqoBMv5G_t7qmCsVw8sXTPXCH14UkoP2e_uDtKcQw5pZFBzu.A;
-        path=/; expires=Mon, 24-Feb-25 14:19:45 GMT; domain=.api.openai.com; HttpOnly; Secure; SameSite=None
-      - _cfuvid=oNCING6vqt0l3I1diDaRV6nmKfAFViK6cw0CrmYy07Q-1740404985622-0.0.1.1-604800000; path=/; domain=.api.openai.com;
-        HttpOnly; Secure; SameSite=None
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       transfer-encoding:
@@ -63,8 +58,8 @@ interactions:
           content: The fruit in the image is a kiwi.
           refusal: null
           role: assistant
-      created: 1740404983
-      id: chatcmpl-B4T83ZiQSmoIGr6h7cVTGD43DsnbD
+      created: 1740408634
+      id: chatcmpl-B4U4wIOoauVGgr7Nqe5H2oj5tZoKK
       model: gpt-4o-2024-08-06
       object: chat.completion
       service_tier: default

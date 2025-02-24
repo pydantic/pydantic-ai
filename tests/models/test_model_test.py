@@ -96,7 +96,7 @@ def test_tool_retry():
         [
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
-                parts=[ToolCallPart('my_ret', {'x': 0})],
+                parts=[ToolCallPart(tool_name='my_ret', args={'x': 0})],
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -106,7 +106,7 @@ def test_tool_retry():
                 ]
             ),
             ModelResponse(
-                parts=[ToolCallPart('my_ret', {'x': 0})],
+                parts=[ToolCallPart(tool_name='my_ret', args={'x': 0})],
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
             ),

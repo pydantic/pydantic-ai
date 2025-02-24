@@ -157,7 +157,7 @@ def test_weather():
         [
             ModelRequest(parts=[UserPromptPart(content='London', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
-                parts=[ToolCallPart('get_location', '{"location_description": "London"}')],
+                parts=[ToolCallPart(tool_name='get_location', args='{"location_description": "London"}')],
                 model_name='function:weather_model',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -169,12 +169,7 @@ def test_weather():
                 ]
             ),
             ModelResponse(
-                parts=[
-                    ToolCallPart(
-                        'get_weather',
-                        '{"lat": 51, "lng": 0}',
-                    )
-                ],
+                parts=[ToolCallPart(tool_name='get_weather', args='{"lat": 51, "lng": 0}')],
                 model_name='function:weather_model',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -350,11 +345,11 @@ def test_call_all():
             ),
             ModelResponse(
                 parts=[
-                    ToolCallPart('foo', {'x': 0}),
-                    ToolCallPart('bar', {'x': 0}),
-                    ToolCallPart('baz', {'x': 0}),
-                    ToolCallPart('qux', {'x': 0}),
-                    ToolCallPart('quz', {'x': 'a'}),
+                    ToolCallPart(tool_name='foo', args={'x': 0}),
+                    ToolCallPart(tool_name='bar', args={'x': 0}),
+                    ToolCallPart(tool_name='baz', args={'x': 0}),
+                    ToolCallPart(tool_name='qux', args={'x': 0}),
+                    ToolCallPart(tool_name='quz', args={'x': 'a'}),
                 ],
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
