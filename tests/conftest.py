@@ -208,9 +208,25 @@ async def close_cached_httpx_client() -> AsyncIterator[None]:
 
 
 @pytest.fixture(scope='session')
-def image_content() -> BinaryContent:
-    image_bytes = (Path(__file__).parent / 'assets' / 'kiwi.png').read_bytes()
+def assets_path() -> Path:
+    return Path(__file__).parent / 'assets'
+
+
+@pytest.fixture(scope='session')
+def audio_content(assets_path: Path) -> BinaryContent:
+    audio_bytes = assets_path.joinpath('marcelo.mp3').read_bytes()
+    return BinaryContent(data=audio_bytes, media_type='audio/mpeg')
+
+
+@pytest.fixture(scope='session')
+def image_content(assets_path: Path) -> BinaryContent:
+    image_bytes = assets_path.joinpath('kiwi.png').read_bytes()
     return BinaryContent(data=image_bytes, media_type='image/png')
+
+
+@pytest.fixture(scope='session')
+def openai_api_key() -> str:
+    return os.getenv('OPENAI_API_KEY', 'mock-api-key')
 
 
 @pytest.fixture(scope='session')

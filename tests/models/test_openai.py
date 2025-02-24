@@ -8,7 +8,7 @@ from functools import cached_property
 from typing import Any, Literal, cast
 
 import pytest
-from inline_snapshot import Is, snapshot
+from inline_snapshot import snapshot
 from typing_extensions import TypedDict
 
 from pydantic_ai import Agent, ModelRetry, UnexpectedModelBehavior
@@ -636,71 +636,23 @@ async def test_image_url_input(allow_model_requests: None):
     )
 
 
-async def test_image_as_binary_content_input(allow_model_requests: None):
-    c = completion_message(ChatCompletionMessage(content='world', role='assistant'))
-    mock_client = MockOpenAI.create_mock(c)
-    m = OpenAIModel('gpt-4o', openai_client=mock_client)
+@pytest.mark.vcr()
+async def test_image_as_binary_content_input(
+    allow_model_requests: None, image_content: BinaryContent, openai_api_key: str
+):
+    m = OpenAIModel('gpt-4o', api_key=openai_api_key)
     agent = Agent(m)
 
-    base64_content = (
-        b'/9j/4AAQSkZJRgABAQEAYABgAAD/4QBYRXhpZgAATU0AKgAAAAgAA1IBAAEAAAABAAAAPgIBAAEAAAABAAAARgMBAAEAAAABAAAA'
-        b'WgAAAAAAAAAE'
-    )
-
-    result = await agent.run(['hello', BinaryContent(data=base64_content, media_type='image/jpeg')])
-    assert result.data == 'world'
-    assert get_mock_chat_completion_kwargs(mock_client) == snapshot(
-        [
-            {
-                'model': 'gpt-4o',
-                'messages': [
-                    {
-                        'role': 'user',
-                        'content': [
-                            {'text': 'hello', 'type': 'text'},
-                            {
-                                'image_url': {
-                                    'url': 'data:image/jpeg;base64,LzlqLzRBQVFTa1pKUmdBQkFRRUFZQUJnQUFELzRRQllSWGhwWmdBQVRVMEFLZ0FBQUFnQUExSUJBQUVBQUFBQkFBQUFQZ0lCQUFFQUFBQUJBQUFBUmdNQkFBRUFBQUFCQUFBQVdnQUFBQUFBQUFBRQ=='
-                                },
-                                'type': 'image_url',
-                            },
-                        ],
-                    }
-                ],
-                'n': 1,
-            }
-        ]
-    )
+    result = await agent.run(['What fruit is in the image?', image_content])
+    assert result.data == snapshot('The fruit in the image is a kiwi.')
 
 
-@pytest.mark.parametrize(('media_type', 'file_format'), [('audio/wav', 'wav'), ('audio/mpeg', 'mp3')])
-async def test_audio_as_binary_content_input(allow_model_requests: None, media_type: str, file_format: str):
-    c = completion_message(ChatCompletionMessage(content='world', role='assistant'))
-    mock_client = MockOpenAI.create_mock(c)
-    m = OpenAIModel('gpt-4o', openai_client=mock_client)
+@pytest.mark.vcr()
+async def test_audio_as_binary_content_input(
+    allow_model_requests: None, audio_content: BinaryContent, openai_api_key: str
+):
+    m = OpenAIModel('gpt-4o-audio-preview', api_key=openai_api_key)
     agent = Agent(m)
 
-    base64_content = b'//uQZ'
-
-    result = await agent.run(['hello', BinaryContent(data=base64_content, media_type=media_type)])
-    assert result.data == 'world'
-    assert get_mock_chat_completion_kwargs(mock_client) == snapshot(
-        [
-            {
-                'model': 'gpt-4o',
-                'messages': [
-                    {
-                        'role': 'user',
-                        'content': [
-                            {'text': 'hello', 'type': 'text'},
-                            {
-                                'input_audio': {'data': 'Ly91UVo=', 'format': Is(file_format)},
-                                'type': 'input_audio',
-                            },
-                        ],
-                    }
-                ],
-                'n': 1,
-            }
-        ]
-    )
+    result = await agent.run(['Whose name is mentioned in the audio?', audio_content])
+    assert result.data == snapshot('The name mentioned in the audio is Marcelo.')
