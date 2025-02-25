@@ -17,8 +17,7 @@ def on_config(config: MkDocsConfig):
 
 
 def on_page_content(html: str, page: Page, config: MkDocsConfig, files: Files) -> str:
-    if not os.getenv('CI_DOCS_BUILD'):
-        # Only run in CI
+    if not os.getenv('CI'):
         return html
 
     soup = BeautifulSoup(html, 'html.parser')

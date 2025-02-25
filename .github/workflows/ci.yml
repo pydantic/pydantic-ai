@@ -66,14 +66,11 @@ jobs:
 
         # always build docs to check it works without insiders packages
       - run: make docs
-        env:
-          CI_DOCS_BUID: 1
 
       - run: make docs-insiders
         if: github.event.pull_request.head.repo.full_name == github.repository || github.ref == 'refs/heads/main'
         env:
           PPPR_TOKEN: ${{ secrets.PPPR_TOKEN }}
-          CI_DOCS_BUID: 1
 
       - run: tree -sh site
       - uses: actions/setup-node@v4
