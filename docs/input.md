@@ -1,13 +1,13 @@
-# Image & Audio Input
+# Image and Audio Input
 
-Nowadays, some of the LLMs are also able to understand audio and image content.
+Some LLMs are now capable of understanding both audio and image content.
 
 ## Image Input
 
 !!! info
-    Some models don't support image input. Please check the model's documentation to see if it supports image input.
+    Some models do not support image input. Please check the model's documentation to confirm whether it supports image input.
 
-You can use [`ImageUrl`][pydantic_ai.ImageUrl] in case you have the URL in hands:
+If you have a direct URL for the image, you can use [`ImageUrl`][pydantic_ai.ImageUrl]:
 
 ```py {title="main.py" test="skip" lint="skip"}
 from pydantic_ai import Agent, ImageUrl
@@ -25,14 +25,14 @@ print(result.data)
 #> This is the logo for Pydantic, a data validation and settings management library in Python.
 ```
 
-You can also use the [`BinaryContent`][pydantic_ai.BinaryContent], if you have it locally:
+If you have the image locally, you can also use [`BinaryContent`][pydantic_ai.BinaryContent]:
 
 ```py {title="main.py" test="skip" lint="skip"}
 import httpx
 
 from pydantic_ai import Agent, BinaryContent
 
-image_response = httpx.get('https://iili.io/3Hs4FMg.png')  # pydantic logo
+image_response = httpx.get('https://iili.io/3Hs4FMg.png')  # Pydantic logo
 
 agent = Agent(model='openai:gpt-4o')
 result = agent.run_sync(
@@ -45,14 +45,11 @@ print(result.data)
 #> This is the logo for Pydantic, a data validation and settings management library in Python.
 ```
 
-1. We are downloading the image to make the example runnable, but you can use `Path().read_bytes()`
-   to read the content of a file locally.
+1. To ensure the example is runnable we download this image from the web, but you can also use `Path().read_bytes()` to read a local file's contents.
 
 ## Audio Input
 
 !!! info
-    Some models don't support audio input. Please check the model's documentation to see if it supports audio input.
+    Some models do not support audio input. Please check the model's documentation to confirm whether it supports audio input.
 
-You can either use [`AudioUrl`][pydantic_ai.AudioUrl] or [`BinaryContent`][pydantic_ai.BinaryContent] to provide the audio input.
-
-The use is analogous to the above.
+You can provide audio input using either [`AudioUrl`][pydantic_ai.AudioUrl] or [`BinaryContent`][pydantic_ai.BinaryContent]. The process is analogous to the examples above.
