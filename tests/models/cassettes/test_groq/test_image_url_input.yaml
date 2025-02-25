@@ -1,0 +1,84 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '291'
+      content-type:
+      - application/json
+      host:
+      - api.groq.com
+    method: POST
+    parsed_body:
+      messages:
+      - content:
+        - text: What is the name of this fruit?
+          type: text
+        - image_url:
+            url: https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg
+          type: image_url
+        role: user
+      model: llama-3.2-11b-vision-preview
+      n: 1
+      stream: false
+    uri: https://api.groq.com/openai/v1/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      cache-control:
+      - private, max-age=0, no-store, no-cache, must-revalidate
+      connection:
+      - keep-alive
+      content-length:
+      - '1314'
+      content-type:
+      - application/json
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          content: |-
+            The image you provided appears to be a potato. It is a root vegetable that belongs to the nightshade family. Potatoes are a popular and versatile crop, widely cultivated and consumed around the world.
+
+            **Characteristics and Uses:**
+
+            Potatoes are known for their starchy, slightly sweet flavor and soft, white interior. They come in various shapes, sizes, and colors including white, yellow, red, and purple. Some popular types of potatoes include:
+
+            * Russet potatoes (also known as Idaho potatoes)
+            * Red potatoes
+            * Yukon gold potatoes
+            * Sweet potatoes
+
+            Potatoes are a versatile food that can be prepared in many different ways, such as baked, mashed, boiled, fried, or used in soups and stews. They are an excellent source of dietary fiber, potassium, and several key vitamins and minerals.
+          role: assistant
+      created: 1740435524
+      id: chatcmpl-80d45e77-08f4-434d-971b-cd731e4772c5
+      model: llama-3.2-11b-vision-preview
+      object: chat.completion
+      system_fingerprint: fp_433a4d274a
+      usage:
+        completion_time: 0.243321808
+        completion_tokens: 170
+        prompt_time: 0.000571927
+        prompt_tokens: 19
+        queue_time: 0.172874337
+        total_time: 0.243893735
+        total_tokens: 189
+      x_groq:
+        id: req_01jmx0n29nf00a3x2fjfvyzrhs
+    status:
+      code: 200
+      message: OK
+version: 1

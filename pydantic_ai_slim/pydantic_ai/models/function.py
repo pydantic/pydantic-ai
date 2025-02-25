@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 import inspect
 import re
-from collections.abc import AsyncIterator, Awaitable, Iterable
+from collections.abc import AsyncIterator, Awaitable, Iterable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -14,6 +14,9 @@ from typing_extensions import TypeAlias, assert_never, overload
 from .. import _utils, usage
 from .._utils import PeekableAsyncStream
 from ..messages import (
+    AudioUrl,
+    BinaryContent,
+    ImageUrl,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -23,6 +26,7 @@ from ..messages import (
     TextPart,
     ToolCallPart,
     ToolReturnPart,
+    UserContent,
     UserPromptPart,
 )
 from ..settings import ModelSettings
@@ -239,8 +243,7 @@ def _estimate_usage(messages: Iterable[ModelMessage]) -> usage.Usage:
         if isinstance(message, ModelRequest):
             for part in message.parts:
                 if isinstance(part, (SystemPromptPart, UserPromptPart)):
-                    # TODO(Marcelo): I'll support this.
-                    request_tokens += _estimate_string_tokens(part.content)  # type: ignore
+                    request_tokens += _estimate_string_tokens(part.content)
                 elif isinstance(part, ToolReturnPart):
                     request_tokens += _estimate_string_tokens(part.model_response_str())
                 elif isinstance(part, RetryPromptPart):
@@ -263,7 +266,11 @@ def _estimate_usage(messages: Iterable[ModelMessage]) -> usage.Usage:
     )
 
 
-def _estimate_string_tokens(content: str) -> int:
+def _estimate_string_tokens(content: str | Sequence[UserContent]) -> int:
     if not content:
         return 0
-    return len(re.split(r'[\s",.:]+', content.strip()))
+    if isinstance(content, str):
+        return len(re.split(r'[\s",.:]+', content.strip()))
+    # TODO(Marcelo): We need to study how we can estimate the tokens for these types of content.
+    assert isinstance(content, (AudioUrl, ImageUrl, BinaryContent))
+    return 0

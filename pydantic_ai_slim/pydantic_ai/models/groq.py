@@ -394,6 +394,6 @@ def _map_user_prompt(part: UserPromptPart) -> chat.ChatCompletionUserMessagePara
                     content.append(chat.ChatCompletionContentPartImageParam(image_url=image_url, type='image_url'))
                 else:
                     raise ValueError('Only images are supported for binary content in Groq.')
-            else:
+            else:  # pragma: no cover
                 raise ValueError(f'Unsupported content type: {type(item)}')
     return chat.ChatCompletionUserMessageParam(role='user', content=content)

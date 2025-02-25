@@ -8,7 +8,6 @@ from functools import cached_property
 from typing import Any, Literal, cast
 
 import pytest
-from dirty_equals import IsDatetime
 from inline_snapshot import snapshot
 from typing_extensions import TypedDict
 
@@ -493,41 +492,31 @@ async def test_no_delta(allow_model_requests: None):
         assert result.is_complete
 
 
-async def test_image_url_input(allow_model_requests: None):
-    c = completion_message(ChatCompletionMessage(content='world', role='assistant'))
-    mock_client = MockGroq.create_mock(c)
-    m = GroqModel('llama-3.3-70b-versatile', groq_client=mock_client)
+@pytest.mark.vcr()
+async def test_image_url_input(allow_model_requests: None, groq_api_key: str):
+    m = GroqModel('llama-3.2-11b-vision-preview', api_key=groq_api_key)
     agent = Agent(m)
 
     result = await agent.run(
         [
-            'hello',
+            'What is the name of this fruit?',
             ImageUrl(url='https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg'),
         ]
     )
-    assert result.data == 'world'
-    assert result.all_messages() == snapshot(
-        [
-            ModelRequest(
-                parts=[
-                    UserPromptPart(
-                        content=[
-                            'hello',
-                            ImageUrl(
-                                url='https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg'
-                            ),
-                        ],
-                        timestamp=IsDatetime(),  # type: ignore
-                    )
-                ]
-            ),
-            ModelResponse(
-                parts=[TextPart(content='world')],
-                model_name='llama-3.3-70b-versatile-123',
-                timestamp=IsDatetime(),  # type: ignore
-            ),
-        ]
-    )
+    assert result.data == snapshot("""\
+The image you provided appears to be a potato. It is a root vegetable that belongs to the nightshade family. Potatoes are a popular and versatile crop, widely cultivated and consumed around the world.
+
+**Characteristics and Uses:**
+
+Potatoes are known for their starchy, slightly sweet flavor and soft, white interior. They come in various shapes, sizes, and colors including white, yellow, red, and purple. Some popular types of potatoes include:
+
+* Russet potatoes (also known as Idaho potatoes)
+* Red potatoes
+* Yukon gold potatoes
+* Sweet potatoes
+
+Potatoes are a versatile food that can be prepared in many different ways, such as baked, mashed, boiled, fried, or used in soups and stews. They are an excellent source of dietary fiber, potassium, and several key vitamins and minerals.\
+""")
 
 
 @pytest.mark.parametrize('media_type', ['audio/wav', 'audio/mpeg'])
@@ -543,36 +532,14 @@ async def test_audio_as_binary_content_input(allow_model_requests: None, media_t
         await agent.run(['hello', BinaryContent(data=base64_content, media_type=media_type)])
 
 
-async def test_image_as_binary_content_input(allow_model_requests: None):
-    c = completion_message(ChatCompletionMessage(content='world', role='assistant'))
-    mock_client = MockGroq.create_mock(c)
-    m = GroqModel('llama-3.3-70b-versatile', groq_client=mock_client)
+@pytest.mark.vcr()
+async def test_image_as_binary_content_input(
+    allow_model_requests: None, groq_api_key: str, image_content: BinaryContent
+) -> None:
+    m = GroqModel('llama-3.2-11b-vision-preview', api_key=groq_api_key)
     agent = Agent(m)
 
-    base64_content = (
-        b'/9j/4AAQSkZJRgABAQEAYABgAAD/4QBYRXhpZgAATU0AKgAAAAgAA1IBAAEAAAABAAAAPgIBAAEAAAABAAAARgMBAAEAAAABAAAA'
-        b'WgAAAAAAAAAE'
-    )
-
-    result = await agent.run(['hello', BinaryContent(data=base64_content, media_type='image/jpeg')])
-    assert result.data == 'world'
-    assert result.all_messages() == snapshot(
-        [
-            ModelRequest(
-                parts=[
-                    UserPromptPart(
-                        content=[
-                            'hello',
-                            BinaryContent(data=base64_content, media_type='image/jpeg'),
-                        ],
-                        timestamp=IsDatetime(),  # type: ignore
-                    )
-                ]
-            ),
-            ModelResponse(
-                parts=[TextPart(content='world')],
-                model_name='llama-3.3-70b-versatile-123',
-                timestamp=IsDatetime(),  # type: ignore
-            ),
-        ]
+    result = await agent.run(['What is the name of this fruit?', image_content])
+    assert result.data == snapshot(
+        "This is a kiwi, also known as a Chinese gooseberry. It's a small, green fruit with a hairy, brown skin and a bright green, juicy flesh inside. Kiwis are native to China and are often eaten raw, either on their own or added to salads, smoothies, and desserts. They're also a good source of vitamin C, vitamin K, and other nutrients."
     )
