@@ -41,7 +41,7 @@ class AudioUrl:
     url: str
     """The URL of the audio file."""
 
-    type: Literal['audio-url'] = 'audio-url'
+    kind: Literal['audio-url'] = 'audio-url'
     """Type identifier, this is available on all parts as a discriminator."""
 
     @property
@@ -62,7 +62,7 @@ class ImageUrl:
     url: str
     """The URL of the image."""
 
-    type: Literal['image-url'] = 'image-url'
+    kind: Literal['image-url'] = 'image-url'
     """Type identifier, this is available on all parts as a discriminator."""
 
     @property
@@ -94,7 +94,7 @@ class BinaryContent:
     media_type: AudioMediaType | ImageMediaType | str
     """The media type of the binary data."""
 
-    type: Literal['binary'] = 'binary'
+    kind: Literal['binary'] = 'binary'
     """Type identifier, this is available on all parts as a discriminator."""
 
     @property
