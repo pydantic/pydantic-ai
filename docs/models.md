@@ -694,7 +694,7 @@ print(response.all_messages())
     ),
     ModelResponse(
         parts=[TextPart(content='Paris', part_kind='text')],
-        model_name='function:model_logic',
+        model_name='claude-3-5-sonnet-latest',
         timestamp=datetime.datetime(...),
         kind='response',
     ),
@@ -702,7 +702,7 @@ print(response.all_messages())
 """
 ```
 
-The `ModelResponse` message above indicates that the result was returned by the Anthropic model, which is the second model specified in the `FallbackModel`.
+The `ModelResponse` message above indicates in the `model_name` field that the result was returned by the Anthropic model, which is the second model specified in the `FallbackModel`.
 
 !!! note
     Each model's options should be configured individually. For example, `base_url`, `api_key`, and custom clients should be set on each model itself, not on the `FallbackModel`.

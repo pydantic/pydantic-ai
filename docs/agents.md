@@ -136,7 +136,7 @@ async def main():
         HandleResponseNode(
             model_response=ModelResponse(
                 parts=[TextPart(content='Paris', part_kind='text')],
-                model_name='function:model_logic',
+                model_name='gpt-4o',
                 timestamp=datetime.datetime(...),
                 kind='response',
             )
@@ -197,7 +197,7 @@ async def main():
             HandleResponseNode(
                 model_response=ModelResponse(
                     parts=[TextPart(content='Paris', part_kind='text')],
-                    model_name='function:model_logic',
+                    model_name='gpt-4o',
                     timestamp=datetime.datetime(...),
                     kind='response',
                 )
@@ -612,7 +612,7 @@ with capture_run_messages() as messages:  # (2)!
                         part_kind='tool-call',
                     )
                 ],
-                model_name='function:model_logic',
+                model_name='gpt-4o',
                 timestamp=datetime.datetime(...),
                 kind='response',
             ),
@@ -637,7 +637,7 @@ with capture_run_messages() as messages:  # (2)!
                         part_kind='tool-call',
                     )
                 ],
-                model_name='function:model_logic',
+                model_name='gpt-4o',
                 timestamp=datetime.datetime(...),
                 kind='response',
             ),
