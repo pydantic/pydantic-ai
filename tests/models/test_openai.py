@@ -32,7 +32,7 @@ from ..conftest import IsNow, TestEnv, raise_if_exception, try_import
 from .mock_async_stream import MockAsyncStream
 
 with try_import() as imports_successful:
-    from openai import NOT_GIVEN, APIStatusError, AsyncOpenAI, BadRequestError, OpenAIError
+    from openai import NOT_GIVEN, APIStatusError, AsyncOpenAI, OpenAIError
     from openai.types import chat
     from openai.types.chat.chat_completion import Choice
     from openai.types.chat.chat_completion_chunk import (
@@ -582,7 +582,7 @@ async def test_openai_o1_mini_system_role(
     model = OpenAIModel('o1-mini', api_key=openai_api_key, system_prompt_role=system_prompt_role)
     agent = Agent(model=model, system_prompt='You are a helpful assistant.')
 
-    with pytest.raises(BadRequestError, match=r".*Unsupported value: 'messages\[0\]\.role' does not support.*"):
+    with pytest.raises(ModelStatusError, match=r".*Unsupported value: 'messages\[0\]\.role' does not support.*"):
         await agent.run('Hello')
 
 
