@@ -286,7 +286,7 @@ class GeminiModel(Model):
                     if isinstance(part, SystemPromptPart):
                         sys_prompt_parts.append(_GeminiTextPart(text=part.content))
                     elif isinstance(part, UserPromptPart):
-                        message_parts.extend(await _map_user_prompt(part))
+                        message_parts.extend(await cls._map_user_prompt(part))
                     elif isinstance(part, ToolReturnPart):
                         message_parts.append(_response_part_from_response(part.tool_name, part.model_response_object()))
                     elif isinstance(part, RetryPromptPart):
@@ -306,6 +306,34 @@ class GeminiModel(Model):
                 assert_never(m)
 
         return sys_prompt_parts, contents
+
+    @staticmethod
+    async def _map_user_prompt(part: UserPromptPart) -> list[_GeminiPartUnion]:
+        if isinstance(part.content, str):
+            return [{'text': part.content}]
+        else:
+            content: list[_GeminiPartUnion] = []
+            for item in part.content:
+                if isinstance(item, str):
+                    content.append({'text': item})
+                elif isinstance(item, BinaryContent):
+                    base64_encoded = base64.b64encode(item.data).decode('utf-8')
+                    content.append(_GeminiInlineDataPart(data=base64_encoded, mime_type=item.media_type))
+                elif isinstance(item, (AudioUrl, ImageUrl)):
+                    try:
+                        content.append(_GeminiFileDataData(file_uri=item.url, mime_type=item.media_type))
+                    except ValueError:
+                        # Download the file if can't find the mime type.
+                        client = cached_async_http_client()
+                        response = await client.get(item.url, follow_redirects=True)
+                        response.raise_for_status()
+                        base64_encoded = base64.b64encode(response.content).decode('utf-8')
+                        content.append(
+                            _GeminiInlineDataPart(data=base64_encoded, mime_type=response.headers['Content-Type'])
+                        )
+                else:
+                    assert_never(item)
+        return content
 
 
 class AuthProtocol(Protocol):
@@ -814,31 +842,3 @@ def _ensure_decodeable(content: bytearray) -> bytearray:
             content = content[:-1]  # this will definitely succeed before we run out of bytes
         else:
             return content
-
-
-async def _map_user_prompt(part: UserPromptPart) -> list[_GeminiPartUnion]:
-    if isinstance(part.content, str):
-        return [{'text': part.content}]
-    else:
-        content: list[_GeminiPartUnion] = []
-        for item in part.content:
-            if isinstance(item, str):
-                content.append({'text': item})
-            elif isinstance(item, BinaryContent):
-                base64_encoded = base64.b64encode(item.data).decode('utf-8')
-                content.append(_GeminiInlineDataPart(data=base64_encoded, mime_type=item.media_type))
-            elif isinstance(item, (AudioUrl, ImageUrl)):
-                try:
-                    content.append(_GeminiFileDataData(file_uri=item.url, mime_type=item.media_type))
-                except ValueError:
-                    # Download the file if can't find the mime type.
-                    client = cached_async_http_client()
-                    response = await client.get(item.url, follow_redirects=True)
-                    response.raise_for_status()
-                    base64_encoded = base64.b64encode(response.content).decode('utf-8')
-                    content.append(
-                        _GeminiInlineDataPart(data=base64_encoded, mime_type=response.headers['Content-Type'])
-                    )
-            else:
-                assert_never(item)
-    return content

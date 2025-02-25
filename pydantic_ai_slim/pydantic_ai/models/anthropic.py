@@ -281,7 +281,7 @@ class AnthropicModel(Model):
                     if isinstance(request_part, SystemPromptPart):
                         system_prompt += request_part.content
                     elif isinstance(request_part, UserPromptPart):
-                        async for content in _map_user_prompt(request_part):
+                        async for content in self._map_user_prompt(request_part):
                             user_content_params.append(content)
                     elif isinstance(request_part, ToolReturnPart):
                         tool_result_block_param = ToolResultBlockParam(
@@ -320,6 +320,32 @@ class AnthropicModel(Model):
             else:
                 assert_never(m)
         return system_prompt, anthropic_messages
+
+    @staticmethod
+    async def _map_user_prompt(part: UserPromptPart) -> AsyncGenerator[ImageBlockParam | TextBlockParam]:
+        if isinstance(part.content, str):
+            yield TextBlockParam(text=part.content, type='text')
+        else:
+            for item in part.content:
+                if isinstance(item, str):
+                    yield TextBlockParam(text=item, type='text')
+                elif isinstance(item, BinaryContent):
+                    if item.is_image:
+                        yield ImageBlockParam(
+                            source={'data': io.BytesIO(item.data), 'media_type': item.media_type, 'type': 'base64'},  # type: ignore
+                            type='image',
+                        )
+                    else:
+                        raise RuntimeError('Only images are supported for binary content')
+                elif isinstance(item, ImageUrl):
+                    response = await cached_async_http_client().get(item.url)
+                    response.raise_for_status()
+                    yield ImageBlockParam(
+                        source={'data': io.BytesIO(response.content), 'media_type': 'image/jpeg', 'type': 'base64'},
+                        type='image',
+                    )
+                else:
+                    raise RuntimeError(f'Unsupported content type: {type(item)}')
 
     @staticmethod
     def _map_tool_definition(f: ToolDefinition) -> ToolParam:
@@ -425,29 +451,3 @@ class AnthropicStreamedResponse(StreamedResponse):
     def timestamp(self) -> datetime:
         """Get the timestamp of the response."""
         return self._timestamp
-
-
-async def _map_user_prompt(part: UserPromptPart) -> AsyncGenerator[ImageBlockParam | TextBlockParam]:
-    if isinstance(part.content, str):
-        yield TextBlockParam(text=part.content, type='text')
-    else:
-        for item in part.content:
-            if isinstance(item, str):
-                yield TextBlockParam(text=item, type='text')
-            elif isinstance(item, BinaryContent):
-                if item.is_image:
-                    yield ImageBlockParam(
-                        source={'data': io.BytesIO(item.data), 'media_type': item.media_type, 'type': 'base64'},  # type: ignore
-                        type='image',
-                    )
-                else:
-                    raise RuntimeError('Only images are supported for binary content')
-            elif isinstance(item, ImageUrl):
-                response = await cached_async_http_client().get(item.url)
-                response.raise_for_status()
-                yield ImageBlockParam(
-                    source={'data': io.BytesIO(response.content), 'media_type': 'image/jpeg', 'type': 'base64'},
-                    type='image',
-                )
-            else:
-                raise RuntimeError(f'Unsupported content type: {type(item)}')
