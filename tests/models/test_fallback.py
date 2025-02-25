@@ -54,7 +54,7 @@ def test_first_successful() -> None:
             ),
             ModelResponse(
                 parts=[TextPart(content='success')],
-                model_name='function:success_response',
+                model_name='function:success_response:',
                 timestamp=IsNow(tz=timezone.utc),
             ),
         ]
@@ -78,7 +78,7 @@ def test_first_failed() -> None:
             ),
             ModelResponse(
                 parts=[TextPart(content='success')],
-                model_name='function:success_response',
+                model_name='function:success_response:',
                 timestamp=IsNow(tz=timezone.utc),
             ),
         ]
@@ -122,17 +122,17 @@ async def test_first_success_streaming() -> None:
             [
                 ModelResponse(
                     parts=[TextPart(content='hello ')],
-                    model_name='function:success_response_stream',
+                    model_name='function::success_response_stream',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='hello world')],
-                    model_name='function:success_response_stream',
+                    model_name='function::success_response_stream',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='hello world')],
-                    model_name='function:success_response_stream',
+                    model_name='function::success_response_stream',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
             ]
@@ -148,17 +148,17 @@ async def test_first_failed_streaming() -> None:
             [
                 ModelResponse(
                     parts=[TextPart(content='hello ')],
-                    model_name='function:success_response_stream',
+                    model_name='function::success_response_stream',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='hello world')],
-                    model_name='function:success_response_stream',
+                    model_name='function::success_response_stream',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='hello world')],
-                    model_name='function:success_response_stream',
+                    model_name='function::success_response_stream',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
             ]

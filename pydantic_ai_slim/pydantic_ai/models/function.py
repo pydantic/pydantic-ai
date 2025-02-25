@@ -132,7 +132,7 @@ class FunctionModel(Model):
         if isinstance(first, _utils.Unset):
             raise ValueError('Stream function must return at least one item')
 
-        yield FunctionStreamedResponse(_model_name=f'function:{self.stream_function.__name__}', _iter=response_stream)
+        yield FunctionStreamedResponse(_model_name=self._model_name, _iter=response_stream)
 
     @property
     def model_name(self) -> str:

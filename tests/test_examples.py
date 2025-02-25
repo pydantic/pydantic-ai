@@ -31,7 +31,6 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import KnownModelName, Model, infer_model
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
-from pydantic_ai.models.openai import OpenAIModel
 from pydantic_ai.models.test import TestModel
 
 from .conftest import ClientWithHandler, TestEnv
@@ -396,6 +395,11 @@ def mock_infer_model(model: Model | KnownModelName) -> Model:
 
         mock_fallback_models: list[Model] = []
         for m in model.models:
+            try:
+                from pydantic_ai.models.openai import OpenAIModel
+            except ImportError:
+                OpenAIModel = type(None)
+
             if isinstance(m, OpenAIModel):
                 # Raise an HTTP error for OpenAIModel
                 mock_fallback_models.append(FunctionModel(raise_http_error, model_name=m.model_name))
