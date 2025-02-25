@@ -12,7 +12,7 @@ import pytest
 from inline_snapshot import snapshot
 from typing_extensions import TypedDict
 
-from pydantic_ai import Agent, ModelRetry, ModelStatusError, UnexpectedModelBehavior
+from pydantic_ai import Agent, ModelHTTPError, ModelRetry, UnexpectedModelBehavior
 from pydantic_ai.messages import (
     BinaryContent,
     ImageUrl,
@@ -582,7 +582,7 @@ async def test_openai_o1_mini_system_role(
     model = OpenAIModel('o1-mini', api_key=openai_api_key, system_prompt_role=system_prompt_role)
     agent = Agent(model=model, system_prompt='You are a helpful assistant.')
 
-    with pytest.raises(ModelStatusError, match=r".*Unsupported value: 'messages\[0\]\.role' does not support.*"):
+    with pytest.raises(ModelHTTPError, match=r".*Unsupported value: 'messages\[0\]\.role' does not support.*"):
         await agent.run('Hello')
 
 
@@ -678,6 +678,6 @@ def test_model_status_error(allow_model_requests: None) -> None:
     )
     m = OpenAIModel('gpt-4o', openai_client=mock_client)
     agent = Agent(m)
-    with pytest.raises(ModelStatusError) as exc_info:
+    with pytest.raises(ModelHTTPError) as exc_info:
         agent.run_sync('hello')
     assert str(exc_info.value) == snapshot("status_code: 500, model_name: gpt-4o, body: {'error': 'test error'}")

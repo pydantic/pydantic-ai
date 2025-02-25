@@ -3,8 +3,9 @@ from importlib.metadata import version
 from .agent import Agent, EndStrategy, HandleResponseNode, ModelRequestNode, UserPromptNode, capture_run_messages
 from .exceptions import (
     AgentRunError,
+    FallbackExceptionGroup,
+    ModelHTTPError,
     ModelRetry,
-    ModelStatusError,
     UnexpectedModelBehavior,
     UsageLimitExceeded,
     UserError,
@@ -24,7 +25,8 @@ __all__ = (
     # exceptions
     'AgentRunError',
     'ModelRetry',
-    'ModelStatusError',
+    'ModelHTTPError',
+    'FallbackExceptionGroup',
     'UnexpectedModelBehavior',
     'UsageLimitExceeded',
     'UserError',

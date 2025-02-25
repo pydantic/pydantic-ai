@@ -12,7 +12,7 @@ import httpx
 import pytest
 from inline_snapshot import snapshot
 
-from pydantic_ai import Agent, ModelRetry, ModelStatusError
+from pydantic_ai import Agent, ModelHTTPError, ModelRetry
 from pydantic_ai.messages import (
     BinaryContent,
     ImageUrl,
@@ -592,7 +592,7 @@ def test_model_status_error(allow_model_requests: None) -> None:
     )
     m = AnthropicModel('claude-3-5-sonnet-latest', anthropic_client=mock_client)
     agent = Agent(m)
-    with pytest.raises(ModelStatusError) as exc_info:
+    with pytest.raises(ModelHTTPError) as exc_info:
         agent.run_sync('hello')
     assert str(exc_info.value) == snapshot(
         "status_code: 500, model_name: claude-3-5-sonnet-latest, body: {'error': 'test error'}"

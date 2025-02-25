@@ -11,7 +11,7 @@ from typing import Literal, Union, cast, overload
 from httpx import AsyncClient as AsyncHTTPClient
 from typing_extensions import assert_never
 
-from .. import ModelStatusError, UnexpectedModelBehavior, _utils, usage
+from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._utils import guard_tool_call_id as _guard_tool_call_id
 from ..messages import (
     BinaryContent,
@@ -217,7 +217,7 @@ class GroqModel(Model):
             )
         except APIStatusError as e:
             if (status_code := e.status_code) >= 400:
-                raise ModelStatusError(status_code=status_code, model_name=self.model_name, body=e.body) from e
+                raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
             raise
 
     def _process_response(self, response: chat.ChatCompletion) -> ModelResponse:

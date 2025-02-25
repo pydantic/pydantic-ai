@@ -1,6 +1,12 @@
 from __future__ import annotations as _annotations
 
 import json
+import sys
+
+if sys.version_info < (3, 11):
+    from exceptiongroup import ExceptionGroup
+else:
+    ExceptionGroup = ExceptionGroup
 
 __all__ = (
     'ModelRetry',
@@ -8,7 +14,8 @@ __all__ = (
     'AgentRunError',
     'UnexpectedModelBehavior',
     'UsageLimitExceeded',
-    'ModelStatusError',
+    'ModelHTTPError',
+    'FallbackExceptionGroup',
 )
 
 
@@ -81,7 +88,7 @@ class UnexpectedModelBehavior(AgentRunError):
             return self.message
 
 
-class ModelStatusError(AgentRunError):
+class ModelHTTPError(AgentRunError):
     """Raised when an model provider response has a status code of 4xx or 5xx."""
 
     status_code: int
@@ -102,3 +109,7 @@ class ModelStatusError(AgentRunError):
         self.body = body
         message = f'status_code: {status_code}, model_name: {model_name}, body: {body}'
         super().__init__(message)
+
+
+class FallbackExceptionGroup(ExceptionGroup):
+    """A group of exceptions that can be raised when all fallback models fail."""

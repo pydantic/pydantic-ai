@@ -14,7 +14,7 @@ from pydantic import BaseModel
 from typing_extensions import TypedDict
 
 from pydantic_ai.agent import Agent
-from pydantic_ai.exceptions import ModelRetry, ModelStatusError
+from pydantic_ai.exceptions import ModelHTTPError, ModelRetry
 from pydantic_ai.messages import (
     BinaryContent,
     ImageUrl,
@@ -1828,6 +1828,6 @@ def test_model_status_error(allow_model_requests: None) -> None:
     )
     m = MistralModel('mistral-large-latest', client=mock_client)
     agent = Agent(m)
-    with pytest.raises(ModelStatusError) as exc_info:
+    with pytest.raises(ModelHTTPError) as exc_info:
         agent.run_sync('hello')
     assert str(exc_info.value) == snapshot('status_code: 500, model_name: mistral-large-latest, body: test error')

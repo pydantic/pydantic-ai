@@ -707,14 +707,18 @@ print(response.all_messages())
     You should configure each of model options individually, e.g. `base_url`, `api_key`, custom clients, etc. for each model should be set on the model itself, not the `FallbackModel`.
 
 In this example, we demonstrate the exception handling capabilities of `FallbackModel`. If all models fail,
-an [`ExceptionGroup`][ExceptionGroup] exception is raised, which contains a group of
-[`ModelStatusError`][pydantic_ai.exceptions.ModelStatusError] exceptions raised during the `run` execution.
+a [`FallbackExceptionGroup`][pydantic_ai.exceptions.FallbackExceptionGroup] exception is raised, which contains
+a group of exceptions raised during the `run` execution.
+
+By default, the `FallbackModel` will only fallback to the next model if the current model raises a
+[`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError] exception. You can customise this behaviour by
+passing a custom `fallback_on` argument to the `FallbackModel` constructor.
 
 === "Python >=3.11"
 
     ```python {title="fallback_model_failure.py" py="3.11"}
     from pydantic_ai import Agent
-    from pydantic_ai.exceptions import ModelStatusError
+    from pydantic_ai.exceptions import ModelHTTPError
     from pydantic_ai.models.anthropic import AnthropicModel
     from pydantic_ai.models.fallback import FallbackModel
     from pydantic_ai.models.openai import OpenAIModel
@@ -726,7 +730,7 @@ an [`ExceptionGroup`][ExceptionGroup] exception is raised, which contains a grou
     agent = Agent(fallback_model)
     try:
         response = agent.run_sync('What is the capital of France?')
-    except* ModelStatusError as exc_group:
+    except* ModelHTTPError as exc_group:
         for exc in exc_group.exceptions:
             print(exc)
     ```
@@ -741,7 +745,7 @@ an [`ExceptionGroup`][ExceptionGroup] exception is raised, which contains a grou
     from exceptiongroup import catch
 
     from pydantic_ai import Agent
-    from pydantic_ai.exceptions import ModelStatusError
+    from pydantic_ai.exceptions import ModelHTTPError
     from pydantic_ai.models.anthropic import AnthropicModel
     from pydantic_ai.models.fallback import FallbackModel
     from pydantic_ai.models.openai import OpenAIModel
@@ -757,6 +761,6 @@ an [`ExceptionGroup`][ExceptionGroup] exception is raised, which contains a grou
     fallback_model = FallbackModel(openai_model, anthropic_model)
 
     agent = Agent(fallback_model)
-    with catch({ModelStatusError: model_status_error_handler}):
+    with catch({ModelHTTPError: model_status_error_handler}):
         response = agent.run_sync('What is the capital of France?')
     ```

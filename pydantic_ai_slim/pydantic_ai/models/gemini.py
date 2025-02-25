@@ -15,7 +15,7 @@ import pydantic
 from httpx import USE_CLIENT_DEFAULT, AsyncClient as AsyncHTTPClient, Response as HTTPResponse
 from typing_extensions import NotRequired, TypedDict, assert_never
 
-from .. import ModelStatusError, UnexpectedModelBehavior, UserError, _utils, usage
+from .. import ModelHTTPError, UnexpectedModelBehavior, UserError, _utils, usage
 from ..messages import (
     AudioUrl,
     BinaryContent,
@@ -236,7 +236,7 @@ class GeminiModel(Model):
             if (status_code := r.status_code) != 200:
                 await r.aread()
                 if status_code >= 400:
-                    raise ModelStatusError(status_code=status_code, model_name=self.model_name, body=r.text)
+                    raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=r.text)
                 raise UnexpectedModelBehavior(f'Unexpected response from gemini {status_code}', r.text)
             yield r
 

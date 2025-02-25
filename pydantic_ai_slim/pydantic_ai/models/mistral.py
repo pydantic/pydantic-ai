@@ -13,7 +13,7 @@ import pydantic_core
 from httpx import AsyncClient as AsyncHTTPClient, Timeout
 from typing_extensions import assert_never
 
-from .. import ModelStatusError, UnexpectedModelBehavior, _utils
+from .. import ModelHTTPError, UnexpectedModelBehavior, _utils
 from .._utils import now_utc as _now_utc
 from ..messages import (
     BinaryContent,
@@ -201,7 +201,7 @@ class MistralModel(Model):
             )
         except SDKError as e:
             if (status_code := e.status_code) >= 400:
-                raise ModelStatusError(status_code=status_code, model_name=self.model_name, body=e.body) from e
+                raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
             raise
 
         assert response, 'A unexpected empty response from Mistral.'

@@ -9,7 +9,7 @@ from typing import Any, Union, cast
 import pytest
 from inline_snapshot import snapshot
 
-from pydantic_ai import Agent, ModelRetry, ModelStatusError
+from pydantic_ai import Agent, ModelHTTPError, ModelRetry
 from pydantic_ai.messages import (
     ImageUrl,
     ModelRequest,
@@ -348,6 +348,6 @@ def test_model_status_error(allow_model_requests: None) -> None:
     )
     m = CohereModel('command-r', cohere_client=mock_client)
     agent = Agent(m)
-    with pytest.raises(ModelStatusError) as exc_info:
+    with pytest.raises(ModelHTTPError) as exc_info:
         agent.run_sync('hello')
     assert str(exc_info.value) == snapshot("status_code: 500, model_name: command-r, body: {'error': 'test error'}")

@@ -5,7 +5,7 @@ from datetime import timezone
 import pytest
 from inline_snapshot import snapshot
 
-from pydantic_ai import Agent, ModelStatusError
+from pydantic_ai import Agent, ModelHTTPError
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, UserPromptPart
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -25,7 +25,7 @@ def success_response(_model_messages: list[ModelMessage], _agent_info: AgentInfo
 
 
 def failure_response(_model_messages: list[ModelMessage], _agent_info: AgentInfo) -> ModelResponse:
-    raise ModelStatusError(status_code=500, model_name='test-function-model', body={'error': 'test error'})
+    raise ModelHTTPError(status_code=500, model_name='test-function-model', body={'error': 'test error'})
 
 
 success_model = FunctionModel(success_response)
@@ -93,7 +93,7 @@ def test_all_failed() -> None:
     assert 'All models from FallbackModel failed' in exc_info.value.args[0]
     exceptions = exc_info.value.exceptions
     assert len(exceptions) == 2
-    assert isinstance(exceptions[0], ModelStatusError)
+    assert isinstance(exceptions[0], ModelHTTPError)
     assert exceptions[0].status_code == 500
     assert exceptions[0].model_name == 'test-function-model'
     assert exceptions[0].body == {'error': 'test error'}
@@ -106,7 +106,7 @@ async def success_response_stream(_model_messages: list[ModelMessage], _agent_in
 
 async def failure_response_stream(_model_messages: list[ModelMessage], _agent_info: AgentInfo) -> AsyncIterator[str]:
     # Note: today we can only handle errors that are raised before the streaming begins
-    raise ModelStatusError(status_code=500, model_name='test-function-model', body={'error': 'test error'})
+    raise ModelHTTPError(status_code=500, model_name='test-function-model', body={'error': 'test error'})
     yield 'uh oh... '
 
 
@@ -175,7 +175,33 @@ async def test_all_failed_streaming() -> None:
     assert 'All models from FallbackModel failed' in exc_info.value.args[0]
     exceptions = exc_info.value.exceptions
     assert len(exceptions) == 2
-    assert isinstance(exceptions[0], ModelStatusError)
+    assert isinstance(exceptions[0], ModelHTTPError)
     assert exceptions[0].status_code == 500
     assert exceptions[0].model_name == 'test-function-model'
     assert exceptions[0].body == {'error': 'test error'}
+
+
+async def test_fallback_condition_override() -> None:
+    def should_fallback(exc: Exception) -> bool:
+        return False
+
+    fallback_model = FallbackModel(failure_model, success_model, fallback_on=should_fallback)
+    agent = Agent(model=fallback_model)
+    with pytest.raises(ModelHTTPError):
+        await agent.run('hello')
+
+
+class PotatoException(Exception): ...
+
+
+def potato_exception_response(_model_messages: list[ModelMessage], _agent_info: AgentInfo) -> ModelResponse:
+    raise PotatoException()
+
+
+async def test_fallback_condition_tuple() -> None:
+    potato_model = FunctionModel(potato_exception_response)
+    fallback_model = FallbackModel(potato_model, success_model, fallback_on=(PotatoException, ModelHTTPError))
+    agent = Agent(model=fallback_model)
+
+    response = await agent.run('hello')
+    assert response.data == 'success'
