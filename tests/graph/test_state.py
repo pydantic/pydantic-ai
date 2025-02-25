@@ -36,9 +36,9 @@ async def test_run_graph():
     assert graph._get_state_type() is MyState
     assert graph._get_run_end_type() is str
     state = MyState(1, '')
-    result, history = await graph.run(Foo(), state=state)
-    assert result == snapshot('x=2 y=y')
-    assert history == snapshot(
+    result = await graph.run(Foo(), state=state)
+    assert result.output == snapshot('x=2 y=y')
+    assert result.history == snapshot(
         [
             NodeStep(
                 state=MyState(x=2, y=''),
@@ -52,7 +52,7 @@ async def test_run_graph():
                 start_ts=IsNow(tz=timezone.utc),
                 duration=IsFloat(),
             ),
-            EndStep(result=End('x=2 y=y'), ts=IsNow(tz=timezone.utc)),
+            EndStep(result=End(data='x=2 y=y'), ts=IsNow(tz=timezone.utc)),
         ]
     )
     assert state == MyState(x=2, y='y')

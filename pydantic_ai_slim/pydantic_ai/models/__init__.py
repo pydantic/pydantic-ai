@@ -234,6 +234,8 @@ class StreamedResponse(ABC):
 
         This method should be implemented by subclasses to translate the vendor-specific stream of events into
         pydantic_ai-format events.
+
+        It should use the `_parts_manager` to handle deltas, and should update the `_usage` attributes as it goes.
         """
         raise NotImplementedError()
         # noinspection PyUnreachableCode
@@ -362,7 +364,6 @@ def infer_model(model: Model | KnownModelName) -> Model:
         raise UserError(f'Unknown model: {model}')
 
 
-@cache
 def cached_async_http_client(timeout: int = 600, connect: int = 5) -> httpx.AsyncClient:
     """Cached HTTPX async client so multiple agents and calls can share the same client.
 
@@ -373,6 +374,16 @@ def cached_async_http_client(timeout: int = 600, connect: int = 5) -> httpx.Asyn
     The default timeouts match those of OpenAI,
     see <https://github.com/openai/openai-python/blob/v1.54.4/src/openai/_constants.py#L9>.
     """
+    client = _cached_async_http_client(timeout=timeout, connect=connect)
+    if client.is_closed:
+        # This happens if the context manager is used, so we need to create a new client.
+        _cached_async_http_client.cache_clear()
+        client = _cached_async_http_client(timeout=timeout, connect=connect)
+    return client
+
+
+@cache
+def _cached_async_http_client(timeout: int = 600, connect: int = 5) -> httpx.AsyncClient:
     return httpx.AsyncClient(
         timeout=httpx.Timeout(timeout=timeout, connect=connect),
         headers={'User-Agent': get_user_agent()},

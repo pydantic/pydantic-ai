@@ -1,6 +1,6 @@
 from importlib.metadata import version
 
-from .agent import Agent, capture_run_messages
+from .agent import Agent, EndStrategy, HandleResponseNode, ModelRequestNode, UserPromptNode, capture_run_messages
 from .exceptions import (
     AgentRunError,
     FallbackModelFailure,
@@ -10,13 +10,19 @@ from .exceptions import (
     UsageLimitExceeded,
     UserError,
 )
+from .messages import AudioUrl, BinaryContent, ImageUrl
 from .tools import RunContext, Tool
 
 __all__ = (
+    '__version__',
+    # agent
     'Agent',
+    'EndStrategy',
+    'HandleResponseNode',
+    'ModelRequestNode',
+    'UserPromptNode',
     'capture_run_messages',
-    'RunContext',
-    'Tool',
+    # exceptions
     'AgentRunError',
     'FallbackModelFailure',
     'ModelRetry',
@@ -24,6 +30,12 @@ __all__ = (
     'UnexpectedModelBehavior',
     'UsageLimitExceeded',
     'UserError',
-    '__version__',
+    # messages
+    'ImageUrl',
+    'AudioUrl',
+    'BinaryContent',
+    # tools
+    'Tool',
+    'RunContext',
 )
 __version__ = version('pydantic_ai_slim')

@@ -109,6 +109,6 @@ def run_g5() -> None:
     g5.run_sync(A())  # pyright: ignore[reportArgumentType]
     g5.run_sync(A(), state=MyState(x=1))  # pyright: ignore[reportArgumentType]
     g5.run_sync(A(), deps=MyDeps(y='y'))  # pyright: ignore[reportArgumentType]
-    answer, history = g5.run_sync(A(), state=MyState(x=1), deps=MyDeps(y='y'))
-    assert_type(answer, int)
-    assert_type(history, list[HistoryStep[MyState, int]])
+    result = g5.run_sync(A(), state=MyState(x=1), deps=MyDeps(y='y'))
+    assert_type(result.output, int)
+    assert_type(result.history, list[HistoryStep[MyState, int]])

@@ -6,12 +6,12 @@ PydanticAI provides access to messages exchanged during an agent run. These mess
 
 After running an agent, you can access the messages exchanged during that run from the `result` object.
 
-Both [`RunResult`][pydantic_ai.result.RunResult]
+Both [`RunResult`][pydantic_ai.agent.AgentRunResult]
 (returned by [`Agent.run`][pydantic_ai.Agent.run], [`Agent.run_sync`][pydantic_ai.Agent.run_sync])
 and [`StreamedRunResult`][pydantic_ai.result.StreamedRunResult] (returned by [`Agent.run_stream`][pydantic_ai.Agent.run_stream]) have the following methods:
 
-* [`all_messages()`][pydantic_ai.result.RunResult.all_messages]: returns all messages, including messages from prior runs. There's also a variant that returns JSON bytes, [`all_messages_json()`][pydantic_ai.result.RunResult.all_messages_json].
-* [`new_messages()`][pydantic_ai.result.RunResult.new_messages]: returns only the messages from the current run. There's also a variant that returns JSON bytes, [`new_messages_json()`][pydantic_ai.result.RunResult.new_messages_json].
+* [`all_messages()`][pydantic_ai.agent.AgentRunResult.all_messages]: returns all messages, including messages from prior runs. There's also a variant that returns JSON bytes, [`all_messages_json()`][pydantic_ai.agent.AgentRunResult.all_messages_json].
+* [`new_messages()`][pydantic_ai.agent.AgentRunResult.new_messages]: returns only the messages from the current run. There's also a variant that returns JSON bytes, [`new_messages_json()`][pydantic_ai.agent.AgentRunResult.new_messages_json].
 
 !!! info "StreamedRunResult and complete messages"
     On [`StreamedRunResult`][pydantic_ai.result.StreamedRunResult], the messages returned from these methods will only include the final result message once the stream has finished.
@@ -25,7 +25,7 @@ and [`StreamedRunResult`][pydantic_ai.result.StreamedRunResult] (returned by [`A
 
     **Note:** The final result message will NOT be added to result messages if you use [`.stream_text(delta=True)`][pydantic_ai.result.StreamedRunResult.stream_text] since in this case the result content is never built as one string.
 
-Example of accessing methods on a [`RunResult`][pydantic_ai.result.RunResult] :
+Example of accessing methods on a [`RunResult`][pydantic_ai.agent.AgentRunResult] :
 
 ```python {title="run_result_messages.py" hl_lines="10 28"}
 from pydantic_ai import Agent

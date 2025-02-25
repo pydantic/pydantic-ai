@@ -14,6 +14,8 @@ from typing_extensions import TypedDict
 
 from pydantic_ai import Agent, ModelRetry, ModelStatusError, UnexpectedModelBehavior
 from pydantic_ai.messages import (
+    BinaryContent,
+    ImageUrl,
     ModelRequest,
     ModelResponse,
     RetryPromptPart,
@@ -30,7 +32,7 @@ from ..conftest import IsNow, TestEnv, raise_if_exception, try_import
 from .mock_async_stream import MockAsyncStream
 
 with try_import() as imports_successful:
-    from openai import NOT_GIVEN, APIStatusError, AsyncOpenAI, OpenAIError
+    from openai import NOT_GIVEN, APIStatusError, AsyncOpenAI, BadRequestError, OpenAIError
     from openai.types import chat
     from openai.types.chat.chat_completion import Choice
     from openai.types.chat.chat_completion_chunk import (
@@ -570,6 +572,20 @@ async def test_system_prompt_role(
     ]
 
 
+@pytest.mark.parametrize('system_prompt_role', ['system', 'developer'])
+@pytest.mark.vcr
+async def test_openai_o1_mini_system_role(
+    allow_model_requests: None,
+    system_prompt_role: Literal['system', 'developer'],
+    openai_api_key: str,
+) -> None:
+    model = OpenAIModel('o1-mini', api_key=openai_api_key, system_prompt_role=system_prompt_role)
+    agent = Agent(model=model, system_prompt='You are a helpful assistant.')
+
+    with pytest.raises(BadRequestError, match=r".*Unsupported value: 'messages\[0\]\.role' does not support.*"):
+        await agent.run('Hello')
+
+
 @pytest.mark.parametrize('parallel_tool_calls', [True, False])
 async def test_parallel_tool_calls(allow_model_requests: None, parallel_tool_calls: bool) -> None:
     c = completion_message(
@@ -591,6 +607,65 @@ async def test_parallel_tool_calls(allow_model_requests: None, parallel_tool_cal
 
     await agent.run('Hello')
     assert get_mock_chat_completion_kwargs(mock_client)[0]['parallel_tool_calls'] == parallel_tool_calls
+
+
+async def test_image_url_input(allow_model_requests: None):
+    c = completion_message(ChatCompletionMessage(content='world', role='assistant'))
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIModel('gpt-4o', openai_client=mock_client)
+    agent = Agent(m)
+
+    result = await agent.run(
+        [
+            'hello',
+            ImageUrl(url='https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg'),
+        ]
+    )
+    assert result.data == 'world'
+    assert get_mock_chat_completion_kwargs(mock_client) == snapshot(
+        [
+            {
+                'model': 'gpt-4o',
+                'messages': [
+                    {
+                        'role': 'user',
+                        'content': [
+                            {'text': 'hello', 'type': 'text'},
+                            {
+                                'image_url': {
+                                    'url': 'https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg'
+                                },
+                                'type': 'image_url',
+                            },
+                        ],
+                    }
+                ],
+                'n': 1,
+            }
+        ]
+    )
+
+
+@pytest.mark.vcr()
+async def test_image_as_binary_content_input(
+    allow_model_requests: None, image_content: BinaryContent, openai_api_key: str
+):
+    m = OpenAIModel('gpt-4o', api_key=openai_api_key)
+    agent = Agent(m)
+
+    result = await agent.run(['What fruit is in the image?', image_content])
+    assert result.data == snapshot('The fruit in the image is a kiwi.')
+
+
+@pytest.mark.vcr()
+async def test_audio_as_binary_content_input(
+    allow_model_requests: None, audio_content: BinaryContent, openai_api_key: str
+):
+    m = OpenAIModel('gpt-4o-audio-preview', api_key=openai_api_key)
+    agent = Agent(m)
+
+    result = await agent.run(['Whose name is mentioned in the audio?', audio_content])
+    assert result.data == snapshot('The name mentioned in the audio is Marcelo.')
 
 
 def test_model_status_error(allow_model_requests: None) -> None:

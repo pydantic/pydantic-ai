@@ -11,6 +11,7 @@ from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, ModelRetry, ModelStatusError
 from pydantic_ai.messages import (
+    ImageUrl,
     ModelRequest,
     ModelResponse,
     RetryPromptPart,
@@ -111,11 +112,11 @@ async def test_request_simple_success(allow_model_requests: None):
         [
             ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
-                parts=[TextPart('world')], model_name='command-r7b-12-2024', timestamp=IsNow(tz=timezone.utc)
+                parts=[TextPart(content='world')], model_name='command-r7b-12-2024', timestamp=IsNow(tz=timezone.utc)
             ),
             ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
-                parts=[TextPart('world')], model_name='command-r7b-12-2024', timestamp=IsNow(tz=timezone.utc)
+                parts=[TextPart(content='world')], model_name='command-r7b-12-2024', timestamp=IsNow(tz=timezone.utc)
             ),
         ]
     )
@@ -304,7 +305,9 @@ async def test_request_tool_call(allow_model_requests: None):
                 ]
             ),
             ModelResponse(
-                parts=[TextPart('final response')], model_name='command-r7b-12-2024', timestamp=IsNow(tz=timezone.utc)
+                parts=[TextPart(content='final response')],
+                model_name='command-r7b-12-2024',
+                timestamp=IsNow(tz=timezone.utc),
             ),
         ]
     )
@@ -317,6 +320,23 @@ async def test_request_tool_call(allow_model_requests: None):
             details={'input_tokens': 4, 'output_tokens': 2},
         )
     )
+
+
+async def test_multimodal(allow_model_requests: None):
+    c = completion_message(AssistantMessageResponse(content=[TextAssistantMessageResponseContentItem(text='world')]))
+    mock_client = MockAsyncClientV2.create_mock(c)
+    m = CohereModel('command-r7b-12-2024', cohere_client=mock_client)
+    agent = Agent(m)
+
+    with pytest.raises(RuntimeError, match='Cohere does not yet support multi-modal inputs.'):
+        await agent.run(
+            [
+                'hello',
+                ImageUrl(
+                    url='https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg'
+                ),
+            ]
+        )
 
 
 def test_model_status_error(allow_model_requests: None) -> None:
