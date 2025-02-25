@@ -92,9 +92,11 @@ class DocumentUrl:
     """Type identifier, this is available on all parts as a discriminator."""
 
     @property
-    def media_type(self) -> str | None:
+    def media_type(self) -> str:
         """Return the media type of the document, based on the url."""
         type_, _ = guess_type(self.url)
+        if type_ is None:
+            raise RuntimeError(f'Unknown document file extension: {self.url}')
         return type_
 
 
@@ -142,7 +144,7 @@ class BinaryContent:
             raise ValueError(f'Unknown audio media type: {self.media_type}')
 
 
-UserContent: TypeAlias = 'str | ImageUrl | AudioUrl | BinaryContent'
+UserContent: TypeAlias = 'str | ImageUrl | AudioUrl | DocumentUrl | BinaryContent'
 
 
 @dataclass

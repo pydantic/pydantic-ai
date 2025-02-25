@@ -43,10 +43,12 @@ from . import (
 try:
     from anthropic import NOT_GIVEN, AsyncAnthropic, AsyncStream
     from anthropic.types import (
+        Base64PDFSourceParam,
         ImageBlockParam,
         Message as AnthropicMessage,
         MessageParam,
         MetadataParam,
+        PlainTextSourceParam,
         RawContentBlockDeltaEvent,
         RawContentBlockStartEvent,
         RawContentBlockStopEvent,
@@ -324,7 +326,9 @@ class AnthropicModel(Model):
         return system_prompt, anthropic_messages
 
     @staticmethod
-    async def _map_user_prompt(part: UserPromptPart) -> AsyncGenerator[ImageBlockParam | TextBlockParam]:
+    async def _map_user_prompt(
+        part: UserPromptPart,
+    ) -> AsyncGenerator[ImageBlockParam | TextBlockParam | DocumentBlockParam]:
         if isinstance(part.content, str):
             yield TextBlockParam(text=part.content, type='text')
         else:
@@ -349,8 +353,22 @@ class AnthropicModel(Model):
                 elif isinstance(item, DocumentUrl):
                     response = await cached_async_http_client().get(item.url)
                     response.raise_for_status()
-                    yield DocumentBlockParam()
-
+                    if item.media_type == 'application/pdf':
+                        yield DocumentBlockParam(
+                            source=Base64PDFSourceParam(
+                                data=io.BytesIO(response.content),
+                                media_type=item.media_type,
+                                type='base64',
+                            ),
+                            type='document',
+                        )
+                    elif item.media_type == 'text/plain':
+                        yield DocumentBlockParam(
+                            source=PlainTextSourceParam(data=response.text, media_type=item.media_type, type='text'),
+                            type='document',
+                        )
+                    else:
+                        raise RuntimeError(f'Unsupported media type: {item.media_type}')
                 else:
                     raise RuntimeError(f'Unsupported content type: {type(item)}')
 

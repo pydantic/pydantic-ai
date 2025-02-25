@@ -19,6 +19,7 @@ from .. import UnexpectedModelBehavior, _utils, exceptions, usage
 from ..messages import (
     AudioUrl,
     BinaryContent,
+    DocumentUrl,
     ImageUrl,
     ModelMessage,
     ModelRequest,
@@ -319,7 +320,7 @@ class GeminiModel(Model):
                 elif isinstance(item, BinaryContent):
                     base64_encoded = base64.b64encode(item.data).decode('utf-8')
                     content.append(_GeminiInlineDataPart(data=base64_encoded, mime_type=item.media_type))
-                elif isinstance(item, (AudioUrl, ImageUrl)):
+                elif isinstance(item, (AudioUrl, ImageUrl, DocumentUrl)):
                     try:
                         content.append(_GeminiFileDataData(file_uri=item.url, mime_type=item.media_type))
                     except ValueError:
