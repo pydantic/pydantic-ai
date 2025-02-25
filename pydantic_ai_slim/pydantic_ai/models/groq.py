@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+import base64
 from collections.abc import AsyncIterable, AsyncIterator, Iterable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -13,6 +14,8 @@ from typing_extensions import assert_never
 from .. import UnexpectedModelBehavior, _utils, usage
 from .._utils import guard_tool_call_id as _guard_tool_call_id
 from ..messages import (
+    BinaryContent,
+    ImageUrl,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -38,7 +41,7 @@ from . import (
 try:
     from groq import NOT_GIVEN, AsyncGroq, AsyncStream
     from groq.types import chat
-    from groq.types.chat import ChatCompletion, ChatCompletionChunk
+    from groq.types.chat.chat_completion_content_part_image_param import ImageURL
 except ImportError as _import_error:
     raise ImportError(
         'Please install `groq` to use the Groq model, '
@@ -163,7 +166,7 @@ class GroqModel(Model):
         stream: Literal[True],
         model_settings: GroqModelSettings,
         model_request_parameters: ModelRequestParameters,
-    ) -> AsyncStream[ChatCompletionChunk]:
+    ) -> AsyncStream[chat.ChatCompletionChunk]:
         pass
 
     @overload
@@ -182,7 +185,7 @@ class GroqModel(Model):
         stream: bool,
         model_settings: GroqModelSettings,
         model_request_parameters: ModelRequestParameters,
-    ) -> chat.ChatCompletion | AsyncStream[ChatCompletionChunk]:
+    ) -> chat.ChatCompletion | AsyncStream[chat.ChatCompletionChunk]:
         tools = self._get_tools(model_request_parameters)
         # standalone function to make it easier to override
         if not tools:
@@ -224,7 +227,7 @@ class GroqModel(Model):
                 items.append(ToolCallPart(tool_name=c.function.name, args=c.function.arguments, tool_call_id=c.id))
         return ModelResponse(items, model_name=response.model, timestamp=timestamp)
 
-    async def _process_streamed_response(self, response: AsyncStream[ChatCompletionChunk]) -> GroqStreamedResponse:
+    async def _process_streamed_response(self, response: AsyncStream[chat.ChatCompletionChunk]) -> GroqStreamedResponse:
         """Process a streamed response, and prepare a streaming response to return."""
         peekable_response = _utils.PeekableAsyncStream(response)
         first_chunk = await peekable_response.peek()
@@ -293,7 +296,7 @@ class GroqModel(Model):
             if isinstance(part, SystemPromptPart):
                 yield chat.ChatCompletionSystemMessageParam(role='system', content=part.content)
             elif isinstance(part, UserPromptPart):
-                yield chat.ChatCompletionUserMessageParam(role='user', content=part.content)
+                yield cls._map_user_prompt(part)
             elif isinstance(part, ToolReturnPart):
                 yield chat.ChatCompletionToolMessageParam(
                     role='tool',
@@ -310,13 +313,37 @@ class GroqModel(Model):
                         content=part.model_response(),
                     )
 
+    @staticmethod
+    def _map_user_prompt(part: UserPromptPart) -> chat.ChatCompletionUserMessageParam:
+        content: str | list[chat.ChatCompletionContentPartParam]
+        if isinstance(part.content, str):
+            content = part.content
+        else:
+            content = []
+            for item in part.content:
+                if isinstance(item, str):
+                    content.append(chat.ChatCompletionContentPartTextParam(text=item, type='text'))
+                elif isinstance(item, ImageUrl):
+                    image_url = ImageURL(url=item.url)
+                    content.append(chat.ChatCompletionContentPartImageParam(image_url=image_url, type='image_url'))
+                elif isinstance(item, BinaryContent):
+                    base64_encoded = base64.b64encode(item.data).decode('utf-8')
+                    if item.is_image:
+                        image_url = ImageURL(url=f'data:{item.media_type};base64,{base64_encoded}')
+                        content.append(chat.ChatCompletionContentPartImageParam(image_url=image_url, type='image_url'))
+                    else:
+                        raise RuntimeError('Only images are supported for binary content in Groq.')
+                else:  # pragma: no cover
+                    raise RuntimeError(f'Unsupported content type: {type(item)}')
+        return chat.ChatCompletionUserMessageParam(role='user', content=content)
+
 
 @dataclass
 class GroqStreamedResponse(StreamedResponse):
     """Implementation of `StreamedResponse` for Groq models."""
 
     _model_name: GroqModelName
-    _response: AsyncIterable[ChatCompletionChunk]
+    _response: AsyncIterable[chat.ChatCompletionChunk]
     _timestamp: datetime
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
@@ -355,9 +382,9 @@ class GroqStreamedResponse(StreamedResponse):
         return self._timestamp
 
 
-def _map_usage(completion: ChatCompletionChunk | ChatCompletion) -> usage.Usage:
+def _map_usage(completion: chat.ChatCompletionChunk | chat.ChatCompletion) -> usage.Usage:
     response_usage = None
-    if isinstance(completion, ChatCompletion):
+    if isinstance(completion, chat.ChatCompletion):
         response_usage = completion.usage
     elif completion.x_groq is not None:
         response_usage = completion.x_groq.usage

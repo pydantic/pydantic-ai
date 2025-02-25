@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+import base64
 import os
 from collections.abc import AsyncIterable, AsyncIterator, Iterable
 from contextlib import asynccontextmanager
@@ -15,6 +16,8 @@ from typing_extensions import assert_never
 from .. import UnexpectedModelBehavior, _utils
 from .._utils import now_utc as _now_utc
 from ..messages import (
+    BinaryContent,
+    ImageUrl,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -45,6 +48,8 @@ try:
         Content as MistralContent,
         ContentChunk as MistralContentChunk,
         FunctionCall as MistralFunctionCall,
+        ImageURL as MistralImageURL,
+        ImageURLChunk as MistralImageURLChunk,
         Mistral,
         OptionalNullable as MistralOptionalNullable,
         TextChunk as MistralTextChunk,
@@ -423,7 +428,7 @@ class MistralModel(Model):
             if isinstance(part, SystemPromptPart):
                 yield MistralSystemMessage(content=part.content)
             elif isinstance(part, UserPromptPart):
-                yield MistralUserMessage(content=part.content)
+                yield cls._map_user_prompt(part)
             elif isinstance(part, ToolReturnPart):
                 yield MistralToolMessage(
                     tool_call_id=part.tool_call_id,
@@ -459,6 +464,29 @@ class MistralModel(Model):
             yield MistralAssistantMessage(content=content_chunks, tool_calls=tool_calls)
         else:
             assert_never(message)
+
+    @staticmethod
+    def _map_user_prompt(part: UserPromptPart) -> MistralUserMessage:
+        content: str | list[MistralContentChunk]
+        if isinstance(part.content, str):
+            content = part.content
+        else:
+            content = []
+            for item in part.content:
+                if isinstance(item, str):
+                    content.append(MistralTextChunk(text=item))
+                elif isinstance(item, ImageUrl):
+                    content.append(MistralImageURLChunk(image_url=MistralImageURL(url=item.url)))
+                elif isinstance(item, BinaryContent):
+                    base64_encoded = base64.b64encode(item.data).decode('utf-8')
+                    if item.is_image:
+                        image_url = MistralImageURL(url=f'data:{item.media_type};base64,{base64_encoded}')
+                        content.append(MistralImageURLChunk(image_url=image_url, type='image_url'))
+                    else:
+                        raise RuntimeError('Only image binary content is supported for Mistral.')
+                else:  # pragma: no cover
+                    raise RuntimeError(f'Unsupported content type: {type(item)}')
+        return MistralUserMessage(content=content)
 
 
 MistralToolCallId = Union[str, None]

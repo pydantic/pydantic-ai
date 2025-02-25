@@ -12,6 +12,8 @@ from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, ModelRetry
 from pydantic_ai.messages import (
+    BinaryContent,
+    ImageUrl,
     ModelRequest,
     ModelResponse,
     RetryPromptPart,
@@ -369,7 +371,7 @@ async def test_multiple_parallel_tool_calls(allow_model_requests: None):
     second_request = all_messages[2]
     assert first_response.parts == [
         TextPart(
-            content='Let me retrieve the information about each family member to determine their ages.',
+            content="I'll retrieve the information about each family member to determine their ages.",
             part_kind='text',
         ),
         ToolCallPart(
@@ -541,3 +543,34 @@ async def test_stream_structured(allow_model_requests: None):
         assert result.is_complete
         assert result.usage() == snapshot(Usage(requests=2, request_tokens=20, response_tokens=5, total_tokens=25))
         assert tool_called
+
+
+@pytest.mark.vcr()
+async def test_image_url_input(allow_model_requests: None, anthropic_api_key: str):
+    m = AnthropicModel('claude-3-5-haiku-latest', api_key=anthropic_api_key)
+    agent = Agent(m)
+
+    result = await agent.run(
+        [
+            'What is this vegetable?',
+            ImageUrl(url='https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg'),
+        ]
+    )
+    assert result.data == snapshot("""\
+This is a potato. It's a yellow-skinned potato with a somewhat oblong or oval shape. The surface is covered in small eyes or dimples, which is typical of potato skin. The color is a golden-yellow, and the potato appears to be clean and fresh, photographed against a white background.
+
+Potatoes are root vegetables that are staple foods in many cuisines around the world. They can be prepared in numerous ways such as boiling, baking, roasting, frying, or mashing. This particular potato looks like it could be a Yukon Gold or a similar yellow-fleshed variety.\
+""")
+
+
+@pytest.mark.parametrize('media_type', ('audio/wav', 'audio/mpeg'))
+async def test_audio_as_binary_content_input(allow_model_requests: None, media_type: str):
+    c = completion_message([TextBlock(text='world', type='text')], AnthropicUsage(input_tokens=5, output_tokens=10))
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-3-5-haiku-latest', anthropic_client=mock_client)
+    agent = Agent(m)
+
+    base64_content = b'//uQZ'
+
+    with pytest.raises(RuntimeError, match='Only images are supported for binary content'):
+        await agent.run(['hello', BinaryContent(data=base64_content, media_type=media_type)])

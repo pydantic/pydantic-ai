@@ -1,12 +1,14 @@
 from __future__ import annotations as _annotations
 
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Annotated, Any, Literal, Union, cast, overload
 
 import pydantic
 import pydantic_core
+from typing_extensions import TypeAlias
 
 from ._utils import now_utc as _now_utc
 from .exceptions import UnexpectedModelBehavior
@@ -33,6 +35,93 @@ class SystemPromptPart:
 
 
 @dataclass
+class AudioUrl:
+    """A URL to an audio file."""
+
+    url: str
+    """The URL of the audio file."""
+
+    kind: Literal['audio-url'] = 'audio-url'
+    """Type identifier, this is available on all parts as a discriminator."""
+
+    @property
+    def media_type(self) -> AudioMediaType:
+        """Return the media type of the audio file, based on the url."""
+        if self.url.endswith('.mp3'):
+            return 'audio/mpeg'
+        elif self.url.endswith('.wav'):
+            return 'audio/wav'
+        else:
+            raise ValueError(f'Unknown audio file extension: {self.url}')
+
+
+@dataclass
+class ImageUrl:
+    """A URL to an image."""
+
+    url: str
+    """The URL of the image."""
+
+    kind: Literal['image-url'] = 'image-url'
+    """Type identifier, this is available on all parts as a discriminator."""
+
+    @property
+    def media_type(self) -> ImageMediaType:
+        """Return the media type of the image, based on the url."""
+        if self.url.endswith(('.jpg', '.jpeg')):
+            return 'image/jpeg'
+        elif self.url.endswith('.png'):
+            return 'image/png'
+        elif self.url.endswith('.gif'):
+            return 'image/gif'
+        elif self.url.endswith('.webp'):
+            return 'image/webp'
+        else:
+            raise ValueError(f'Unknown image file extension: {self.url}')
+
+
+AudioMediaType: TypeAlias = Literal['audio/wav', 'audio/mpeg']
+ImageMediaType: TypeAlias = Literal['image/jpeg', 'image/png', 'image/gif', 'image/webp']
+
+
+@dataclass
+class BinaryContent:
+    """Binary content, e.g. an audio or image file."""
+
+    data: bytes
+    """The binary data."""
+
+    media_type: AudioMediaType | ImageMediaType | str
+    """The media type of the binary data."""
+
+    kind: Literal['binary'] = 'binary'
+    """Type identifier, this is available on all parts as a discriminator."""
+
+    @property
+    def is_audio(self) -> bool:
+        """Return `True` if the media type is an audio type."""
+        return self.media_type.startswith('audio/')
+
+    @property
+    def is_image(self) -> bool:
+        """Return `True` if the media type is an image type."""
+        return self.media_type.startswith('image/')
+
+    @property
+    def audio_format(self) -> Literal['mp3', 'wav']:
+        """Return the audio format given the media type."""
+        if self.media_type == 'audio/mpeg':
+            return 'mp3'
+        elif self.media_type == 'audio/wav':
+            return 'wav'
+        else:
+            raise ValueError(f'Unknown audio media type: {self.media_type}')
+
+
+UserContent: TypeAlias = 'str | ImageUrl | AudioUrl | BinaryContent'
+
+
+@dataclass
 class UserPromptPart:
     """A user prompt, generally written by the end user.
 
@@ -40,7 +129,7 @@ class UserPromptPart:
     [`Agent.run_sync`][pydantic_ai.Agent.run_sync], and [`Agent.run_stream`][pydantic_ai.Agent.run_stream].
     """
 
-    content: str
+    content: str | Sequence[UserContent]
     """The content of the prompt."""
 
     timestamp: datetime = field(default_factory=_now_utc)

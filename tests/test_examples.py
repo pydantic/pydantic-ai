@@ -271,6 +271,7 @@ text_responses: dict[str, str | ToolCallPart] = {
 async def model_logic(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:  # pragma: no cover  # noqa: C901
     m = messages[-1].parts[-1]
     if isinstance(m, UserPromptPart):
+        assert isinstance(m.content, str)
         if m.content == 'Tell me a joke.' and any(t.name == 'joke_factory' for t in info.function_tools):
             return ModelResponse(parts=[ToolCallPart(tool_name='joke_factory', args={'count': 5})])
         elif m.content == 'Please generate 5 jokes.' and any(t.name == 'get_jokes' for t in info.function_tools):
@@ -349,6 +350,7 @@ async def stream_model_logic(
 ) -> AsyncIterator[str | DeltaToolCalls]:  # pragma: no cover
     m = messages[-1].parts[-1]
     if isinstance(m, UserPromptPart):
+        assert isinstance(m.content, str)
         if response := text_responses.get(m.content):
             if isinstance(response, str):
                 words = response.split(' ')

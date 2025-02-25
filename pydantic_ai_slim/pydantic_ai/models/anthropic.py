@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
-from collections.abc import AsyncIterable, AsyncIterator
+import io
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -13,6 +14,8 @@ from typing_extensions import assert_never
 from .. import UnexpectedModelBehavior, _utils, usage
 from .._utils import guard_tool_call_id as _guard_tool_call_id
 from ..messages import (
+    BinaryContent,
+    ImageUrl,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -38,6 +41,7 @@ from . import (
 try:
     from anthropic import NOT_GIVEN, AsyncAnthropic, AsyncStream
     from anthropic.types import (
+        ImageBlockParam,
         Message as AnthropicMessage,
         MessageParam,
         MetadataParam,
@@ -214,7 +218,7 @@ class AnthropicModel(Model):
             if (allow_parallel_tool_calls := model_settings.get('parallel_tool_calls')) is not None:
                 tool_choice['disable_parallel_tool_use'] = not allow_parallel_tool_calls
 
-        system_prompt, anthropic_messages = self._map_message(messages)
+        system_prompt, anthropic_messages = await self._map_message(messages)
 
         return await self.client.messages.create(
             max_tokens=model_settings.get('max_tokens', 1024),
@@ -266,19 +270,19 @@ class AnthropicModel(Model):
             tools += [self._map_tool_definition(r) for r in model_request_parameters.result_tools]
         return tools
 
-    def _map_message(self, messages: list[ModelMessage]) -> tuple[str, list[MessageParam]]:
+    async def _map_message(self, messages: list[ModelMessage]) -> tuple[str, list[MessageParam]]:
         """Just maps a `pydantic_ai.Message` to a `anthropic.types.MessageParam`."""
         system_prompt: str = ''
         anthropic_messages: list[MessageParam] = []
         for m in messages:
             if isinstance(m, ModelRequest):
-                user_content_params: list[ToolResultBlockParam | TextBlockParam] = []
+                user_content_params: list[ToolResultBlockParam | TextBlockParam | ImageBlockParam] = []
                 for request_part in m.parts:
                     if isinstance(request_part, SystemPromptPart):
                         system_prompt += request_part.content
                     elif isinstance(request_part, UserPromptPart):
-                        text_block_param = TextBlockParam(type='text', text=request_part.content)
-                        user_content_params.append(text_block_param)
+                        async for content in self._map_user_prompt(request_part):
+                            user_content_params.append(content)
                     elif isinstance(request_part, ToolReturnPart):
                         tool_result_block_param = ToolResultBlockParam(
                             tool_use_id=_guard_tool_call_id(t=request_part, model_source='Anthropic'),
@@ -298,12 +302,7 @@ class AnthropicModel(Model):
                                 is_error=True,
                             )
                         user_content_params.append(retry_param)
-                anthropic_messages.append(
-                    MessageParam(
-                        role='user',
-                        content=user_content_params,
-                    )
-                )
+                anthropic_messages.append(MessageParam(role='user', content=user_content_params))
             elif isinstance(m, ModelResponse):
                 assistant_content_params: list[TextBlockParam | ToolUseBlockParam] = []
                 for response_part in m.parts:
@@ -321,6 +320,32 @@ class AnthropicModel(Model):
             else:
                 assert_never(m)
         return system_prompt, anthropic_messages
+
+    @staticmethod
+    async def _map_user_prompt(part: UserPromptPart) -> AsyncGenerator[ImageBlockParam | TextBlockParam]:
+        if isinstance(part.content, str):
+            yield TextBlockParam(text=part.content, type='text')
+        else:
+            for item in part.content:
+                if isinstance(item, str):
+                    yield TextBlockParam(text=item, type='text')
+                elif isinstance(item, BinaryContent):
+                    if item.is_image:
+                        yield ImageBlockParam(
+                            source={'data': io.BytesIO(item.data), 'media_type': item.media_type, 'type': 'base64'},  # type: ignore
+                            type='image',
+                        )
+                    else:
+                        raise RuntimeError('Only images are supported for binary content')
+                elif isinstance(item, ImageUrl):
+                    response = await cached_async_http_client().get(item.url)
+                    response.raise_for_status()
+                    yield ImageBlockParam(
+                        source={'data': io.BytesIO(response.content), 'media_type': 'image/jpeg', 'type': 'base64'},
+                        type='image',
+                    )
+                else:
+                    raise RuntimeError(f'Unsupported content type: {type(item)}')
 
     @staticmethod
     def _map_tool_definition(f: ToolDefinition) -> ToolParam:

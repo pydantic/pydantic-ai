@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 import asyncio
 import dataclasses
 from abc import ABC
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator, Iterator, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from dataclasses import field
@@ -89,7 +89,7 @@ class GraphAgentDeps(Generic[DepsT, ResultDataT]):
 
     user_deps: DepsT
 
-    prompt: str
+    prompt: str | Sequence[_messages.UserContent]
     new_message_index: int
 
     model: models.Model
@@ -109,7 +109,7 @@ class GraphAgentDeps(Generic[DepsT, ResultDataT]):
 
 @dataclasses.dataclass
 class UserPromptNode(BaseNode[GraphAgentState, GraphAgentDeps[DepsT, Any], NodeRunEndT], ABC):
-    user_prompt: str
+    user_prompt: str | Sequence[_messages.UserContent]
 
     system_prompts: tuple[str, ...]
     system_prompt_functions: list[_system_prompt.SystemPromptRunner[DepsT]]
@@ -135,7 +135,10 @@ class UserPromptNode(BaseNode[GraphAgentState, GraphAgentDeps[DepsT, Any], NodeR
         return next_message
 
     async def _prepare_messages(
-        self, user_prompt: str, message_history: list[_messages.ModelMessage] | None, run_context: RunContext[DepsT]
+        self,
+        user_prompt: str | Sequence[_messages.UserContent],
+        message_history: list[_messages.ModelMessage] | None,
+        run_context: RunContext[DepsT],
     ) -> tuple[list[_messages.ModelMessage], _messages.ModelRequest]:
         try:
             ctx_messages = get_captured_run_messages()

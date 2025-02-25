@@ -16,52 +16,53 @@ nav:
   - contributing.md
   - troubleshooting.md
   - Documentation:
-    - agents.md
-    - models.md
-    - dependencies.md
-    - tools.md
-    - results.md
-    - message-history.md
-    - testing-evals.md
-    - logfire.md
-    - multi-agent-applications.md
-    - graph.md
+      - agents.md
+      - models.md
+      - dependencies.md
+      - tools.md
+      - results.md
+      - message-history.md
+      - testing-evals.md
+      - logfire.md
+      - multi-agent-applications.md
+      - graph.md
+      - input.md
   - Examples:
-    - examples/index.md
-    - examples/pydantic-model.md
-    - examples/weather-agent.md
-    - examples/bank-support.md
-    - examples/sql-gen.md
-    - examples/flight-booking.md
-    - examples/rag.md
-    - examples/stream-markdown.md
-    - examples/stream-whales.md
-    - examples/chat-app.md
-    - examples/question-graph.md
+      - examples/index.md
+      - examples/pydantic-model.md
+      - examples/weather-agent.md
+      - examples/bank-support.md
+      - examples/sql-gen.md
+      - examples/flight-booking.md
+      - examples/rag.md
+      - examples/stream-markdown.md
+      - examples/stream-whales.md
+      - examples/chat-app.md
+      - examples/question-graph.md
   - API Reference:
-    - api/agent.md
-    - api/tools.md
-    - api/result.md
-    - api/messages.md
-    - api/exceptions.md
-    - api/settings.md
-    - api/usage.md
-    - api/format_as_xml.md
-    - api/models/base.md
-    - api/models/openai.md
-    - api/models/anthropic.md
-    - api/models/cohere.md
-    - api/models/gemini.md
-    - api/models/vertexai.md
-    - api/models/groq.md
-    - api/models/mistral.md
-    - api/models/test.md
-    - api/models/function.md
-    - api/pydantic_graph/graph.md
-    - api/pydantic_graph/nodes.md
-    - api/pydantic_graph/state.md
-    - api/pydantic_graph/mermaid.md
-    - api/pydantic_graph/exceptions.md
+      - api/agent.md
+      - api/tools.md
+      - api/result.md
+      - api/messages.md
+      - api/exceptions.md
+      - api/settings.md
+      - api/usage.md
+      - api/format_as_xml.md
+      - api/models/base.md
+      - api/models/openai.md
+      - api/models/anthropic.md
+      - api/models/cohere.md
+      - api/models/gemini.md
+      - api/models/vertexai.md
+      - api/models/groq.md
+      - api/models/mistral.md
+      - api/models/test.md
+      - api/models/function.md
+      - api/pydantic_graph/graph.md
+      - api/pydantic_graph/nodes.md
+      - api/pydantic_graph/state.md
+      - api/pydantic_graph/mermaid.md
+      - api/pydantic_graph/exceptions.md
 
 extra:
   # hide the "Made with Material for MkDocs" message
@@ -100,12 +101,12 @@ theme:
     - content.code.copy
     - content.code.select
     - navigation.path
-#    - navigation.expand
+    #    - navigation.expand
     - navigation.indexes
     - navigation.sections
     - navigation.tracking
     - toc.follow
-#    - navigation.tabs  # don't use navbar tabs
+  #    - navigation.tabs  # don't use navbar tabs
   logo: "img/logo-white.svg"
   favicon: "favicon.ico"
 
@@ -151,7 +152,7 @@ markdown_extensions:
       emoji_generator: !!python/name:material.extensions.emoji.to_svg
       options:
         custom_icons:
-            - docs/.overrides/.icons
+          - docs/.overrides/.icons
   - pymdownx.tabbed:
       alternate_style: true
   - pymdownx.tasklist:
@@ -190,6 +191,6 @@ plugins:
             # waiting for https://github.com/encode/httpx/discussions/3091#discussioncomment-11205594
 
 hooks:
-- 'docs/.hooks/main.py'
-- 'docs/.hooks/build_llms_txt.py'
-- 'docs/.hooks/algolia.py'
+  - "docs/.hooks/main.py"
+  - "docs/.hooks/build_llms_txt.py"
+  - "docs/.hooks/algolia.py"

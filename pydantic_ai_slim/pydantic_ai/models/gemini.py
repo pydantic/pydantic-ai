@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+import base64
 import os
 import re
 from collections.abc import AsyncIterator, Sequence
@@ -16,6 +17,9 @@ from typing_extensions import NotRequired, TypedDict, assert_never
 
 from .. import UnexpectedModelBehavior, _utils, exceptions, usage
 from ..messages import (
+    AudioUrl,
+    BinaryContent,
+    ImageUrl,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -185,7 +189,7 @@ class GeminiModel(Model):
     ) -> AsyncIterator[HTTPResponse]:
         tools = self._get_tools(model_request_parameters)
         tool_config = self._get_tool_config(model_request_parameters, tools)
-        sys_prompt_parts, contents = self._message_to_gemini_content(messages)
+        sys_prompt_parts, contents = await self._message_to_gemini_content(messages)
 
         request_data = _GeminiRequest(contents=contents)
         if sys_prompt_parts:
@@ -269,7 +273,7 @@ class GeminiModel(Model):
         return GeminiStreamedResponse(_model_name=self._model_name, _content=content, _stream=aiter_bytes)
 
     @classmethod
-    def _message_to_gemini_content(
+    async def _message_to_gemini_content(
         cls, messages: list[ModelMessage]
     ) -> tuple[list[_GeminiTextPart], list[_GeminiContent]]:
         sys_prompt_parts: list[_GeminiTextPart] = []
@@ -282,7 +286,7 @@ class GeminiModel(Model):
                     if isinstance(part, SystemPromptPart):
                         sys_prompt_parts.append(_GeminiTextPart(text=part.content))
                     elif isinstance(part, UserPromptPart):
-                        message_parts.append(_GeminiTextPart(text=part.content))
+                        message_parts.extend(await cls._map_user_prompt(part))
                     elif isinstance(part, ToolReturnPart):
                         message_parts.append(_response_part_from_response(part.tool_name, part.model_response_object()))
                     elif isinstance(part, RetryPromptPart):
@@ -302,6 +306,34 @@ class GeminiModel(Model):
                 assert_never(m)
 
         return sys_prompt_parts, contents
+
+    @staticmethod
+    async def _map_user_prompt(part: UserPromptPart) -> list[_GeminiPartUnion]:
+        if isinstance(part.content, str):
+            return [{'text': part.content}]
+        else:
+            content: list[_GeminiPartUnion] = []
+            for item in part.content:
+                if isinstance(item, str):
+                    content.append({'text': item})
+                elif isinstance(item, BinaryContent):
+                    base64_encoded = base64.b64encode(item.data).decode('utf-8')
+                    content.append(_GeminiInlineDataPart(data=base64_encoded, mime_type=item.media_type))
+                elif isinstance(item, (AudioUrl, ImageUrl)):
+                    try:
+                        content.append(_GeminiFileDataData(file_uri=item.url, mime_type=item.media_type))
+                    except ValueError:
+                        # Download the file if can't find the mime type.
+                        client = cached_async_http_client()
+                        response = await client.get(item.url, follow_redirects=True)
+                        response.raise_for_status()
+                        base64_encoded = base64.b64encode(response.content).decode('utf-8')
+                        content.append(
+                            _GeminiInlineDataPart(data=base64_encoded, mime_type=response.headers['Content-Type'])
+                        )
+                else:
+                    assert_never(item)
+        return content
 
 
 class AuthProtocol(Protocol):
@@ -494,6 +526,20 @@ class _GeminiTextPart(TypedDict):
     text: str
 
 
+class _GeminiInlineDataPart(TypedDict):
+    """See <https://ai.google.dev/api/caching#Blob>."""
+
+    data: str
+    mime_type: Annotated[str, pydantic.Field(alias='mimeType')]
+
+
+class _GeminiFileDataData(TypedDict):
+    """See <https://ai.google.dev/api/caching#FileData>."""
+
+    file_uri: Annotated[str, pydantic.Field(alias='fileUri')]
+    mime_type: Annotated[str, pydantic.Field(alias='mimeType')]
+
+
 class _GeminiFunctionCallPart(TypedDict):
     function_call: Annotated[_GeminiFunctionCall, pydantic.Field(alias='functionCall')]
 
@@ -549,6 +595,10 @@ def _part_discriminator(v: Any) -> str:
     if isinstance(v, dict):
         if 'text' in v:
             return 'text'
+        elif 'inlineData' in v:
+            return 'inline_data'
+        elif 'fileData' in v:
+            return 'file_data'
         elif 'functionCall' in v or 'function_call' in v:
             return 'function_call'
         elif 'functionResponse' in v or 'function_response' in v:
@@ -564,6 +614,8 @@ _GeminiPartUnion = Annotated[
         Annotated[_GeminiTextPart, pydantic.Tag('text')],
         Annotated[_GeminiFunctionCallPart, pydantic.Tag('function_call')],
         Annotated[_GeminiFunctionResponsePart, pydantic.Tag('function_response')],
+        Annotated[_GeminiInlineDataPart, pydantic.Tag('inline_data')],
+        Annotated[_GeminiFileDataData, pydantic.Tag('file_data')],
     ],
     pydantic.Discriminator(_part_discriminator),
 ]
