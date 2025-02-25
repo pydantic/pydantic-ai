@@ -6,9 +6,7 @@ build-backend = "hatchling.build"
 name = "pydantic-ai-slim"
 version = "0.0.26"
 description = "Agent Framework / shim to use Pydantic with LLMs, slim package"
-authors = [
-    { name = "Samuel Colvin", email = "samuel@pydantic.dev" },
-]
+authors = [{ name = "Samuel Colvin", email = "samuel@pydantic.dev" }]
 license = "MIT"
 readme = "README.md"
 classifiers = [
@@ -40,6 +38,7 @@ dependencies = [
     "logfire-api>=1.2.0",
     "pydantic>=2.10",
     "pydantic-graph==0.0.26",
+    "exceptiongroup; python_version < '3.11'",
 ]
 
 [project.optional-dependencies]
