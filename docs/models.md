@@ -657,13 +657,12 @@ For details on when we'll accept contributions adding new models to PydanticAI, 
 
 ## Fallback
 
-You can use [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] to try a list of models
+You can use [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] to attempt multiple models
 in sequence until one returns a successful result. Under the hood, PydanticAI automatically switches
-from one model to the next if a 4xx or 5xx status code is returned by the current model.
+from one model to the next if the current model returns a 4xx or 5xx status code.
 
-In the following example, the agent will first make a request to the OpenAI model (which fails with an
-invalid API key), and then fall back to the Anthropic model. The `ModelResponse` message indicates that the
-result was returned by the Anthropic model, which is the second model provided to the `FallbackModel`.
+In the following example, the agent first makes a request to the OpenAI model (which fails due to an invalid API key),
+and then falls back to the Anthropic model.
 
 ```python {title="fallback_model.py"}
 from pydantic_ai import Agent
@@ -703,16 +702,14 @@ print(response.all_messages())
 """
 ```
 
+The `ModelResponse` message above indicates that the result was returned by the Anthropic model, which is the second model specified in the `FallbackModel`.
+
 !!! note
-    You should configure each of model options individually, e.g. `base_url`, `api_key`, custom clients, etc. for each model should be set on the model itself, not the `FallbackModel`.
+    Each model's options should be configured individually. For example, `base_url`, `api_key`, and custom clients should be set on each model itself, not on the `FallbackModel`.
 
-In this example, we demonstrate the exception handling capabilities of `FallbackModel`. If all models fail,
-a [`FallbackExceptionGroup`][pydantic_ai.exceptions.FallbackExceptionGroup] exception is raised, which contains
-a group of exceptions raised during the `run` execution.
-
-By default, the `FallbackModel` will only fallback to the next model if the current model raises a
-[`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError] exception. You can customise this behaviour by
-passing a custom `fallback_on` argument to the `FallbackModel` constructor.
+In this next example, we demonstrate the exception-handling capabilities of `FallbackModel`.
+If all models fail, a [`FallbackExceptionGroup`][pydantic_ai.exceptions.FallbackExceptionGroup] is raised, which
+contains all the exceptions encountered during the `run` execution.
 
 === "Python >=3.11"
 
@@ -764,3 +761,7 @@ passing a custom `fallback_on` argument to the `FallbackModel` constructor.
     with catch({ModelHTTPError: model_status_error_handler}):
         response = agent.run_sync('What is the capital of France?')
     ```
+
+By default, the `FallbackModel` only moves on to the next model if the current model raises a
+[`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError]. You can customize this behavior by
+passing a custom `fallback_on` argument to the `FallbackModel` constructor.
