@@ -1,17 +1,23 @@
 from __future__ import annotations as _annotations
 
+import sys
 from collections.abc import AsyncIterator
 from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from ..exceptions import FallbackModelFailure, ModelStatusError
+from ..exceptions import ModelStatusError
 from . import KnownModelName, Model, ModelRequestParameters, StreamedResponse, infer_model
 
 if TYPE_CHECKING:
     from ..messages import ModelMessage, ModelResponse
     from ..settings import ModelSettings
     from ..usage import Usage
+
+if sys.version_info < (3, 11):
+    from exceptiongroup import ExceptionGroup as ExceptionGroup
+else:
+    ExceptionGroup = ExceptionGroup
 
 
 @dataclass(init=False)
@@ -45,17 +51,20 @@ class FallbackModel(Model):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> tuple[ModelResponse, Usage]:
-        """Try each model in sequence until one succeeds."""
-        errors: list[ModelStatusError] = []
+        """Try each model in sequence until one succeeds.
+
+        In case of failure, raise an ExceptionGroup with all exceptions.
+        """
+        exceptions: list[ModelStatusError] = []
 
         for model in self.models:
             try:
                 return await model.request(messages, model_settings, model_request_parameters)
             except ModelStatusError as exc_info:
-                errors.append(exc_info)
+                exceptions.append(exc_info)
                 continue
 
-        raise FallbackModelFailure(errors=errors)
+        raise ExceptionGroup('All models from FallbackModel failed', exceptions)
 
     @asynccontextmanager
     async def request_stream(
@@ -65,7 +74,7 @@ class FallbackModel(Model):
         model_request_parameters: ModelRequestParameters,
     ) -> AsyncIterator[StreamedResponse]:
         """Try each model in sequence until one succeeds."""
-        errors: list[ModelStatusError] = []
+        exceptions: list[ModelStatusError] = []
 
         for model in self.models:
             async with AsyncExitStack() as stack:
@@ -74,12 +83,12 @@ class FallbackModel(Model):
                         model.request_stream(messages, model_settings, model_request_parameters)
                     )
                 except ModelStatusError as exc_info:
-                    errors.append(exc_info)
+                    exceptions.append(exc_info)
                     continue
                 yield response
                 return
 
-        raise FallbackModelFailure(errors=errors)
+        raise ExceptionGroup('All models from FallbackModel failed', exceptions)
 
     @property
     def model_name(self) -> str:

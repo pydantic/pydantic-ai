@@ -657,9 +657,12 @@ For details on when we'll accept contributions adding new models to PydanticAI, 
 
 ## Fallback Models
 
-You can use [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] to try a list of models in sequence until one returns a successful result. Under the hood, PydanticAI automatically switches from one model to the next if a 4xx or 5xx status code is returned by the current model.
+You can use [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] to try a list of models
+in sequence until one returns a successful result. Under the hood, PydanticAI automatically switches
+from one model to the next if a 4xx or 5xx status code is returned by the current model.
 
-In the following example, the agent will first make a request to the OpenAI model (which fails with an invalid API key), and then fall back to the Anthropic model. The `ModelResponse` message indicates that the
+In the following example, the agent will first make a request to the OpenAI model (which fails with an
+invalid API key), and then fall back to the Anthropic model. The `ModelResponse` message indicates that the
 result was returned by the Anthropic model, which is the second model provided to the `FallbackModel`.
 
 ```python {title="fallback_model.py"}
@@ -704,44 +707,50 @@ print(response.all_messages())
     You should configure each of model options individually, e.g. `base_url`, `api_key`, custom clients, etc. for each model should be set on the model itself, not the `FallbackModel`.
 
 In this example, we demonstrate the exception handling capabilities of `FallbackModel`. If all models fail,
-a [`FallbackModelFailure`][pydantic_ai.exceptions.FallbackModelFailure] exception is raised, which contains a
-list of all [`ModelStatusError`][pydantic_ai.exceptions.ModelStatusError] exceptions raised during the run execution.
+an [`ExceptionGroup`][ExceptionGroup] exception is raised, which contains a group of
+[`ModelStatusError`][pydantic_ai.exceptions.ModelStatusError] exceptions raised during the `run` execution.
 
-```python {title="fallback_model_failure.py"}
-from pydantic_ai import Agent, FallbackModelFailure
-from pydantic_ai.models.anthropic import AnthropicModel
-from pydantic_ai.models.fallback import FallbackModel
-from pydantic_ai.models.openai import OpenAIModel
+=== "Python >=3.11"
 
-openai_model = OpenAIModel('gpt-4o', api_key='not-valid')
-anthropic_model = AnthropicModel('claude-3-5-sonnet-latest', api_key='not-valid')
-fallback_model = FallbackModel(openai_model, anthropic_model)
+    ```python {title="fallback_model_failure.py"}
+    from pydantic_ai import Agent, FallbackModelFailure
+    from pydantic_ai.models.anthropic import AnthropicModel
+    from pydantic_ai.models.fallback import FallbackModel
+    from pydantic_ai.models.openai import OpenAIModel
 
-agent = Agent(fallback_model)
-try:
-    response = agent.run_sync('What is the capital of France?')
-except FallbackModelFailure as exc_info:
-    print(exc_info)
-    """
-    FallbackModelFailure caused by:
-    - ModelStatusError:
-        status_code: 401
-        model_name: gpt-4o
-        body: {
-            'message': 'Incorrect API key provided: not-valid. You can find your API key at https://platform.openai.com/account/api-keys.',
-            'type': 'invalid_request_error',
-            'param': None,
-            'code': 'invalid_api_key'
-        }
-    - ModelStatusError:
-        status_code: 401
-        model_name: claude-3-5-sonnet-latest
-        body: {
-            'type': 'error',
-            'error': {
-                'type': 'authentication_error',
-                'message': 'invalid x-api-key'
-            }
-        }
-    """
-```
+    openai_model = OpenAIModel('gpt-4o', api_key='not-valid')
+    anthropic_model = AnthropicModel('claude-3-5-sonnet-latest', api_key='not-valid')
+    fallback_model = FallbackModel(openai_model, anthropic_model)
+
+    agent = Agent(fallback_model)
+    try:
+        response = agent.run_sync('What is the capital of France?')
+    except* ModelStatusError as exc_group:
+        for exc in exc_group.exceptions:
+            print(exc)
+    ```
+
+=== "Python <3.11"
+
+    Since [`except*`](https://docs.python.org/3/reference/compound_stmts.html#except-star) is only supported
+    in Python 3.11+, we use the [`exceptiongroup`](https://github.com/agronholm/exceptiongroup) backport
+    package for earlier Python versions:
+
+    ```python {title="fallback_model_failure.py"}
+    from pydantic_ai import Agent, FallbackModelFailure
+    from pydantic_ai.models.anthropic import AnthropicModel
+    from pydantic_ai.models.fallback import FallbackModel
+    from pydantic_ai.models.openai import OpenAIModel
+
+    def model_status_error_handler(exc_group: BaseExceptionGroup) -> None:
+        for exc in exc_group.exceptions:
+            print(exc)
+
+    openai_model = OpenAIModel('gpt-4o', api_key='not-valid')
+    anthropic_model = AnthropicModel('claude-3-5-sonnet-latest', api_key='not-valid')
+    fallback_model = FallbackModel(openai_model, anthropic_model)
+
+    agent = Agent(fallback_model)
+    with catch({ModelStatusError: model_status_error_handler}):
+        response = agent.run_sync('What is the capital of France?')
+    ```

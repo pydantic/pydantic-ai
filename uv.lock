@@ -2576,6 +2576,7 @@ version = "0.0.26"
 source = { editable = "pydantic_ai_slim" }
 dependencies = [
     { name = "eval-type-backport" },
+    { name = "exceptiongroup", marker = "python_full_version < '3.11'" },
     { name = "griffe" },
     { name = "httpx" },
     { name = "logfire-api" },
@@ -2628,6 +2629,7 @@ requires-dist = [
     { name = "anthropic", marker = "extra == 'anthropic'", specifier = ">=0.40.0" },
     { name = "cohere", marker = "extra == 'cohere'", specifier = ">=5.13.11" },
     { name = "eval-type-backport", specifier = ">=0.2.0" },
+    { name = "exceptiongroup", marker = "python_full_version < '3.11'" },
     { name = "google-auth", marker = "extra == 'vertexai'", specifier = ">=2.36.0" },
     { name = "griffe", specifier = ">=1.3.2" },
     { name = "groq", marker = "extra == 'groq'", specifier = ">=0.12.0" },

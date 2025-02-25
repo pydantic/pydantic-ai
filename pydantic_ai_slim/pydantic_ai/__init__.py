@@ -3,7 +3,6 @@ from importlib.metadata import version
 from .agent import Agent, EndStrategy, HandleResponseNode, ModelRequestNode, UserPromptNode, capture_run_messages
 from .exceptions import (
     AgentRunError,
-    FallbackModelFailure,
     ModelRetry,
     ModelStatusError,
     UnexpectedModelBehavior,
@@ -24,7 +23,6 @@ __all__ = (
     'capture_run_messages',
     # exceptions
     'AgentRunError',
-    'FallbackModelFailure',
     'ModelRetry',
     'ModelStatusError',
     'UnexpectedModelBehavior',
