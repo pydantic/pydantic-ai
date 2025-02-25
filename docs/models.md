@@ -712,8 +712,9 @@ an [`ExceptionGroup`][ExceptionGroup] exception is raised, which contains a grou
 
 === "Python >=3.11"
 
-    ```python {title="fallback_model_failure.py"}
-    from pydantic_ai import Agent, FallbackModelFailure
+    ```python {title="fallback_model_failure.py" py="3.11"}
+    from pydantic_ai import Agent
+    from pydantic_ai.exceptions import ModelStatusError
     from pydantic_ai.models.anthropic import AnthropicModel
     from pydantic_ai.models.fallback import FallbackModel
     from pydantic_ai.models.openai import OpenAIModel
@@ -736,15 +737,20 @@ an [`ExceptionGroup`][ExceptionGroup] exception is raised, which contains a grou
     in Python 3.11+, we use the [`exceptiongroup`](https://github.com/agronholm/exceptiongroup) backport
     package for earlier Python versions:
 
-    ```python {title="fallback_model_failure.py"}
-    from pydantic_ai import Agent, FallbackModelFailure
+    ```python {title="fallback_model_failure.py" noqa="F821" test="skip"}
+    from exceptiongroup import catch
+
+    from pydantic_ai import Agent
+    from pydantic_ai.exceptions import ModelStatusError
     from pydantic_ai.models.anthropic import AnthropicModel
     from pydantic_ai.models.fallback import FallbackModel
     from pydantic_ai.models.openai import OpenAIModel
 
+
     def model_status_error_handler(exc_group: BaseExceptionGroup) -> None:
         for exc in exc_group.exceptions:
             print(exc)
+
 
     openai_model = OpenAIModel('gpt-4o', api_key='not-valid')
     anthropic_model = AnthropicModel('claude-3-5-sonnet-latest', api_key='not-valid')
