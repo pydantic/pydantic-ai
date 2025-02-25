@@ -242,7 +242,6 @@ from pydantic_ai.messages import (
     FinalResultEvent, TextPartDelta, ToolCallPartDelta,
 )
 from pydantic_ai.tools import RunContext
-from pydantic_graph import End
 
 
 @dataclass
@@ -287,8 +286,7 @@ async def main():
 
         # Begin a node-by-node, streaming iteration
         with weather_agent.iter(user_prompt, deps=deps) as run:
-            node = run.next_node  # The first node to run
-            while not isinstance(node, End):
+            async for node in run:
                 if is_model_request_node(node):
                     # A model request node => We can stream tokens from the model's request
                     print("=== ModelRequestNode: streaming partial request tokens ===")
@@ -313,8 +311,6 @@ async def main():
                                 print(f"[Tools] The LLM calls tool={event.part.tool_name!r} with args={event.part.args} (tool_call_id={event.part.tool_call_id!r})")
                             elif isinstance(event, FunctionToolResultEvent):
                                 print(f"[Tools] Tool call {event.tool_call_id!r} returned => {event.result.content}")
-
-                node = await run.next(node)
 
             # Once an End node is reached, the agent run is complete
             assert run.result is not None
