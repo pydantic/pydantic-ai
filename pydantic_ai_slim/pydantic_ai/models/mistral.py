@@ -644,7 +644,7 @@ def _map_user_prompt(part: UserPromptPart) -> MistralUserMessage:
                     image_url = MistralImageURL(url=f'data:{item.media_type};base64,{base64_encoded}')
                     content.append(MistralImageURLChunk(image_url=image_url, type='image_url'))
                 else:
-                    raise ValueError('Only image binary content is supported for Mistral.')
-            else:
-                raise ValueError(f'Unsupported content type: {type(item)}')
+                    raise RuntimeError('Only image binary content is supported for Mistral.')
+            else:  # pragma: no cover
+                raise RuntimeError(f'Unsupported content type: {type(item)}')
     return MistralUserMessage(content=content)

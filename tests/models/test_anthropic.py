@@ -1,6 +1,5 @@
 from __future__ import annotations as _annotations
 
-import io
 import json
 import os
 from dataclasses import dataclass, field
@@ -9,7 +8,6 @@ from functools import cached_property
 from typing import Any, TypeVar, cast
 
 import pytest
-from dirty_equals import IsInstance
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, ModelRetry
@@ -547,35 +545,22 @@ async def test_stream_structured(allow_model_requests: None):
         assert tool_called
 
 
-async def test_image_url_input(allow_model_requests: None):
-    c = completion_message([TextBlock(text='world', type='text')], AnthropicUsage(input_tokens=5, output_tokens=10))
-    mock_client = MockAnthropic.create_mock(c)
-    m = AnthropicModel('claude-3-5-haiku-latest', anthropic_client=mock_client)
+@pytest.mark.vcr()
+async def test_image_url_input(allow_model_requests: None, anthropic_api_key: str):
+    m = AnthropicModel('claude-3-5-haiku-latest', api_key=anthropic_api_key)
     agent = Agent(m)
 
     result = await agent.run(
         [
-            'hello',
+            'What is this vegetable?',
             ImageUrl(url='https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg'),
         ]
     )
-    assert result.data == 'world'
-    assert get_mock_chat_completion_kwargs(mock_client)[0]['messages'] == [
-        {
-            'role': 'user',
-            'content': [
-                {'text': 'hello', 'type': 'text'},
-                {
-                    'source': {
-                        'data': IsInstance(io.BytesIO),
-                        'media_type': 'image/jpeg',
-                        'type': 'base64',
-                    },
-                    'type': 'image',
-                },
-            ],
-        }
-    ]
+    assert result.data == snapshot("""\
+This is a potato. It's a yellow-skinned potato with a somewhat oblong or oval shape. The surface is covered in small eyes or dimples, which is typical of potato skin. The color is a golden-yellow, and the potato appears to be clean and fresh, photographed against a white background.
+
+Potatoes are root vegetables that are staple foods in many cuisines around the world. They can be prepared in numerous ways such as boiling, baking, roasting, frying, or mashing. This particular potato looks like it could be a Yukon Gold or a similar yellow-fleshed variety.\
+""")
 
 
 @pytest.mark.parametrize('media_type', ('audio/wav', 'audio/mpeg'))
@@ -587,5 +572,5 @@ async def test_audio_as_binary_content_input(allow_model_requests: None, media_t
 
     base64_content = b'//uQZ'
 
-    with pytest.raises(ValueError, match='Only images are supported for binary content'):
+    with pytest.raises(RuntimeError, match='Only images are supported for binary content'):
         await agent.run(['hello', BinaryContent(data=base64_content, media_type=media_type)])

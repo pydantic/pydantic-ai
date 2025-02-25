@@ -27,34 +27,29 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.models.gemini import (
+    ApiKeyAuth,
+    GeminiModel,
+    GeminiModelSettings,
+    _content_model_response,
+    _gemini_response_ta,
+    _gemini_streamed_response_ta,
+    _GeminiCandidates,
+    _GeminiContent,
+    _GeminiFunction,
+    _GeminiFunctionCallingConfig,
+    _GeminiResponse,
+    _GeminiSafetyRating,
+    _GeminiToolConfig,
+    _GeminiTools,
+    _GeminiUsageMetaData,
+)
 from pydantic_ai.result import Usage
 from pydantic_ai.tools import ToolDefinition
 
-from ..conftest import ClientWithHandler, IsNow, TestEnv, try_import
+from ..conftest import ClientWithHandler, IsNow, TestEnv
 
-with try_import() as imports_successful:
-    from pydantic_ai.models.gemini import (
-        ApiKeyAuth,
-        GeminiModel,
-        GeminiModelSettings,
-        _content_model_response,
-        _gemini_response_ta,
-        _gemini_streamed_response_ta,
-        _GeminiCandidates,
-        _GeminiContent,
-        _GeminiFunction,
-        _GeminiFunctionCallingConfig,
-        _GeminiResponse,
-        _GeminiSafetyRating,
-        _GeminiToolConfig,
-        _GeminiTools,
-        _GeminiUsageMetaData,
-    )
-
-pytestmark = [
-    pytest.mark.skipif(not imports_successful(), reason='google-genai not installed'),
-    pytest.mark.anyio,
-]
+pytestmark = pytest.mark.anyio
 
 
 def test_api_key_arg(env: TestEnv):
@@ -679,7 +674,7 @@ async def test_stream_invalid_unicode_text(get_gemini_client: GetGeminiClient):
             parts[0].decode()
         except UnicodeDecodeError:
             break
-    else:
+    else:  # pragma: no cover
         assert False, 'failed to find a spot in payload that would break unicode parsing'
 
     with pytest.raises(UnicodeDecodeError):

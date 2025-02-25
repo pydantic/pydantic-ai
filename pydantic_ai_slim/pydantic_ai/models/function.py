@@ -272,5 +272,6 @@ def _estimate_string_tokens(content: str | Sequence[UserContent]) -> int:
     if isinstance(content, str):
         return len(re.split(r'[\s",.:]+', content.strip()))
     # TODO(Marcelo): We need to study how we can estimate the tokens for these types of content.
-    assert isinstance(content, (AudioUrl, ImageUrl, BinaryContent))
-    return 0
+    else:  # pragma: no cover
+        assert isinstance(content, (AudioUrl, ImageUrl, BinaryContent))
+        return 0

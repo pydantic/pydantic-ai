@@ -1859,5 +1859,5 @@ async def test_audio_as_binary_content_input(allow_model_requests: None):
 
     base64_content = b'//uQZ'
 
-    with pytest.raises(ValueError, match='Only image binary content is supported for Mistral.'):
+    with pytest.raises(RuntimeError, match='Only image binary content is supported for Mistral.'):
         await agent.run(['hello', BinaryContent(data=base64_content, media_type='audio/wav')])

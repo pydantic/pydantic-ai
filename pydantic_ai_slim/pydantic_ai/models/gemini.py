@@ -840,5 +840,5 @@ async def _map_user_prompt(part: UserPromptPart) -> list[_GeminiPartUnion]:
                         _GeminiInlineDataPart(data=base64_encoded, mime_type=response.headers['Content-Type'])
                     )
             else:
-                raise ValueError(f'Unsupported content type: {item}')
+                assert_never(item)
     return content

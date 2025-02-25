@@ -435,12 +435,13 @@ async def _map_user_prompt(part: UserPromptPart) -> AsyncGenerator[ImageBlockPar
             if isinstance(item, str):
                 yield TextBlockParam(text=item, type='text')
             elif isinstance(item, BinaryContent):
-                if not item.is_image:
-                    raise ValueError('Only images are supported for binary content')
-                yield ImageBlockParam(
-                    source={'data': io.BytesIO(item.data), 'media_type': item.media_type, 'type': 'base64'},  # type: ignore
-                    type='image',
-                )
+                if item.is_image:
+                    yield ImageBlockParam(
+                        source={'data': io.BytesIO(item.data), 'media_type': item.media_type, 'type': 'base64'},  # type: ignore
+                        type='image',
+                    )
+                else:
+                    raise RuntimeError('Only images are supported for binary content')
             elif isinstance(item, ImageUrl):
                 response = await cached_async_http_client().get(item.url)
                 response.raise_for_status()
@@ -449,4 +450,4 @@ async def _map_user_prompt(part: UserPromptPart) -> AsyncGenerator[ImageBlockPar
                     type='image',
                 )
             else:
-                raise ValueError(f'Unsupported content type: {type(item)}')
+                raise RuntimeError(f'Unsupported content type: {type(item)}')

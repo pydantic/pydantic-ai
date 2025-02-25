@@ -817,15 +817,6 @@ def test_unknown_tool_fix():
     )
 
 
-try:
-    import google.genai  # type: ignore # noqa
-
-    skip_gemini_test = False
-except ImportError:
-    skip_gemini_test = True
-
-
-@pytest.mark.skipif(skip_gemini_test, reason='Need google-genai installed.')
 def test_model_requests_blocked(env: TestEnv):
     env.set('GEMINI_API_KEY', 'foobar')
     agent = Agent('google-gla:gemini-1.5-flash', result_type=tuple[str, str], defer_model_check=True)

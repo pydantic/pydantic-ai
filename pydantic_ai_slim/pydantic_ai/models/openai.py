@@ -431,9 +431,8 @@ async def _map_user_prompt(part: UserPromptPart) -> chat.ChatCompletionUserMessa
                 elif item.is_audio:
                     audio = InputAudio(data=base64_encoded, format=item.audio_format)
                     content.append(ChatCompletionContentPartInputAudioParam(input_audio=audio, type='input_audio'))
-                else:
-                    raise ValueError(f'Unsupported binary content type: {item.media_type}')
-                # TODO(Marcelo): We should add a test for this.
+                else:  # pragma: no cover
+                    raise RuntimeError(f'Unsupported binary content type: {item.media_type}')
             elif isinstance(item, AudioUrl):  # pragma: no cover
                 client = cached_async_http_client()
                 response = await client.get(item.url)
