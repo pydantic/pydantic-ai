@@ -4,6 +4,7 @@ import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime
+from mimetypes import guess_type
 from typing import Annotated, Any, Literal, Union, cast, overload
 
 import pydantic
@@ -80,8 +81,26 @@ class ImageUrl:
             raise ValueError(f'Unknown image file extension: {self.url}')
 
 
+@dataclass
+class DocumentUrl:
+    """The URL of the document."""
+
+    url: str
+    """The URL of the document."""
+
+    kind: Literal['document-url'] = 'document-url'
+    """Type identifier, this is available on all parts as a discriminator."""
+
+    @property
+    def media_type(self) -> str | None:
+        """Return the media type of the document, based on the url."""
+        type_, _ = guess_type(self.url)
+        return type_
+
+
 AudioMediaType: TypeAlias = Literal['audio/wav', 'audio/mpeg']
 ImageMediaType: TypeAlias = Literal['image/jpeg', 'image/png', 'image/gif', 'image/webp']
+DocumentMediaType: TypeAlias = Literal['application/pdf', 'text/plain']
 
 
 @dataclass
@@ -91,7 +110,7 @@ class BinaryContent:
     data: bytes
     """The binary data."""
 
-    media_type: AudioMediaType | ImageMediaType | str
+    media_type: AudioMediaType | ImageMediaType | DocumentMediaType | str
     """The media type of the binary data."""
 
     kind: Literal['binary'] = 'binary'
@@ -106,6 +125,11 @@ class BinaryContent:
     def is_image(self) -> bool:
         """Return `True` if the media type is an image type."""
         return self.media_type.startswith('image/')
+
+    @property
+    def is_document(self) -> bool:
+        """Return `True` if the media type is a document type."""
+        return self.media_type in {'application/pdf', 'text/plain'}
 
     @property
     def audio_format(self) -> Literal['mp3', 'wav']:

@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from json import JSONDecodeError, loads as json_loads
 from typing import Any, Literal, Union, cast, overload
 
+from anthropic.types import DocumentBlockParam
 from httpx import AsyncClient as AsyncHTTPClient
 from typing_extensions import assert_never
 
@@ -15,6 +16,7 @@ from .. import UnexpectedModelBehavior, _utils, usage
 from .._utils import guard_tool_call_id as _guard_tool_call_id
 from ..messages import (
     BinaryContent,
+    DocumentUrl,
     ImageUrl,
     ModelMessage,
     ModelRequest,
@@ -344,6 +346,11 @@ class AnthropicModel(Model):
                         source={'data': io.BytesIO(response.content), 'media_type': 'image/jpeg', 'type': 'base64'},
                         type='image',
                     )
+                elif isinstance(item, DocumentUrl):
+                    response = await cached_async_http_client().get(item.url)
+                    response.raise_for_status()
+                    yield DocumentBlockParam()
+
                 else:
                     raise RuntimeError(f'Unsupported content type: {type(item)}')
 
