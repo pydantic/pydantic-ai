@@ -10,7 +10,7 @@ from dataclasses import field
 from typing import Any, Generic, Literal, Union, cast
 
 import logfire_api
-from typing_extensions import TypeVar, assert_never
+from typing_extensions import TypeGuard, TypeVar, assert_never
 
 from pydantic_graph import BaseNode, Graph, GraphRunContext
 from pydantic_graph.nodes import End, NodeRunEndT
@@ -40,6 +40,8 @@ __all__ = (
     'HandleResponseNode',
     'build_run_context',
     'capture_run_messages',
+    'is_model_request_node',
+    'is_handle_response_node',
 )
 
 _logfire = logfire_api.Logfire(otel_scope='pydantic-ai')
@@ -237,11 +239,29 @@ class ModelRequestNode(BaseNode[GraphAgentState, GraphAgentDeps[DepsT, Any], res
         return await self._make_request(ctx)
 
     @asynccontextmanager
+    async def stream(
+        self,
+        ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, T]],
+    ) -> AsyncIterator[result.AgentStream[DepsT, T]]:
+        async with self._stream(ctx) as streamed_response:
+            agent_stream = result.AgentStream[DepsT, T](
+                streamed_response,
+                ctx.deps.result_schema,
+                ctx.deps.result_validators,
+                build_run_context(ctx),
+                ctx.deps.usage_limits,
+            )
+            yield agent_stream
+            # In case the user didn't manually consume the full stream, ensure it is fully consumed here,
+            # otherwise usage won't be properly counted:
+            async for _ in agent_stream:
+                pass
+
+    @asynccontextmanager
     async def _stream(
         self,
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, T]],
     ) -> AsyncIterator[models.StreamedResponse]:
-        # TODO: Consider changing this to return something more similar to a `StreamedRunResult`, then make it public
         assert not self._did_stream, 'stream() should only be called once per node'
 
         model_settings, model_request_parameters = await self._prepare_request(ctx)
@@ -575,7 +595,7 @@ async def process_function_tools(
             for task in done:
                 index = tasks.index(task)
                 result = task.result()
-                yield _messages.FunctionToolResultEvent(result, call_id=call_index_to_event_id[index])
+                yield _messages.FunctionToolResultEvent(result, tool_call_id=call_index_to_event_id[index])
                 if isinstance(result, (_messages.ToolReturnPart, _messages.RetryPromptPart)):
                     results_by_index[index] = result
                 else:
@@ -685,3 +705,15 @@ def build_agent_graph(
         auto_instrument=False,
     )
     return graph
+
+
+def is_model_request_node(
+    node: BaseNode[GraphAgentState, GraphAgentDeps[DepsT, Any], result.FinalResult[NodeRunEndT]],
+) -> TypeGuard[ModelRequestNode[DepsT, NodeRunEndT]]:
+    return isinstance(node, ModelRequestNode)
+
+
+def is_handle_response_node(
+    node: BaseNode[GraphAgentState, GraphAgentDeps[DepsT, Any], result.FinalResult[NodeRunEndT]],
+) -> TypeGuard[HandleResponseNode[DepsT, NodeRunEndT]]:
+    return isinstance(node, HandleResponseNode)

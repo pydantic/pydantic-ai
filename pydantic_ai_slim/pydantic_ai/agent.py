@@ -45,7 +45,8 @@ EndStrategy = _agent_graph.EndStrategy
 HandleResponseNode = _agent_graph.HandleResponseNode
 ModelRequestNode = _agent_graph.ModelRequestNode
 UserPromptNode = _agent_graph.UserPromptNode
-
+is_handle_response_node = _agent_graph.is_handle_response_node
+is_model_request_node = _agent_graph.is_model_request_node
 
 __all__ = (
     'Agent',
@@ -56,6 +57,8 @@ __all__ = (
     'HandleResponseNode',
     'ModelRequestNode',
     'UserPromptNode',
+    'is_handle_response_node',
+    'is_model_request_node',
 )
 
 _logfire = logfire_api.Logfire(otel_scope='pydantic-ai')
