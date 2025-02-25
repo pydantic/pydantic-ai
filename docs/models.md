@@ -655,7 +655,7 @@ The best place to start is to review the source code for existing implementation
 For details on when we'll accept contributions adding new models to PydanticAI, see the [contributing guidelines](contributing.md#new-model-rules).
 
 
-## Fallback Models
+## Fallback
 
 You can use [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] to try a list of models
 in sequence until one returns a successful result. Under the hood, PydanticAI automatically switches
