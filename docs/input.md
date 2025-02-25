@@ -12,8 +12,6 @@ If you have a direct URL for the image, you can use [`ImageUrl`][pydantic_ai.Ima
 ```py {title="main.py" test="skip" lint="skip"}
 from pydantic_ai import Agent, ImageUrl
 
-image_url = ImageUrl(url='https://iili.io/3Hs4FMg.png')
-
 agent = Agent(model='openai:gpt-4o')
 result = agent.run_sync(
     [
