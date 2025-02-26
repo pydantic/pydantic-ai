@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+import base64
 import io
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator
 from contextlib import asynccontextmanager
@@ -343,12 +344,27 @@ class AnthropicModel(Model):
                     else:
                         raise RuntimeError('Only images are supported for binary content')
                 elif isinstance(item, ImageUrl):
-                    response = await cached_async_http_client().get(item.url)
-                    response.raise_for_status()
-                    yield ImageBlockParam(
-                        source={'data': io.BytesIO(response.content), 'media_type': 'image/jpeg', 'type': 'base64'},
-                        type='image',
-                    )
+                    # yield ImageBlockParam(
+                    #     source={'data': io.BytesIO(response.content), 'media_type': item.media_type, 'type': 'base64'},
+                    #     type='image',
+                    # )
+                    try:
+                        response = await cached_async_http_client().get(item.url)
+                        response.raise_for_status()
+                        yield ImageBlockParam(
+                            source={'data': io.BytesIO(response.content), 'media_type': item.media_type, 'type': 'base64'},
+                            type='image',
+                        )
+                    except ValueError:
+                        # Download the file if can't find the mime type.
+                        client = cached_async_http_client()
+                        response = await client.get(item.url, follow_redirects=True)
+                        response.raise_for_status()
+                        base64_encoded = base64.b64encode(response.content).decode('utf-8')
+                        yield ImageBlockParam(
+                            source={'data': base64_encoded, 'media_type': response.headers['Content-Type'], 'type': 'base64'},
+                            type='image',
+                        )
                 else:
                     raise RuntimeError(f'Unsupported content type: {type(item)}')
 
@@ -456,3 +472,4 @@ class AnthropicStreamedResponse(StreamedResponse):
     def timestamp(self) -> datetime:
         """Get the timestamp of the response."""
         return self._timestamp
+
