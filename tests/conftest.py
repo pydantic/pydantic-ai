@@ -186,6 +186,11 @@ def set_event_loop() -> Iterator[None]:
     new_loop.close()
 
 
+def raise_if_exception(e: Any) -> None:
+    if isinstance(e, Exception):
+        raise e
+
+
 def pytest_recording_configure(config: Any, vcr: VCR):
     from . import json_body_serializer
 

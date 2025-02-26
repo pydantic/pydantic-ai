@@ -653,3 +653,115 @@ For streaming, you'll also need to implement the following abstract base class:
 The best place to start is to review the source code for existing implementations, e.g. [`OpenAIModel`](https://github.com/pydantic/pydantic-ai/blob/main/pydantic_ai_slim/pydantic_ai/models/openai.py).
 
 For details on when we'll accept contributions adding new models to PydanticAI, see the [contributing guidelines](contributing.md#new-model-rules).
+
+
+## Fallback
+
+You can use [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] to attempt multiple models
+in sequence until one returns a successful result. Under the hood, PydanticAI automatically switches
+from one model to the next if the current model returns a 4xx or 5xx status code.
+
+In the following example, the agent first makes a request to the OpenAI model (which fails due to an invalid API key),
+and then falls back to the Anthropic model.
+
+```python {title="fallback_model.py"}
+from pydantic_ai import Agent
+from pydantic_ai.models.anthropic import AnthropicModel
+from pydantic_ai.models.fallback import FallbackModel
+from pydantic_ai.models.openai import OpenAIModel
+
+openai_model = OpenAIModel('gpt-4o', api_key='not-valid')
+anthropic_model = AnthropicModel('claude-3-5-sonnet-latest')
+fallback_model = FallbackModel(openai_model, anthropic_model)
+
+agent = Agent(fallback_model)
+response = agent.run_sync('What is the capital of France?')
+print(response.data)
+#> Paris
+
+print(response.all_messages())
+"""
+[
+    ModelRequest(
+        parts=[
+            UserPromptPart(
+                content='What is the capital of France?',
+                timestamp=datetime.datetime(...),
+                part_kind='user-prompt',
+            )
+        ],
+        kind='request',
+    ),
+    ModelResponse(
+        parts=[TextPart(content='Paris', part_kind='text')],
+        model_name='claude-3-5-sonnet-latest',
+        timestamp=datetime.datetime(...),
+        kind='response',
+    ),
+]
+"""
+```
+
+The `ModelResponse` message above indicates in the `model_name` field that the result was returned by the Anthropic model, which is the second model specified in the `FallbackModel`.
+
+!!! note
+    Each model's options should be configured individually. For example, `base_url`, `api_key`, and custom clients should be set on each model itself, not on the `FallbackModel`.
+
+In this next example, we demonstrate the exception-handling capabilities of `FallbackModel`.
+If all models fail, a [`FallbackExceptionGroup`][pydantic_ai.exceptions.FallbackExceptionGroup] is raised, which
+contains all the exceptions encountered during the `run` execution.
+
+=== "Python >=3.11"
+
+    ```python {title="fallback_model_failure.py" py="3.11"}
+    from pydantic_ai import Agent
+    from pydantic_ai.exceptions import ModelHTTPError
+    from pydantic_ai.models.anthropic import AnthropicModel
+    from pydantic_ai.models.fallback import FallbackModel
+    from pydantic_ai.models.openai import OpenAIModel
+
+    openai_model = OpenAIModel('gpt-4o', api_key='not-valid')
+    anthropic_model = AnthropicModel('claude-3-5-sonnet-latest', api_key='not-valid')
+    fallback_model = FallbackModel(openai_model, anthropic_model)
+
+    agent = Agent(fallback_model)
+    try:
+        response = agent.run_sync('What is the capital of France?')
+    except* ModelHTTPError as exc_group:
+        for exc in exc_group.exceptions:
+            print(exc)
+    ```
+
+=== "Python <3.11"
+
+    Since [`except*`](https://docs.python.org/3/reference/compound_stmts.html#except-star) is only supported
+    in Python 3.11+, we use the [`exceptiongroup`](https://github.com/agronholm/exceptiongroup) backport
+    package for earlier Python versions:
+
+    ```python {title="fallback_model_failure.py" noqa="F821" test="skip"}
+    from exceptiongroup import catch
+
+    from pydantic_ai import Agent
+    from pydantic_ai.exceptions import ModelHTTPError
+    from pydantic_ai.models.anthropic import AnthropicModel
+    from pydantic_ai.models.fallback import FallbackModel
+    from pydantic_ai.models.openai import OpenAIModel
+
+
+    def model_status_error_handler(exc_group: BaseExceptionGroup) -> None:
+        for exc in exc_group.exceptions:
+            print(exc)
+
+
+    openai_model = OpenAIModel('gpt-4o', api_key='not-valid')
+    anthropic_model = AnthropicModel('claude-3-5-sonnet-latest', api_key='not-valid')
+    fallback_model = FallbackModel(openai_model, anthropic_model)
+
+    agent = Agent(fallback_model)
+    with catch({ModelHTTPError: model_status_error_handler}):
+        response = agent.run_sync('What is the capital of France?')
+    ```
+
+By default, the `FallbackModel` only moves on to the next model if the current model raises a
+[`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError]. You can customize this behavior by
+passing a custom `fallback_on` argument to the `FallbackModel` constructor.

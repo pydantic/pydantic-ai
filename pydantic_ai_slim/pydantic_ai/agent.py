@@ -368,7 +368,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
                 HandleResponseNode(
                     model_response=ModelResponse(
                         parts=[TextPart(content='Paris', part_kind='text')],
-                        model_name='function:model_logic',
+                        model_name='gpt-4o',
                         timestamp=datetime.datetime(...),
                         kind='response',
                     )
@@ -1217,7 +1217,7 @@ class AgentRun(Generic[AgentDepsT, ResultDataT]):
             HandleResponseNode(
                 model_response=ModelResponse(
                     parts=[TextPart(content='Paris', part_kind='text')],
-                    model_name='function:model_logic',
+                    model_name='gpt-4o',
                     timestamp=datetime.datetime(...),
                     kind='response',
                 )
@@ -1360,7 +1360,7 @@ class AgentRun(Generic[AgentDepsT, ResultDataT]):
                     HandleResponseNode(
                         model_response=ModelResponse(
                             parts=[TextPart(content='Paris', part_kind='text')],
-                            model_name='function:model_logic',
+                            model_name='gpt-4o',
                             timestamp=datetime.datetime(...),
                             kind='response',
                         )

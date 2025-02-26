@@ -15,7 +15,7 @@ import pydantic
 from httpx import USE_CLIENT_DEFAULT, AsyncClient as AsyncHTTPClient, Response as HTTPResponse
 from typing_extensions import NotRequired, TypedDict, assert_never
 
-from .. import UnexpectedModelBehavior, _utils, exceptions, usage
+from .. import ModelHTTPError, UnexpectedModelBehavior, UserError, _utils, usage
 from ..messages import (
     AudioUrl,
     BinaryContent,
@@ -112,7 +112,7 @@ class GeminiModel(Model):
             if env_api_key := os.getenv('GEMINI_API_KEY'):
                 api_key = env_api_key
             else:
-                raise exceptions.UserError('API key must be provided or set in the GEMINI_API_KEY environment variable')
+                raise UserError('API key must be provided or set in the GEMINI_API_KEY environment variable')
         self.http_client = http_client or cached_async_http_client()
         self._auth = ApiKeyAuth(api_key)
         self._url = url_template.format(model=model_name)
@@ -233,9 +233,11 @@ class GeminiModel(Model):
             headers=headers,
             timeout=model_settings.get('timeout', USE_CLIENT_DEFAULT),
         ) as r:
-            if r.status_code != 200:
+            if (status_code := r.status_code) != 200:
                 await r.aread()
-                raise exceptions.UnexpectedModelBehavior(f'Unexpected response from gemini {r.status_code}', r.text)
+                if status_code >= 400:
+                    raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=r.text)
+                raise UnexpectedModelBehavior(f'Unexpected response from gemini {status_code}', r.text)
             yield r
 
     def _process_response(self, response: _GeminiResponse) -> ModelResponse:
@@ -563,7 +565,7 @@ def _process_response_from_parts(
                 )
             )
         elif 'function_response' in part:
-            raise exceptions.UnexpectedModelBehavior(
+            raise UnexpectedModelBehavior(
                 f'Unsupported response from Gemini, expected all parts to be function calls or text, got: {part!r}'
             )
     return ModelResponse(parts=items, model_name=model_name, timestamp=timestamp or _utils.now_utc())
@@ -778,7 +780,7 @@ class _GeminiJsonSchema:
             # noinspection PyTypeChecker
             key = re.sub(r'^#/\$defs/', '', ref)
             if key in refs_stack:
-                raise exceptions.UserError('Recursive `$ref`s in JSON Schema are not supported by Gemini')
+                raise UserError('Recursive `$ref`s in JSON Schema are not supported by Gemini')
             refs_stack += (key,)
             schema_def = self.defs[key]
             self._simplify(schema_def, refs_stack)
@@ -812,7 +814,7 @@ class _GeminiJsonSchema:
     def _object(self, schema: dict[str, Any], refs_stack: tuple[str, ...]) -> None:
         ad_props = schema.pop('additionalProperties', None)
         if ad_props:
-            raise exceptions.UserError('Additional properties in JSON Schema are not supported by Gemini')
+            raise UserError('Additional properties in JSON Schema are not supported by Gemini')
 
         if properties := schema.get('properties'):  # pragma: no branch
             for value in properties.values():
