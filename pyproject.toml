@@ -30,9 +30,8 @@ classifiers = [
     "Framework :: Pydantic :: 2",
 ]
 requires-python = ">=3.9"
-
 dependencies = [
-    "pydantic-ai-slim[openai,vertexai,groq,anthropic,mistral,cohere]==0.0.30",
+    "pydantic-ai-slim[openai,vertexai,groq,anthropic,mistral,cohere,bedrock]==0.0.30",
 ]
 
 [project.urls]
@@ -129,7 +128,11 @@ strict = true
 [tool.pytest.ini_options]
 testpaths = "tests"
 xfail_strict = true
-filterwarnings = ["error"]
+filterwarnings = [
+    "error",
+    # boto3
+    "ignore::DeprecationWarning:botocore.*"
+]
 
 # https://coverage.readthedocs.io/en/latest/config.html#run
 [tool.coverage.run]
