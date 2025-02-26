@@ -326,6 +326,7 @@ class GeminiModel(Model):
                     )
                 elif isinstance(item, (AudioUrl, ImageUrl, DocumentUrl)):
                     try:
+                        print(item.url, item.media_type)
                         content.append(
                             _GeminiFileDataPart(file_data={'file_uri': item.url, 'mime_type': item.media_type})
                         )
