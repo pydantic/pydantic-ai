@@ -7,10 +7,10 @@ from collections.abc import AsyncIterator, Awaitable, Iterator, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
 from copy import deepcopy
 from types import FrameType
-from typing import Any, Callable, Generic, TypeGuard, cast, final, overload
+from typing import Any, Callable, Generic, cast, final, overload
 
 import logfire_api
-from typing_extensions import TypeVar, deprecated
+from typing_extensions import TypeGuard, TypeVar, deprecated
 
 from pydantic_graph import End, Graph, GraphRun, GraphRunContext
 
