@@ -222,24 +222,22 @@ Once the run finishes, `agent_run.final_result` becomes a [`AgentRunResult`][pyd
 
 ### Streaming
 
-Here is an example of streaming in combination with `async for`:
+Here is an example of streaming an agent run in combination with `async for` iteration:
 
-```python {title="streaming.py"}
+```python {title="streaming.py"} {test="skip"}
 import asyncio
 from dataclasses import dataclass
 from datetime import date
 
-from pydantic_ai import (
-    Agent,
-    capture_run_messages,
-)
-from pydantic_ai.agent import is_handle_response_node, is_model_request_node
+from pydantic_ai import Agent
 from pydantic_ai.messages import (
-    PartStartEvent,
-    PartDeltaEvent,
+    FinalResultEvent,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
-    FinalResultEvent, TextPartDelta, ToolCallPartDelta,
+    PartDeltaEvent,
+    PartStartEvent,
+    TextPartDelta,
+    ToolCallPartDelta,
 )
 from pydantic_ai.tools import RunContext
 
@@ -248,18 +246,20 @@ from pydantic_ai.tools import RunContext
 class WeatherService:
     async def get_forecast(self, location: str, forecast_date: date) -> str:
         # In real code: call weather API, DB queries, etc.
-        return f"The forecast in {location} on {forecast_date} is 24°C and sunny."
+        return f'The forecast in {location} on {forecast_date} is 24°C and sunny.'
 
     async def get_historic_weather(self, location: str, forecast_date: date) -> str:
         # In real code: call a historical weather API or DB
-        return f"The weather in {location} on {forecast_date} was 18°C and partly cloudy."
+        return (
+            f'The weather in {location} on {forecast_date} was 18°C and partly cloudy.'
+        )
 
 
 weather_agent = Agent[WeatherService, str](
-    "openai:gpt-4o",
+    'openai:gpt-4o',
     deps_type=WeatherService,
     result_type=str,  # We'll produce a final answer as plain text
-    system_prompt="Providing a weather forecast at the locations the user provides.",
+    system_prompt='Providing a weather forecast at the locations the user provides.',
 )
 
 
@@ -277,53 +277,60 @@ async def weather_forecast(
 
 async def main():
     # The user asks for tomorrow's weather in Paris
-    user_prompt = "What will the weather be like in Paris tomorrow?"
+    user_prompt = 'What will the weather be like in Paris tomorrow?'
 
-    # We'll capture raw messages for debugging
-    with capture_run_messages() as messages:
-        # Provide a WeatherService instance as the agent's dependencies
-        deps = WeatherService()
+    # Provide a WeatherService instance as the agent's dependencies
+    deps = WeatherService()
 
-        # Begin a node-by-node, streaming iteration
-        with weather_agent.iter(user_prompt, deps=deps) as run:
-            async for node in run:
-                if is_model_request_node(node):
-                    # A model request node => We can stream tokens from the model's request
-                    print("=== ModelRequestNode: streaming partial request tokens ===")
-                    async with node.stream(run.ctx) as request_stream:
-                        async for event in request_stream:
-                            if isinstance(event, PartStartEvent):
-                                print(f"[Request] Starting part {event.index}: {event.part!r}")
-                            elif isinstance(event, PartDeltaEvent):
-                                if isinstance(event.delta, TextPartDelta):
-                                    print(f"[Request] Part {event.index} text delta: {event.delta.content_delta!r}")
-                                elif isinstance(event.delta, ToolCallPartDelta):
-                                    print(f"[Request] Part {event.index} args_delta={event.delta.args_delta}")
-                            elif isinstance(event, FinalResultEvent):
-                                print(f"[Result] The model produced a final result (tool_name={event.tool_name})")
+    # Begin a node-by-node, streaming iteration
+    with weather_agent.iter(user_prompt, deps=deps) as run:
+        async for node in run:
+            if Agent.is_model_request_node(node):
+                # A model request node => We can stream tokens from the model's request
+                print('=== ModelRequestNode: streaming partial request tokens ===')
+                async with node.stream(run.ctx) as request_stream:
+                    async for event in request_stream:
+                        if isinstance(event, PartStartEvent):
+                            print(
+                                f'[Request] Starting part {event.index}: {event.part!r}'
+                            )
+                        elif isinstance(event, PartDeltaEvent):
+                            if isinstance(event.delta, TextPartDelta):
+                                print(
+                                    f'[Request] Part {event.index} text delta: {event.delta.content_delta!r}'
+                                )
+                            elif isinstance(event.delta, ToolCallPartDelta):
+                                print(
+                                    f'[Request] Part {event.index} args_delta={event.delta.args_delta}'
+                                )
+                        elif isinstance(event, FinalResultEvent):
+                            print(
+                                f'[Result] The model produced a final result (tool_name={event.tool_name})'
+                            )
 
-                elif is_handle_response_node(node):
-                    # A handle-response node => The model returned some data, potentially calls a tool
-                    print("=== HandleResponseNode: streaming partial response & tool usage ===")
-                    async with node.stream(run.ctx) as handle_stream:
-                        async for event in handle_stream:
-                            if isinstance(event, FunctionToolCallEvent):
-                                print(f"[Tools] The LLM calls tool={event.part.tool_name!r} with args={event.part.args} (tool_call_id={event.part.tool_call_id!r})")
-                            elif isinstance(event, FunctionToolResultEvent):
-                                print(f"[Tools] Tool call {event.tool_call_id!r} returned => {event.result.content}")
+            elif Agent.is_handle_response_node(node):
+                # A handle-response node => The model returned some data, potentially calls a tool
+                print(
+                    '=== HandleResponseNode: streaming partial response & tool usage ==='
+                )
+                async with node.stream(run.ctx) as handle_stream:
+                    async for event in handle_stream:
+                        if isinstance(event, FunctionToolCallEvent):
+                            print(
+                                f'[Tools] The LLM calls tool={event.part.tool_name!r} with args={event.part.args} (tool_call_id={event.part.tool_call_id!r})'
+                            )
+                        elif isinstance(event, FunctionToolResultEvent):
+                            print(
+                                f'[Tools] Tool call {event.tool_call_id!r} returned => {event.result.content}'
+                            )
 
-            # Once an End node is reached, the agent run is complete
-            assert run.result is not None
-            print("\n=== Final Agent Output ===")
-            print("Forecast:", run.result.data)
-
-    # Show the raw messages exchanged
-    print("\n=== Raw Messages Captured ===")
-    for m in messages:
-        print(" -", m)
+        # Once an End node is reached, the agent run is complete
+        assert run.result is not None
+        print('\n=== Final Agent Output ===')
+        print('Forecast:', run.result.data)
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     asyncio.run(main())
 
 """
@@ -380,12 +387,6 @@ if __name__ == "__main__":
 
 === Final Agent Output ===
 Forecast: The weather forecast for Paris tomorrow, November 2, 2023, is expected to be 18°C and partly cloudy.
-
-=== Raw Messages Captured ===
- - ModelRequest(parts=[SystemPromptPart(content='Providing a weather forecast at the locations the user provides.', dynamic_ref=None, part_kind='system-prompt'), UserPromptPart(content='What will the weather be like in Paris tomorrow?', timestamp=datetime.datetime(2025, 2, 25, 7, 16, 4, 867863, tzinfo=datetime.timezone.utc), part_kind='user-prompt')], kind='request')
- - ModelResponse(parts=[ToolCallPart(tool_name='weather_forecast', args='{"location":"Paris","forecast_date":"2023-11-02"}', tool_call_id='call_Q0QqiZfIhHyNViiLG7jT0G9R', part_kind='tool-call')], model_name='gpt-4o', timestamp=datetime.datetime(2025, 2, 25, 7, 16, 8, tzinfo=datetime.timezone.utc), kind='response')
- - ModelRequest(parts=[ToolReturnPart(tool_name='weather_forecast', content='The weather in Paris on 2023-11-02 was 18°C and partly cloudy.', tool_call_id='call_Q0QqiZfIhHyNViiLG7jT0G9R', timestamp=datetime.datetime(2025, 2, 25, 7, 16, 9, 150432, tzinfo=datetime.timezone.utc), part_kind='tool-return')], kind='request')
- - ModelResponse(parts=[TextPart(content='The weather forecast for Paris tomorrow, November 2, 2023, is expected to be 18°C and partly cloudy.', part_kind='text')], model_name='gpt-4o', timestamp=datetime.datetime(2025, 2, 25, 7, 16, 9, tzinfo=datetime.timezone.utc), kind='response')
 """
 ```
 

@@ -2,7 +2,6 @@ from __future__ import annotations as _annotations
 
 import asyncio
 import dataclasses
-from abc import ABC
 from collections.abc import AsyncIterator, Iterator, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
@@ -40,8 +39,6 @@ __all__ = (
     'HandleResponseNode',
     'build_run_context',
     'capture_run_messages',
-    'is_model_request_node',
-    'is_handle_response_node',
 )
 
 _logfire = logfire_api.Logfire(otel_scope='pydantic-ai')
@@ -57,6 +54,7 @@ else:
     logfire._internal.stack_info.NON_USER_CODE_PREFIXES += (str(Path(__file__).parent.absolute()),)
 
 T = TypeVar('T')
+S = TypeVar('S')
 NoneType = type(None)
 EndStrategy = Literal['early', 'exhaustive']
 """The strategy for handling multiple tool calls when a final result is found.
@@ -109,8 +107,31 @@ class GraphAgentDeps(Generic[DepsT, ResultDataT]):
     run_span: logfire_api.LogfireSpan
 
 
+class AgentNode(BaseNode[GraphAgentState, GraphAgentDeps[DepsT, Any], result.FinalResult[NodeRunEndT]]):
+    """The base class for all agent nodes.
+
+    Using subclass of `BaseNode` for all nodes reduces the amount of boilerplate of generics everywhere
+    """
+
+
+def is_agent_node(
+    node: BaseNode[GraphAgentState, GraphAgentDeps[T, Any], result.FinalResult[S]] | End[result.FinalResult[S]],
+) -> TypeGuard[AgentNode[T, S]]:
+    """Check if the provided node is an instance of `AgentNode`.
+
+    Usage:
+
+        if is_agent_node(node):
+            # `node` is an AgentNode
+            ...
+
+    This method preserves the generic parameters on the narrowed type, unlike `isinstance(node, AgentNode)`.
+    """
+    return isinstance(node, AgentNode)
+
+
 @dataclasses.dataclass
-class UserPromptNode(BaseNode[GraphAgentState, GraphAgentDeps[DepsT, Any], result.FinalResult[NodeRunEndT]], ABC):
+class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
     user_prompt: str | Sequence[_messages.UserContent]
 
     system_prompts: tuple[str, ...]
@@ -217,7 +238,7 @@ async def _prepare_request_parameters(
 
 
 @dataclasses.dataclass
-class ModelRequestNode(BaseNode[GraphAgentState, GraphAgentDeps[DepsT, Any], result.FinalResult[NodeRunEndT]]):
+class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
     """Make a request to the model using the last message in state.message_history."""
 
     request: _messages.ModelRequest
@@ -339,7 +360,7 @@ class ModelRequestNode(BaseNode[GraphAgentState, GraphAgentDeps[DepsT, Any], res
 
 
 @dataclasses.dataclass
-class HandleResponseNode(BaseNode[GraphAgentState, GraphAgentDeps[DepsT, Any], result.FinalResult[NodeRunEndT]]):
+class HandleResponseNode(AgentNode[DepsT, NodeRunEndT]):
     """Process a model response, and decide whether to end the run or make a new request."""
 
     model_response: _messages.ModelResponse
@@ -705,15 +726,3 @@ def build_agent_graph(
         auto_instrument=False,
     )
     return graph
-
-
-def is_model_request_node(
-    node: BaseNode[GraphAgentState, GraphAgentDeps[DepsT, Any], result.FinalResult[NodeRunEndT]],
-) -> TypeGuard[ModelRequestNode[DepsT, NodeRunEndT]]:
-    return isinstance(node, ModelRequestNode)
-
-
-def is_handle_response_node(
-    node: BaseNode[GraphAgentState, GraphAgentDeps[DepsT, Any], result.FinalResult[NodeRunEndT]],
-) -> TypeGuard[HandleResponseNode[DepsT, NodeRunEndT]]:
-    return isinstance(node, HandleResponseNode)
