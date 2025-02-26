@@ -17,7 +17,9 @@ agent = Agent(
     system_prompt='Search DuckDuckGo for the given query and return the results.',
 )
 
-result = agent.run_sync('Can you list the top five highest-grossing animated films of 2025?')
+result = agent.run_sync(
+    'Can you list the top five highest-grossing animated films of 2025?'
+)
 print(result.data)
 """
 I looked into several sources on animated box‐office performance in 2025, and while detailed
