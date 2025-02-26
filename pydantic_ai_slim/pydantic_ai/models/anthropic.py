@@ -344,10 +344,6 @@ class AnthropicModel(Model):
                     else:
                         raise RuntimeError('Only images are supported for binary content')
                 elif isinstance(item, ImageUrl):
-                    # yield ImageBlockParam(
-                    #     source={'data': io.BytesIO(response.content), 'media_type': item.media_type, 'type': 'base64'},
-                    #     type='image',
-                    # )
                     try:
                         response = await cached_async_http_client().get(item.url)
                         response.raise_for_status()
