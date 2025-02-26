@@ -348,7 +348,11 @@ class AnthropicModel(Model):
                         response = await cached_async_http_client().get(item.url)
                         response.raise_for_status()
                         yield ImageBlockParam(
-                            source={'data': io.BytesIO(response.content), 'media_type': item.media_type, 'type': 'base64'},
+                            source={
+                                'data': io.BytesIO(response.content),
+                                'media_type': item.media_type,
+                                'type': 'base64',
+                            },
                             type='image',
                         )
                     except ValueError:
@@ -358,7 +362,11 @@ class AnthropicModel(Model):
                         response.raise_for_status()
                         base64_encoded = base64.b64encode(response.content).decode('utf-8')
                         yield ImageBlockParam(
-                            source={'data': base64_encoded, 'media_type': response.headers['Content-Type'], 'type': 'base64'},
+                            source={
+                                'data': base64_encoded,
+                                'media_type': response.headers['Content-Type'],
+                                'type': 'base64',
+                            },
                             type='image',
                         )
                 else:
@@ -468,4 +476,3 @@ class AnthropicStreamedResponse(StreamedResponse):
     def timestamp(self) -> datetime:
         """Get the timestamp of the response."""
         return self._timestamp
-
