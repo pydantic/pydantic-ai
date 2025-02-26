@@ -17,6 +17,7 @@ from pydantic_ai import Agent, ModelRetry, UnexpectedModelBehavior, UserError
 from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.messages import (
     BinaryContent,
+    DocumentUrl,
     ImageUrl,
     ModelRequest,
     ModelResponse,
@@ -1010,3 +1011,14 @@ async def test_image_url_input(allow_model_requests: None, gemini_api_key: str) 
 
     result = await agent.run(['What is the name of this fruit?', image_url])
     assert result.data == snapshot('This is not a fruit, it is an organ console.')
+
+
+@pytest.mark.vcr()
+async def test_document_url_input(allow_model_requests: None, gemini_api_key: str) -> None:
+    m = GeminiModel('gemini-1.0-pro', api_key=gemini_api_key)
+    agent = Agent(m)
+
+    document_url = DocumentUrl(url='gs://cloud-samples-data/generative-ai/pdf/2403.05530.pdf')
+
+    result = await agent.run(['What is the main content on this document?', document_url])
+    assert result.data == snapshot()

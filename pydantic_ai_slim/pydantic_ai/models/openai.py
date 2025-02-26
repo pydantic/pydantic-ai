@@ -16,6 +16,7 @@ from .._utils import guard_tool_call_id as _guard_tool_call_id
 from ..messages import (
     AudioUrl,
     BinaryContent,
+    DocumentUrl,
     ImageUrl,
     ModelMessage,
     ModelRequest,
@@ -384,6 +385,8 @@ class OpenAIModel(Model):
                     base64_encoded = base64.b64encode(response.content).decode('utf-8')
                     audio = InputAudio(data=base64_encoded, format=response.headers.get('content-type'))
                     content.append(ChatCompletionContentPartInputAudioParam(input_audio=audio, type='input_audio'))
+                elif isinstance(item, DocumentUrl):
+                    raise RuntimeError('DocumentUrl is not supported by OpenAI')
                 else:
                     assert_never(item)
         return chat.ChatCompletionUserMessageParam(role='user', content=content)

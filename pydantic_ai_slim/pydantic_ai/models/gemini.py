@@ -19,6 +19,7 @@ from .. import ModelHTTPError, UnexpectedModelBehavior, UserError, _utils, usage
 from ..messages import (
     AudioUrl,
     BinaryContent,
+    DocumentUrl,
     ImageUrl,
     ModelMessage,
     ModelRequest,
@@ -323,8 +324,9 @@ class GeminiModel(Model):
                     content.append(
                         _GeminiInlineDataPart(inline_data={'data': base64_encoded, 'mime_type': item.media_type})
                     )
-                elif isinstance(item, (AudioUrl, ImageUrl)):
+                elif isinstance(item, (AudioUrl, ImageUrl, DocumentUrl)):
                     try:
+                        print(item.url, item.media_type)
                         content.append(
                             _GeminiFileDataPart(file_data={'file_uri': item.url, 'mime_type': item.media_type})
                         )
