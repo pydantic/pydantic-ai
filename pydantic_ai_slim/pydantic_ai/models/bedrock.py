@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import functools
 import typing
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator, Iterable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Literal, Union, overload
+from typing import TYPE_CHECKING, Any, Generic, Literal, Union, overload
 
 import anyio
 import anyio.to_thread
@@ -107,14 +107,16 @@ def exclude_none(data: dict[str, Any]):
     return {k: v for k, v in data.items() if v is not None}
 
 
-class AsyncIteratorWrapper:
-    def __init__(self, sync_iterator: Iterator[T]):
+class AsyncIteratorWrapper(Generic[T]):
+    """Wrap a synchronous iterator in an async iterator."""
+
+    def __init__(self, sync_iterator: Iterable[T]):
         self.sync_iterator = iter(sync_iterator)
 
     def __aiter__(self):
         return self
 
-    async def __anext__(self) -> object:
+    async def __anext__(self) -> T:
         try:
             # Run the synchronous next() call in a thread pool
             item = await anyio.to_thread.run_sync(next, self.sync_iterator)

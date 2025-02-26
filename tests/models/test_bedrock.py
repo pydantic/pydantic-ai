@@ -22,7 +22,11 @@ with try_import() as imports_successful:
     from pydantic_ai.models.bedrock import BedrockModel
 
 
-pytestmark = [pytest.mark.anyio, pytest.mark.vcr]
+pytestmark = [
+    pytest.mark.skipif(not imports_successful(), reason='bedrock not installed'),
+    pytest.mark.anyio,
+    pytest.mark.vcr,
+]
 
 
 async def test_bedrock_model():
