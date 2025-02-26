@@ -361,14 +361,18 @@ class AnthropicModel(Model):
                         response = await client.get(item.url, follow_redirects=True)
                         response.raise_for_status()
                         base64_encoded = base64.b64encode(response.content).decode('utf-8')
-                        yield ImageBlockParam(
-                            source={
-                                'data': base64_encoded,
-                                'media_type': response.headers['Content-Type'],
-                                'type': 'base64',
-                            },
-                            type='image',
-                        )
+                        if (mime_type := response.headers['Content-Type']) in (
+                            'image/jpeg',
+                            'image/png',
+                            'image/gif',
+                            'image/webp',
+                        ):
+                            yield ImageBlockParam(
+                                source={'data': base64_encoded, 'media_type': mime_type, 'type': 'base64'},
+                                type='image',
+                            )
+                        else:  # pragma: no cover
+                            raise RuntimeError(f'Unsupported image type: {mime_type}')
                 else:
                     raise RuntimeError(f'Unsupported content type: {type(item)}')
 
