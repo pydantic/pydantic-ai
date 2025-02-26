@@ -126,12 +126,12 @@ def run_persistence_any() -> None:
 
 
 def run_persistence_right() -> None:
-    p: FullStatePersistence[MyState, int] = FullStatePersistence()
+    p = FullStatePersistence[MyState, int]()
     answer = g5.run_sync(A(), persistence=p, state=MyState(x=1), deps=MyDeps(y='y'))
     assert_type(answer, int)
     assert_type(p, FullStatePersistence[MyState, int])
 
 
 def run_persistence_wrong() -> None:
-    p: FullStatePersistence[str, int] = FullStatePersistence()
+    p = FullStatePersistence[str, int]()
     g5.run_sync(A(), persistence=p, state=MyState(x=1), deps=MyDeps(y='y'))  # type: ignore[arg-type]

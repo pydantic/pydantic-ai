@@ -16,9 +16,6 @@ from . import EndSnapshot, NodeSnapshot, Snapshot, StatePersistence, _utils, bui
 StateT = TypeVar('StateT', default=Any)
 RunEndT = TypeVar('RunEndT', default=Any)
 
-S = TypeVar('S')
-R = TypeVar('R')
-
 
 @dataclass
 class SimpleStatePersistence(StatePersistence[StateT, RunEndT]):
