@@ -48,15 +48,23 @@ class FunctionModel(Model):
     _system: str | None = field(default=None, repr=False)
 
     @overload
-    def __init__(self, function: FunctionDef) -> None: ...
+    def __init__(self, function: FunctionDef, *, model_name: str | None = None) -> None: ...
 
     @overload
-    def __init__(self, *, stream_function: StreamFunctionDef) -> None: ...
+    def __init__(self, *, stream_function: StreamFunctionDef, model_name: str | None = None) -> None: ...
 
     @overload
-    def __init__(self, function: FunctionDef, *, stream_function: StreamFunctionDef) -> None: ...
+    def __init__(
+        self, function: FunctionDef, *, stream_function: StreamFunctionDef, model_name: str | None = None
+    ) -> None: ...
 
-    def __init__(self, function: FunctionDef | None = None, *, stream_function: StreamFunctionDef | None = None):
+    def __init__(
+        self,
+        function: FunctionDef | None = None,
+        *,
+        stream_function: StreamFunctionDef | None = None,
+        model_name: str | None = None,
+    ):
         """Initialize a `FunctionModel`.
 
         Either `function` or `stream_function` must be provided, providing both is allowed.
@@ -64,6 +72,7 @@ class FunctionModel(Model):
         Args:
             function: The function to call for non-streamed requests.
             stream_function: The function to call for streamed requests.
+            model_name: The name of the model. If not provided, a name is generated from the function names.
         """
         if function is None and stream_function is None:
             raise TypeError('Either `function` or `stream_function` must be provided')
@@ -72,7 +81,7 @@ class FunctionModel(Model):
 
         function_name = self.function.__name__ if self.function is not None else ''
         stream_function_name = self.stream_function.__name__ if self.stream_function is not None else ''
-        self._model_name = f'function:{function_name}:{stream_function_name}'
+        self._model_name = model_name or f'function:{function_name}:{stream_function_name}'
 
     async def request(
         self,
@@ -95,7 +104,7 @@ class FunctionModel(Model):
             response_ = await _utils.run_in_executor(self.function, messages, agent_info)
             assert isinstance(response_, ModelResponse), response_
             response = response_
-        response.model_name = f'function:{self.function.__name__}'
+        response.model_name = self._model_name
         # TODO is `messages` right here? Should it just be new messages?
         return response, _estimate_usage(chain(messages, [response]))
 
@@ -123,7 +132,7 @@ class FunctionModel(Model):
         if isinstance(first, _utils.Unset):
             raise ValueError('Stream function must return at least one item')
 
-        yield FunctionStreamedResponse(_model_name=f'function:{self.stream_function.__name__}', _iter=response_stream)
+        yield FunctionStreamedResponse(_model_name=self._model_name, _iter=response_stream)
 
     @property
     def model_name(self) -> str:

@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 from typing_extensions import Literal, TypeAlias
 
 from pydantic_ai import Agent, ModelRetry, UnexpectedModelBehavior, UserError
+from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.messages import (
     BinaryContent,
     ImageUrl,
@@ -624,10 +625,10 @@ async def test_unexpected_response(client_with_handler: ClientWithHandler, env: 
     m = GeminiModel('gemini-1.5-flash', http_client=gemini_client)
     agent = Agent(m, system_prompt='this is the system prompt')
 
-    with pytest.raises(UnexpectedModelBehavior) as exc_info:
+    with pytest.raises(ModelHTTPError) as exc_info:
         await agent.run('Hello')
 
-    assert str(exc_info.value) == snapshot('Unexpected response from gemini 401, body:\ninvalid request')
+    assert str(exc_info.value) == snapshot('status_code: 401, model_name: gemini-1.5-flash, body: invalid request')
 
 
 async def test_stream_text(get_gemini_client: GetGeminiClient):
@@ -997,7 +998,7 @@ async def test_image_as_binary_content_input(
     agent = Agent(m)
 
     result = await agent.run(['What is the name of this fruit?', image_content])
-    assert result.data == snapshot('The fruit in the image is a Kiwi.')
+    assert result.data == snapshot('The fruit in the image is a kiwi.')
 
 
 @pytest.mark.vcr()
@@ -1008,4 +1009,4 @@ async def test_image_url_input(allow_model_requests: None, gemini_api_key: str) 
     image_url = ImageUrl(url='https://goo.gle/instrument-img')
 
     result = await agent.run(['What is the name of this fruit?', image_url])
-    assert result.data == snapshot('The image shows an organ, not a fruit.')
+    assert result.data == snapshot('This is not a fruit, it is an organ console.')

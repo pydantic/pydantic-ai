@@ -12,7 +12,7 @@ from anthropic.types import DocumentBlockParam
 from httpx import AsyncClient as AsyncHTTPClient
 from typing_extensions import assert_never
 
-from .. import UnexpectedModelBehavior, _utils, usage
+from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._utils import guard_tool_call_id as _guard_tool_call_id
 from ..messages import (
     BinaryContent,
@@ -41,7 +41,7 @@ from . import (
 )
 
 try:
-    from anthropic import NOT_GIVEN, AsyncAnthropic, AsyncStream
+    from anthropic import NOT_GIVEN, APIStatusError, AsyncAnthropic, AsyncStream
     from anthropic.types import (
         Base64PDFSourceParam,
         ImageBlockParam,
@@ -224,19 +224,24 @@ class AnthropicModel(Model):
 
         system_prompt, anthropic_messages = await self._map_message(messages)
 
-        return await self.client.messages.create(
-            max_tokens=model_settings.get('max_tokens', 1024),
-            system=system_prompt or NOT_GIVEN,
-            messages=anthropic_messages,
-            model=self._model_name,
-            tools=tools or NOT_GIVEN,
-            tool_choice=tool_choice or NOT_GIVEN,
-            stream=stream,
-            temperature=model_settings.get('temperature', NOT_GIVEN),
-            top_p=model_settings.get('top_p', NOT_GIVEN),
-            timeout=model_settings.get('timeout', NOT_GIVEN),
-            metadata=model_settings.get('anthropic_metadata', NOT_GIVEN),
-        )
+        try:
+            return await self.client.messages.create(
+                max_tokens=model_settings.get('max_tokens', 1024),
+                system=system_prompt or NOT_GIVEN,
+                messages=anthropic_messages,
+                model=self._model_name,
+                tools=tools or NOT_GIVEN,
+                tool_choice=tool_choice or NOT_GIVEN,
+                stream=stream,
+                temperature=model_settings.get('temperature', NOT_GIVEN),
+                top_p=model_settings.get('top_p', NOT_GIVEN),
+                timeout=model_settings.get('timeout', NOT_GIVEN),
+                metadata=model_settings.get('anthropic_metadata', NOT_GIVEN),
+            )
+        except APIStatusError as e:
+            if (status_code := e.status_code) >= 400:
+                raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
+            raise
 
     def _process_response(self, response: AnthropicMessage) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
@@ -280,7 +285,9 @@ class AnthropicModel(Model):
         anthropic_messages: list[MessageParam] = []
         for m in messages:
             if isinstance(m, ModelRequest):
-                user_content_params: list[ToolResultBlockParam | TextBlockParam | ImageBlockParam] = []
+                user_content_params: list[
+                    ToolResultBlockParam | TextBlockParam | ImageBlockParam | DocumentBlockParam
+                ] = []
                 for request_part in m.parts:
                     if isinstance(request_part, SystemPromptPart):
                         system_prompt += request_part.content
