@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 import pytest
+from dirty_equals import IsJson
 from inline_snapshot import snapshot
 from typing_extensions import NotRequired, TypedDict
 
@@ -98,5 +99,39 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary]) -> None:
             'run_step': 1,
             'logfire.span_type': 'span',
             'logfire.msg': 'preparing model request params',
+        }
+    )
+    assert summary.attributes[2] == snapshot(
+        {
+            'gen_ai.operation.name': 'chat',
+            'gen_ai.system': 'test',
+            'gen_ai.request.model': 'test',
+            'logfire.span_type': 'span',
+            'logfire.msg': 'chat test',
+            'gen_ai.response.model': 'test',
+            'gen_ai.usage.input_tokens': 51,
+            'gen_ai.usage.output_tokens': 4,
+            'events': IsJson(
+                [
+                    {
+                        'event.name': 'gen_ai.user.message',
+                        'content': 'Hello',
+                        'role': 'user',
+                        'gen_ai.system': 'test',
+                    },
+                    {
+                        'event.name': 'gen_ai.choice',
+                        'index': 0,
+                        'message': {
+                            'role': 'assistant',
+                            'tool_calls': [
+                                {'id': None, 'type': 'function', 'function': {'name': 'my_ret', 'arguments': {'x': 0}}}
+                            ],
+                        },
+                        'gen_ai.system': 'test',
+                    },
+                ]
+            ),
+            'logfire.json_schema': '{"type": "object", "properties": {"events": {"type": "array"}}}',
         }
     )
