@@ -11,6 +11,7 @@ import asyncio
 # Initialize the OpenAI model with the desired model name
 openai_model = OpenAIModel(model_name='whisper-1')
 
+
 # Asynchronous function to get the transcription of the audio file
 async def get_transcription():
     # Open the audio file in binary mode
@@ -19,6 +20,7 @@ async def get_transcription():
         transcription_text = await openai_model.transcription(audio_file)
 
     return transcription_text
+
 
 # Run the asynchronous function
 asyncio.run(get_transcription())
