@@ -76,34 +76,38 @@ async def test_streamed_text_limits() -> None:
     async def ret_a(x: str) -> str:
         return f'{x}-apple'
 
-    async with test_agent.run_stream('Hello', usage_limits=UsageLimits(response_tokens_limit=10)) as result:
-        assert test_agent.name == 'test_agent'
-        assert not result.is_complete
-        assert result.all_messages() == snapshot(
-            [
-                ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
-                ModelResponse(
-                    parts=[ToolCallPart(tool_name='ret_a', args={'x': 'a'})],
-                    model_name='test',
-                    timestamp=IsNow(tz=timezone.utc),
-                ),
-                ModelRequest(
-                    parts=[ToolReturnPart(tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc))]
-                ),
-            ]
-        )
-        assert result.usage() == snapshot(
-            Usage(
-                requests=2,
-                request_tokens=103,
-                response_tokens=5,
-                total_tokens=108,
+    succeeded = False
+
+    with pytest.raises(
+        UsageLimitExceeded, match=re.escape('Exceeded the response_tokens_limit of 10 (response_tokens=11)')
+    ):
+        async with test_agent.run_stream('Hello', usage_limits=UsageLimits(response_tokens_limit=10)) as result:
+            assert test_agent.name == 'test_agent'
+            assert not result.is_complete
+            assert result.all_messages() == snapshot(
+                [
+                    ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
+                    ModelResponse(
+                        parts=[ToolCallPart(tool_name='ret_a', args={'x': 'a'})],
+                        model_name='test',
+                        timestamp=IsNow(tz=timezone.utc),
+                    ),
+                    ModelRequest(
+                        parts=[ToolReturnPart(tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc))]
+                    ),
+                ]
             )
-        )
-        with pytest.raises(
-            UsageLimitExceeded, match=re.escape('Exceeded the response_tokens_limit of 10 (response_tokens=11)')
-        ):
-            await result.get_data()
+            assert result.usage() == snapshot(
+                Usage(
+                    requests=2,
+                    request_tokens=103,
+                    response_tokens=5,
+                    total_tokens=108,
+                )
+            )
+            succeeded = True
+
+    assert succeeded
 
 
 def test_usage_so_far() -> None:

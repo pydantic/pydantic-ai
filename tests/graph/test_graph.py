@@ -57,11 +57,11 @@ async def test_graph():
     assert my_graph.name is None
     assert my_graph._get_state_type() is type(None)
     assert my_graph._get_run_end_type() is int
-    result, history = await my_graph.run(Float2String(3.14))
+    result = await my_graph.run(Float2String(3.14))
     # len('3.14') * 2 == 8
-    assert result == 8
+    assert result.output == 8
     assert my_graph.name == 'my_graph'
-    assert history == snapshot(
+    assert result.history == snapshot(
         [
             NodeStep(
                 state=None,
@@ -84,10 +84,10 @@ async def test_graph():
             EndStep(result=End(data=8), ts=IsNow(tz=timezone.utc)),
         ]
     )
-    result, history = await my_graph.run(Float2String(3.14159))
+    result = await my_graph.run(Float2String(3.14159))
     # len('3.14159') == 7, 21 * 2 == 42
-    assert result == 42
-    assert history == snapshot(
+    assert result.output == 42
+    assert result.history == snapshot(
         [
             NodeStep(
                 state=None,
@@ -122,7 +122,7 @@ async def test_graph():
             EndStep(result=End(data=42), ts=IsNow(tz=timezone.utc)),
         ]
     )
-    assert [e.data_snapshot() for e in history] == snapshot(
+    assert [e.data_snapshot() for e in result.history] == snapshot(
         [
             Float2String(input_data=3.14159),
             String2Length(input_data='3.14159'),
@@ -320,10 +320,10 @@ async def test_deps():
             return End(123)
 
     g = Graph(nodes=(Foo, Bar))
-    result, history = await g.run(Foo(), deps=Deps(1, 2))
+    result = await g.run(Foo(), deps=Deps(1, 2))
 
-    assert result == 123
-    assert history == snapshot(
+    assert result.output == 123
+    assert result.history == snapshot(
         [
             NodeStep(state=None, node=Foo(), start_ts=IsNow(tz=timezone.utc), duration=IsFloat()),
             NodeStep(state=None, node=Bar(), start_ts=IsNow(tz=timezone.utc), duration=IsFloat()),

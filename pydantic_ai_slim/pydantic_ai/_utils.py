@@ -85,7 +85,7 @@ async def group_by_temporal(
 ) -> AsyncIterator[AsyncIterable[list[T]]]:
     """Group items from an async iterable into lists based on time interval between them.
 
-    Effectively debouncing the iterator.
+    Effectively, this debounces the iterator.
 
     This returns a context manager usable as an iterator so any pending tasks can be cancelled if an error occurs
     during iteration.

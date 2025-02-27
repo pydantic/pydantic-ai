@@ -25,7 +25,7 @@ From there, follow the [Logfire setup docs](logfire.md#using-logfire) to configu
 
 ## Running Examples
 
-We distribute the [`pydantic_ai_examples`](https://github.com/pydantic/pydantic-ai/tree/main/pydantic_ai_examples) directory as a separate PyPI package ([`pydantic-ai-examples`](https://pypi.org/project/pydantic-ai-examples/)) to make examples extremely easy to customize and run.
+We distribute the [`pydantic_ai_examples`](https://github.com/pydantic/pydantic-ai/tree/main/examples/pydantic_ai_examples) directory as a separate PyPI package ([`pydantic-ai-examples`](https://pypi.org/project/pydantic-ai-examples/)) to make examples extremely easy to customize and run.
 
 To install examples, use the `examples` optional group:
 
@@ -53,6 +53,8 @@ pip/uv-add 'pydantic-ai-slim[openai]'
 * `groq` — installs `groq` [PyPI ↗](https://pypi.org/project/groq){:target="_blank"}
 * `mistral` — installs `mistralai` [PyPI ↗](https://pypi.org/project/mistralai){:target="_blank"}
 * `cohere` - installs `cohere` [PyPI ↗](https://pypi.org/project/cohere){:target="_blank"}
+* `duckduckgo` - installs `duckduckgo-search` [PyPI ↗](https://pypi.org/project/duckduckgo-search){:target="_blank"}
+* `tavily` - installs `tavily-python` [PyPI ↗](https://pypi.org/project/tavily-python){:target="_blank"}
 
 See the [models](models.md) documentation for information on which optional dependencies are required for each model.
 

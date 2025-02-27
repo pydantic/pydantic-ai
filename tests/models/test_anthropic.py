@@ -1,16 +1,21 @@
 from __future__ import annotations as _annotations
 
 import json
+import os
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import timezone
 from functools import cached_property
-from typing import Any, TypeVar, cast
+from typing import Any, TypeVar, Union, cast
 
+import httpx
 import pytest
 from inline_snapshot import snapshot
 
-from pydantic_ai import Agent, ModelRetry
+from pydantic_ai import Agent, ModelHTTPError, ModelRetry
 from pydantic_ai.messages import (
+    BinaryContent,
+    ImageUrl,
     ModelRequest,
     ModelResponse,
     RetryPromptPart,
@@ -23,11 +28,11 @@ from pydantic_ai.messages import (
 from pydantic_ai.result import Usage
 from pydantic_ai.settings import ModelSettings
 
-from ..conftest import IsNow, try_import
+from ..conftest import IsDatetime, IsNow, IsStr, raise_if_exception, try_import
 from .mock_async_stream import MockAsyncStream
 
 with try_import() as imports_successful:
-    from anthropic import NOT_GIVEN, AsyncAnthropic
+    from anthropic import NOT_GIVEN, APIStatusError, AsyncAnthropic
     from anthropic.types import (
         ContentBlock,
         InputJSONDelta,
@@ -48,6 +53,10 @@ with try_import() as imports_successful:
 
     from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
 
+    # note: we use Union here so that casting works with Python 3.9
+    MockAnthropicMessage = Union[AnthropicMessage, Exception]
+    MockRawMessageStreamEvent = Union[RawMessageStreamEvent, Exception]
+
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='anthropic not installed'),
     pytest.mark.anyio,
@@ -66,8 +75,8 @@ def test_init():
 
 @dataclass
 class MockAnthropic:
-    messages_: AnthropicMessage | list[AnthropicMessage] | None = None
-    stream: list[RawMessageStreamEvent] | list[list[RawMessageStreamEvent]] | None = None
+    messages_: MockAnthropicMessage | Sequence[MockAnthropicMessage] | None = None
+    stream: Sequence[MockRawMessageStreamEvent] | Sequence[Sequence[MockRawMessageStreamEvent]] | None = None
     index = 0
     chat_completion_kwargs: list[dict[str, Any]] = field(default_factory=list)
 
@@ -76,34 +85,34 @@ class MockAnthropic:
         return type('Messages', (), {'create': self.messages_create})
 
     @classmethod
-    def create_mock(cls, messages_: AnthropicMessage | list[AnthropicMessage]) -> AsyncAnthropic:
+    def create_mock(cls, messages_: MockAnthropicMessage | Sequence[MockAnthropicMessage]) -> AsyncAnthropic:
         return cast(AsyncAnthropic, cls(messages_=messages_))
 
     @classmethod
     def create_stream_mock(
-        cls, stream: list[RawMessageStreamEvent] | list[list[RawMessageStreamEvent]]
+        cls, stream: Sequence[MockRawMessageStreamEvent] | Sequence[Sequence[MockRawMessageStreamEvent]]
     ) -> AsyncAnthropic:
         return cast(AsyncAnthropic, cls(stream=stream))
 
     async def messages_create(
         self, *_args: Any, stream: bool = False, **kwargs: Any
-    ) -> AnthropicMessage | MockAsyncStream[RawMessageStreamEvent]:
+    ) -> AnthropicMessage | MockAsyncStream[MockRawMessageStreamEvent]:
         self.chat_completion_kwargs.append({k: v for k, v in kwargs.items() if v is not NOT_GIVEN})
 
         if stream:
             assert self.stream is not None, 'you can only use `stream=True` if `stream` is provided'
-            # noinspection PyUnresolvedReferences
-            if isinstance(self.stream[0], list):
-                indexed_stream = cast(list[RawMessageStreamEvent], self.stream[self.index])
-                response = MockAsyncStream(iter(indexed_stream))
+            if isinstance(self.stream[0], Sequence):
+                response = MockAsyncStream(iter(cast(list[MockRawMessageStreamEvent], self.stream[self.index])))
             else:
-                response = MockAsyncStream(iter(cast(list[RawMessageStreamEvent], self.stream)))
+                response = MockAsyncStream(iter(cast(list[MockRawMessageStreamEvent], self.stream)))
         else:
             assert self.messages_ is not None, '`messages` must be provided'
-            if isinstance(self.messages_, list):
-                response = self.messages_[self.index]
+            if isinstance(self.messages_, Sequence):
+                raise_if_exception(self.messages_[self.index])
+                response = cast(AnthropicMessage, self.messages_[self.index])
             else:
-                response = self.messages_
+                raise_if_exception(self.messages_)
+                response = cast(AnthropicMessage, self.messages_)
         self.index += 1
         return response
 
@@ -112,7 +121,7 @@ def completion_message(content: list[ContentBlock], usage: AnthropicUsage) -> An
     return AnthropicMessage(
         id='123',
         content=content,
-        model='claude-3-5-haiku-latest',
+        model='claude-3-5-haiku-123',
         role='assistant',
         stop_reason='end_turn',
         type='message',
@@ -141,13 +150,13 @@ async def test_sync_request_text_response(allow_model_requests: None):
             ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[TextPart(content='world')],
-                model_name='claude-3-5-haiku-latest',
+                model_name='claude-3-5-haiku-123',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[TextPart(content='world')],
-                model_name='claude-3-5-haiku-latest',
+                model_name='claude-3-5-haiku-123',
                 timestamp=IsNow(tz=timezone.utc),
             ),
         ]
@@ -190,7 +199,7 @@ async def test_request_structured_response(allow_model_requests: None):
                         tool_call_id='123',
                     )
                 ],
-                model_name='claude-3-5-haiku-latest',
+                model_name='claude-3-5-haiku-123',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
@@ -252,7 +261,7 @@ async def test_request_tool_call(allow_model_requests: None):
                         tool_call_id='1',
                     )
                 ],
-                model_name='claude-3-5-haiku-latest',
+                model_name='claude-3-5-haiku-123',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
@@ -273,7 +282,7 @@ async def test_request_tool_call(allow_model_requests: None):
                         tool_call_id='2',
                     )
                 ],
-                model_name='claude-3-5-haiku-latest',
+                model_name='claude-3-5-haiku-123',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
@@ -288,7 +297,7 @@ async def test_request_tool_call(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='final response')],
-                model_name='claude-3-5-haiku-latest',
+                model_name='claude-3-5-haiku-123',
                 timestamp=IsNow(tz=timezone.utc),
             ),
         ]
@@ -332,6 +341,96 @@ async def test_parallel_tool_calls(allow_model_requests: None, parallel_tool_cal
     )
 
 
+@pytest.mark.vcr
+async def test_multiple_parallel_tool_calls(allow_model_requests: None):
+    async def retrieve_entity_info(name: str) -> str:
+        """Get the knowledge about the given entity."""
+        data = {
+            'alice': "alice is bob's wife",
+            'bob': "bob is alice's husband",
+            'charlie': "charlie is alice's son",
+            'daisy': "daisy is bob's daughter and charlie's younger sister",
+        }
+        return data[name.lower()]
+
+    system_prompt = """
+    Use the `retrieve_entity_info` tool to get information about a specific person.
+    If you need to use `retrieve_entity_info` to get information about multiple people, try
+    to call them in parallel as much as possible.
+    Think step by step and then provide a single most probable concise answer.
+    """
+
+    # If we don't provide some value for the API key, the anthropic SDK will raise an error.
+    # However, we do want to use the environment variable if present when rewriting VCR cassettes.
+    api_key = os.environ.get('ANTHROPIC_API_KEY', 'mock-value')
+    agent = Agent(
+        AnthropicModel('claude-3-5-haiku-latest', api_key=api_key),
+        system_prompt=system_prompt,
+        tools=[retrieve_entity_info],
+    )
+
+    result = await agent.run('Alice, Bob, Charlie and Daisy are a family. Who is the youngest?')
+    assert 'Daisy is the youngest' in result.data
+
+    all_messages = result.all_messages()
+    first_response = all_messages[1]
+    second_request = all_messages[2]
+    assert first_response.parts == [
+        TextPart(
+            content="I'll retrieve the information about each family member to determine their ages.",
+            part_kind='text',
+        ),
+        ToolCallPart(
+            tool_name='retrieve_entity_info', args={'name': 'Alice'}, tool_call_id=IsStr(), part_kind='tool-call'
+        ),
+        ToolCallPart(
+            tool_name='retrieve_entity_info', args={'name': 'Bob'}, tool_call_id=IsStr(), part_kind='tool-call'
+        ),
+        ToolCallPart(
+            tool_name='retrieve_entity_info', args={'name': 'Charlie'}, tool_call_id=IsStr(), part_kind='tool-call'
+        ),
+        ToolCallPart(
+            tool_name='retrieve_entity_info', args={'name': 'Daisy'}, tool_call_id=IsStr(), part_kind='tool-call'
+        ),
+    ]
+    assert second_request.parts == [
+        ToolReturnPart(
+            tool_name='retrieve_entity_info',
+            content="alice is bob's wife",
+            tool_call_id=IsStr(),
+            timestamp=IsDatetime(),
+            part_kind='tool-return',
+        ),
+        ToolReturnPart(
+            tool_name='retrieve_entity_info',
+            content="bob is alice's husband",
+            tool_call_id=IsStr(),
+            timestamp=IsDatetime(),
+            part_kind='tool-return',
+        ),
+        ToolReturnPart(
+            tool_name='retrieve_entity_info',
+            content="charlie is alice's son",
+            tool_call_id=IsStr(),
+            timestamp=IsDatetime(),
+            part_kind='tool-return',
+        ),
+        ToolReturnPart(
+            tool_name='retrieve_entity_info',
+            content="daisy is bob's daughter and charlie's younger sister",
+            tool_call_id=IsStr(),
+            timestamp=IsDatetime(),
+            part_kind='tool-return',
+        ),
+    ]
+
+    # Ensure the tool call IDs match between the tool calls and the tool returns
+    tool_call_part_ids = [part.tool_call_id for part in first_response.parts if part.part_kind == 'tool-call']
+    tool_return_part_ids = [part.tool_call_id for part in second_request.parts if part.part_kind == 'tool-return']
+    assert len(set(tool_call_part_ids)) == 4  # ensure they are all unique
+    assert tool_call_part_ids == tool_return_part_ids
+
+
 async def test_anthropic_specific_metadata(allow_model_requests: None) -> None:
     c = completion_message([TextBlock(text='world', type='text')], AnthropicUsage(input_tokens=5, output_tokens=10))
     mock_client = MockAnthropic.create_mock(c)
@@ -354,7 +453,7 @@ async def test_stream_structured(allow_model_requests: None):
     5. Update usage
     6. Message stop
     """
-    stream: list[RawMessageStreamEvent] = [
+    stream = [
         RawMessageStartEvent(
             type='message_start',
             message=AnthropicMessage(
@@ -400,7 +499,7 @@ async def test_stream_structured(allow_model_requests: None):
         RawMessageStopEvent(type='message_stop'),
     ]
 
-    done_stream: list[RawMessageStreamEvent] = [
+    done_stream = [
         RawMessageStartEvent(
             type='message_start',
             message=AnthropicMessage(
@@ -450,3 +549,69 @@ async def test_stream_structured(allow_model_requests: None):
         assert result.is_complete
         assert result.usage() == snapshot(Usage(requests=2, request_tokens=20, response_tokens=5, total_tokens=25))
         assert tool_called
+
+
+@pytest.mark.vcr()
+async def test_image_url_input(allow_model_requests: None, anthropic_api_key: str):
+    m = AnthropicModel('claude-3-5-haiku-latest', api_key=anthropic_api_key)
+    agent = Agent(m)
+
+    result = await agent.run(
+        [
+            'What is this vegetable?',
+            ImageUrl(url='https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg'),
+        ]
+    )
+    assert result.data == snapshot("""\
+This is a potato. It's a yellow-skinned potato with a somewhat oblong or oval shape. The surface is covered in small eyes or dimples, which is typical of potato skin. The color is a golden-yellow, and the potato appears to be clean and fresh, photographed against a white background.
+
+Potatoes are root vegetables that are staple foods in many cuisines around the world. They can be prepared in numerous ways such as boiling, baking, roasting, frying, or mashing. This particular potato looks like it could be a Yukon Gold or a similar yellow-fleshed variety.\
+""")
+
+
+@pytest.mark.vcr()
+async def test_image_url_input_invalid_mime_type(allow_model_requests: None, anthropic_api_key: str):
+    m = AnthropicModel('claude-3-5-haiku-latest', api_key=anthropic_api_key)
+    agent = Agent(m)
+
+    result = await agent.run(
+        [
+            'What animal is this?',
+            ImageUrl(
+                url='https://lh3.googleusercontent.com/proxy/YngsuS8jQJysXxeucAgVBcSgIdwZlSQ-HvsNxGjHS0SrUKXI161bNKh6SOcMsNUGsnxoOrS3AYX--MT4T3S3SoCgSD1xKrtBwwItcgexaX_7W-qHo-VupmYgjjzWO-BuORLp9-pj8Kjr'
+            ),
+        ]
+    )
+    assert result.data == snapshot(
+        'This is a Great Horned Owl (Bubo virginianus), a large and powerful owl species. It has distinctive ear tufts (the "horns"), large yellow eyes, and a mottled gray-brown plumage that provides excellent camouflage. In this image, the owl is perched on a branch, surrounded by soft yellow and green vegetation, which creates a beautiful, slightly blurred background that highlights the owl\'s sharp features. Great Horned Owls are known for their adaptability, wide distribution across the Americas, and their status as powerful nocturnal predators.'
+    )
+
+
+@pytest.mark.parametrize('media_type', ('audio/wav', 'audio/mpeg'))
+async def test_audio_as_binary_content_input(allow_model_requests: None, media_type: str):
+    c = completion_message([TextBlock(text='world', type='text')], AnthropicUsage(input_tokens=5, output_tokens=10))
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-3-5-haiku-latest', anthropic_client=mock_client)
+    agent = Agent(m)
+
+    base64_content = b'//uQZ'
+
+    with pytest.raises(RuntimeError, match='Only images are supported for binary content'):
+        await agent.run(['hello', BinaryContent(data=base64_content, media_type=media_type)])
+
+
+def test_model_status_error(allow_model_requests: None) -> None:
+    mock_client = MockAnthropic.create_mock(
+        APIStatusError(
+            'test error',
+            response=httpx.Response(status_code=500, request=httpx.Request('POST', 'https://example.com/v1')),
+            body={'error': 'test error'},
+        )
+    )
+    m = AnthropicModel('claude-3-5-sonnet-latest', anthropic_client=mock_client)
+    agent = Agent(m)
+    with pytest.raises(ModelHTTPError) as exc_info:
+        agent.run_sync('hello')
+    assert str(exc_info.value) == snapshot(
+        "status_code: 500, model_name: claude-3-5-sonnet-latest, body: {'error': 'test error'}"
+    )

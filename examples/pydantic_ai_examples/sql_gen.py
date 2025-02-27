@@ -171,7 +171,7 @@ async def database_connect(server_dsn: str, database: str) -> AsyncGenerator[Any
                     await conn.execute(
                         "CREATE TYPE log_level AS ENUM ('debug', 'info', 'warning', 'error', 'critical')"
                     )
-                await conn.execute(DB_SCHEMA)
+                    await conn.execute(DB_SCHEMA)
         yield conn
     finally:
         await conn.close()

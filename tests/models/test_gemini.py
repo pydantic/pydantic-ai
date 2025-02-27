@@ -14,7 +14,10 @@ from pydantic import BaseModel, Field
 from typing_extensions import Literal, TypeAlias
 
 from pydantic_ai import Agent, ModelRetry, UnexpectedModelBehavior, UserError
+from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.messages import (
+    BinaryContent,
+    ImageUrl,
     ModelRequest,
     ModelResponse,
     RetryPromptPart,
@@ -30,7 +33,6 @@ from pydantic_ai.models.gemini import (
     GeminiModel,
     GeminiModelSettings,
     _content_model_response,
-    _function_call_part_from_call,
     _gemini_response_ta,
     _gemini_streamed_response_ta,
     _GeminiCandidates,
@@ -39,7 +41,6 @@ from pydantic_ai.models.gemini import (
     _GeminiFunctionCallingConfig,
     _GeminiResponse,
     _GeminiSafetyRating,
-    _GeminiTextPart,
     _GeminiToolConfig,
     _GeminiTools,
     _GeminiUsageMetaData,
@@ -365,7 +366,7 @@ async def test_json_def_date(allow_model_requests: None):
         _GeminiTools(
             function_declarations=[
                 _GeminiFunction(
-                    description='This is the tool for the final ' 'Result',
+                    description='This is the tool for the final Result',
                     name='result',
                     parameters={
                         'properties': {
@@ -440,7 +441,7 @@ def gemini_response(content: _GeminiContent, finish_reason: Literal['STOP'] | No
     candidate = _GeminiCandidates(content=content, index=0, safety_ratings=[])
     if finish_reason:  # pragma: no cover
         candidate['finish_reason'] = finish_reason
-    return _GeminiResponse(candidates=[candidate], usage_metadata=example_usage())
+    return _GeminiResponse(candidates=[candidate], usage_metadata=example_usage(), model_version='gemini-1.5-flash-123')
 
 
 def example_usage() -> _GeminiUsageMetaData:
@@ -459,7 +460,9 @@ async def test_text_success(get_gemini_client: GetGeminiClient):
         [
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
-                parts=[TextPart(content='Hello world')], model_name='gemini-1.5-flash', timestamp=IsNow(tz=timezone.utc)
+                parts=[TextPart(content='Hello world')],
+                model_name='gemini-1.5-flash-123',
+                timestamp=IsNow(tz=timezone.utc),
             ),
         ]
     )
@@ -472,13 +475,13 @@ async def test_text_success(get_gemini_client: GetGeminiClient):
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[TextPart(content='Hello world')],
-                model_name='gemini-1.5-flash',
+                model_name='gemini-1.5-flash-123',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[TextPart(content='Hello world')],
-                model_name='gemini-1.5-flash',
+                model_name='gemini-1.5-flash-123',
                 timestamp=IsNow(tz=timezone.utc),
             ),
         ]
@@ -505,7 +508,7 @@ async def test_request_structured_response(get_gemini_client: GetGeminiClient):
                         args={'response': [1, 2, 123]},
                     )
                 ],
-                model_name='gemini-1.5-flash',
+                model_name='gemini-1.5-flash-123',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
@@ -566,7 +569,7 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
                         args={'loc_name': 'San Fransisco'},
                     )
                 ],
-                model_name='gemini-1.5-flash',
+                model_name='gemini-1.5-flash-123',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
@@ -589,7 +592,7 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
                         args={'loc_name': 'New York'},
                     ),
                 ],
-                model_name='gemini-1.5-flash',
+                model_name='gemini-1.5-flash-123',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
@@ -604,7 +607,7 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
             ),
             ModelResponse(
                 parts=[TextPart(content='final response')],
-                model_name='gemini-1.5-flash',
+                model_name='gemini-1.5-flash-123',
                 timestamp=IsNow(tz=timezone.utc),
             ),
         ]
@@ -622,10 +625,10 @@ async def test_unexpected_response(client_with_handler: ClientWithHandler, env: 
     m = GeminiModel('gemini-1.5-flash', http_client=gemini_client)
     agent = Agent(m, system_prompt='this is the system prompt')
 
-    with pytest.raises(UnexpectedModelBehavior) as exc_info:
+    with pytest.raises(ModelHTTPError) as exc_info:
         await agent.run('Hello')
 
-    assert str(exc_info.value) == snapshot('Unexpected response from gemini 401, body:\ninvalid request')
+    assert str(exc_info.value) == snapshot('status_code: 401, model_name: gemini-1.5-flash, body: invalid request')
 
 
 async def test_stream_text(get_gemini_client: GetGeminiClient):
@@ -655,6 +658,38 @@ async def test_stream_text(get_gemini_client: GetGeminiClient):
     async with agent.run_stream('Hello') as result:
         chunks = [chunk async for chunk in result.stream_text(delta=True, debounce_by=None)]
         assert chunks == snapshot(['Hello ', 'world'])
+    assert result.usage() == snapshot(Usage(requests=1, request_tokens=2, response_tokens=4, total_tokens=6))
+
+
+async def test_stream_invalid_unicode_text(get_gemini_client: GetGeminiClient):
+    # Probably safe to remove this test once https://github.com/pydantic/pydantic-core/issues/1633 is resolved
+    responses = [
+        gemini_response(_content_model_response(ModelResponse(parts=[TextPart('abc')]))),
+        gemini_response(_content_model_response(ModelResponse(parts=[TextPart('€def')]))),
+    ]
+    json_data = _gemini_streamed_response_ta.dump_json(responses, by_alias=True)
+
+    for i in range(10, 1000):
+        parts = [json_data[:i], json_data[i:]]
+        try:
+            parts[0].decode()
+        except UnicodeDecodeError:
+            break
+    else:  # pragma: no cover
+        assert False, 'failed to find a spot in payload that would break unicode parsing'
+
+    with pytest.raises(UnicodeDecodeError):
+        # Ensure the first part is _not_ valid unicode
+        parts[0].decode()
+
+    stream = AsyncByteStreamList(parts)
+    gemini_client = get_gemini_client(stream)
+    m = GeminiModel('gemini-1.5-flash', http_client=gemini_client)
+    agent = Agent(m)
+
+    async with agent.run_stream('Hello') as result:
+        chunks = [chunk async for chunk in result.stream(debounce_by=None)]
+        assert chunks == snapshot(['abc', 'abc€def', 'abc€def'])
     assert result.usage() == snapshot(Usage(requests=1, request_tokens=2, response_tokens=4, total_tokens=6))
 
 
@@ -773,13 +808,8 @@ async def test_stream_text_heterogeneous(get_gemini_client: GetGeminiClient):
             _GeminiContent(
                 role='model',
                 parts=[
-                    _GeminiTextPart(text='foo'),
-                    _function_call_part_from_call(
-                        ToolCallPart(
-                            tool_name='get_location',
-                            args={'loc_name': 'San Fransisco'},
-                        )
-                    ),
+                    {'text': 'foo'},
+                    {'function_call': {'name': 'get_location', 'args': {'loc_name': 'San Fransisco'}}},
                 ],
             )
         ),
@@ -789,6 +819,10 @@ async def test_stream_text_heterogeneous(get_gemini_client: GetGeminiClient):
     gemini_client = get_gemini_client(stream)
     m = GeminiModel('gemini-1.5-flash', http_client=gemini_client)
     agent = Agent(m)
+
+    @agent.tool_plain()
+    def get_location(loc_name: str) -> str:
+        return f'Location for {loc_name}'
 
     async with agent.run_stream('Hello') as result:
         data = await result.get_data()
@@ -954,3 +988,25 @@ async def test_safety_settings_safe(
         ),
     )
     assert result.data == 'world'
+
+
+@pytest.mark.vcr()
+async def test_image_as_binary_content_input(
+    allow_model_requests: None, gemini_api_key: str, image_content: BinaryContent
+) -> None:
+    m = GeminiModel('gemini-2.0-flash', api_key=gemini_api_key)
+    agent = Agent(m)
+
+    result = await agent.run(['What is the name of this fruit?', image_content])
+    assert result.data == snapshot('The fruit in the image is a kiwi.')
+
+
+@pytest.mark.vcr()
+async def test_image_url_input(allow_model_requests: None, gemini_api_key: str) -> None:
+    m = GeminiModel('gemini-2.0-flash-exp', api_key=gemini_api_key)
+    agent = Agent(m)
+
+    image_url = ImageUrl(url='https://goo.gle/instrument-img')
+
+    result = await agent.run(['What is the name of this fruit?', image_url])
+    assert result.data == snapshot('This is not a fruit, it is an organ console.')

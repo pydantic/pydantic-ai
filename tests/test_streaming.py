@@ -277,7 +277,7 @@ async def test_call_tool():
                 ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
                 ModelResponse(
                     parts=[ToolCallPart(tool_name='ret_a', args='{"x": "hello"}')],
-                    model_name='function:stream_structured_function',
+                    model_name='function::stream_structured_function',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 ModelRequest(
@@ -291,7 +291,7 @@ async def test_call_tool():
                 ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
                 ModelResponse(
                     parts=[ToolCallPart(tool_name='ret_a', args='{"x": "hello"}')],
-                    model_name='function:stream_structured_function',
+                    model_name='function::stream_structured_function',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 ModelRequest(
@@ -304,7 +304,7 @@ async def test_call_tool():
                             args='{"response": ["hello world", 2]}',
                         )
                     ],
-                    model_name='function:stream_structured_function',
+                    model_name='function::stream_structured_function',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 ModelRequest(
@@ -335,14 +335,18 @@ async def test_call_tool_wrong_name():
     async def stream_structured_function(_messages: list[ModelMessage], _: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
         yield {0: DeltaToolCall(name='foobar', json_args='{}')}
 
-    agent = Agent(FunctionModel(stream_function=stream_structured_function), result_type=tuple[str, int])
+    agent = Agent(
+        FunctionModel(stream_function=stream_structured_function),
+        result_type=tuple[str, int],
+        retries=0,
+    )
 
     @agent.tool_plain
     async def ret_a(x: str) -> str:  # pragma: no cover
         return x
 
     with capture_run_messages() as messages:
-        with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum retries \(1\) for result validation'):
+        with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum retries \(0\) for result validation'):
             async with agent.run_stream('hello'):
                 pass  # pragma: no cover
 
@@ -351,16 +355,8 @@ async def test_call_tool_wrong_name():
             ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='foobar', args='{}')],
-                model_name='function:stream_structured_function',
+                model_name='function::stream_structured_function',
                 timestamp=IsNow(tz=timezone.utc),
-            ),
-            ModelRequest(
-                parts=[
-                    RetryPromptPart(
-                        content="Unknown tool name: 'foobar'. Available tools: ret_a, final_result",
-                        timestamp=IsNow(tz=timezone.utc),
-                    )
-                ]
             ),
         ]
     )
@@ -414,7 +410,7 @@ async def test_early_strategy_stops_after_first_final_result():
                     ToolCallPart(tool_name='regular_tool', args='{"x": 1}'),
                     ToolCallPart(tool_name='another_tool', args='{"y": 2}'),
                 ],
-                model_name='function:sf',
+                model_name='function::sf',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
@@ -466,7 +462,7 @@ async def test_early_strategy_uses_first_final_result():
                     ToolCallPart(tool_name='final_result', args='{"value": "first"}'),
                     ToolCallPart(tool_name='final_result', args='{"value": "second"}'),
                 ],
-                model_name='function:sf',
+                model_name='function::sf',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
@@ -528,7 +524,7 @@ async def test_exhaustive_strategy_executes_all_tools():
                     ToolCallPart(tool_name='final_result', args='{"value": "second"}'),
                     ToolCallPart(tool_name='unknown_tool', args='{"value": "???"}'),
                 ],
-                model_name='function:sf',
+                model_name='function::sf',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
@@ -594,7 +590,7 @@ async def test_early_strategy_with_final_result_in_middle():
             ModelRequest(
                 parts=[
                     UserPromptPart(
-                        content='test early strategy with final ' 'result in middle',
+                        content='test early strategy with final result in middle',
                         timestamp=IsNow(tz=datetime.timezone.utc),
                         part_kind='user-prompt',
                     )
@@ -628,7 +624,7 @@ async def test_early_strategy_with_final_result_in_middle():
                         part_kind='tool-call',
                     ),
                 ],
-                model_name='function:sf',
+                model_name='function::sf',
                 timestamp=IsNow(tz=datetime.timezone.utc),
                 kind='response',
             ),
@@ -636,7 +632,7 @@ async def test_early_strategy_with_final_result_in_middle():
                 parts=[
                     ToolReturnPart(
                         tool_name='regular_tool',
-                        content='Tool not executed - a final ' 'result was already processed.',
+                        content='Tool not executed - a final result was already processed.',
                         tool_call_id=None,
                         timestamp=IsNow(tz=datetime.timezone.utc),
                         part_kind='tool-return',
@@ -650,7 +646,7 @@ async def test_early_strategy_with_final_result_in_middle():
                     ),
                     ToolReturnPart(
                         tool_name='another_tool',
-                        content='Tool not executed - a final ' 'result was already processed.',
+                        content='Tool not executed - a final result was already processed.',
                         tool_call_id=None,
                         timestamp=IsNow(tz=datetime.timezone.utc),
                         part_kind='tool-return',

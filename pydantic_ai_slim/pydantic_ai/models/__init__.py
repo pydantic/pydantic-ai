@@ -54,6 +54,8 @@ KnownModelName = Literal[
     'google-gla:gemini-2.0-flash-exp',
     'google-gla:gemini-2.0-flash-thinking-exp-01-21',
     'google-gla:gemini-exp-1206',
+    'google-gla:gemini-2.0-flash',
+    'google-gla:gemini-2.0-flash-lite-preview-02-05',
     'google-vertex:gemini-1.0-pro',
     'google-vertex:gemini-1.5-flash',
     'google-vertex:gemini-1.5-flash-8b',
@@ -61,6 +63,8 @@ KnownModelName = Literal[
     'google-vertex:gemini-2.0-flash-exp',
     'google-vertex:gemini-2.0-flash-thinking-exp-01-21',
     'google-vertex:gemini-exp-1206',
+    'google-vertex:gemini-2.0-flash',
+    'google-vertex:gemini-2.0-flash-lite-preview-02-05',
     'gpt-3.5-turbo',
     'gpt-3.5-turbo-0125',
     'gpt-3.5-turbo-0301',
@@ -175,9 +179,6 @@ class ModelRequestParameters:
 class Model(ABC):
     """Abstract class for a model."""
 
-    _model_name: str
-    _system: str | None
-
     @abstractmethod
     async def request(
         self,
@@ -203,24 +204,25 @@ class Model(ABC):
         yield  # pragma: no cover
 
     @property
+    @abstractmethod
     def model_name(self) -> str:
         """The model name."""
-        return self._model_name
+        raise NotImplementedError()
 
     @property
+    @abstractmethod
     def system(self) -> str | None:
         """The system / model provider, ex: openai."""
-        return self._system
+        raise NotImplementedError()
 
 
 @dataclass
 class StreamedResponse(ABC):
     """Streamed response from an LLM when calling a tool."""
 
-    _model_name: str
-    _usage: Usage = field(default_factory=Usage, init=False)
     _parts_manager: ModelResponsePartsManager = field(default_factory=ModelResponsePartsManager, init=False)
     _event_iterator: AsyncIterator[ModelResponseStreamEvent] | None = field(default=None, init=False)
+    _usage: Usage = field(default_factory=Usage, init=False)
 
     def __aiter__(self) -> AsyncIterator[ModelResponseStreamEvent]:
         """Stream the response as an async iterable of [`ModelResponseStreamEvent`][pydantic_ai.messages.ModelResponseStreamEvent]s."""
@@ -234,6 +236,8 @@ class StreamedResponse(ABC):
 
         This method should be implemented by subclasses to translate the vendor-specific stream of events into
         pydantic_ai-format events.
+
+        It should use the `_parts_manager` to handle deltas, and should update the `_usage` attributes as it goes.
         """
         raise NotImplementedError()
         # noinspection PyUnreachableCode
@@ -242,17 +246,20 @@ class StreamedResponse(ABC):
     def get(self) -> ModelResponse:
         """Build a [`ModelResponse`][pydantic_ai.messages.ModelResponse] from the data received from the stream so far."""
         return ModelResponse(
-            parts=self._parts_manager.get_parts(), model_name=self._model_name, timestamp=self.timestamp()
+            parts=self._parts_manager.get_parts(), model_name=self.model_name, timestamp=self.timestamp
         )
-
-    def model_name(self) -> str:
-        """Get the model name of the response."""
-        return self._model_name
 
     def usage(self) -> Usage:
         """Get the usage of the response so far. This will not be the final usage until the stream is exhausted."""
         return self._usage
 
+    @property
+    @abstractmethod
+    def model_name(self) -> str:
+        """Get the model name of the response."""
+        raise NotImplementedError()
+
+    @property
     @abstractmethod
     def timestamp(self) -> datetime:
         """Get the timestamp of the response."""
@@ -359,7 +366,6 @@ def infer_model(model: Model | KnownModelName) -> Model:
         raise UserError(f'Unknown model: {model}')
 
 
-@cache
 def cached_async_http_client(timeout: int = 600, connect: int = 5) -> httpx.AsyncClient:
     """Cached HTTPX async client so multiple agents and calls can share the same client.
 
@@ -370,6 +376,16 @@ def cached_async_http_client(timeout: int = 600, connect: int = 5) -> httpx.Asyn
     The default timeouts match those of OpenAI,
     see <https://github.com/openai/openai-python/blob/v1.54.4/src/openai/_constants.py#L9>.
     """
+    client = _cached_async_http_client(timeout=timeout, connect=connect)
+    if client.is_closed:
+        # This happens if the context manager is used, so we need to create a new client.
+        _cached_async_http_client.cache_clear()
+        client = _cached_async_http_client(timeout=timeout, connect=connect)
+    return client
+
+
+@cache
+def _cached_async_http_client(timeout: int = 600, connect: int = 5) -> httpx.AsyncClient:
     return httpx.AsyncClient(
         timeout=httpx.Timeout(timeout=timeout, connect=connect),
         headers={'User-Agent': get_user_agent()},

@@ -16,6 +16,7 @@ from devtools import debug
 from pytest_examples import CodeExample, EvalExample, find_examples
 from pytest_mock import MockerFixture
 
+from pydantic_ai import ModelHTTPError
 from pydantic_ai._utils import group_by_temporal
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.messages import (
@@ -27,7 +28,8 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.models import KnownModelName, Model
+from pydantic_ai.models import KnownModelName, Model, infer_model
+from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 
@@ -77,6 +79,7 @@ def test_docs_examples(
     env.set('OPENAI_API_KEY', 'testing')
     env.set('GEMINI_API_KEY', 'testing')
     env.set('GROQ_API_KEY', 'testing')
+    env.set('CO_API_KEY', 'testing')
 
     sys.path.append('tests/example_modules')
 
@@ -271,6 +274,7 @@ text_responses: dict[str, str | ToolCallPart] = {
 async def model_logic(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:  # pragma: no cover  # noqa: C901
     m = messages[-1].parts[-1]
     if isinstance(m, UserPromptPart):
+        assert isinstance(m.content, str)
         if m.content == 'Tell me a joke.' and any(t.name == 'joke_factory' for t in info.function_tools):
             return ModelResponse(parts=[ToolCallPart(tool_name='joke_factory', args={'count': 5})])
         elif m.content == 'Please generate 5 jokes.' and any(t.name == 'get_jokes' for t in info.function_tools):
@@ -349,6 +353,7 @@ async def stream_model_logic(
 ) -> AsyncIterator[str | DeltaToolCalls]:  # pragma: no cover
     m = messages[-1].parts[-1]
     if isinstance(m, UserPromptPart):
+        assert isinstance(m.content, str)
         if response := text_responses.get(m.content):
             if isinstance(response, str):
                 words = response.split(' ')
@@ -375,12 +380,37 @@ async def stream_model_logic(
 
 
 def mock_infer_model(model: Model | KnownModelName) -> Model:
+    if model == 'test':
+        return TestModel()
+
+    if isinstance(model, str):
+        # Use the non-mocked model inference to ensure we get the same model name the user would
+        model = infer_model(model)
+
+    if isinstance(model, FallbackModel):
+        # When a fallback model is encountered, replace any OpenAIModel with a model that will raise a ModelHTTPError.
+        # Otherwise, do the usual inference.
+        def raise_http_error(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:  # pragma: no cover
+            raise ModelHTTPError(401, 'Invalid API Key')
+
+        mock_fallback_models: list[Model] = []
+        for m in model.models:
+            try:
+                from pydantic_ai.models.openai import OpenAIModel
+            except ImportError:
+                OpenAIModel = type(None)
+
+            if isinstance(m, OpenAIModel):
+                # Raise an HTTP error for OpenAIModel
+                mock_fallback_models.append(FunctionModel(raise_http_error, model_name=m.model_name))
+            else:
+                mock_fallback_models.append(mock_infer_model(m))
+        return FallbackModel(*mock_fallback_models)
     if isinstance(model, (FunctionModel, TestModel)):
         return model
-    elif model == 'test':
-        return TestModel()
     else:
-        return FunctionModel(model_logic, stream_function=stream_model_logic)
+        model_name = model if isinstance(model, str) else model.model_name
+        return FunctionModel(model_logic, stream_function=stream_model_logic, model_name=model_name)
 
 
 def mock_group_by_temporal(aiter: Any, soft_max_interval: float | None) -> Any:

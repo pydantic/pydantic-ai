@@ -89,13 +89,37 @@ In order to monitor HTTPX requests made by models, you can use `logfire`'s [HTTP
 Instrumentation is as easy as adding the following three lines to your application:
 
 ```py {title="instrument_httpx.py" test="skip" lint="skip"}
-...
 import logfire
-logfire.configure()  # (1)!
-logfire.instrument_httpx()  # (2)!
-...
-```
+logfire.configure()
+logfire.instrument_httpx(capture_all=True)  # (1)!
 ```
 
-In particular, this can help you to trace specific requests, responses, and headers which might be of particular interest
-if you're using a custom `httpx` client in your model.
+1. See the [logfire docs](https://logfire.pydantic.dev/docs/integrations/http-clients/httpx/) for more `httpx` instrumentation details.
+
+In particular, this can help you to trace specific requests, responses, and headers:
+
+```py {title="instrument_httpx_example.py", test="skip" lint="skip"}
+import logfire
+from pydantic_ai import Agent
+
+logfire.configure()
+logfire.instrument_httpx(capture_all=True)  # (1)!
+
+agent = Agent('openai:gpt-4o')
+result = agent.run_sync('What is the capital of France?')
+print(result.data)
+#> The capital of France is Paris.
+```
+
+1. Capture all of headers, request body, and response body.
+
+=== "With `httpx` instrumentation"
+
+    ![Logfire with HTTPX instrumentation](img/logfire-with-httpx.png)
+
+=== "Without `httpx` instrumentation"
+
+    ![Logfire without HTTPX instrumentation](img/logfire-without-httpx.png)
+
+!!! tip
+    `httpx` instrumentation might be of particular utility if you're using a custom `httpx` client in your model in order to get insights into your custom requests.

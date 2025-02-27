@@ -64,7 +64,11 @@ testcov: test ## Run tests and generate a coverage report
 
 .PHONY: update-examples
 update-examples: ## Update documentation examples
-	uv run -m pytest --update-examples
+	uv run -m pytest --update-examples tests/test_examples.py
+
+.PHONY: update-vcr-tests
+update-vcr-tests: ## Update tests using VCR that hit LLM APIs; note you'll need to set API keys as appropriate
+	uv run -m pytest --record-mode=rewrite tests
 
 # `--no-strict` so you can build the docs without insiders packages
 .PHONY: docs

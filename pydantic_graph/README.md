@@ -50,10 +50,10 @@ class Increment(BaseNode):
 
 
 fives_graph = Graph(nodes=[DivisibleBy5, Increment])
-result, history = fives_graph.run_sync(DivisibleBy5(4))
-print(result)
+result = fives_graph.run_sync(DivisibleBy5(4))
+print(result.output)
 #> 5
 # the full history is quite verbose (see below), so we'll just print the summary
-print([item.data_snapshot() for item in history])
+print([item.data_snapshot() for item in result.history])
 #> [DivisibleBy5(foo=4), Increment(foo=4), DivisibleBy5(foo=5), End(data=5)]
 ```

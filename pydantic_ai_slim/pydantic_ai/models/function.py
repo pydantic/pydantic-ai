@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 import inspect
 import re
-from collections.abc import AsyncIterator, Awaitable, Iterable
+from collections.abc import AsyncIterator, Awaitable, Iterable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -14,6 +14,9 @@ from typing_extensions import TypeAlias, assert_never, overload
 from .. import _utils, usage
 from .._utils import PeekableAsyncStream
 from ..messages import (
+    AudioUrl,
+    BinaryContent,
+    ImageUrl,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -23,6 +26,7 @@ from ..messages import (
     TextPart,
     ToolCallPart,
     ToolReturnPart,
+    UserContent,
     UserPromptPart,
 )
 from ..settings import ModelSettings
@@ -44,15 +48,23 @@ class FunctionModel(Model):
     _system: str | None = field(default=None, repr=False)
 
     @overload
-    def __init__(self, function: FunctionDef) -> None: ...
+    def __init__(self, function: FunctionDef, *, model_name: str | None = None) -> None: ...
 
     @overload
-    def __init__(self, *, stream_function: StreamFunctionDef) -> None: ...
+    def __init__(self, *, stream_function: StreamFunctionDef, model_name: str | None = None) -> None: ...
 
     @overload
-    def __init__(self, function: FunctionDef, *, stream_function: StreamFunctionDef) -> None: ...
+    def __init__(
+        self, function: FunctionDef, *, stream_function: StreamFunctionDef, model_name: str | None = None
+    ) -> None: ...
 
-    def __init__(self, function: FunctionDef | None = None, *, stream_function: StreamFunctionDef | None = None):
+    def __init__(
+        self,
+        function: FunctionDef | None = None,
+        *,
+        stream_function: StreamFunctionDef | None = None,
+        model_name: str | None = None,
+    ):
         """Initialize a `FunctionModel`.
 
         Either `function` or `stream_function` must be provided, providing both is allowed.
@@ -60,6 +72,7 @@ class FunctionModel(Model):
         Args:
             function: The function to call for non-streamed requests.
             stream_function: The function to call for streamed requests.
+            model_name: The name of the model. If not provided, a name is generated from the function names.
         """
         if function is None and stream_function is None:
             raise TypeError('Either `function` or `stream_function` must be provided')
@@ -68,7 +81,7 @@ class FunctionModel(Model):
 
         function_name = self.function.__name__ if self.function is not None else ''
         stream_function_name = self.stream_function.__name__ if self.stream_function is not None else ''
-        self._model_name = f'function:{function_name}:{stream_function_name}'
+        self._model_name = model_name or f'function:{function_name}:{stream_function_name}'
 
     async def request(
         self,
@@ -91,7 +104,7 @@ class FunctionModel(Model):
             response_ = await _utils.run_in_executor(self.function, messages, agent_info)
             assert isinstance(response_, ModelResponse), response_
             response = response_
-        response.model_name = f'function:{self.function.__name__}'
+        response.model_name = self._model_name
         # TODO is `messages` right here? Should it just be new messages?
         return response, _estimate_usage(chain(messages, [response]))
 
@@ -109,9 +122,9 @@ class FunctionModel(Model):
             model_settings,
         )
 
-        assert (
-            self.stream_function is not None
-        ), 'FunctionModel must receive a `stream_function` to support streamed requests'
+        assert self.stream_function is not None, (
+            'FunctionModel must receive a `stream_function` to support streamed requests'
+        )
 
         response_stream = PeekableAsyncStream(self.stream_function(messages, agent_info))
 
@@ -119,7 +132,17 @@ class FunctionModel(Model):
         if isinstance(first, _utils.Unset):
             raise ValueError('Stream function must return at least one item')
 
-        yield FunctionStreamedResponse(_model_name=f'function:{self.stream_function.__name__}', _iter=response_stream)
+        yield FunctionStreamedResponse(_model_name=self._model_name, _iter=response_stream)
+
+    @property
+    def model_name(self) -> str:
+        """The model name."""
+        return self._model_name
+
+    @property
+    def system(self) -> str | None:
+        """The system / model provider."""
+        return self._system
 
 
 @dataclass(frozen=True)
@@ -178,6 +201,7 @@ E.g. you need to yield all text or all `DeltaToolCalls`, not mix them.
 class FunctionStreamedResponse(StreamedResponse):
     """Implementation of `StreamedResponse` for [FunctionModel][pydantic_ai.models.function.FunctionModel]."""
 
+    _model_name: str
     _iter: AsyncIterator[str | DeltaToolCalls]
     _timestamp: datetime = field(default_factory=_utils.now_utc)
 
@@ -205,7 +229,14 @@ class FunctionStreamedResponse(StreamedResponse):
                     if maybe_event is not None:
                         yield maybe_event
 
+    @property
+    def model_name(self) -> str:
+        """Get the model name of the response."""
+        return self._model_name
+
+    @property
     def timestamp(self) -> datetime:
+        """Get the timestamp of the response."""
         return self._timestamp
 
 
@@ -244,7 +275,12 @@ def _estimate_usage(messages: Iterable[ModelMessage]) -> usage.Usage:
     )
 
 
-def _estimate_string_tokens(content: str) -> int:
+def _estimate_string_tokens(content: str | Sequence[UserContent]) -> int:
     if not content:
         return 0
-    return len(re.split(r'[\s",.:]+', content.strip()))
+    if isinstance(content, str):
+        return len(re.split(r'[\s",.:]+', content.strip()))
+    # TODO(Marcelo): We need to study how we can estimate the tokens for these types of content.
+    else:  # pragma: no cover
+        assert isinstance(content, (AudioUrl, ImageUrl, BinaryContent))
+        return 0
