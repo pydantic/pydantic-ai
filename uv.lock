@@ -21,6 +21,7 @@ members = [
     "pydantic-ai",
     "pydantic-ai-examples",
     "pydantic-ai-slim",
+    "pydantic-evals",
     "pydantic-graph",
 ]
 
@@ -2754,6 +2755,84 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/5e/3e/fe5b6613d9e4c0038434396b46c5303f5ade871166900b357ada4766c5b7/pydantic_core-2.27.2-pp39-pypy39_pp73-musllinux_1_1_armv7l.whl", hash = "sha256:8083d4e875ebe0b864ffef72a4304827015cff328a1be6e22cc850753bfb122b", size = 2116654 },
     { url = "https://files.pythonhosted.org/packages/db/ad/28869f58938fad8cc84739c4e592989730bfb69b7c90a8fff138dff18e1e/pydantic_core-2.27.2-pp39-pypy39_pp73-musllinux_1_1_x86_64.whl", hash = "sha256:f141ee28a0ad2123b6611b6ceff018039df17f32ada8b534e6aa039545a3efb2", size = 2152292 },
     { url = "https://files.pythonhosted.org/packages/a1/0c/c5c5cd3689c32ed1fe8c5d234b079c12c281c051759770c05b8bed6412b5/pydantic_core-2.27.2-pp39-pypy39_pp73-win_amd64.whl", hash = "sha256:7d0c8399fcc1848491f00e0314bd59fb34a9c008761bcb422a057670c3f65e35", size = 2004961 },
+]
+
+[[package]]
+name = "pydantic-evals"
+version = "0.0.1"
+source = { editable = "pydantic_evals" }
+dependencies = [
+    { name = "logfire-api" },
+    { name = "pydantic" },
+    { name = "rich" },
+]
+
+[package.optional-dependencies]
+anthropic = [
+    { name = "anthropic" },
+]
+cohere = [
+    { name = "cohere" },
+]
+groq = [
+    { name = "groq" },
+]
+logfire = [
+    { name = "logfire" },
+]
+mistral = [
+    { name = "mistralai" },
+]
+openai = [
+    { name = "openai" },
+]
+vertexai = [
+    { name = "google-auth" },
+    { name = "requests" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "anyio" },
+    { name = "coverage", extra = ["toml"] },
+    { name = "devtools" },
+    { name = "diff-cover", version = "9.2.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.10'" },
+    { name = "diff-cover", version = "9.2.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.10'" },
+    { name = "dirty-equals" },
+    { name = "inline-snapshot" },
+    { name = "pytest" },
+    { name = "pytest-examples" },
+    { name = "pytest-mock" },
+    { name = "pytest-pretty" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "anthropic", marker = "extra == 'anthropic'", specifier = ">=0.40.0" },
+    { name = "cohere", marker = "extra == 'cohere'", specifier = ">=5.13.11" },
+    { name = "google-auth", marker = "extra == 'vertexai'", specifier = ">=2.36.0" },
+    { name = "groq", marker = "extra == 'groq'", specifier = ">=0.12.0" },
+    { name = "logfire", marker = "extra == 'logfire'", specifier = ">=2.3" },
+    { name = "logfire-api", specifier = ">=1.2.0" },
+    { name = "mistralai", marker = "extra == 'mistral'", specifier = ">=1.2.5" },
+    { name = "openai", marker = "extra == 'openai'", specifier = ">=1.61.0" },
+    { name = "pydantic", specifier = ">=2.10" },
+    { name = "requests", marker = "extra == 'vertexai'", specifier = ">=2.32.3" },
+    { name = "rich", specifier = ">=13.9.4" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "anyio", specifier = ">=4.5.0" },
+    { name = "coverage", extras = ["toml"], specifier = ">=7.6.2" },
+    { name = "devtools", specifier = ">=0.12.2" },
+    { name = "diff-cover", specifier = ">=9.2.0" },
+    { name = "dirty-equals", specifier = ">=0.9.0" },
+    { name = "inline-snapshot", specifier = ">=0.19.3" },
+    { name = "pytest", specifier = ">=8.3.3" },
+    { name = "pytest-examples", specifier = ">=0.0.14" },
+    { name = "pytest-mock", specifier = ">=3.14.0" },
+    { name = "pytest-pretty", specifier = ">=1.2.0" },
 ]
 
 [[package]]
