@@ -167,15 +167,10 @@ class InstrumentedModel(WrapperModel):
                         )
                 span.set_attributes(
                     {
-                        k: v
-                        for k, v in {
-                            # TODO finish_reason (https://github.com/open-telemetry/semantic-conventions/issues/1277), id
-                            #  https://github.com/pydantic/pydantic-ai/issues/886
-                            'gen_ai.response.model': response.model_name or model_name,
-                            'gen_ai.usage.input_tokens': usage.request_tokens,
-                            'gen_ai.usage.output_tokens': usage.response_tokens,
-                        }.items()
-                        if v is not None
+                        # TODO finish_reason (https://github.com/open-telemetry/semantic-conventions/issues/1277), id
+                        #  https://github.com/pydantic/pydantic-ai/issues/886
+                        'gen_ai.response.model': response.model_name or model_name,
+                        **usage.opentelemetry_attributes(),
                     }
                 )
 

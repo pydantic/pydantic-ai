@@ -9,7 +9,7 @@ from copy import deepcopy
 from types import FrameType
 from typing import Any, Callable, Generic, cast, final, overload
 
-import logfire_api
+from opentelemetry.trace import NoOpTracer
 from typing_extensions import TypeVar, deprecated
 
 from pydantic_graph import BaseNode, End, Graph, GraphRun, GraphRunContext
@@ -25,6 +25,7 @@ from . import (
     result,
     usage as _usage,
 )
+from .models.instrumented import InstrumentedModel
 from .result import FinalResult, ResultDataT, StreamedRunResult
 from .settings import ModelSettings, merge_model_settings
 from .tools import (
@@ -58,17 +59,6 @@ __all__ = (
     'UserPromptNode',
 )
 
-_logfire = logfire_api.Logfire(otel_scope='pydantic-ai')
-
-# while waiting for https://github.com/pydantic/logfire/issues/745
-try:
-    import logfire._internal.stack_info
-except ImportError:
-    pass
-else:
-    from pathlib import Path
-
-    logfire._internal.stack_info.NON_USER_CODE_PREFIXES += (str(Path(__file__).parent.absolute()),)
 
 T = TypeVar('T')
 NoneType = type(None)
@@ -122,6 +112,9 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
     The type of the result data, used to validate the result data, defaults to `str`.
     """
 
+    instrumented: bool
+    """TODO"""
+
     _deps_type: type[AgentDepsT] = dataclasses.field(repr=False)
     _result_tool_name: str = dataclasses.field(repr=False)
     _result_tool_description: str | None = dataclasses.field(repr=False)
@@ -154,6 +147,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
         defer_model_check: bool = False,
         end_strategy: EndStrategy = 'early',
+        instrumented: bool = False,
     ):
         """Create an agent.
 
@@ -183,6 +177,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
                 [override the model][pydantic_ai.Agent.override] for testing.
             end_strategy: Strategy for handling tool calls that are requested alongside a final result.
                 See [`EndStrategy`][pydantic_ai.agent.EndStrategy] for more information.
+            instrumented: TODO
         """
         if model is None or defer_model_check:
             self.model = model
@@ -193,6 +188,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         self.name = name
         self.model_settings = model_settings
         self.result_type = result_type
+        self.instrumented = instrumented
 
         self._deps_type = deps_type
 
@@ -424,13 +420,18 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         model_settings = merge_model_settings(self.model_settings, model_settings)
         usage_limits = usage_limits or _usage.UsageLimits()
 
-        # Build the deps object for the graph
-        run_span = _logfire.span(
+        if isinstance(model, InstrumentedModel):
+            tracer = model.tracer
+        else:
+            tracer = NoOpTracer()
+        run_span = tracer.start_span(
             '{agent_name} run {prompt=}',
-            prompt=user_prompt,
-            model_name=model_used.model_name if model_used else 'no-model',
-            agent_name=self.name or 'agent',
+            attributes=dict(
+                model_name=model_used.model_name if model_used else 'no-model',
+                agent_name=self.name or 'agent',
+            ),
         )
+
         graph_deps = _agent_graph.GraphAgentDeps[AgentDepsT, RunResultDataT](
             user_deps=deps,
             prompt=user_prompt,
@@ -1114,6 +1115,9 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
             model_ = self.model = models.infer_model(self.model)
         else:
             raise exceptions.UserError('`model` must be set either when creating the agent or when calling it.')
+
+        if self.instrumented and not isinstance(model_, InstrumentedModel):
+            model_ = InstrumentedModel(model_)
 
         return model_
 

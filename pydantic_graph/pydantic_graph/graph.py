@@ -14,6 +14,7 @@ import logfire_api
 import pydantic
 import typing_extensions
 from logfire_api import LogfireSpan
+from opentelemetry.trace import Span
 
 from . import _utils, exceptions, mermaid
 from .nodes import BaseNode, DepsT, End, GraphRunContext, NodeDef, RunEndT
@@ -189,7 +190,7 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
         state: StateT = None,
         deps: DepsT = None,
         infer_name: bool = True,
-        span: LogfireSpan | None = None,
+        span: LogfireSpan | Span | None = None,
     ) -> Iterator[GraphRun[StateT, DepsT, T]]:
         """A contextmanager which can be used to iterate over the graph's nodes as they are executed.
 
@@ -232,7 +233,6 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
                 state=state,
                 deps=deps,
                 auto_instrument=self._auto_instrument,
-                span=span,
             )
 
     def run_sync(
@@ -623,7 +623,6 @@ class GraphRun(Generic[StateT, DepsT, RunEndT]):
         state: StateT,
         deps: DepsT,
         auto_instrument: bool,
-        span: LogfireSpan | None = None,
     ):
         """Create a new run for a given graph, starting at the specified node.
 
@@ -646,7 +645,6 @@ class GraphRun(Generic[StateT, DepsT, RunEndT]):
         self.state = state
         self.deps = deps
         self._auto_instrument = auto_instrument
-        self._span = span
 
         self._next_node: BaseNode[StateT, DepsT, RunEndT] | End[RunEndT] = start_node
 

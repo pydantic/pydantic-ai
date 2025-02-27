@@ -10,6 +10,7 @@ from dataclasses import field
 from typing import Any, Generic, Literal, Union, cast
 
 import logfire_api
+from opentelemetry.trace import Span
 from typing_extensions import TypeVar, assert_never
 
 from pydantic_graph import BaseNode, Graph, GraphRunContext
@@ -104,7 +105,7 @@ class GraphAgentDeps(Generic[DepsT, ResultDataT]):
 
     function_tools: dict[str, Tool[DepsT]] = dataclasses.field(repr=False)
 
-    run_span: logfire_api.LogfireSpan
+    run_span: Span
 
 
 @dataclasses.dataclass
@@ -434,8 +435,7 @@ class HandleResponseNode(BaseNode[GraphAgentState, GraphAgentDeps[DepsT, Any], r
         if tool_responses:
             messages.append(_messages.ModelRequest(parts=tool_responses))
 
-        # TODO replace with plain span, set usage as plain attributes
-        run_span.set_attribute('usage', usage)
+        run_span.set_attributes(usage.opentelemetry_attributes())
 
         # End the run with self.data
         return End(final_result)
