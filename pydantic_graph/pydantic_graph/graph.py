@@ -637,7 +637,6 @@ class GraphRun(Generic[StateT, DepsT, RunEndT]):
             deps: Optional dependencies that each node can access via `ctx.deps`, e.g. database connections,
                 configuration, or logging clients.
             auto_instrument: Whether to automatically create instrumentation spans during the run.
-            span: An optional existing Logfire span to nest node-level spans under (advanced usage).
         """
         self.graph = graph
         self.history = history
