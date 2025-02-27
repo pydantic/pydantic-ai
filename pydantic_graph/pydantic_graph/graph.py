@@ -186,6 +186,7 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
         self: Graph[StateT, DepsT, T],
         start_node: BaseNode[StateT, DepsT, T],
         *,
+        history: list[HistoryStep[StateT, T]] | None = None,
         state: StateT = None,
         deps: DepsT = None,
         infer_name: bool = True,
@@ -208,6 +209,7 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
         Args:
             start_node: the first node to run. Since the graph definition doesn't define the entry point in the graph,
                 you need to provide the starting node.
+            history: The history of the graph run so far. If not provided, a new list will be created.
             state: The initial state of the graph.
             deps: The dependencies of the graph.
             infer_name: Whether to infer the graph name from the calling frame.
@@ -228,7 +230,7 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
             yield GraphRun[StateT, DepsT, T](
                 self,
                 start_node,
-                history=[],
+                history=history if history is not None else [],
                 state=state,
                 deps=deps,
                 auto_instrument=self._auto_instrument,
