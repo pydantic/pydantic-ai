@@ -22,3 +22,8 @@ async def get_transcription():
 
 # Run the asynchronous function
 asyncio.run(get_transcription())
+```
+
+## An example of a response could be
+```
+Lorem ipsum dolor sit amet consectetur adipiscing elit congue, ridiculous dapibus porttitor suspendisse torquent netus elementum ornare, eros quisque lacinia taciti imperdiet consequat magna. Lectus ad vel mollis pretium eget commodo donec velit, elementum phasellus libero himenaeos dictumst nascetur nibh penatibus egestas, proin various condimentum curabitur venenatis ultrices hendrerit. Iaculis etiam fringilla viverra porttitor cras tortor molestie dictum, tristique lacus tincidunt torquent ultrices natoque ad lectus nisl, facilisis phasellus quam nibh consequat quisque pulvinar.```
