@@ -284,7 +284,10 @@ async def main():
     # Begin a node-by-node, streaming iteration
     with weather_agent.iter(user_prompt, deps=WeatherService()) as run:
         async for node in run:
-            if Agent.is_model_request_node(node):
+            if Agent.is_user_prompt_node(node):
+                # A user prompt node => The user has provided input
+                output_messages.append(f'=== UserPromptNode: {node.user_prompt} ===')
+            elif Agent.is_model_request_node(node):
                 # A model request node => We can stream tokens from the model's request
                 output_messages.append(
                     '=== ModelRequestNode: streaming partial request tokens ==='
@@ -308,7 +311,6 @@ async def main():
                             output_messages.append(
                                 f'[Result] The model produced a final result (tool_name={event.tool_name})'
                             )
-
             elif Agent.is_handle_response_node(node):
                 # A handle-response node => The model returned some data, potentially calls a tool
                 output_messages.append(
@@ -324,10 +326,10 @@ async def main():
                             output_messages.append(
                                 f'[Tools] Tool call {event.tool_call_id!r} returned => {event.result.content}'
                             )
-
-        # Once an End node is reached, the agent run is complete
-        assert run.result is not None
-        output_messages.append(f'=== Final Agent Output: {run.result.data} ===')
+            elif Agent.is_end_node(node):
+                assert run.result.data == node.data.data
+                # Once an End node is reached, the agent run is complete
+                output_messages.append(f'=== Final Agent Output: {run.result.data} ===')
 
 
 if __name__ == '__main__':
