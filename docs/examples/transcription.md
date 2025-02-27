@@ -5,8 +5,9 @@ This example shows how to use the `OpenAIModel` class from the `pydantic_ai.mode
 ## Example Code
 
 ```python
-from pydantic_ai.models.openai import OpenAIModel
 import asyncio
+
+from pydantic_ai.models.openai import OpenAIModel
 
 # Initialize the OpenAI model with the desired model name
 openai_model = OpenAIModel(model_name='whisper-1')
@@ -15,7 +16,7 @@ openai_model = OpenAIModel(model_name='whisper-1')
 # Asynchronous function to get the transcription of the audio file
 async def get_transcription():
     # Open the audio file in binary mode
-    with open("/path/to/audio.mp3", "rb") as audio_file:
+    with open('/path/to/audio.mp3', 'rb') as audio_file:
         # Call the transcription method of the model
         transcription_text = await openai_model.transcription(audio_file)
 
