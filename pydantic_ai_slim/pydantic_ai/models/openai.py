@@ -83,6 +83,14 @@ class OpenAIModelSettings(ModelSettings):
     """
 
 
+def non_annotated(model_settings: dict) -> dict:
+    '''
+    Extract non annotated key-value pairs from model_settings.
+    '''
+    return {k: v for (k, v) in model_settings.items()\
+            if k not in OpenAIModelSettings.__annotations__}
+
+
 @dataclass(init=False)
 class OpenAIModel(Model):
     """A model that uses the OpenAI API.
@@ -243,6 +251,7 @@ class OpenAIModel(Model):
                 frequency_penalty=model_settings.get('frequency_penalty', NOT_GIVEN),
                 logit_bias=model_settings.get('logit_bias', NOT_GIVEN),
                 reasoning_effort=model_settings.get('openai_reasoning_effort', NOT_GIVEN),
+                **non_annotated(model_settings)
             )
         except APIStatusError as e:
             if (status_code := e.status_code) >= 400:
