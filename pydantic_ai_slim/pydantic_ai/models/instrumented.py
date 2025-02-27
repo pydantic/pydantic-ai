@@ -4,7 +4,7 @@ from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from functools import partial
-from typing import Any, Callable, Literal, cast
+from typing import Any, Callable, Literal
 
 import logfire_api
 from opentelemetry._events import Event, EventLogger, EventLoggerProvider, get_event_logger_provider
@@ -46,8 +46,6 @@ MODEL_SETTING_ATTRIBUTES: tuple[
     'presence_penalty',
     'frequency_penalty',
 )
-
-NOT_GIVEN = object()
 
 
 @dataclass
@@ -135,8 +133,8 @@ class InstrumentedModel(WrapperModel):
 
         if model_settings:
             for key in MODEL_SETTING_ATTRIBUTES:
-                if (value := model_settings.get(key, NOT_GIVEN)) is not NOT_GIVEN:
-                    attributes[f'gen_ai.request.{key}'] = cast('float | int', value)
+                if isinstance(value := model_settings.get(key), (float, int)):
+                    attributes[f'gen_ai.request.{key}'] = value
 
         emit_event = partial(self._emit_event, system)
 
