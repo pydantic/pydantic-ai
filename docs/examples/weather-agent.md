@@ -48,5 +48,5 @@ python/uv-run -m pydantic_ai_examples.weather_agent_gradio
 ## UI Code
 
 ```python {title="pydantic_ai_examples/weather_agent_gradio.py"}
-#! pydantic_ai_examples/weather_agent_gradio.py
+#! examples/pydantic_ai_examples/weather_agent_gradio.py
 ```

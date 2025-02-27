@@ -1,19 +1,22 @@
 from __future__ import annotations as _annotations
 
+import base64
 import os
-from collections.abc import AsyncIterable, AsyncIterator, Iterable
+from collections.abc import AsyncIterable, AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from itertools import chain
 from typing import Literal, Union, cast, overload
 
 from httpx import AsyncClient as AsyncHTTPClient
 from typing_extensions import assert_never
 
-from .. import UnexpectedModelBehavior, _utils, usage
+from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._utils import guard_tool_call_id as _guard_tool_call_id
 from ..messages import (
+    AudioUrl,
+    BinaryContent,
+    ImageUrl,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -37,9 +40,17 @@ from . import (
 )
 
 try:
-    from openai import NOT_GIVEN, AsyncOpenAI, AsyncStream
+    from openai import NOT_GIVEN, APIStatusError, AsyncOpenAI, AsyncStream
     from openai.types import ChatModel, chat
-    from openai.types.chat import ChatCompletionChunk
+    from openai.types.chat import (
+        ChatCompletionChunk,
+        ChatCompletionContentPartImageParam,
+        ChatCompletionContentPartInputAudioParam,
+        ChatCompletionContentPartParam,
+        ChatCompletionContentPartTextParam,
+    )
+    from openai.types.chat.chat_completion_content_part_image_param import ImageURL
+    from openai.types.chat.chat_completion_content_part_input_audio_param import InputAudio
 except ImportError as _import_error:
     raise ImportError(
         'Please install `openai` to use the OpenAI model, '
@@ -208,27 +219,35 @@ class OpenAIModel(Model):
         else:
             tool_choice = 'auto'
 
-        openai_messages = list(chain(*(self._map_message(m) for m in messages)))
+        openai_messages: list[chat.ChatCompletionMessageParam] = []
+        for m in messages:
+            async for msg in self._map_message(m):
+                openai_messages.append(msg)
 
-        return await self.client.chat.completions.create(
-            model=self._model_name,
-            messages=openai_messages,
-            n=1,
-            parallel_tool_calls=model_settings.get('parallel_tool_calls', NOT_GIVEN),
-            tools=tools or NOT_GIVEN,
-            tool_choice=tool_choice or NOT_GIVEN,
-            stream=stream,
-            stream_options={'include_usage': True} if stream else NOT_GIVEN,
-            max_tokens=model_settings.get('max_tokens', NOT_GIVEN),
-            temperature=model_settings.get('temperature', NOT_GIVEN),
-            top_p=model_settings.get('top_p', NOT_GIVEN),
-            timeout=model_settings.get('timeout', NOT_GIVEN),
-            seed=model_settings.get('seed', NOT_GIVEN),
-            presence_penalty=model_settings.get('presence_penalty', NOT_GIVEN),
-            frequency_penalty=model_settings.get('frequency_penalty', NOT_GIVEN),
-            logit_bias=model_settings.get('logit_bias', NOT_GIVEN),
-            reasoning_effort=model_settings.get('openai_reasoning_effort', NOT_GIVEN),
-        )
+        try:
+            return await self.client.chat.completions.create(
+                model=self._model_name,
+                messages=openai_messages,
+                n=1,
+                parallel_tool_calls=model_settings.get('parallel_tool_calls', NOT_GIVEN),
+                tools=tools or NOT_GIVEN,
+                tool_choice=tool_choice or NOT_GIVEN,
+                stream=stream,
+                stream_options={'include_usage': True} if stream else NOT_GIVEN,
+                max_tokens=model_settings.get('max_tokens', NOT_GIVEN),
+                temperature=model_settings.get('temperature', NOT_GIVEN),
+                top_p=model_settings.get('top_p', NOT_GIVEN),
+                timeout=model_settings.get('timeout', NOT_GIVEN),
+                seed=model_settings.get('seed', NOT_GIVEN),
+                presence_penalty=model_settings.get('presence_penalty', NOT_GIVEN),
+                frequency_penalty=model_settings.get('frequency_penalty', NOT_GIVEN),
+                logit_bias=model_settings.get('logit_bias', NOT_GIVEN),
+                reasoning_effort=model_settings.get('openai_reasoning_effort', NOT_GIVEN),
+            )
+        except APIStatusError as e:
+            if (status_code := e.status_code) >= 400:
+                raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
+            raise
 
     def _process_response(self, response: chat.ChatCompletion) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
@@ -261,10 +280,11 @@ class OpenAIModel(Model):
             tools += [self._map_tool_definition(r) for r in model_request_parameters.result_tools]
         return tools
 
-    def _map_message(self, message: ModelMessage) -> Iterable[chat.ChatCompletionMessageParam]:
+    async def _map_message(self, message: ModelMessage) -> AsyncIterable[chat.ChatCompletionMessageParam]:
         """Just maps a `pydantic_ai.Message` to a `openai.types.ChatCompletionMessageParam`."""
         if isinstance(message, ModelRequest):
-            yield from self._map_user_message(message)
+            async for item in self._map_user_message(message):
+                yield item
         elif isinstance(message, ModelResponse):
             texts: list[str] = []
             tool_calls: list[chat.ChatCompletionMessageToolCallParam] = []
@@ -305,7 +325,7 @@ class OpenAIModel(Model):
             },
         }
 
-    def _map_user_message(self, message: ModelRequest) -> Iterable[chat.ChatCompletionMessageParam]:
+    async def _map_user_message(self, message: ModelRequest) -> AsyncIterable[chat.ChatCompletionMessageParam]:
         for part in message.parts:
             if isinstance(part, SystemPromptPart):
                 if self.system_prompt_role == 'developer':
@@ -315,7 +335,7 @@ class OpenAIModel(Model):
                 else:
                     yield chat.ChatCompletionSystemMessageParam(role='system', content=part.content)
             elif isinstance(part, UserPromptPart):
-                yield chat.ChatCompletionUserMessageParam(role='user', content=part.content)
+                yield await self._map_user_prompt(part)
             elif isinstance(part, ToolReturnPart):
                 yield chat.ChatCompletionToolMessageParam(
                     role='tool',
@@ -333,6 +353,40 @@ class OpenAIModel(Model):
                     )
             else:
                 assert_never(part)
+
+    @staticmethod
+    async def _map_user_prompt(part: UserPromptPart) -> chat.ChatCompletionUserMessageParam:
+        content: str | list[ChatCompletionContentPartParam]
+        if isinstance(part.content, str):
+            content = part.content
+        else:
+            content = []
+            for item in part.content:
+                if isinstance(item, str):
+                    content.append(ChatCompletionContentPartTextParam(text=item, type='text'))
+                elif isinstance(item, ImageUrl):
+                    image_url = ImageURL(url=item.url)
+                    content.append(ChatCompletionContentPartImageParam(image_url=image_url, type='image_url'))
+                elif isinstance(item, BinaryContent):
+                    base64_encoded = base64.b64encode(item.data).decode('utf-8')
+                    if item.is_image:
+                        image_url = ImageURL(url=f'data:{item.media_type};base64,{base64_encoded}')
+                        content.append(ChatCompletionContentPartImageParam(image_url=image_url, type='image_url'))
+                    elif item.is_audio:
+                        audio = InputAudio(data=base64_encoded, format=item.audio_format)
+                        content.append(ChatCompletionContentPartInputAudioParam(input_audio=audio, type='input_audio'))
+                    else:  # pragma: no cover
+                        raise RuntimeError(f'Unsupported binary content type: {item.media_type}')
+                elif isinstance(item, AudioUrl):  # pragma: no cover
+                    client = cached_async_http_client()
+                    response = await client.get(item.url)
+                    response.raise_for_status()
+                    base64_encoded = base64.b64encode(response.content).decode('utf-8')
+                    audio = InputAudio(data=base64_encoded, format=response.headers.get('content-type'))
+                    content.append(ChatCompletionContentPartInputAudioParam(input_audio=audio, type='input_audio'))
+                else:
+                    assert_never(item)
+        return chat.ChatCompletionUserMessageParam(role='user', content=content)
 
 
 @dataclass

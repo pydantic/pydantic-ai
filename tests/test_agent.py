@@ -24,7 +24,6 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.models import cached_async_http_client
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.result import Usage
@@ -86,8 +85,8 @@ def test_result_pydantic_model_retry():
         [
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
-                parts=[ToolCallPart('final_result', '{"a": "wrong", "b": "foo"}')],
-                model_name='function:return_model',
+                parts=[ToolCallPart(tool_name='final_result', args='{"a": "wrong", "b": "foo"}')],
+                model_name='function:return_model:',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
@@ -107,8 +106,8 @@ def test_result_pydantic_model_retry():
                 ]
             ),
             ModelResponse(
-                parts=[ToolCallPart('final_result', '{"a": 42, "b": "foo"}')],
-                model_name='function:return_model',
+                parts=[ToolCallPart(tool_name='final_result', args='{"a": 42, "b": "foo"}')],
+                model_name='function:return_model:',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
@@ -203,8 +202,8 @@ def test_result_validator():
         [
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
-                parts=[ToolCallPart('final_result', '{"a": 41, "b": "foo"}')],
-                model_name='function:return_model',
+                parts=[ToolCallPart(tool_name='final_result', args='{"a": 41, "b": "foo"}')],
+                model_name='function:return_model:',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
@@ -215,8 +214,8 @@ def test_result_validator():
                 ]
             ),
             ModelResponse(
-                parts=[ToolCallPart('final_result', '{"a": 42, "b": "foo"}')],
-                model_name='function:return_model',
+                parts=[ToolCallPart(tool_name='final_result', args='{"a": 42, "b": "foo"}')],
+                model_name='function:return_model:',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
@@ -254,7 +253,7 @@ def test_plain_response_then_tuple():
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[TextPart(content='hello')],
-                model_name='function:return_tuple',
+                model_name='function:return_tuple:',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
@@ -267,7 +266,7 @@ def test_plain_response_then_tuple():
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='final_result', args='{"response": ["foo", "bar"]}')],
-                model_name='function:return_tuple',
+                model_name='function:return_tuple:',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
@@ -764,7 +763,7 @@ def test_unknown_tool():
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='foobar', args='{}')],
-                model_name='function:empty',
+                model_name='function:empty:',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
@@ -776,7 +775,7 @@ def test_unknown_tool():
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='foobar', args='{}')],
-                model_name='function:empty',
+                model_name='function:empty:',
                 timestamp=IsNow(tz=timezone.utc),
             ),
         ]
@@ -799,7 +798,7 @@ def test_unknown_tool_fix():
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='foobar', args='{}')],
-                model_name='function:empty',
+                model_name='function:empty:',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
@@ -811,7 +810,7 @@ def test_unknown_tool_fix():
             ),
             ModelResponse(
                 parts=[TextPart(content='success')],
-                model_name='function:empty',
+                model_name='function:empty:',
                 timestamp=IsNow(tz=timezone.utc),
             ),
         ]
@@ -848,15 +847,14 @@ def test_run_sync_multiple():
 
     @agent.tool_plain
     async def make_request() -> str:
-        # raised a `RuntimeError: Event loop is closed` on repeat runs when we used `asyncio.run()`
-        client = cached_async_http_client()
-        # use this as I suspect it's about the fastest globally available endpoint
-        try:
-            response = await client.get('https://cloudflare.com/cdn-cgi/trace')
-        except httpx.ConnectError:
-            pytest.skip('offline')
-        else:
-            return str(response.status_code)
+        async with httpx.AsyncClient() as client:
+            # use this as I suspect it's about the fastest globally available endpoint
+            try:
+                response = await client.get('https://cloudflare.com/cdn-cgi/trace')
+            except httpx.ConnectError:  # pragma: no cover
+                pytest.skip('offline')
+            else:
+                return str(response.status_code)
 
     for _ in range(2):
         result = agent.run_sync('Hello')
@@ -1062,7 +1060,7 @@ class TestMultipleToolCalls:
                         ToolCallPart(tool_name='final_result', args={'value': 'second'}),
                         ToolCallPart(tool_name='unknown_tool', args={'value': '???'}),
                     ],
-                    model_name='function:return_model',
+                    model_name='function:return_model:',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 ModelRequest(
@@ -1139,7 +1137,7 @@ class TestMultipleToolCalls:
                         ToolCallPart(tool_name='another_tool', args={'y': 2}),
                         ToolCallPart(tool_name='unknown_tool', args={'value': '???'}),
                     ],
-                    model_name='function:return_model',
+                    model_name='function:return_model:',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 ModelRequest(
@@ -1252,7 +1250,7 @@ def test_heterogeneous_responses_non_streaming() -> None:
                         args={'loc_name': 'London'},
                     ),
                 ],
-                model_name='function:return_model',
+                model_name='function:return_model:',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
@@ -1264,7 +1262,7 @@ def test_heterogeneous_responses_non_streaming() -> None:
             ),
             ModelResponse(
                 parts=[TextPart(content='final response')],
-                model_name='function:return_model',
+                model_name='function:return_model:',
                 timestamp=IsNow(tz=timezone.utc),
             ),
         ]

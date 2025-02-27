@@ -53,7 +53,7 @@ async def test_dump_load_history(graph: Graph[MyState, None, int]):
         [
             NodeStep(state=MyState(x=2, y=''), node=Foo(), start_ts=IsNow(tz=timezone.utc), duration=IsFloat()),
             NodeStep(state=MyState(x=2, y='y'), node=Bar(), start_ts=IsNow(tz=timezone.utc), duration=IsFloat()),
-            EndStep(result=End(4), ts=IsNow(tz=timezone.utc)),
+            EndStep(result=End(data=4), ts=IsNow(tz=timezone.utc)),
         ]
     )
     history_json = graph.dump_history(result.history)
