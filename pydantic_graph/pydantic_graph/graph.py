@@ -259,8 +259,9 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
         """
         if infer_name and self.name is None:
             self._infer_name(inspect.currentframe())
-        with _utils.get_event_loop() as event_loop:
-            return event_loop.run_until_complete(self.run(start_node, state=state, deps=deps, infer_name=False))
+        return _utils.get_event_loop().run_until_complete(
+            self.run(start_node, state=state, deps=deps, infer_name=False)
+        )
 
     async def next(
         self: Graph[StateT, DepsT, T],
