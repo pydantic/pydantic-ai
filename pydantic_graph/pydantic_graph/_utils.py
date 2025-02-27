@@ -1,11 +1,24 @@
 from __future__ import annotations as _annotations
 
+import asyncio
 import sys
 import types
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Annotated, Any, TypeVar, Union, get_args, get_origin
 
 import typing_extensions
+
+
+@contextmanager
+def get_event_loop():
+    try:
+        event_loop = asyncio.get_event_loop()
+    except RuntimeError:
+        event_loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(event_loop)
+    yield event_loop
+    event_loop.close()
 
 
 def get_union_args(tp: Any) -> tuple[Any, ...]:
