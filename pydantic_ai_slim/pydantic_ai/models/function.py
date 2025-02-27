@@ -177,6 +177,8 @@ class DeltaToolCall:
     """Incremental change to the name of the tool."""
     json_args: str | None = None
     """Incremental change to the arguments as JSON"""
+    tool_call_id: str | None = None
+    """Incremental change to the tool call ID."""
 
 
 DeltaToolCalls: TypeAlias = dict[int, DeltaToolCall]
@@ -224,7 +226,7 @@ class FunctionStreamedResponse(StreamedResponse):
                         vendor_part_id=dtc_index,
                         tool_name=delta_tool_call.name,
                         args=delta_tool_call.json_args,
-                        tool_call_id=None,
+                        tool_call_id=delta_tool_call.tool_call_id,
                     )
                     if maybe_event is not None:
                         yield maybe_event
