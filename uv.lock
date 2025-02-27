@@ -2715,6 +2715,7 @@ dependencies = [
     { name = "griffe" },
     { name = "httpx" },
     { name = "logfire-api" },
+    { name = "opentelemetry-api" },
     { name = "pydantic" },
     { name = "pydantic-graph" },
 ]
@@ -2777,6 +2778,7 @@ requires-dist = [
     { name = "logfire-api", specifier = ">=1.2.0" },
     { name = "mistralai", marker = "extra == 'mistral'", specifier = ">=1.2.5" },
     { name = "openai", marker = "extra == 'openai'", specifier = ">=1.61.0" },
+    { name = "opentelemetry-api", specifier = ">=1.28.0" },
     { name = "pydantic", specifier = ">=2.10" },
     { name = "pydantic-graph", editable = "pydantic_graph" },
     { name = "requests", marker = "extra == 'vertexai'", specifier = ">=2.32.3" },
