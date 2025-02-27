@@ -41,10 +41,7 @@ class DuckDuckGoSearchTool:
     """The DuckDuckGo search client."""
 
     max_results: int | None = None
-    """The maximum number of results.
-
-    If None, returns results only from the first response.
-    """
+    """The maximum number of results. If None, returns results only from the first response."""
 
     async def __call__(self, query: str) -> list[DuckDuckGoResult]:
         """Searches DuckDuckGo for the given query and returns the results.
