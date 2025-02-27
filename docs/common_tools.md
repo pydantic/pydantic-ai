@@ -1,9 +1,24 @@
+# Common Tools
+
 PydanticAI ships with native tools that can be used to enhance your agent's capabilities.
 
 ## DuckDuckGo Search Tool
 
 The DuckDuckGo search tool allows you to search the web for information. It is built on top of the
 [DuckDuckGo API](https://github.com/deedy5/duckduckgo_search).
+
+### Installation
+
+To use [`duckduckgo_search_tool`][pydantic_ai.common_tools.duckduckgo.duckduckgo_search_tool], you need to install
+[`pydantic-ai-slim`](install.md#slim-install) with the `duckduckgo` optional group:
+
+```bash
+pip/uv-add 'pydantic-ai-slim[duckduckgo]'
+```
+
+### Usage
+
+Here's an example of how you can use the DuckDuckGo search tool with an agent:
 
 ```py {title="main.py" test="skip"}
 from pydantic_ai import Agent
@@ -65,3 +80,26 @@ the 2025 year‑end box‑office tallies are in or to consult a regularly update
 Would you like help finding a current source or additional details on where to look for the complete updated list?
 """
 ```
+
+## Tavily Search Tool
+
+!!! info
+    Tavily is a paid service. You need to [sign up for an account](https://app.tavily.com/home) and get
+    an API key to use the Tavily search tool.
+
+The Tavily search tool allows you to search the web for information. It is built on top of the [Tavily API](https://tavily.com/).
+
+### Installation
+
+To use [`tavily_search_tool`][pydantic_ai.common_tools.tavily.tavily_search_tool], you need to install
+[`pydantic-ai-slim`](install.md#slim-install) with the `tavily` optional group:
+
+```bash
+pip/uv-add 'pydantic-ai-slim[tavily]'
+```
+
+### Usage
+
+Here's an example of how you can use the Tavily search tool with an agent:
+
+```py {title="main.py" test="skip"}
