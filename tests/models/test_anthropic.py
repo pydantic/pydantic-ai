@@ -569,6 +569,24 @@ Potatoes are root vegetables that are staple foods in many cuisines around the w
 """)
 
 
+@pytest.mark.vcr()
+async def test_image_url_input_invalid_mime_type(allow_model_requests: None, anthropic_api_key: str):
+    m = AnthropicModel('claude-3-5-haiku-latest', api_key=anthropic_api_key)
+    agent = Agent(m)
+
+    result = await agent.run(
+        [
+            'What animal is this?',
+            ImageUrl(
+                url='https://lh3.googleusercontent.com/proxy/YngsuS8jQJysXxeucAgVBcSgIdwZlSQ-HvsNxGjHS0SrUKXI161bNKh6SOcMsNUGsnxoOrS3AYX--MT4T3S3SoCgSD1xKrtBwwItcgexaX_7W-qHo-VupmYgjjzWO-BuORLp9-pj8Kjr'
+            ),
+        ]
+    )
+    assert result.data == snapshot(
+        'This is a Great Horned Owl (Bubo virginianus), a large and powerful owl species. It has distinctive ear tufts (the "horns"), large yellow eyes, and a mottled gray-brown plumage that provides excellent camouflage. In this image, the owl is perched on a branch, surrounded by soft yellow and green vegetation, which creates a beautiful, slightly blurred background that highlights the owl\'s sharp features. Great Horned Owls are known for their adaptability, wide distribution across the Americas, and their status as powerful nocturnal predators.'
+    )
+
+
 @pytest.mark.parametrize('media_type', ('audio/wav', 'audio/mpeg'))
 async def test_audio_as_binary_content_input(allow_model_requests: None, media_type: str):
     c = completion_message([TextBlock(text='world', type='text')], AnthropicUsage(input_tokens=5, output_tokens=10))

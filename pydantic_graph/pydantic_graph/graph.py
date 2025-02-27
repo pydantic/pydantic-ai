@@ -1,6 +1,5 @@
 from __future__ import annotations as _annotations
 
-import asyncio
 import inspect
 import types
 from collections.abc import AsyncIterator, Iterator, Sequence
@@ -260,7 +259,7 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
         """
         if infer_name and self.name is None:
             self._infer_name(inspect.currentframe())
-        return asyncio.get_event_loop().run_until_complete(
+        return _utils.get_event_loop().run_until_complete(
             self.run(start_node, state=state, deps=deps, infer_name=False)
         )
 

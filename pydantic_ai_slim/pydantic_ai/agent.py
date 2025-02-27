@@ -1,6 +1,5 @@
 from __future__ import annotations as _annotations
 
-import asyncio
 import dataclasses
 import inspect
 from collections.abc import AsyncIterator, Awaitable, Iterator, Sequence
@@ -13,6 +12,7 @@ import logfire_api
 from typing_extensions import TypeGuard, TypeVar, deprecated
 
 from pydantic_graph import End, Graph, GraphRun, GraphRunContext
+from pydantic_graph._utils import get_event_loop
 
 from . import (
     _agent_graph,
@@ -538,7 +538,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         """
         if infer_name and self.name is None:
             self._infer_name(inspect.currentframe())
-        return asyncio.get_event_loop().run_until_complete(
+        return get_event_loop().run_until_complete(
             self.run(
                 user_prompt,
                 result_type=result_type,

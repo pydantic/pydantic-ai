@@ -49,6 +49,8 @@ class RunContext(Generic[AgentDepsT]):
     """The original user prompt passed to the run."""
     messages: list[_messages.ModelMessage] = field(default_factory=list)
     """Messages exchanged in the conversation so far."""
+    tool_call_id: str | None = None
+    """The ID of the tool call."""
     tool_name: str | None = None
     """Name of the tool being called."""
     retry: int = 0
@@ -301,7 +303,12 @@ class Tool(Generic[AgentDepsT]):
         if self._single_arg_name:
             args_dict = {self._single_arg_name: args_dict}
 
-        ctx = dataclasses.replace(run_context, retry=self.current_retry, tool_name=message.tool_name)
+        ctx = dataclasses.replace(
+            run_context,
+            retry=self.current_retry,
+            tool_name=message.tool_name,
+            tool_call_id=message.tool_call_id,
+        )
         args = [ctx] if self.takes_ctx else []
         for positional_field in self._positional_fields:
             args.append(args_dict.pop(positional_field))

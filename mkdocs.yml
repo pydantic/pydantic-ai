@@ -20,6 +20,7 @@ nav:
       - models.md
       - dependencies.md
       - tools.md
+      - common_tools.md
       - results.md
       - message-history.md
       - testing-evals.md
@@ -42,6 +43,7 @@ nav:
   - API Reference:
       - api/agent.md
       - api/tools.md
+      - api/common_tools.md
       - api/result.md
       - api/messages.md
       - api/exceptions.md
