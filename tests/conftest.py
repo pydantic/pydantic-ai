@@ -20,6 +20,8 @@ from typing_extensions import TypeAlias
 from vcr import VCR
 
 import pydantic_ai.models
+from pydantic_ai.messages import BinaryContent
+from pydantic_ai.models import cached_async_http_client
 
 __all__ = 'IsDatetime', 'IsFloat', 'IsNow', 'IsStr', 'TestEnv', 'ClientWithHandler', 'try_import'
 
@@ -184,6 +186,11 @@ def set_event_loop() -> Iterator[None]:
     new_loop.close()
 
 
+def raise_if_exception(e: Any) -> None:
+    if isinstance(e, Exception):
+        raise e
+
+
 def pytest_recording_configure(config: Any, vcr: VCR):
     from . import json_body_serializer
 
@@ -199,6 +206,44 @@ def vcr_config():
     }
 
 
+@pytest.fixture(autouse=True)
+async def close_cached_httpx_client() -> AsyncIterator[None]:
+    yield
+    await cached_async_http_client().aclose()
+
+
 @pytest.fixture(scope='session')
-def openai_key() -> str:
+def assets_path() -> Path:
+    return Path(__file__).parent / 'assets'
+
+
+@pytest.fixture(scope='session')
+def audio_content(assets_path: Path) -> BinaryContent:
+    audio_bytes = assets_path.joinpath('marcelo.mp3').read_bytes()
+    return BinaryContent(data=audio_bytes, media_type='audio/mpeg')
+
+
+@pytest.fixture(scope='session')
+def image_content(assets_path: Path) -> BinaryContent:
+    image_bytes = assets_path.joinpath('kiwi.png').read_bytes()
+    return BinaryContent(data=image_bytes, media_type='image/png')
+
+
+@pytest.fixture(scope='session')
+def openai_api_key() -> str:
     return os.getenv('OPENAI_API_KEY', 'mock-api-key')
+
+
+@pytest.fixture(scope='session')
+def gemini_api_key() -> str:
+    return os.getenv('GEMINI_API_KEY', 'mock-api-key')
+
+
+@pytest.fixture(scope='session')
+def groq_api_key() -> str:
+    return os.getenv('GROQ_API_KEY', 'mock-api-key')
+
+
+@pytest.fixture(scope='session')
+def anthropic_api_key() -> str:
+    return os.getenv('ANTHROPIC_API_KEY', 'mock-api-key')

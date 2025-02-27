@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+import base64
 import os
 import re
 from collections.abc import AsyncIterator, Sequence
@@ -14,8 +15,11 @@ import pydantic
 from httpx import USE_CLIENT_DEFAULT, AsyncClient as AsyncHTTPClient, Response as HTTPResponse
 from typing_extensions import NotRequired, TypedDict, assert_never
 
-from .. import UnexpectedModelBehavior, _utils, exceptions, usage
+from .. import ModelHTTPError, UnexpectedModelBehavior, UserError, _utils, usage
 from ..messages import (
+    AudioUrl,
+    BinaryContent,
+    ImageUrl,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -108,7 +112,7 @@ class GeminiModel(Model):
             if env_api_key := os.getenv('GEMINI_API_KEY'):
                 api_key = env_api_key
             else:
-                raise exceptions.UserError('API key must be provided or set in the GEMINI_API_KEY environment variable')
+                raise UserError('API key must be provided or set in the GEMINI_API_KEY environment variable')
         self.http_client = http_client or cached_async_http_client()
         self._auth = ApiKeyAuth(api_key)
         self._url = url_template.format(model=model_name)
@@ -185,7 +189,7 @@ class GeminiModel(Model):
     ) -> AsyncIterator[HTTPResponse]:
         tools = self._get_tools(model_request_parameters)
         tool_config = self._get_tool_config(model_request_parameters, tools)
-        sys_prompt_parts, contents = self._message_to_gemini_content(messages)
+        sys_prompt_parts, contents = await self._message_to_gemini_content(messages)
 
         request_data = _GeminiRequest(contents=contents)
         if sys_prompt_parts:
@@ -229,9 +233,11 @@ class GeminiModel(Model):
             headers=headers,
             timeout=model_settings.get('timeout', USE_CLIENT_DEFAULT),
         ) as r:
-            if r.status_code != 200:
+            if (status_code := r.status_code) != 200:
                 await r.aread()
-                raise exceptions.UnexpectedModelBehavior(f'Unexpected response from gemini {r.status_code}', r.text)
+                if status_code >= 400:
+                    raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=r.text)
+                raise UnexpectedModelBehavior(f'Unexpected response from gemini {status_code}', r.text)
             yield r
 
     def _process_response(self, response: _GeminiResponse) -> ModelResponse:
@@ -269,7 +275,7 @@ class GeminiModel(Model):
         return GeminiStreamedResponse(_model_name=self._model_name, _content=content, _stream=aiter_bytes)
 
     @classmethod
-    def _message_to_gemini_content(
+    async def _message_to_gemini_content(
         cls, messages: list[ModelMessage]
     ) -> tuple[list[_GeminiTextPart], list[_GeminiContent]]:
         sys_prompt_parts: list[_GeminiTextPart] = []
@@ -282,7 +288,7 @@ class GeminiModel(Model):
                     if isinstance(part, SystemPromptPart):
                         sys_prompt_parts.append(_GeminiTextPart(text=part.content))
                     elif isinstance(part, UserPromptPart):
-                        message_parts.append(_GeminiTextPart(text=part.content))
+                        message_parts.extend(await cls._map_user_prompt(part))
                     elif isinstance(part, ToolReturnPart):
                         message_parts.append(_response_part_from_response(part.tool_name, part.model_response_object()))
                     elif isinstance(part, RetryPromptPart):
@@ -302,6 +308,40 @@ class GeminiModel(Model):
                 assert_never(m)
 
         return sys_prompt_parts, contents
+
+    @staticmethod
+    async def _map_user_prompt(part: UserPromptPart) -> list[_GeminiPartUnion]:
+        if isinstance(part.content, str):
+            return [{'text': part.content}]
+        else:
+            content: list[_GeminiPartUnion] = []
+            for item in part.content:
+                if isinstance(item, str):
+                    content.append({'text': item})
+                elif isinstance(item, BinaryContent):
+                    base64_encoded = base64.b64encode(item.data).decode('utf-8')
+                    content.append(
+                        _GeminiInlineDataPart(inline_data={'data': base64_encoded, 'mime_type': item.media_type})
+                    )
+                elif isinstance(item, (AudioUrl, ImageUrl)):
+                    try:
+                        content.append(
+                            _GeminiFileDataPart(file_data={'file_uri': item.url, 'mime_type': item.media_type})
+                        )
+                    except ValueError:
+                        # Download the file if can't find the mime type.
+                        client = cached_async_http_client()
+                        response = await client.get(item.url, follow_redirects=True)
+                        response.raise_for_status()
+                        base64_encoded = base64.b64encode(response.content).decode('utf-8')
+                        content.append(
+                            _GeminiInlineDataPart(
+                                inline_data={'data': base64_encoded, 'mime_type': response.headers['Content-Type']}
+                            )
+                        )
+                else:
+                    assert_never(item)
+        return content
 
 
 class AuthProtocol(Protocol):
@@ -494,6 +534,28 @@ class _GeminiTextPart(TypedDict):
     text: str
 
 
+class _GeminiInlineData(TypedDict):
+    data: str
+    mime_type: Annotated[str, pydantic.Field(alias='mimeType')]
+
+
+class _GeminiInlineDataPart(TypedDict):
+    """See <https://ai.google.dev/api/caching#Blob>."""
+
+    inline_data: Annotated[_GeminiInlineData, pydantic.Field(alias='inlineData')]
+
+
+class _GeminiFileData(TypedDict):
+    """See <https://ai.google.dev/api/caching#FileData>."""
+
+    file_uri: Annotated[str, pydantic.Field(alias='fileUri')]
+    mime_type: Annotated[str, pydantic.Field(alias='mimeType')]
+
+
+class _GeminiFileDataPart(TypedDict):
+    file_data: Annotated[_GeminiFileData, pydantic.Field(alias='fileData')]
+
+
 class _GeminiFunctionCallPart(TypedDict):
     function_call: Annotated[_GeminiFunctionCall, pydantic.Field(alias='functionCall')]
 
@@ -517,7 +579,7 @@ def _process_response_from_parts(
                 )
             )
         elif 'function_response' in part:
-            raise exceptions.UnexpectedModelBehavior(
+            raise UnexpectedModelBehavior(
                 f'Unsupported response from Gemini, expected all parts to be function calls or text, got: {part!r}'
             )
     return ModelResponse(parts=items, model_name=model_name, timestamp=timestamp or _utils.now_utc())
@@ -549,6 +611,10 @@ def _part_discriminator(v: Any) -> str:
     if isinstance(v, dict):
         if 'text' in v:
             return 'text'
+        elif 'inlineData' in v:
+            return 'inline_data'
+        elif 'fileData' in v:
+            return 'file_data'
         elif 'functionCall' in v or 'function_call' in v:
             return 'function_call'
         elif 'functionResponse' in v or 'function_response' in v:
@@ -564,6 +630,8 @@ _GeminiPartUnion = Annotated[
         Annotated[_GeminiTextPart, pydantic.Tag('text')],
         Annotated[_GeminiFunctionCallPart, pydantic.Tag('function_call')],
         Annotated[_GeminiFunctionResponsePart, pydantic.Tag('function_response')],
+        Annotated[_GeminiInlineDataPart, pydantic.Tag('inline_data')],
+        Annotated[_GeminiFileDataPart, pydantic.Tag('file_data')],
     ],
     pydantic.Discriminator(_part_discriminator),
 ]
@@ -726,7 +794,7 @@ class _GeminiJsonSchema:
             # noinspection PyTypeChecker
             key = re.sub(r'^#/\$defs/', '', ref)
             if key in refs_stack:
-                raise exceptions.UserError('Recursive `$ref`s in JSON Schema are not supported by Gemini')
+                raise UserError('Recursive `$ref`s in JSON Schema are not supported by Gemini')
             refs_stack += (key,)
             schema_def = self.defs[key]
             self._simplify(schema_def, refs_stack)
@@ -760,7 +828,7 @@ class _GeminiJsonSchema:
     def _object(self, schema: dict[str, Any], refs_stack: tuple[str, ...]) -> None:
         ad_props = schema.pop('additionalProperties', None)
         if ad_props:
-            raise exceptions.UserError('Additional properties in JSON Schema are not supported by Gemini')
+            raise UserError('Additional properties in JSON Schema are not supported by Gemini')
 
         if properties := schema.get('properties'):  # pragma: no branch
             for value in properties.values():

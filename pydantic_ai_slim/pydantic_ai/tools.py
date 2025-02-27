@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 import dataclasses
 import inspect
-from collections.abc import Awaitable
+from collections.abc import Awaitable, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Callable, Generic, Literal, Union, cast
 
@@ -45,10 +45,12 @@ class RunContext(Generic[AgentDepsT]):
     """The model used in this run."""
     usage: Usage
     """LLM usage associated with the run."""
-    prompt: str
+    prompt: str | Sequence[_messages.UserContent]
     """The original user prompt passed to the run."""
     messages: list[_messages.ModelMessage] = field(default_factory=list)
     """Messages exchanged in the conversation so far."""
+    tool_call_id: str | None = None
+    """The ID of the tool call."""
     tool_name: str | None = None
     """Name of the tool being called."""
     retry: int = 0
@@ -301,7 +303,12 @@ class Tool(Generic[AgentDepsT]):
         if self._single_arg_name:
             args_dict = {self._single_arg_name: args_dict}
 
-        ctx = dataclasses.replace(run_context, retry=self.current_retry, tool_name=message.tool_name)
+        ctx = dataclasses.replace(
+            run_context,
+            retry=self.current_retry,
+            tool_name=message.tool_name,
+            tool_call_id=message.tool_call_id,
+        )
         args = [ctx] if self.takes_ctx else []
         for positional_field in self._positional_fields:
             args.append(args_dict.pop(positional_field))

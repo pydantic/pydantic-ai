@@ -5,14 +5,17 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from functools import cached_property
-from typing import Any, Literal, cast
+from typing import Any, Literal, Union, cast
 
+import httpx
 import pytest
 from inline_snapshot import snapshot
 from typing_extensions import TypedDict
 
-from pydantic_ai import Agent, ModelRetry, UnexpectedModelBehavior
+from pydantic_ai import Agent, ModelHTTPError, ModelRetry, UnexpectedModelBehavior
 from pydantic_ai.messages import (
+    BinaryContent,
+    ImageUrl,
     ModelRequest,
     ModelResponse,
     RetryPromptPart,
@@ -25,11 +28,11 @@ from pydantic_ai.messages import (
 from pydantic_ai.result import Usage
 from pydantic_ai.settings import ModelSettings
 
-from ..conftest import IsNow, TestEnv, try_import
+from ..conftest import IsNow, TestEnv, raise_if_exception, try_import
 from .mock_async_stream import MockAsyncStream
 
 with try_import() as imports_successful:
-    from openai import NOT_GIVEN, AsyncOpenAI, BadRequestError, OpenAIError
+    from openai import NOT_GIVEN, APIStatusError, AsyncOpenAI, OpenAIError
     from openai.types import chat
     from openai.types.chat.chat_completion import Choice
     from openai.types.chat.chat_completion_chunk import (
@@ -43,6 +46,10 @@ with try_import() as imports_successful:
     from openai.types.completion_usage import CompletionUsage, PromptTokensDetails
 
     from pydantic_ai.models.openai import OpenAIModel, OpenAISystemPromptRole
+
+    # note: we use Union here so that casting works with Python 3.9
+    MockChatCompletion = Union[chat.ChatCompletion, Exception]
+    MockChatCompletionChunk = Union[chat.ChatCompletionChunk, Exception]
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
@@ -85,8 +92,8 @@ def test_init_of_openai_without_api_key_raises_error(env: TestEnv):
 
 @dataclass
 class MockOpenAI:
-    completions: chat.ChatCompletion | list[chat.ChatCompletion] | None = None
-    stream: list[chat.ChatCompletionChunk] | list[list[chat.ChatCompletionChunk]] | None = None
+    completions: MockChatCompletion | Sequence[MockChatCompletion] | None = None
+    stream: Sequence[MockChatCompletionChunk] | Sequence[Sequence[MockChatCompletionChunk]] | None = None
     index: int = 0
     chat_completion_kwargs: list[dict[str, Any]] = field(default_factory=list)
 
@@ -96,34 +103,35 @@ class MockOpenAI:
         return type('Chat', (), {'completions': chat_completions})
 
     @classmethod
-    def create_mock(cls, completions: chat.ChatCompletion | list[chat.ChatCompletion]) -> AsyncOpenAI:
+    def create_mock(cls, completions: MockChatCompletion | Sequence[MockChatCompletion]) -> AsyncOpenAI:
         return cast(AsyncOpenAI, cls(completions=completions))
 
     @classmethod
     def create_mock_stream(
-        cls, stream: Sequence[chat.ChatCompletionChunk] | Sequence[list[chat.ChatCompletionChunk]]
+        cls,
+        stream: Sequence[MockChatCompletionChunk] | Sequence[Sequence[MockChatCompletionChunk]],
     ) -> AsyncOpenAI:
-        return cast(AsyncOpenAI, cls(stream=list(stream)))  # pyright: ignore[reportArgumentType]
+        return cast(AsyncOpenAI, cls(stream=stream))
 
     async def chat_completions_create(  # pragma: no cover
         self, *_args: Any, stream: bool = False, **kwargs: Any
-    ) -> chat.ChatCompletion | MockAsyncStream[chat.ChatCompletionChunk]:
+    ) -> chat.ChatCompletion | MockAsyncStream[MockChatCompletionChunk]:
         self.chat_completion_kwargs.append({k: v for k, v in kwargs.items() if v is not NOT_GIVEN})
 
         if stream:
             assert self.stream is not None, 'you can only used `stream=True` if `stream` is provided'
-            # noinspection PyUnresolvedReferences
-            if isinstance(self.stream[0], list):
-                indexed_stream = cast(list[chat.ChatCompletionChunk], self.stream[self.index])
-                response = MockAsyncStream(iter(indexed_stream))
+            if isinstance(self.stream[0], Sequence):
+                response = MockAsyncStream(iter(cast(list[MockChatCompletionChunk], self.stream[self.index])))
             else:
-                response = MockAsyncStream(iter(cast(list[chat.ChatCompletionChunk], self.stream)))
+                response = MockAsyncStream(iter(cast(list[MockChatCompletionChunk], self.stream)))
         else:
             assert self.completions is not None, 'you can only used `stream=False` if `completions` are provided'
-            if isinstance(self.completions, list):
-                response = self.completions[self.index]
+            if isinstance(self.completions, Sequence):
+                raise_if_exception(self.completions[self.index])
+                response = cast(chat.ChatCompletion, self.completions[self.index])
             else:
-                response = self.completions
+                raise_if_exception(self.completions)
+                response = cast(chat.ChatCompletion, self.completions)
         self.index += 1
         return response
 
@@ -398,7 +406,7 @@ def text_chunk(text: str, finish_reason: FinishReason | None = None) -> chat.Cha
 
 
 async def test_stream_text(allow_model_requests: None):
-    stream = text_chunk('hello '), text_chunk('world'), chunk([])
+    stream = [text_chunk('hello '), text_chunk('world'), chunk([])]
     mock_client = MockOpenAI.create_mock_stream(stream)
     m = OpenAIModel('gpt-4o', openai_client=mock_client)
     agent = Agent(m)
@@ -411,7 +419,11 @@ async def test_stream_text(allow_model_requests: None):
 
 
 async def test_stream_text_finish_reason(allow_model_requests: None):
-    stream = text_chunk('hello '), text_chunk('world'), text_chunk('.', finish_reason='stop')
+    stream = [
+        text_chunk('hello '),
+        text_chunk('world'),
+        text_chunk('.', finish_reason='stop'),
+    ]
     mock_client = MockOpenAI.create_mock_stream(stream)
     m = OpenAIModel('gpt-4o', openai_client=mock_client)
     agent = Agent(m)
@@ -447,7 +459,7 @@ class MyTypedDict(TypedDict, total=False):
 
 
 async def test_stream_structured(allow_model_requests: None):
-    stream = (
+    stream = [
         chunk([ChoiceDelta()]),
         chunk([ChoiceDelta(tool_calls=[])]),
         chunk([ChoiceDelta(tool_calls=[ChoiceDeltaToolCall(index=0, function=None)])]),
@@ -458,7 +470,7 @@ async def test_stream_structured(allow_model_requests: None):
         struc_chunk(None, '", "second": "Two"'),
         struc_chunk(None, '}'),
         chunk([]),
-    )
+    ]
     mock_client = MockOpenAI.create_mock_stream(stream)
     m = OpenAIModel('gpt-4o', openai_client=mock_client)
     agent = Agent(m, result_type=MyTypedDict)
@@ -480,13 +492,13 @@ async def test_stream_structured(allow_model_requests: None):
 
 
 async def test_stream_structured_finish_reason(allow_model_requests: None):
-    stream = (
+    stream = [
         struc_chunk('final_result', None),
         struc_chunk(None, '{"first": "One'),
         struc_chunk(None, '", "second": "Two"'),
         struc_chunk(None, '}'),
         struc_chunk(None, None, finish_reason='stop'),
-    )
+    ]
     mock_client = MockOpenAI.create_mock_stream(stream)
     m = OpenAIModel('gpt-4o', openai_client=mock_client)
     agent = Agent(m, result_type=MyTypedDict)
@@ -506,7 +518,7 @@ async def test_stream_structured_finish_reason(allow_model_requests: None):
 
 
 async def test_no_content(allow_model_requests: None):
-    stream = chunk([ChoiceDelta()]), chunk([ChoiceDelta()])
+    stream = [chunk([ChoiceDelta()]), chunk([ChoiceDelta()])]
     mock_client = MockOpenAI.create_mock_stream(stream)
     m = OpenAIModel('gpt-4o', openai_client=mock_client)
     agent = Agent(m, result_type=MyTypedDict)
@@ -517,11 +529,11 @@ async def test_no_content(allow_model_requests: None):
 
 
 async def test_no_delta(allow_model_requests: None):
-    stream = (
+    stream = [
         chunk([]),
         text_chunk('hello '),
         text_chunk('world'),
-    )
+    ]
     mock_client = MockOpenAI.create_mock_stream(stream)
     m = OpenAIModel('gpt-4o', openai_client=mock_client)
     agent = Agent(m)
@@ -565,12 +577,12 @@ async def test_system_prompt_role(
 async def test_openai_o1_mini_system_role(
     allow_model_requests: None,
     system_prompt_role: Literal['system', 'developer'],
-    openai_key: str,
+    openai_api_key: str,
 ) -> None:
-    model = OpenAIModel('o1-mini', api_key=openai_key, system_prompt_role=system_prompt_role)
+    model = OpenAIModel('o1-mini', api_key=openai_api_key, system_prompt_role=system_prompt_role)
     agent = Agent(model=model, system_prompt='You are a helpful assistant.')
 
-    with pytest.raises(BadRequestError, match=r".*Unsupported value: 'messages\[0\]\.role' does not support.*"):
+    with pytest.raises(ModelHTTPError, match=r".*Unsupported value: 'messages\[0\]\.role' does not support.*"):
         await agent.run('Hello')
 
 
@@ -595,3 +607,77 @@ async def test_parallel_tool_calls(allow_model_requests: None, parallel_tool_cal
 
     await agent.run('Hello')
     assert get_mock_chat_completion_kwargs(mock_client)[0]['parallel_tool_calls'] == parallel_tool_calls
+
+
+async def test_image_url_input(allow_model_requests: None):
+    c = completion_message(ChatCompletionMessage(content='world', role='assistant'))
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIModel('gpt-4o', openai_client=mock_client)
+    agent = Agent(m)
+
+    result = await agent.run(
+        [
+            'hello',
+            ImageUrl(url='https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg'),
+        ]
+    )
+    assert result.data == 'world'
+    assert get_mock_chat_completion_kwargs(mock_client) == snapshot(
+        [
+            {
+                'model': 'gpt-4o',
+                'messages': [
+                    {
+                        'role': 'user',
+                        'content': [
+                            {'text': 'hello', 'type': 'text'},
+                            {
+                                'image_url': {
+                                    'url': 'https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg'
+                                },
+                                'type': 'image_url',
+                            },
+                        ],
+                    }
+                ],
+                'n': 1,
+            }
+        ]
+    )
+
+
+@pytest.mark.vcr()
+async def test_image_as_binary_content_input(
+    allow_model_requests: None, image_content: BinaryContent, openai_api_key: str
+):
+    m = OpenAIModel('gpt-4o', api_key=openai_api_key)
+    agent = Agent(m)
+
+    result = await agent.run(['What fruit is in the image?', image_content])
+    assert result.data == snapshot('The fruit in the image is a kiwi.')
+
+
+@pytest.mark.vcr()
+async def test_audio_as_binary_content_input(
+    allow_model_requests: None, audio_content: BinaryContent, openai_api_key: str
+):
+    m = OpenAIModel('gpt-4o-audio-preview', api_key=openai_api_key)
+    agent = Agent(m)
+
+    result = await agent.run(['Whose name is mentioned in the audio?', audio_content])
+    assert result.data == snapshot('The name mentioned in the audio is Marcelo.')
+
+
+def test_model_status_error(allow_model_requests: None) -> None:
+    mock_client = MockOpenAI.create_mock(
+        APIStatusError(
+            'test error',
+            response=httpx.Response(status_code=500, request=httpx.Request('POST', 'https://example.com/v1')),
+            body={'error': 'test error'},
+        )
+    )
+    m = OpenAIModel('gpt-4o', openai_client=mock_client)
+    agent = Agent(m)
+    with pytest.raises(ModelHTTPError) as exc_info:
+        agent.run_sync('hello')
+    assert str(exc_info.value) == snapshot("status_code: 500, model_name: gpt-4o, body: {'error': 'test error'}")

@@ -9,7 +9,7 @@ from cohere import TextAssistantMessageContentItem
 from httpx import AsyncClient as AsyncHTTPClient
 from typing_extensions import assert_never
 
-from .. import result
+from .. import ModelHTTPError, result
 from .._utils import guard_tool_call_id as _guard_tool_call_id
 from ..messages import (
     ModelMessage,
@@ -45,6 +45,7 @@ try:
         ToolV2Function,
         UserChatMessageV2,
     )
+    from cohere.core.api_error import ApiError
     from cohere.v2.client import OMIT
 except ImportError as _import_error:
     raise ImportError(
@@ -154,17 +155,22 @@ class CohereModel(Model):
     ) -> ChatResponse:
         tools = self._get_tools(model_request_parameters)
         cohere_messages = list(chain(*(self._map_message(m) for m in messages)))
-        return await self.client.chat(
-            model=self._model_name,
-            messages=cohere_messages,
-            tools=tools or OMIT,
-            max_tokens=model_settings.get('max_tokens', OMIT),
-            temperature=model_settings.get('temperature', OMIT),
-            p=model_settings.get('top_p', OMIT),
-            seed=model_settings.get('seed', OMIT),
-            presence_penalty=model_settings.get('presence_penalty', OMIT),
-            frequency_penalty=model_settings.get('frequency_penalty', OMIT),
-        )
+        try:
+            return await self.client.chat(
+                model=self._model_name,
+                messages=cohere_messages,
+                tools=tools or OMIT,
+                max_tokens=model_settings.get('max_tokens', OMIT),
+                temperature=model_settings.get('temperature', OMIT),
+                p=model_settings.get('top_p', OMIT),
+                seed=model_settings.get('seed', OMIT),
+                presence_penalty=model_settings.get('presence_penalty', OMIT),
+                frequency_penalty=model_settings.get('frequency_penalty', OMIT),
+            )
+        except ApiError as e:
+            if (status_code := e.status_code) and status_code >= 400:
+                raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
+            raise
 
     def _process_response(self, response: ChatResponse) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
@@ -242,7 +248,10 @@ class CohereModel(Model):
             if isinstance(part, SystemPromptPart):
                 yield SystemChatMessageV2(role='system', content=part.content)
             elif isinstance(part, UserPromptPart):
-                yield UserChatMessageV2(role='user', content=part.content)
+                if isinstance(part.content, str):
+                    yield UserChatMessageV2(role='user', content=part.content)
+                else:
+                    raise RuntimeError('Cohere does not yet support multi-modal inputs.')
             elif isinstance(part, ToolReturnPart):
                 yield ToolChatMessageV2(
                     role='tool',

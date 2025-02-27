@@ -5,14 +5,17 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from functools import cached_property
-from typing import Any, Literal, cast
+from typing import Any, Literal, Union, cast
 
+import httpx
 import pytest
 from inline_snapshot import snapshot
 from typing_extensions import TypedDict
 
-from pydantic_ai import Agent, ModelRetry, UnexpectedModelBehavior
+from pydantic_ai import Agent, ModelHTTPError, ModelRetry, UnexpectedModelBehavior
 from pydantic_ai.messages import (
+    BinaryContent,
+    ImageUrl,
     ModelRequest,
     ModelResponse,
     RetryPromptPart,
@@ -24,11 +27,11 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.result import Usage
 
-from ..conftest import IsNow, try_import
+from ..conftest import IsNow, raise_if_exception, try_import
 from .mock_async_stream import MockAsyncStream
 
 with try_import() as imports_successful:
-    from groq import AsyncGroq
+    from groq import APIStatusError, AsyncGroq
     from groq.types import chat
     from groq.types.chat.chat_completion import Choice
     from groq.types.chat.chat_completion_chunk import (
@@ -42,6 +45,10 @@ with try_import() as imports_successful:
     from groq.types.completion_usage import CompletionUsage
 
     from pydantic_ai.models.groq import GroqModel
+
+    # note: we use Union here so that casting works with Python 3.9
+    MockChatCompletion = Union[chat.ChatCompletion, Exception]
+    MockChatCompletionChunk = Union[chat.ChatCompletionChunk, Exception]
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='groq not installed'),
@@ -58,9 +65,9 @@ def test_init():
 
 @dataclass
 class MockGroq:
-    completions: chat.ChatCompletion | list[chat.ChatCompletion] | None = None
-    stream: list[chat.ChatCompletionChunk] | list[list[chat.ChatCompletionChunk]] | None = None
-    index = 0
+    completions: MockChatCompletion | Sequence[MockChatCompletion] | None = None
+    stream: Sequence[MockChatCompletionChunk] | Sequence[Sequence[MockChatCompletionChunk]] | None = None
+    index: int = 0
 
     @cached_property
     def chat(self) -> Any:
@@ -68,32 +75,33 @@ class MockGroq:
         return type('Chat', (), {'completions': chat_completions})
 
     @classmethod
-    def create_mock(cls, completions: chat.ChatCompletion | list[chat.ChatCompletion]) -> AsyncGroq:
+    def create_mock(cls, completions: MockChatCompletion | Sequence[MockChatCompletion]) -> AsyncGroq:
         return cast(AsyncGroq, cls(completions=completions))
 
     @classmethod
     def create_mock_stream(
-        cls, stream: Sequence[chat.ChatCompletionChunk] | Sequence[list[chat.ChatCompletionChunk]]
+        cls,
+        stream: Sequence[MockChatCompletionChunk] | Sequence[Sequence[MockChatCompletionChunk]],
     ) -> AsyncGroq:
-        return cast(AsyncGroq, cls(stream=list(stream)))  # pyright: ignore[reportArgumentType]
+        return cast(AsyncGroq, cls(stream=stream))
 
     async def chat_completions_create(
         self, *_args: Any, stream: bool = False, **_kwargs: Any
-    ) -> chat.ChatCompletion | MockAsyncStream[chat.ChatCompletionChunk]:
+    ) -> chat.ChatCompletion | MockAsyncStream[MockChatCompletionChunk]:
         if stream:
             assert self.stream is not None, 'you can only used `stream=True` if `stream` is provided'
-            # noinspection PyUnresolvedReferences
-            if isinstance(self.stream[0], list):  # pragma: no cover
-                indexed_stream = cast(list[chat.ChatCompletionChunk], self.stream[self.index])
-                response = MockAsyncStream(iter(indexed_stream))
+            if isinstance(self.stream[0], Sequence):
+                response = MockAsyncStream(iter(cast(list[MockChatCompletionChunk], self.stream[self.index])))
             else:
-                response = MockAsyncStream(iter(cast(list[chat.ChatCompletionChunk], self.stream)))
+                response = MockAsyncStream(iter(cast(list[MockChatCompletionChunk], self.stream)))
         else:
             assert self.completions is not None, 'you can only used `stream=False` if `completions` are provided'
-            if isinstance(self.completions, list):
-                response = self.completions[self.index]
+            if isinstance(self.completions, Sequence):
+                raise_if_exception(self.completions[self.index])
+                response = cast(chat.ChatCompletion, self.completions[self.index])
             else:
-                response = self.completions
+                raise_if_exception(self.completions)
+                response = cast(chat.ChatCompletion, self.completions)
         self.index += 1
         return response
 
@@ -488,3 +496,73 @@ async def test_no_delta(allow_model_requests: None):
         assert not result.is_complete
         assert [c async for c in result.stream(debounce_by=None)] == snapshot(['hello ', 'hello world', 'hello world'])
         assert result.is_complete
+
+
+@pytest.mark.vcr()
+async def test_image_url_input(allow_model_requests: None, groq_api_key: str):
+    m = GroqModel('llama-3.2-11b-vision-preview', api_key=groq_api_key)
+    agent = Agent(m)
+
+    result = await agent.run(
+        [
+            'What is the name of this fruit?',
+            ImageUrl(url='https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg'),
+        ]
+    )
+    assert result.data == snapshot("""\
+The image you provided appears to be a potato. It is a root vegetable that belongs to the nightshade family. Potatoes are a popular and versatile crop, widely cultivated and consumed around the world.
+
+**Characteristics and Uses:**
+
+Potatoes are known for their starchy, slightly sweet flavor and soft, white interior. They come in various shapes, sizes, and colors including white, yellow, red, and purple. Some popular types of potatoes include:
+
+* Russet potatoes (also known as Idaho potatoes)
+* Red potatoes
+* Yukon gold potatoes
+* Sweet potatoes
+
+Potatoes are a versatile food that can be prepared in many different ways, such as baked, mashed, boiled, fried, or used in soups and stews. They are an excellent source of dietary fiber, potassium, and several key vitamins and minerals.\
+""")
+
+
+@pytest.mark.parametrize('media_type', ['audio/wav', 'audio/mpeg'])
+async def test_audio_as_binary_content_input(allow_model_requests: None, media_type: str):
+    c = completion_message(ChatCompletionMessage(content='world', role='assistant'))
+    mock_client = MockGroq.create_mock(c)
+    m = GroqModel('llama-3.3-70b-versatile', groq_client=mock_client)
+    agent = Agent(m)
+
+    base64_content = b'//uQZ'
+
+    with pytest.raises(RuntimeError, match='Only images are supported for binary content in Groq.'):
+        await agent.run(['hello', BinaryContent(data=base64_content, media_type=media_type)])
+
+
+@pytest.mark.vcr()
+async def test_image_as_binary_content_input(
+    allow_model_requests: None, groq_api_key: str, image_content: BinaryContent
+) -> None:
+    m = GroqModel('llama-3.2-11b-vision-preview', api_key=groq_api_key)
+    agent = Agent(m)
+
+    result = await agent.run(['What is the name of this fruit?', image_content])
+    assert result.data == snapshot(
+        "This is a kiwi, also known as a Chinese gooseberry. It's a small, green fruit with a hairy, brown skin and a bright green, juicy flesh inside. Kiwis are native to China and are often eaten raw, either on their own or added to salads, smoothies, and desserts. They're also a good source of vitamin C, vitamin K, and other nutrients."
+    )
+
+
+def test_model_status_error(allow_model_requests: None) -> None:
+    mock_client = MockGroq.create_mock(
+        APIStatusError(
+            'test error',
+            response=httpx.Response(status_code=500, request=httpx.Request('POST', 'https://example.com/v1')),
+            body={'error': 'test error'},
+        )
+    )
+    m = GroqModel('llama-3.3-70b-versatile', groq_client=mock_client)
+    agent = Agent(m)
+    with pytest.raises(ModelHTTPError) as exc_info:
+        agent.run_sync('hello')
+    assert str(exc_info.value) == snapshot(
+        "status_code: 500, model_name: llama-3.3-70b-versatile, body: {'error': 'test error'}"
+    )
