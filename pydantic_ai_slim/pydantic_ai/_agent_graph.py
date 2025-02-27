@@ -9,8 +9,7 @@ from contextvars import ContextVar
 from dataclasses import field
 from typing import Any, Generic, Literal, Union, cast
 
-import logfire_api
-from opentelemetry.trace import Span
+from opentelemetry.trace import Span, Tracer
 from typing_extensions import TypeVar, assert_never
 
 from pydantic_graph import BaseNode, Graph, GraphRunContext
@@ -43,17 +42,6 @@ __all__ = (
     'capture_run_messages',
 )
 
-_logfire = logfire_api.Logfire(otel_scope='pydantic-ai')
-
-# while waiting for https://github.com/pydantic/logfire/issues/745
-try:
-    import logfire._internal.stack_info
-except ImportError:
-    pass
-else:
-    from pathlib import Path
-
-    logfire._internal.stack_info.NON_USER_CODE_PREFIXES += (str(Path(__file__).parent.absolute()),)
 
 T = TypeVar('T')
 NoneType = type(None)
@@ -106,6 +94,7 @@ class GraphAgentDeps(Generic[DepsT, ResultDataT]):
     function_tools: dict[str, Tool[DepsT]] = dataclasses.field(repr=False)
 
     run_span: Span
+    tracer: Tracer
 
 
 @dataclasses.dataclass
@@ -289,7 +278,9 @@ class ModelRequestNode(BaseNode[GraphAgentState, GraphAgentDeps[DepsT, Any], res
         ctx.state.run_step += 1
 
         model_settings = merge_model_settings(ctx.deps.model_settings, None)
-        with _logfire.span('preparing model request params {run_step=}', run_step=ctx.state.run_step):
+        with ctx.deps.tracer.start_as_current_span(
+            'preparing model request params {run_step=}', attributes=dict(run_step=ctx.state.run_step)
+        ):
             model_request_parameters = await _prepare_request_parameters(ctx)
         return model_settings, model_request_parameters
 
@@ -546,7 +537,9 @@ async def process_function_tools(
 
     # Run all tool tasks in parallel
     results_by_index: dict[int, _messages.ModelRequestPart] = {}
-    with _logfire.span('running {tools=}', tools=[call.tool_name for _, call in calls_to_run]):
+    with ctx.deps.tracer.start_as_current_span(
+        'running {tools=}', attributes=dict(tools=[call.tool_name for _, call in calls_to_run])
+    ):
         # TODO: Should we wrap each individual tool call in a dedicated span?
         tasks = [asyncio.create_task(tool.run(call, run_context), name=call.tool_name) for tool, call in calls_to_run]
         pending = tasks

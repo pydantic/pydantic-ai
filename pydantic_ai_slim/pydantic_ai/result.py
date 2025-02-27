@@ -6,7 +6,6 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Generic, Union, cast
 
-import logfire_api
 from typing_extensions import TypeVar
 
 from . import _result, _utils, exceptions, messages as _messages, models
@@ -47,8 +46,6 @@ A function that always takes and returns the same type of data (which is the res
 
 Usage `ResultValidatorFunc[AgentDepsT, T]`.
 """
-
-_logfire = logfire_api.Logfire(otel_scope='pydantic-ai')
 
 
 @dataclass

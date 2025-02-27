@@ -446,6 +446,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
             result_validators=result_validators,
             function_tools=self._function_tools,
             run_span=run_span,
+            tracer=tracer,
         )
         start_node = _agent_graph.UserPromptNode[AgentDepsT](
             user_prompt=user_prompt,

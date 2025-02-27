@@ -51,7 +51,7 @@ NOT_GIVEN = object()
 
 @dataclass
 class InstrumentedModel(WrapperModel):
-    """Model which is instrumented with logfire."""
+    """Model which is instrumented with OpenTelemetry."""
 
     tracer: Tracer = field(repr=False)
     event_logger: EventLogger = field(repr=False)
