@@ -38,6 +38,8 @@ class DuckDuckGoSearchTool:
 
     client: DDGS
     """The DuckDuckGo search client."""
+    max_results: int | None = None
+    """The maximum number of results to return. If None, returns results only from the first response."""
 
     async def __call__(self, query: str) -> list[DuckDuckGoResult]:
         """Searches DuckDuckGo for the given query and returns the results.
@@ -48,16 +50,19 @@ class DuckDuckGoSearchTool:
         Returns:
             The search results.
         """
-        results = await anyio.to_thread.run_sync(self.client.text, query)
+        # Pass all required positional arguments in order: keywords, region, safesearch, timelimit, backend, max_results
+        results = await anyio.to_thread.run_sync(
+            self.client.text, query, 'wt-wt', 'moderate', None, 'auto', self.max_results
+        )
         if len(results) == 0:
             raise RuntimeError('No search results found.')
         return duckduckgo_ta.validate_python(results)
 
 
-def duckduckgo_search_tool(duckduckgo_client: DDGS | None = None):
+def duckduckgo_search_tool(duckduckgo_client: DDGS | None = None, max_results: int | None = None):
     """Creates a DuckDuckGo search tool."""
     return Tool(
-        DuckDuckGoSearchTool(client=duckduckgo_client or DDGS()).__call__,
+        DuckDuckGoSearchTool(client=duckduckgo_client or DDGS(), max_results=max_results).__call__,
         name='duckduckgo_search',
-        description='Searches DuckDuckGo for the given query and returns the results.',
+        description='Searches DuckDuckGo for the given query and returns the results. You can specify max_results to control the number of results (if None, returns results only from the first response).',
     )
