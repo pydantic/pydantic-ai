@@ -428,7 +428,6 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         run_span = _logfire.span(
             '{agent_name} run {prompt=}',
             prompt=user_prompt,
-            agent=self,
             model_name=model_used.model_name if model_used else 'no-model',
             agent_name=self.name or 'agent',
         )
