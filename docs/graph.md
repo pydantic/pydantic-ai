@@ -679,7 +679,7 @@ count_down_graph = Graph(nodes=[CountDown])
 
 async def main():
     state = CountDownState(counter=3)
-    with count_down_graph.iter(CountDown(), state=state) as run:  # (1)!
+    async with count_down_graph.iter(CountDown(), state=state) as run:  # (1)!
         async for node in run:  # (2)!
             print('Node:', node)
             #> Node: CountDown()
@@ -712,7 +712,7 @@ from count_down import CountDown, CountDownState, count_down_graph
 
 async def main():
     state = CountDownState(counter=5)
-    with count_down_graph.iter(CountDown(), state=state) as run:
+    async with count_down_graph.iter(CountDown(), state=state) as run:
         node = run.next_node  # (1)!
         while not isinstance(node, End):  # (2)!
             print('Node:', node)
