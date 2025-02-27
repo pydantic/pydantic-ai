@@ -1,3 +1,4 @@
+import functools
 from dataclasses import dataclass
 from typing import TypedDict
 
@@ -39,6 +40,9 @@ class DuckDuckGoSearchTool:
     client: DDGS
     """The DuckDuckGo search client."""
 
+    max_results: int | None = None
+    """The maximum number of results. If None, returns results only from the first response."""
+
     async def __call__(self, query: str) -> list[DuckDuckGoResult]:
         """Searches DuckDuckGo for the given query and returns the results.
 
@@ -48,16 +52,22 @@ class DuckDuckGoSearchTool:
         Returns:
             The search results.
         """
-        results = await anyio.to_thread.run_sync(self.client.text, query)
+        search = functools.partial(self.client.text, max_results=self.max_results)
+        results = await anyio.to_thread.run_sync(search, query)
         if len(results) == 0:
             raise RuntimeError('No search results found.')
         return duckduckgo_ta.validate_python(results)
 
 
-def duckduckgo_search_tool(duckduckgo_client: DDGS | None = None):
-    """Creates a DuckDuckGo search tool."""
+def duckduckgo_search_tool(duckduckgo_client: DDGS | None = None, max_results: int | None = None):
+    """Creates a DuckDuckGo search tool.
+
+    Args:
+        duckduckgo_client: The DuckDuckGo search client.
+        max_results: The maximum number of results. If None, returns results only from the first response.
+    """
     return Tool(
-        DuckDuckGoSearchTool(client=duckduckgo_client or DDGS()).__call__,
+        DuckDuckGoSearchTool(client=duckduckgo_client or DDGS(), max_results=max_results).__call__,
         name='duckduckgo_search',
         description='Searches DuckDuckGo for the given query and returns the results.',
     )
