@@ -17,16 +17,20 @@ __all__ = ('tavily_search_tool',)
 
 
 class TavilySearchResult(TypedDict):
-    """A Tavily search result."""
+    """A Tavily search result.
+
+    See [Tavily Search Endpoint documentation](https://docs.tavily.com/api-reference/endpoint/search)
+    for more information.
+    """
 
     title: str
     """The title of the search result."""
     url: str
-    """The URL of the search result."""
+    """The URL of the search result.."""
     content: str
-    """The content of the search result."""
+    """A short description of the search result."""
     score: float
-    """The score of the search result."""
+    """The relevance score of the search result."""
 
 
 tavily_search_ta = TypeAdapter(list[TavilySearchResult])
