@@ -54,8 +54,7 @@ class TavilySearchTool:
 
         Args:
             query: The search query to execute with Tavily.
-            search_deep: The depth of the search. A basic search costs 1 API Credit, while an advanced search costs
-                2 API Credits.
+            search_deep: The depth of the search.
             topic: The category of the search.
             time_range: The time range back from the current date to filter results.
 
