@@ -47,7 +47,7 @@ class DuckDuckGoSearchTool:
         """Searches DuckDuckGo for the given query and returns the results.
 
         Args:
-            query: The search query.
+            query: The query to search for.
 
         Returns:
             The search results.
