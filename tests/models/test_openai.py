@@ -1,11 +1,13 @@
 from __future__ import annotations as _annotations
 
+import io
 import json
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from functools import cached_property
 from typing import Any, Literal, Union, cast
+from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
@@ -681,3 +683,23 @@ def test_model_status_error(allow_model_requests: None) -> None:
     with pytest.raises(ModelHTTPError) as exc_info:
         agent.run_sync('hello')
     assert str(exc_info.value) == snapshot("status_code: 500, model_name: gpt-4o, body: {'error': 'test error'}")
+
+
+@pytest.mark.vcr()
+async def test_transcription():
+    audio_content = b'Simulated audio content'
+    audio_file = io.BytesIO(audio_content)
+
+    mock_client = AsyncMock(spec=AsyncOpenAI)
+
+    mock_audio = MagicMock()
+    mock_audio.translations.create = AsyncMock(return_value=AsyncMock(text='Transcribed text'))
+    mock_client.audio = mock_audio
+
+    model = OpenAIModel(model_name='whisper-1', openai_client=mock_client)
+
+    transcription_result = await model.transcription(audio_file)
+
+    assert transcription_result == 'Transcribed text'
+
+    mock_client.audio.translations.create.assert_awaited_once_with(model='whisper-1', file=audio_file)
