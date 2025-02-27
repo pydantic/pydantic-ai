@@ -279,7 +279,7 @@ class ModelRequestNode(BaseNode[GraphAgentState, GraphAgentDeps[DepsT, Any], res
 
         model_settings = merge_model_settings(ctx.deps.model_settings, None)
         with ctx.deps.tracer.start_as_current_span(
-            'preparing model request params {run_step=}', attributes=dict(run_step=ctx.state.run_step)
+            'preparing model request params', attributes=dict(run_step=ctx.state.run_step)
         ):
             model_request_parameters = await _prepare_request_parameters(ctx)
         return model_settings, model_request_parameters
@@ -537,8 +537,9 @@ async def process_function_tools(
 
     # Run all tool tasks in parallel
     results_by_index: dict[int, _messages.ModelRequestPart] = {}
+    tool_names = [call.tool_name for _, call in calls_to_run]
     with ctx.deps.tracer.start_as_current_span(
-        'running {tools=}', attributes=dict(tools=[call.tool_name for _, call in calls_to_run])
+        'running tools', attributes={'tools': tool_names, 'logfire.msg': f'running tools: {", ".join(tool_names)}'}
     ):
         # TODO: Should we wrap each individual tool call in a dedicated span?
         tasks = [asyncio.create_task(tool.run(call, run_context), name=call.tool_name) for tool, call in calls_to_run]

@@ -9,7 +9,7 @@ from copy import deepcopy
 from types import FrameType
 from typing import Any, Callable, Generic, cast, final, overload
 
-from opentelemetry.trace import NoOpTracer
+from opentelemetry.trace import NoOpTracer, use_span
 from typing_extensions import TypeVar, deprecated
 
 from pydantic_graph import BaseNode, End, Graph, GraphRun, GraphRunContext
@@ -391,6 +391,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         if infer_name and self.name is None:
             self._infer_name(inspect.currentframe())
         model_used = self._get_model(model)
+        del model
 
         deps = self._get_deps(deps)
         new_message_index = len(message_history) if message_history else 0
@@ -420,16 +421,18 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         model_settings = merge_model_settings(self.model_settings, model_settings)
         usage_limits = usage_limits or _usage.UsageLimits()
 
-        if isinstance(model, InstrumentedModel):
-            tracer = model.tracer
+        if isinstance(model_used, InstrumentedModel):
+            tracer = model_used.tracer
         else:
             tracer = NoOpTracer()
+        agent_name = self.name or 'agent'
         run_span = tracer.start_span(
-            '{agent_name} run {prompt=}',
-            attributes=dict(
-                model_name=model_used.model_name if model_used else 'no-model',
-                agent_name=self.name or 'agent',
-            ),
+            'agent run',
+            attributes={
+                'model_name': model_used.model_name if model_used else 'no-model',
+                'agent_name': agent_name,
+                'logfire.msg': f'{agent_name} run',
+            },
         )
 
         graph_deps = _agent_graph.GraphAgentDeps[AgentDepsT, RunResultDataT](
@@ -460,7 +463,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
             state=state,
             deps=graph_deps,
             infer_name=False,
-            span=run_span,
+            span=use_span(run_span, end_on_exit=True),
         ) as graph_run:
             yield AgentRun(graph_run)
 

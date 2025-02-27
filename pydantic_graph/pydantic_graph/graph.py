@@ -4,7 +4,7 @@ import asyncio
 import inspect
 import types
 from collections.abc import AsyncIterator, Iterator, Sequence
-from contextlib import ExitStack, contextmanager
+from contextlib import AbstractContextManager, ExitStack, contextmanager
 from dataclasses import dataclass, field
 from functools import cached_property
 from time import perf_counter
@@ -14,7 +14,6 @@ import logfire_api
 import pydantic
 import typing_extensions
 from logfire_api import LogfireSpan
-from opentelemetry.trace import Span
 
 from . import _utils, exceptions, mermaid
 from .nodes import BaseNode, DepsT, End, GraphRunContext, NodeDef, RunEndT
@@ -190,7 +189,7 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
         state: StateT = None,
         deps: DepsT = None,
         infer_name: bool = True,
-        span: LogfireSpan | Span | None = None,
+        span: AbstractContextManager[Any] | None = None,
     ) -> Iterator[GraphRun[StateT, DepsT, T]]:
         """A contextmanager which can be used to iterate over the graph's nodes as they are executed.
 
