@@ -533,8 +533,23 @@ class PartDeltaEvent:
     """Event type identifier, used as a discriminator."""
 
 
+@dataclass
+class FinalResultEvent:
+    """An event indicating the response to the current model request matches the result schema."""
+
+    tool_name: str | None
+    """The name of the result tool that was called. `None` if the result is from text content and not from a tool."""
+    event_kind: Literal['final_result'] = 'final_result'
+    """Event type identifier, used as a discriminator."""
+
+
 ModelResponseStreamEvent = Annotated[Union[PartStartEvent, PartDeltaEvent], pydantic.Discriminator('event_kind')]
 """An event in the model response stream, either starting a new part or applying a delta to an existing one."""
+
+AgentStreamEvent = Annotated[
+    Union[PartStartEvent, PartDeltaEvent, FinalResultEvent], pydantic.Discriminator('event_kind')
+]
+"""An event in the agent stream."""
 
 
 @dataclass
@@ -558,7 +573,7 @@ class FunctionToolResultEvent:
 
     result: ToolReturnPart | RetryPromptPart
     """The result of the call to the function tool."""
-    call_id: str
+    tool_call_id: str
     """An ID used to match the result to its original call."""
     event_kind: Literal['function_tool_result'] = 'function_tool_result'
     """Event type identifier, used as a discriminator."""

@@ -2,7 +2,6 @@ from __future__ import annotations as _annotations
 
 import asyncio
 import dataclasses
-from abc import ABC
 from collections.abc import AsyncIterator, Iterator, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
@@ -10,7 +9,7 @@ from dataclasses import field
 from typing import Any, Generic, Literal, Union, cast
 
 import logfire_api
-from typing_extensions import TypeVar, assert_never
+from typing_extensions import TypeGuard, TypeVar, assert_never
 
 from pydantic_graph import BaseNode, Graph, GraphRunContext
 from pydantic_graph.nodes import End, NodeRunEndT
@@ -55,6 +54,7 @@ else:
     logfire._internal.stack_info.NON_USER_CODE_PREFIXES += (str(Path(__file__).parent.absolute()),)
 
 T = TypeVar('T')
+S = TypeVar('S')
 NoneType = type(None)
 EndStrategy = Literal['early', 'exhaustive']
 """The strategy for handling multiple tool calls when a final result is found.
@@ -107,8 +107,31 @@ class GraphAgentDeps(Generic[DepsT, ResultDataT]):
     run_span: logfire_api.LogfireSpan
 
 
+class AgentNode(BaseNode[GraphAgentState, GraphAgentDeps[DepsT, Any], result.FinalResult[NodeRunEndT]]):
+    """The base class for all agent nodes.
+
+    Using subclass of `BaseNode` for all nodes reduces the amount of boilerplate of generics everywhere
+    """
+
+
+def is_agent_node(
+    node: BaseNode[GraphAgentState, GraphAgentDeps[T, Any], result.FinalResult[S]] | End[result.FinalResult[S]],
+) -> TypeGuard[AgentNode[T, S]]:
+    """Check if the provided node is an instance of `AgentNode`.
+
+    Usage:
+
+        if is_agent_node(node):
+            # `node` is an AgentNode
+            ...
+
+    This method preserves the generic parameters on the narrowed type, unlike `isinstance(node, AgentNode)`.
+    """
+    return isinstance(node, AgentNode)
+
+
 @dataclasses.dataclass
-class UserPromptNode(BaseNode[GraphAgentState, GraphAgentDeps[DepsT, Any], result.FinalResult[NodeRunEndT]], ABC):
+class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
     user_prompt: str | Sequence[_messages.UserContent]
 
     system_prompts: tuple[str, ...]
@@ -215,7 +238,7 @@ async def _prepare_request_parameters(
 
 
 @dataclasses.dataclass
-class ModelRequestNode(BaseNode[GraphAgentState, GraphAgentDeps[DepsT, Any], result.FinalResult[NodeRunEndT]]):
+class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
     """Make a request to the model using the last message in state.message_history."""
 
     request: _messages.ModelRequest
@@ -237,11 +260,29 @@ class ModelRequestNode(BaseNode[GraphAgentState, GraphAgentDeps[DepsT, Any], res
         return await self._make_request(ctx)
 
     @asynccontextmanager
+    async def stream(
+        self,
+        ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, T]],
+    ) -> AsyncIterator[result.AgentStream[DepsT, T]]:
+        async with self._stream(ctx) as streamed_response:
+            agent_stream = result.AgentStream[DepsT, T](
+                streamed_response,
+                ctx.deps.result_schema,
+                ctx.deps.result_validators,
+                build_run_context(ctx),
+                ctx.deps.usage_limits,
+            )
+            yield agent_stream
+            # In case the user didn't manually consume the full stream, ensure it is fully consumed here,
+            # otherwise usage won't be properly counted:
+            async for _ in agent_stream:
+                pass
+
+    @asynccontextmanager
     async def _stream(
         self,
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, T]],
     ) -> AsyncIterator[models.StreamedResponse]:
-        # TODO: Consider changing this to return something more similar to a `StreamedRunResult`, then make it public
         assert not self._did_stream, 'stream() should only be called once per node'
 
         model_settings, model_request_parameters = await self._prepare_request(ctx)
@@ -319,7 +360,7 @@ class ModelRequestNode(BaseNode[GraphAgentState, GraphAgentDeps[DepsT, Any], res
 
 
 @dataclasses.dataclass
-class HandleResponseNode(BaseNode[GraphAgentState, GraphAgentDeps[DepsT, Any], result.FinalResult[NodeRunEndT]]):
+class HandleResponseNode(AgentNode[DepsT, NodeRunEndT]):
     """Process a model response, and decide whether to end the run or make a new request."""
 
     model_response: _messages.ModelResponse
@@ -575,7 +616,7 @@ async def process_function_tools(
             for task in done:
                 index = tasks.index(task)
                 result = task.result()
-                yield _messages.FunctionToolResultEvent(result, call_id=call_index_to_event_id[index])
+                yield _messages.FunctionToolResultEvent(result, tool_call_id=call_index_to_event_id[index])
                 if isinstance(result, (_messages.ToolReturnPart, _messages.RetryPromptPart)):
                     results_by_index[index] = result
                 else:
