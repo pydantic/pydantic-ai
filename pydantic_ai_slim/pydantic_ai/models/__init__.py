@@ -114,6 +114,7 @@ KnownModelName = Literal[
     'o1-preview-2024-09-12',
     'o3-mini',
     'o3-mini-2025-01-31',
+    'whisper-1',
     'openai:chatgpt-4o-latest',
     'openai:gpt-3.5-turbo',
     'openai:gpt-3.5-turbo-0125',
@@ -153,6 +154,7 @@ KnownModelName = Literal[
     'openai:o1-preview-2024-09-12',
     'openai:o3-mini',
     'openai:o3-mini-2025-01-31',
+    'openai:whisper-1',
     'test',
 ]
 """Known model names that can be used with the `model` parameter of [`Agent`][pydantic_ai.Agent].

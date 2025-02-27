@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from itertools import chain
-from typing import Literal, Union, cast, overload
+from typing import BinaryIO, Literal, Union, cast, overload
 
 from httpx import AsyncClient as AsyncHTTPClient
 from typing_extensions import assert_never
@@ -38,7 +38,7 @@ from . import (
 
 try:
     from openai import NOT_GIVEN, AsyncOpenAI, AsyncStream
-    from openai.types import ChatModel, chat
+    from openai.types import AudioModel, ChatModel, chat
     from openai.types.chat import ChatCompletionChunk
 except ImportError as _import_error:
     raise ImportError(
@@ -46,7 +46,7 @@ except ImportError as _import_error:
         "you can use the `openai` optional group — `pip install 'pydantic-ai-slim[openai]'`"
     ) from _import_error
 
-OpenAIModelName = Union[str, ChatModel]
+OpenAIModelName = Union[str, ChatModel, AudioModel]
 """
 Possible OpenAI model names.
 
@@ -325,6 +325,24 @@ class OpenAIModel(Model):
                     )
             else:
                 assert_never(part)
+
+    async def transcription(self, audio_file: BinaryIO) -> str:
+        """Transcribe an audio file using the OpenAI API.
+
+        Args:
+            audio_file: A file-like object containing the audio data to transcribe.
+
+        Returns:
+            The transcribed text as a string.
+        """
+        try:
+            transcription = await self.client.audio.translations.create(
+                model=self.model_name,
+                file=audio_file,
+            )
+            return transcription.text
+        except Exception as e:
+            raise RuntimeError(f'Error during transcription: {e}')
 
 
 @dataclass

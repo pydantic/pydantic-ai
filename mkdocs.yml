@@ -36,6 +36,7 @@ nav:
     - examples/rag.md
     - examples/stream-markdown.md
     - examples/stream-whales.md
+    - examples/transcription.md
     - examples/chat-app.md
     - examples/question-graph.md
   - API Reference:
