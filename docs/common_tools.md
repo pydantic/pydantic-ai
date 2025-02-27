@@ -22,7 +22,7 @@ Here's an example of how you can use the DuckDuckGo search tool with an agent:
 
 ```py {title="main.py" test="skip"}
 from pydantic_ai import Agent
-from pydantic_ai.toolsets.duckduckgo import duckduckgo_search_tool
+from pydantic_ai.common_tools.duckduckgo import duckduckgo_search_tool
 
 agent = Agent(
     'openai:o3-mini',
