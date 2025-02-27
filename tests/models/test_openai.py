@@ -686,7 +686,7 @@ def test_model_status_error(allow_model_requests: None) -> None:
 
 
 @pytest.mark.vcr()
-async def test_transcription():
+async def test_transcription_success():
     audio_content = b'Simulated audio content'
     audio_file = io.BytesIO(audio_content)
 
@@ -701,5 +701,25 @@ async def test_transcription():
     transcription_result = await model.transcription(audio_file)
 
     assert transcription_result == 'Transcribed text'
+
+    mock_client.audio.translations.create.assert_awaited_once_with(model='whisper-1', file=audio_file)
+
+
+@pytest.mark.vcr()
+async def test_transcription_error():
+    audio_content = b'Simulated audio content'
+    audio_file = io.BytesIO(audio_content)
+
+    mock_client = AsyncMock(spec=AsyncOpenAI)
+
+    mock_audio = MagicMock()
+    mock_audio.translations.create = AsyncMock(side_effect=Exception('Simulated API error'))
+    mock_client.audio = mock_audio
+
+    model = OpenAIModel(model_name='whisper-1', openai_client=mock_client)
+
+    # Llamar al método de transcripción y verificar que lanza una excepción
+    with pytest.raises(RuntimeError, match='Error during transcription: Simulated API error'):
+        await model.transcription(audio_file)
 
     mock_client.audio.translations.create.assert_awaited_once_with(model='whisper-1', file=audio_file)
