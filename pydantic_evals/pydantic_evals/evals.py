@@ -155,6 +155,11 @@ class Eval:
             finally:
                 _CURRENT_EVAL_CASE.reset(token)
 
+@dataclass
+class Score:
+    value: float
+    reason: str | None = None
+
 
 @dataclass
 class EvalCase(Generic[OutputT]):
@@ -167,6 +172,7 @@ class EvalCase(Generic[OutputT]):
     scores: dict[str, int | float] = field(init=False, default_factory=dict)
     metrics: dict[str, int | float] = field(init=False, default_factory=dict)
     labels: dict[str, bool | str] = field(init=False, default_factory=dict)
+    metadata: dict[str, Any] = field(init=False, default_factory=dict)
 
     case_span: logfire_api.LogfireSpan = field(repr=False)
     task_span: logfire_api.LogfireSpan = field(repr=False)
@@ -195,6 +201,17 @@ class EvalCase(Generic[OutputT]):
     def record_label(self, name: str, value: bool | str) -> None:
         label_attribute = f'label.{name}'
         self.labels[name] = value
+
+        # If we want to use span links to store labels we can do something like this:
+        # with logfire.span('label {name=} {value=}', name=name, value=value, _links=[(self.span.context, None)]):
+        #     pass
+
+        # We need to support updating labels via span links, but I'm not sure if we should _only_ support that
+        self.case_span.set_attribute(label_attribute, value)
+        
+    def record_metadata(self, name: str, value: bool | str) -> None:
+        label_attribute = f'label.{name}'
+        self.metadata[name] = value
 
         # If we want to use span links to store labels we can do something like this:
         # with logfire.span('label {name=} {value=}', name=name, value=value, _links=[(self.span.context, None)]):

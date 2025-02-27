@@ -2796,8 +2796,8 @@ dev = [
     { name = "anyio" },
     { name = "coverage", extra = ["toml"] },
     { name = "devtools" },
-    { name = "diff-cover", version = "9.2.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.10'" },
-    { name = "diff-cover", version = "9.2.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.10'" },
+    { name = "diff-cover", version = "9.2.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.9.17'" },
+    { name = "diff-cover", version = "9.2.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.9.17'" },
     { name = "dirty-equals" },
     { name = "inline-snapshot" },
     { name = "pytest" },
@@ -2820,6 +2820,7 @@ requires-dist = [
     { name = "requests", marker = "extra == 'vertexai'", specifier = ">=2.32.3" },
     { name = "rich", specifier = ">=13.9.4" },
 ]
+provides-extras = ["logfire", "openai", "cohere", "vertexai", "anthropic", "groq", "mistral"]
 
 [package.metadata.requires-dev]
 dev = [
