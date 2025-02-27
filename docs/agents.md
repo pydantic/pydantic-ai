@@ -337,13 +337,13 @@ if __name__ == '__main__':
     """
     [
         '=== ModelRequestNode: streaming partial request tokens ===',
-        '[Request] Starting part 0: ToolCallPart(tool_name=\'weather_forecast\', args=\'{"location":"Pa\', tool_call_id=None, part_kind=\'tool-call\')',
+        '[Request] Starting part 0: ToolCallPart(tool_name=\'weather_forecast\', args=\'{"location":"Pa\', tool_call_id=\'0001\', part_kind=\'tool-call\')',
         '[Request] Part 0 args_delta=ris","forecast_',
         '[Request] Part 0 args_delta=date":"2030-01-',
         '[Request] Part 0 args_delta=01"}',
         '=== HandleResponseNode: streaming partial response & tool usage ===',
-        '[Tools] The LLM calls tool=\'weather_forecast\' with args={"location":"Paris","forecast_date":"2030-01-01"} (tool_call_id=None)',
-        "[Tools] Tool call 'ea89591f-d193-435f-9640-f095f165bb89' returned => The forecast in Paris on 2030-01-01 is 24°C and sunny.",
+        '[Tools] The LLM calls tool=\'weather_forecast\' with args={"location":"Paris","forecast_date":"2030-01-01"} (tool_call_id=\'0001\')',
+        "[Tools] Tool call '0001' returned => The forecast in Paris on 2030-01-01 is 24°C and sunny.",
         '=== ModelRequestNode: streaming partial request tokens ===',
         "[Request] Starting part 0: TextPart(content='It will be ', part_kind='text')",
         '[Result] The model produced a final result (tool_name=None)',

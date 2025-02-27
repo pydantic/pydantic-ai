@@ -183,7 +183,7 @@ text_responses: dict[str, str | ToolCallPart] = {
         'The weather in West London is raining, while in Wiltshire it is sunny.'
     ),
     'What will the weather be like in Paris on Tuesday?': ToolCallPart(
-        tool_name='weather_forecast', args={'location': 'Paris', 'forecast_date': '2030-01-01'}
+        tool_name='weather_forecast', args={'location': 'Paris', 'forecast_date': '2030-01-01'}, tool_call_id='0001'
     ),
     'Tell me a joke.': 'Did you hear about the toothpaste scandal? They called it Colgate.',
     'Explain?': 'This is an excellent joke invented by Samuel Colvin, it needs no explanation.',
@@ -376,7 +376,7 @@ async def stream_model_logic(  # noqa C901
     async def stream_tool_call_response(r: ToolCallPart) -> AsyncIterator[DeltaToolCalls]:
         json_text = r.args_as_json_str()
 
-        yield {1: DeltaToolCall(name=r.tool_name)}
+        yield {1: DeltaToolCall(name=r.tool_name, tool_call_id=r.tool_call_id)}
         for chunk_index in range(0, len(json_text), 15):
             text_chunk = json_text[chunk_index : chunk_index + 15]
             yield {1: DeltaToolCall(json_args=text_chunk)}
