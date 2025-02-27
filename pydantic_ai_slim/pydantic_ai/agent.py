@@ -1293,7 +1293,7 @@ class AgentRun(Generic[AgentDepsT, ResultDataT]):
             return next_node
         if _agent_graph.is_agent_node(next_node):
             return next_node
-        raise exceptions.AgentRunError(f'Unexpected node type: {type(next_node)}')
+        raise exceptions.AgentRunError(f'Unexpected node type: {type(next_node)}')  # pragma: no cover
 
     @property
     def result(self) -> AgentRunResult[ResultDataT] | None:
