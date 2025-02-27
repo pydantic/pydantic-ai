@@ -63,7 +63,12 @@ class DuckDuckGoSearchTool:
 
 
 def duckduckgo_search_tool(duckduckgo_client: DDGS | None = None, max_results: int | None = None):
-    """Creates a DuckDuckGo search tool."""
+    """Creates a DuckDuckGo search tool.
+
+    Args:
+        duckduckgo_client: The DuckDuckGo search client.
+        max_results: The maximum number of results. If None, returns results only from the first response.
+    """
     return Tool(
         DuckDuckGoSearchTool(client=duckduckgo_client or DDGS(), max_results=max_results).__call__,
         name='duckduckgo_search',
