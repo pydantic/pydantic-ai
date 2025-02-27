@@ -155,6 +155,7 @@ class Eval:
             finally:
                 _CURRENT_EVAL_CASE.reset(token)
 
+
 @dataclass
 class Score:
     value: float
@@ -208,7 +209,7 @@ class EvalCase(Generic[OutputT]):
 
         # We need to support updating labels via span links, but I'm not sure if we should _only_ support that
         self.case_span.set_attribute(label_attribute, value)
-        
+
     def record_metadata(self, name: str, value: bool | str) -> None:
         label_attribute = f'label.{name}'
         self.metadata[name] = value

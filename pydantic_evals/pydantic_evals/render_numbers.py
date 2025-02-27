@@ -115,7 +115,7 @@ def _render_signed(val: float, sig_figs: int) -> str:
     s = format(abs(val), f'.{sig_figs}g')
     if 'e' not in s and '.' not in s:
         s += '.0'
-    return f"{'+' if val >= 0 else '-'}{s}"
+    return f'{"+" if val >= 0 else "-"}{s}'
 
 
 def _render_relative(new: float, base: float, small_base_threshold: float) -> str | None:
