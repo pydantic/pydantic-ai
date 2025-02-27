@@ -9,7 +9,7 @@ from contextvars import ContextVar
 from dataclasses import field
 from typing import Any, Generic, Literal, Union, cast
 
-import logfire_api
+from opentelemetry.trace import Span, Tracer
 from typing_extensions import TypeVar, assert_never
 
 from pydantic_graph import BaseNode, Graph, GraphRunContext
@@ -42,17 +42,6 @@ __all__ = (
     'capture_run_messages',
 )
 
-_logfire = logfire_api.Logfire(otel_scope='pydantic-ai')
-
-# while waiting for https://github.com/pydantic/logfire/issues/745
-try:
-    import logfire._internal.stack_info
-except ImportError:
-    pass
-else:
-    from pathlib import Path
-
-    logfire._internal.stack_info.NON_USER_CODE_PREFIXES += (str(Path(__file__).parent.absolute()),)
 
 T = TypeVar('T')
 NoneType = type(None)
@@ -104,7 +93,8 @@ class GraphAgentDeps(Generic[DepsT, ResultDataT]):
 
     function_tools: dict[str, Tool[DepsT]] = dataclasses.field(repr=False)
 
-    run_span: logfire_api.LogfireSpan
+    run_span: Span
+    tracer: Tracer
 
 
 @dataclasses.dataclass
@@ -245,21 +235,18 @@ class ModelRequestNode(BaseNode[GraphAgentState, GraphAgentDeps[DepsT, Any], res
         assert not self._did_stream, 'stream() should only be called once per node'
 
         model_settings, model_request_parameters = await self._prepare_request(ctx)
-        with _logfire.span('model request', run_step=ctx.state.run_step) as span:
-            async with ctx.deps.model.request_stream(
-                ctx.state.message_history, model_settings, model_request_parameters
-            ) as streamed_response:
-                self._did_stream = True
-                ctx.state.usage.incr(_usage.Usage(), requests=1)
-                yield streamed_response
-                # In case the user didn't manually consume the full stream, ensure it is fully consumed here,
-                # otherwise usage won't be properly counted:
-                async for _ in streamed_response:
-                    pass
-            model_response = streamed_response.get()
-            request_usage = streamed_response.usage()
-            span.set_attribute('response', model_response)
-            span.set_attribute('usage', request_usage)
+        async with ctx.deps.model.request_stream(
+            ctx.state.message_history, model_settings, model_request_parameters
+        ) as streamed_response:
+            self._did_stream = True
+            ctx.state.usage.incr(_usage.Usage(), requests=1)
+            yield streamed_response
+            # In case the user didn't manually consume the full stream, ensure it is fully consumed here,
+            # otherwise usage won't be properly counted:
+            async for _ in streamed_response:
+                pass
+        model_response = streamed_response.get()
+        request_usage = streamed_response.usage()
 
         self._finish_handling(ctx, model_response, request_usage)
         assert self._result is not None  # this should be set by the previous line
@@ -271,13 +258,10 @@ class ModelRequestNode(BaseNode[GraphAgentState, GraphAgentDeps[DepsT, Any], res
             return self._result
 
         model_settings, model_request_parameters = await self._prepare_request(ctx)
-        with _logfire.span('model request', run_step=ctx.state.run_step) as span:
-            model_response, request_usage = await ctx.deps.model.request(
-                ctx.state.message_history, model_settings, model_request_parameters
-            )
-            ctx.state.usage.incr(_usage.Usage(), requests=1)
-            span.set_attribute('response', model_response)
-            span.set_attribute('usage', request_usage)
+        model_response, request_usage = await ctx.deps.model.request(
+            ctx.state.message_history, model_settings, model_request_parameters
+        )
+        ctx.state.usage.incr(_usage.Usage(), requests=1)
 
         return self._finish_handling(ctx, model_response, request_usage)
 
@@ -294,7 +278,9 @@ class ModelRequestNode(BaseNode[GraphAgentState, GraphAgentDeps[DepsT, Any], res
         ctx.state.run_step += 1
 
         model_settings = merge_model_settings(ctx.deps.model_settings, None)
-        with _logfire.span('preparing model request params {run_step=}', run_step=ctx.state.run_step):
+        with ctx.deps.tracer.start_as_current_span(
+            'preparing model request params', attributes=dict(run_step=ctx.state.run_step)
+        ):
             model_request_parameters = await _prepare_request_parameters(ctx)
         return model_settings, model_request_parameters
 
@@ -344,26 +330,12 @@ class HandleResponseNode(BaseNode[GraphAgentState, GraphAgentDeps[DepsT, Any], r
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
     ) -> AsyncIterator[AsyncIterator[_messages.HandleResponseEvent]]:
         """Process the model response and yield events for the start and end of each function tool call."""
-        with _logfire.span('handle model response', run_step=ctx.state.run_step) as handle_span:
-            stream = self._run_stream(ctx)
-            yield stream
+        stream = self._run_stream(ctx)
+        yield stream
 
-            # Run the stream to completion if it was not finished:
-            async for _event in stream:
-                pass
-
-            # Set the next node based on the final state of the stream
-            next_node = self._next_node
-            if isinstance(next_node, End):
-                handle_span.set_attribute('result', next_node.data)
-                handle_span.message = 'handle model response -> final result'
-            elif tool_responses := self._tool_responses:
-                # TODO: We could drop `self._tool_responses` if we drop this set_attribute
-                #   I'm thinking it might be better to just create a span for the handling of each tool
-                #   than to set an attribute here.
-                handle_span.set_attribute('tool_responses', tool_responses)
-                tool_responses_str = ' '.join(r.part_kind for r in tool_responses)
-                handle_span.message = f'handle model response -> {tool_responses_str}'
+        # Run the stream to completion if it was not finished:
+        async for _event in stream:
+            pass
 
     async def _run_stream(
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
@@ -454,8 +426,7 @@ class HandleResponseNode(BaseNode[GraphAgentState, GraphAgentDeps[DepsT, Any], r
         if tool_responses:
             messages.append(_messages.ModelRequest(parts=tool_responses))
 
-        run_span.set_attribute('usage', usage)
-        run_span.set_attribute('all_messages', messages)
+        run_span.set_attributes(usage.opentelemetry_attributes())
 
         # End the run with self.data
         return End(final_result)
@@ -566,7 +537,10 @@ async def process_function_tools(
 
     # Run all tool tasks in parallel
     results_by_index: dict[int, _messages.ModelRequestPart] = {}
-    with _logfire.span('running {tools=}', tools=[call.tool_name for _, call in calls_to_run]):
+    tool_names = [call.tool_name for _, call in calls_to_run]
+    with ctx.deps.tracer.start_as_current_span(
+        'running tools', attributes={'tools': tool_names, 'logfire.msg': f'running tools: {", ".join(tool_names)}'}
+    ):
         # TODO: Should we wrap each individual tool call in a dedicated span?
         tasks = [asyncio.create_task(tool.run(call, run_context), name=call.tool_name) for tool, call in calls_to_run]
         pending = tasks

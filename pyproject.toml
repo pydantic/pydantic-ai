@@ -168,6 +168,7 @@ ignore_no_config = true
 [tool.inline-snapshot.shortcuts]
 snap-fix = ["create", "fix"]
 snap = ["create"]
+format-command="ruff format --stdin-filename {filename}"
 
 [tool.codespell]
 # Ref: https://github.com/codespell-project/codespell#using-a-config-file

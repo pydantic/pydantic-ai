@@ -56,6 +56,16 @@ class Usage:
         new_usage.incr(other)
         return new_usage
 
+    def opentelemetry_attributes(self) -> dict[str, int]:
+        """Get the token limits as OpenTelemetry attributes."""
+        result = {
+            'gen_ai.usage.input_tokens': self.request_tokens,
+            'gen_ai.usage.output_tokens': self.response_tokens,
+        }
+        for key, value in (self.details or {}).items():
+            result[f'gen_ai.usage.details.{key}'] = value
+        return {k: v for k, v in result.items() if v is not None}
+
 
 @dataclass
 class UsageLimits:

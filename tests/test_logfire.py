@@ -4,7 +4,6 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 import pytest
-from dirty_equals import IsInt, IsJson, IsStr
 from inline_snapshot import snapshot
 from typing_extensions import NotRequired, TypedDict
 
@@ -59,7 +58,7 @@ def get_logfire_summary(capfire: CaptureLogfire) -> Callable[[], LogfireSummary]
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
 def test_logfire(get_logfire_summary: Callable[[], LogfireSummary]) -> None:
-    my_agent = Agent(model=TestModel())
+    my_agent = Agent(model=TestModel(), instrumented=True)
 
     @my_agent.tool_plain
     async def my_ret(x: int) -> str:
@@ -73,189 +72,31 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary]) -> None:
         [
             {
                 'id': 0,
-                'message': 'my_agent run prompt=Hello',
+                'message': 'my_agent run',
                 'children': [
-                    {'id': 1, 'message': 'preparing model request params run_step=1'},
-                    {'id': 2, 'message': 'model request'},
-                    {
-                        'id': 3,
-                        'message': 'handle model response -> tool-return',
-                        'children': [{'id': 4, 'message': "running tools=['my_ret']"}],
-                    },
-                    {'id': 5, 'message': 'preparing model request params run_step=2'},
-                    {'id': 6, 'message': 'model request'},
-                    {'id': 7, 'message': 'handle model response -> final result'},
+                    {'id': 1, 'message': 'preparing model request params'},
+                    {'id': 2, 'message': 'chat test'},
+                    {'id': 3, 'message': 'running tools: my_ret'},
+                    {'id': 4, 'message': 'preparing model request params'},
+                    {'id': 5, 'message': 'chat test'},
                 ],
             }
         ]
     )
     assert summary.attributes[0] == snapshot(
         {
-            'code.filepath': 'test_logfire.py',
-            'code.function': 'test_logfire',
-            'code.lineno': 123,
-            'prompt': 'Hello',
-            'agent': IsJson(
-                {
-                    'model': {
-                        'call_tools': 'all',
-                        'custom_result_text': None,
-                        'custom_result_args': None,
-                        'seed': 0,
-                        'last_model_request_parameters': None,
-                    },
-                    'name': 'my_agent',
-                    'end_strategy': 'early',
-                    'model_settings': None,
-                }
-            ),
             'model_name': 'test',
             'agent_name': 'my_agent',
-            'logfire.msg_template': '{agent_name} run {prompt=}',
-            'logfire.msg': 'my_agent run prompt=Hello',
+            'logfire.msg': 'my_agent run',
             'logfire.span_type': 'span',
-            'all_messages': IsJson(
-                [
-                    {
-                        'parts': [
-                            {
-                                'content': 'Hello',
-                                'timestamp': IsStr(regex=r'\d{4}-\d{2}-.+'),
-                                'part_kind': 'user-prompt',
-                            },
-                        ],
-                        'kind': 'request',
-                    },
-                    {
-                        'parts': [
-                            {'tool_name': 'my_ret', 'args': {'x': 0}, 'tool_call_id': None, 'part_kind': 'tool-call'}
-                        ],
-                        'model_name': 'test',
-                        'timestamp': IsStr(regex=r'\d{4}-\d{2}-.+'),
-                        'kind': 'response',
-                    },
-                    {
-                        'parts': [
-                            {
-                                'tool_name': 'my_ret',
-                                'content': '1',
-                                'tool_call_id': None,
-                                'timestamp': IsStr(regex=r'\d{4}-\d{2}-.+'),
-                                'part_kind': 'tool-return',
-                            },
-                        ],
-                        'kind': 'request',
-                    },
-                    {
-                        'parts': [{'content': '{"my_ret":"1"}', 'part_kind': 'text'}],
-                        'model_name': 'test',
-                        'timestamp': IsStr(regex=r'\d{4}-\d{2}-.+'),
-                        'kind': 'response',
-                    },
-                ]
-            ),
-            'usage': IsJson(
-                {'requests': 2, 'request_tokens': 103, 'response_tokens': 12, 'total_tokens': 115, 'details': None}
-            ),
-            'logfire.json_schema': IsJson(
-                {
-                    'type': 'object',
-                    'properties': {
-                        'prompt': {},
-                        'agent': {
-                            'type': 'object',
-                            'title': 'Agent',
-                            'x-python-datatype': 'dataclass',
-                            'properties': {
-                                'model': {'type': 'object', 'title': 'TestModel', 'x-python-datatype': 'dataclass'}
-                            },
-                        },
-                        'model_name': {},
-                        'agent_name': {},
-                        'all_messages': {
-                            'type': 'array',
-                            'prefixItems': [
-                                {
-                                    'type': 'object',
-                                    'title': 'ModelRequest',
-                                    'x-python-datatype': 'dataclass',
-                                    'properties': {
-                                        'parts': {
-                                            'type': 'array',
-                                            'items': {
-                                                'type': 'object',
-                                                'title': 'UserPromptPart',
-                                                'x-python-datatype': 'dataclass',
-                                                'properties': {'timestamp': {'type': 'string', 'format': 'date-time'}},
-                                            },
-                                        }
-                                    },
-                                },
-                                {
-                                    'type': 'object',
-                                    'title': 'ModelResponse',
-                                    'x-python-datatype': 'dataclass',
-                                    'properties': {
-                                        'parts': {
-                                            'type': 'array',
-                                            'items': {
-                                                'type': 'object',
-                                                'title': 'ToolCallPart',
-                                                'x-python-datatype': 'dataclass',
-                                            },
-                                        },
-                                        'timestamp': {'type': 'string', 'format': 'date-time'},
-                                    },
-                                },
-                                {
-                                    'type': 'object',
-                                    'title': 'ModelRequest',
-                                    'x-python-datatype': 'dataclass',
-                                    'properties': {
-                                        'parts': {
-                                            'type': 'array',
-                                            'items': {
-                                                'type': 'object',
-                                                'title': 'ToolReturnPart',
-                                                'x-python-datatype': 'dataclass',
-                                                'properties': {'timestamp': {'type': 'string', 'format': 'date-time'}},
-                                            },
-                                        }
-                                    },
-                                },
-                                {
-                                    'type': 'object',
-                                    'title': 'ModelResponse',
-                                    'x-python-datatype': 'dataclass',
-                                    'properties': {
-                                        'parts': {
-                                            'type': 'array',
-                                            'items': {
-                                                'type': 'object',
-                                                'title': 'TextPart',
-                                                'x-python-datatype': 'dataclass',
-                                            },
-                                        },
-                                        'timestamp': {'type': 'string', 'format': 'date-time'},
-                                    },
-                                },
-                            ],
-                        },
-                        'usage': {'type': 'object', 'title': 'Usage', 'x-python-datatype': 'dataclass'},
-                    },
-                }
-            ),
+            'gen_ai.usage.input_tokens': 103,
+            'gen_ai.usage.output_tokens': 12,
         }
     )
     assert summary.attributes[1] == snapshot(
         {
-            'code.filepath': 'test_logfire.py',
-            'code.function': 'test_logfire',
-            'code.lineno': IsInt(),
             'run_step': 1,
-            'logfire.msg_template': 'preparing model request params {run_step=}',
             'logfire.span_type': 'span',
-            'logfire.msg': 'preparing model request params run_step=1',
-            'logfire.json_schema': '{"type":"object","properties":{"run_step":{}}}',
+            'logfire.msg': 'preparing model request params',
         }
     )

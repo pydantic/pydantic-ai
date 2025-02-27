@@ -9,6 +9,7 @@ from typing import Any, Callable, Literal
 import logfire_api
 from opentelemetry._events import Event, EventLogger, EventLoggerProvider, get_event_logger_provider
 from opentelemetry.trace import Tracer, TracerProvider, get_tracer_provider
+from opentelemetry.util.types import AttributeValue
 
 from ..messages import (
     ModelMessage,
@@ -46,12 +47,10 @@ MODEL_SETTING_ATTRIBUTES: tuple[
     'frequency_penalty',
 )
 
-NOT_GIVEN = object()
-
 
 @dataclass
 class InstrumentedModel(WrapperModel):
-    """Model which is instrumented with logfire."""
+    """Model which is instrumented with OpenTelemetry."""
 
     tracer: Tracer = field(repr=False)
     event_logger: EventLogger = field(repr=False)
@@ -126,7 +125,7 @@ class InstrumentedModel(WrapperModel):
         #  - server.port: to parse from the base_url
         #  - error.type: unclear if we should do something here or just always rely on span exceptions
         #  - gen_ai.request.stop_sequences/top_k: model_settings doesn't include these
-        attributes: dict[str, Any] = {
+        attributes: dict[str, AttributeValue] = {
             'gen_ai.operation.name': operation,
             'gen_ai.system': system,
             'gen_ai.request.model': model_name,
@@ -134,7 +133,7 @@ class InstrumentedModel(WrapperModel):
 
         if model_settings:
             for key in MODEL_SETTING_ATTRIBUTES:
-                if (value := model_settings.get(key, NOT_GIVEN)) is not NOT_GIVEN:
+                if isinstance(value := model_settings.get(key), (float, int)):
                     attributes[f'gen_ai.request.{key}'] = value
 
         emit_event = partial(self._emit_event, system)
@@ -167,15 +166,10 @@ class InstrumentedModel(WrapperModel):
                         )
                 span.set_attributes(
                     {
-                        k: v
-                        for k, v in {
-                            # TODO finish_reason (https://github.com/open-telemetry/semantic-conventions/issues/1277), id
-                            #  https://github.com/pydantic/pydantic-ai/issues/886
-                            'gen_ai.response.model': response.model_name or model_name,
-                            'gen_ai.usage.input_tokens': usage.request_tokens,
-                            'gen_ai.usage.output_tokens': usage.response_tokens,
-                        }.items()
-                        if v is not None
+                        # TODO finish_reason (https://github.com/open-telemetry/semantic-conventions/issues/1277), id
+                        #  https://github.com/pydantic/pydantic-ai/issues/886
+                        'gen_ai.response.model': response.model_name or model_name,
+                        **usage.opentelemetry_attributes(),
                     }
                 )
 
