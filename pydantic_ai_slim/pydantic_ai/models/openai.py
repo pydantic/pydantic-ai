@@ -6,7 +6,6 @@ from collections.abc import AsyncIterable, AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from itertools import chain
 from typing import BinaryIO, Literal, Union, cast, overload
 
 from httpx import AsyncClient as AsyncHTTPClient
@@ -41,9 +40,17 @@ from . import (
 )
 
 try:
-    from openai import NOT_GIVEN, AsyncOpenAI, AsyncStream
+    from openai import NOT_GIVEN, APIStatusError, AsyncOpenAI, AsyncStream
     from openai.types import AudioModel, ChatModel, chat
-    from openai.types.chat import ChatCompletionChunk
+    from openai.types.chat import (
+        ChatCompletionChunk,
+        ChatCompletionContentPartImageParam,
+        ChatCompletionContentPartInputAudioParam,
+        ChatCompletionContentPartParam,
+        ChatCompletionContentPartTextParam,
+    )
+    from openai.types.chat.chat_completion_content_part_image_param import ImageURL
+    from openai.types.chat.chat_completion_content_part_input_audio_param import InputAudio
 except ImportError as _import_error:
     raise ImportError(
         'Please install `openai` to use the OpenAI model, '
