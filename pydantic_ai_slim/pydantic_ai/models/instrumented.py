@@ -4,11 +4,12 @@ from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from functools import partial
-from typing import Any, Callable, Literal
+from typing import Any, Callable, Literal, cast
 
 import logfire_api
 from opentelemetry._events import Event, EventLogger, EventLoggerProvider, get_event_logger_provider
 from opentelemetry.trace import Tracer, TracerProvider, get_tracer_provider
+from opentelemetry.util.types import AttributeValue
 
 from ..messages import (
     ModelMessage,
@@ -126,7 +127,7 @@ class InstrumentedModel(WrapperModel):
         #  - server.port: to parse from the base_url
         #  - error.type: unclear if we should do something here or just always rely on span exceptions
         #  - gen_ai.request.stop_sequences/top_k: model_settings doesn't include these
-        attributes: dict[str, Any] = {
+        attributes: dict[str, AttributeValue] = {
             'gen_ai.operation.name': operation,
             'gen_ai.system': system,
             'gen_ai.request.model': model_name,
@@ -135,7 +136,7 @@ class InstrumentedModel(WrapperModel):
         if model_settings:
             for key in MODEL_SETTING_ATTRIBUTES:
                 if (value := model_settings.get(key, NOT_GIVEN)) is not NOT_GIVEN:
-                    attributes[f'gen_ai.request.{key}'] = value
+                    attributes[f'gen_ai.request.{key}'] = cast('float | int', value)
 
         emit_event = partial(self._emit_event, system)
 
