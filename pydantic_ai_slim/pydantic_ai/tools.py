@@ -50,7 +50,7 @@ class RunContext(Generic[AgentDepsT]):
     messages: list[_messages.ModelMessage] = field(default_factory=list)
     """Messages exchanged in the conversation so far."""
     tool_call_id: str | None = None
-    """The ID of the tool call"""
+    """The ID of the tool call."""
     tool_name: str | None = None
     """Name of the tool being called."""
     retry: int = 0
