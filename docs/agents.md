@@ -282,7 +282,7 @@ async def main():
     user_prompt = 'What will the weather be like in Paris on Tuesday?'
 
     # Begin a node-by-node, streaming iteration
-    with weather_agent.iter(user_prompt, deps=WeatherService()) as run:
+    async with weather_agent.iter(user_prompt, deps=WeatherService()) as run:
         async for node in run:
             if Agent.is_user_prompt_node(node):
                 # A user prompt node => The user has provided input
