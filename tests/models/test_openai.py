@@ -718,7 +718,6 @@ async def test_transcription_error():
 
     model = OpenAIModel(model_name='whisper-1', openai_client=mock_client)
 
-    # Llamar al método de transcripción y verificar que lanza una excepción
     with pytest.raises(RuntimeError, match='Error during transcription: Simulated API error'):
         await model.transcription(audio_file)
 
