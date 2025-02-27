@@ -105,7 +105,7 @@ class MyResponseStream(StreamedResponse):
 @pytest.mark.anyio
 @requires_logfire_events
 async def test_instrumented_model(capfire: CaptureLogfire):
-    model = InstrumentedModel.from_logfire(MyModel())
+    model = InstrumentedModel.from_logfire(MyModel(), event_mode='logs')
     assert model.system == 'my_system'
     assert model.model_name == 'my_model'
 
@@ -323,7 +323,7 @@ async def test_instrumented_model_not_recording():
 @pytest.mark.anyio
 @requires_logfire_events
 async def test_instrumented_model_stream(capfire: CaptureLogfire):
-    model = InstrumentedModel.from_logfire(MyModel())
+    model = InstrumentedModel.from_logfire(MyModel(), event_mode='logs')
 
     messages: list[ModelMessage] = [
         ModelRequest(
@@ -405,7 +405,7 @@ async def test_instrumented_model_stream(capfire: CaptureLogfire):
 @pytest.mark.anyio
 @requires_logfire_events
 async def test_instrumented_model_stream_break(capfire: CaptureLogfire):
-    model = InstrumentedModel.from_logfire(MyModel())
+    model = InstrumentedModel.from_logfire(MyModel(), event_mode='logs')
 
     messages: list[ModelMessage] = [
         ModelRequest(
