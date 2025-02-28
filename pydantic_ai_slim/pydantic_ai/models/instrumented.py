@@ -180,7 +180,7 @@ class InstrumentedModel(WrapperModel):
             attr_name = 'events'
             span.set_attributes(
                 {
-                    attr_name: ANY_ADAPTER.dump_json(events_list),
+                    attr_name: json.dumps(events_list),
                     'logfire.json_schema': json.dumps(
                         {
                             'type': 'object',
@@ -199,4 +199,12 @@ class InstrumentedModel(WrapperModel):
                         result.append(part.otel_event())
             elif isinstance(message, ModelResponse):
                 result.extend(message.otel_events())
+        for event in result:
+            try:
+                event.body = ANY_ADAPTER.dump_python(event.body, mode='json')
+            except Exception:
+                try:
+                    event.body = str(event.body)
+                except Exception:
+                    event.body = 'Unable to serialize event body'
         return result
