@@ -141,7 +141,7 @@ async def main():
                 kind='response',
             )
         ),
-        End(data=FinalResult(data='Paris', tool_name=None)),
+        End(data=FinalResult(data='Paris', tool_name=None, tool_call_id=None)),
     ]
     """
     print(agent_run.result.data)
@@ -202,7 +202,7 @@ async def main():
                     kind='response',
                 )
             ),
-            End(data=FinalResult(data='Paris', tool_name=None)),
+            End(data=FinalResult(data='Paris', tool_name=None, tool_call_id=None)),
         ]
         """
 ```

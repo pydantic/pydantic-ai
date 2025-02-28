@@ -370,7 +370,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
                         kind='response',
                     )
                 ),
-                End(data=FinalResult(data='Paris', tool_name=None)),
+                End(data=FinalResult(data='Paris', tool_name=None, tool_call_id=None)),
             ]
             '''
             print(agent_run.result.data)
@@ -1258,7 +1258,7 @@ class AgentRun(Generic[AgentDepsT, ResultDataT]):
                     kind='response',
                 )
             ),
-            End(data=FinalResult(data='Paris', tool_name=None)),
+            End(data=FinalResult(data='Paris', tool_name=None, tool_call_id=None)),
         ]
         '''
         print(agent_run.result.data)
@@ -1382,7 +1382,7 @@ class AgentRun(Generic[AgentDepsT, ResultDataT]):
                             kind='response',
                         )
                     ),
-                    End(data=FinalResult(data='Paris', tool_name=None)),
+                    End(data=FinalResult(data='Paris', tool_name=None, tool_call_id=None)),
                 ]
                 '''
                 print('Final result:', agent_run.result.data)
