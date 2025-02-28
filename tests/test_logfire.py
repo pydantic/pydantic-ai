@@ -154,92 +154,26 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary]) -> None:
                 {'requests': 2, 'request_tokens': 103, 'response_tokens': 12, 'total_tokens': 115, 'details': None}
             ),
             'logfire.json_schema': IsJson(
-                {
-                    'type': 'object',
-                    'properties': {
-                        'prompt': {},
-                        'agent': {
-                            'type': 'object',
-                            'title': 'Agent',
-                            'x-python-datatype': 'dataclass',
-                            'properties': {
-                                'model': {'type': 'object', 'title': 'TestModel', 'x-python-datatype': 'dataclass'}
+                snapshot(
+                    {
+                        'type': 'object',
+                        'properties': {
+                            'prompt': {},
+                            'agent': {
+                                'type': 'object',
+                                'title': 'Agent',
+                                'x-python-datatype': 'dataclass',
+                                'properties': {
+                                    'model': {'type': 'object', 'title': 'TestModel', 'x-python-datatype': 'dataclass'}
+                                },
                             },
+                            'model_name': {},
+                            'agent_name': {},
+                            'usage': {'type': 'object', 'title': 'Usage', 'x-python-datatype': 'dataclass'},
+                            'all_messages_events': {'type': 'array'},
                         },
-                        'model_name': {},
-                        'agent_name': {},
-                        'all_messages': {
-                            'type': 'array',
-                            'prefixItems': [
-                                {
-                                    'type': 'object',
-                                    'title': 'ModelRequest',
-                                    'x-python-datatype': 'dataclass',
-                                    'properties': {
-                                        'parts': {
-                                            'type': 'array',
-                                            'items': {
-                                                'type': 'object',
-                                                'title': 'UserPromptPart',
-                                                'x-python-datatype': 'dataclass',
-                                                'properties': {'timestamp': {'type': 'string', 'format': 'date-time'}},
-                                            },
-                                        }
-                                    },
-                                },
-                                {
-                                    'type': 'object',
-                                    'title': 'ModelResponse',
-                                    'x-python-datatype': 'dataclass',
-                                    'properties': {
-                                        'parts': {
-                                            'type': 'array',
-                                            'items': {
-                                                'type': 'object',
-                                                'title': 'ToolCallPart',
-                                                'x-python-datatype': 'dataclass',
-                                            },
-                                        },
-                                        'timestamp': {'type': 'string', 'format': 'date-time'},
-                                    },
-                                },
-                                {
-                                    'type': 'object',
-                                    'title': 'ModelRequest',
-                                    'x-python-datatype': 'dataclass',
-                                    'properties': {
-                                        'parts': {
-                                            'type': 'array',
-                                            'items': {
-                                                'type': 'object',
-                                                'title': 'ToolReturnPart',
-                                                'x-python-datatype': 'dataclass',
-                                                'properties': {'timestamp': {'type': 'string', 'format': 'date-time'}},
-                                            },
-                                        }
-                                    },
-                                },
-                                {
-                                    'type': 'object',
-                                    'title': 'ModelResponse',
-                                    'x-python-datatype': 'dataclass',
-                                    'properties': {
-                                        'parts': {
-                                            'type': 'array',
-                                            'items': {
-                                                'type': 'object',
-                                                'title': 'TextPart',
-                                                'x-python-datatype': 'dataclass',
-                                            },
-                                        },
-                                        'timestamp': {'type': 'string', 'format': 'date-time'},
-                                    },
-                                },
-                            ],
-                        },
-                        'usage': {'type': 'object', 'title': 'Usage', 'x-python-datatype': 'dataclass'},
-                    },
-                }
+                    }
+                )
             ),
         }
     )
