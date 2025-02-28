@@ -52,7 +52,7 @@ class DeepSeekProvider(Provider[AsyncOpenAI]):
 
     @property
     def base_url(self) -> str:
-        return 'https://api.deepsek.com/v1'
+        return 'https://api.deepseek.com'
 
     @property
     def client(self) -> AsyncOpenAI:

@@ -106,21 +106,22 @@ class OpenAIModel(Model):
         self,
         model_name: OpenAIModelName,
         *,
-        provider: None = None,
-        base_url: str | None = None,
-        api_key: str | None = None,
-        openai_client: AsyncOpenAI | None = None,
-        http_client: AsyncHTTPClient | None = None,
+        provider: Literal['openai', 'deepseek'] | Provider[AsyncOpenAI] = 'openai',
         system_prompt_role: OpenAISystemPromptRole | None = None,
         system: str | None = 'openai',
     ) -> None: ...
 
+    @deprecated('Use provider parameter instead of `base_url`, `api_key`, `openai_client` and `http_client`.')
     @overload
     def __init__(
         self,
         model_name: OpenAIModelName,
         *,
-        provider: Literal['openai', 'deepseek'] | Provider[AsyncOpenAI] = 'openai',
+        provider: None = None,
+        base_url: str | None = None,
+        api_key: str | None = None,
+        openai_client: AsyncOpenAI | None = None,
+        http_client: AsyncHTTPClient | None = None,
         system_prompt_role: OpenAISystemPromptRole | None = None,
         system: str | None = 'openai',
     ) -> None: ...
@@ -489,3 +490,6 @@ def _map_usage(response: chat.ChatCompletion | ChatCompletionChunk) -> usage.Usa
             total_tokens=response_usage.total_tokens,
             details=details,
         )
+
+
+OpenAIInterface = OpenAIModel

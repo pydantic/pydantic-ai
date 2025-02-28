@@ -47,6 +47,8 @@ KnownModelName = Literal[
     'cohere:command-r-plus-04-2024',
     'cohere:command-r-plus-08-2024',
     'cohere:command-r7b-12-2024',
+    'deepseek:deepseek-chat',
+    'deepseek:deepseek-reasoner',
     'google-gla:gemini-1.0-pro',
     'google-gla:gemini-1.5-flash',
     'google-gla:gemini-1.5-flash-8b',
@@ -320,6 +322,10 @@ def infer_model(model: Model | KnownModelName) -> Model:
         from .cohere import CohereModel
 
         return CohereModel(model[7:])
+    elif model.startswith('deepseek:'):
+        from .openai import OpenAIInterface
+
+        return OpenAIInterface(model[9:], provider='deepseek')
     elif model.startswith('openai:'):
         from .openai import OpenAIModel
 
