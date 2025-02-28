@@ -370,7 +370,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
                         kind='response',
                     )
                 ),
-                End(data=FinalResult(data='Paris', tool_name=None)),
+                End(data=FinalResult(data='Paris', tool_name=None, tool_call_id=None)),
             ]
             '''
             print(agent_run.result.data)
@@ -661,11 +661,10 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
                                     new_part = maybe_part_event.part
                                     if isinstance(new_part, _messages.TextPart):
                                         if _agent_graph.allow_text_result(result_schema):
-                                            return FinalResult(s, None)
-                                    elif isinstance(new_part, _messages.ToolCallPart):
-                                        if result_schema is not None and (match := result_schema.find_tool([new_part])):
-                                            call, _ = match
-                                            return FinalResult(s, call.tool_name)
+                                            return FinalResult(s, None, None)
+                                    elif isinstance(new_part, _messages.ToolCallPart) and result_schema:
+                                        for call, _ in result_schema.find_tool([new_part]):
+                                            return FinalResult(s, call.tool_name, call.tool_call_id)
                             return None
 
                         final_result_details = await stream_to_final(streamed_response)
@@ -692,6 +691,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
                                 async for _event in _agent_graph.process_function_tools(
                                     tool_calls,
                                     final_result_details.tool_name,
+                                    final_result_details.tool_call_id,
                                     graph_ctx,
                                     parts,
                                 ):
@@ -1258,7 +1258,7 @@ class AgentRun(Generic[AgentDepsT, ResultDataT]):
                     kind='response',
                 )
             ),
-            End(data=FinalResult(data='Paris', tool_name=None)),
+            End(data=FinalResult(data='Paris', tool_name=None, tool_call_id=None)),
         ]
         '''
         print(agent_run.result.data)
@@ -1382,7 +1382,7 @@ class AgentRun(Generic[AgentDepsT, ResultDataT]):
                             kind='response',
                         )
                     ),
-                    End(data=FinalResult(data='Paris', tool_name=None)),
+                    End(data=FinalResult(data='Paris', tool_name=None, tool_call_id=None)),
                 ]
                 '''
                 print('Final result:', agent_run.result.data)

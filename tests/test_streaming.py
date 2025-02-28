@@ -768,7 +768,7 @@ async def test_iter_stream_output():
                     async for chunk in stream.stream_output(debounce_by=None):
                         messages.append(chunk)
                 stream_usage = deepcopy(stream.usage())
-    assert run.next_node == End(data=FinalResult(data='The bat sat on the mat.', tool_name=None))
+    assert run.next_node == End(data=FinalResult(data='The bat sat on the mat.', tool_name=None, tool_call_id=None))
     assert (
         run.usage()
         == stream_usage
