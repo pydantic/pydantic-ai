@@ -149,6 +149,7 @@ KnownModelName = Literal[
     'openai:gpt-4o-mini-2024-07-18',
     'openai:gpt-4o-mini-audio-preview',
     'openai:gpt-4o-mini-audio-preview-2024-12-17',
+    'openai:gpt-4.5-preview',
     'openai:o1',
     'openai:o1-2024-12-17',
     'openai:o1-mini',
