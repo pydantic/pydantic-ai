@@ -42,7 +42,7 @@ from .tools import (
 # Re-exporting like this improves auto-import behavior in PyCharm
 capture_run_messages = _agent_graph.capture_run_messages
 EndStrategy = _agent_graph.EndStrategy
-HandleResponseNode = _agent_graph.HandleResponseNode
+CallToolsNode = _agent_graph.CallToolsNode
 ModelRequestNode = _agent_graph.ModelRequestNode
 UserPromptNode = _agent_graph.UserPromptNode
 
@@ -52,7 +52,7 @@ __all__ = (
     'AgentRunResult',
     'capture_run_messages',
     'EndStrategy',
-    'HandleResponseNode',
+    'CallToolsNode',
     'ModelRequestNode',
     'UserPromptNode',
 )
@@ -362,7 +362,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
                         kind='request',
                     )
                 ),
-                HandleResponseNode(
+                CallToolsNode(
                     model_response=ModelResponse(
                         parts=[TextPart(content='Paris', part_kind='text')],
                         model_name='gpt-4o',
@@ -1183,14 +1183,14 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         return isinstance(node, _agent_graph.ModelRequestNode)
 
     @staticmethod
-    def is_handle_response_node(
+    def is_call_tools_node(
         node: _agent_graph.AgentNode[T, S] | End[result.FinalResult[S]],
-    ) -> TypeGuard[_agent_graph.HandleResponseNode[T, S]]:
-        """Check if the node is a `HandleResponseNode`, narrowing the type if it is.
+    ) -> TypeGuard[_agent_graph.CallToolsNode[T, S]]:
+        """Check if the node is a `CallToolsNode`, narrowing the type if it is.
 
         This method preserves the generic parameters while narrowing the type, unlike a direct call to `isinstance`.
         """
-        return isinstance(node, _agent_graph.HandleResponseNode)
+        return isinstance(node, _agent_graph.CallToolsNode)
 
     @staticmethod
     def is_user_prompt_node(
@@ -1250,7 +1250,7 @@ class AgentRun(Generic[AgentDepsT, ResultDataT]):
                     kind='request',
                 )
             ),
-            HandleResponseNode(
+            CallToolsNode(
                 model_response=ModelResponse(
                     parts=[TextPart(content='Paris', part_kind='text')],
                     model_name='gpt-4o',
@@ -1374,7 +1374,7 @@ class AgentRun(Generic[AgentDepsT, ResultDataT]):
                             kind='request',
                         )
                     ),
-                    HandleResponseNode(
+                    CallToolsNode(
                         model_response=ModelResponse(
                             parts=[TextPart(content='Paris', part_kind='text')],
                             model_name='gpt-4o',
