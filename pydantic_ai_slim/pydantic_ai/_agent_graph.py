@@ -23,6 +23,7 @@ from . import (
     result,
     usage as _usage,
 )
+from .models.instrumented import InstrumentedModel
 from .result import ResultDataT
 from .settings import ModelSettings, merge_model_settings
 from .tools import (
@@ -490,7 +491,10 @@ class HandleResponseNode(AgentNode[DepsT, NodeRunEndT]):
             messages.append(_messages.ModelRequest(parts=tool_responses))
 
         run_span.set_attribute('usage', usage)
-        run_span.set_attribute('all_messages', messages)
+        run_span.set_attribute(
+            'all_messages_events',
+            [InstrumentedModel.event_to_dict(e) for e in InstrumentedModel.messages_to_otel_events(messages)],
+        )
 
         # End the run with self.data
         return End(final_result)

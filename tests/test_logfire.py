@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 import pytest
-from dirty_equals import IsInt, IsJson, IsStr
+from dirty_equals import IsInt, IsJson
 from inline_snapshot import snapshot
 from typing_extensions import NotRequired, TypedDict
 
@@ -114,45 +114,41 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary]) -> None:
             'logfire.msg_template': '{agent_name} run {prompt=}',
             'logfire.msg': 'my_agent run prompt=Hello',
             'logfire.span_type': 'span',
-            'all_messages': IsJson(
-                [
-                    {
-                        'parts': [
-                            {
-                                'content': 'Hello',
-                                'timestamp': IsStr(regex=r'\d{4}-\d{2}-.+'),
-                                'part_kind': 'user-prompt',
-                            },
-                        ],
-                        'kind': 'request',
-                    },
-                    {
-                        'parts': [
-                            {'tool_name': 'my_ret', 'args': {'x': 0}, 'tool_call_id': None, 'part_kind': 'tool-call'}
-                        ],
-                        'model_name': 'test',
-                        'timestamp': IsStr(regex=r'\d{4}-\d{2}-.+'),
-                        'kind': 'response',
-                    },
-                    {
-                        'parts': [
-                            {
-                                'tool_name': 'my_ret',
-                                'content': '1',
-                                'tool_call_id': None,
-                                'timestamp': IsStr(regex=r'\d{4}-\d{2}-.+'),
-                                'part_kind': 'tool-return',
-                            },
-                        ],
-                        'kind': 'request',
-                    },
-                    {
-                        'parts': [{'content': '{"my_ret":"1"}', 'part_kind': 'text'}],
-                        'model_name': 'test',
-                        'timestamp': IsStr(regex=r'\d{4}-\d{2}-.+'),
-                        'kind': 'response',
-                    },
-                ]
+            'all_messages_events': IsJson(
+                snapshot(
+                    [
+                        {
+                            'content': 'Hello',
+                            'role': 'user',
+                            'event.name': 'gen_ai.user.message',
+                        },
+                        {
+                            'role': 'assistant',
+                            'tool_calls': [
+                                {
+                                    'id': None,
+                                    'type': 'function',
+                                    'function': {
+                                        'name': 'my_ret',
+                                        'arguments': {'x': 0},
+                                    },
+                                }
+                            ],
+                            'event.name': 'gen_ai.assistant.message',
+                        },
+                        {
+                            'content': '1',
+                            'role': 'tool',
+                            'id': None,
+                            'event.name': 'gen_ai.tool.message',
+                        },
+                        {
+                            'role': 'assistant',
+                            'content': '{"my_ret":"1"}',
+                            'event.name': 'gen_ai.assistant.message',
+                        },
+                    ]
+                )
             ),
             'usage': IsJson(
                 {'requests': 2, 'request_tokens': 103, 'response_tokens': 12, 'total_tokens': 115, 'details': None}
