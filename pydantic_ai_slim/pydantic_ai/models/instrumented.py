@@ -173,14 +173,19 @@ class InstrumentedModel(WrapperModel):
                 event.attributes = {**(event.attributes or {}), **event_attributes}
                 self.event_logger.emit(event)
         else:
-            events_list: list[dict[str, Any]] = []
-            for event in events:
-                events_list.append({'event.name': event.name, **(event.body or {}), **event_attributes})
-
             attr_name = 'events'
             span.set_attributes(
                 {
-                    attr_name: json.dumps(events_list),
+                    attr_name: json.dumps(
+                        [
+                            {
+                                'event.name': event.name,
+                                **(event.body or {}),
+                                **event_attributes,
+                            }
+                            for event in events
+                        ]
+                    ),
                     'logfire.json_schema': json.dumps(
                         {
                             'type': 'object',
