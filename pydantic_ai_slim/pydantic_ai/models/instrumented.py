@@ -209,7 +209,7 @@ class InstrumentedModel(WrapperModel):
         for event in result:
             try:
                 event.body = ANY_ADAPTER.dump_python(event.body, mode='json')
-            except Exception:  # pragma: no cover
+            except Exception:
                 try:
                     event.body = str(event.body)
                 except Exception:
