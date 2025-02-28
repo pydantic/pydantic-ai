@@ -87,14 +87,13 @@ LatestBedrockModelNames = Literal[
     'mistral.mistral-large-2402-v1:0',
     'mistral.mistral-large-2407-v1:0',
 ]
-"""Latest Gemini models."""
+"""Latest Bedrock models."""
 
 BedrockModelName = Union[str, LatestBedrockModelNames]
 """Possible Bedrock model names.
 
-Since Gemini supports a variety of date-stamped models, we explicitly list the latest models but
-allow any name in the type hints.
-See [the Gemini API docs](https://ai.google.dev/gemini-api/docs/models/gemini#model-variations) for a full list.
+Since Gemini supports a variety of date-stamped models, we explicitly list the latest models but allow any name in the type hints.
+See [the Bedrock docs](https://docs.aws.amazon.com/bedrock/latest/userguide/models-supported.html) for a full list.
 """
 
 
@@ -198,10 +197,9 @@ class BedrockStreamedResponse(StreamedResponse):
         )
 
 
-# TODO(Marcelo): Should we call this `BedrockConverseAPI` instead?
 @dataclass(init=False)
-class BedrockModel(Model):
-    """A model that uses the Bedrock-runtime API."""
+class BedrockConverseModel(Model):
+    """A model that uses the Bedrock Converse API."""
 
     client: BedrockRuntimeClient
 

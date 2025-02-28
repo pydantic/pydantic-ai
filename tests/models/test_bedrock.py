@@ -19,7 +19,7 @@ from pydantic_ai.usage import Usage
 from ..conftest import IsDatetime, try_import
 
 with try_import() as imports_successful:
-    from pydantic_ai.models.bedrock import BedrockModel
+    from pydantic_ai.models.bedrock import BedrockConverseModel
 
 
 pytestmark = [
@@ -30,7 +30,7 @@ pytestmark = [
 
 
 async def test_bedrock_model():
-    model = BedrockModel('us.amazon.nova-micro-v1:0')
+    model = BedrockConverseModel('us.amazon.nova-micro-v1:0')
     agent = Agent(model=model, system_prompt='You are a chatbot.')
 
     result = await agent.run('Hello!')
@@ -60,7 +60,7 @@ async def test_bedrock_model():
 
 
 async def test_bedrock_model_structured_response():
-    model = BedrockModel('us.amazon.nova-micro-v1:0')
+    model = BedrockConverseModel('us.amazon.nova-micro-v1:0')
     agent = Agent(model=model, system_prompt='You are a helpful chatbot.', retries=5)
 
     class Response(TypedDict):
