@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
@@ -9,6 +10,7 @@ from typing import Any, Callable, Literal
 import logfire_api
 from opentelemetry._events import Event, EventLogger, EventLoggerProvider, get_event_logger_provider
 from opentelemetry.trace import Tracer, TracerProvider, get_tracer_provider
+from opentelemetry.util.types import AttributeValue
 
 from ..messages import (
     ModelMessage,
@@ -46,40 +48,42 @@ MODEL_SETTING_ATTRIBUTES: tuple[
     'frequency_penalty',
 )
 
-NOT_GIVEN = object()
-
 
 @dataclass
 class InstrumentedModel(WrapperModel):
-    """Model which is instrumented with logfire."""
+    """Model which is instrumented with OpenTelemetry."""
 
     tracer: Tracer = field(repr=False)
     event_logger: EventLogger = field(repr=False)
+    event_mode: Literal['attributes', 'logs'] = 'attributes'
 
     def __init__(
         self,
         wrapped: Model | KnownModelName,
         tracer_provider: TracerProvider | None = None,
         event_logger_provider: EventLoggerProvider | None = None,
+        event_mode: Literal['attributes', 'logs'] = 'attributes',
     ):
         super().__init__(wrapped)
         tracer_provider = tracer_provider or get_tracer_provider()
         event_logger_provider = event_logger_provider or get_event_logger_provider()
         self.tracer = tracer_provider.get_tracer('pydantic-ai')
         self.event_logger = event_logger_provider.get_event_logger('pydantic-ai')
+        self.event_mode = event_mode
 
     @classmethod
     def from_logfire(
         cls,
         wrapped: Model | KnownModelName,
         logfire_instance: logfire_api.Logfire = logfire_api.DEFAULT_LOGFIRE_INSTANCE,
+        event_mode: Literal['attributes', 'logs'] = 'attributes',
     ) -> InstrumentedModel:
         if hasattr(logfire_instance.config, 'get_event_logger_provider'):
             event_provider = logfire_instance.config.get_event_logger_provider()
         else:
             event_provider = None
         tracer_provider = logfire_instance.config.get_tracer_provider()
-        return cls(wrapped, tracer_provider, event_provider)
+        return cls(wrapped, tracer_provider, event_provider, event_mode)
 
     async def request(
         self,
@@ -111,7 +115,7 @@ class InstrumentedModel(WrapperModel):
                     finish(response_stream.get(), response_stream.usage())
 
     @contextmanager
-    def _instrument(
+    def _instrument(  # noqa: C901
         self,
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
@@ -126,7 +130,7 @@ class InstrumentedModel(WrapperModel):
         #  - server.port: to parse from the base_url
         #  - error.type: unclear if we should do something here or just always rely on span exceptions
         #  - gen_ai.request.stop_sequences/top_k: model_settings doesn't include these
-        attributes: dict[str, Any] = {
+        attributes: dict[str, AttributeValue] = {
             'gen_ai.operation.name': operation,
             'gen_ai.system': system,
             'gen_ai.request.model': model_name,
@@ -134,10 +138,11 @@ class InstrumentedModel(WrapperModel):
 
         if model_settings:
             for key in MODEL_SETTING_ATTRIBUTES:
-                if (value := model_settings.get(key, NOT_GIVEN)) is not NOT_GIVEN:
+                if isinstance(value := model_settings.get(key), (float, int)):
                     attributes[f'gen_ai.request.{key}'] = value
 
-        emit_event = partial(self._emit_event, system)
+        events_list = []
+        emit_event = partial(self._emit_event, system, events_list)
 
         with self.tracer.start_as_current_span(span_name, attributes=attributes) as span:
             if span.is_recording():
@@ -167,22 +172,36 @@ class InstrumentedModel(WrapperModel):
                         )
                 span.set_attributes(
                     {
-                        k: v
-                        for k, v in {
-                            # TODO finish_reason (https://github.com/open-telemetry/semantic-conventions/issues/1277), id
-                            #  https://github.com/pydantic/pydantic-ai/issues/886
-                            'gen_ai.response.model': response.model_name or model_name,
-                            'gen_ai.usage.input_tokens': usage.request_tokens,
-                            'gen_ai.usage.output_tokens': usage.response_tokens,
-                        }.items()
-                        if v is not None
+                        # TODO finish_reason (https://github.com/open-telemetry/semantic-conventions/issues/1277), id
+                        #  https://github.com/pydantic/pydantic-ai/issues/886
+                        'gen_ai.response.model': response.model_name or model_name,
+                        **usage.opentelemetry_attributes(),
                     }
                 )
+                if events_list:
+                    attr_name = 'events'
+                    span.set_attributes(
+                        {
+                            attr_name: json.dumps(events_list),
+                            'logfire.json_schema': json.dumps(
+                                {
+                                    'type': 'object',
+                                    'properties': {attr_name: {'type': 'array'}},
+                                }
+                            ),
+                        }
+                    )
 
             yield finish
 
-    def _emit_event(self, system: str, event_name: str, body: dict[str, Any]) -> None:
-        self.event_logger.emit(Event(event_name, body=body, attributes={'gen_ai.system': system}))
+    def _emit_event(
+        self, system: str, events_list: list[dict[str, Any]], event_name: str, body: dict[str, Any]
+    ) -> None:
+        attributes = {'gen_ai.system': system}
+        if self.event_mode == 'logs':
+            self.event_logger.emit(Event(event_name, body=body, attributes=attributes))
+        else:
+            events_list.append({'event.name': event_name, **body, **attributes})
 
 
 def _request_part_body(part: ModelRequestPart) -> tuple[str, dict[str, Any]]:
