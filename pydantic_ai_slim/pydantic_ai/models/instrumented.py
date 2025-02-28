@@ -180,7 +180,7 @@ class InstrumentedModel(WrapperModel):
             attr_name = 'events'
             span.set_attributes(
                 {
-                    attr_name: ANY_ADAPTER.dump_json(events),
+                    attr_name: ANY_ADAPTER.dump_json(events_list),
                     'logfire.json_schema': json.dumps(
                         {
                             'type': 'object',
