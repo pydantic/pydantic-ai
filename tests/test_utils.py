@@ -44,6 +44,30 @@ def test_check_object_json_schema():
     object_schema = {'type': 'object', 'properties': {'a': {'type': 'string'}}}
     assert check_object_json_schema(object_schema) == object_schema
 
+    ref_schema = {
+        '$defs': {
+            'JsonModel': {
+                'properties': {
+                    'type': {'title': 'Type', 'type': 'string'},
+                    'items': {'anyOf': [{'$ref': '#/$defs/JsonModel'}, {'type': 'null'}]},
+                },
+                'required': ['type', 'items'],
+                'title': 'JsonModel',
+                'type': 'object',
+            }
+        },
+        '$ref': '#/$defs/JsonModel',
+    }
+    assert check_object_json_schema(ref_schema) == {
+        'properties': {
+            'type': {'title': 'Type', 'type': 'string'},
+            'items': {'anyOf': [{'$ref': '#/$defs/JsonModel'}, {'type': 'null'}]},
+        },
+        'required': ['type', 'items'],
+        'title': 'JsonModel',
+        'type': 'object',
+    }
+
     array_schema = {'type': 'array', 'items': {'type': 'string'}}
     with pytest.raises(UserError, match='^Schema must be an object$'):
         check_object_json_schema(array_schema)
