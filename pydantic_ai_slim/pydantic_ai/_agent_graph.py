@@ -36,7 +36,7 @@ __all__ = (
     'GraphAgentDeps',
     'UserPromptNode',
     'ModelRequestNode',
-    'HandleResponseNode',
+    'CallToolsNode',
     'build_run_context',
     'capture_run_messages',
 )
@@ -243,12 +243,12 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
     request: _messages.ModelRequest
 
-    _result: HandleResponseNode[DepsT, NodeRunEndT] | None = field(default=None, repr=False)
+    _result: CallToolsNode[DepsT, NodeRunEndT] | None = field(default=None, repr=False)
     _did_stream: bool = field(default=False, repr=False)
 
     async def run(
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
-    ) -> HandleResponseNode[DepsT, NodeRunEndT]:
+    ) -> CallToolsNode[DepsT, NodeRunEndT]:
         if self._result is not None:
             return self._result
 
@@ -307,7 +307,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
     async def _make_request(
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
-    ) -> HandleResponseNode[DepsT, NodeRunEndT]:
+    ) -> CallToolsNode[DepsT, NodeRunEndT]:
         if self._result is not None:
             return self._result
 
@@ -344,7 +344,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
         response: _messages.ModelResponse,
         usage: _usage.Usage,
-    ) -> HandleResponseNode[DepsT, NodeRunEndT]:
+    ) -> CallToolsNode[DepsT, NodeRunEndT]:
         # Update usage
         ctx.state.usage.incr(usage, requests=0)
         if ctx.deps.usage_limits:
@@ -354,13 +354,13 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         ctx.state.message_history.append(response)
 
         # Set the `_result` attribute since we can't use `return` in an async iterator
-        self._result = HandleResponseNode(response)
+        self._result = CallToolsNode(response)
 
         return self._result
 
 
 @dataclasses.dataclass
-class HandleResponseNode(AgentNode[DepsT, NodeRunEndT]):
+class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
     """Process a model response, and decide whether to end the run or make a new request."""
 
     model_response: _messages.ModelResponse
@@ -716,7 +716,7 @@ def build_agent_graph(
     nodes = (
         UserPromptNode[DepsT],
         ModelRequestNode[DepsT],
-        HandleResponseNode[DepsT],
+        CallToolsNode[DepsT],
     )
     graph = Graph[GraphAgentState, GraphAgentDeps[DepsT, Any], result.FinalResult[ResultT]](
         nodes=nodes,

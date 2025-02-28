@@ -133,7 +133,7 @@ async def main():
                 kind='request',
             )
         ),
-        HandleResponseNode(
+        CallToolsNode(
             model_response=ModelResponse(
                 parts=[TextPart(content='Paris', part_kind='text')],
                 model_name='gpt-4o',
@@ -194,7 +194,7 @@ async def main():
                     kind='request',
                 )
             ),
-            HandleResponseNode(
+            CallToolsNode(
                 model_response=ModelResponse(
                     parts=[TextPart(content='Paris', part_kind='text')],
                     model_name='gpt-4o',
@@ -311,10 +311,10 @@ async def main():
                             output_messages.append(
                                 f'[Result] The model produced a final result (tool_name={event.tool_name})'
                             )
-            elif Agent.is_handle_response_node(node):
+            elif Agent.is_call_tools_node(node):
                 # A handle-response node => The model returned some data, potentially calls a tool
                 output_messages.append(
-                    '=== HandleResponseNode: streaming partial response & tool usage ==='
+                    '=== CallToolsNode: streaming partial response & tool usage ==='
                 )
                 async with node.stream(run.ctx) as handle_stream:
                     async for event in handle_stream:
@@ -343,7 +343,7 @@ if __name__ == '__main__':
         '[Request] Part 0 args_delta=ris","forecast_',
         '[Request] Part 0 args_delta=date":"2030-01-',
         '[Request] Part 0 args_delta=01"}',
-        '=== HandleResponseNode: streaming partial response & tool usage ===',
+        '=== CallToolsNode: streaming partial response & tool usage ===',
         '[Tools] The LLM calls tool=\'weather_forecast\' with args={"location":"Paris","forecast_date":"2030-01-01"} (tool_call_id=\'0001\')',
         "[Tools] Tool call '0001' returned => The forecast in Paris on 2030-01-01 is 24°C and sunny.",
         '=== ModelRequestNode: streaming partial request tokens ===',
@@ -352,7 +352,7 @@ if __name__ == '__main__':
         "[Request] Part 0 text delta: 'warm and sunny '",
         "[Request] Part 0 text delta: 'in Paris on '",
         "[Request] Part 0 text delta: 'Tuesday.'",
-        '=== HandleResponseNode: streaming partial response & tool usage ===',
+        '=== CallToolsNode: streaming partial response & tool usage ===',
         '=== Final Agent Output: It will be warm and sunny in Paris on Tuesday. ===',
     ]
     """
