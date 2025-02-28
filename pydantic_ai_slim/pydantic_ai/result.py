@@ -145,12 +145,14 @@ class AgentStream(Generic[AgentDepsT, ResultDataT]):
                 if isinstance(e, _messages.PartStartEvent):
                     new_part = e.part
                     if isinstance(new_part, _messages.ToolCallPart):
-                        if result_schema is not None and (match := result_schema.find_tool([new_part])):
-                            call, _ = match
-                            return _messages.FinalResultEvent(tool_name=call.tool_name)
+                        if result_schema:
+                            for call, _ in result_schema.find_tool([new_part]):
+                                return _messages.FinalResultEvent(
+                                    tool_name=call.tool_name, tool_call_id=call.tool_call_id
+                                )
                     elif allow_text_result:
                         assert_type(e, _messages.PartStartEvent)
-                        return _messages.FinalResultEvent(tool_name=None)
+                        return _messages.FinalResultEvent(tool_name=None, tool_call_id=None)
 
             usage_checking_stream = _get_usage_checking_stream_response(
                 self._raw_stream_response, self._usage_limits, self.usage
@@ -472,6 +474,8 @@ class FinalResult(Generic[ResultDataT]):
     """The final result data."""
     tool_name: str | None
     """Name of the final result tool; `None` if the result came from unstructured text content."""
+    tool_call_id: str | None
+    """ID of the tool call that produced the final result; `None` if the result came from unstructured text content."""
 
 
 def _get_usage_checking_stream_response(
