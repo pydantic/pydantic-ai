@@ -48,6 +48,8 @@ def check_object_json_schema(schema: JsonSchemaValue) -> ObjectJsonSchema:
 
     if schema.get('type') == 'object':
         return schema
+    elif schema.get('$ref') is not None:
+        return schema.get('$defs', {}).get(schema['$ref'].split('/')[-1])
     else:
         raise UserError('Schema must be an object')
 
