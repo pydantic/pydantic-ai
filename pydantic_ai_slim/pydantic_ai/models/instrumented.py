@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator, Iterator, Mapping
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from typing import Any, Callable, Literal
@@ -167,25 +167,16 @@ class InstrumentedModel(WrapperModel):
             yield finish
 
     def _emit_events(self, system: str, span: Span, events: list[Event]) -> None:
-        event_attributes = {'gen_ai.system': system}
+        for event in events:
+            event.attributes = {'gen_ai.system': system, **(event.attributes or {})}
         if self.event_mode == 'logs':
             for event in events:
-                event.attributes = {**(event.attributes or {}), **event_attributes}
                 self.event_logger.emit(event)
         else:
             attr_name = 'events'
             span.set_attributes(
                 {
-                    attr_name: json.dumps(
-                        [
-                            {
-                                'event.name': event.name,
-                                **(event.body or {}),
-                                **event_attributes,
-                            }
-                            for event in events
-                        ]
-                    ),
+                    attr_name: json.dumps([self.event_to_dict(event) for event in events]),
                     'logfire.json_schema': json.dumps(
                         {
                             'type': 'object',
@@ -195,7 +186,18 @@ class InstrumentedModel(WrapperModel):
                 }
             )
 
-    def messages_to_otel_events(self, messages: list[ModelMessage]) -> list[Event]:
+    @staticmethod
+    def event_to_dict(event: Event) -> dict[str, Any]:
+        if not event.body:
+            body = {}
+        elif isinstance(event.body, Mapping):
+            body = event.body  # type: ignore
+        else:
+            body = {'body': event.body}
+        return {**body, **(event.attributes or {})}
+
+    @staticmethod
+    def messages_to_otel_events(messages: list[ModelMessage]) -> list[Event]:
         result: list[Event] = []
         for message in messages:
             if isinstance(message, ModelRequest):
