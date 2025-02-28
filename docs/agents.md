@@ -114,7 +114,7 @@ agent = Agent('openai:gpt-4o')
 async def main():
     nodes = []
     # Begin an AgentRun, which is an async-iterable over the nodes of the agent's graph
-    with agent.iter('What is the capital of France?') as agent_run:
+    async with agent.iter('What is the capital of France?') as agent_run:
         async for node in agent_run:
             # Each node represents a step in the agent's execution
             nodes.append(node)
@@ -163,7 +163,7 @@ agent = Agent('openai:gpt-4o')
 
 
 async def main():
-    with agent.iter('What is the capital of France?') as agent_run:
+    async with agent.iter('What is the capital of France?') as agent_run:
         node = agent_run.next_node  # (1)!
 
         all_nodes = [node]
@@ -282,7 +282,7 @@ async def main():
     user_prompt = 'What will the weather be like in Paris on Tuesday?'
 
     # Begin a node-by-node, streaming iteration
-    with weather_agent.iter(user_prompt, deps=WeatherService()) as run:
+    async with weather_agent.iter(user_prompt, deps=WeatherService()) as run:
         async for node in run:
             if Agent.is_user_prompt_node(node):
                 # A user prompt node => The user has provided input

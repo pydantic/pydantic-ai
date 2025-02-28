@@ -761,7 +761,7 @@ async def test_iter_stream_output():
     messages: list[str] = []
 
     stream_usage: Usage | None = None
-    with agent.iter('Hello') as run:
+    async with agent.iter('Hello') as run:
         async for node in run:
             if agent.is_model_request_node(node):
                 async with node.stream(run.ctx) as stream:
@@ -800,7 +800,7 @@ async def test_iter_stream_responses():
     run: AgentRun
     stream: AgentStream
     messages: list[ModelResponse] = []
-    with agent.iter('Hello') as run:
+    async with agent.iter('Hello') as run:
         async for node in run:
             if agent.is_model_request_node(node):
                 async with node.stream(run.ctx) as stream:
@@ -843,7 +843,7 @@ async def test_stream_iter_structured_validator() -> None:
         return ResultType(value=data.value + ' (validated)')
 
     outputs: list[ResultType] = []
-    with agent.iter('test') as run:
+    async with agent.iter('test') as run:
         async for node in run:
             if agent.is_model_request_node(node):
                 async with node.stream(run.ctx) as stream:
