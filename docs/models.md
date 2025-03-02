@@ -155,12 +155,6 @@ agent = Agent(model)
 
 ## Gemini
 
-!!! warning "For prototyping only"
-    Google themselves refer to this API as the "hobby" API, I've received 503 responses from it a number of times.
-    The API is easy to use and useful for prototyping and simple demos, but I would not rely on it in production.
-
-    If you want to run Gemini models in production, you should use the [VertexAI API](#gemini-via-vertexai) described below.
-
 ### Install
 
 To use [`GeminiModel`][pydantic_ai.models.gemini.GeminiModel] models, you just need to install [`pydantic-ai`](install.md) or [`pydantic-ai-slim`](install.md#slim-install), no extra dependencies are required.
@@ -171,7 +165,7 @@ To use [`GeminiModel`][pydantic_ai.models.gemini.GeminiModel] models, you just n
 
 [`GeminiModelName`][pydantic_ai.models.gemini.GeminiModelName] contains a list of available Gemini models that can be used through this interface.
 
-To use `GeminiModel`, go to [aistudio.google.com](https://aistudio.google.com/) and follow your nose until you find the place to generate an API key.
+To use `GeminiModel`, go to [aistudio.google.com](https://aistudio.google.com/apikey) and select "Create API key".
 
 ### Environment variable
 
@@ -186,7 +180,7 @@ You can then use [`GeminiModel`][pydantic_ai.models.gemini.GeminiModel] by name:
 ```python {title="gemini_model_by_name.py"}
 from pydantic_ai import Agent
 
-agent = Agent('google-gla:gemini-1.5-flash')
+agent = Agent('google-gla:gemini-2.0-flash')
 ...
 ```
 
@@ -200,7 +194,7 @@ Or initialise the model directly with just the model name:
 from pydantic_ai import Agent
 from pydantic_ai.models.gemini import GeminiModel
 
-model = GeminiModel('gemini-1.5-flash')
+model = GeminiModel('gemini-2.0-flash')
 agent = Agent(model)
 ...
 ```
@@ -213,14 +207,14 @@ If you don't want to or can't set the environment variable, you can pass it at r
 from pydantic_ai import Agent
 from pydantic_ai.models.gemini import GeminiModel
 
-model = GeminiModel('gemini-1.5-flash', api_key='your-api-key')
+model = GeminiModel('gemini-2.0-flash', api_key='your-api-key')
 agent = Agent(model)
 ...
 ```
 
 ## Gemini via VertexAI
 
-To run Google's Gemini models in production, you should use [`VertexAIModel`][pydantic_ai.models.vertexai.VertexAIModel] which uses the `*-aiplatform.googleapis.com` API.
+If you are an enterprise user, you should use [`VertexAIModel`][pydantic_ai.models.vertexai.VertexAIModel] which uses the `*-aiplatform.googleapis.com` API.
 
 [`GeminiModelName`][pydantic_ai.models.gemini.GeminiModelName] contains a list of available Gemini models that can be used through this interface.
 
@@ -236,7 +230,7 @@ pip/uv-add 'pydantic-ai-slim[vertexai]'
 
 This interface has a number of advantages over `generativelanguage.googleapis.com` documented above:
 
-1. The VertexAI API is more reliably and marginally lower latency in our experience.
+1. The VertexAI API comes with more enterprise readiness guarantees.
 2. You can
    [purchase provisioned throughput](https://cloud.google.com/vertex-ai/generative-ai/docs/provisioned-throughput#purchase-provisioned-throughput)
    with VertexAI to guarantee capacity.
@@ -258,7 +252,7 @@ To use `VertexAIModel`, with [application default credentials](https://cloud.goo
 from pydantic_ai import Agent
 from pydantic_ai.models.vertexai import VertexAIModel
 
-model = VertexAIModel('gemini-1.5-flash')
+model = VertexAIModel('gemini-2.0-flash')
 agent = Agent(model)
 ...
 ```
@@ -282,7 +276,7 @@ from pydantic_ai import Agent
 from pydantic_ai.models.vertexai import VertexAIModel
 
 model = VertexAIModel(
-    'gemini-1.5-flash',
+    'gemini-2.0-flash',
     service_account_file='path/to/service-account.json',
 )
 agent = Agent(model)
@@ -299,7 +293,7 @@ Using a region close to your application can improve latency and might be import
 from pydantic_ai import Agent
 from pydantic_ai.models.vertexai import VertexAIModel
 
-model = VertexAIModel('gemini-1.5-flash', region='asia-east1')
+model = VertexAIModel('gemini-2.0-flash', region='asia-east1')
 agent = Agent(model)
 ...
 ```
