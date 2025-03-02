@@ -52,5 +52,13 @@ def infer_provider(provider: str) -> Provider[Any]:
         from .deepseek import DeepSeekProvider
 
         return DeepSeekProvider()
+    elif provider == 'google-vertex':
+        from .google_vertexai import VertexAIProvider
+
+        return VertexAIProvider()
+    elif provider == 'google-gla':
+        from .google_gla import GoogleGLAProvider
+
+        return GoogleGLAProvider()
     else:
         raise ValueError(f'Unknown provider: {provider}')

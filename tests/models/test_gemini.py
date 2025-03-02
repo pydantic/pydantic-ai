@@ -81,7 +81,7 @@ def test_api_key_empty(env: TestEnv):
 
 async def test_model_simple(allow_model_requests: None):
     m = GeminiModel('gemini-1.5-flash', api_key='via-arg')
-    assert isinstance(m.http_client, httpx.AsyncClient)
+    assert isinstance(m.client, httpx.AsyncClient)
     assert m.model_name == 'gemini-1.5-flash'
     assert isinstance(m.auth, ApiKeyAuth)
     assert m.auth.api_key == 'via-arg'

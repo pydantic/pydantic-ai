@@ -1,12 +1,8 @@
 from __future__ import annotations as _annotations
 
 import functools
-
-from pydantic_ai._utils import run_in_executor
-
-run_in_executor
-
 from collections.abc import AsyncGenerator
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Literal
 
@@ -25,9 +21,15 @@ try:
     from google.oauth2.service_account import Credentials as ServiceAccountCredentials
 except ImportError as _import_error:
     raise ImportError(
-        'Please install `google-auth` to use the VertexAI model, '
+        'Please install `google-auth` to use the VertexAI provider, '
         "you can use the `vertexai` optional group — `pip install 'pydantic-ai-slim[vertexai]'`"
     ) from _import_error
+
+
+__all__ = ('VertexAIProvider',)
+
+# default expiry is 3600 seconds
+MAX_TOKEN_AGE = timedelta(seconds=3000)
 
 
 class VertexAIProvider(Provider[httpx.AsyncClient]):
@@ -35,11 +37,16 @@ class VertexAIProvider(Provider[httpx.AsyncClient]):
 
     @property
     def name(self) -> str:
-        return 'vertexai'
+        return 'google-vertex'
 
     @property
     def base_url(self) -> str:
-        return 'https://{region}-aiplatform.googleapis.com/v1'
+        return (
+            f'https://{self.region}-aiplatform.googleapis.com/v1'
+            f'/projects/{self.project_id}'
+            f'/locations/{self.region}'
+            f'/publishers/{self.model_publisher}/models/'
+        )
 
     @property
     def client(self) -> httpx.AsyncClient:
@@ -47,9 +54,9 @@ class VertexAIProvider(Provider[httpx.AsyncClient]):
 
     def __init__(
         self,
-        service_account_file: str,
-        project_id: str,
-        region: str,
+        service_account_file: Path | str | None = None,
+        project_id: str | None = None,
+        region: VertexAiRegion = 'us-central1',
         model_publisher: str = 'google',
         http_client: httpx.AsyncClient | None = None,
     ) -> None:
@@ -59,9 +66,14 @@ class VertexAIProvider(Provider[httpx.AsyncClient]):
         self.region = region
         self.model_publisher = model_publisher
 
+        self._client.auth = _VertexAIAuth(service_account_file, project_id, region)
+        self._client.base_url = self.base_url
 
-class VertexAIAuth(httpx.Auth):
+
+class _VertexAIAuth(httpx.Auth):
     """Auth class for Vertex AI API."""
+
+    credentials: BaseCredentials | ServiceAccountCredentials | None
 
     def __init__(
         self,
@@ -78,11 +90,21 @@ class VertexAIAuth(httpx.Auth):
     async def async_auth_flow(self, request: httpx.Request) -> AsyncGenerator[httpx.Request, httpx.Response]:
         if self.credentials is None:
             self.credentials = await self._get_credentials()
+        if self.credentials.token is None or self._token_expired():  # type: ignore[reportUnknownMemberType]
+            await anyio.to_thread.run_sync(self._refresh_token)
+            self.token_created = datetime.now()
+        request.headers['Authorization'] = f'Bearer {self.credentials.token}'  # type: ignore[reportUnknownMemberType]
+
+        # NOTE: This workaround is in place because we might get the project_id from the credentials.
+        request.url = httpx.URL(str(request.url).replace('projects/None', f'projects/{self.project_id}'))
         yield request
 
     async def _get_credentials(self) -> BaseCredentials | ServiceAccountCredentials:
         if self.service_account_file is not None:
-            creds: BaseCredentials | ServiceAccountCredentials = await _creds_from_file(self.service_account_file)
+            creds = await _creds_from_file(self.service_account_file)
+            assert creds.project_id is None or isinstance(creds.project_id, str)  # type: ignore[reportUnknownMemberType]
+            creds_project_id: str | None = creds.project_id
+            creds_source = 'service account file'
         else:
             creds, creds_project_id = await _async_google_auth()
             creds_source = '`google.auth.default()`'
@@ -90,11 +112,20 @@ class VertexAIAuth(httpx.Auth):
         if self.project_id is None:
             if creds_project_id is None:
                 raise UserError(f'No project_id provided and none found in {creds_source}')
-            project_id = creds_project_id
-        else:
-            project_id = self.project_id
-
+            self.project_id = creds_project_id
         return creds
+
+    def _token_expired(self) -> bool:
+        if self.token_created is None:
+            return True
+        else:
+            return (datetime.now() - self.token_created) > MAX_TOKEN_AGE
+
+    def _refresh_token(self) -> str:
+        assert self.credentials is not None
+        self.credentials.refresh(Request())  # type: ignore[reportUnknownMemberType]
+        assert isinstance(self.credentials.token, str), f'Expected token to be a string, got {self.credentials.token}'  # type: ignore[reportUnknownMemberType]
+        return self.credentials.token
 
 
 async def _async_google_auth() -> tuple[BaseCredentials, str | None]:
