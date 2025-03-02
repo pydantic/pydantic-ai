@@ -55,6 +55,8 @@ mistral = ["mistralai>=1.2.5"]
 # Tools
 duckduckgo = ["duckduckgo-search>=7.0.0"]
 tavily = ["tavily-python>=0.5.0"]
+# CLI
+cli = ["rich>=13", "prompt-toolkit>=3"]
 
 [dependency-groups]
 dev = [
@@ -70,6 +72,9 @@ dev = [
     "pytest-recording>=0.13.2",
     "diff-cover>=9.2.0",
 ]
+
+[project.scripts]
+pydai = "pydantic_ai._cli:cli"
 
 [tool.hatch.build.targets.wheel]
 packages = ["pydantic_ai"]
