@@ -104,7 +104,7 @@ class VertexAIModel(GeminiModel):
         self.project_id = project_id
         self.region = region
         self.model_publisher = model_publisher
-        self.http_client = http_client or cached_async_http_client()
+        self.client = http_client or cached_async_http_client()
         self.url_template = url_template
 
         self._auth = None
