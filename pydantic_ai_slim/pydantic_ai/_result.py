@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 import inspect
 import sys
 import types
-from collections.abc import Awaitable, Iterable
+from collections.abc import Awaitable, Iterable, Iterator
 from dataclasses import dataclass, field
 from typing import Any, Callable, Generic, Literal, Union, cast, get_args, get_origin
 
@@ -127,12 +127,12 @@ class ResultSchema(Generic[ResultDataT]):
     def find_tool(
         self,
         parts: Iterable[_messages.ModelResponsePart],
-    ) -> tuple[_messages.ToolCallPart, ResultTool[ResultDataT]] | None:
+    ) -> Iterator[tuple[_messages.ToolCallPart, ResultTool[ResultDataT]]]:
         """Find a tool that matches one of the calls."""
         for part in parts:
             if isinstance(part, _messages.ToolCallPart):
                 if result := self.tools.get(part.tool_name):
-                    return part, result
+                    yield part, result
 
     def tool_names(self) -> list[str]:
         """Return the names of the tools."""
