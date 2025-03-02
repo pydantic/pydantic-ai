@@ -7,14 +7,20 @@ from importlib.metadata import version
 from pathlib import Path
 from typing import Literal, TypedDict, cast
 
-from prompt_toolkit import PromptSession
-from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
-from prompt_toolkit.history import FileHistory
-from rich.console import Console, ConsoleOptions, RenderResult
-from rich.live import Live
-from rich.markdown import CodeBlock, Markdown
-from rich.syntax import Syntax
-from rich.text import Text
+try:
+    from prompt_toolkit import PromptSession
+    from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
+    from prompt_toolkit.history import FileHistory
+    from rich.console import Console, ConsoleOptions, RenderResult
+    from rich.live import Live
+    from rich.markdown import CodeBlock, Markdown
+    from rich.syntax import Syntax
+    from rich.text import Text
+except ImportError as _import_error:
+    raise ImportError(
+        'Please install `rich` and `prompt-toolkit` to use the PydanticAI CLI, '
+        "you can use the `cli` optional group — `pip install 'pydantic-ai-slim[cli]'`"
+    ) from _import_error
 
 from pydantic_ai.agent import Agent
 from pydantic_ai.messages import ModelMessage, PartDeltaEvent, TextPartDelta
