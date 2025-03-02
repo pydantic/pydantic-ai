@@ -113,6 +113,7 @@ class VertexAIModel(GeminiModel):
             'The VertexAIModel is deprecated, please use the GeminiModel with the VertexAIProvider instead.',
             DeprecationWarning,
         )
+        self._provider = None
 
     async def ainit(self) -> None:
         """Initialize the model, setting the URL and auth.
