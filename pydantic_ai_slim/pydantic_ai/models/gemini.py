@@ -8,12 +8,14 @@ from contextlib import asynccontextmanager
 from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Annotated, Any, Literal, Protocol, Union, cast
+from typing import Annotated, Any, Literal, Protocol, Union, cast, overload
 from uuid import uuid4
 
 import pydantic
 from httpx import USE_CLIENT_DEFAULT, AsyncClient as AsyncHTTPClient, Response as HTTPResponse
-from typing_extensions import NotRequired, TypedDict, assert_never
+from typing_extensions import NotRequired, TypedDict, assert_never, deprecated
+
+from pydantic_ai.providers import Provider
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, UserError, _utils, usage
 from ..messages import (
@@ -88,10 +90,31 @@ class GeminiModel(Model):
     _url: str | None = field(repr=False)
     _system: str | None = field(default='google-gla', repr=False)
 
+    @overload
     def __init__(
         self,
         model_name: GeminiModelName,
         *,
+        provider: Literal['google', 'vertex'] | Provider[AsyncHTTPClient] = 'google',
+    ) -> None: ...
+
+    @deprecated('Use the `provider` argument instead of the `api_key`, `http_client`, and `url_template` arguments.')
+    @overload
+    def __init__(
+        self,
+        model_name: GeminiModelName,
+        *,
+        provider: None = None,
+        api_key: str | None = None,
+        http_client: AsyncHTTPClient | None = None,
+        url_template: str = 'https://generativelanguage.googleapis.com/v1beta/models/{model}:',
+    ) -> None: ...
+
+    def __init__(
+        self,
+        model_name: GeminiModelName,
+        *,
+        provider: Literal['google', 'vertex'] | Provider[AsyncHTTPClient] | None = None,
         api_key: str | None = None,
         http_client: AsyncHTTPClient | None = None,
         url_template: str = 'https://generativelanguage.googleapis.com/v1beta/models/{model}:',
@@ -100,6 +123,7 @@ class GeminiModel(Model):
 
         Args:
             model_name: The name of the model to use.
+            provider: The provider to use for the model.
             api_key: The API key to use for authentication, if not provided, the `GEMINI_API_KEY` environment variable
                 will be used if available.
             http_client: An existing `httpx.AsyncClient` to use for making HTTP requests.

@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+import warnings
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -108,6 +109,10 @@ class VertexAIModel(GeminiModel):
 
         self._auth = None
         self._url = None
+        warnings.warn(
+            'The VertexAIModel is deprecated, please use the GeminiModel with the VertexAIProvider instead.',
+            DeprecationWarning,
+        )
 
     async def ainit(self) -> None:
         """Initialize the model, setting the URL and auth.

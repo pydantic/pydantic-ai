@@ -100,7 +100,6 @@ class OpenAIModel(Model):
     _model_name: OpenAIModelName = field(repr=False)
     _system: str | None = field(repr=False)
 
-    @deprecated('Use provider parameter instead of `base_url`, `api_key`, `openai_client` and `http_client`.')
     @overload
     def __init__(
         self,
