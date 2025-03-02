@@ -308,7 +308,8 @@ class AnthropicModel(Model):
                                 is_error=True,
                             )
                         user_content_params.append(retry_param)
-                anthropic_messages.append(MessageParam(role='user', content=user_content_params))
+                if len(user_content_params) > 0:
+                    anthropic_messages.append(MessageParam(role='user', content=user_content_params))
             elif isinstance(m, ModelResponse):
                 assistant_content_params: list[TextBlockParam | ToolUseBlockParam] = []
                 for response_part in m.parts:
