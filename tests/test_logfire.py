@@ -76,14 +76,14 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary]) -> None:
                 'message': 'my_agent run prompt=Hello',
                 'children': [
                     {'id': 1, 'message': 'preparing model request params run_step=1'},
-                    {'id': 2, 'message': 'model request'},
+                    {'id': 2, 'message': 'chat test'},
                     {
                         'id': 3,
                         'message': 'handle model response -> tool-return',
                         'children': [{'id': 4, 'message': "running tools=['my_ret']"}],
                     },
                     {'id': 5, 'message': 'preparing model request params run_step=2'},
-                    {'id': 6, 'message': 'model request'},
+                    {'id': 6, 'message': 'chat test'},
                     {'id': 7, 'message': 'handle model response -> final result'},
                 ],
             }

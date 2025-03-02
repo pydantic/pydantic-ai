@@ -286,21 +286,18 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         assert not self._did_stream, 'stream() should only be called once per node'
 
         model_settings, model_request_parameters = await self._prepare_request(ctx)
-        with _logfire.span('model request', run_step=ctx.state.run_step) as span:
-            async with ctx.deps.model.request_stream(
-                ctx.state.message_history, model_settings, model_request_parameters
-            ) as streamed_response:
-                self._did_stream = True
-                ctx.state.usage.incr(_usage.Usage(), requests=1)
-                yield streamed_response
-                # In case the user didn't manually consume the full stream, ensure it is fully consumed here,
-                # otherwise usage won't be properly counted:
-                async for _ in streamed_response:
-                    pass
-            model_response = streamed_response.get()
-            request_usage = streamed_response.usage()
-            span.set_attribute('response', model_response)
-            span.set_attribute('usage', request_usage)
+        async with ctx.deps.model.request_stream(
+            ctx.state.message_history, model_settings, model_request_parameters
+        ) as streamed_response:
+            self._did_stream = True
+            ctx.state.usage.incr(_usage.Usage(), requests=1)
+            yield streamed_response
+            # In case the user didn't manually consume the full stream, ensure it is fully consumed here,
+            # otherwise usage won't be properly counted:
+            async for _ in streamed_response:
+                pass
+        model_response = streamed_response.get()
+        request_usage = streamed_response.usage()
 
         self._finish_handling(ctx, model_response, request_usage)
         assert self._result is not None  # this should be set by the previous line
@@ -312,13 +309,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             return self._result
 
         model_settings, model_request_parameters = await self._prepare_request(ctx)
-        with _logfire.span('model request', run_step=ctx.state.run_step) as span:
-            model_response, request_usage = await ctx.deps.model.request(
-                ctx.state.message_history, model_settings, model_request_parameters
-            )
-            ctx.state.usage.incr(_usage.Usage(), requests=1)
-            span.set_attribute('response', model_response)
-            span.set_attribute('usage', request_usage)
+        model_response, request_usage = await ctx.deps.model.request(
+            ctx.state.message_history, model_settings, model_request_parameters
+        )
+        ctx.state.usage.incr(_usage.Usage(), requests=1)
 
         return self._finish_handling(ctx, model_response, request_usage)
 

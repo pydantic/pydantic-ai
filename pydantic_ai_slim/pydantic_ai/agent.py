@@ -25,6 +25,7 @@ from . import (
     result,
     usage as _usage,
 )
+from .models.instrumented import InstrumentedModel
 from .result import FinalResult, ResultDataT, StreamedRunResult
 from .settings import ModelSettings, merge_model_settings
 from .tools import (
@@ -1114,6 +1115,9 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
             model_ = self.model = models.infer_model(self.model)
         else:
             raise exceptions.UserError('`model` must be set either when creating the agent or when calling it.')
+
+        if not isinstance(model_, InstrumentedModel):
+            model_ = InstrumentedModel(model_)
 
         return model_
 
