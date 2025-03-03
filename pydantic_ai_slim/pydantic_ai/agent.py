@@ -113,7 +113,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
     """
 
     auto_instrument: bool
-    """TODO"""
+    """Automatically instrument with OpenTelemetry. Will use Logfire if it's configured."""
 
     _deps_type: type[AgentDepsT] = dataclasses.field(repr=False)
     _result_tool_name: str = dataclasses.field(repr=False)
@@ -177,7 +177,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
                 [override the model][pydantic_ai.Agent.override] for testing.
             end_strategy: Strategy for handling tool calls that are requested alongside a final result.
                 See [`EndStrategy`][pydantic_ai.agent.EndStrategy] for more information.
-            auto_instrument: TODO
+            auto_instrument: Automatically instrument with OpenTelemetry. Will use Logfire if it's configured.
         """
         if model is None or defer_model_check:
             self.model = model
