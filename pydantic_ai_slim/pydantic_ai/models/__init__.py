@@ -28,6 +28,7 @@ if TYPE_CHECKING:
 
 
 KnownModelName = Literal[
+    'anthropic:claude-3-7-sonnet-latest',
     'anthropic:claude-3-5-haiku-latest',
     'anthropic:claude-3-5-sonnet-latest',
     'anthropic:claude-3-opus-latest',
