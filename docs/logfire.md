@@ -64,7 +64,7 @@ and enable instrumentation in your agent:
 ```python {title="instrument_agent.py"}
 from pydantic_ai import Agent
 
-agent = Agent(..., auto_instrument=True)
+agent = Agent('openai:gpt-4o', auto_instrument=True)
 ```
 
 The [logfire documentation](https://logfire.pydantic.dev/docs/) has more details on how to use logfire,
@@ -113,7 +113,7 @@ from pydantic_ai import Agent
 logfire.configure()
 logfire.instrument_httpx(capture_all=True)  # (1)!
 
-agent = Agent('openai:gpt-4o')
+agent = Agent('openai:gpt-4o', auto_instrument=True)
 result = agent.run_sync('What is the capital of France?')
 print(result.data)
 #> The capital of France is Paris.
