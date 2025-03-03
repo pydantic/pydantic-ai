@@ -168,7 +168,7 @@ To understand the flow of the above runs, we can watch the agent in action using
 
 To do this, we need to set up logfire, and add the following to our code:
 
-```python {title="bank_support_with_logfire.py" hl_lines="6-8,20" test="skip" lint="skip"}
+```python {title="bank_support_with_logfire.py" hl_lines="6-8 20" test="skip" lint="skip"}
 ...
 from pydantic_ai import Agent, RunContext
 
