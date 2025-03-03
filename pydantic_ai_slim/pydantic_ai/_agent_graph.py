@@ -98,6 +98,7 @@ class GraphAgentDeps(Generic[DepsT, ResultDataT]):
     usage_limits: _usage.UsageLimits
     max_result_retries: int
     end_strategy: EndStrategy
+    reflect_on_tool_call: bool
 
     result_schema: _result.ResultSchema[ResultDataT] | None
     result_tools: list[ToolDefinition]
@@ -304,16 +305,23 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         assert self._result is not None  # this should be set by the previous line
 
     async def _make_request(
-        self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
+        self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
     ) -> CallToolsNode[DepsT, NodeRunEndT]:
         if self._result is not None:
             return self._result
 
         model_settings, model_request_parameters = await self._prepare_request(ctx)
-        model_response, request_usage = await ctx.deps.model.request(
-            ctx.state.message_history, model_settings, model_request_parameters
-        )
-        ctx.state.usage.incr(_usage.Usage(), requests=1)
+        if not ctx.deps.reflect_on_tool_call and isinstance(self.request.parts[0], _messages.ToolReturnPart):
+            model_response = models.ModelResponse(
+                parts=[_messages.TextPart(content='End tool call')],
+                model_name=ctx.deps.model.model_name,
+            )
+            request_usage = _usage.Usage()
+        else:
+            model_response, request_usage = await ctx.deps.model.request(
+                ctx.state.message_history, model_settings, model_request_parameters,
+            )
+            ctx.state.usage.incr(_usage.Usage(), requests=1)
 
         return self._finish_handling(ctx, model_response, request_usage)
 
