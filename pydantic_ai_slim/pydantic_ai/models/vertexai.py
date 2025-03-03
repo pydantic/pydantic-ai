@@ -110,7 +110,7 @@ class VertexAIModel(GeminiModel):
         self._auth = None
         self._url = None
         warnings.warn(
-            'The VertexAIModel is deprecated, please use the GeminiModel with the VertexAIProvider instead.',
+            'VertexAIModel is deprecated, please use `GeminiModel(provider=VertexAIProvider(...))` instead.',
             DeprecationWarning,
         )
         self._provider = None
