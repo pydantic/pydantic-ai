@@ -61,6 +61,7 @@ try:
         ToolResultBlockParam,
         ToolUseBlock,
         ToolUseBlockParam,
+        ContentBlock,
     )
 except ImportError as _import_error:
     raise ImportError(
@@ -71,6 +72,7 @@ except ImportError as _import_error:
 LatestAnthropicModelNames = Literal[
     'claude-3-5-haiku-latest',
     'claude-3-5-sonnet-latest',
+    'claude-3-7-sonnet-latest',
     'claude-3-opus-latest',
 ]
 """Latest Anthropic models."""
@@ -423,7 +425,7 @@ class AnthropicStreamedResponse(StreamedResponse):
     _timestamp: datetime
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
-        current_block: TextBlock | ToolUseBlock | None = None
+        current_block: ContentBlock | None = None
         current_json: str = ''
 
         async for event in self._response:

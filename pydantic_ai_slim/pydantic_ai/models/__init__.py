@@ -28,13 +28,13 @@ if TYPE_CHECKING:
 
 
 KnownModelName = Literal[
+    'anthropic:claude-3-7-sonnet-latest',
     'anthropic:claude-3-5-haiku-latest',
     'anthropic:claude-3-5-sonnet-latest',
-    'anthropic:claude-3-7-sonnet-latest',
     'anthropic:claude-3-opus-latest',
+    'claude-3-7-sonnet-latest',
     'claude-3-5-haiku-latest',
     'claude-3-5-sonnet-latest',
-    'claude-3-7-sonnet-latest',
     'claude-3-opus-latest',
     'cohere:c4ai-aya-expanse-32b',
     'cohere:c4ai-aya-expanse-8b',
