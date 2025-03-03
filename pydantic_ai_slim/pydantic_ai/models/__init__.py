@@ -34,6 +34,7 @@ KnownModelName = Literal[
     'claude-3-5-haiku-latest',
     'claude-3-5-sonnet-latest',
     'claude-3-opus-latest',
+    'claude-3-7-sonnet-latest',
     'cohere:c4ai-aya-expanse-32b',
     'cohere:c4ai-aya-expanse-8b',
     'cohere:command',
