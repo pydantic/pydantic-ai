@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Literal
 
 from httpx import AsyncClient as AsyncHTTPClient
+from typing_extensions import deprecated
 
 from .. import usage
 from .._utils import run_in_executor
@@ -56,6 +57,7 @@ The template is used thus:
 """
 
 
+@deprecated('Please use `GeminiModel(provider=GoogleVertexProvider(...))` instead.')
 @dataclass(init=False)
 class VertexAIModel(GeminiModel):
     """A model that uses Gemini via the `*-aiplatform.googleapis.com` VertexAI API."""
@@ -110,7 +112,7 @@ class VertexAIModel(GeminiModel):
         self._auth = None
         self._url = None
         warnings.warn(
-            'VertexAIModel is deprecated, please use `GeminiModel(provider=VertexAIProvider(...))` instead.',
+            'VertexAIModel is deprecated, please use `GeminiModel(provider=GoogleVertexProvider(...))` instead.',
             DeprecationWarning,
         )
         self._provider = None

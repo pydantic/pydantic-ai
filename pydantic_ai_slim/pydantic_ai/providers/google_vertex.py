@@ -26,13 +26,13 @@ except ImportError as _import_error:
     ) from _import_error
 
 
-__all__ = ('VertexAIProvider',)
+__all__ = ('GoogleVertexProvider',)
 
 # default expiry is 3600 seconds
 MAX_TOKEN_AGE = timedelta(seconds=3000)
 
 
-class VertexAIProvider(Provider[httpx.AsyncClient]):
+class GoogleVertexProvider(Provider[httpx.AsyncClient]):
     """Provider for Vertex AI API."""
 
     @property
@@ -60,6 +60,19 @@ class VertexAIProvider(Provider[httpx.AsyncClient]):
         model_publisher: str = 'google',
         http_client: httpx.AsyncClient | None = None,
     ) -> None:
+        """Create a new Vertex AI provider.
+
+        Args:
+            service_account_file: Path to a service account file.
+                If not provided, the default environment credentials will be used.
+            project_id: The project ID to use, if not provided it will be taken from the credentials.
+            region: The region to make requests to.
+            model_publisher: The model publisher to use, I couldn't find a good list of available publishers,
+                and from trial and error it seems non-google models don't work with the `generateContent` and
+                `streamGenerateContent` functions, hence only `google` is currently supported.
+                Please create an issue or PR if you know how to use other publishers.
+            http_client: An existing `httpx.AsyncClient` to use for making HTTP requests.
+        """
         self._client = http_client or cached_async_http_client()
         self.service_account_file = service_account_file
         self.project_id = project_id

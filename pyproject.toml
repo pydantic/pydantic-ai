@@ -129,7 +129,7 @@ strict = true
 [tool.pytest.ini_options]
 testpaths = "tests"
 xfail_strict = true
-filterwarnings = ["error", "ignore::DeprecationWarning:pydantic_ai"]
+filterwarnings = ["error"]
 
 # https://coverage.readthedocs.io/en/latest/config.html#run
 [tool.coverage.run]
