@@ -42,6 +42,7 @@ from . import (
 try:
     from anthropic import NOT_GIVEN, APIStatusError, AsyncAnthropic, AsyncStream
     from anthropic.types import (
+        ContentBlock,
         ImageBlockParam,
         Message as AnthropicMessage,
         MessageParam,
@@ -61,7 +62,6 @@ try:
         ToolResultBlockParam,
         ToolUseBlock,
         ToolUseBlockParam,
-        ContentBlock,
     )
 except ImportError as _import_error:
     raise ImportError(
