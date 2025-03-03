@@ -69,7 +69,7 @@ except ImportError as _import_error:
     ) from _import_error
 
 LatestAnthropicModelNames = Literal[
-    'claude-3-7'
+    'claude-3-7-sonnet-latest'
     'claude-3-5-haiku-latest',
     'claude-3-5-sonnet-latest',
     'claude-3-opus-latest',
