@@ -9,7 +9,7 @@ workers_dev = false
 directory = "../site"
 binding = "ASSETS"
 # so we can rewrite the HTML to insert the version notice
-experimental_serve_directly = false
+run_worker_first = true
 
 [[kv_namespaces]]
 binding = "VERSION_NOTICE_CACHE"

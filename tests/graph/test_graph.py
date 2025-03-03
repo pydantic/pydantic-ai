@@ -60,7 +60,7 @@ async def test_graph():
     assert my_graph._inferred_types == (type(None), int)
     result = await my_graph.run(Float2String(3.14))
     # len('3.14') * 2 == 8
-    assert result == 8
+    assert result.output == 8
     assert my_graph.name == 'my_graph'
 
 
@@ -99,7 +99,7 @@ async def test_graph_history():
     sp = FullStatePersistence()
     result = await my_graph.run(Float2String(3.14159), persistence=sp)
     # len('3.14159') == 7, 21 * 2 == 42
-    assert result == 42
+    assert result.output == 42
     assert sp.history == snapshot(
         [
             NodeSnapshot(
@@ -337,7 +337,7 @@ async def test_deps():
     sp = FullStatePersistence()
     result = await g.run(Foo(), deps=Deps(1, 2), persistence=sp)
 
-    assert result == 123
+    assert result.output == 123
     assert sp.history == snapshot(
         [
             NodeSnapshot(state=None, node=Foo(), start_ts=IsNow(tz=timezone.utc), duration=IsFloat()),

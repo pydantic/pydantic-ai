@@ -67,7 +67,7 @@ def test_simple():
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[TextPart(content="content='Hello' part_kind='user-prompt' message_count=1")],
-                model_name='function:return_last',
+                model_name='function:return_last:',
                 timestamp=IsNow(tz=timezone.utc),
             ),
         ]
@@ -80,13 +80,13 @@ def test_simple():
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[TextPart(content="content='Hello' part_kind='user-prompt' message_count=1")],
-                model_name='function:return_last',
+                model_name='function:return_last:',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(parts=[UserPromptPart(content='World', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[TextPart(content="content='World' part_kind='user-prompt' message_count=3")],
-                model_name='function:return_last',
+                model_name='function:return_last:',
                 timestamp=IsNow(tz=timezone.utc),
             ),
         ]
@@ -112,7 +112,14 @@ async def weather_model(messages: list[ModelMessage], info: AgentInfo) -> ModelR
         elif last.tool_name == 'get_weather':
             location_name: str | None = None
             for m in messages:
-                location_name = next((part.content for part in m.parts if isinstance(part, UserPromptPart)), None)
+                location_name = next(
+                    (
+                        item
+                        for item in (part.content for part in m.parts if isinstance(part, UserPromptPart))
+                        if isinstance(item, str)
+                    ),
+                    None,
+                )
                 if location_name is not None:
                     break
 
@@ -150,8 +157,8 @@ def test_weather():
         [
             ModelRequest(parts=[UserPromptPart(content='London', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
-                parts=[ToolCallPart('get_location', '{"location_description": "London"}')],
-                model_name='function:weather_model',
+                parts=[ToolCallPart(tool_name='get_location', args='{"location_description": "London"}')],
+                model_name='function:weather_model:',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
@@ -162,13 +169,8 @@ def test_weather():
                 ]
             ),
             ModelResponse(
-                parts=[
-                    ToolCallPart(
-                        'get_weather',
-                        '{"lat": 51, "lng": 0}',
-                    )
-                ],
-                model_name='function:weather_model',
+                parts=[ToolCallPart(tool_name='get_weather', args='{"lat": 51, "lng": 0}')],
+                model_name='function:weather_model:',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
@@ -176,7 +178,7 @@ def test_weather():
             ),
             ModelResponse(
                 parts=[TextPart(content='Raining in London')],
-                model_name='function:weather_model',
+                model_name='function:weather_model:',
                 timestamp=IsNow(tz=timezone.utc),
             ),
         ]
@@ -189,7 +191,7 @@ def test_weather():
 async def call_function_model(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:  # pragma: no cover
     last = messages[-1].parts[-1]
     if isinstance(last, UserPromptPart):
-        if last.content.startswith('{'):
+        if isinstance(last.content, str) and last.content.startswith('{'):
             details = json.loads(last.content)
             return ModelResponse(
                 parts=[
@@ -343,11 +345,11 @@ def test_call_all():
             ),
             ModelResponse(
                 parts=[
-                    ToolCallPart('foo', {'x': 0}),
-                    ToolCallPart('bar', {'x': 0}),
-                    ToolCallPart('baz', {'x': 0}),
-                    ToolCallPart('qux', {'x': 0}),
-                    ToolCallPart('quz', {'x': 'a'}),
+                    ToolCallPart(tool_name='foo', args={'x': 0}),
+                    ToolCallPart(tool_name='bar', args={'x': 0}),
+                    ToolCallPart(tool_name='baz', args={'x': 0}),
+                    ToolCallPart(tool_name='qux', args={'x': 0}),
+                    ToolCallPart(tool_name='quz', args={'x': 'a'}),
                 ],
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
@@ -431,7 +433,7 @@ async def test_stream_text():
                 ModelRequest(parts=[UserPromptPart(content='', timestamp=IsNow(tz=timezone.utc))]),
                 ModelResponse(
                     parts=[TextPart(content='hello world')],
-                    model_name='function:stream_text_function',
+                    model_name='function::stream_text_function',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
             ]

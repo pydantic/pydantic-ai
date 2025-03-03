@@ -1,11 +1,15 @@
 from __future__ import annotations as _annotations
 
+import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Annotated, Any, Literal, Union, cast, overload
 
 import pydantic
 import pydantic_core
+from opentelemetry._events import Event
+from typing_extensions import TypeAlias
 
 from ._utils import now_utc as _now_utc
 from .exceptions import UnexpectedModelBehavior
@@ -30,6 +34,96 @@ class SystemPromptPart:
     part_kind: Literal['system-prompt'] = 'system-prompt'
     """Part type identifier, this is available on all parts as a discriminator."""
 
+    def otel_event(self) -> Event:
+        return Event('gen_ai.system.message', body={'content': self.content, 'role': 'system'})
+
+
+@dataclass
+class AudioUrl:
+    """A URL to an audio file."""
+
+    url: str
+    """The URL of the audio file."""
+
+    kind: Literal['audio-url'] = 'audio-url'
+    """Type identifier, this is available on all parts as a discriminator."""
+
+    @property
+    def media_type(self) -> AudioMediaType:
+        """Return the media type of the audio file, based on the url."""
+        if self.url.endswith('.mp3'):
+            return 'audio/mpeg'
+        elif self.url.endswith('.wav'):
+            return 'audio/wav'
+        else:
+            raise ValueError(f'Unknown audio file extension: {self.url}')
+
+
+@dataclass
+class ImageUrl:
+    """A URL to an image."""
+
+    url: str
+    """The URL of the image."""
+
+    kind: Literal['image-url'] = 'image-url'
+    """Type identifier, this is available on all parts as a discriminator."""
+
+    @property
+    def media_type(self) -> ImageMediaType:
+        """Return the media type of the image, based on the url."""
+        if self.url.endswith(('.jpg', '.jpeg')):
+            return 'image/jpeg'
+        elif self.url.endswith('.png'):
+            return 'image/png'
+        elif self.url.endswith('.gif'):
+            return 'image/gif'
+        elif self.url.endswith('.webp'):
+            return 'image/webp'
+        else:
+            raise ValueError(f'Unknown image file extension: {self.url}')
+
+
+AudioMediaType: TypeAlias = Literal['audio/wav', 'audio/mpeg']
+ImageMediaType: TypeAlias = Literal['image/jpeg', 'image/png', 'image/gif', 'image/webp']
+
+
+@dataclass
+class BinaryContent:
+    """Binary content, e.g. an audio or image file."""
+
+    data: bytes
+    """The binary data."""
+
+    media_type: AudioMediaType | ImageMediaType | str
+    """The media type of the binary data."""
+
+    kind: Literal['binary'] = 'binary'
+    """Type identifier, this is available on all parts as a discriminator."""
+
+    @property
+    def is_audio(self) -> bool:
+        """Return `True` if the media type is an audio type."""
+        return self.media_type.startswith('audio/')
+
+    @property
+    def is_image(self) -> bool:
+        """Return `True` if the media type is an image type."""
+        return self.media_type.startswith('image/')
+
+    @property
+    def audio_format(self) -> Literal['mp3', 'wav']:
+        """Return the audio format given the media type."""
+        if self.media_type == 'audio/mpeg':
+            return 'mp3'
+        elif self.media_type == 'audio/wav':
+            return 'wav'
+        else:
+            raise ValueError(f'Unknown audio media type: {self.media_type}')
+
+
+UserContent: TypeAlias = 'str | ImageUrl | AudioUrl | BinaryContent'
+
 
 @dataclass
 class UserPromptPart:
@@ -39,7 +133,7 @@ class UserPromptPart:
     [`Agent.run_sync`][pydantic_ai.Agent.run_sync], and [`Agent.run_stream`][pydantic_ai.Agent.run_stream].
     """
 
-    content: str
+    content: str | Sequence[UserContent]
     """The content of the prompt."""
 
     timestamp: datetime = field(default_factory=_now_utc)
@@ -47,6 +141,14 @@ class UserPromptPart:
 
     part_kind: Literal['user-prompt'] = 'user-prompt'
     """Part type identifier, this is available on all parts as a discriminator."""
+
+    def otel_event(self) -> Event:
+        if isinstance(self.content, str):
+            content = self.content
+        else:
+            # TODO figure out what to record for images and audio
+            content = [part if isinstance(part, str) else {'kind': part.kind} for part in self.content]
+        return Event('gen_ai.user.message', body={'content': content, 'role': 'user'})
 
 
 tool_return_ta: pydantic.TypeAdapter[Any] = pydantic.TypeAdapter(Any, config=pydantic.ConfigDict(defer_build=True))
@@ -85,6 +187,9 @@ class ToolReturnPart:
             return tool_return_ta.dump_python(self.content, mode='json')  # pyright: ignore[reportUnknownMemberType]
         else:
             return {'return_value': tool_return_ta.dump_python(self.content, mode='json')}
+
+    def otel_event(self) -> Event:
+        return Event('gen_ai.tool.message', body={'content': self.content, 'role': 'tool', 'id': self.tool_call_id})
 
 
 error_details_ta = pydantic.TypeAdapter(list[pydantic_core.ErrorDetails], config=pydantic.ConfigDict(defer_build=True))
@@ -133,6 +238,14 @@ class RetryPromptPart:
             json_errors = error_details_ta.dump_json(self.content, exclude={'__all__': {'ctx'}}, indent=2)
             description = f'{len(self.content)} validation errors: {json_errors.decode()}'
         return f'{description}\n\nFix the errors and try again.'
+
+    def otel_event(self) -> Event:
+        if self.tool_name is None:
+            return Event('gen_ai.user.message', body={'content': self.model_response(), 'role': 'user'})
+        else:
+            return Event(
+                'gen_ai.tool.message', body={'content': self.model_response(), 'role': 'tool', 'id': self.tool_call_id}
+            )
 
 
 ModelRequestPart = Annotated[
@@ -238,6 +351,36 @@ class ModelResponse:
 
     kind: Literal['response'] = 'response'
     """Message type identifier, this is available on all parts as a discriminator."""
+
+    def otel_events(self) -> list[Event]:
+        """Return OpenTelemetry events for the response."""
+        result: list[Event] = []
+
+        def new_event_body():
+            new_body: dict[str, Any] = {'role': 'assistant'}
+            ev = Event('gen_ai.assistant.message', body=new_body)
+            result.append(ev)
+            return new_body
+
+        body = new_event_body()
+        for part in self.parts:
+            if isinstance(part, ToolCallPart):
+                body.setdefault('tool_calls', []).append(
+                    {
+                        'id': part.tool_call_id,
+                        'type': 'function',  # TODO https://github.com/pydantic/pydantic-ai/issues/888
+                        'function': {
+                            'name': part.tool_name,
+                            'arguments': part.args,
+                        },
+                    }
+                )
+            elif isinstance(part, TextPart):
+                if body.get('content'):
+                    body = new_event_body()
+                body['content'] = part.content
+
+        return result
 
 
 ModelMessage = Annotated[Union[ModelRequest, ModelResponse], pydantic.Discriminator('kind')]
@@ -443,5 +586,52 @@ class PartDeltaEvent:
     """Event type identifier, used as a discriminator."""
 
 
+@dataclass
+class FinalResultEvent:
+    """An event indicating the response to the current model request matches the result schema."""
+
+    tool_name: str | None
+    """The name of the result tool that was called. `None` if the result is from text content and not from a tool."""
+    tool_call_id: str | None
+    """The tool call ID, if any, that this result is associated with."""
+    event_kind: Literal['final_result'] = 'final_result'
+    """Event type identifier, used as a discriminator."""
+
+
 ModelResponseStreamEvent = Annotated[Union[PartStartEvent, PartDeltaEvent], pydantic.Discriminator('event_kind')]
 """An event in the model response stream, either starting a new part or applying a delta to an existing one."""
+
+AgentStreamEvent = Annotated[
+    Union[PartStartEvent, PartDeltaEvent, FinalResultEvent], pydantic.Discriminator('event_kind')
+]
+"""An event in the agent stream."""
+
+
+@dataclass
+class FunctionToolCallEvent:
+    """An event indicating the start to a call to a function tool."""
+
+    part: ToolCallPart
+    """The (function) tool call to make."""
+    call_id: str = field(init=False)
+    """An ID used for matching details about the call to its result. If present, defaults to the part's tool_call_id."""
+    event_kind: Literal['function_tool_call'] = 'function_tool_call'
+    """Event type identifier, used as a discriminator."""
+
+    def __post_init__(self):
+        self.call_id = self.part.tool_call_id or str(uuid.uuid4())
+
+
+@dataclass
+class FunctionToolResultEvent:
+    """An event indicating the result of a function tool call."""
+
+    result: ToolReturnPart | RetryPromptPart
+    """The result of the call to the function tool."""
+    tool_call_id: str
+    """An ID used to match the result to its original call."""
+    event_kind: Literal['function_tool_result'] = 'function_tool_result'
+    """Event type identifier, used as a discriminator."""
+
+
+HandleResponseEvent = Annotated[Union[FunctionToolCallEvent, FunctionToolResultEvent], pydantic.Discriminator('kind')]

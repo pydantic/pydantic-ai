@@ -44,7 +44,7 @@ async def test_run_graph():
     state = MyState(1, '')
     sp = FullStatePersistence()
     result = await graph.run(Foo(), state=state, persistence=sp)
-    assert result == snapshot('x=2 y=y')
+    assert result.output == snapshot('x=2 y=y')
     assert sp.history == snapshot(
         [
             NodeSnapshot(

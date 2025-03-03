@@ -56,8 +56,9 @@ class Bar(BaseNode[MyState, None, int]):
 async def test_dump_load_history(graph: Graph[MyState, None, int]):
     sp = FullStatePersistence()
     result = await graph.run(Foo(), state=MyState(1, ''), persistence=sp)
-    assert result == snapshot(4)
-    assert sp.history == snapshot(
+    assert result.output == snapshot(4)
+    assert result.state == snapshot(MyState(x=2, y='y'))
+    assert result.persistence == snapshot(
         [
             NodeSnapshot(state=MyState(x=1, y=''), node=Foo(), start_ts=IsNow(tz=timezone.utc), duration=IsFloat()),
             NodeSnapshot(state=MyState(x=2, y=''), node=Bar(), start_ts=IsNow(tz=timezone.utc), duration=IsFloat()),

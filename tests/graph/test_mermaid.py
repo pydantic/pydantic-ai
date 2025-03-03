@@ -70,8 +70,8 @@ graph2 = Graph(nodes=(Spam, Foo, Bar, Eggs))
 async def test_run_graph():
     sp = FullStatePersistence()
     result = await graph1.run(Foo(), persistence=sp)
-    assert result is None
-    assert sp.history == snapshot(
+    assert result.output is None
+    assert result.persistence == snapshot(
         [
             NodeSnapshot(
                 state=None,

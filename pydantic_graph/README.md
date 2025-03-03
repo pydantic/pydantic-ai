@@ -51,6 +51,6 @@ class Increment(BaseNode):
 
 fives_graph = Graph(nodes=[DivisibleBy5, Increment])
 result = fives_graph.run_sync(DivisibleBy5(4))
-print(result)
+print(result.output)
 #> 5
 ```
