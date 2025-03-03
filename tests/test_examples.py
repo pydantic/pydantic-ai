@@ -182,6 +182,9 @@ text_responses: dict[str, str | ToolCallPart] = {
     'What is the weather like in West London and in Wiltshire?': (
         'The weather in West London is raining, while in Wiltshire it is sunny.'
     ),
+    'What will the weather be like in Paris on Tuesday?': ToolCallPart(
+        tool_name='weather_forecast', args={'location': 'Paris', 'forecast_date': '2030-01-01'}, tool_call_id='0001'
+    ),
     'Tell me a joke.': 'Did you hear about the toothpaste scandal? They called it Colgate.',
     'Explain?': 'This is an excellent joke invented by Samuel Colvin, it needs no explanation.',
     'What is the capital of France?': 'Paris',
@@ -270,6 +273,13 @@ text_responses: dict[str, str | ToolCallPart] = {
     ),
 }
 
+tool_responses: dict[tuple[str, str], str] = {
+    (
+        'weather_forecast',
+        'The forecast in Paris on 2030-01-01 is 24°C and sunny.',
+    ): 'It will be warm and sunny in Paris on Tuesday.',
+}
+
 
 async def model_logic(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:  # pragma: no cover  # noqa: C901
     m = messages[-1].parts[-1]
@@ -348,35 +358,53 @@ async def model_logic(messages: list[ModelMessage], info: AgentInfo) -> ModelRes
         raise RuntimeError(f'Unexpected message: {m}')
 
 
-async def stream_model_logic(
+async def stream_model_logic(  # noqa C901
     messages: list[ModelMessage], info: AgentInfo
 ) -> AsyncIterator[str | DeltaToolCalls]:  # pragma: no cover
-    m = messages[-1].parts[-1]
-    if isinstance(m, UserPromptPart):
-        assert isinstance(m.content, str)
-        if response := text_responses.get(m.content):
-            if isinstance(response, str):
-                words = response.split(' ')
-                chunk: list[str] = []
-                for work in words:
-                    chunk.append(work)
-                    if len(chunk) == 3:
-                        yield ' '.join(chunk) + ' '
-                        chunk.clear()
-                if chunk:
-                    yield ' '.join(chunk)
-                return
-            else:
-                json_text = response.args_as_json_str()
+    async def stream_text_response(r: str) -> AsyncIterator[str]:
+        if isinstance(r, str):
+            words = r.split(' ')
+            chunk: list[str] = []
+            for word in words:
+                chunk.append(word)
+                if len(chunk) == 3:
+                    yield ' '.join(chunk) + ' '
+                    chunk.clear()
+            if chunk:
+                yield ' '.join(chunk)
 
-                yield {1: DeltaToolCall(name=response.tool_name)}
-                for chunk_index in range(0, len(json_text), 15):
-                    text_chunk = json_text[chunk_index : chunk_index + 15]
-                    yield {1: DeltaToolCall(json_args=text_chunk)}
-                return
+    async def stream_tool_call_response(r: ToolCallPart) -> AsyncIterator[DeltaToolCalls]:
+        json_text = r.args_as_json_str()
+
+        yield {1: DeltaToolCall(name=r.tool_name, tool_call_id=r.tool_call_id)}
+        for chunk_index in range(0, len(json_text), 15):
+            text_chunk = json_text[chunk_index : chunk_index + 15]
+            yield {1: DeltaToolCall(json_args=text_chunk)}
+
+    async def stream_part_response(r: str | ToolCallPart) -> AsyncIterator[str | DeltaToolCalls]:
+        if isinstance(r, str):
+            async for chunk in stream_text_response(r):
+                yield chunk
+        else:
+            async for chunk in stream_tool_call_response(r):
+                yield chunk
+
+    last_part = messages[-1].parts[-1]
+    if isinstance(last_part, UserPromptPart):
+        assert isinstance(last_part.content, str)
+        if response := text_responses.get(last_part.content):
+            async for chunk in stream_part_response(response):
+                yield chunk
+            return
+    elif isinstance(last_part, ToolReturnPart):
+        assert isinstance(last_part.content, str)
+        if response := tool_responses.get((last_part.tool_name, last_part.content)):
+            async for chunk in stream_part_response(response):
+                yield chunk
+            return
 
     sys.stdout.write(str(debug.format(messages, info)))
-    raise RuntimeError(f'Unexpected message: {m}')
+    raise RuntimeError(f'Unexpected message: {last_part}')
 
 
 def mock_infer_model(model: Model | KnownModelName) -> Model:

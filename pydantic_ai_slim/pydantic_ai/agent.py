@@ -1,6 +1,5 @@
 from __future__ import annotations as _annotations
 
-import asyncio
 import dataclasses
 import inspect
 from collections.abc import AsyncIterator, Awaitable, Iterator, Sequence
@@ -10,9 +9,10 @@ from types import FrameType
 from typing import Any, Callable, Generic, cast, final, overload
 
 from opentelemetry.trace import NoOpTracer, use_span
-from typing_extensions import TypeVar, deprecated
+from typing_extensions import TypeGuard, TypeVar, deprecated
 
-from pydantic_graph import BaseNode, End, Graph, GraphRun, GraphRunContext
+from pydantic_graph import End, Graph, GraphRun, GraphRunContext
+from pydantic_graph._utils import get_event_loop
 
 from . import (
     _agent_graph,
@@ -47,7 +47,6 @@ HandleResponseNode = _agent_graph.HandleResponseNode
 ModelRequestNode = _agent_graph.ModelRequestNode
 UserPromptNode = _agent_graph.UserPromptNode
 
-
 __all__ = (
     'Agent',
     'AgentRun',
@@ -61,6 +60,7 @@ __all__ = (
 
 
 T = TypeVar('T')
+S = TypeVar('S')
 NoneType = type(None)
 RunResultDataT = TypeVar('RunResultDataT')
 """Type variable for the result data of a run where `result_type` was customized on the run call."""
@@ -542,7 +542,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         """
         if infer_name and self.name is None:
             self._infer_name(inspect.currentframe())
-        return asyncio.get_event_loop().run_until_complete(
+        return get_event_loop().run_until_complete(
             self.run(
                 user_prompt,
                 result_type=result_type,
@@ -650,10 +650,9 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         ) as agent_run:
             first_node = agent_run.next_node  # start with the first node
             assert isinstance(first_node, _agent_graph.UserPromptNode)  # the first node should be a user prompt node
-            node: BaseNode[Any, Any, Any] = cast(BaseNode[Any, Any, Any], first_node)
+            node = first_node
             while True:
-                if isinstance(node, _agent_graph.ModelRequestNode):
-                    node = cast(_agent_graph.ModelRequestNode[AgentDepsT, Any], node)
+                if self.is_model_request_node(node):
                     graph_ctx = agent_run.ctx
                     async with node._stream(graph_ctx) as streamed_response:  # pyright: ignore[reportPrivateUsage]
 
@@ -721,9 +720,9 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
                             )
                             break
                 next_node = await agent_run.next(node)
-                if not isinstance(next_node, BaseNode):
+                if not isinstance(next_node, _agent_graph.AgentNode):
                     raise exceptions.AgentRunError('Should have produced a StreamedRunResult before getting here')
-                node = cast(BaseNode[Any, Any, Any], next_node)
+                node = cast(_agent_graph.AgentNode[Any, Any], next_node)
 
         if not yielded:
             raise exceptions.AgentRunError('Agent run finished without producing a final result')
@@ -1180,6 +1179,46 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         else:
             return self._result_schema  # pyright: ignore[reportReturnType]
 
+    @staticmethod
+    def is_model_request_node(
+        node: _agent_graph.AgentNode[T, S] | End[result.FinalResult[S]],
+    ) -> TypeGuard[_agent_graph.ModelRequestNode[T, S]]:
+        """Check if the node is a `ModelRequestNode`, narrowing the type if it is.
+
+        This method preserves the generic parameters while narrowing the type, unlike a direct call to `isinstance`.
+        """
+        return isinstance(node, _agent_graph.ModelRequestNode)
+
+    @staticmethod
+    def is_handle_response_node(
+        node: _agent_graph.AgentNode[T, S] | End[result.FinalResult[S]],
+    ) -> TypeGuard[_agent_graph.HandleResponseNode[T, S]]:
+        """Check if the node is a `HandleResponseNode`, narrowing the type if it is.
+
+        This method preserves the generic parameters while narrowing the type, unlike a direct call to `isinstance`.
+        """
+        return isinstance(node, _agent_graph.HandleResponseNode)
+
+    @staticmethod
+    def is_user_prompt_node(
+        node: _agent_graph.AgentNode[T, S] | End[result.FinalResult[S]],
+    ) -> TypeGuard[_agent_graph.UserPromptNode[T, S]]:
+        """Check if the node is a `UserPromptNode`, narrowing the type if it is.
+
+        This method preserves the generic parameters while narrowing the type, unlike a direct call to `isinstance`.
+        """
+        return isinstance(node, _agent_graph.UserPromptNode)
+
+    @staticmethod
+    def is_end_node(
+        node: _agent_graph.AgentNode[T, S] | End[result.FinalResult[S]],
+    ) -> TypeGuard[End[result.FinalResult[S]]]:
+        """Check if the node is a `End`, narrowing the type if it is.
+
+        This method preserves the generic parameters while narrowing the type, unlike a direct call to `isinstance`.
+        """
+        return isinstance(node, End)
+
 
 @dataclasses.dataclass(repr=False)
 class AgentRun(Generic[AgentDepsT, ResultDataT]):
@@ -1251,15 +1290,17 @@ class AgentRun(Generic[AgentDepsT, ResultDataT]):
     @property
     def next_node(
         self,
-    ) -> (
-        BaseNode[_agent_graph.GraphAgentState, _agent_graph.GraphAgentDeps[AgentDepsT, Any], FinalResult[ResultDataT]]
-        | End[FinalResult[ResultDataT]]
-    ):
+    ) -> _agent_graph.AgentNode[AgentDepsT, ResultDataT] | End[FinalResult[ResultDataT]]:
         """The next node that will be run in the agent graph.
 
         This is the next node that will be used during async iteration, or if a node is not passed to `self.next(...)`.
         """
-        return self._graph_run.next_node
+        next_node = self._graph_run.next_node
+        if isinstance(next_node, End):
+            return next_node
+        if _agent_graph.is_agent_node(next_node):
+            return next_node
+        raise exceptions.AgentRunError(f'Unexpected node type: {type(next_node)}')  # pragma: no cover
 
     @property
     def result(self) -> AgentRunResult[ResultDataT] | None:
@@ -1280,45 +1321,24 @@ class AgentRun(Generic[AgentDepsT, ResultDataT]):
 
     def __aiter__(
         self,
-    ) -> AsyncIterator[
-        BaseNode[
-            _agent_graph.GraphAgentState,
-            _agent_graph.GraphAgentDeps[AgentDepsT, Any],
-            FinalResult[ResultDataT],
-        ]
-        | End[FinalResult[ResultDataT]]
-    ]:
+    ) -> AsyncIterator[_agent_graph.AgentNode[AgentDepsT, ResultDataT] | End[FinalResult[ResultDataT]]]:
         """Provide async-iteration over the nodes in the agent run."""
         return self
 
     async def __anext__(
         self,
-    ) -> (
-        BaseNode[
-            _agent_graph.GraphAgentState,
-            _agent_graph.GraphAgentDeps[AgentDepsT, Any],
-            FinalResult[ResultDataT],
-        ]
-        | End[FinalResult[ResultDataT]]
-    ):
+    ) -> _agent_graph.AgentNode[AgentDepsT, ResultDataT] | End[FinalResult[ResultDataT]]:
         """Advance to the next node automatically based on the last returned node."""
-        return await self._graph_run.__anext__()
+        next_node = await self._graph_run.__anext__()
+        if _agent_graph.is_agent_node(next_node):
+            return next_node
+        assert isinstance(next_node, End), f'Unexpected node type: {type(next_node)}'
+        return next_node
 
     async def next(
         self,
-        node: BaseNode[
-            _agent_graph.GraphAgentState,
-            _agent_graph.GraphAgentDeps[AgentDepsT, Any],
-            FinalResult[ResultDataT],
-        ],
-    ) -> (
-        BaseNode[
-            _agent_graph.GraphAgentState,
-            _agent_graph.GraphAgentDeps[AgentDepsT, Any],
-            FinalResult[ResultDataT],
-        ]
-        | End[FinalResult[ResultDataT]]
-    ):
+        node: _agent_graph.AgentNode[AgentDepsT, ResultDataT],
+    ) -> _agent_graph.AgentNode[AgentDepsT, ResultDataT] | End[FinalResult[ResultDataT]]:
         """Manually drive the agent run by passing in the node you want to run next.
 
         This lets you inspect or mutate the node before continuing execution, or skip certain nodes
@@ -1385,7 +1405,11 @@ class AgentRun(Generic[AgentDepsT, ResultDataT]):
         """
         # Note: It might be nice to expose a synchronous interface for iteration, but we shouldn't do it
         # on this class, or else IDEs won't warn you if you accidentally use `for` instead of `async for` to iterate.
-        return await self._graph_run.next(node)
+        next_node = await self._graph_run.next(node)
+        if _agent_graph.is_agent_node(next_node):
+            return next_node
+        assert isinstance(next_node, End), f'Unexpected node type: {type(next_node)}'
+        return next_node
 
     def usage(self) -> _usage.Usage:
         """Get usage statistics for the run so far, including token usage, model requests, and so on."""
