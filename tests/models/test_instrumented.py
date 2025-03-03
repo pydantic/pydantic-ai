@@ -632,3 +632,33 @@ Fix the errors and try again.\
             },
         ]
     )
+
+
+def test_messages_to_otel_events_serialization_errors():
+    class Foo:
+        def __repr__(self):
+            return 'Foo()'
+
+    class Bar:
+        def __repr__(self):
+            raise ValueError
+
+    messages = [
+        ModelResponse(parts=[ToolCallPart('tool', {'arg': Foo()})]),
+        ModelRequest(parts=[ToolReturnPart('tool', Bar())]),
+    ]
+
+    assert [
+        InstrumentedModel.event_to_dict(e) for e in InstrumentedModel.messages_to_otel_events(messages)
+    ] == snapshot(
+        [
+            {
+                'body': "{'role': 'assistant', 'tool_calls': [{'id': None, 'type': 'function', 'function': {'name': 'tool', 'arguments': {'arg': Foo()}}}]}",
+                'event.name': 'gen_ai.assistant.message',
+            },
+            {
+                'body': 'Unable to serialize event body',
+                'event.name': 'gen_ai.tool.message',
+            },
+        ]
+    )

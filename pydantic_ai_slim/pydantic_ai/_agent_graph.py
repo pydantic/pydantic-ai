@@ -2,6 +2,7 @@ from __future__ import annotations as _annotations
 
 import asyncio
 import dataclasses
+import json
 from collections.abc import AsyncIterator, Iterator, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
@@ -23,6 +24,7 @@ from . import (
     result,
     usage as _usage,
 )
+from .models.instrumented import InstrumentedModel
 from .result import ResultDataT
 from .settings import ModelSettings, merge_model_settings
 from .tools import (
@@ -36,7 +38,7 @@ __all__ = (
     'GraphAgentDeps',
     'UserPromptNode',
     'ModelRequestNode',
-    'HandleResponseNode',
+    'CallToolsNode',
     'build_run_context',
     'capture_run_messages',
 )
@@ -233,12 +235,12 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
     request: _messages.ModelRequest
 
-    _result: HandleResponseNode[DepsT, NodeRunEndT] | None = field(default=None, repr=False)
+    _result: CallToolsNode[DepsT, NodeRunEndT] | None = field(default=None, repr=False)
     _did_stream: bool = field(default=False, repr=False)
 
     async def run(
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
-    ) -> HandleResponseNode[DepsT, NodeRunEndT]:
+    ) -> CallToolsNode[DepsT, NodeRunEndT]:
         if self._result is not None:
             return self._result
 
@@ -294,7 +296,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
     async def _make_request(
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
-    ) -> HandleResponseNode[DepsT, NodeRunEndT]:
+    ) -> CallToolsNode[DepsT, NodeRunEndT]:
         if self._result is not None:
             return self._result
 
@@ -330,7 +332,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
         response: _messages.ModelResponse,
         usage: _usage.Usage,
-    ) -> HandleResponseNode[DepsT, NodeRunEndT]:
+    ) -> CallToolsNode[DepsT, NodeRunEndT]:
         # Update usage
         ctx.state.usage.incr(usage, requests=0)
         if ctx.deps.usage_limits:
@@ -340,13 +342,13 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         ctx.state.message_history.append(response)
 
         # Set the `_result` attribute since we can't use `return` in an async iterator
-        self._result = HandleResponseNode(response)
+        self._result = CallToolsNode(response)
 
         return self._result
 
 
 @dataclasses.dataclass
-class HandleResponseNode(AgentNode[DepsT, NodeRunEndT]):
+class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
     """Process a model response, and decide whether to end the run or make a new request."""
 
     model_response: _messages.ModelResponse
@@ -426,8 +428,7 @@ class HandleResponseNode(AgentNode[DepsT, NodeRunEndT]):
         final_result: result.FinalResult[NodeRunEndT] | None = None
         parts: list[_messages.ModelRequestPart] = []
         if result_schema is not None:
-            if match := result_schema.find_tool(tool_calls):
-                call, result_tool = match
+            for call, result_tool in result_schema.find_tool(tool_calls):
                 try:
                     result_data = result_tool.validate(call)
                     result_data = await _validate_result(result_data, ctx, call)
@@ -437,12 +438,17 @@ class HandleResponseNode(AgentNode[DepsT, NodeRunEndT]):
                     ctx.state.increment_retries(ctx.deps.max_result_retries)
                     parts.append(e.tool_retry)
                 else:
-                    final_result = result.FinalResult(result_data, call.tool_name)
+                    final_result = result.FinalResult(result_data, call.tool_name, call.tool_call_id)
+                    break
 
         # Then build the other request parts based on end strategy
         tool_responses: list[_messages.ModelRequestPart] = self._tool_responses
         async for event in process_function_tools(
-            tool_calls, final_result and final_result.tool_name, ctx, tool_responses
+            tool_calls,
+            final_result and final_result.tool_name,
+            final_result and final_result.tool_call_id,
+            ctx,
+            tool_responses,
         ):
             yield event
 
@@ -468,6 +474,22 @@ class HandleResponseNode(AgentNode[DepsT, NodeRunEndT]):
             messages.append(_messages.ModelRequest(parts=tool_responses))
 
         run_span.set_attributes(usage.opentelemetry_attributes())
+        run_span.set_attribute(
+            'all_messages_events',
+            json.dumps(
+                [InstrumentedModel.event_to_dict(e) for e in InstrumentedModel.messages_to_otel_events(messages)]
+            ),
+        )
+        run_span.set_attributes(
+            {
+                'logfire.json_schema': json.dumps(
+                    {
+                        'type': 'object',
+                        'properties': {'all_messages_events': {'type': 'array'}},
+                    }
+                ),
+            }
+        )
 
         # End the run with self.data
         return End(final_result)
@@ -489,7 +511,7 @@ class HandleResponseNode(AgentNode[DepsT, NodeRunEndT]):
                 return ModelRequestNode[DepsT, NodeRunEndT](_messages.ModelRequest(parts=[e.tool_retry]))
             else:
                 # The following cast is safe because we know `str` is an allowed result type
-                return self._handle_final_result(ctx, result.FinalResult(result_data, tool_name=None), [])
+                return self._handle_final_result(ctx, result.FinalResult(result_data, None, None), [])
         else:
             ctx.state.increment_retries(ctx.deps.max_result_retries)
             return ModelRequestNode[DepsT, NodeRunEndT](
@@ -518,6 +540,7 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
 async def process_function_tools(
     tool_calls: list[_messages.ToolCallPart],
     result_tool_name: str | None,
+    result_tool_call_id: str | None,
     ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
     output_parts: list[_messages.ModelRequestPart],
 ) -> AsyncIterator[_messages.HandleResponseEvent]:
@@ -537,7 +560,11 @@ async def process_function_tools(
     calls_to_run: list[tuple[Tool[DepsT], _messages.ToolCallPart]] = []
     call_index_to_event_id: dict[int, str] = {}
     for call in tool_calls:
-        if call.tool_name == result_tool_name and not found_used_result_tool:
+        if (
+            call.tool_name == result_tool_name
+            and call.tool_call_id == result_tool_call_id
+            and not found_used_result_tool
+        ):
             found_used_result_tool = True
             output_parts.append(
                 _messages.ToolReturnPart(
@@ -564,9 +591,14 @@ async def process_function_tools(
             # if tool_name is in _result_schema, it means we found a result tool but an error occurred in
             # validation, we don't add another part here
             if result_tool_name is not None:
+                if found_used_result_tool:
+                    content = 'Result tool not used - a final result was already processed.'
+                else:
+                    # TODO: Include information about the validation failure, and/or merge this with the ModelRetry part
+                    content = 'Result tool not used - result failed validation.'
                 part = _messages.ToolReturnPart(
                     tool_name=call.tool_name,
-                    content='Result tool not used - a final result was already processed.',
+                    content=content,
                     tool_call_id=call.tool_call_id,
                 )
                 output_parts.append(part)
@@ -690,7 +722,7 @@ def build_agent_graph(
     nodes = (
         UserPromptNode[DepsT],
         ModelRequestNode[DepsT],
-        HandleResponseNode[DepsT],
+        CallToolsNode[DepsT],
     )
     graph = Graph[GraphAgentState, GraphAgentDeps[DepsT, Any], result.FinalResult[ResultT]](
         nodes=nodes,

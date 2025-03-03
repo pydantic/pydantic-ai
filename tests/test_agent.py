@@ -1183,6 +1183,42 @@ class TestMultipleToolCalls:
         tool_returns = [m for m in result.all_messages() if isinstance(m, ToolReturnPart)]
         assert tool_returns == snapshot([])
 
+    def test_multiple_final_result_are_validated_correctly(self):
+        """Tests that if multiple final results are returned, but one fails validation, the other is used."""
+
+        def return_model(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            assert info.result_tools is not None
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('final_result', {'bad_value': 'first'}, tool_call_id='first'),
+                    ToolCallPart('final_result', {'value': 'second'}, tool_call_id='second'),
+                ]
+            )
+
+        agent = Agent(FunctionModel(return_model), result_type=self.ResultType, end_strategy='early')
+        result = agent.run_sync('test multiple final results')
+
+        # Verify the result came from the second final tool
+        assert result.data.value == 'second'
+
+        # Verify we got appropriate tool returns
+        assert result.new_messages()[-1].parts == snapshot(
+            [
+                ToolReturnPart(
+                    tool_name='final_result',
+                    tool_call_id='first',
+                    content='Result tool not used - result failed validation.',
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
+                ToolReturnPart(
+                    tool_name='final_result',
+                    content='Final result processed.',
+                    timestamp=IsNow(tz=timezone.utc),
+                    tool_call_id='second',
+                ),
+            ]
+        )
+
 
 async def test_model_settings_override() -> None:
     def return_settings(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:

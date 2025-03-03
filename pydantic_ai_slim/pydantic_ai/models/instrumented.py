@@ -1,28 +1,21 @@
 from __future__ import annotations
 
 import json
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator, Iterator, Mapping
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
-from functools import partial
 from typing import Any, Callable, Literal
 
 import logfire_api
 from opentelemetry._events import Event, EventLogger, EventLoggerProvider, get_event_logger_provider
-from opentelemetry.trace import Tracer, TracerProvider, get_tracer_provider
+from opentelemetry.trace import Span, Tracer, TracerProvider, get_tracer_provider
 from opentelemetry.util.types import AttributeValue
+from pydantic import TypeAdapter
 
 from ..messages import (
     ModelMessage,
     ModelRequest,
-    ModelRequestPart,
     ModelResponse,
-    RetryPromptPart,
-    SystemPromptPart,
-    TextPart,
-    ToolCallPart,
-    ToolReturnPart,
-    UserPromptPart,
 )
 from ..settings import ModelSettings
 from ..usage import Usage
@@ -47,6 +40,8 @@ MODEL_SETTING_ATTRIBUTES: tuple[
     'presence_penalty',
     'frequency_penalty',
 )
+
+ANY_ADAPTER = TypeAdapter[Any](Any)
 
 
 @dataclass
@@ -115,7 +110,7 @@ class InstrumentedModel(WrapperModel):
                     finish(response_stream.get(), response_stream.usage())
 
     @contextmanager
-    def _instrument(  # noqa: C901
+    def _instrument(
         self,
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
@@ -141,35 +136,24 @@ class InstrumentedModel(WrapperModel):
                 if isinstance(value := model_settings.get(key), (float, int)):
                     attributes[f'gen_ai.request.{key}'] = value
 
-        events_list = []
-        emit_event = partial(self._emit_event, system, events_list)
-
         with self.tracer.start_as_current_span(span_name, attributes=attributes) as span:
-            if span.is_recording():
-                for message in messages:
-                    if isinstance(message, ModelRequest):
-                        for part in message.parts:
-                            event_name, body = _request_part_body(part)
-                            if event_name:
-                                emit_event(event_name, body)
-                    elif isinstance(message, ModelResponse):
-                        for body in _response_bodies(message):
-                            emit_event('gen_ai.assistant.message', body)
 
             def finish(response: ModelResponse, usage: Usage):
                 if not span.is_recording():
                     return
 
-                for response_body in _response_bodies(response):
-                    if response_body:
-                        emit_event(
+                events = self.messages_to_otel_events(messages)
+                for event in self.messages_to_otel_events([response]):
+                    events.append(
+                        Event(
                             'gen_ai.choice',
-                            {
+                            body={
                                 # TODO finish_reason
                                 'index': 0,
-                                'message': response_body,
+                                'message': event.body,
                             },
                         )
+                    )
                 span.set_attributes(
                     {
                         # TODO finish_reason (https://github.com/open-telemetry/semantic-conventions/issues/1277), id
@@ -178,67 +162,56 @@ class InstrumentedModel(WrapperModel):
                         **usage.opentelemetry_attributes(),
                     }
                 )
-                if events_list:
-                    attr_name = 'events'
-                    span.set_attributes(
-                        {
-                            attr_name: json.dumps(events_list),
-                            'logfire.json_schema': json.dumps(
-                                {
-                                    'type': 'object',
-                                    'properties': {attr_name: {'type': 'array'}},
-                                }
-                            ),
-                        }
-                    )
+                self._emit_events(system, span, events)
 
             yield finish
 
-    def _emit_event(
-        self, system: str, events_list: list[dict[str, Any]], event_name: str, body: dict[str, Any]
-    ) -> None:
-        attributes = {'gen_ai.system': system}
+    def _emit_events(self, system: str, span: Span, events: list[Event]) -> None:
+        for event in events:
+            event.attributes = {'gen_ai.system': system, **(event.attributes or {})}
         if self.event_mode == 'logs':
-            self.event_logger.emit(Event(event_name, body=body, attributes=attributes))
+            for event in events:
+                self.event_logger.emit(event)
         else:
-            events_list.append({'event.name': event_name, **body, **attributes})
-
-
-def _request_part_body(part: ModelRequestPart) -> tuple[str, dict[str, Any]]:
-    if isinstance(part, SystemPromptPart):
-        return 'gen_ai.system.message', {'content': part.content, 'role': 'system'}
-    elif isinstance(part, UserPromptPart):
-        return 'gen_ai.user.message', {'content': part.content, 'role': 'user'}
-    elif isinstance(part, ToolReturnPart):
-        return 'gen_ai.tool.message', {'content': part.content, 'role': 'tool', 'id': part.tool_call_id}
-    elif isinstance(part, RetryPromptPart):
-        if part.tool_name is None:
-            return 'gen_ai.user.message', {'content': part.model_response(), 'role': 'user'}
-        else:
-            return 'gen_ai.tool.message', {'content': part.model_response(), 'role': 'tool', 'id': part.tool_call_id}
-    else:
-        return '', {}
-
-
-def _response_bodies(message: ModelResponse) -> list[dict[str, Any]]:
-    body: dict[str, Any] = {'role': 'assistant'}
-    result = [body]
-    for part in message.parts:
-        if isinstance(part, ToolCallPart):
-            body.setdefault('tool_calls', []).append(
+            attr_name = 'events'
+            span.set_attributes(
                 {
-                    'id': part.tool_call_id,
-                    'type': 'function',  # TODO https://github.com/pydantic/pydantic-ai/issues/888
-                    'function': {
-                        'name': part.tool_name,
-                        'arguments': part.args,
-                    },
+                    attr_name: json.dumps([self.event_to_dict(event) for event in events]),
+                    'logfire.json_schema': json.dumps(
+                        {
+                            'type': 'object',
+                            'properties': {attr_name: {'type': 'array'}},
+                        }
+                    ),
                 }
             )
-        elif isinstance(part, TextPart):
-            if body.get('content'):
-                body = {'role': 'assistant'}
-                result.append(body)
-            body['content'] = part.content
 
-    return result
+    @staticmethod
+    def event_to_dict(event: Event) -> dict[str, Any]:
+        if not event.body:
+            body = {}
+        elif isinstance(event.body, Mapping):
+            body = event.body  # type: ignore
+        else:
+            body = {'body': event.body}
+        return {**body, **(event.attributes or {})}
+
+    @staticmethod
+    def messages_to_otel_events(messages: list[ModelMessage]) -> list[Event]:
+        result: list[Event] = []
+        for message in messages:
+            if isinstance(message, ModelRequest):
+                for part in message.parts:
+                    if hasattr(part, 'otel_event'):
+                        result.append(part.otel_event())
+            elif isinstance(message, ModelResponse):
+                result.extend(message.otel_events())
+        for event in result:
+            try:
+                event.body = ANY_ADAPTER.dump_python(event.body, mode='json')
+            except Exception:
+                try:
+                    event.body = str(event.body)
+                except Exception:
+                    event.body = 'Unable to serialize event body'
+        return result

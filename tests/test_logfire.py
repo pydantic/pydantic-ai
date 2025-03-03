@@ -92,6 +92,50 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary]) -> None:
             'logfire.span_type': 'span',
             'gen_ai.usage.input_tokens': 103,
             'gen_ai.usage.output_tokens': 12,
+            'all_messages_events': IsJson(
+                snapshot(
+                    [
+                        {
+                            'content': 'Hello',
+                            'role': 'user',
+                            'event.name': 'gen_ai.user.message',
+                        },
+                        {
+                            'role': 'assistant',
+                            'tool_calls': [
+                                {
+                                    'id': None,
+                                    'type': 'function',
+                                    'function': {
+                                        'name': 'my_ret',
+                                        'arguments': {'x': 0},
+                                    },
+                                }
+                            ],
+                            'event.name': 'gen_ai.assistant.message',
+                        },
+                        {
+                            'content': '1',
+                            'role': 'tool',
+                            'id': None,
+                            'event.name': 'gen_ai.tool.message',
+                        },
+                        {
+                            'role': 'assistant',
+                            'content': '{"my_ret":"1"}',
+                            'event.name': 'gen_ai.assistant.message',
+                        },
+                    ]
+                )
+            ),
+            'logfire.json_schema': IsJson(
+                snapshot(
+                    {
+                        'type': 'object',
+                        'properties': {'all_messages_events': {'type': 'array'}},
+                    }
+                )
+            ),
         }
     )
     assert summary.attributes[1] == snapshot(
