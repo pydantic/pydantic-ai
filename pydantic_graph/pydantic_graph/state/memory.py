@@ -21,7 +21,7 @@ RunEndT = TypeVar('RunEndT', default=Any)
 class SimpleStatePersistence(StatePersistence[StateT, RunEndT]):
     """Simple in memory state persistence that just hold the latest snapshot."""
 
-    deep_copy: bool = True
+    deep_copy: bool = False
     last_snapshot: Snapshot[StateT, RunEndT] | None = None
 
     async def snapshot_node(self, state: StateT, next_node: BaseNode[StateT, Any, RunEndT]) -> None:

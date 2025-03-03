@@ -71,7 +71,7 @@ async def test_run_graph():
     sp = FullStatePersistence()
     result = await graph1.run(Foo(), persistence=sp)
     assert result.output is None
-    assert result.persistence == snapshot(
+    assert sp.history == snapshot(
         [
             NodeSnapshot(
                 state=None,

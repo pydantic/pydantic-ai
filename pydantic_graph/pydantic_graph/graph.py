@@ -322,6 +322,13 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
             ctx = GraphRunContext(state, deps)
             async with persistence.record_run():
                 next_or_end = await node.run(ctx)
+
+        if isinstance(next_or_end, End):
+            await persistence.snapshot_end(state, next_or_end)
+        elif not isinstance(next_or_end, BaseNode):
+            raise exceptions.GraphRuntimeError(
+                f'Invalid node return type: `{type(next_or_end).__name__}`. Expected `BaseNode` or `End`.'
+            )
         return next_or_end
 
     async def next_from_persistence(

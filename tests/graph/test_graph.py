@@ -71,7 +71,7 @@ async def test_graph_history():
     sp = FullStatePersistence()
     result = await my_graph.run(Float2String(3.14), persistence=sp)
     # len('3.14') * 2 == 8
-    assert result == 8
+    assert result.output == 8
     assert my_graph.name == 'my_graph'
     assert sp.history == snapshot(
         [
@@ -93,7 +93,7 @@ async def test_graph_history():
                 start_ts=IsNow(tz=timezone.utc),
                 duration=IsFloat(),
             ),
-            EndSnapshot(state=None, result=End(8), ts=IsNow(tz=timezone.utc)),
+            EndSnapshot(state=None, result=End(data=8), ts=IsNow(tz=timezone.utc)),
         ]
     )
     sp = FullStatePersistence()
@@ -132,7 +132,7 @@ async def test_graph_history():
                 start_ts=IsNow(tz=timezone.utc),
                 duration=IsFloat(),
             ),
-            EndSnapshot(state=None, result=End(42), ts=IsNow(tz=timezone.utc)),
+            EndSnapshot(state=None, result=End(data=42), ts=IsNow(tz=timezone.utc)),
         ]
     )
     assert [e.node for e in sp.history] == snapshot(

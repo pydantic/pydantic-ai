@@ -655,7 +655,7 @@ Here's an example:
 from __future__ import annotations as _annotations
 
 from dataclasses import dataclass
-from pydantic_graph import Graph, BaseNode, End, GraphRunContext
+from pydantic_graph import Graph, BaseNode, End, GraphRunContext, FullStatePersistence
 
 
 @dataclass
@@ -677,7 +677,10 @@ count_down_graph = Graph(nodes=[CountDown])
 
 async def main():
     state = CountDownState(counter=3)
-    async with count_down_graph.iter(CountDown(), state=state) as run:  # (1)!
+    persistence = FullStatePersistence()
+    async with count_down_graph.iter(
+        CountDown(), state=state, persistence=persistence
+    ) as run:  # (1)!
         async for node in run:  # (2)!
             print('Node:', node)
             #> Node: CountDown()
@@ -686,7 +689,7 @@ async def main():
             #> Node: End(data=0)
     print('Final result:', run.result.output)  # (3)!
     #> Final result: 0
-    print('History snapshots:', [step.data_snapshot() for step in run.history])
+    print('History snapshots:', [step.node for step in persistence.history])
     """
     History snapshots:
     [CountDown(), CountDown(), CountDown(), CountDown(), End(data=0)]
@@ -704,13 +707,14 @@ Alternatively, you can drive iteration manually with the [`GraphRun.next`][pydan
 Below is a contrived example that stops whenever the counter is at 2, ignoring any node runs beyond that:
 
 ```python {title="count_down_next.py" noqa="I001" py="3.10"}
-from pydantic_graph import End
+from pydantic_graph import End, FullStatePersistence
 from count_down import CountDown, CountDownState, count_down_graph
 
 
 async def main():
     state = CountDownState(counter=5)
-    async with count_down_graph.iter(CountDown(), state=state) as run:
+    sp = FullStatePersistence()
+    async with count_down_graph.iter(CountDown(), state=state, persistence=sp) as run:
         node = run.next_node  # (1)!
         while not isinstance(node, End):  # (2)!
             print('Node:', node)
@@ -725,11 +729,11 @@ async def main():
         print(run.result)  # (5)!
         #> None
 
-        for step in run.history:  # (6)!
-            print('History Step:', step.data_snapshot(), step.state)
+        for step in sp.history:  # (6)!
+            print('History Step:', step.node, step.state)
+            #> History Step: CountDown() CountDownState(counter=5)
             #> History Step: CountDown() CountDownState(counter=4)
             #> History Step: CountDown() CountDownState(counter=3)
-            #> History Step: CountDown() CountDownState(counter=2)
 ```
 
 1. We start by grabbing the first node that will be run in the agent's graph.
