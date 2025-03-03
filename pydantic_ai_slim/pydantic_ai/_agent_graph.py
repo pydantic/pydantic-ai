@@ -473,19 +473,26 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         if tool_responses:
             messages.append(_messages.ModelRequest(parts=tool_responses))
 
-        run_span.set_attributes(usage.opentelemetry_attributes())
-        run_span.set_attribute(
-            'all_messages_events',
-            json.dumps(
-                [InstrumentedModel.event_to_dict(e) for e in InstrumentedModel.messages_to_otel_events(messages)]
-            ),
+        run_span.set_attributes(
+            {
+                **usage.opentelemetry_attributes(),
+                'all_messages_events': json.dumps(
+                    [InstrumentedModel.event_to_dict(e) for e in InstrumentedModel.messages_to_otel_events(messages)]
+                ),
+                'final_result': final_result.data
+                if isinstance(final_result.data, str)
+                else json.dumps(InstrumentedModel.serialize_any(final_result.data)),
+            }
         )
         run_span.set_attributes(
             {
                 'logfire.json_schema': json.dumps(
                     {
                         'type': 'object',
-                        'properties': {'all_messages_events': {'type': 'array'}},
+                        'properties': {
+                            'all_messages_events': {'type': 'array'},
+                            'final_result': {'type': 'object'},
+                        },
                     }
                 ),
             }

@@ -207,11 +207,15 @@ class InstrumentedModel(WrapperModel):
             elif isinstance(message, ModelResponse):
                 result.extend(message.otel_events())
         for event in result:
-            try:
-                event.body = ANY_ADAPTER.dump_python(event.body, mode='json')
-            except Exception:
-                try:
-                    event.body = str(event.body)
-                except Exception:
-                    event.body = 'Unable to serialize event body'
+            event.body = InstrumentedModel.serialize_any(event.body)
         return result
+
+    @staticmethod
+    def serialize_any(value: Any) -> str:
+        try:
+            return ANY_ADAPTER.dump_python(value, mode='json')
+        except Exception:
+            try:
+                return str(value)
+            except Exception as e:
+                return f'Unable to serialize: {e}'

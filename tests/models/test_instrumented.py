@@ -641,7 +641,7 @@ def test_messages_to_otel_events_serialization_errors():
 
     class Bar:
         def __repr__(self):
-            raise ValueError
+            raise ValueError('error!')
 
     messages = [
         ModelResponse(parts=[ToolCallPart('tool', {'arg': Foo()})]),
@@ -657,7 +657,7 @@ def test_messages_to_otel_events_serialization_errors():
                 'event.name': 'gen_ai.assistant.message',
             },
             {
-                'body': 'Unable to serialize event body',
+                'body': 'Unable to serialize: error!',
                 'event.name': 'gen_ai.tool.message',
             },
         ]
