@@ -72,18 +72,8 @@ model = OpenAIModel('gpt-4o')
 agent = Agent(model)
 ...
 ```
-By default, the `OpenAIModel` uses the `OpenAIProvider` with the `base_url` set to `https://api.openai.com/v1`.
-
-You can change the provider to one of the [OpenAI-compatible Models](#openai-compatible-models)
-
-```python {title="openai_model_init_deepseek.py"}
-from pydantic_ai import Agent
-from pydantic_ai.models.openai import OpenAIModel
-
-model = OpenAIModel('deepseek-chat', provider='deepseek')
-agent = Agent(model)
-...
-```
+By default, the `OpenAIModel` uses the [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider.__init__]
+with the `base_url` set to `https://api.openai.com/v1`.
 
 ### `provider` argument
 

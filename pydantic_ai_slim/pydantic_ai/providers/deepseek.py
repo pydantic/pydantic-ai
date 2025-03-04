@@ -41,7 +41,10 @@ class DeepSeekProvider(Provider[AsyncOpenAI]):
     ) -> None:
         api_key = api_key or os.environ.get('DEEPSEEK_API_KEY')
         if api_key is None and openai_client is None:
-            raise ValueError('API key is required for DeepSeek provider')
+            raise ValueError(
+                'Set the `DEEPSEEK_API_KEY` environment variable or pass it via `DeepSeekProvider(api_key=...)`'
+                'to use the DeepSeek provider.'
+            )
 
         if openai_client is not None:
             assert http_client is None, 'Cannot provide both `openai_client` and `http_client`'
