@@ -524,7 +524,7 @@ agent = Agent(model)
 Many of the models are compatible with OpenAI API, and thus can be used with [`OpenAIModel`][pydantic_ai.models.openai.OpenAIModel] in PydanticAI.
 Before getting started, check the [OpenAI](#openai) section for installation and configuration instructions.
 
-To use another OpenAI-compatible API, you can make use of the [`base_url`][pydantic_ai.models.openai.OpenAIProvider.__init__]
+To use another OpenAI-compatible API, you can make use of the [`base_url`][pydantic_ai.providers.openai.OpenAIProvider.__init__]
 and [`api_key`][pydantic_ai.providers.openai.OpenAIProvider.__init__] arguments from `OpenAIProvider`:
 
 ```python {title="deepseek_model_init.py" hl_lines="5-6"}
