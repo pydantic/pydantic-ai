@@ -58,11 +58,13 @@ class InstrumentedModel(WrapperModel):
         event_logger_provider: EventLoggerProvider | None = None,
         event_mode: Literal['attributes', 'logs'] = 'attributes',
     ):
+        from pydantic_ai import __version__
+
         super().__init__(wrapped)
         tracer_provider = tracer_provider or get_tracer_provider()
         event_logger_provider = event_logger_provider or get_event_logger_provider()
-        self.tracer = tracer_provider.get_tracer('pydantic-ai')
-        self.event_logger = event_logger_provider.get_event_logger('pydantic-ai')
+        self.tracer = tracer_provider.get_tracer('pydantic-ai', __version__)
+        self.event_logger = event_logger_provider.get_event_logger('pydantic-ai', __version__)
         self.event_mode = event_mode
 
     async def request(
