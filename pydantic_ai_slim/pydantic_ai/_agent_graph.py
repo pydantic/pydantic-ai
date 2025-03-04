@@ -302,7 +302,6 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         if self._result is not None:
             return self._result
 
-        model_settings, model_request_parameters = await self._prepare_request(ctx)
         if not ctx.deps.reflect_on_tool_call and isinstance(self.request.parts[0], _messages.ToolReturnPart):
             model_response = models.ModelResponse(
                 parts=[_messages.TextPart(content='End tool call')],
@@ -310,6 +309,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             )
             request_usage = _usage.Usage()
         else:
+            model_settings, model_request_parameters = await self._prepare_request(ctx)
             model_response, request_usage = await ctx.deps.model.request(
                 ctx.state.message_history,
                 model_settings,
