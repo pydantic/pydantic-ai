@@ -101,7 +101,6 @@ class MyResponseStream(StreamedResponse):
         return datetime(2022, 1, 1)
 
 
-@pytest.mark.anyio
 @requires_logfire_events
 async def test_instrumented_model(capfire: CaptureLogfire):
     model = InstrumentedModel(MyModel(), InstrumentationOptions(event_mode='logs'))
@@ -309,7 +308,6 @@ Fix the errors and try again.\
     )
 
 
-@pytest.mark.anyio
 async def test_instrumented_model_not_recording():
     model = InstrumentedModel(
         MyModel(),
@@ -328,7 +326,6 @@ async def test_instrumented_model_not_recording():
     )
 
 
-@pytest.mark.anyio
 @requires_logfire_events
 async def test_instrumented_model_stream(capfire: CaptureLogfire):
     model = InstrumentedModel(MyModel(), InstrumentationOptions(event_mode='logs'))
@@ -411,7 +408,6 @@ async def test_instrumented_model_stream(capfire: CaptureLogfire):
     )
 
 
-@pytest.mark.anyio
 @requires_logfire_events
 async def test_instrumented_model_stream_break(capfire: CaptureLogfire):
     model = InstrumentedModel(MyModel(), InstrumentationOptions(event_mode='logs'))
@@ -506,7 +502,6 @@ async def test_instrumented_model_stream_break(capfire: CaptureLogfire):
     )
 
 
-@pytest.mark.anyio
 async def test_instrumented_model_attributes_mode(capfire: CaptureLogfire):
     model = InstrumentedModel(MyModel(), InstrumentationOptions(event_mode='attributes'))
     assert model.system == 'my_system'
