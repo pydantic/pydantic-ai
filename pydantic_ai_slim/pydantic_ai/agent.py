@@ -25,6 +25,7 @@ from . import (
     result,
     usage as _usage,
 )
+from .models.instrumented import InstrumentedModel
 from .result import FinalResult, ResultDataT, StreamedRunResult
 from .settings import ModelSettings, merge_model_settings
 from .tools import (
@@ -42,7 +43,7 @@ from .tools import (
 # Re-exporting like this improves auto-import behavior in PyCharm
 capture_run_messages = _agent_graph.capture_run_messages
 EndStrategy = _agent_graph.EndStrategy
-HandleResponseNode = _agent_graph.HandleResponseNode
+CallToolsNode = _agent_graph.CallToolsNode
 ModelRequestNode = _agent_graph.ModelRequestNode
 UserPromptNode = _agent_graph.UserPromptNode
 
@@ -52,7 +53,7 @@ __all__ = (
     'AgentRunResult',
     'capture_run_messages',
     'EndStrategy',
-    'HandleResponseNode',
+    'CallToolsNode',
     'ModelRequestNode',
     'UserPromptNode',
 )
@@ -294,7 +295,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         """
         if infer_name and self.name is None:
             self._infer_name(inspect.currentframe())
-        with self.iter(
+        async with self.iter(
             user_prompt=user_prompt,
             result_type=result_type,
             message_history=message_history,
@@ -310,8 +311,8 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         assert (final_result := agent_run.result) is not None, 'The graph run did not finish properly'
         return final_result
 
-    @contextmanager
-    def iter(
+    @asynccontextmanager
+    async def iter(
         self,
         user_prompt: str | Sequence[_messages.UserContent],
         *,
@@ -323,7 +324,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.Usage | None = None,
         infer_name: bool = True,
-    ) -> Iterator[AgentRun[AgentDepsT, Any]]:
+    ) -> AsyncIterator[AgentRun[AgentDepsT, Any]]:
         """A contextmanager which can be used to iterate over the agent graph's nodes as they are executed.
 
         This method builds an internal agent graph (using system prompts, tools and result schemas) and then returns an
@@ -344,7 +345,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
 
         async def main():
             nodes = []
-            with agent.iter('What is the capital of France?') as agent_run:
+            async with agent.iter('What is the capital of France?') as agent_run:
                 async for node in agent_run:
                     nodes.append(node)
             print(nodes)
@@ -362,7 +363,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
                         kind='request',
                     )
                 ),
-                HandleResponseNode(
+                CallToolsNode(
                     model_response=ModelResponse(
                         parts=[TextPart(content='Paris', part_kind='text')],
                         model_name='gpt-4o',
@@ -370,7 +371,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
                         kind='response',
                     )
                 ),
-                End(data=FinalResult(data='Paris', tool_name=None)),
+                End(data=FinalResult(data='Paris', tool_name=None, tool_call_id=None)),
             ]
             '''
             print(agent_run.result.data)
@@ -454,7 +455,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
             system_prompt_dynamic_functions=self._system_prompt_dynamic_functions,
         )
 
-        with graph.iter(
+        async with graph.iter(
             start_node,
             state=state,
             deps=graph_deps,
@@ -633,7 +634,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
                 self._infer_name(frame.f_back)
 
         yielded = False
-        with self.iter(
+        async with self.iter(
             user_prompt,
             result_type=result_type,
             message_history=message_history,
@@ -661,11 +662,10 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
                                     new_part = maybe_part_event.part
                                     if isinstance(new_part, _messages.TextPart):
                                         if _agent_graph.allow_text_result(result_schema):
-                                            return FinalResult(s, None)
-                                    elif isinstance(new_part, _messages.ToolCallPart):
-                                        if result_schema is not None and (match := result_schema.find_tool([new_part])):
-                                            call, _ = match
-                                            return FinalResult(s, call.tool_name)
+                                            return FinalResult(s, None, None)
+                                    elif isinstance(new_part, _messages.ToolCallPart) and result_schema:
+                                        for call, _ in result_schema.find_tool([new_part]):
+                                            return FinalResult(s, call.tool_name, call.tool_call_id)
                             return None
 
                         final_result_details = await stream_to_final(streamed_response)
@@ -692,6 +692,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
                                 async for _event in _agent_graph.process_function_tools(
                                     tool_calls,
                                     final_result_details.tool_name,
+                                    final_result_details.tool_call_id,
                                     graph_ctx,
                                     parts,
                                 ):
@@ -1115,6 +1116,9 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         else:
             raise exceptions.UserError('`model` must be set either when creating the agent or when calling it.')
 
+        if not isinstance(model_, InstrumentedModel):
+            model_ = InstrumentedModel(model_)
+
         return model_
 
     def _get_deps(self: Agent[T, ResultDataT], deps: T) -> T:
@@ -1183,14 +1187,14 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         return isinstance(node, _agent_graph.ModelRequestNode)
 
     @staticmethod
-    def is_handle_response_node(
+    def is_call_tools_node(
         node: _agent_graph.AgentNode[T, S] | End[result.FinalResult[S]],
-    ) -> TypeGuard[_agent_graph.HandleResponseNode[T, S]]:
-        """Check if the node is a `HandleResponseNode`, narrowing the type if it is.
+    ) -> TypeGuard[_agent_graph.CallToolsNode[T, S]]:
+        """Check if the node is a `CallToolsNode`, narrowing the type if it is.
 
         This method preserves the generic parameters while narrowing the type, unlike a direct call to `isinstance`.
         """
-        return isinstance(node, _agent_graph.HandleResponseNode)
+        return isinstance(node, _agent_graph.CallToolsNode)
 
     @staticmethod
     def is_user_prompt_node(
@@ -1217,7 +1221,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
 class AgentRun(Generic[AgentDepsT, ResultDataT]):
     """A stateful, async-iterable run of an [`Agent`][pydantic_ai.agent.Agent].
 
-    You generally obtain an `AgentRun` instance by calling `with my_agent.iter(...) as agent_run:`.
+    You generally obtain an `AgentRun` instance by calling `async with my_agent.iter(...) as agent_run:`.
 
     Once you have an instance, you can use it to iterate through the run's nodes as they execute. When an
     [`End`][pydantic_graph.nodes.End] is reached, the run finishes and [`result`][pydantic_ai.agent.AgentRun.result]
@@ -1232,7 +1236,7 @@ class AgentRun(Generic[AgentDepsT, ResultDataT]):
     async def main():
         nodes = []
         # Iterate through the run, recording each node along the way:
-        with agent.iter('What is the capital of France?') as agent_run:
+        async with agent.iter('What is the capital of France?') as agent_run:
             async for node in agent_run:
                 nodes.append(node)
         print(nodes)
@@ -1250,7 +1254,7 @@ class AgentRun(Generic[AgentDepsT, ResultDataT]):
                     kind='request',
                 )
             ),
-            HandleResponseNode(
+            CallToolsNode(
                 model_response=ModelResponse(
                     parts=[TextPart(content='Paris', part_kind='text')],
                     model_name='gpt-4o',
@@ -1258,7 +1262,7 @@ class AgentRun(Generic[AgentDepsT, ResultDataT]):
                     kind='response',
                 )
             ),
-            End(data=FinalResult(data='Paris', tool_name=None)),
+            End(data=FinalResult(data='Paris', tool_name=None, tool_call_id=None)),
         ]
         '''
         print(agent_run.result.data)
@@ -1346,7 +1350,7 @@ class AgentRun(Generic[AgentDepsT, ResultDataT]):
         agent = Agent('openai:gpt-4o')
 
         async def main():
-            with agent.iter('What is the capital of France?') as agent_run:
+            async with agent.iter('What is the capital of France?') as agent_run:
                 next_node = agent_run.next_node  # start with the first node
                 nodes = [next_node]
                 while not isinstance(next_node, End):
@@ -1374,7 +1378,7 @@ class AgentRun(Generic[AgentDepsT, ResultDataT]):
                             kind='request',
                         )
                     ),
-                    HandleResponseNode(
+                    CallToolsNode(
                         model_response=ModelResponse(
                             parts=[TextPart(content='Paris', part_kind='text')],
                             model_name='gpt-4o',
@@ -1382,7 +1386,7 @@ class AgentRun(Generic[AgentDepsT, ResultDataT]):
                             kind='response',
                         )
                     ),
-                    End(data=FinalResult(data='Paris', tool_name=None)),
+                    End(data=FinalResult(data='Paris', tool_name=None, tool_call_id=None)),
                 ]
                 '''
                 print('Final result:', agent_run.result.data)

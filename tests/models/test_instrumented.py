@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 
 import pytest
+from dirty_equals import IsJson
 from inline_snapshot import snapshot
 from logfire_api import DEFAULT_LOGFIRE_INSTANCE
 
@@ -105,7 +106,7 @@ class MyResponseStream(StreamedResponse):
 @pytest.mark.anyio
 @requires_logfire_events
 async def test_instrumented_model(capfire: CaptureLogfire):
-    model = InstrumentedModel.from_logfire(MyModel())
+    model = InstrumentedModel.from_logfire(MyModel(), event_mode='logs')
     assert model.system == 'my_system'
     assert model.model_name == 'my_model'
 
@@ -323,7 +324,7 @@ async def test_instrumented_model_not_recording():
 @pytest.mark.anyio
 @requires_logfire_events
 async def test_instrumented_model_stream(capfire: CaptureLogfire):
-    model = InstrumentedModel.from_logfire(MyModel())
+    model = InstrumentedModel.from_logfire(MyModel(), event_mode='logs')
 
     messages: list[ModelMessage] = [
         ModelRequest(
@@ -405,7 +406,7 @@ async def test_instrumented_model_stream(capfire: CaptureLogfire):
 @pytest.mark.anyio
 @requires_logfire_events
 async def test_instrumented_model_stream_break(capfire: CaptureLogfire):
-    model = InstrumentedModel.from_logfire(MyModel())
+    model = InstrumentedModel.from_logfire(MyModel(), event_mode='logs')
 
     messages: list[ModelMessage] = [
         ModelRequest(
@@ -491,6 +492,173 @@ async def test_instrumented_model_stream_break(capfire: CaptureLogfire):
                 'trace_id': 1,
                 'span_id': 1,
                 'trace_flags': 1,
+            },
+        ]
+    )
+
+
+@pytest.mark.anyio
+async def test_instrumented_model_attributes_mode(capfire: CaptureLogfire):
+    model = InstrumentedModel(MyModel(), event_mode='attributes')
+    assert model.system == 'my_system'
+    assert model.model_name == 'my_model'
+
+    messages = [
+        ModelRequest(
+            parts=[
+                SystemPromptPart('system_prompt'),
+                UserPromptPart('user_prompt'),
+                ToolReturnPart('tool3', 'tool_return_content', 'tool_call_3'),
+                RetryPromptPart('retry_prompt1', tool_name='tool4', tool_call_id='tool_call_4'),
+                RetryPromptPart('retry_prompt2'),
+                {},  # test unexpected parts  # type: ignore
+            ]
+        ),
+        ModelResponse(
+            parts=[
+                TextPart('text3'),
+            ]
+        ),
+    ]
+    await model.request(
+        messages,
+        model_settings=ModelSettings(temperature=1),
+        model_request_parameters=ModelRequestParameters(
+            function_tools=[],
+            allow_text_result=True,
+            result_tools=[],
+        ),
+    )
+
+    assert capfire.exporter.exported_spans_as_dict() == snapshot(
+        [
+            {
+                'name': 'chat my_model',
+                'context': {'trace_id': 1, 'span_id': 1, 'is_remote': False},
+                'parent': None,
+                'start_time': 1000000000,
+                'end_time': 2000000000,
+                'attributes': {
+                    'gen_ai.operation.name': 'chat',
+                    'gen_ai.system': 'my_system',
+                    'gen_ai.request.model': 'my_model',
+                    'gen_ai.request.temperature': 1,
+                    'logfire.msg': 'chat my_model',
+                    'logfire.span_type': 'span',
+                    'gen_ai.response.model': 'my_model_123',
+                    'gen_ai.usage.input_tokens': 100,
+                    'gen_ai.usage.output_tokens': 200,
+                    'events': IsJson(
+                        snapshot(
+                            [
+                                {
+                                    'event.name': 'gen_ai.system.message',
+                                    'content': 'system_prompt',
+                                    'role': 'system',
+                                    'gen_ai.system': 'my_system',
+                                },
+                                {
+                                    'event.name': 'gen_ai.user.message',
+                                    'content': 'user_prompt',
+                                    'role': 'user',
+                                    'gen_ai.system': 'my_system',
+                                },
+                                {
+                                    'event.name': 'gen_ai.tool.message',
+                                    'content': 'tool_return_content',
+                                    'role': 'tool',
+                                    'id': 'tool_call_3',
+                                    'gen_ai.system': 'my_system',
+                                },
+                                {
+                                    'event.name': 'gen_ai.tool.message',
+                                    'content': """\
+retry_prompt1
+
+Fix the errors and try again.\
+""",
+                                    'role': 'tool',
+                                    'id': 'tool_call_4',
+                                    'gen_ai.system': 'my_system',
+                                },
+                                {
+                                    'event.name': 'gen_ai.user.message',
+                                    'content': """\
+retry_prompt2
+
+Fix the errors and try again.\
+""",
+                                    'role': 'user',
+                                    'gen_ai.system': 'my_system',
+                                },
+                                {
+                                    'event.name': 'gen_ai.assistant.message',
+                                    'role': 'assistant',
+                                    'content': 'text3',
+                                    'gen_ai.system': 'my_system',
+                                },
+                                {
+                                    'event.name': 'gen_ai.choice',
+                                    'index': 0,
+                                    'message': {
+                                        'role': 'assistant',
+                                        'content': 'text1',
+                                        'tool_calls': [
+                                            {
+                                                'id': 'tool_call_1',
+                                                'type': 'function',
+                                                'function': {'name': 'tool1', 'arguments': 'args1'},
+                                            },
+                                            {
+                                                'id': 'tool_call_2',
+                                                'type': 'function',
+                                                'function': {'name': 'tool2', 'arguments': {'args2': 3}},
+                                            },
+                                        ],
+                                    },
+                                    'gen_ai.system': 'my_system',
+                                },
+                                {
+                                    'event.name': 'gen_ai.choice',
+                                    'index': 0,
+                                    'message': {'role': 'assistant', 'content': 'text2'},
+                                    'gen_ai.system': 'my_system',
+                                },
+                            ]
+                        )
+                    ),
+                    'logfire.json_schema': '{"type": "object", "properties": {"events": {"type": "array"}}}',
+                },
+            },
+        ]
+    )
+
+
+def test_messages_to_otel_events_serialization_errors():
+    class Foo:
+        def __repr__(self):
+            return 'Foo()'
+
+    class Bar:
+        def __repr__(self):
+            raise ValueError
+
+    messages = [
+        ModelResponse(parts=[ToolCallPart('tool', {'arg': Foo()})]),
+        ModelRequest(parts=[ToolReturnPart('tool', Bar())]),
+    ]
+
+    assert [
+        InstrumentedModel.event_to_dict(e) for e in InstrumentedModel.messages_to_otel_events(messages)
+    ] == snapshot(
+        [
+            {
+                'body': "{'role': 'assistant', 'tool_calls': [{'id': None, 'type': 'function', 'function': {'name': 'tool', 'arguments': {'arg': Foo()}}}]}",
+                'event.name': 'gen_ai.assistant.message',
+            },
+            {
+                'body': 'Unable to serialize event body',
+                'event.name': 'gen_ai.tool.message',
             },
         ]
     )

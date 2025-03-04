@@ -2,8 +2,8 @@ from __future__ import annotations as _annotations
 
 import inspect
 import types
-from collections.abc import AsyncIterator, Iterator, Sequence
-from contextlib import ExitStack, contextmanager
+from collections.abc import AsyncIterator, Sequence
+from contextlib import ExitStack, asynccontextmanager
 from dataclasses import dataclass, field
 from functools import cached_property
 from time import perf_counter
@@ -172,7 +172,7 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
         if infer_name and self.name is None:
             self._infer_name(inspect.currentframe())
 
-        with self.iter(start_node, state=state, deps=deps, infer_name=infer_name, span=span) as graph_run:
+        async with self.iter(start_node, state=state, deps=deps, infer_name=infer_name, span=span) as graph_run:
             async for _node in graph_run:
                 pass
 
@@ -180,8 +180,8 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
         assert final_result is not None, 'GraphRun should have a final result'
         return final_result
 
-    @contextmanager
-    def iter(
+    @asynccontextmanager
+    async def iter(
         self: Graph[StateT, DepsT, T],
         start_node: BaseNode[StateT, DepsT, T],
         *,
@@ -189,7 +189,7 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
         deps: DepsT = None,
         infer_name: bool = True,
         span: LogfireSpan | None = None,
-    ) -> Iterator[GraphRun[StateT, DepsT, T]]:
+    ) -> AsyncIterator[GraphRun[StateT, DepsT, T]]:
         """A contextmanager which can be used to iterate over the graph's nodes as they are executed.
 
         This method returns a `GraphRun` object which can be used to async-iterate over the nodes of this `Graph` as
@@ -569,7 +569,7 @@ class GraphRun(Generic[StateT, DepsT, RunEndT]):
     """A stateful, async-iterable run of a [`Graph`][pydantic_graph.graph.Graph].
 
     You typically get a `GraphRun` instance from calling
-    `with [my_graph.iter(...)][pydantic_graph.graph.Graph.iter] as graph_run:`. That gives you the ability to iterate
+    `async with [my_graph.iter(...)][pydantic_graph.graph.Graph.iter] as graph_run:`. That gives you the ability to iterate
     through nodes as they run, either by `async for` iteration or by repeatedly calling `.next(...)`.
 
     Here's an example of iterating over the graph from [above][pydantic_graph.graph.Graph]:
@@ -579,7 +579,7 @@ class GraphRun(Generic[StateT, DepsT, RunEndT]):
 
     async def main():
         state = MyState(1)
-        with never_42_graph.iter(Increment(), state=state) as graph_run:
+        async with never_42_graph.iter(Increment(), state=state) as graph_run:
             node_states = [(graph_run.next_node, deepcopy(graph_run.state))]
             async for node in graph_run:
                 node_states.append((node, deepcopy(graph_run.state)))
@@ -593,7 +593,7 @@ class GraphRun(Generic[StateT, DepsT, RunEndT]):
             '''
 
         state = MyState(41)
-        with never_42_graph.iter(Increment(), state=state) as graph_run:
+        async with never_42_graph.iter(Increment(), state=state) as graph_run:
             node_states = [(graph_run.next_node, deepcopy(graph_run.state))]
             async for node in graph_run:
                 node_states.append((node, deepcopy(graph_run.state)))
@@ -684,7 +684,7 @@ class GraphRun(Generic[StateT, DepsT, RunEndT]):
 
         async def main():
             state = MyState(48)
-            with never_42_graph.iter(Increment(), state=state) as graph_run:
+            async with never_42_graph.iter(Increment(), state=state) as graph_run:
                 next_node = graph_run.next_node  # start with the first node
                 node_states = [(next_node, deepcopy(graph_run.state))]
 
