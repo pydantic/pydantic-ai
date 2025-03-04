@@ -165,6 +165,9 @@ exclude_lines = [
 [tool.logfire]
 ignore_no_config = true
 
+[tool.inline-snapshot]
+format-command="ruff format --stdin-filename {filename}"
+
 [tool.inline-snapshot.shortcuts]
 snap-fix = ["create", "fix"]
 snap = ["create"]

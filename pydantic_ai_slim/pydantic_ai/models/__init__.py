@@ -28,9 +28,11 @@ if TYPE_CHECKING:
 
 
 KnownModelName = Literal[
+    'anthropic:claude-3-7-sonnet-latest',
     'anthropic:claude-3-5-haiku-latest',
     'anthropic:claude-3-5-sonnet-latest',
     'anthropic:claude-3-opus-latest',
+    'claude-3-7-sonnet-latest',
     'claude-3-5-haiku-latest',
     'claude-3-5-sonnet-latest',
     'claude-3-opus-latest',
@@ -56,6 +58,7 @@ KnownModelName = Literal[
     'google-gla:gemini-exp-1206',
     'google-gla:gemini-2.0-flash',
     'google-gla:gemini-2.0-flash-lite-preview-02-05',
+    'google-gla:gemini-2.0-pro-exp-02-05',
     'google-vertex:gemini-1.0-pro',
     'google-vertex:gemini-1.5-flash',
     'google-vertex:gemini-1.5-flash-8b',
@@ -65,6 +68,7 @@ KnownModelName = Literal[
     'google-vertex:gemini-exp-1206',
     'google-vertex:gemini-2.0-flash',
     'google-vertex:gemini-2.0-flash-lite-preview-02-05',
+    'google-vertex:gemini-2.0-pro-exp-02-05',
     'gpt-3.5-turbo',
     'gpt-3.5-turbo-0125',
     'gpt-3.5-turbo-0301',
