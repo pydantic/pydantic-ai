@@ -49,7 +49,7 @@ class InstrumentationOptions:
 
     Used in:
 
-    - [`Agent(instrument=...)`][pydantic_ai.agent.Agent(instrument)]
+    - `Agent(instrument=...)`
     - [`Agent.instrument_all()`][pydantic_ai.agent.Agent.instrument_all]
     - `InstrumentedModel`
     """
