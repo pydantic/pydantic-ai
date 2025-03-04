@@ -59,7 +59,7 @@ def get_logfire_summary(capfire: CaptureLogfire) -> Callable[[], LogfireSummary]
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
 def test_logfire(get_logfire_summary: Callable[[], LogfireSummary]) -> None:
-    my_agent = Agent(model=TestModel(), auto_instrument=True)
+    my_agent = Agent(model=TestModel(), instrument=True)
 
     @my_agent.tool_plain
     async def my_ret(x: int) -> str:

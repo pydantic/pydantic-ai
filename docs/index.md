@@ -175,6 +175,7 @@ from pydantic_ai import Agent, RunContext
 from bank_database import DatabaseConn
 
 import logfire
+
 logfire.configure()  # (1)!
 logfire.instrument_asyncpg()  # (2)!
 
@@ -188,7 +189,7 @@ support_agent = Agent(
         'You are a support agent in our bank, give the '
         'customer support and judge the risk level of their query.'
     ),
-    auto_instrument=True,
+    instrument=True,
 )
 ```
 

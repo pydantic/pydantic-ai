@@ -112,7 +112,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
     The type of the result data, used to validate the result data, defaults to `str`.
     """
 
-    auto_instrument: bool
+    instrument: bool
     """Automatically instrument with OpenTelemetry. Will use Logfire if it's configured."""
 
     _deps_type: type[AgentDepsT] = dataclasses.field(repr=False)
@@ -147,7 +147,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
         defer_model_check: bool = False,
         end_strategy: EndStrategy = 'early',
-        auto_instrument: bool = False,
+        instrument: bool = False,
     ):
         """Create an agent.
 
@@ -177,7 +177,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
                 [override the model][pydantic_ai.Agent.override] for testing.
             end_strategy: Strategy for handling tool calls that are requested alongside a final result.
                 See [`EndStrategy`][pydantic_ai.agent.EndStrategy] for more information.
-            auto_instrument: Automatically instrument with OpenTelemetry. Will use Logfire if it's configured.
+            instrument: Automatically instrument with OpenTelemetry. Will use Logfire if it's configured.
         """
         if model is None or defer_model_check:
             self.model = model
@@ -188,7 +188,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         self.name = name
         self.model_settings = model_settings
         self.result_type = result_type
-        self.auto_instrument = auto_instrument
+        self.instrument = instrument
 
         self._deps_type = deps_type
 
@@ -1119,7 +1119,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         else:
             raise exceptions.UserError('`model` must be set either when creating the agent or when calling it.')
 
-        if self.auto_instrument and not isinstance(model_, InstrumentedModel):
+        if self.instrument and not isinstance(model_, InstrumentedModel):
             model_ = InstrumentedModel(model_)
 
         return model_
