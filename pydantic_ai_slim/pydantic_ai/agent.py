@@ -113,7 +113,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
     """
 
     instrument: InstrumentationOptions | bool | None
-    """Automatically instrument with OpenTelemetry. Will use Logfire if it's configured."""
+    """Options to automatically instrument with OpenTelemetry."""
 
     _instrument_default: ClassVar[InstrumentationOptions | bool] = False
 
@@ -179,7 +179,12 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
                 [override the model][pydantic_ai.Agent.override] for testing.
             end_strategy: Strategy for handling tool calls that are requested alongside a final result.
                 See [`EndStrategy`][pydantic_ai.agent.EndStrategy] for more information.
-            instrument: Automatically instrument with OpenTelemetry. Will use Logfire if it's configured.
+            instrument: Set to True to automatically instrument with OpenTelemetry,
+                which will use Logfire if it's configured.
+                Set to an instance of [`InstrumentationOptions`](pydantic_ai.InstrumentationOptions) to customize.
+                If this isn't set, then the last value set by
+                [`Agent.instrument_all()`][pydantic_ai.Agent.instrument_all]
+                will be used, which defaults to False.
         """
         if model is None or defer_model_check:
             self.model = model
@@ -217,6 +222,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
 
     @staticmethod
     def instrument_all(instrument: InstrumentationOptions | bool = True) -> None:
+        """Set the instrumentation options for all agents where `instrument` is not set."""
         Agent._instrument_default = instrument
 
     @overload
