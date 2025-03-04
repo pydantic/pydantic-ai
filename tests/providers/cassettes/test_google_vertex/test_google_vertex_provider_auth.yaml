@@ -37,8 +37,8 @@ interactions:
     parsed_body:
       access_token: scrubbed
       expires_in: 3599
-      id_token: eyJhbGciOiJSUzI1NiIsImtpZCI6IjI1ZjgyMTE3MTM3ODhiNjE0NTQ3NGI1MDI5YjAxNDFiZDViM2RlOWMiLCJ0eXAiOiJKV1QifQ.eyJpc3MiOiJodHRwczovL2FjY291bnRzLmdvb2dsZS5jb20iLCJhenAiOiI3NjQwODYwNTE4NTAtNnFyNHA2Z3BpNmhuNTA2cHQ4ZWp1cTgzZGkzNDFodXIuYXBwcy5nb29nbGV1c2VyY29udGVudC5jb20iLCJhdWQiOiI3NjQwODYwNTE4NTAtNnFyNHA2Z3BpNmhuNTA2cHQ4ZWp1cTgzZGkzNDFodXIuYXBwcy5nb29nbGV1c2VyY29udGVudC5jb20iLCJzdWIiOiIxMDY1Njg0NzQzMTU3NzkyMTI1NTkiLCJoZCI6InB5ZGFudGljLmRldiIsImVtYWlsIjoibWFyY2Vsb0BweWRhbnRpYy5kZXYiLCJlbWFpbF92ZXJpZmllZCI6dHJ1ZSwiYXRfaGFzaCI6IkZEemNqS3E4cHFDWVZ1b3VJQnhid3ciLCJpYXQiOjE3NDExMTY0MjgsImV4cCI6MTc0MTEyMDAyOH0.W0vmqKZTpHia_tG-l-NRpKFpRAlAsVjy3e2lpbREuzoHFSVxoYt3-NEdWrzBcwF9XnwMB1JrvyPVHDcNClPvSpozTR9DxwQx89PUu4c61WjrrqAsyeiKWowCsa7fLU4ePzQ7si4_4nQb56kGsUJtLVxWDTnxeaaOs5j1wdydSsL5lhQ2vE-TIdIn1YSpZdLrqq12TvMQcL5xAfFRltMhF6mAjcapqpF0A6nXUCA682TkDytXMcRxEHGpObWgz9tD-JtKfLjVFQNmiV-bqLepOsf1BO3RQIHQ91TZWZkVPdmVqUWF4VYFXoaDiz17hRt6esovwFCcRfLtm2ridQrlMA
-      scope: https://www.googleapis.com/auth/sqlservice.login openid https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/cloud-platform
+      id_token: eyJhbGciOiJSUzI1NiIsImtpZCI6IjI1ZjgyMTE3MTM3ODhiNjE0NTQ3NGI1MDI5YjAxNDFiZDViM2RlOWMiLCJ0eXAiOiJKV1QifQ.eyJpc3MiOiJodHRwczovL2FjY291bnRzLmdvb2dsZS5jb20iLCJhenAiOiI3NjQwODYwNTE4NTAtNnFyNHA2Z3BpNmhuNTA2cHQ4ZWp1cTgzZGkzNDFodXIuYXBwcy5nb29nbGV1c2VyY29udGVudC5jb20iLCJhdWQiOiI3NjQwODYwNTE4NTAtNnFyNHA2Z3BpNmhuNTA2cHQ4ZWp1cTgzZGkzNDFodXIuYXBwcy5nb29nbGV1c2VyY29udGVudC5jb20iLCJzdWIiOiIxMDY1Njg0NzQzMTU3NzkyMTI1NTkiLCJoZCI6InB5ZGFudGljLmRldiIsImVtYWlsIjoibWFyY2Vsb0BweWRhbnRpYy5kZXYiLCJlbWFpbF92ZXJpZmllZCI6dHJ1ZSwiYXRfaGFzaCI6Imxkd2Z4aUt5eUx6YTFPLUhvYjZpV2ciLCJpYXQiOjE3NDExMTY3MTcsImV4cCI6MTc0MTEyMDMxN30.c4FpD9be0-c2Cwfo-0C4UYGCuqBwk7q9uAkFZst4cQYAKwxhaK-S5ptEyAsfXh7YGFy2nXeRKx_zxxw-YjDVouImGGr31ZJ_jhdQYbDuC4taYNnI2xYmwbIPI-EVMVM6veFs6qO-2MQ5f6qSMUh1xG5Q0E6XDhwJl4FgZbSKy_hIB69nmOw1tsDN3p4lTxnhq3shgPuqpHNxvWvyI7z3AK0S2Cxnsf8G1LFkY_NIvyFoX-YrkICoVGVIe8xjDdvFzNQQ7DN82tV1dzFlm6-8AaNPbBe1tdSSz1AzVLhwKgduh9KabmYoPMreJMITbHSXAgZmtDFoPw4lVq7tbLyESA
+      scope: openid https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/sqlservice.login https://www.googleapis.com/auth/userinfo.email
       token_type: Bearer
     status:
       code: 200
@@ -69,7 +69,7 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '1735'
+      - '1743'
       content-type:
       - application/json; charset=UTF-8
       transfer-encoding:
@@ -80,46 +80,46 @@ interactions:
       - Referer
     parsed_body:
       candidates:
-      - avgLogprobs: -0.2553652392493354
+      - avgLogprobs: -0.2656492471694946
         content:
           parts:
-          - text: Hello! How can I help you today?
+          - text: "Hello! \U0001F44B How can I help you today?"
           role: model
         finishReason: STOP
         safetyRatings:
         - category: HARM_CATEGORY_HATE_SPEECH
           probability: NEGLIGIBLE
-          probabilityScore: 0.034179688
+          probabilityScore: 0.028930664
           severity: HARM_SEVERITY_NEGLIGIBLE
-          severityScore: 0.053466797
+          severityScore: 0.04272461
         - category: HARM_CATEGORY_DANGEROUS_CONTENT
           probability: NEGLIGIBLE
-          probabilityScore: 0.05102539
+          probabilityScore: 0.045410156
           severity: HARM_SEVERITY_NEGLIGIBLE
-          severityScore: 0.020629883
+          severityScore: 0.026733398
         - category: HARM_CATEGORY_HARASSMENT
           probability: NEGLIGIBLE
-          probabilityScore: 0.060058594
+          probabilityScore: 0.05834961
           severity: HARM_SEVERITY_NEGLIGIBLE
-          severityScore: 0.01977539
+          severityScore: 0.018310547
         - category: HARM_CATEGORY_SEXUALLY_EXPLICIT
           probability: NEGLIGIBLE
-          probabilityScore: 0.11425781
+          probabilityScore: 0.103515625
           severity: HARM_SEVERITY_NEGLIGIBLE
-          severityScore: 0.03112793
-      createTime: '2025-03-04T19:27:08.910440Z'
+          severityScore: 0.029785156
+      createTime: '2025-03-04T19:31:58.470492Z'
       modelVersion: gemini-1.0-pro-002
-      responseId: DFTHZ-jIN8qVmecPluy-0Ak
+      responseId: LlXHZ9zbHOScmecPhOi5GQ
       usageMetadata:
-        candidatesTokenCount: 9
+        candidatesTokenCount: 10
         candidatesTokensDetails:
         - modality: TEXT
-          tokenCount: 9
+          tokenCount: 10
         promptTokenCount: 1
         promptTokensDetails:
         - modality: TEXT
           tokenCount: 1
-        totalTokenCount: 10
+        totalTokenCount: 11
     status:
       code: 200
       message: OK
