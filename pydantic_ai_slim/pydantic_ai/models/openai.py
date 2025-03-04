@@ -164,7 +164,7 @@ class OpenAIModel(Model):
                 self.client = infer_provider(provider).client
             else:
                 self.client = provider.client
-        else:
+        else:  # pragma: no cover
             # This is a workaround for the OpenAI client requiring an API key, whilst locally served,
             # openai compatible models do not always need an API key, but a placeholder (non-empty) key is required.
             if (

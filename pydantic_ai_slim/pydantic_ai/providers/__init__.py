@@ -60,5 +60,5 @@ def infer_provider(provider: str) -> Provider[Any]:
         from .google_gla import GoogleGLAProvider
 
         return GoogleGLAProvider()
-    else:
+    else:  # pragma: no cover
         raise ValueError(f'Unknown provider: {provider}')
