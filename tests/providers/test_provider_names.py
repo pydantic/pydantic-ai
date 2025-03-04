@@ -6,7 +6,6 @@ from pydantic_ai.providers import Provider, infer_provider
 
 from ..conftest import try_import
 
-test_inter_provider_params = []
 with try_import() as imports_successful:
     from pydantic_ai.providers.deepseek import DeepSeekProvider
     from pydantic_ai.providers.google_gla import GoogleGLAProvider
@@ -19,6 +18,9 @@ with try_import() as imports_successful:
         ('google-vertex', GoogleVertexProvider),
         ('google-gla', GoogleGLAProvider),
     ]
+
+if not imports_successful():
+    test_infer_provider_params = []
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='need to install all extra packages')
 
