@@ -25,7 +25,6 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.result import Usage
 from pydantic_ai.settings import ModelSettings
 
@@ -47,6 +46,7 @@ with try_import() as imports_successful:
     from openai.types.completion_usage import CompletionUsage, PromptTokensDetails
 
     from pydantic_ai.models.openai import OpenAIModel, OpenAISystemPromptRole
+    from pydantic_ai.providers.openai import OpenAIProvider
 
     # note: we use Union here so that casting works with Python 3.9
     MockChatCompletion = Union[chat.ChatCompletion, Exception]
