@@ -45,7 +45,14 @@ ANY_ADAPTER = TypeAdapter[Any](Any)
 
 @dataclass(init=False)
 class InstrumentationOptions:
-    """Options for `InstrumentedModel`, `Agent(instrument=...)`, and `Agent.instrument_all()`."""
+    """Options for instrumenting models and agents with OpenTelemetry.
+
+    Used in:
+
+    - [`Agent(instrument=...)`][pydantic_ai.agent.Agent(instrument)]
+    - [`Agent.instrument_all()`][pydantic_ai.agent.Agent.instrument_all]
+    - `InstrumentedModel`
+    """
 
     tracer: Tracer = field(repr=False)
     event_logger: EventLogger = field(repr=False)
