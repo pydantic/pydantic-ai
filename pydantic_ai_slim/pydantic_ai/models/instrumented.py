@@ -45,7 +45,7 @@ ANY_ADAPTER = TypeAdapter[Any](Any)
 
 @dataclass(init=False)
 class InstrumentationOptions:
-    """Model which is instrumented with OpenTelemetry."""
+    """Options for `InstrumentedModel`, `Agent(instrument=...)`, and `Agent.instrument_all()`."""
 
     tracer: Tracer = field(repr=False)
     event_logger: EventLogger = field(repr=False)
@@ -53,10 +53,24 @@ class InstrumentationOptions:
 
     def __init__(
         self,
+        *,
+        event_mode: Literal['attributes', 'logs'] = 'attributes',
         tracer_provider: TracerProvider | None = None,
         event_logger_provider: EventLoggerProvider | None = None,
-        event_mode: Literal['attributes', 'logs'] = 'attributes',
     ):
+        """Create instrumentation options.
+
+        Args:
+            event_mode: The mode for emitting events. If `'attributes'`, events are attached to the span as attributes.
+                If `'logs'`, events are emitted as OpenTelemetry log-based events.
+            tracer_provider: The OpenTelemetry tracer provider to use.
+            If not provided, the global tracer provider is used.
+                Calling `logfire.configure()` sets the global tracer provider, so most users don't need this.
+            event_logger_provider: The OpenTelemetry event logger provider to use.
+                If not provided, the global event logger provider is used.
+                Calling `logfire.configure()` sets the global event logger provider, so most users don't need this.
+                This is only used if `event_mode='logs'`.
+        """
         from pydantic_ai import __version__
 
         tracer_provider = tracer_provider or get_tracer_provider()
@@ -70,7 +84,7 @@ class InstrumentationOptions:
 class InstrumentedModel(WrapperModel):
     """Model which is instrumented with OpenTelemetry."""
 
-    options: InstrumentationOptions = field(repr=False)
+    options: InstrumentationOptions
 
     def __init__(
         self,
