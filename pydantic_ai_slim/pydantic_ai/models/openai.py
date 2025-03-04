@@ -128,6 +128,7 @@ class OpenAIModel(Model):
                 In the future, this may be inferred from the model name.
             system: The model provider used, defaults to `openai`. This is for observability purposes, you must
                 customize the `base_url` and `api_key` to use a different provider.
+            user: The user to associate with the request. If not provided, defaults to `None`.
         """
         self.user = user
         self._model_name = model_name
