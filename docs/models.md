@@ -18,18 +18,26 @@ To use each model provider, you need to configure your local environment and mak
 
 ## Models, Interfaces, and Providers
 
+
 PydanticAI uses a few key terms to describe how it interacts with different LLMs:
 
-* **Model**: This refers to the specific LLM model you want to use (e.g., `gpt-4o`, `claude-3-5-sonnet-latest`, `gemini-1.5-flash`).
-    It's the "brain" that processes your prompts and generates responses.  You specify the model as a parameter within the Model classes.
-* **Interface**:  This is the API that PydanticAI uses to communicate with the LLM provider.  Different providers might have
-    different APIs (e.g., OpenAI's API, Anthropic's API, Google's Generative Language API). The Model classes (like
-    `OpenAIModel`, `GeminiModel`, etc.) represent these interfaces and will soon be renamed to reflect this better.
-* **Provider**: This is a class that handles authentication and connection to a specific LLM service.  It provides a
-    consistent way to access different LLMs, regardless of their underlying API. Examples include `OpenAIProvider`,
-    `GoogleVertexProvider`, and `DeepSeekProvider`. Providers manage the details of connecting to the service, so you don't have to.
+* **Model**: This refers to the specific LLM model you want to handle your requests (e.g., `gpt-4o`, `claude-3-5-sonnet-latest`,
+    `gemini-1.5-flash`). It's the "brain" that processes your prompts and generates responses.  You specify the
+    _Model_ as a parameter to the _Interface_.
+* **Interface**: This refers to a PydanticAI class used to make requests following a specific LLM API
+    (generally by wrapping a vendor-provided SDK, like the `openai` python SDK). These classes implement a
+    vendor-SDK-agnostic API, ensuring a single PydanticAI agent is portable to different LLM vendors without
+    any other code changes just by swapping out the _Interface_ it uses. Currently, interface classes are named
+    roughly in the format `<VendorSdk>Model`, for example, we have `OpenAIModel`, `AnthropicModel`, `GeminiModel`,
+    etc. These `Model` classes will soon be renamed to `<VendorSdk>Interface` to reflect this terminology better.
+* **Provider**: This refers to _Interface_-specific classes which handle the authentication and connections to an LLM vendor.
+    Passing a non-default _Provider_ as a parameter to an _Interface_ is how you can ensure that your agent will make
+    requests to a specific endpoint, or make use of a specific approach to authentication (e.g., you can use Vertex-specific
+    auth with the `GeminiModel` by way of the `VertexProvider`). In particular, this is how you can make use of an AI gateway,
+    or an LLM vendor that offers API compatibility with the vendor SDK used by an existing interface (such as `OpenAIModel`).
 
-In short, you select a *model*, PydanticAI uses the appropriate *interface* class, and the *provider* handles the connection and authentication to the underlying service.
+In short, you select a *model*, PydanticAI uses the appropriate *interface* class, and the *provider* handles the
+connection and authentication to the underlying service.
 
 ## OpenAI
 
