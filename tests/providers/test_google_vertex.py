@@ -1,4 +1,6 @@
+import os
 from pathlib import Path
+from unittest.mock import patch
 
 import httpx
 import pytest
@@ -16,6 +18,12 @@ pytestmark = [
     pytest.mark.anyio(),
     pytest.mark.vcr(),
 ]
+
+
+@pytest.fixture()
+def ignore_environment_variables():
+    with patch.dict(os.environ, {}, clear=True):
+        yield
 
 
 def test_google_vertex_provider(allow_model_requests: None) -> None:
