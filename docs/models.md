@@ -17,6 +17,21 @@ PydanticAI also comes with [`TestModel`](api/models/test.md) and [`FunctionModel
 
 To use each model provider, you need to configure your local environment and make sure you have the right packages installed.
 
+## Models, Interfaces, and Providers
+
+PydanticAI uses a few key terms to describe how it interacts with different LLMs:
+
+* **Model**: This refers to the specific LLM model you want to use (e.g., `gpt-4o`, `claude-3-5-sonnet-latest`, `gemini-1.5-flash`).
+    It's the "brain" that processes your prompts and generates responses.  You specify the model as a parameter within the Model classes.
+* **Interface**:  This is the API that PydanticAI uses to communicate with the LLM provider.  Different providers might have
+    different APIs (e.g., OpenAI's API, Anthropic's API, Google's Generative Language API). The Model classes (like
+    `OpenAIModel`, `GeminiModel`, etc.) represent these interfaces and will soon be renamed to reflect this better.
+* **Provider**: This is a class that handles authentication and connection to a specific LLM service.  It provides a
+    consistent way to access different LLMs, regardless of their underlying API. Examples include `OpenAIProvider`,
+    `GoogleVertexProvider`, and `DeepSeekProvider`. Providers manage the details of connecting to the service, so you don't have to.
+
+In short, you select a *model*, PydanticAI uses the appropriate *interface* class, and the *provider* handles the connection and authentication to the underlying service.
+
 ## OpenAI
 
 ### Install
@@ -53,45 +68,55 @@ Or initialise the model directly with just the model name:
 ```python {title="openai_model_init.py"}
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIModel
+from pydantic_ai.providers.openai import OpenAIProvider
 
 model = OpenAIModel('gpt-4o')
 agent = Agent(model)
 ...
 ```
+By default, the `OpenAIModel` uses the `OpenAIProvider` with the `base_url` set to `https://api.openai.com/v1`.
 
-### `api_key` argument
+You can change the provider to one of the [OpenAI-compatible Models](#openai-compatible-models)
 
-If you don't want to or can't set the environment variable, you can pass it at runtime via the [`api_key` argument][pydantic_ai.models.openai.OpenAIModel.__init__]:
-
-```python {title="openai_model_api_key.py"}
+```python {title="openai_model_init_deepseek.py"}
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIModel
 
-model = OpenAIModel('gpt-4o', api_key='your-api-key')
+model = OpenAIModel('deepseek-chat', provider='deepseek')
 agent = Agent(model)
 ...
 ```
 
-### Custom OpenAI Client
+### `provider` argument
 
-`OpenAIModel` also accepts a custom `AsyncOpenAI` client via the [`openai_client` parameter][pydantic_ai.models.openai.OpenAIModel.__init__],
-so you can customise the `organization`, `project`, `base_url` etc. as defined in the [OpenAI API docs](https://platform.openai.com/docs/api-reference).
+You can provide a custom [`Provider`][pydantic_ai.providers.Provider] via the [`provider` argument][pydantic_ai.models.openai.OpenAIModel.__init__]:
 
-You could also use the [`AsyncAzureOpenAI`](https://learn.microsoft.com/en-us/azure/ai-services/openai/how-to/switching-endpoints) client to use the Azure OpenAI API.
+```python {title="openai_model_provider.py"}
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIModel
+from pydantic_ai.providers.openai import OpenAIProvider
 
-```python {title="openai_azure.py"}
-from openai import AsyncAzureOpenAI
+model = OpenAIModel('gpt-4o', provider=OpenAIProvider(api_key='your-api-key'))
+agent = Agent(model)
+...
+```
+You can also customize the `OpenAIProvider` with a custom `base_url` and `http_client`:
+```python {title="openai_model_custom_provider.py"}
+from httpx import AsyncClient
 
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIModel
+from pydantic_ai.providers.openai import OpenAIProvider
 
-client = AsyncAzureOpenAI(
-    azure_endpoint='...',
-    api_version='2024-07-01-preview',
-    api_key='your-api-key',
+custom_http_client = AsyncClient(timeout=30)
+
+model = OpenAIModel(
+    'gpt-4o',
+     provider=OpenAIProvider(
+        api_key='your-api-key',
+        http_client=custom_http_client
+    )
 )
-
-model = OpenAIModel('gpt-4o', openai_client=client)
 agent = Agent(model)
 ...
 ```
@@ -186,41 +211,59 @@ agent = Agent('google-gla:gemini-2.0-flash')
 
 !!! note
     The `google-gla` provider prefix represents the [Google **G**enerative **L**anguage **A**PI](https://ai.google.dev/api/all-methods) for `GeminiModel`s.
-    `google-vertex` is used with [Vertex AI](https://cloud.google.com/vertex-ai/generative-ai/docs/learn/models) for `VertexAIModel`s.
+    `google-vertex` is used with [Vertex AI](https://cloud.google.com/vertex-ai/generative-ai/docs/learn/models).
 
-Or initialise the model directly with just the model name:
+Or initialise the model directly with just the model name and provider:
 
 ```python {title="gemini_model_init.py"}
 from pydantic_ai import Agent
 from pydantic_ai.models.gemini import GeminiModel
 
-model = GeminiModel('gemini-2.0-flash')
+model = GeminiModel('gemini-2.0-flash', provider='google-gla')
 agent = Agent(model)
 ...
 ```
 
-### `api_key` argument
+### `provider` argument
 
-If you don't want to or can't set the environment variable, you can pass it at runtime via the [`api_key` argument][pydantic_ai.models.gemini.GeminiModel.__init__]:
+You can provide a custom [`Provider`][pydantic_ai.providers.Provider] via the [`provider` argument][pydantic_ai.models.gemini.GeminiModel.__init__]:
 
-```python {title="gemini_model_api_key.py"}
+```python {title="gemini_model_provider.py"}
 from pydantic_ai import Agent
 from pydantic_ai.models.gemini import GeminiModel
+from pydantic_ai.providers.google_gla import GoogleGLAProvider
 
-model = GeminiModel('gemini-2.0-flash', api_key='your-api-key')
+model = GeminiModel('gemini-2.0-flash', provider=GoogleGLAProvider(api_key='your-api-key'))
+agent = Agent(model)
+...
+```
+You can also customize the `GoogleGLAProvider` with a custom `http_client`:
+```python {title="gemini_model_custom_provider.py"}
+from httpx import AsyncClient
+
+from pydantic_ai import Agent
+from pydantic_ai.models.gemini import GeminiModel
+from pydantic_ai.providers.google_gla import GoogleGLAProvider
+
+custom_http_client = AsyncClient(timeout=30)
+model = GeminiModel(
+    'gemini-2.0-flash',
+    provider=GoogleGLAProvider(api_key='your-api-key', http_client=custom_http_client)
+)
 agent = Agent(model)
 ...
 ```
 
 ## Gemini via VertexAI
 
-If you are an enterprise user, you should use [`VertexAIModel`][pydantic_ai.models.vertexai.VertexAIModel] which uses the `*-aiplatform.googleapis.com` API.
+If you are an enterprise user, you should use the `google-vertex` provider with [`GeminiModel`][pydantic_ai.models.gemini.GeminiModel] which uses the `*-aiplatform.googleapis.com` API.
 
 [`GeminiModelName`][pydantic_ai.models.gemini.GeminiModelName] contains a list of available Gemini models that can be used through this interface.
 
 ### Install
 
-To use [`VertexAIModel`][pydantic_ai.models.vertexai.VertexAIModel], you need to either install [`pydantic-ai`](install.md), or install [`pydantic-ai-slim`](install.md#slim-install) with the `vertexai` optional group:
+To use the `google-vertex` provider with [`GeminiModel`][pydantic_ai.models.gemini.GeminiModel], you need to either install
+[`pydantic-ai`](install.md), or install [`pydantic-ai-slim`](install.md#slim-install) with the `vertexai` optional group:
 
 ```bash
 pip/uv-add 'pydantic-ai-slim[vertexai]'
@@ -250,9 +293,9 @@ To use `VertexAIModel`, with [application default credentials](https://cloud.goo
 
 ```python {title="vertexai_application_default_credentials.py"}
 from pydantic_ai import Agent
-from pydantic_ai.models.vertexai import VertexAIModel
+from pydantic_ai.models.gemini import GeminiModel
 
-model = VertexAIModel('gemini-2.0-flash')
+model = GeminiModel('gemini-2.0-flash', provider='google-vertex')
 agent = Agent(model)
 ...
 ```
@@ -261,9 +304,9 @@ Internally this uses [`google.auth.default()`](https://google-auth.readthedocs.i
 
 !!! note "Won't fail until `agent.run()`"
 
-    Because `google.auth.default()` requires network requests and can be slow, it's not run until you call `agent.run()`. Meaning any configuration or permissions error will only be raised when you try to use the model. To initialize the model for this check to be run, call [`await model.ainit()`][pydantic_ai.models.vertexai.VertexAIModel.ainit].
+    Because `google.auth.default()` requires network requests and can be slow, it's not run until you call `agent.run()`.
 
-You may also need to pass the [`project_id` argument to `VertexAIModel`][pydantic_ai.models.vertexai.VertexAIModel.__init__] if application default credentials don't set a project, if you pass `project_id` and it conflicts with the project set by application default credentials, an error is raised.
+You may also need to pass the [`project_id` argument to `GoogleVertexProvider`][pydantic_ai.providers.google_vertex.GoogleVertexProvider] if application default credentials don't set a project, if you pass `project_id` and it conflicts with the project set by application default credentials, an error is raised.
 
 ### Service account
 
@@ -273,11 +316,13 @@ Once you have the JSON file, you can use it thus:
 
 ```python {title="vertexai_service_account.py"}
 from pydantic_ai import Agent
-from pydantic_ai.models.vertexai import VertexAIModel
+from pydantic_ai.models.gemini import GeminiModel
+from pydantic_ai.providers.google_vertex import GoogleVertexProvider
 
-model = VertexAIModel(
+
+model = GeminiModel(
     'gemini-2.0-flash',
-    service_account_file='path/to/service-account.json',
+     provider=GoogleVertexProvider(service_account_file='path/to/service-account.json')
 )
 agent = Agent(model)
 ...
@@ -285,20 +330,39 @@ agent = Agent(model)
 
 ### Customising region
 
-Whichever way you authenticate, you can specify which region requests will be sent to via the [`region` argument][pydantic_ai.models.vertexai.VertexAIModel.__init__].
+Whichever way you authenticate, you can specify which region requests will be sent to via the [`region` argument][pydantic_ai.providers.google_vertex.GoogleVertexProvider].
 
 Using a region close to your application can improve latency and might be important from a regulatory perspective.
 
 ```python {title="vertexai_region.py"}
 from pydantic_ai import Agent
-from pydantic_ai.models.vertexai import VertexAIModel
+from pydantic_ai.models.gemini import GeminiModel
+from pydantic_ai.providers.google_vertex import GoogleVertexProvider
 
-model = VertexAIModel('gemini-2.0-flash', region='asia-east1')
+model = GeminiModel('gemini-2.0-flash', provider=GoogleVertexProvider(region='asia-east1'))
 agent = Agent(model)
 ...
 ```
+You can also customize the `GoogleVertexProvider` with a custom `http_client`:
+```python {title="vertexai_custom_provider.py"}
+from httpx import AsyncClient
 
-[`VertexAiRegion`][pydantic_ai.models.vertexai.VertexAiRegion] contains a list of available regions.
+from pydantic_ai import Agent
+from pydantic_ai.models.gemini import GeminiModel
+from pydantic_ai.providers.google_vertex import GoogleVertexProvider
+
+custom_http_client = AsyncClient(timeout=30)
+model = GeminiModel(
+    'gemini-2.0-flash',
+    provider=GoogleVertexProvider(
+        region='asia-east1',
+        http_client=custom_http_client
+    )
+)
+agent = Agent(model)
+...
+```
+[`VertexAiRegion`][pydantic_ai.providers.google_vertex.VertexAiRegion] contains a list of available regions.
 
 ## Groq
 
@@ -476,16 +540,48 @@ agent = Agent(model)
 Many of the models are compatible with OpenAI API, and thus can be used with [`OpenAIModel`][pydantic_ai.models.openai.OpenAIModel] in PydanticAI.
 Before getting started, check the [OpenAI](#openai) section for installation and configuration instructions.
 
-To use another OpenAI-compatible API, you can make use of the [`base_url`][pydantic_ai.models.openai.OpenAIModel.__init__] and [`api_key`][pydantic_ai.models.openai.OpenAIModel.__init__] arguments:
+To use another OpenAI-compatible API, you can use the provider string:
 
-```python {title="openai_model_base_url.py" hl_lines="5-6"}
+```python {title="deepseek_model_init.py"}
+from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIModel
 
 model = OpenAIModel(
-    'model_name',
-    base_url='https://<openai-compatible-api-endpoint>.com',
-    api_key='your-api-key',
+    'deepseek-chat',
+    provider='deepseek'
 )
+agent = Agent(model)
+...
+```
+
+You can also use the `provider` argument with a custom provider class like the [`DeepSeekProvider`][pydantic_ai.providers.deepseek.DeepSeekProvider]:
+
+```python {title="deepseek_model_init_provider_class.py"}
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIModel
+from pydantic_ai.providers.deepseek import DeepSeekProvider
+
+model = OpenAIModel(
+    'deepseek-chat',
+    provider=DeepSeekProvider(api_key='your-deepseek-api-key'),
+)
+agent = Agent(model)
+...
+```
+You can also customize any provider with a custom `http_client`:
+```python {title="deepseek_model_init_provider_custom.py"}
+from httpx import AsyncClient
+
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIModel
+from pydantic_ai.providers.deepseek import DeepSeekProvider
+
+custom_http_client = AsyncClient(timeout=30)
+model = OpenAIModel(
+    'deepseek-chat',
+    provider=DeepSeekProvider(api_key='your-deepseek-api-key', http_client=custom_http_client),
+)
+agent = Agent(model)
 ...
 ```
 
@@ -502,6 +598,7 @@ With `ollama` installed, you can run the server with the model you want to use:
 ```bash {title="terminal-run-ollama"}
 ollama run llama3.2
 ```
+
 (this will pull the `llama3.2` model if you don't already have it downloaded)
 
 Then run your code, here's a minimal example:
@@ -511,6 +608,7 @@ from pydantic import BaseModel
 
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIModel
+from pydantic_ai.providers.openai import OpenAIProvider
 
 
 class CityLocation(BaseModel):
@@ -518,7 +616,7 @@ class CityLocation(BaseModel):
     country: str
 
 
-ollama_model = OpenAIModel(model_name='llama3.2', base_url='http://localhost:11434/v1')
+ollama_model = OpenAIModel(model_name='llama3.2', provider=OpenAIProvider(base_url='http://localhost:11434/v1'))
 agent = Agent(ollama_model, result_type=CityLocation)
 
 result = agent.run_sync('Where were the olympics held in 2012?')
@@ -537,10 +635,11 @@ from pydantic import BaseModel
 
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIModel
+from pydantic_ai.providers.openai import OpenAIProvider
 
 ollama_model = OpenAIModel(
     model_name='qwen2.5-coder:7b',  # (1)!
-    base_url='http://192.168.1.74:11434/v1',  # (2)!
+    provider=OpenAIProvider(base_url='http://192.168.1.74:11434/v1'),  # (2)!
 )
 
 
@@ -560,23 +659,23 @@ Usage(requests=1, request_tokens=57, response_tokens=8, total_tokens=65, details
 """
 ```
 
-1. The name of the model running on the remote server
-2. The url of the remote server
+1.  The name of the model running on the remote server
+2.  The url of the remote server
 
 ### OpenRouter
 
 To use [OpenRouter](https://openrouter.ai), first create an API key at [openrouter.ai/keys](https://openrouter.ai/keys).
 
-Once you have the API key, you can pass it to [`OpenAIModel`][pydantic_ai.models.openai.OpenAIModel] as the `api_key` argument:
+Once you have the API key, you can use it with the `OpenAIProvider`:
 
 ```python {title="openrouter_model_init.py"}
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIModel
+from pydantic_ai.providers.openai import OpenAIProvider
 
 model = OpenAIModel(
     'anthropic/claude-3.5-sonnet',
-    base_url='https://openrouter.ai/api/v1',
-    api_key='your-openrouter-api-key',
+    provider=OpenAIProvider(base_url='https://openrouter.ai/api/v1', api_key='your-openrouter-api-key'),
 )
 agent = Agent(model)
 ...
@@ -585,39 +684,20 @@ agent = Agent(model)
 ### Grok (xAI)
 
 Go to [xAI API Console](https://console.x.ai/) and create an API key.
-Once you have the API key, follow the [xAI API Documentation](https://docs.x.ai/docs/overview), and set the `base_url` and `api_key` arguments appropriately:
+Once you have the API key, you can use it with the `OpenAIProvider`:
 
 ```python {title="grok_model_init.py"}
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIModel
+from pydantic_ai.providers.openai import OpenAIProvider
 
 model = OpenAIModel(
     'grok-2-1212',
-    base_url='https://api.x.ai/v1',
-    api_key='your-xai-api-key',
+     provider=OpenAIProvider(base_url='https://api.x.ai/v1', api_key='your-xai-api-key'),
 )
 agent = Agent(model)
 ...
 ```
-
-### DeepSeek
-
-Go to [DeepSeek API Platform](https://platform.deepseek.com/api_keys) and create an API key.
-Once you have the API key, follow the [DeepSeek API Documentation](https://platform.deepseek.com/docs/api/overview), and set the `base_url` and `api_key` arguments appropriately:
-
-```python {title="deepseek_model_init.py"}
-from pydantic_ai import Agent
-from pydantic_ai.models.openai import OpenAIModel
-
-model = OpenAIModel(
-    'deepseek-chat',
-    base_url='https://api.deepseek.com',
-    api_key='your-deepseek-api-key',
-)
-agent = Agent(model)
-...
-```
-
 ### Perplexity
 
 Follow the Perplexity [getting started](https://docs.perplexity.ai/guides/getting-started)
@@ -626,11 +706,12 @@ guide to create an API key. Then, you can query the Perplexity API with the foll
 ```py {title="perplexity_model_init.py"}
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIModel
+from pydantic_ai.providers.openai import OpenAIProvider
 
 model = OpenAIModel(
     'sonar-pro',
-    base_url='https://api.perplexity.ai',
-    api_key='your-perplexity-api-key',
+    provider=OpenAIProvider(base_url='https://api.perplexity.ai', api_key='your-perplexity-api-key'),
+
 )
 agent = Agent(model)
 ...
@@ -647,7 +728,6 @@ For streaming, you'll also need to implement the following abstract base class:
 The best place to start is to review the source code for existing implementations, e.g. [`OpenAIModel`](https://github.com/pydantic/pydantic-ai/blob/main/pydantic_ai_slim/pydantic_ai/models/openai.py).
 
 For details on when we'll accept contributions adding new models to PydanticAI, see the [contributing guidelines](contributing.md#new-model-rules).
-
 
 ## Fallback
 
