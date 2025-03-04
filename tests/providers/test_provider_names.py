@@ -1,4 +1,6 @@
+import os
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 
@@ -13,10 +15,10 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.openai import OpenAIProvider
 
     test_infer_provider_params = [
-        ('deepseek', DeepSeekProvider),
-        ('openai', OpenAIProvider),
-        ('google-vertex', GoogleVertexProvider),
-        ('google-gla', GoogleGLAProvider),
+        ('deepseek', DeepSeekProvider, 'DEEPSEEK_API_KEY'),
+        ('openai', OpenAIProvider, None),
+        ('google-vertex', GoogleVertexProvider, None),
+        ('google-gla', GoogleGLAProvider, 'GEMINI_API_KEY'),
     ]
 
 if not imports_successful():
@@ -25,6 +27,16 @@ if not imports_successful():
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='need to install all extra packages')
 
 
-@pytest.mark.parametrize(('provider, provider_cls'), test_infer_provider_params)
-def test_infer_provider(provider: str, provider_cls: type[Provider[Any]]):
-    assert isinstance(infer_provider(provider), provider_cls)
+@pytest.fixture(scope='module', autouse=True)
+def empty_env():
+    with patch.dict(os.environ, {}, clear=True):
+        yield
+
+
+@pytest.mark.parametrize(('provider', 'provider_cls', 'exception_has'), test_infer_provider_params)
+def test_infer_provider(provider: str, provider_cls: type[Provider[Any]], exception_has: str | None):
+    if exception_has is not None:
+        with pytest.raises(ValueError, match=rf'.*{exception_has}.*'):
+            infer_provider(provider)
+    else:
+        assert isinstance(infer_provider(provider), provider_cls)
