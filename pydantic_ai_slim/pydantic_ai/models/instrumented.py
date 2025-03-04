@@ -64,7 +64,7 @@ class InstrumentationOptions:
             event_mode: The mode for emitting events. If `'attributes'`, events are attached to the span as attributes.
                 If `'logs'`, events are emitted as OpenTelemetry log-based events.
             tracer_provider: The OpenTelemetry tracer provider to use.
-            If not provided, the global tracer provider is used.
+                If not provided, the global tracer provider is used.
                 Calling `logfire.configure()` sets the global tracer provider, so most users don't need this.
             event_logger_provider: The OpenTelemetry event logger provider to use.
                 If not provided, the global event logger provider is used.

@@ -56,6 +56,7 @@ __all__ = (
     'CallToolsNode',
     'ModelRequestNode',
     'UserPromptNode',
+    'InstrumentationOptions',
 )
 
 
@@ -181,7 +182,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
                 See [`EndStrategy`][pydantic_ai.agent.EndStrategy] for more information.
             instrument: Set to True to automatically instrument with OpenTelemetry,
                 which will use Logfire if it's configured.
-                Set to an instance of [`InstrumentationOptions`](pydantic_ai.InstrumentationOptions) to customize.
+                Set to an instance of [`InstrumentationOptions`][pydantic_ai.agent.InstrumentationOptions] to customize.
                 If this isn't set, then the last value set by
                 [`Agent.instrument_all()`][pydantic_ai.Agent.instrument_all]
                 will be used, which defaults to False.

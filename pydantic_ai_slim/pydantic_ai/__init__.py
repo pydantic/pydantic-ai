@@ -11,7 +11,6 @@ from .exceptions import (
     UserError,
 )
 from .messages import AudioUrl, BinaryContent, ImageUrl
-from .models.instrumented import InstrumentationOptions
 from .tools import RunContext, Tool
 
 __all__ = (
@@ -35,8 +34,6 @@ __all__ = (
     'ImageUrl',
     'AudioUrl',
     'BinaryContent',
-    # models.instrumented
-    'InstrumentationOptions',
     # tools
     'Tool',
     'RunContext',
