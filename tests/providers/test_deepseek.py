@@ -1,4 +1,5 @@
 import os
+import re
 from unittest.mock import patch
 
 import httpx
@@ -24,8 +25,14 @@ def test_deep_seek_provider():
 
 def test_deep_seek_provider_need_api_key() -> None:
     with patch.dict(os.environ, {}, clear=True):
-        provider = DeepSeekProvider()
-        assert provider.client.api_key == 'api-key-not-set'
+        with pytest.raises(
+            ValueError,
+            match=re.escape(
+                'Set the `DEEPSEEK_API_KEY` environment variable or pass it via `DeepSeekProvider(api_key=...)`'
+                'to use the DeepSeek provider.'
+            ),
+        ):
+            DeepSeekProvider()
 
 
 def test_deep_seek_provider_pass_http_client() -> None:

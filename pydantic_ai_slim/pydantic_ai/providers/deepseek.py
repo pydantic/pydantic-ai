@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import os
+from typing import overload
 
 from httpx import AsyncClient as AsyncHTTPClient
 from openai import AsyncOpenAI
@@ -9,7 +10,7 @@ from pydantic_ai.models import cached_async_http_client
 
 try:
     from openai import AsyncOpenAI
-except ImportError as _import_error:
+except ImportError as _import_error:  # pragma: no cover
     raise ImportError(
         'Please install `openai` to use the DeepSeek provider, '
         "you can use the `openai` optional group — `pip install 'pydantic-ai-slim[openai]'`"
@@ -33,20 +34,37 @@ class DeepSeekProvider(Provider[AsyncOpenAI]):
     def client(self) -> AsyncOpenAI:
         return self._client
 
+    # The `openai_client` cannot be used with `http_client` and `api_key` at the same time.
+    @overload
+    def __init__(
+        self,
+        api_key: str | None = None,
+        openai_client: None = None,
+        http_client: AsyncHTTPClient | None = None,
+    ) -> None: ...
+
+    @overload
+    def __init__(
+        self,
+        api_key: None = None,
+        openai_client: AsyncOpenAI | None = None,
+        http_client: None = None,
+    ) -> None: ...
+
     def __init__(
         self,
         api_key: str | None = None,
         openai_client: AsyncOpenAI | None = None,
         http_client: AsyncHTTPClient | None = None,
     ) -> None:
-        # This is a workaround for the OpenAI client requiring an API key, whilst locally served,
-        # OpenAI compatible models do not always need an API key, but a placeholder (non-empty) key is required.
-        if api_key is None and 'OPENAI_API_KEY' not in os.environ and openai_client is None:
-            api_key = os.environ.get('DEEPSEEK_API_KEY', 'api-key-not-set')
+        api_key = api_key or os.getenv('DEEPSEEK_API_KEY')
+        if api_key is None and openai_client is None:
+            raise ValueError(
+                'Set the `DEEPSEEK_API_KEY` environment variable or pass it via `DeepSeekProvider(api_key=...)`'
+                'to use the DeepSeek provider.'
+            )
 
         if openai_client is not None:
-            assert http_client is None, 'Cannot provide both `openai_client` and `http_client`'
-            assert api_key is None, 'Cannot provide both `openai_client` and `api_key`'
             self._client = openai_client
         elif http_client is not None:
             self._client = AsyncOpenAI(base_url=self.base_url, api_key=api_key, http_client=http_client)
