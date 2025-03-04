@@ -199,19 +199,30 @@ class InstrumentedModel(WrapperModel):
     @staticmethod
     def messages_to_otel_events(messages: list[ModelMessage]) -> list[Event]:
         result: list[Event] = []
-        for message in messages:
+        for message_index, message in enumerate(messages):
+            message_events: list[Event] = []
             if isinstance(message, ModelRequest):
                 for part in message.parts:
                     if hasattr(part, 'otel_event'):
-                        result.append(part.otel_event())
+                        message_events.append(part.otel_event())
             elif isinstance(message, ModelResponse):
-                result.extend(message.otel_events())
+                message_events = message.otel_events()
+            for event in message_events:
+                event.attributes = {
+                    'gen_ai.message.index': message_index,
+                    **(event.attributes or {}),
+                }
+            result.extend(message_events)
         for event in result:
-            try:
-                event.body = ANY_ADAPTER.dump_python(event.body, mode='json')
-            except Exception:
-                try:
-                    event.body = str(event.body)
-                except Exception:
-                    event.body = 'Unable to serialize event body'
+            event.body = InstrumentedModel.serialize_any(event.body)
         return result
+
+    @staticmethod
+    def serialize_any(value: Any) -> str:
+        try:
+            return ANY_ADAPTER.dump_python(value, mode='json')
+        except Exception:
+            try:
+                return str(value)
+            except Exception as e:
+                return f'Unable to serialize: {e}'

@@ -168,14 +168,29 @@ To understand the flow of the above runs, we can watch the agent in action using
 
 To do this, we need to set up logfire, and add the following to our code:
 
-```python {title="bank_support_with_logfire.py" hl_lines="4-6" test="skip" lint="skip"}
+```python {title="bank_support_with_logfire.py" hl_lines="6-8 20" test="skip" lint="skip"}
 ...
+from pydantic_ai import Agent, RunContext
+
 from bank_database import DatabaseConn
 
 import logfire
+
 logfire.configure()  # (1)!
 logfire.instrument_asyncpg()  # (2)!
+
 ...
+
+support_agent = Agent(
+    'openai:gpt-4o',
+    deps_type=SupportDependencies,
+    result_type=SupportResult,
+    system_prompt=(
+        'You are a support agent in our bank, give the '
+        'customer support and judge the risk level of their query.'
+    ),
+    instrument=True,
+)
 ```
 
 1. Configure logfire, this will fail if project is not set up.

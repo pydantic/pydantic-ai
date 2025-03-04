@@ -97,6 +97,7 @@ agent: Agent[Deps, Response] = Agent(
     # Type ignore while we wait for PEP-0747, nonetheless unions will work fine everywhere else
     result_type=Response,  # type: ignore
     deps_type=Deps,
+    instrument=True,
 )
 
 

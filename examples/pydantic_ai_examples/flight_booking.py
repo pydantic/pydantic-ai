@@ -49,6 +49,7 @@ search_agent = Agent[Deps, FlightDetails | NoFlightFound](
     system_prompt=(
         'Your job is to find the cheapest flight for the user on the given date. '
     ),
+    instrument=True,
 )
 
 

@@ -168,6 +168,7 @@ async def test_instrumented_model(capfire: CaptureLogfire):
                 'severity_text': None,
                 'attributes': {
                     'gen_ai.system': 'my_system',
+                    'gen_ai.message.index': 0,
                     'event.name': 'gen_ai.system.message',
                 },
                 'timestamp': 2000000000,
@@ -182,6 +183,7 @@ async def test_instrumented_model(capfire: CaptureLogfire):
                 'severity_text': None,
                 'attributes': {
                     'gen_ai.system': 'my_system',
+                    'gen_ai.message.index': 0,
                     'event.name': 'gen_ai.user.message',
                 },
                 'timestamp': 4000000000,
@@ -196,6 +198,7 @@ async def test_instrumented_model(capfire: CaptureLogfire):
                 'severity_text': None,
                 'attributes': {
                     'gen_ai.system': 'my_system',
+                    'gen_ai.message.index': 0,
                     'event.name': 'gen_ai.tool.message',
                 },
                 'timestamp': 6000000000,
@@ -218,6 +221,7 @@ Fix the errors and try again.\
                 'severity_text': None,
                 'attributes': {
                     'gen_ai.system': 'my_system',
+                    'gen_ai.message.index': 0,
                     'event.name': 'gen_ai.tool.message',
                 },
                 'timestamp': 8000000000,
@@ -239,6 +243,7 @@ Fix the errors and try again.\
                 'severity_text': None,
                 'attributes': {
                     'gen_ai.system': 'my_system',
+                    'gen_ai.message.index': 0,
                     'event.name': 'gen_ai.user.message',
                 },
                 'timestamp': 10000000000,
@@ -253,6 +258,7 @@ Fix the errors and try again.\
                 'severity_text': None,
                 'attributes': {
                     'gen_ai.system': 'my_system',
+                    'gen_ai.message.index': 1,
                     'event.name': 'gen_ai.assistant.message',
                 },
                 'timestamp': 12000000000,
@@ -380,6 +386,7 @@ async def test_instrumented_model_stream(capfire: CaptureLogfire):
                 'severity_text': None,
                 'attributes': {
                     'gen_ai.system': 'my_system',
+                    'gen_ai.message.index': 0,
                     'event.name': 'gen_ai.user.message',
                 },
                 'timestamp': 2000000000,
@@ -474,6 +481,7 @@ async def test_instrumented_model_stream_break(capfire: CaptureLogfire):
                 'severity_text': None,
                 'attributes': {
                     'gen_ai.system': 'my_system',
+                    'gen_ai.message.index': 0,
                     'event.name': 'gen_ai.user.message',
                 },
                 'timestamp': 2000000000,
@@ -555,12 +563,14 @@ async def test_instrumented_model_attributes_mode(capfire: CaptureLogfire):
                                     'event.name': 'gen_ai.system.message',
                                     'content': 'system_prompt',
                                     'role': 'system',
+                                    'gen_ai.message.index': 0,
                                     'gen_ai.system': 'my_system',
                                 },
                                 {
                                     'event.name': 'gen_ai.user.message',
                                     'content': 'user_prompt',
                                     'role': 'user',
+                                    'gen_ai.message.index': 0,
                                     'gen_ai.system': 'my_system',
                                 },
                                 {
@@ -568,6 +578,7 @@ async def test_instrumented_model_attributes_mode(capfire: CaptureLogfire):
                                     'content': 'tool_return_content',
                                     'role': 'tool',
                                     'id': 'tool_call_3',
+                                    'gen_ai.message.index': 0,
                                     'gen_ai.system': 'my_system',
                                 },
                                 {
@@ -579,6 +590,7 @@ Fix the errors and try again.\
 """,
                                     'role': 'tool',
                                     'id': 'tool_call_4',
+                                    'gen_ai.message.index': 0,
                                     'gen_ai.system': 'my_system',
                                 },
                                 {
@@ -589,12 +601,14 @@ retry_prompt2
 Fix the errors and try again.\
 """,
                                     'role': 'user',
+                                    'gen_ai.message.index': 0,
                                     'gen_ai.system': 'my_system',
                                 },
                                 {
                                     'event.name': 'gen_ai.assistant.message',
                                     'role': 'assistant',
                                     'content': 'text3',
+                                    'gen_ai.message.index': 1,
                                     'gen_ai.system': 'my_system',
                                 },
                                 {
@@ -641,7 +655,7 @@ def test_messages_to_otel_events_serialization_errors():
 
     class Bar:
         def __repr__(self):
-            raise ValueError
+            raise ValueError('error!')
 
     messages = [
         ModelResponse(parts=[ToolCallPart('tool', {'arg': Foo()})]),
@@ -654,10 +668,12 @@ def test_messages_to_otel_events_serialization_errors():
         [
             {
                 'body': "{'role': 'assistant', 'tool_calls': [{'id': None, 'type': 'function', 'function': {'name': 'tool', 'arguments': {'arg': Foo()}}}]}",
+                'gen_ai.message.index': 0,
                 'event.name': 'gen_ai.assistant.message',
             },
             {
-                'body': 'Unable to serialize event body',
+                'body': 'Unable to serialize: error!',
+                'gen_ai.message.index': 1,
                 'event.name': 'gen_ai.tool.message',
             },
         ]
