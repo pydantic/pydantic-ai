@@ -489,6 +489,3 @@ def _map_usage(response: chat.ChatCompletion | ChatCompletionChunk) -> usage.Usa
             total_tokens=response_usage.total_tokens,
             details=details,
         )
-
-
-OpenAIInterface = OpenAIModel

@@ -348,9 +348,9 @@ def infer_model(model: Model | KnownModelName) -> Model:
         # TODO(Marcelo): Missing provider API.
         return CohereModel(model_name)
     elif provider in ('deepseek', 'openai'):
-        from .openai import OpenAIInterface
+        from .openai import OpenAIModel
 
-        return OpenAIInterface(model_name, provider=provider)
+        return OpenAIModel(model_name, provider=provider)
     elif provider in ('google-gla', 'google-vertex'):
         from .gemini import GeminiModel
 
