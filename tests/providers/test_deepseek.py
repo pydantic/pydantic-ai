@@ -17,10 +17,11 @@ pytestmark = pytest.mark.skipif(not imports_successful(), reason='openai not ins
 
 
 def test_deep_seek_provider():
-    provider = DeepSeekProvider()
+    provider = DeepSeekProvider(api_key='api-key')
     assert provider.name == 'deepseek'
     assert provider.base_url == 'https://api.deepseek.com'
     assert isinstance(provider.client, openai.AsyncOpenAI)
+    assert provider.client.api_key == 'api-key'
 
 
 def test_deep_seek_provider_need_api_key() -> None:
@@ -46,7 +47,3 @@ def test_deep_seek_pass_openai_client() -> None:
     provider = DeepSeekProvider(openai_client=openai_client)
     assert provider.client == openai_client
 
-
-def test_deep_seek_provider_pass_api_key() -> None:
-    provider = DeepSeekProvider(api_key='api-key')
-    assert provider.client.api_key == 'api-key'
