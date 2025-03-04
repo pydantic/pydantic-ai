@@ -534,13 +534,20 @@ agent = Agent(model)
 Many of the models are compatible with OpenAI API, and thus can be used with [`OpenAIModel`][pydantic_ai.models.openai.OpenAIModel] in PydanticAI.
 Before getting started, check the [OpenAI](#openai) section for installation and configuration instructions.
 
-To use another OpenAI-compatible API, you can use the provider string:
+To use another OpenAI-compatible API, you can make use of the [`base_url`][pydantic_ai.models.openai.OpenAIProvider.__init__]
+and [`api_key`][pydantic_ai.providers.openai.OpenAIProvider.__init__] arguments from `OpenAIProvider`:
 
-```python {title="deepseek_model_init.py"}
+```python {title="deepseek_model_init.py" hl_lines="5-6"}
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIModel
+from pydantic_ai.providers.openai import OpenAIProvider
 
-model = OpenAIModel('deepseek-chat', provider='deepseek')
+model = OpenAIModel(
+    'model_name',
+    provider=OpenAIProvider(
+        base_url='https://<openai-compatible-api-endpoint>.com', api_key='your-api-key'
+    ),
+)
 agent = Agent(model)
 ...
 ```
