@@ -89,20 +89,18 @@ class TestReflectOnToolCall:
         # The result should be the text "End tool call" (based on the implementation)
         assert result.data == 'End tool call'
 
-        # There should be 4 messages: initial request, tool call, tool return
-        # But no final reflection message from the model
-        assert len(messages) == 4
+        # There should be 3 messages: initial request, tool call, final response
+        assert len(messages) == 3
 
         # Check message sequence
-        assert isinstance(messages[0], ModelRequest)
-        assert isinstance(messages[1], ModelResponse)
-        assert isinstance(messages[2], ModelRequest)
-        assert isinstance(messages[3], ModelResponse)
+        assert isinstance(messages[0], ModelRequest)  # Initial request
+        assert isinstance(messages[1], ModelResponse)  # Tool call
+        assert isinstance(messages[2], ModelResponse)  # End tool call response
 
-        # Verify the last message is a tool return, not a model response
+        # Verify the last message is the "End tool call" response
         assert len(messages[2].parts) == 1
-        assert isinstance(messages[2].parts[0], ToolReturnPart)
-        assert messages[2].parts[0].content == 'test_data: test'
+        assert isinstance(messages[2].parts[0], TextPart)
+        assert messages[2].parts[0].content == 'End tool call'
 
     def test_multiple_tools_with_reflection(self) -> None:
         """Test behavior with multiple tool calls and reflection enabled."""
@@ -164,16 +162,25 @@ class TestReflectOnToolCall:
         # The result should be "End tool call" based on the implementation
         assert result.data == 'End tool call'
 
-        # There should be 4 messages: initial request, tool calls, tool returns, final summary
-        assert len(messages) == 4
+        # There should be 3 messages: initial request, tool calls, final response
+        assert len(messages) == 3
 
-        # Verify the tool returns
-        assert isinstance(messages[2], ModelRequest)
-        assert len(messages[2].parts) == 2
-        assert isinstance(messages[2].parts[0], ToolReturnPart)
-        assert isinstance(messages[2].parts[1], ToolReturnPart)
-        assert messages[2].parts[0].content == 'Result A: a'
-        assert messages[2].parts[1].content == 'Result B: b'
+        # Verify the message sequence
+        assert isinstance(messages[0], ModelRequest)  # Initial request
+        assert isinstance(messages[1], ModelResponse)  # Tool calls
+        assert isinstance(messages[2], ModelResponse)  # End tool call response
+
+        # Verify the tool calls message has multiple parts
+        assert len(messages[1].parts) == 2
+        assert isinstance(messages[1].parts[0], ToolCallPart)
+        assert isinstance(messages[1].parts[1], ToolCallPart)
+        assert messages[1].parts[0].tool_name == 'tool_a'
+        assert messages[1].parts[1].tool_name == 'tool_b'
+
+        # Verify the final response
+        assert len(messages[2].parts) == 1
+        assert isinstance(messages[2].parts[0], TextPart)
+        assert messages[2].parts[0].content == 'End tool call'
 
     def test_streaming_with_reflection(self) -> None:
         """Test streaming behavior with reflection enabled."""
@@ -230,20 +237,19 @@ class TestReflectOnToolCall:
         # The result should be "End tool call" based on the implementation
         assert result.data == 'End tool call'
 
-        # There should be 4 messages total
-        assert len(messages) == 4
+        # There should be 3 messages total
+        assert len(messages) == 3
+
+        # Check message sequence
+        assert isinstance(messages[0], ModelRequest)  # Initial request
+        assert isinstance(messages[1], ModelResponse)  # Tool call
+        assert isinstance(messages[2], ModelResponse)  # End tool call
 
         # The last message should be the "End tool call" response
         assert isinstance(messages[-1], ModelResponse)
         assert len(messages[-1].parts) == 1
         assert isinstance(messages[-1].parts[0], TextPart)
         assert messages[-1].parts[0].content == 'End tool call'
-
-        # The second-to-last message should be the tool return
-        assert isinstance(messages[-2], ModelRequest)
-        assert len(messages[-2].parts) == 1
-        assert isinstance(messages[-2].parts[0], ToolReturnPart)
-        assert messages[-2].parts[0].content == 'streaming_data: test'
 
     def test_result_schema_with_reflection(self) -> None:
         """Test structured result with reflection enabled."""
@@ -333,7 +339,7 @@ class TestReflectOnToolCall:
         # Verify message sequence
         assert isinstance(messages[0], ModelRequest)  # Initial request
         assert isinstance(messages[1], ModelResponse)  # Tool call + result call
-        assert isinstance(messages[2], ModelRequest)  # Tool return + result return
+        assert isinstance(messages[2], ModelRequest)  # Tool returns
 
         # Verify there are two parts in the tool response
         assert len(messages[1].parts) == 2
@@ -342,7 +348,7 @@ class TestReflectOnToolCall:
         assert messages[1].parts[0].tool_name == 'get_data'
         assert messages[1].parts[1].tool_name.startswith('final_result')
 
-        # Verify there are two parts in the tool return
+        # Verify tool returns
         assert len(messages[2].parts) == 2
         assert isinstance(messages[2].parts[0], ToolReturnPart)
         assert isinstance(messages[2].parts[1], ToolReturnPart)
