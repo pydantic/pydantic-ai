@@ -6,7 +6,7 @@ from collections.abc import AsyncIterator, Awaitable, Iterator, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
 from copy import deepcopy
 from types import FrameType
-from typing import Any, Callable, Generic, cast, final, overload
+from typing import Any, Callable, ClassVar, Generic, cast, final, overload
 
 from opentelemetry.trace import NoOpTracer, use_span
 from typing_extensions import TypeGuard, TypeVar, deprecated
@@ -112,8 +112,10 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
     The type of the result data, used to validate the result data, defaults to `str`.
     """
 
-    instrument: InstrumentationOptions | None
+    instrument: InstrumentationOptions | bool | None
     """Automatically instrument with OpenTelemetry. Will use Logfire if it's configured."""
+
+    _instrument_default: ClassVar[InstrumentationOptions | bool] = False
 
     _deps_type: type[AgentDepsT] = dataclasses.field(repr=False)
     _result_tool_name: str = dataclasses.field(repr=False)
@@ -147,7 +149,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
         defer_model_check: bool = False,
         end_strategy: EndStrategy = 'early',
-        instrument: bool | InstrumentationOptions = False,
+        instrument: InstrumentationOptions | bool | None = None,
     ):
         """Create an agent.
 
@@ -188,12 +190,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         self.name = name
         self.model_settings = model_settings
         self.result_type = result_type
-        if instrument is True:
-            self.instrument = InstrumentationOptions()
-        elif instrument is False:
-            self.instrument = None
-        else:
-            self.instrument = instrument
+        self.instrument = instrument
 
         self._deps_type = deps_type
 
@@ -217,6 +214,10 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
                 self._register_tool(tool)
             else:
                 self._register_tool(Tool(tool))
+
+    @staticmethod
+    def instrument_all(instrument: InstrumentationOptions | bool = True) -> None:
+        Agent._instrument_default = instrument
 
     @overload
     async def run(
@@ -1124,8 +1125,15 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         else:
             raise exceptions.UserError('`model` must be set either when creating the agent or when calling it.')
 
-        if self.instrument and not isinstance(model_, InstrumentedModel):
-            model_ = InstrumentedModel(model_, self.instrument)
+        instrument = self.instrument
+        if instrument is None:
+            instrument = self._instrument_default
+
+        if instrument and not isinstance(model_, InstrumentedModel):
+            if instrument is True:
+                instrument = InstrumentationOptions()
+
+            model_ = InstrumentedModel(model_, instrument)
 
         return model_
 

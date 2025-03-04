@@ -9,7 +9,7 @@ from inline_snapshot import snapshot
 from typing_extensions import NotRequired, TypedDict
 
 from pydantic_ai import Agent
-from pydantic_ai.models.instrumented import InstrumentationOptions
+from pydantic_ai.models.instrumented import InstrumentationOptions, InstrumentedModel
 from pydantic_ai.models.test import TestModel
 
 try:
@@ -80,11 +80,8 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary], instrument: 
 
     summary = get_logfire_summary()
     if instrument is False:
-        assert my_agent.instrument is None
         assert summary.traces == []
         return
-
-    assert my_agent.instrument is not None
 
     assert summary.traces == snapshot(
         [
@@ -168,7 +165,7 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary], instrument: 
         }
     )
     chat_span_attributes = summary.attributes[2]
-    if my_agent.instrument.event_mode == 'attributes':
+    if instrument is True or instrument.event_mode == 'attributes':
         attribute_mode_attributes = {k: chat_span_attributes.pop(k) for k in ['events', 'logfire.json_schema']}
         assert attribute_mode_attributes == snapshot(
             {
@@ -216,3 +213,29 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary], instrument: 
             'gen_ai.usage.output_tokens': 4,
         }
     )
+
+
+def test_instrument_all():
+    model = TestModel()
+    agent = Agent()
+
+    def get_model():
+        return agent._get_model(model)  # type: ignore
+
+    assert get_model() is model
+
+    Agent.instrument_all()
+    m = get_model()
+    assert isinstance(m, InstrumentedModel)
+    assert m.wrapped is model
+    assert m.options.event_mode == InstrumentationOptions().event_mode
+
+    options = InstrumentationOptions(event_mode='logs')
+    Agent.instrument_all(options)
+    m = get_model()
+    assert isinstance(m, InstrumentedModel)
+    assert m.wrapped is model
+    assert m.options is options
+
+    Agent.instrument_all(False)
+    assert get_model() is model
