@@ -1,7 +1,7 @@
 from __future__ import annotations as _annotations
 
 from dataclasses import dataclass
-from typing import Any, Callable, Literal
+from typing import Any, Callable
 
 import pytest
 from dirty_equals import IsJson
@@ -59,9 +59,17 @@ def get_logfire_summary(capfire: CaptureLogfire) -> Callable[[], LogfireSummary]
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
-@pytest.mark.parametrize('event_mode', ['logs', 'attributes'])
-def test_logfire(get_logfire_summary: Callable[[], LogfireSummary], event_mode: Literal['attributes', 'logs']) -> None:
-    my_agent = Agent(model=TestModel(), instrument=InstrumentationOptions(event_mode=event_mode))
+@pytest.mark.parametrize(
+    'instrument',
+    [
+        True,
+        False,
+        InstrumentationOptions(event_mode='attributes'),
+        InstrumentationOptions(event_mode='logs'),
+    ],
+)
+def test_logfire(get_logfire_summary: Callable[[], LogfireSummary], instrument: InstrumentationOptions | bool) -> None:
+    my_agent = Agent(model=TestModel(), instrument=instrument)
 
     @my_agent.tool_plain
     async def my_ret(x: int) -> str:
@@ -71,6 +79,13 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary], event_mode: 
     assert result.data == snapshot('{"my_ret":"1"}')
 
     summary = get_logfire_summary()
+    if instrument is False:
+        assert my_agent.instrument is None
+        assert summary.traces == []
+        return
+
+    assert my_agent.instrument is not None
+
     assert summary.traces == snapshot(
         [
             {
@@ -153,7 +168,7 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary], event_mode: 
         }
     )
     chat_span_attributes = summary.attributes[2]
-    if event_mode == 'attributes':
+    if my_agent.instrument.event_mode == 'attributes':
         attribute_mode_attributes = {k: chat_span_attributes.pop(k) for k in ['events', 'logfire.json_schema']}
         assert attribute_mode_attributes == snapshot(
             {
