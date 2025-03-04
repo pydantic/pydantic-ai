@@ -66,10 +66,17 @@ See [the Gemini API docs](https://ai.google.dev/gemini-api/docs/models/gemini#mo
 """
 
 
-class GeminiModelSettings(ModelSettings):
+class GeminiModelSettings(ModelSettings, total=False):
     """Settings used for a Gemini model request."""
 
     gemini_safety_settings: list[GeminiSafetySettings]
+    """Safety settings options for Gemini model request."""
+
+    gemini_labels: dict[str, str]
+    """Custom metadata to add to each API request. Only supported by the Vertex AI provider.
+
+    See the [Gemini API docs](https://cloud.google.com/vertex-ai/generative-ai/docs/multimodal/add-labels-to-api-calls) for use cases and limitations.
+    """
 
 
 @dataclass(init=False)
@@ -212,8 +219,10 @@ class GeminiModel(Model):
                 generation_config['presence_penalty'] = presence_penalty
             if (frequency_penalty := model_settings.get('frequency_penalty')) is not None:
                 generation_config['frequency_penalty'] = frequency_penalty
-            if (gemini_safety_settings := model_settings.get('gemini_safety_settings')) != []:
+            if gemini_safety_settings := model_settings.get('gemini_safety_settings'):
                 request_data['safety_settings'] = gemini_safety_settings
+            if gemini_labels := model_settings.get('gemini_labels'):
+                request_data['labels'] = gemini_labels
         if generation_config:
             request_data['generation_config'] = generation_config
 
@@ -464,6 +473,7 @@ class _GeminiRequest(TypedDict):
     <https://ai.google.dev/gemini-api/docs/system-instructions?lang=rest>
     """
     generation_config: NotRequired[_GeminiGenerationConfig]
+    labels: NotRequired[dict[str, str]]
 
 
 class GeminiSafetySettings(TypedDict):
