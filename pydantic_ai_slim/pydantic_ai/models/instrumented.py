@@ -6,7 +6,6 @@ from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from typing import Any, Callable, Literal
 
-import logfire_api
 from opentelemetry._events import Event, EventLogger, EventLoggerProvider, get_event_logger_provider
 from opentelemetry.trace import Span, Tracer, TracerProvider, get_tracer_provider
 from opentelemetry.util.types import AttributeValue
@@ -59,26 +58,14 @@ class InstrumentedModel(WrapperModel):
         event_logger_provider: EventLoggerProvider | None = None,
         event_mode: Literal['attributes', 'logs'] = 'attributes',
     ):
+        from pydantic_ai import __version__
+
         super().__init__(wrapped)
         tracer_provider = tracer_provider or get_tracer_provider()
         event_logger_provider = event_logger_provider or get_event_logger_provider()
-        self.tracer = tracer_provider.get_tracer('pydantic-ai')
-        self.event_logger = event_logger_provider.get_event_logger('pydantic-ai')
+        self.tracer = tracer_provider.get_tracer('pydantic-ai', __version__)
+        self.event_logger = event_logger_provider.get_event_logger('pydantic-ai', __version__)
         self.event_mode = event_mode
-
-    @classmethod
-    def from_logfire(
-        cls,
-        wrapped: Model | KnownModelName,
-        logfire_instance: logfire_api.Logfire = logfire_api.DEFAULT_LOGFIRE_INSTANCE,
-        event_mode: Literal['attributes', 'logs'] = 'attributes',
-    ) -> InstrumentedModel:
-        if hasattr(logfire_instance.config, 'get_event_logger_provider'):
-            event_provider = logfire_instance.config.get_event_logger_provider()
-        else:
-            event_provider = None
-        tracer_provider = logfire_instance.config.get_tracer_provider()
-        return cls(wrapped, tracer_provider, event_provider, event_mode)
 
     async def request(
         self,
