@@ -13,8 +13,8 @@ with try_import() as imports_successful:
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='google-genai not installed'),
-    pytest.mark.anyio,
-    pytest.mark.vcr,
+    pytest.mark.anyio(),
+    pytest.mark.vcr(),
 ]
 
 
@@ -30,8 +30,4 @@ def test_google_vertex_provider(allow_model_requests: None) -> None:
 async def test_google_vertex_provider_auth(tmp_path: Path, allow_model_requests: None):
     agent = Agent('google-vertex:gemini-1.0-pro')
     result = await agent.run('Hello')
-    assert result.data == snapshot("""\
-Hello! 👋
-
-How can I help you today? 😊\
-""")
+    assert result.data == snapshot('Hello! How can I help you today?')
