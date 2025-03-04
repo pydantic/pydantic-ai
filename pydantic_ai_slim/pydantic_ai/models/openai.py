@@ -129,7 +129,7 @@ class OpenAIModel(Model):
             system: The model provider used, defaults to `openai`. This is for observability purposes, you must
                 customize the `base_url` and `api_key` to use a different provider.
         """
-        self.user = user    # this is a workaround for the OpenAI client requiring a user field
+        self.user = user
         self._model_name = model_name
         # This is a workaround for the OpenAI client requiring an API key, whilst locally served,
         # openai compatible models do not always need an API key, but a placeholder (non-empty) key is required.
