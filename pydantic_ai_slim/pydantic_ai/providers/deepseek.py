@@ -34,25 +34,21 @@ class DeepSeekProvider(Provider[AsyncOpenAI]):
     def client(self) -> AsyncOpenAI:
         return self._client
 
-    # The `openai_client` cannot be used with `http_client` and `api_key` at the same time.
     @overload
-    def __init__(
-        self,
-        api_key: str | None = None,
-        openai_client: None = None,
-        http_client: AsyncHTTPClient | None = None,
-    ) -> None: ...
+    def __init__(self) -> None: ...
 
     @overload
-    def __init__(
-        self,
-        api_key: None = None,
-        openai_client: AsyncOpenAI | None = None,
-        http_client: None = None,
-    ) -> None: ...
+    def __init__(self, *, api_key: str) -> None: ...
+
+    @overload
+    def __init__(self, *, api_key: str, http_client: AsyncHTTPClient) -> None: ...
+
+    @overload
+    def __init__(self, *, openai_client: AsyncOpenAI | None = None) -> None: ...
 
     def __init__(
         self,
+        *,
         api_key: str | None = None,
         openai_client: AsyncOpenAI | None = None,
         http_client: AsyncHTTPClient | None = None,
