@@ -25,7 +25,7 @@ from . import (
     result,
     usage as _usage,
 )
-from .models.instrumented import InstrumentedModel
+from .models.instrumented import InstrumentationOptions, InstrumentedModel
 from .result import FinalResult, ResultDataT, StreamedRunResult
 from .settings import ModelSettings, merge_model_settings
 from .tools import (
@@ -112,7 +112,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
     The type of the result data, used to validate the result data, defaults to `str`.
     """
 
-    instrument: bool
+    instrument: InstrumentationOptions | None
     """Automatically instrument with OpenTelemetry. Will use Logfire if it's configured."""
 
     _deps_type: type[AgentDepsT] = dataclasses.field(repr=False)
@@ -147,7 +147,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
         defer_model_check: bool = False,
         end_strategy: EndStrategy = 'early',
-        instrument: bool = False,
+        instrument: bool | InstrumentationOptions = False,
     ):
         """Create an agent.
 
@@ -188,7 +188,12 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         self.name = name
         self.model_settings = model_settings
         self.result_type = result_type
-        self.instrument = instrument
+        if instrument is True:
+            self.instrument = InstrumentationOptions()
+        elif instrument is False:
+            self.instrument = None
+        else:
+            self.instrument = instrument
 
         self._deps_type = deps_type
 
@@ -1120,7 +1125,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
             raise exceptions.UserError('`model` must be set either when creating the agent or when calling it.')
 
         if self.instrument and not isinstance(model_, InstrumentedModel):
-            model_ = InstrumentedModel(model_)
+            model_ = InstrumentedModel(model_, self.instrument)
 
         return model_
 
