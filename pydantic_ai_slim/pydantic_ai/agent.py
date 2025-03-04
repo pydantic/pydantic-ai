@@ -8,7 +8,7 @@ from copy import deepcopy
 from types import FrameType
 from typing import Any, Callable, Generic, cast, final, overload
 
-from opentelemetry.trace import NoOpTracer, use_span
+from opentelemetry.trace import NoOpTracer, use_span, Span
 from typing_extensions import TypeGuard, TypeVar, deprecated
 
 from pydantic_graph import End, Graph, GraphRun, GraphRunContext
@@ -116,6 +116,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
     """Automatically instrument with OpenTelemetry. Will use Logfire if it's configured."""
 
     _deps_type: type[AgentDepsT] = dataclasses.field(repr=False)
+    _reflect_on_tool_call: bool = dataclasses.field(repr=False)
     _result_tool_name: str = dataclasses.field(repr=False)
     _result_tool_description: str | None = dataclasses.field(repr=False)
     _result_schema: _result.ResultSchema[ResultDataT] | None = dataclasses.field(repr=False)
@@ -148,6 +149,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         defer_model_check: bool = False,
         end_strategy: EndStrategy = 'early',
         instrument: bool = False,
+        reflect_on_tool_call: bool = True,
     ):
         """Create an agent.
 
@@ -178,6 +180,9 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
             end_strategy: Strategy for handling tool calls that are requested alongside a final result.
                 See [`EndStrategy`][pydantic_ai.agent.EndStrategy] for more information.
             instrument: Automatically instrument with OpenTelemetry. Will use Logfire if it's configured.
+            reflect_on_tool_call: Whether to generate a final response with an LLM call after tool calls.
+                When set to `False`, the agent will return tool call results directly without generating
+                a final reflection response. Defaults to `True`.
         """
         if model is None or defer_model_check:
             self.model = model
@@ -207,6 +212,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
 
         self._default_retries = retries
         self._max_result_retries = result_retries if result_retries is not None else retries
+        self._reflect_on_tool_call = reflect_on_tool_call
         for tool in tools:
             if isinstance(tool, Tool):
                 self._register_tool(tool)
@@ -314,7 +320,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         result_type: type[RunResultDataT] | None = None,
         message_history: list[_messages.ModelMessage] | None = None,
         model: models.Model | models.KnownModelName | None = None,
-        deps: AgentDepsT = None,
+        deps: AgentDepsT | None = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.Usage | None = None,
@@ -434,22 +440,17 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
                 'logfire.msg': f'{agent_name} run',
             },
         )
-
-        graph_deps = _agent_graph.GraphAgentDeps[AgentDepsT, RunResultDataT](
-            user_deps=deps,
-            prompt=user_prompt,
-            new_message_index=new_message_index,
-            model=model_used,
-            model_settings=model_settings,
-            usage_limits=usage_limits,
-            max_result_retries=self._max_result_retries,
-            end_strategy=self.end_strategy,
-            result_schema=result_schema,
-            result_tools=self._result_schema.tool_defs() if self._result_schema else [],
-            result_validators=result_validators,
-            function_tools=self._function_tools,
-            run_span=run_span,
-            tracer=tracer,
+        graph_deps = self._build_graph_deps(
+            deps,
+            user_prompt,
+            new_message_index,
+            model_used,
+            model_settings,
+            usage_limits,
+            result_schema,
+            result_validators,
+            run_span,
+            tracer,
         )
         start_node = _agent_graph.UserPromptNode[AgentDepsT](
             user_prompt=user_prompt,
@@ -1124,17 +1125,54 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
 
         return model_
 
-    def _get_deps(self: Agent[T, ResultDataT], deps: T) -> T:
+    def _get_deps(self: Agent[T, ResultDataT], deps: T | None) -> T:
         """Get deps for a run.
 
         If we've overridden deps via `_override_deps`, use that, otherwise use the deps passed to the call.
 
         We could do runtime type checking of deps against `self._deps_type`, but that's a slippery slope.
+
+        Args:
+            deps: Dependencies to use for this run, can be None.
+
+        Returns:
+            The dependencies to use for the run.
         """
         if some_deps := self._override_deps:
             return some_deps.value
         else:
-            return deps
+            return deps  # type: ignore
+
+    def _build_graph_deps(
+        self,
+        deps: AgentDepsT,
+        user_prompt: str | Sequence[_messages.UserContent],
+        new_message_index: int,
+        model_used: models.Model,
+        model_settings: ModelSettings | None,
+        usage_limits: _usage.UsageLimits,
+        result_schema: _result.ResultSchema[RunResultDataT] | None,
+        result_validators: list[_result.ResultValidator[AgentDepsT, RunResultDataT]],
+        run_span: Span,
+        tracer,
+    ) -> _agent_graph.GraphAgentDeps[AgentDepsT, RunResultDataT]:
+        return _agent_graph.GraphAgentDeps[AgentDepsT, RunResultDataT](
+            user_deps=deps,
+            prompt=user_prompt,
+            new_message_index=new_message_index,
+            model=model_used,
+            model_settings=model_settings,
+            usage_limits=usage_limits,
+            max_result_retries=self._max_result_retries,
+            end_strategy=self.end_strategy,
+            result_schema=result_schema,
+            result_tools=self._result_schema.tool_defs() if self._result_schema else [],
+            result_validators=result_validators,
+            function_tools=self._function_tools,
+            reflect_on_tool_call=self._reflect_on_tool_call,
+            run_span=run_span,
+            tracer=tracer,
+        )
 
     def _infer_name(self, function_frame: FrameType | None) -> None:
         """Infer the agent name from the call frame.
