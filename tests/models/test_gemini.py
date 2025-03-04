@@ -990,6 +990,30 @@ async def test_safety_settings_safe(
     assert result.data == 'world'
 
 
+async def test_labels_bad_request(
+    client_with_handler: ClientWithHandler, env: TestEnv, allow_model_requests: None
+) -> None:
+    env.set('GEMINI_API_KEY', 'via-env-var')
+
+    def handler(request: httpx.Request):
+        labels = json.loads(request.content)['labels']
+        assert labels == {'environment': 'test', 'team': 'analytics'}
+
+        return httpx.Response(400, content='invalid request')
+
+    gemini_client = client_with_handler(handler)
+    m = GeminiModel('gemini-1.5-flash', http_client=gemini_client)
+    agent = Agent(m, system_prompt='this is the system prompt')
+
+    with pytest.raises(ModelHTTPError) as exc_info:
+        await agent.run(
+            'Hello',
+            model_settings=GeminiModelSettings(gemini_labels={'environment': 'test', 'team': 'analytics'}),
+        )
+
+    assert str(exc_info.value) == snapshot('status_code: 400, model_name: gemini-1.5-flash, body: invalid request')
+
+
 @pytest.mark.vcr()
 async def test_image_as_binary_content_input(
     allow_model_requests: None, gemini_api_key: str, image_content: BinaryContent
