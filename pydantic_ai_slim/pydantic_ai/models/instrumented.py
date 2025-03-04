@@ -4,7 +4,7 @@ import json
 from collections.abc import AsyncIterator, Iterator, Mapping
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
-from typing import Any, Callable, Literal
+from typing import Any, Callable, Literal, overload
 
 from opentelemetry._events import Event, EventLogger, EventLoggerProvider, get_event_logger_provider
 from opentelemetry.trace import Span, Tracer, TracerProvider, get_tracer_provider
@@ -43,8 +43,8 @@ MODEL_SETTING_ATTRIBUTES: tuple[
 ANY_ADAPTER = TypeAdapter[Any](Any)
 
 
-@dataclass
-class InstrumentedModel(WrapperModel):
+@dataclass(init=False)
+class InstrumentationOptions:
     """Model which is instrumented with OpenTelemetry."""
 
     tracer: Tracer = field(repr=False)
@@ -53,19 +53,62 @@ class InstrumentedModel(WrapperModel):
 
     def __init__(
         self,
-        wrapped: Model | KnownModelName,
         tracer_provider: TracerProvider | None = None,
         event_logger_provider: EventLoggerProvider | None = None,
         event_mode: Literal['attributes', 'logs'] = 'attributes',
     ):
         from pydantic_ai import __version__
 
-        super().__init__(wrapped)
         tracer_provider = tracer_provider or get_tracer_provider()
         event_logger_provider = event_logger_provider or get_event_logger_provider()
         self.tracer = tracer_provider.get_tracer('pydantic-ai', __version__)
         self.event_logger = event_logger_provider.get_event_logger('pydantic-ai', __version__)
         self.event_mode = event_mode
+
+
+@dataclass
+class InstrumentedModel(WrapperModel):
+    """Model which is instrumented with OpenTelemetry."""
+
+    options: InstrumentationOptions = field(repr=False)
+
+    @overload
+    def __init__(
+        self,
+        wrapped: Model | KnownModelName,
+        options: InstrumentationOptions | None = None,
+        /,
+    ) -> None: ...
+
+    @overload
+    def __init__(
+        self,
+        wrapped: Model | KnownModelName,
+        /,
+        *,
+        tracer_provider: TracerProvider | None = None,
+        event_logger_provider: EventLoggerProvider | None = None,
+        event_mode: Literal['attributes', 'logs'] = 'attributes',
+    ) -> None: ...
+
+    def __init__(
+        self,
+        wrapped: Model | KnownModelName,
+        options: InstrumentationOptions | None = None,
+        /,
+        *,
+        tracer_provider: TracerProvider | None = None,
+        event_logger_provider: EventLoggerProvider | None = None,
+        event_mode: Literal['attributes', 'logs'] = 'attributes',
+    ) -> None:
+        super().__init__(wrapped)
+
+        if not options:
+            options = InstrumentationOptions(tracer_provider, event_logger_provider, event_mode)
+        elif tracer_provider or event_logger_provider or event_mode != 'attributes':  # pragma: no cover
+            raise ValueError('Cannot specify options and individual parameters')
+
+        self.options = options
 
     async def request(
         self,
@@ -123,7 +166,7 @@ class InstrumentedModel(WrapperModel):
                 if isinstance(value := model_settings.get(key), (float, int)):
                     attributes[f'gen_ai.request.{key}'] = value
 
-        with self.tracer.start_as_current_span(span_name, attributes=attributes) as span:
+        with self.options.tracer.start_as_current_span(span_name, attributes=attributes) as span:
 
             def finish(response: ModelResponse, usage: Usage):
                 if not span.is_recording():
@@ -156,9 +199,9 @@ class InstrumentedModel(WrapperModel):
     def _emit_events(self, system: str, span: Span, events: list[Event]) -> None:
         for event in events:
             event.attributes = {'gen_ai.system': system, **(event.attributes or {})}
-        if self.event_mode == 'logs':
+        if self.options.event_mode == 'logs':
             for event in events:
-                self.event_logger.emit(event)
+                self.options.event_logger.emit(event)
         else:
             attr_name = 'events'
             span.set_attributes(

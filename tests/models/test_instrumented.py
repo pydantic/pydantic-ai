@@ -313,7 +313,9 @@ Fix the errors and try again.\
 
 @pytest.mark.anyio
 async def test_instrumented_model_not_recording():
-    model = InstrumentedModel(MyModel(), NoOpTracerProvider(), NoOpEventLoggerProvider())
+    model = InstrumentedModel(
+        MyModel(), tracer_provider=NoOpTracerProvider(), event_logger_provider=NoOpEventLoggerProvider()
+    )
 
     messages: list[ModelMessage] = [ModelRequest(parts=[SystemPromptPart('system_prompt')])]
     await model.request(
