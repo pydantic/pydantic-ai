@@ -1,8 +1,9 @@
 """Tests for the _build_graph_deps method."""
 
-from typing import Any
+from typing import Any, cast
 
 import pytest
+from opentelemetry.trace import NoOpTracer, Span
 
 from pydantic_ai import Agent
 from pydantic_ai._agent_graph import GraphAgentDeps
@@ -29,11 +30,12 @@ class TestBuildGraphDeps:
         usage_limits = UsageLimits()
         result_schema = None
         result_validators: list[Any] = []
-        run_span = None  # type: ignore
+        # Create a mock Span instance instead of using the class
+        run_span = cast(Span, object())
+        tracer = NoOpTracer()
 
-        # pyright: reportPrivateUsage=false
         # Call the method
-        graph_deps = agent_true._build_graph_deps(
+        graph_deps = agent_true._build_graph_deps(  # pyright: ignore[reportPrivateUsage]
             deps,
             user_prompt,
             new_message_index,
@@ -43,6 +45,7 @@ class TestBuildGraphDeps:
             result_schema,
             result_validators,
             run_span,
+            tracer,
         )
 
         # Verify that reflect_on_tool_call was correctly passed to GraphAgentDeps
@@ -53,7 +56,7 @@ class TestBuildGraphDeps:
         agent_false = Agent(TestModel(), reflect_on_tool_call=False)
 
         # Call the method with the second agent
-        graph_deps = agent_false._build_graph_deps(
+        graph_deps = agent_false._build_graph_deps(  # pyright: ignore[reportPrivateUsage]
             deps,
             user_prompt,
             new_message_index,
@@ -63,6 +66,7 @@ class TestBuildGraphDeps:
             result_schema,
             result_validators,
             run_span,
+            tracer,
         )
 
         # Verify that reflect_on_tool_call=False was correctly passed to GraphAgentDeps

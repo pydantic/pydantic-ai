@@ -1,6 +1,5 @@
 """Tests for reflect_on_tool_call functionality."""
 
-
 import pytest
 from pydantic import BaseModel
 
@@ -27,15 +26,13 @@ class TestReflectOnToolCall:
         """Test that the reflect_on_tool_call parameter is stored in the agent."""
         agent = Agent(TestModel(), reflect_on_tool_call=reflect_on_tool_call)
 
-        # pyright: reportPrivateUsage=false
-        assert agent._reflect_on_tool_call is reflect_on_tool_call
+        assert agent._reflect_on_tool_call is reflect_on_tool_call  # pyright: ignore[reportPrivateUsage]
 
     def test_agent_default_to_reflect(self) -> None:
         """Test that by default, reflect_on_tool_call is True."""
         agent = Agent(TestModel())
 
-        # pyright: reportPrivateUsage=false
-        assert agent._reflect_on_tool_call is True
+        assert agent._reflect_on_tool_call is True  # pyright: ignore[reportPrivateUsage]
 
     def test_with_reflection(self) -> None:
         """Test normal behavior with reflection enabled (default behavior)."""

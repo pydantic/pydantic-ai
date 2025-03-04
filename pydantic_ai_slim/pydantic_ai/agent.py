@@ -8,7 +8,7 @@ from copy import deepcopy
 from types import FrameType
 from typing import Any, Callable, Generic, cast, final, overload
 
-from opentelemetry.trace import NoOpTracer, use_span, Span
+from opentelemetry.trace import NoOpTracer, Span, Tracer, use_span
 from typing_extensions import TypeGuard, TypeVar, deprecated
 
 from pydantic_graph import End, Graph, GraphRun, GraphRunContext
@@ -1154,7 +1154,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         result_schema: _result.ResultSchema[RunResultDataT] | None,
         result_validators: list[_result.ResultValidator[AgentDepsT, RunResultDataT]],
         run_span: Span,
-        tracer,
+        tracer: Tracer,
     ) -> _agent_graph.GraphAgentDeps[AgentDepsT, RunResultDataT]:
         return _agent_graph.GraphAgentDeps[AgentDepsT, RunResultDataT](
             user_deps=deps,
