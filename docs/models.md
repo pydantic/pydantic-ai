@@ -1,8 +1,8 @@
-PydanticAI is Model-agnostic and has built in support for the following model interfaces:
+PydanticAI is Model-agnostic and has built in support for the following model providers:
 
 * [OpenAI](#openai)
 * [Anthropic](#anthropic)
-* [Gemini](#gemini)
+* Gemini via two different APIs: [Generative Language API](#gemini) and [VertexAI API](#gemini-via-vertexai)
 * [Ollama](#ollama)
 * [Deepseek](#deepseek)
 * [Groq](#groq)
