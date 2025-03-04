@@ -4,7 +4,7 @@ import json
 from collections.abc import AsyncIterator, Iterator, Mapping
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
-from typing import Any, Callable, Literal, overload
+from typing import Any, Callable, Literal
 
 from opentelemetry._events import Event, EventLogger, EventLoggerProvider, get_event_logger_provider
 from opentelemetry.trace import Span, Tracer, TracerProvider, get_tracer_provider
@@ -72,43 +72,13 @@ class InstrumentedModel(WrapperModel):
 
     options: InstrumentationOptions = field(repr=False)
 
-    @overload
     def __init__(
         self,
         wrapped: Model | KnownModelName,
         options: InstrumentationOptions | None = None,
-        /,
-    ) -> None: ...
-
-    @overload
-    def __init__(
-        self,
-        wrapped: Model | KnownModelName,
-        /,
-        *,
-        tracer_provider: TracerProvider | None = None,
-        event_logger_provider: EventLoggerProvider | None = None,
-        event_mode: Literal['attributes', 'logs'] = 'attributes',
-    ) -> None: ...
-
-    def __init__(
-        self,
-        wrapped: Model | KnownModelName,
-        options: InstrumentationOptions | None = None,
-        /,
-        *,
-        tracer_provider: TracerProvider | None = None,
-        event_logger_provider: EventLoggerProvider | None = None,
-        event_mode: Literal['attributes', 'logs'] = 'attributes',
     ) -> None:
         super().__init__(wrapped)
-
-        if not options:
-            options = InstrumentationOptions(tracer_provider, event_logger_provider, event_mode)
-        elif tracer_provider or event_logger_provider or event_mode != 'attributes':  # pragma: no cover
-            raise ValueError('Cannot specify options and individual parameters')
-
-        self.options = options
+        self.options = options or InstrumentationOptions()
 
     async def request(
         self,
