@@ -29,5 +29,6 @@ class GoogleGLAProvider(Provider[httpx.AsyncClient]):
             raise ValueError('API key is required for Google GLA provider')
 
         self._client = http_client or cached_async_http_client()
+        self._client.base_url = self.base_url
         # https://cloud.google.com/docs/authentication/api-keys-use#using-with-rest
         self._client.headers['X-Goog-Api-Key'] = api_key

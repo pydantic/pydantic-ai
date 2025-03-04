@@ -4,7 +4,6 @@ PydanticAI is Model-agnostic and has built in support for the following model pr
 * [Anthropic](#anthropic)
 * Gemini via two different APIs: [Generative Language API](#gemini) and [VertexAI API](#gemini-via-vertexai)
 * [Ollama](#ollama)
-* [Deepseek](#deepseek)
 * [Groq](#groq)
 * [Mistral](#mistral)
 * [Cohere](#cohere)
@@ -68,7 +67,6 @@ Or initialise the model directly with just the model name:
 ```python {title="openai_model_init.py"}
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIModel
-from pydantic_ai.providers.openai import OpenAIProvider
 
 model = OpenAIModel('gpt-4o')
 agent = Agent(model)
@@ -112,10 +110,7 @@ custom_http_client = AsyncClient(timeout=30)
 
 model = OpenAIModel(
     'gpt-4o',
-     provider=OpenAIProvider(
-        api_key='your-api-key',
-        http_client=custom_http_client
-    )
+    provider=OpenAIProvider(api_key='your-api-key', http_client=custom_http_client),
 )
 agent = Agent(model)
 ...
@@ -233,7 +228,9 @@ from pydantic_ai import Agent
 from pydantic_ai.models.gemini import GeminiModel
 from pydantic_ai.providers.google_gla import GoogleGLAProvider
 
-model = GeminiModel('gemini-2.0-flash', provider=GoogleGLAProvider(api_key='your-api-key'))
+model = GeminiModel(
+    'gemini-2.0-flash', provider=GoogleGLAProvider(api_key='your-api-key')
+)
 agent = Agent(model)
 ...
 ```
@@ -248,7 +245,7 @@ from pydantic_ai.providers.google_gla import GoogleGLAProvider
 custom_http_client = AsyncClient(timeout=30)
 model = GeminiModel(
     'gemini-2.0-flash',
-    provider=GoogleGLAProvider(api_key='your-api-key', http_client=custom_http_client)
+    provider=GoogleGLAProvider(api_key='your-api-key', http_client=custom_http_client),
 )
 agent = Agent(model)
 ...
@@ -319,10 +316,9 @@ from pydantic_ai import Agent
 from pydantic_ai.models.gemini import GeminiModel
 from pydantic_ai.providers.google_vertex import GoogleVertexProvider
 
-
 model = GeminiModel(
     'gemini-2.0-flash',
-     provider=GoogleVertexProvider(service_account_file='path/to/service-account.json')
+    provider=GoogleVertexProvider(service_account_file='path/to/service-account.json'),
 )
 agent = Agent(model)
 ...
@@ -339,7 +335,9 @@ from pydantic_ai import Agent
 from pydantic_ai.models.gemini import GeminiModel
 from pydantic_ai.providers.google_vertex import GoogleVertexProvider
 
-model = GeminiModel('gemini-2.0-flash', provider=GoogleVertexProvider(region='asia-east1'))
+model = GeminiModel(
+    'gemini-2.0-flash', provider=GoogleVertexProvider(region='asia-east1')
+)
 agent = Agent(model)
 ...
 ```
@@ -354,15 +352,11 @@ from pydantic_ai.providers.google_vertex import GoogleVertexProvider
 custom_http_client = AsyncClient(timeout=30)
 model = GeminiModel(
     'gemini-2.0-flash',
-    provider=GoogleVertexProvider(
-        region='asia-east1',
-        http_client=custom_http_client
-    )
+    provider=GoogleVertexProvider(region='asia-east1', http_client=custom_http_client),
 )
 agent = Agent(model)
 ...
 ```
-[`VertexAiRegion`][pydantic_ai.providers.google_vertex.VertexAiRegion] contains a list of available regions.
 
 ## Groq
 
@@ -546,10 +540,7 @@ To use another OpenAI-compatible API, you can use the provider string:
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIModel
 
-model = OpenAIModel(
-    'deepseek-chat',
-    provider='deepseek'
-)
+model = OpenAIModel('deepseek-chat', provider='deepseek')
 agent = Agent(model)
 ...
 ```
@@ -579,7 +570,9 @@ from pydantic_ai.providers.deepseek import DeepSeekProvider
 custom_http_client = AsyncClient(timeout=30)
 model = OpenAIModel(
     'deepseek-chat',
-    provider=DeepSeekProvider(api_key='your-deepseek-api-key', http_client=custom_http_client),
+    provider=DeepSeekProvider(
+        api_key='your-deepseek-api-key', http_client=custom_http_client
+    ),
 )
 agent = Agent(model)
 ...
@@ -616,7 +609,9 @@ class CityLocation(BaseModel):
     country: str
 
 
-ollama_model = OpenAIModel(model_name='llama3.2', provider=OpenAIProvider(base_url='http://localhost:11434/v1'))
+ollama_model = OpenAIModel(
+    model_name='llama3.2', provider=OpenAIProvider(base_url='http://localhost:11434/v1')
+)
 agent = Agent(ollama_model, result_type=CityLocation)
 
 result = agent.run_sync('Where were the olympics held in 2012?')
@@ -675,7 +670,9 @@ from pydantic_ai.providers.openai import OpenAIProvider
 
 model = OpenAIModel(
     'anthropic/claude-3.5-sonnet',
-    provider=OpenAIProvider(base_url='https://openrouter.ai/api/v1', api_key='your-openrouter-api-key'),
+    provider=OpenAIProvider(
+        base_url='https://openrouter.ai/api/v1', api_key='your-openrouter-api-key'
+    ),
 )
 agent = Agent(model)
 ...
@@ -693,7 +690,7 @@ from pydantic_ai.providers.openai import OpenAIProvider
 
 model = OpenAIModel(
     'grok-2-1212',
-     provider=OpenAIProvider(base_url='https://api.x.ai/v1', api_key='your-xai-api-key'),
+    provider=OpenAIProvider(base_url='https://api.x.ai/v1', api_key='your-xai-api-key'),
 )
 agent = Agent(model)
 ...
@@ -710,8 +707,9 @@ from pydantic_ai.providers.openai import OpenAIProvider
 
 model = OpenAIModel(
     'sonar-pro',
-    provider=OpenAIProvider(base_url='https://api.perplexity.ai', api_key='your-perplexity-api-key'),
-
+    provider=OpenAIProvider(
+        base_url='https://api.perplexity.ai', api_key='your-perplexity-api-key'
+    ),
 )
 agent = Agent(model)
 ...
