@@ -35,7 +35,7 @@ def test_deep_seek_provider_pass_http_client() -> None:
 
 
 def test_deep_seek_pass_openai_client() -> None:
-    openai_client = openai.AsyncOpenAI()
+    openai_client = openai.AsyncOpenAI(api_key='api-key')
     provider = DeepSeekProvider(openai_client=openai_client)
     assert provider.client == openai_client
 
