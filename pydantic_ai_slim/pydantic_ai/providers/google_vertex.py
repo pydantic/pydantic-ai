@@ -99,6 +99,7 @@ class _VertexAIAuth(httpx.Auth):
         self.region = region
 
         self.credentials = None
+        self.token_created: datetime | None = None
 
     async def async_auth_flow(self, request: httpx.Request) -> AsyncGenerator[httpx.Request, httpx.Response]:
         if self.credentials is None:
@@ -134,7 +135,7 @@ class _VertexAIAuth(httpx.Auth):
         else:
             return (datetime.now() - self.token_created) > MAX_TOKEN_AGE
 
-    def _refresh_token(self) -> str:
+    def _refresh_token(self) -> str:  # pragma: no cover
         assert self.credentials is not None
         self.credentials.refresh(Request())  # type: ignore[reportUnknownMemberType]
         assert isinstance(self.credentials.token, str), f'Expected token to be a string, got {self.credentials.token}'  # type: ignore[reportUnknownMemberType]
