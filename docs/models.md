@@ -96,19 +96,32 @@ model = OpenAIModel('gpt-4o', provider=OpenAIProvider(api_key='your-api-key'))
 agent = Agent(model)
 ...
 ```
-You can also customize the `OpenAIProvider` with a custom `base_url` and `http_client`:
-```python {title="openai_model_custom_provider.py"}
-from httpx import AsyncClient
+
+### Custom OpenAI Client
+
+`OpenAIProvider` also accepts a custom `AsyncOpenAI` client via the
+[`openai_client` parameter][pydantic_ai.providers.openai.OpenAIProvider.__init__], so you can customise the
+`organization`, `project`, `base_url` etc. as defined in the [OpenAI API docs](https://platform.openai.com/docs/api-reference).
+
+You could also use the [`AsyncAzureOpenAI`](https://learn.microsoft.com/en-us/azure/ai-services/openai/how-to/switching-endpoints)
+client to use the Azure OpenAI API.
+
+```python {title="openai_azure.py"}
+from openai import AsyncAzureOpenAI
 
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIModel
 from pydantic_ai.providers.openai import OpenAIProvider
 
-custom_http_client = AsyncClient(timeout=30)
+client = AsyncAzureOpenAI(
+    azure_endpoint='...',
+    api_version='2024-07-01-preview',
+    api_key='your-api-key',
+)
 
 model = OpenAIModel(
     'gpt-4o',
-    provider=OpenAIProvider(api_key='your-api-key', http_client=custom_http_client),
+    provider=OpenAIProvider(openai_client=client),
 )
 agent = Agent(model)
 ...
@@ -659,14 +672,14 @@ Usage(requests=1, request_tokens=57, response_tokens=8, total_tokens=65, details
 """
 ```
 
-1.  The name of the model running on the remote server
-2.  The url of the remote server
+1. The name of the model running on the remote server
+2. The url of the remote server
 
 ### OpenRouter
 
 To use [OpenRouter](https://openrouter.ai), first create an API key at [openrouter.ai/keys](https://openrouter.ai/keys).
 
-Once you have the API key, you can use it with the `OpenAIProvider`:
+Once you have the API key, you can use it with the [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider]:
 
 ```python {title="openrouter_model_init.py"}
 from pydantic_ai import Agent
@@ -686,7 +699,7 @@ agent = Agent(model)
 ### Grok (xAI)
 
 Go to [xAI API Console](https://console.x.ai/) and create an API key.
-Once you have the API key, you can use it with the `OpenAIProvider`:
+Once you have the API key, you can use it with the [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider]:
 
 ```python {title="grok_model_init.py"}
 from pydantic_ai import Agent
@@ -700,6 +713,7 @@ model = OpenAIModel(
 agent = Agent(model)
 ...
 ```
+
 ### Perplexity
 
 Follow the Perplexity [getting started](https://docs.perplexity.ai/guides/getting-started)

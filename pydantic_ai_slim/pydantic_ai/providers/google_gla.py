@@ -24,6 +24,13 @@ class GoogleGLAProvider(Provider[httpx.AsyncClient]):
         return self._client
 
     def __init__(self, api_key: str | None = None, http_client: httpx.AsyncClient | None = None) -> None:
+        """Create a new Google GLA provider.
+
+        Args:
+            api_key: The API key to use for authentication, if not provided, the `GEMINI_API_KEY` environment variable
+                will be used if available.
+            http_client: An existing `httpx.AsyncClient` to use for making HTTP requests.
+        """
         api_key = api_key or os.environ.get('GEMINI_API_KEY')
         if api_key is None:
             raise ValueError(

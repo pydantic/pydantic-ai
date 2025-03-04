@@ -110,7 +110,7 @@ class OpenAIModel(Model):
         system: str | None = 'openai',
     ) -> None: ...
 
-    @deprecated('Use provider parameter instead of `base_url`, `api_key`, `openai_client` and `http_client`.')
+    @deprecated('Use the `provider` parameter instead of `base_url`, `api_key`, `openai_client` and `http_client`.')
     @overload
     def __init__(
         self,
