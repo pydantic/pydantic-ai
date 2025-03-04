@@ -21,7 +21,7 @@ try:
     from google.oauth2.service_account import Credentials as ServiceAccountCredentials
 except ImportError as _import_error:
     raise ImportError(
-        'Please install `google-auth` to use the VertexAI provider, '
+        'Please install `google-auth` to use the Google Vertex AI provider, '
         "you can use the `vertexai` optional group — `pip install 'pydantic-ai-slim[vertexai]'`"
     ) from _import_error
 

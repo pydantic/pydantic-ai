@@ -9,7 +9,7 @@ from pydantic_ai.models import cached_async_http_client
 
 try:
     from openai import AsyncOpenAI
-except ImportError as _import_error:
+except ImportError as _import_error:  # pragma: no cover
     raise ImportError(
         'Please install `openai` to use the OpenAI provider, '
         "you can use the `openai` optional group — `pip install 'pydantic-ai-slim[openai]'`"

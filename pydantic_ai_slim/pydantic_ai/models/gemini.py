@@ -256,7 +256,7 @@ class GeminiModel(Model):
             'Content-Type': 'application/json',
             'User-Agent': get_user_agent(),
         }
-        if self._provider is None:
+        if self._provider is None:  # pragma: no cover
             url = self.url + ('streamGenerateContent' if streamed else 'generateContent')
             headers.update(await self.auth.headers())
         else:

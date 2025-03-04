@@ -39,12 +39,10 @@ class DeepSeekProvider(Provider[AsyncOpenAI]):
         openai_client: AsyncOpenAI | None = None,
         http_client: AsyncHTTPClient | None = None,
     ) -> None:
-        api_key = api_key or os.environ.get('DEEPSEEK_API_KEY')
-        if api_key is None and openai_client is None:
-            raise ValueError(
-                'Set the `DEEPSEEK_API_KEY` environment variable or pass it via `DeepSeekProvider(api_key=...)`'
-                'to use the DeepSeek provider.'
-            )
+        # This is a workaround for the OpenAI client requiring an API key, whilst locally served,
+        # OpenAI compatible models do not always need an API key, but a placeholder (non-empty) key is required.
+        if api_key is None and 'OPENAI_API_KEY' not in os.environ and openai_client is None:
+            api_key = os.environ.get('DEEPSEEK_API_KEY', 'api-key-not-set')
 
         if openai_client is not None:
             assert http_client is None, 'Cannot provide both `openai_client` and `http_client`'

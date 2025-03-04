@@ -24,9 +24,12 @@ class GoogleGLAProvider(Provider[httpx.AsyncClient]):
         return self._client
 
     def __init__(self, api_key: str | None = None, http_client: httpx.AsyncClient | None = None) -> None:
-        api_key = api_key or os.environ.get('GEMINI_API_KEY') or os.environ.get('GOOGLE_GLA_API_KEY')
+        api_key = api_key or os.environ.get('GEMINI_API_KEY')
         if api_key is None:
-            raise ValueError('API key is required for Google GLA provider')
+            raise ValueError(
+                'Set the `GEMINI_API_KEY` environment variable or pass it via `GoogleGLAProvider(api_key=...)`'
+                'to use the Google GLA provider.'
+            )
 
         self._client = http_client or cached_async_http_client()
         self._client.base_url = self.base_url

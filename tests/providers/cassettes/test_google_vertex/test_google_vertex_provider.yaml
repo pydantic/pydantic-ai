@@ -1,0 +1,125 @@
+interactions:
+- request:
+    body: grant_type=refresh_token&client_id=764086051850-6qr4p6gpi6hn506pt8ejuq83di341hur.apps.googleusercontent.com&client_secret=d-FL95Q19q7MQmFpd7hHD0Ty&refresh_token=1%2F%2F0hJpJJHIB_6HFCgYIARAAGBESNwF-L9IrkG8wcCCqUWVHIGwfOv00CBx1kTldn70NgzEsmDiAXdhl11ROL_myqR5Tp524g4JVp_Q
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '268'
+      content-type:
+      - application/x-www-form-urlencoded
+    method: POST
+    uri: https://oauth2.googleapis.com/token
+  response:
+    body:
+      string: |-
+        {
+          "access_token": "ya29.a0AeXRPp5CZ6Axm7gWPuKvhij99sNAYaqLFUnEtsnD4dIdaSPIZe2L9BIl_qF9fTwemtIlCURw84Yj1uIypTutyho_FhLf7ocQyX_R0HyhS5nX6fOsnBOeQxuOtF4XewbMHrpGYKvcos62VyX6AmGchZ9jUDdAgo3jwLf6uYcvvwaCgYKAXESARASFQHGX2Mij4Z4KtT9BnxUFI3x11fhfw0177",
+          "expires_in": 3599,
+          "scope": "https://www.googleapis.com/auth/sqlservice.login openid https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/cloud-platform",
+          "token_type": "Bearer",
+          "id_token": "eyJhbGciOiJSUzI1NiIsImtpZCI6IjI1ZjgyMTE3MTM3ODhiNjE0NTQ3NGI1MDI5YjAxNDFiZDViM2RlOWMiLCJ0eXAiOiJKV1QifQ.eyJpc3MiOiJodHRwczovL2FjY291bnRzLmdvb2dsZS5jb20iLCJhenAiOiI3NjQwODYwNTE4NTAtNnFyNHA2Z3BpNmhuNTA2cHQ4ZWp1cTgzZGkzNDFodXIuYXBwcy5nb29nbGV1c2VyY29udGVudC5jb20iLCJhdWQiOiI3NjQwODYwNTE4NTAtNnFyNHA2Z3BpNmhuNTA2cHQ4ZWp1cTgzZGkzNDFodXIuYXBwcy5nb29nbGV1c2VyY29udGVudC5jb20iLCJzdWIiOiIxMDY1Njg0NzQzMTU3NzkyMTI1NTkiLCJoZCI6InB5ZGFudGljLmRldiIsImVtYWlsIjoibWFyY2Vsb0BweWRhbnRpYy5kZXYiLCJlbWFpbF92ZXJpZmllZCI6dHJ1ZSwiYXRfaGFzaCI6IlJPVks4YWpWb0RpSzlyX2x2V3dRT0EiLCJpYXQiOjE3NDEwOTQ3NTgsImV4cCI6MTc0MTA5ODM1OH0.fo9-9pEXER1Uipe7XGJAJ4hBOjk8My_Td20UoYsbRpsm7qYH7MOR-F5vsbKFOvemNNcpBtMxl_CTDgHNoKkrTPh6DfgrZmtNyhMkP57HiwXyZOnYFAinqXm36YwuZyP9Ai92vmRhOk1et7uuWg5RaBXnXAPPdz3EB7U8DxKtwaqHt2RhLGgcyLocgYTzST6gl6EceKodFe9gDLOhlhZWxKzM_kmdpZ8DyzsIRF5aslXYohrePCnaQmlTM4r_PqSWUDbyGS9sk-kanYGmJsqlCquFpyacTpcjHxwvFTgEqmTIq6I8XbrTpEFk_GIdKgAU9ck0OLRe7TYrFViLwe8DJg"
+        }
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      cache-control:
+      - no-cache, no-store, max-age=0, must-revalidate
+      content-length:
+      - '1419'
+      content-type:
+      - application/json; charset=utf-8
+      expires:
+      - Mon, 01 Jan 1990 00:00:00 GMT
+      pragma:
+      - no-cache
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '65'
+      content-type:
+      - application/json
+      host:
+      - us-central1-aiplatform.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: Hello, World!
+        role: user
+    uri: https://us-central1-aiplatform.googleapis.com/v1/projects/pydantic-platform/locations/us-central1/publishers/google/models/gemini-2.0-flash:generateContent
+  response:
+    body:
+      string: |
+        {
+          "candidates": [
+            {
+              "content": {
+                "role": "model",
+                "parts": [
+                  {
+                    "text": "Hello there! How can I help you today?\n"
+                  }
+                ]
+              },
+              "finishReason": "STOP",
+              "avgLogprobs": -0.063467242500998763
+            }
+          ],
+          "usageMetadata": {
+            "promptTokenCount": 4,
+            "candidatesTokenCount": 11,
+            "totalTokenCount": 15,
+            "promptTokensDetails": [
+              {
+                "modality": "TEXT",
+                "tokenCount": 4
+              }
+            ],
+            "candidatesTokensDetails": [
+              {
+                "modality": "TEXT",
+                "tokenCount": 11
+              }
+            ]
+          },
+          "modelVersion": "gemini-2.0-flash",
+          "createTime": "2025-03-04T13:25:58.379006Z",
+          "responseId": "Zv_GZ_6QF9ShmecPqaXa6As"
+        }
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '732'
+      content-type:
+      - application/json; charset=UTF-8
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    status:
+      code: 200
+      message: OK
+version: 1

@@ -334,8 +334,6 @@ def infer_model(model: Model | KnownModelName) -> Model:
             provider = 'anthropic'
         elif model_name.startswith('gemini'):
             provider = 'google-gla'
-        elif model_name.startswith('vertexai'):
-            provider = 'google-vertex'
         else:
             raise UserError(f'Unknown model: {model}')
 
