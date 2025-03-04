@@ -8,6 +8,8 @@ import pytest
 from dirty_equals import IsJson
 from inline_snapshot import snapshot
 from logfire_api import DEFAULT_LOGFIRE_INSTANCE
+from opentelemetry._events import NoOpEventLoggerProvider
+from opentelemetry.trace import NoOpTracerProvider
 
 from pydantic_ai.messages import (
     ModelMessage,
@@ -25,6 +27,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
+from pydantic_ai.models.instrumented import InstrumentationOptions, InstrumentedModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import Usage
 
@@ -32,10 +35,6 @@ from ..conftest import try_import
 
 with try_import() as imports_successful:
     from logfire.testing import CaptureLogfire
-    from opentelemetry._events import NoOpEventLoggerProvider
-    from opentelemetry.trace import NoOpTracerProvider
-
-    from pydantic_ai.models.instrumented import InstrumentationOptions, InstrumentedModel
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='logfire not installed'),
