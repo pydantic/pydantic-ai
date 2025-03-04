@@ -9,6 +9,8 @@ description = "Agent Framework / shim to use Pydantic with LLMs"
 authors = [
     { name = "Samuel Colvin", email = "samuel@pydantic.dev" },
     { name = "Marcelo Trylesinski", email = "marcelotryle@gmail.com" },
+    { name = "David Montague", email = "david@pydantic.dev" },
+    { name = "Alex Hall", email = "alex@pydantic.dev" },
 ]
 license = "MIT"
 readme = "README.md"
