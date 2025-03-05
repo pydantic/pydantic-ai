@@ -1,19 +1,31 @@
+from __future__ import annotations as _annotations
+
 import argparse
 import asyncio
-import os
 import sys
 from datetime import datetime, timezone
 from importlib.metadata import version
 from pathlib import Path
-from typing import Literal, TypedDict, cast
+from typing import cast
+
+from prompt_toolkit.auto_suggest import Suggestion
+from prompt_toolkit.buffer import Buffer
+from typing_inspection.introspection import get_literal_values
+
+from pydantic_ai.exceptions import UserError
+from pydantic_ai.models import KnownModelName
+from pydantic_graph.nodes import End
 
 try:
+    import argcomplete
     from prompt_toolkit import PromptSession
     from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
+    from prompt_toolkit.document import Document
     from prompt_toolkit.history import FileHistory
     from rich.console import Console, ConsoleOptions, RenderResult
     from rich.live import Live
     from rich.markdown import CodeBlock, Markdown
+    from rich.status import Status
     from rich.syntax import Syntax
     from rich.text import Text
 except ImportError as _import_error:
@@ -41,38 +53,47 @@ Markdown.elements['fence'] = SimpleCodeBlock
 
 def cli() -> int:
     parser = argparse.ArgumentParser(
-        prog='PydAI',
+        prog='pai',
         description=f"""\
 PydanticAI CLI v{__version__}
 
 Special prompt:
+* `exit` - exit the interactive mode
+* `markdown` - show the last markdown output of the last question
 * `multiline` - toggle multiline mode
 """,
     )
     parser.add_argument('prompt', nargs='?', help='AI Prompt, if omitted fall into interactive mode')
-    # Default model, if omitted it will default to openai:gpt-4o.
     parser.add_argument(
-        'model', nargs='?', help='Model to use, if omitted it will default to openai:gpt-4o', default='openai:gpt-4o'
-    )
+        '--model',
+        nargs='?',
+        help='Model to use, it should be "<provider>:<model>" e.g. "openai:gpt-4o". If omitted it will default to "openai:gpt-4o"',
+        default='openai:gpt-4o',
+    ).completer = argcomplete.ChoicesCompleter(list(get_literal_values(KnownModelName)))  # type: ignore[reportPrivateUsage]
     parser.add_argument('--no-stream', action='store_true', help='Whether to stream responses from OpenAI')
     parser.add_argument('--version', action='store_true', help='Show version and exit')
 
+    argcomplete.autocomplete(parser)
     args = parser.parse_args()
 
     console = Console()
-    console.print(f'PydAI - PydanticAI CLI v{__version__}', style='green bold', highlight=False)
+    console.print(f'pai - PydanticAI CLI v{__version__}', style='green bold', highlight=False)
     if args.version:
         return 0
 
     now_utc = datetime.now(timezone.utc)
     tzname = now_utc.astimezone().tzinfo.tzname(now_utc)  # type: ignore
-    agent = Agent(
-        model=args.model or 'openai:gpt-4o',
-        system_prompt=f"""\
-Help the user by responding to their request, the output should be concise and always written in markdown.
-The current date and time is {datetime.now()} {tzname}.
-The user is running {sys.platform}.""",
-    )
+    try:
+        agent = Agent(
+            model=args.model or 'openai:gpt-4o',
+            system_prompt=f"""\
+    Help the user by responding to their request, the output should be concise and always written in markdown.
+    The current date and time is {datetime.now()} {tzname}.
+    The user is running {sys.platform}.""",
+        )
+    except UserError:
+        console.print(f'[red]Invalid model "{args.model}"[/red]')
+        return 1
 
     stream = not args.no_stream
 
@@ -83,21 +104,29 @@ The user is running {sys.platform}.""",
             pass
         return 0
 
-    history = Path().home() / '.prompt-history.txt'
+    history = Path.home() / '.pai-prompt-history.txt'
     session = PromptSession(history=FileHistory(str(history)))  # type: ignore
     multiline = False
     messages: list[ModelMessage] = []
 
     while True:
         try:
-            text = cast(str, session.prompt('pydai ➤ ', auto_suggest=AutoSuggestFromHistory(), multiline=multiline))
+            auto_suggest = CustomAutoSuggest(['markdown', 'multiline', 'exit'])
+            text = cast(str, session.prompt('pai ➤ ', auto_suggest=auto_suggest, multiline=multiline))
         except (KeyboardInterrupt, EOFError):
             return 0
 
         if not text.strip():
             continue
 
-        ident_prompt = text.lower().strip(' ').replace(' ', '-')
+        ident_prompt = text.lower().strip(' ').replace(' ', '-').lstrip(' ')
+        if ident_prompt == 'markdown':
+            for part in messages[-1].parts:
+                if part.part_kind == 'text':
+                    last_content = part.content
+                    console.print('[dim]Last markdown output of last question:[/dim]\n')
+                    console.print(Syntax(last_content, lexer='markdown', background_color='default'))
+            continue
         if ident_prompt == 'multiline':
             multiline = not multiline
             if multiline:
@@ -108,6 +137,9 @@ The user is running {sys.platform}.""",
             else:
                 console.print('Disabling multiline mode.')
             continue
+        if ident_prompt == 'exit':
+            console.print('[dim]Exiting…[/dim]')
+            return 0
 
         try:
             messages = asyncio.run(ask_agent(agent, text, stream, console, messages))
@@ -122,23 +154,38 @@ async def ask_agent(
     console: Console,
     messages: list[ModelMessage] | None = None,
 ) -> list[ModelMessage]:
+    status: None | Status = Status('[dim]Working on it…[/dim]', console=console)
+    live = Live('', refresh_per_second=15, console=console)
+    status.start()
+
     async with agent.iter(prompt, message_history=messages) as agent_run:
         console.print('\nResponse:', style='green')
 
         content: str = ''
         interrupted = False
-        with Live('', refresh_per_second=15, console=console) as live:
-            try:
-                async for node in agent_run:
-                    if Agent.is_model_request_node(node):
-                        async with node.stream(agent_run.ctx) as handle_stream:
-                            async for event in handle_stream:
-                                if isinstance(event, PartDeltaEvent) and isinstance(event.delta, TextPartDelta):
-                                    if stream:
-                                        content += event.delta.content_delta
-                                        live.update(Markdown(content))
-            except KeyboardInterrupt:
-                interrupted = True
+        try:
+            node = agent_run.next_node
+            while not isinstance(node, End):
+                node = await agent_run.next(node)
+                if Agent.is_model_request_node(node):
+                    async with node.stream(agent_run.ctx) as handle_stream:
+                        # NOTE(Marcelo): It took me a lot of time to figure out how to stop `status` and start `live`
+                        # in a context manager, so I had to do it manually with `stop` and `start` methods.
+                        # PR welcome to simplify this code.
+                        if status is not None:
+                            status.stop()
+                            status = None
+                        if not live.is_started:
+                            live.start()
+                        async for event in handle_stream:
+                            if isinstance(event, PartDeltaEvent) and isinstance(event.delta, TextPartDelta):
+                                if stream:
+                                    content += event.delta.content_delta
+                                    live.update(Markdown(content))
+        except KeyboardInterrupt:
+            interrupted = True
+        finally:
+            live.stop()
 
         if interrupted:
             console.print('[dim]Interrupted[/dim]')
@@ -150,21 +197,18 @@ async def ask_agent(
         return agent_run.result.all_messages()
 
 
-class Provider(TypedDict):
-    name: Literal['openai']
-    api_key: str
+class CustomAutoSuggest(AutoSuggestFromHistory):
+    def __init__(self, special_suggestions: list[str] | None = None):
+        super().__init__()
+        self.special_suggestions = special_suggestions or []
 
+    def get_suggestion(self, buffer: Buffer, document: Document) -> Suggestion | None:
+        # Get the suggestion from history
+        suggestion = super().get_suggestion(buffer, document)
 
-def infer_provider() -> Provider:
-    """Infer the provider from the environment variables."""
-    try:
-        openai_api_key = os.environ['OPENAI_API_KEY']
-    except KeyError:
-        raise ValueError('Only OpenAI is supported at the moment, please set the OPENAI_API_KEY environment variable.')
-    return {'name': 'openai', 'api_key': openai_api_key}
-
-
-def default_model(provider: Literal['openai']) -> Literal['openai:gpt-4o']:
-    if provider == 'openai':
-        return 'openai:gpt-4o'
-    raise ValueError(f'Unknown provider: {provider}')
+        # Check for custom suggestions
+        text = document.text_before_cursor.strip()
+        for special in self.special_suggestions:
+            if special.startswith(text):
+                return Suggestion(special[len(text) :])
+        return suggestion
