@@ -1,7 +1,8 @@
 from collections.abc import Iterator
-from typing import Any, get_args
+from typing import Any
 
 import pytest
+from typing_extensions import get_args
 
 from pydantic_ai.models import KnownModelName
 
@@ -42,10 +43,18 @@ def test_known_model_names():
         for n in get_model_names(OpenAIModelName)
         if n.startswith('o1') or n.startswith('gpt') or n.startswith('o3') or n.startswith('whisper')
     ]
+    deepseek_names = ['deepseek:deepseek-chat', 'deepseek:deepseek-reasoner']
     extra_names = ['test']
 
     generated_names = sorted(
-        anthropic_names + cohere_names + google_names + groq_names + mistral_names + openai_names + extra_names
+        anthropic_names
+        + cohere_names
+        + google_names
+        + groq_names
+        + mistral_names
+        + openai_names
+        + deepseek_names
+        + extra_names
     )
 
     known_model_names = sorted(get_args(KnownModelName))

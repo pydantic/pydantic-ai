@@ -6,10 +6,10 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Generic, Union, cast
 
-import logfire_api
-from typing_extensions import TypeVar
+from typing_extensions import TypeVar, assert_type
 
 from . import _result, _utils, exceptions, messages as _messages, models
+from .messages import AgentStreamEvent, FinalResultEvent
 from .tools import AgentDepsT, RunContext
 from .usage import Usage, UsageLimits
 
@@ -48,7 +48,126 @@ A function that always takes and returns the same type of data (which is the res
 Usage `ResultValidatorFunc[AgentDepsT, T]`.
 """
 
-_logfire = logfire_api.Logfire(otel_scope='pydantic-ai')
+
+@dataclass
+class AgentStream(Generic[AgentDepsT, ResultDataT]):
+    _raw_stream_response: models.StreamedResponse
+    _result_schema: _result.ResultSchema[ResultDataT] | None
+    _result_validators: list[_result.ResultValidator[AgentDepsT, ResultDataT]]
+    _run_ctx: RunContext[AgentDepsT]
+    _usage_limits: UsageLimits | None
+
+    _agent_stream_iterator: AsyncIterator[AgentStreamEvent] | None = field(default=None, init=False)
+    _final_result_event: FinalResultEvent | None = field(default=None, init=False)
+    _initial_run_ctx_usage: Usage = field(init=False)
+
+    def __post_init__(self):
+        self._initial_run_ctx_usage = copy(self._run_ctx.usage)
+
+    async def stream_output(self, *, debounce_by: float | None = 0.1) -> AsyncIterator[ResultDataT]:
+        """Asynchronously stream the (validated) agent outputs."""
+        async for response in self.stream_responses(debounce_by=debounce_by):
+            if self._final_result_event is not None:
+                yield await self._validate_response(response, self._final_result_event.tool_name, allow_partial=True)
+        if self._final_result_event is not None:
+            yield await self._validate_response(
+                self._raw_stream_response.get(), self._final_result_event.tool_name, allow_partial=False
+            )
+
+    async def stream_responses(self, *, debounce_by: float | None = 0.1) -> AsyncIterator[_messages.ModelResponse]:
+        """Asynchronously stream the (unvalidated) model responses for the agent."""
+        # if the message currently has any parts with content, yield before streaming
+        msg = self._raw_stream_response.get()
+        for part in msg.parts:
+            if part.has_content():
+                yield msg
+                break
+
+        async with _utils.group_by_temporal(self, debounce_by) as group_iter:
+            async for _items in group_iter:
+                yield self._raw_stream_response.get()  # current state of the response
+
+    def usage(self) -> Usage:
+        """Return the usage of the whole run.
+
+        !!! note
+            This won't return the full usage until the stream is finished.
+        """
+        return self._initial_run_ctx_usage + self._raw_stream_response.usage()
+
+    async def _validate_response(
+        self, message: _messages.ModelResponse, result_tool_name: str | None, *, allow_partial: bool = False
+    ) -> ResultDataT:
+        """Validate a structured result message."""
+        if self._result_schema is not None and result_tool_name is not None:
+            match = self._result_schema.find_named_tool(message.parts, result_tool_name)
+            if match is None:
+                raise exceptions.UnexpectedModelBehavior(
+                    f'Invalid response, unable to find tool: {self._result_schema.tool_names()}'
+                )
+
+            call, result_tool = match
+            result_data = result_tool.validate(call, allow_partial=allow_partial, wrap_validation_errors=False)
+
+            for validator in self._result_validators:
+                result_data = await validator.validate(result_data, call, self._run_ctx)
+            return result_data
+        else:
+            text = '\n\n'.join(x.content for x in message.parts if isinstance(x, _messages.TextPart))
+            for validator in self._result_validators:
+                text = await validator.validate(
+                    text,
+                    None,
+                    self._run_ctx,
+                )
+            # Since there is no result tool, we can assume that str is compatible with ResultDataT
+            return cast(ResultDataT, text)
+
+    def __aiter__(self) -> AsyncIterator[AgentStreamEvent]:
+        """Stream [`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent]s.
+
+        This proxies the _raw_stream_response and sends all events to the agent stream, while also checking for matches
+        on the result schema and emitting a [`FinalResultEvent`][pydantic_ai.messages.FinalResultEvent] if/when the
+        first match is found.
+        """
+        if self._agent_stream_iterator is not None:
+            return self._agent_stream_iterator
+
+        async def aiter():
+            result_schema = self._result_schema
+            allow_text_result = result_schema is None or result_schema.allow_text_result
+
+            def _get_final_result_event(e: _messages.ModelResponseStreamEvent) -> _messages.FinalResultEvent | None:
+                """Return an appropriate FinalResultEvent if `e` corresponds to a part that will produce a final result."""
+                if isinstance(e, _messages.PartStartEvent):
+                    new_part = e.part
+                    if isinstance(new_part, _messages.ToolCallPart):
+                        if result_schema:
+                            for call, _ in result_schema.find_tool([new_part]):
+                                return _messages.FinalResultEvent(
+                                    tool_name=call.tool_name, tool_call_id=call.tool_call_id
+                                )
+                    elif allow_text_result:
+                        assert_type(e, _messages.PartStartEvent)
+                        return _messages.FinalResultEvent(tool_name=None, tool_call_id=None)
+
+            usage_checking_stream = _get_usage_checking_stream_response(
+                self._raw_stream_response, self._usage_limits, self.usage
+            )
+            async for event in usage_checking_stream:
+                yield event
+                if (final_result_event := _get_final_result_event(event)) is not None:
+                    self._final_result_event = final_result_event
+                    yield final_result_event
+                    break
+
+            # If we broke out of the above loop, we need to yield the rest of the events
+            # If we didn't, this will just be a no-op
+            async for event in usage_checking_stream:
+                yield event
+
+        self._agent_stream_iterator = aiter()
+        return self._agent_stream_iterator
 
 
 @dataclass
@@ -180,17 +299,14 @@ class StreamedRunResult(Generic[AgentDepsT, ResultDataT]):
         if self._result_schema and not self._result_schema.allow_text_result:
             raise exceptions.UserError('stream_text() can only be used with text responses')
 
-        with _logfire.span('response stream text') as lf_span:
-            if delta:
-                async for text in self._stream_response_text(delta=delta, debounce_by=debounce_by):
-                    yield text
-            else:
-                combined_validated_text = ''
-                async for text in self._stream_response_text(delta=delta, debounce_by=debounce_by):
-                    combined_validated_text = await self._validate_text_result(text)
-                    yield combined_validated_text
-                lf_span.set_attribute('combined_text', combined_validated_text)
-            await self._marked_completed(self._stream_response.get())
+        if delta:
+            async for text in self._stream_response_text(delta=delta, debounce_by=debounce_by):
+                yield text
+        else:
+            async for text in self._stream_response_text(delta=delta, debounce_by=debounce_by):
+                combined_validated_text = await self._validate_text_result(text)
+                yield combined_validated_text
+        await self._marked_completed(self._stream_response.get())
 
     async def stream_structured(
         self, *, debounce_by: float | None = 0.1
@@ -205,22 +321,20 @@ class StreamedRunResult(Generic[AgentDepsT, ResultDataT]):
         Returns:
             An async iterable of the structured response message and whether that is the last message.
         """
-        with _logfire.span('response stream structured') as lf_span:
-            # if the message currently has any parts with content, yield before streaming
-            msg = self._stream_response.get()
-            for part in msg.parts:
-                if part.has_content():
-                    yield msg, False
-                    break
-
-            async for msg in self._stream_response_structured(debounce_by=debounce_by):
+        # if the message currently has any parts with content, yield before streaming
+        msg = self._stream_response.get()
+        for part in msg.parts:
+            if part.has_content():
                 yield msg, False
+                break
 
-            msg = self._stream_response.get()
-            yield msg, True
+        async for msg in self._stream_response_structured(debounce_by=debounce_by):
+            yield msg, False
 
-            lf_span.set_attribute('structured_response', msg)
-            await self._marked_completed(msg)
+        msg = self._stream_response.get()
+        yield msg, True
+
+        await self._marked_completed(msg)
 
     async def get_data(self) -> ResultDataT:
         """Stream the whole response, validate and return it."""
@@ -352,6 +466,8 @@ class FinalResult(Generic[ResultDataT]):
     """The final result data."""
     tool_name: str | None
     """Name of the final result tool; `None` if the result came from unstructured text content."""
+    tool_call_id: str | None
+    """ID of the tool call that produced the final result; `None` if the result came from unstructured text content."""
 
 
 def _get_usage_checking_stream_response(

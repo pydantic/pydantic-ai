@@ -4,9 +4,14 @@ build-backend = "hatchling.build"
 
 [project]
 name = "pydantic-ai"
-version = "0.0.29"
+version = "0.0.33"
 description = "Agent Framework / shim to use Pydantic with LLMs"
-authors = [{ name = "Samuel Colvin", email = "samuel@pydantic.dev" }]
+authors = [
+    { name = "Samuel Colvin", email = "samuel@pydantic.dev" },
+    { name = "Marcelo Trylesinski", email = "marcelotryle@gmail.com" },
+    { name = "David Montague", email = "david@pydantic.dev" },
+    { name = "Alex Hall", email = "alex@pydantic.dev" },
+]
 license = "MIT"
 readme = "README.md"
 classifiers = [
@@ -32,7 +37,7 @@ classifiers = [
 requires-python = ">=3.9"
 
 dependencies = [
-    "pydantic-ai-slim[openai,vertexai,groq,anthropic,mistral,cohere]==0.0.29",
+    "pydantic-ai-slim[openai,vertexai,groq,anthropic,mistral,cohere]==0.0.33",
 ]
 
 [project.urls]
@@ -42,7 +47,7 @@ Documentation = "https://ai.pydantic.dev"
 Changelog = "https://github.com/pydantic/pydantic-ai/releases"
 
 [project.optional-dependencies]
-examples = ["pydantic-ai-examples==0.0.29"]
+examples = ["pydantic-ai-examples==0.0.33"]
 logfire = ["logfire>=2.3"]
 
 [tool.uv.sources]
@@ -164,6 +169,9 @@ exclude_lines = [
 
 [tool.logfire]
 ignore_no_config = true
+
+[tool.inline-snapshot]
+format-command="ruff format --stdin-filename {filename}"
 
 [tool.inline-snapshot.shortcuts]
 snap-fix = ["create", "fix"]

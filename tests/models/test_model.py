@@ -19,7 +19,7 @@ TEST_CASES = [
         'gemini-1.5-flash',
         'google-vertex',
         'vertexai',
-        'VertexAIModel',
+        'GeminiModel',
     ),
     (
         'GEMINI_API_KEY',
@@ -27,7 +27,7 @@ TEST_CASES = [
         'gemini-1.5-flash',
         'google-vertex',
         'vertexai',
-        'VertexAIModel',
+        'GeminiModel',
     ),
     (
         'ANTHROPIC_API_KEY',

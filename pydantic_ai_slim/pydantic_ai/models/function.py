@@ -177,6 +177,8 @@ class DeltaToolCall:
     """Incremental change to the name of the tool."""
     json_args: str | None = None
     """Incremental change to the arguments as JSON"""
+    tool_call_id: str | None = None
+    """Incremental change to the tool call ID."""
 
 
 DeltaToolCalls: TypeAlias = dict[int, DeltaToolCall]
@@ -224,7 +226,7 @@ class FunctionStreamedResponse(StreamedResponse):
                         vendor_part_id=dtc_index,
                         tool_name=delta_tool_call.name,
                         args=delta_tool_call.json_args,
-                        tool_call_id=None,
+                        tool_call_id=delta_tool_call.tool_call_id,
                     )
                     if maybe_event is not None:
                         yield maybe_event
@@ -280,7 +282,16 @@ def _estimate_string_tokens(content: str | Sequence[UserContent]) -> int:
         return 0
     if isinstance(content, str):
         return len(re.split(r'[\s",.:]+', content.strip()))
-    # TODO(Marcelo): We need to study how we can estimate the tokens for these types of content.
     else:  # pragma: no cover
-        assert isinstance(content, (AudioUrl, ImageUrl, BinaryContent))
-        return 0
+        tokens = 0
+        for part in content:
+            if isinstance(part, str):
+                tokens += len(re.split(r'[\s",.:]+', part.strip()))
+            # TODO(Marcelo): We need to study how we can estimate the tokens for these types of content.
+            if isinstance(part, (AudioUrl, ImageUrl)):
+                tokens += 0
+            elif isinstance(part, BinaryContent):
+                tokens += len(part.data)
+            else:
+                tokens += 0
+        return tokens
