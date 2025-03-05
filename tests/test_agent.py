@@ -1352,14 +1352,17 @@ def test_double_capture_run_messages() -> None:
         ]
     )
 
-@pytest.mark.parametrize('return_value,valid', [
-    ('', True),  
-    (None, False),
-    (5, True),  ## TODO - decide if this is valid
- ]
+
+@pytest.mark.parametrize(
+    'return_value,valid',
+    [
+        ('', True),
+        (None, False),
+        (5, True),  ## TODO - decide if this is valid
+    ],
 )
 @pytest.mark.parametrize('dynamic', [True, False])
-def test_system_prompt_egde_cases(dynamic: bool, return_value: str, valid: bool):
+def test_system_prompt_egde_cases(dynamic: bool, return_value: Any, valid: bool):
     """Tests edge cases for system prompt.
     i.e: SystemPromptPart(
             content="A",       <--- Remains the same when `message_history` is passed.
@@ -1380,6 +1383,7 @@ def test_system_prompt_egde_cases(dynamic: bool, return_value: str, valid: bool)
     else:
         with pytest.raises(UserError, match=f'returned {return_value}'):
             agent.run_sync('Hello')
+
 
 def test_dynamic_false_no_reevaluate():
     """When dynamic is false (default), the system prompt is not reevaluated
