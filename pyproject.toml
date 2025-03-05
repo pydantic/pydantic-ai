@@ -164,6 +164,7 @@ exclude_lines = [
     'typing.assert_never',
     '$\s*assert_never\(',
     'if __name__ == .__main__.:',
+    'except ImportError as _import_error:'
 ]
 
 [tool.logfire]

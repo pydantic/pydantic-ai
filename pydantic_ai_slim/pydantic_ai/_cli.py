@@ -3,13 +3,12 @@ from __future__ import annotations as _annotations
 import argparse
 import asyncio
 import sys
+from collections.abc import Sequence
 from datetime import datetime, timezone
 from importlib.metadata import version
 from pathlib import Path
 from typing import cast
 
-from prompt_toolkit.auto_suggest import Suggestion
-from prompt_toolkit.buffer import Buffer
 from typing_inspection.introspection import get_literal_values
 
 from pydantic_ai.exceptions import UserError
@@ -19,7 +18,8 @@ from pydantic_graph.nodes import End
 try:
     import argcomplete
     from prompt_toolkit import PromptSession
-    from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
+    from prompt_toolkit.auto_suggest import AutoSuggestFromHistory, Suggestion
+    from prompt_toolkit.buffer import Buffer
     from prompt_toolkit.document import Document
     from prompt_toolkit.history import FileHistory
     from rich.console import Console, ConsoleOptions, RenderResult
@@ -30,7 +30,7 @@ try:
     from rich.text import Text
 except ImportError as _import_error:
     raise ImportError(
-        'Please install `rich` and `prompt-toolkit` to use the PydanticAI CLI, '
+        'Please install `rich`, `prompt-toolkit` and `argcomplete` to use the PydanticAI CLI, '
         "you can use the `cli` optional group — `pip install 'pydantic-ai-slim[cli]'`"
     ) from _import_error
 
@@ -51,17 +51,18 @@ class SimpleCodeBlock(CodeBlock):
 Markdown.elements['fence'] = SimpleCodeBlock
 
 
-def cli() -> int:
+def cli(args_list: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog='pai',
         description=f"""\
-PydanticAI CLI v{__version__}
+PydanticAI CLI v{__version__}\n\n
 
 Special prompt:
 * `exit` - exit the interactive mode
 * `markdown` - show the last markdown output of the last question
 * `multiline` - toggle multiline mode
 """,
+        formatter_class=argparse.RawTextHelpFormatter,
     )
     parser.add_argument('prompt', nargs='?', help='AI Prompt, if omitted fall into interactive mode')
     parser.add_argument(
@@ -74,7 +75,7 @@ Special prompt:
     parser.add_argument('--version', action='store_true', help='Show version and exit')
 
     argcomplete.autocomplete(parser)
-    args = parser.parse_args()
+    args = parser.parse_args(args_list)
 
     console = Console()
     console.print(f'pai - PydanticAI CLI v{__version__}', style='green bold', highlight=False)
@@ -212,3 +213,7 @@ class CustomAutoSuggest(AutoSuggestFromHistory):
             if special.startswith(text):
                 return Suggestion(special[len(text) :])
         return suggestion
+
+
+def app():  # pragma: no cover
+    sys.exit(cli())

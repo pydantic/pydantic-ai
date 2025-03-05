@@ -74,7 +74,7 @@ dev = [
 ]
 
 [project.scripts]
-pai = "pydantic_ai._cli:cli"
+pai = "pydantic_ai._cli:app"
 
 [tool.hatch.build.targets.wheel]
 packages = ["pydantic_ai"]
