@@ -1,8 +1,9 @@
 import pytest
-from conftest import try_import
 from dirty_equals import IsStr
 from inline_snapshot import snapshot
 from pytest import CaptureFixture
+
+from .conftest import try_import
 
 with try_import() as imports_successful:
     from pydantic_ai._cli import cli
