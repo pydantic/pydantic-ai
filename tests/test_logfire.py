@@ -223,6 +223,7 @@ def test_instrument_all():
     def get_model():
         return agent._get_model(model)  # type: ignore
 
+    Agent.instrument_all(False)
     assert get_model() is model
 
     Agent.instrument_all()

@@ -21,9 +21,7 @@ LLM Observability tools that just let you understand how your model is performin
     Logfire is a commercially supported, hosted platform with an extremely generous and perpetual [free tier](https://pydantic.dev/pricing/).
     You can sign up and start using Logfire in a couple of minutes.
 
-PydanticAI has built-in (but optional) support for Logfire via the [`logfire-api`](https://github.com/pydantic/logfire/tree/main/logfire-api) no-op package.
-
-That means if the `logfire` package is installed and configured, detailed information about agent runs is sent to Logfire. But if the `logfire` package is not installed, there's virtually no overhead and nothing is sent.
+PydanticAI has built-in (but optional) support for Logfire. That means if the `logfire` package is installed and configured and agent instrumentation is enabled then detailed information about agent runs is sent to Logfire. Otherwise there's virtually no overhead and nothing is sent.
 
 Here's an example showing details of running the [Weather Agent](examples/weather-agent.md) in Logfire:
 
@@ -65,6 +63,8 @@ and enable instrumentation in your agent:
 from pydantic_ai import Agent
 
 agent = Agent('openai:gpt-4o', instrument=True)
+# or instrument all agents to avoid needing to add `instrument=True` to each agent:
+Agent.instrument_all()
 ```
 
 The [logfire documentation](https://logfire.pydantic.dev/docs/) has more details on how to use logfire,
@@ -131,3 +131,44 @@ print(result.data)
 
 !!! tip
     `httpx` instrumentation might be of particular utility if you're using a custom `httpx` client in your model in order to get insights into your custom requests.
+
+## Using OpenTelemetry
+
+PydanticAI's instrumentation uses [OpenTelemetry](https://opentelemetry.io/), which Logfire is based on. You can use the Logfire SDK completely freely and follow the [Alternative backends](https://logfire.pydantic.dev/docs/how-to-guides/alternative-backends/) guide to send the data to any OpenTelemetry collector, such as a self-hosted Jaeger instance. Or you can skip Logfire entirely and use the OpenTelemetry Python SDK directly.
+
+## Data format
+
+PydanticAI follows the [OpenTelemetry Semantic Conventions for Generative AI systems](https://opentelemetry.io/docs/specs/semconv/gen-ai/), with one caveat. The semantic conventions specify that messages should be captured as individual events (logs) that are children of the request span. By default, PydanticAI instead collects these events into a JSON array which is set as a single large attribute called `events` on the request span. To change this, use [`InstrumentationSettings(event_mode='logs')`][pydantic_ai.agent.InstrumentationSettings].
+
+```python {title="instrumentation_settings_event_mode.py"}
+from pydantic_ai import Agent
+from pydantic_ai.agent import InstrumentationSettings
+
+instrumentation_settings = InstrumentationSettings(event_mode='logs')
+
+agent = Agent('openai:gpt-4o', instrument=instrumentation_settings)
+# or instrument all agents:
+Agent.instrument_all(instrumentation_settings)
+```
+
+For now, this won't look as good in the Logfire UI, but we're working on it. **Once the UI supports it, `event_mode='logs'` will become the default.**
+
+If you have very long conversations, the `events` span attribute may be truncated. Using `event_mode='logs'` will help avoid this issue.
+
+Note that the OpenTelemetry Semantic Conventions are still experimental and are likely to change.
+
+## Setting OpenTelemetry SDK providers
+
+By default, the global `TracerProvider` and `EventLoggerProvider` are used. These are set automatically by `logfire.configure()`. They can also be set by the `set_tracer_provider` and `set_event_logger_provider` functions in the OpenTelemetry Python SDK. You can set custom providers with `InstrumentationSettings`:
+
+```python {title="instrumentation_settings_providers.py"}
+from opentelemetry.sdk._events import EventLoggerProvider
+from opentelemetry.sdk.trace import TracerProvider
+
+from pydantic_ai.agent import InstrumentationSettings
+
+instrumentation_settings = InstrumentationSettings(
+    tracer_provider=TracerProvider(),
+    event_logger_provider=EventLoggerProvider(),
+)
+```
