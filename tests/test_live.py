@@ -23,23 +23,29 @@ pytestmark = [
 
 def openai(http_client: httpx.AsyncClient, _tmp_path: Path) -> Model:
     from pydantic_ai.models.openai import OpenAIModel
+    from pydantic_ai.providers.openai import OpenAIProvider
 
-    return OpenAIModel('gpt-4o-mini', http_client=http_client)
+    return OpenAIModel('gpt-4o-mini', provider=OpenAIProvider(http_client=http_client))
 
 
 def gemini(http_client: httpx.AsyncClient, _tmp_path: Path) -> Model:
     from pydantic_ai.models.gemini import GeminiModel
+    from pydantic_ai.providers.google_gla import GoogleGLAProvider
 
-    return GeminiModel('gemini-1.5-pro', http_client=http_client)
+    return GeminiModel('gemini-1.5-pro', provider=GoogleGLAProvider(http_client=http_client))
 
 
 def vertexai(http_client: httpx.AsyncClient, tmp_path: Path) -> Model:
-    from pydantic_ai.models.vertexai import VertexAIModel
+    from pydantic_ai.models.gemini import GeminiModel
+    from pydantic_ai.providers.google_vertex import GoogleVertexProvider
 
     service_account_content = os.environ['GOOGLE_SERVICE_ACCOUNT_CONTENT']
     service_account_path = tmp_path / 'service_account.json'
     service_account_path.write_text(service_account_content)
-    return VertexAIModel('gemini-1.5-flash', service_account_file=service_account_path, http_client=http_client)
+    return GeminiModel(
+        'gemini-1.5-flash',
+        provider=GoogleVertexProvider(service_account_file=service_account_path, http_client=http_client),
+    )
 
 
 def groq(http_client: httpx.AsyncClient, _tmp_path: Path) -> Model:
@@ -56,8 +62,11 @@ def anthropic(http_client: httpx.AsyncClient, _tmp_path: Path) -> Model:
 
 def ollama(http_client: httpx.AsyncClient, _tmp_path: Path) -> Model:
     from pydantic_ai.models.openai import OpenAIModel
+    from pydantic_ai.providers.openai import OpenAIProvider
 
-    return OpenAIModel('qwen2:0.5b', base_url='http://localhost:11434/v1/', http_client=http_client)
+    return OpenAIModel(
+        'qwen2:0.5b', provider=OpenAIProvider(base_url='http://localhost:11434/v1/', http_client=http_client)
+    )
 
 
 def mistral(http_client: httpx.AsyncClient, _tmp_path: Path) -> Model:

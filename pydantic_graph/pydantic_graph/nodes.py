@@ -3,9 +3,9 @@ from __future__ import annotations as _annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, is_dataclass
 from functools import cache
-from typing import TYPE_CHECKING, Any, ClassVar, Generic, get_origin, get_type_hints
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, get_type_hints
 
-from typing_extensions import Never, TypeVar
+from typing_extensions import Never, TypeVar, get_origin
 
 from . import _utils, exceptions
 

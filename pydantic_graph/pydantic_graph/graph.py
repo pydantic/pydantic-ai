@@ -13,6 +13,7 @@ import logfire_api
 import pydantic
 import typing_extensions
 from logfire_api import LogfireSpan
+from typing_inspection import typing_objects
 
 from . import _utils, exceptions, mermaid
 from .nodes import BaseNode, DepsT, End, GraphRunContext, NodeDef, RunEndT
@@ -505,7 +506,7 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
                     args = typing_extensions.get_args(base)
                     if len(args) == 3:
                         t = args[2]
-                        if not _utils.is_never(t):
+                        if not typing_objects.is_never(t):
                             return t
                     # break the inner (bases) loop
                     break
