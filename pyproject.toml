@@ -36,7 +36,7 @@ classifiers = [
 ]
 requires-python = ">=3.9"
 dependencies = [
-    "pydantic-ai-slim[openai,vertexai,groq,anthropic,mistral,cohere]==0.0.33",
+    "pydantic-ai-slim[openai,vertexai,groq,anthropic,mistral,cohere,cli]==0.0.33",
 ]
 
 [project.urls]
