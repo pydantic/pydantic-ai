@@ -117,7 +117,7 @@ class _VertexAIAuth(httpx.Auth):
     async def _get_credentials(self) -> BaseCredentials | ServiceAccountCredentials:
         if self.service_account_file is not None:
             if isinstance(self.service_account_file, str) and not Path(self.service_account_file).exists():
-                creds = await _creds_from_string(self.service_account_file)
+                creds = await _creds_from_file_contents(self.service_account_file)
             else:
                 creds = await _creds_from_file(self.service_account_file)
             assert creds.project_id is None or isinstance(creds.project_id, str)  # type: ignore[reportUnknownMemberType]
@@ -158,12 +158,12 @@ async def _creds_from_file(service_account_file: str | Path) -> ServiceAccountCr
     return await anyio.to_thread.run_sync(service_account_credentials_from_file, str(service_account_file))
 
 
-async def _creds_from_string(service_account_string: str) -> ServiceAccountCredentials:
+async def _creds_from_file_contents(service_account_string: str) -> ServiceAccountCredentials:
     service_account_credentials_from_string = functools.partial(
         ServiceAccountCredentials.from_service_account_info,  # type: ignore[reportUnknownMemberType]
         scopes=['https://www.googleapis.com/auth/cloud-platform'],
     )
-    return await anyio.to_thread.run_sync(service_account_credentials_from_string, json.loads(service_account_string)
+    return await anyio.to_thread.run_sync(service_account_credentials_from_string, json.loads(service_account_string))
 
 
 VertexAiRegion = Literal[
