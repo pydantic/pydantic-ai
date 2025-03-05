@@ -190,6 +190,12 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                             # Look up the runner by its ref
                             if runner := self.system_prompt_dynamic_functions.get(part.dynamic_ref):
                                 updated_part_content = await runner.run(run_context)
+                                if updated_part_content is None:
+                                    raise exceptions.UserError(
+                                        f"system prompt function {runner.function} returned None"
+                                    )
+                                if not isinstance(updated_part_content, str):
+                                    updated_part_content = str(updated_part_content)
                                 msg.parts[i] = _messages.SystemPromptPart(
                                     updated_part_content, dynamic_ref=part.dynamic_ref
                                 )
@@ -199,6 +205,12 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
         messages: list[_messages.ModelRequestPart] = [_messages.SystemPromptPart(p) for p in self.system_prompts]
         for sys_prompt_runner in self.system_prompt_functions:
             prompt = await sys_prompt_runner.run(run_context)
+            if prompt is None:
+                raise exceptions.UserError(
+                    f"system prompt function {sys_prompt_runner.function} returned None"
+                )
+            if not isinstance(prompt, str):
+                prompt = str(prompt)
             if sys_prompt_runner.dynamic:
                 messages.append(_messages.SystemPromptPart(prompt, dynamic_ref=sys_prompt_runner.function.__qualname__))
             else:
