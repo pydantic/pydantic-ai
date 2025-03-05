@@ -8,7 +8,7 @@ from .conftest import try_import
 with try_import() as imports_successful:
     from pydantic_ai._cli import cli
 
-pytestmark = pytest.mark.skipif(not imports_successful, reason='install cli extras to run cli tests')
+pytestmark = pytest.mark.skipif(not imports_successful(), reason='install cli extras to run cli tests')
 
 
 def test_cli_version(capfd: CaptureFixture[str]):
