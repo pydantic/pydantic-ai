@@ -6,7 +6,6 @@ import json
 from collections.abc import AsyncIterator, Callable, Sequence
 from dataclasses import dataclass
 from datetime import timezone
-from pathlib import Path
 
 import httpx
 import pytest
@@ -47,7 +46,6 @@ from pydantic_ai.models.gemini import (
     _GeminiUsageMetaData,
 )
 from pydantic_ai.providers.google_gla import GoogleGLAProvider
-from pydantic_ai.providers.google_vertex import GoogleVertexProvider
 from pydantic_ai.result import Usage
 from pydantic_ai.tools import ToolDefinition
 
@@ -957,17 +955,6 @@ async def test_safety_settings_unsafe(
         assert repr(e) == "UnexpectedModelBehavior('Safety settings triggered')"
 
 
-def _200_response() -> httpx.Response:
-    return httpx.Response(
-        200,
-        content=_gemini_response_ta.dump_json(
-            gemini_response(_content_model_response(ModelResponse(parts=[TextPart('world')]))),
-            by_alias=True,
-        ),
-        headers={'Content-Type': 'application/json'},
-    )
-
-
 async def test_safety_settings_safe(
     client_with_handler: ClientWithHandler, env: TestEnv, allow_model_requests: None
 ) -> None:
@@ -978,7 +965,14 @@ async def test_safety_settings_safe(
             {'category': 'HARM_CATEGORY_DANGEROUS_CONTENT', 'threshold': 'BLOCK_LOW_AND_ABOVE'},
         ]
 
-        return _200_response()
+        return httpx.Response(
+            200,
+            content=_gemini_response_ta.dump_json(
+                gemini_response(_content_model_response(ModelResponse(parts=[TextPart('world')]))),
+                by_alias=True,
+            ),
+            headers={'Content-Type': 'application/json'},
+        )
 
     gemini_client = client_with_handler(handler)
     m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(http_client=gemini_client, api_key='mock'))
@@ -1003,39 +997,17 @@ async def test_labels_are_not_used_with_gla_provider(
         labels = json.loads(request.content).get('labels')
         assert labels is None
 
-        return _200_response()
+        return httpx.Response(
+            200,
+            content=_gemini_response_ta.dump_json(
+                gemini_response(_content_model_response(ModelResponse(parts=[TextPart('world')]))),
+                by_alias=True,
+            ),
+            headers={'Content-Type': 'application/json'},
+        )
 
     gemini_client = client_with_handler(handler)
     m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(http_client=gemini_client, api_key='mock'))
-    agent = Agent(m)
-
-    result = await agent.run(
-        'hello',
-        model_settings=GeminiModelSettings(gemini_labels={'environment': 'test', 'team': 'analytics'}),
-    )
-    assert result.data == 'world'
-
-
-async def test_labels_are_used_with_vertex_provider(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    client_with_handler: ClientWithHandler,
-    env: TestEnv,
-    allow_model_requests: None,
-) -> None:
-    service_account_path = tmp_path / 'service_account.json'
-    save_service_account(service_account_path, 'my-project-id')
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        labels = json.loads(request.content)['labels']
-        assert labels == {'environment': 'test', 'team': 'analytics'}
-
-        return _200_response()
-
-    gemini_client = client_with_handler(handler)
-    provider = GoogleVertexProvider(http_client=gemini_client, service_account_file=service_account_path)
-    monkeypatch.setattr(provider.client.auth, '_refresh_token', lambda: 'my-token')
-    m = GeminiModel('gemini-1.5-flash', provider=provider)
     agent = Agent(m)
 
     result = await agent.run(
@@ -1065,39 +1037,3 @@ async def test_image_url_input(allow_model_requests: None, gemini_api_key: str) 
 
     result = await agent.run(['What is the name of this fruit?', image_url])
     assert result.data == snapshot("This is not a fruit; it's a pipe organ console.")
-
-
-def save_service_account(service_account_path: Path, project_id: str) -> None:
-    service_account = {
-        'type': 'service_account',
-        'project_id': project_id,
-        'private_key_id': 'abc',
-        # this is just a random private key I created with `openssl genpke ...`, it doesn't do anything
-        'private_key': (
-            '-----BEGIN PRIVATE KEY-----\n'
-            'MIICdgIBADANBgkqhkiG9w0BAQEFAASCAmAwggJcAgEAAoGBAMFrZYX4gZ20qv88\n'
-            'jD0QCswXgcxgP7Ta06G47QEFprDVcv4WMUBDJVAKofzVcYyhsasWsOSxcpA8LIi9\n'
-            '/VS2Otf8CmIK6nPBCD17Qgt8/IQYXOS4U2EBh0yjo0HQ4vFpkqium4lLWxrAZohA\n'
-            '8r82clV08iLRUW3J+xvN23iPHyVDAgMBAAECgYBScRJe3iNxMvbHv+kOhe30O/jJ\n'
-            'QiUlUzhtcEMk8mGwceqHvrHTcEtRKJcPC3NQvALcp9lSQQhRzjQ1PLXkC6BcfKFd\n'
-            '03q5tVPmJiqsHbSyUyHWzdlHP42xWpl/RmX/DfRKGhPOvufZpSTzkmKWtN+7osHu\n'
-            '7eiMpg2EDswCvOgf0QJBAPXLYwHbZLaM2KEMDgJSse5ZTE/0VMf+5vSTGUmHkr9c\n'
-            'Wx2G1i258kc/JgsXInPbq4BnK9hd0Xj2T5cmEmQtm4UCQQDJc02DFnPnjPnnDUwg\n'
-            'BPhrCyW+rnBGUVjehveu4XgbGx7l3wsbORTaKdCX3HIKUupgfFwFcDlMUzUy6fPO\n'
-            'IuQnAkA8FhVE/fIX4kSO0hiWnsqafr/2B7+2CG1DOraC0B6ioxwvEqhHE17T5e8R\n'
-            '5PzqH7hEMnR4dy7fCC+avpbeYHvVAkA5W58iR+5Qa49r/hlCtKeWsuHYXQqSuu62\n'
-            'zW8QWBo+fYZapRsgcSxCwc0msBm4XstlFYON+NoXpUlsabiFZOHZAkEA8Ffq3xoU\n'
-            'y0eYGy3MEzxx96F+tkl59lfkwHKWchWZJ95vAKWJaHx9WFxSWiJofbRna8Iim6pY\n'
-            'BootYWyTCfjjwA==\n'
-            '-----END PRIVATE KEY-----\n'
-        ),
-        'client_email': 'testing-pydantic-ai@pydantic-ai.iam.gserviceaccount.com',
-        'client_id': '123',
-        'auth_uri': 'https://accounts.google.com/o/oauth2/auth',
-        'token_uri': 'https://oauth2.googleapis.com/token',
-        'auth_provider_x509_cert_url': 'https://www.googleapis.com/oauth2/v1/certs',
-        'client_x509_cert_url': 'https://www.googleapis.com/...',
-        'universe_domain': 'googleapis.com',
-    }
-
-    service_account_path.write_text(json.dumps(service_account, indent=2))
