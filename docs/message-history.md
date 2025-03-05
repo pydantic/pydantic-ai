@@ -255,7 +255,7 @@ same_history_as_step_1 = messages_adapter.validate_python(as_python_objects)
 result2 = agent.run_sync('Tell me a good joke.', message_history=same_history_different_object)
 print(result2.all_messages())
 """
-[ModelRequest(parts=[SystemPromptPart(content='Be a helpful assistant.', dynamic_ref=None, part_kind='system-prompt'), UserPromptPart(content='Tell me a good joke.', timestamp=datetime.datetime(2025, 3, 5, 21, 32, 42, 842296, tzinfo=TzInfo(UTC)), part_kind='user-prompt')], kind='request'), 
+[ModelRequest(parts=[SystemPromptPart(content='Be a helpful assistant.', dynamic_ref=None, part_kind='system-prompt'), UserPromptPart(content='Tell me a good joke.', timestamp=datetime.datetime(2025, 3, 5, 21, 32, 42, 842296, tzinfo=TzInfo(UTC)), part_kind='user-prompt')], kind='request'),
 ModelResponse(parts=[TextPart(content="Why don't scientists trust atoms?\n\nBecause they make up everything!", part_kind='text')], model_name='gpt-4o-2024-08-06', timestamp=datetime.datetime(2025, 3, 5, 21, 32, 43, tzinfo=TzInfo(UTC)), kind='response'),
 ModelRequest(parts=[UserPromptPart(content='Tell me another', timestamp=datetime.datetime(2025, 3, 5, 21, 32, 43, 822470, tzinfo=datetime.timezone.utc), part_kind='user-prompt')], kind='request'),
 ModelResponse(parts=[TextPart(content='Why did the scarecrow win an award?\n\nBecause he was outstanding in his field!', part_kind='text')], model_name='gpt-4o-2024-08-06', timestamp=datetime.datetime(2025, 3, 5, 21, 32, 43, tzinfo=datetime.timezone.utc), kind='response')]
