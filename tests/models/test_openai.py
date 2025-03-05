@@ -696,14 +696,14 @@ async def test_transcription_success():
     mock_client = AsyncMock(spec=AsyncOpenAI)
 
     mock_audio = MagicMock()
-    mock_audio.translations.create = AsyncMock(return_value=AsyncMock(text='Transcribed text'))
+    mock_audio.translations.create = AsyncMock(return_value=AsyncMock(text=audio_content))
     mock_client.audio = mock_audio
 
-    model = OpenAIModel(model_name='whisper-1', openai_client=mock_client)
+    model = OpenAIModel(model_name='whisper-1', provider=OpenAIProvider(openai_client=mock_client))
 
     transcription_result = await model.transcription(audio_file)
 
-    assert transcription_result == 'Transcribed text'
+    assert transcription_result == audio_content
 
     mock_client.audio.translations.create.assert_awaited_once_with(model='whisper-1', file=audio_file)
 
@@ -719,7 +719,7 @@ async def test_transcription_error():
     mock_audio.translations.create = AsyncMock(side_effect=Exception('Simulated API error'))
     mock_client.audio = mock_audio
 
-    model = OpenAIModel(model_name='whisper-1', openai_client=mock_client)
+    model = OpenAIModel(model_name='whisper-1', provider=OpenAIProvider(openai_client=mock_client))
 
     with pytest.raises(RuntimeError, match='Error during transcription: Simulated API error'):
         await model.transcription(audio_file)
