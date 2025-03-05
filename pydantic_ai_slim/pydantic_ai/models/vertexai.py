@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+import warnings
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -8,6 +9,7 @@ from pathlib import Path
 from typing import Literal
 
 from httpx import AsyncClient as AsyncHTTPClient
+from typing_extensions import deprecated
 
 from .. import usage
 from .._utils import run_in_executor
@@ -55,6 +57,7 @@ The template is used thus:
 """
 
 
+@deprecated('Please use `GeminiModel(provider=GoogleVertexProvider(...))` instead.')
 @dataclass(init=False)
 class VertexAIModel(GeminiModel):
     """A model that uses Gemini via the `*-aiplatform.googleapis.com` VertexAI API."""
@@ -103,11 +106,16 @@ class VertexAIModel(GeminiModel):
         self.project_id = project_id
         self.region = region
         self.model_publisher = model_publisher
-        self.http_client = http_client or cached_async_http_client()
+        self.client = http_client or cached_async_http_client()
         self.url_template = url_template
 
         self._auth = None
         self._url = None
+        warnings.warn(
+            'VertexAIModel is deprecated, please use `GeminiModel(provider=GoogleVertexProvider(...))` instead.',
+            DeprecationWarning,
+        )
+        self._provider = None
 
     async def ainit(self) -> None:
         """Initialize the model, setting the URL and auth.

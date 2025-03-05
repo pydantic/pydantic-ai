@@ -1,3 +1,4 @@
+# pyright: reportDeprecated=false
 from __future__ import annotations as _annotations
 
 import json
@@ -22,6 +23,8 @@ with try_import() as imports_successful:
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='google-auth not installed'),
     pytest.mark.anyio,
+    # This ignore is added because we should just remove the `VertexAIModel` class.
+    pytest.mark.filterwarnings('ignore::DeprecationWarning'),
 ]
 
 

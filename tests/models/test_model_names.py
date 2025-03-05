@@ -41,10 +41,18 @@ def test_known_model_names():
     openai_names = [f'openai:{n}' for n in get_model_names(OpenAIModelName)] + [
         n for n in get_model_names(OpenAIModelName) if n.startswith('o1') or n.startswith('gpt') or n.startswith('o3')
     ]
+    deepseek_names = ['deepseek:deepseek-chat', 'deepseek:deepseek-reasoner']
     extra_names = ['test']
 
     generated_names = sorted(
-        anthropic_names + cohere_names + google_names + groq_names + mistral_names + openai_names + extra_names
+        anthropic_names
+        + cohere_names
+        + google_names
+        + groq_names
+        + mistral_names
+        + openai_names
+        + deepseek_names
+        + extra_names
     )
 
     known_model_names = sorted(get_args(KnownModelName))
