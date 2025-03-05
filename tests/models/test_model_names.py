@@ -1,7 +1,8 @@
 from collections.abc import Iterator
-from typing import Any, get_args
+from typing import Any
 
 import pytest
+from typing_extensions import get_args
 
 from pydantic_ai.models import KnownModelName
 

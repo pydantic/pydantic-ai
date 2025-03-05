@@ -39,6 +39,7 @@ dependencies = [
     "pydantic-graph==0.0.32",
     "exceptiongroup; python_version < '3.11'",
     "opentelemetry-api>=1.28.0",
+    "typing-inspection>=0.4.0",
 ]
 
 [project.optional-dependencies]
