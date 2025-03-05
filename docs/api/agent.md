@@ -9,4 +9,4 @@
             - EndStrategy
             - RunResultDataT
             - capture_run_messages
-            - InstrumentationOptions
+            - InstrumentationSettings
