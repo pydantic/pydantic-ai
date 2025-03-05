@@ -261,6 +261,8 @@ ModelRequest(parts=[UserPromptPart(content='Tell me another', timestamp=datetime
 ModelResponse(parts=[TextPart(content='Why did the scarecrow win an award?\n\nBecause he was outstanding in his field!', part_kind='text')], model_name='gpt-4o-2024-08-06', timestamp=datetime.datetime(2025, 3, 5, 21, 32, 43, tzinfo=datetime.timezone.utc), kind='response')]
 """
 ```
+_(This example is complete, it can be run "as is")_
+
 
 ## Other ways of using messages
 
