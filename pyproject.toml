@@ -35,9 +35,8 @@ classifiers = [
     "Framework :: Pydantic :: 2",
 ]
 requires-python = ">=3.9"
-
 dependencies = [
-    "pydantic-ai-slim[openai,vertexai,groq,anthropic,mistral,cohere]==0.0.33",
+    "pydantic-ai-slim[openai,vertexai,groq,anthropic,mistral,cohere,cli]==0.0.33",
 ]
 
 [project.urls]
@@ -165,6 +164,7 @@ exclude_lines = [
     'typing.assert_never',
     '$\s*assert_never\(',
     'if __name__ == .__main__.:',
+    'except ImportError as _import_error:'
 ]
 
 [tool.logfire]

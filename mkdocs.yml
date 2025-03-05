@@ -28,6 +28,7 @@ nav:
       - multi-agent-applications.md
       - graph.md
       - input.md
+      - cli.md
   - Examples:
       - examples/index.md
       - examples/pydantic-model.md
