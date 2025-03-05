@@ -116,7 +116,7 @@ class _VertexAIAuth(httpx.Auth):
 
     async def _get_credentials(self) -> BaseCredentials | ServiceAccountCredentials:
         if self.service_account_file is not None:
-            if isinstance(self.service_account_file, str) and not Path(self.service_account_file).exists():
+            if isinstance(self.service_account_file, str) and self.service_account_file.strip().startswith('{'):
                 creds = await _creds_from_file_contents(self.service_account_file)
             else:
                 creds = await _creds_from_file(self.service_account_file)

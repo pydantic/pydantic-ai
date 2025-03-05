@@ -74,8 +74,21 @@ async def test_google_vertex_provider_service_account_file(
     assert getattr(provider.client.auth, 'token_created') is not None
 
 
-def save_service_account(service_account_path: Path, project_id: str) -> None:
-    service_account = {
+async def test_google_vertex_provider_service_account_file_contents(
+    monkeypatch: pytest.MonkeyPatch, allow_model_requests: None
+):
+    contents = prepare_service_account_contents('my-project-id')
+
+    provider = GoogleVertexProvider(service_account_file=json.dumps(contents))
+    monkeypatch.setattr(provider.client.auth, '_refresh_token', lambda: 'my-token')
+    await provider.client.post('/gemini-1.0-pro:generateContent')
+    assert provider.region == 'us-central1'
+    assert getattr(provider.client.auth, 'project_id') == 'my-project-id'
+    assert getattr(provider.client.auth, 'token_created') is not None
+
+
+def prepare_service_account_contents(project_id: str) -> dict[str, str]:
+    return {
         'type': 'service_account',
         'project_id': project_id,
         'private_key_id': 'abc',
@@ -106,5 +119,9 @@ def save_service_account(service_account_path: Path, project_id: str) -> None:
         'client_x509_cert_url': 'https://www.googleapis.com/...',
         'universe_domain': 'googleapis.com',
     }
+
+
+def save_service_account(service_account_path: Path, project_id: str) -> None:
+    service_account = prepare_service_account_contents(project_id)
 
     service_account_path.write_text(json.dumps(service_account, indent=2))
