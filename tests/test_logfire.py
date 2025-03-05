@@ -9,7 +9,7 @@ from inline_snapshot import snapshot
 from typing_extensions import NotRequired, TypedDict
 
 from pydantic_ai import Agent
-from pydantic_ai.models.instrumented import InstrumentationOptions, InstrumentedModel
+from pydantic_ai.models.instrumented import InstrumentationSettings, InstrumentedModel
 from pydantic_ai.models.test import TestModel
 
 try:
@@ -64,11 +64,11 @@ def get_logfire_summary(capfire: CaptureLogfire) -> Callable[[], LogfireSummary]
     [
         True,
         False,
-        InstrumentationOptions(event_mode='attributes'),
-        InstrumentationOptions(event_mode='logs'),
+        InstrumentationSettings(event_mode='attributes'),
+        InstrumentationSettings(event_mode='logs'),
     ],
 )
-def test_logfire(get_logfire_summary: Callable[[], LogfireSummary], instrument: InstrumentationOptions | bool) -> None:
+def test_logfire(get_logfire_summary: Callable[[], LogfireSummary], instrument: InstrumentationSettings | bool) -> None:
     my_agent = Agent(model=TestModel(), instrument=instrument)
 
     @my_agent.tool_plain
@@ -228,9 +228,9 @@ def test_instrument_all():
     m = get_model()
     assert isinstance(m, InstrumentedModel)
     assert m.wrapped is model
-    assert m.options.event_mode == InstrumentationOptions().event_mode
+    assert m.options.event_mode == InstrumentationSettings().event_mode
 
-    options = InstrumentationOptions(event_mode='logs')
+    options = InstrumentationSettings(event_mode='logs')
     Agent.instrument_all(options)
     m = get_model()
     assert isinstance(m, InstrumentedModel)

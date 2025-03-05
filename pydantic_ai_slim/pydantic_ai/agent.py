@@ -25,7 +25,7 @@ from . import (
     result,
     usage as _usage,
 )
-from .models.instrumented import InstrumentationOptions, InstrumentedModel
+from .models.instrumented import InstrumentationSettings, InstrumentedModel
 from .result import FinalResult, ResultDataT, StreamedRunResult
 from .settings import ModelSettings, merge_model_settings
 from .tools import (
@@ -56,7 +56,7 @@ __all__ = (
     'CallToolsNode',
     'ModelRequestNode',
     'UserPromptNode',
-    'InstrumentationOptions',
+    'InstrumentationSettings',
 )
 
 
@@ -113,10 +113,10 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
     The type of the result data, used to validate the result data, defaults to `str`.
     """
 
-    instrument: InstrumentationOptions | bool | None
+    instrument: InstrumentationSettings | bool | None
     """Options to automatically instrument with OpenTelemetry."""
 
-    _instrument_default: ClassVar[InstrumentationOptions | bool] = False
+    _instrument_default: ClassVar[InstrumentationSettings | bool] = False
 
     _deps_type: type[AgentDepsT] = dataclasses.field(repr=False)
     _result_tool_name: str = dataclasses.field(repr=False)
@@ -150,7 +150,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
         defer_model_check: bool = False,
         end_strategy: EndStrategy = 'early',
-        instrument: InstrumentationOptions | bool | None = None,
+        instrument: InstrumentationSettings | bool | None = None,
     ):
         """Create an agent.
 
@@ -182,7 +182,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
                 See [`EndStrategy`][pydantic_ai.agent.EndStrategy] for more information.
             instrument: Set to True to automatically instrument with OpenTelemetry,
                 which will use Logfire if it's configured.
-                Set to an instance of [`InstrumentationOptions`][pydantic_ai.agent.InstrumentationOptions] to customize.
+                Set to an instance of [`InstrumentationSettings`][pydantic_ai.agent.InstrumentationSettings] to customize.
                 If this isn't set, then the last value set by
                 [`Agent.instrument_all()`][pydantic_ai.Agent.instrument_all]
                 will be used, which defaults to False.
@@ -222,7 +222,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
                 self._register_tool(Tool(tool))
 
     @staticmethod
-    def instrument_all(instrument: InstrumentationOptions | bool = True) -> None:
+    def instrument_all(instrument: InstrumentationSettings | bool = True) -> None:
         """Set the instrumentation options for all agents where `instrument` is not set."""
         Agent._instrument_default = instrument
 
@@ -1138,7 +1138,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
 
         if instrument and not isinstance(model_, InstrumentedModel):
             if instrument is True:
-                instrument = InstrumentationOptions()
+                instrument = InstrumentationSettings()
 
             model_ = InstrumentedModel(model_, instrument)
 

@@ -44,7 +44,7 @@ ANY_ADAPTER = TypeAdapter[Any](Any)
 
 
 @dataclass(init=False)
-class InstrumentationOptions:
+class InstrumentationSettings:
     """Options for instrumenting models and agents with OpenTelemetry.
 
     Used in:
@@ -91,15 +91,15 @@ class InstrumentationOptions:
 class InstrumentedModel(WrapperModel):
     """Model which is instrumented with OpenTelemetry."""
 
-    options: InstrumentationOptions
+    options: InstrumentationSettings
 
     def __init__(
         self,
         wrapped: Model | KnownModelName,
-        options: InstrumentationOptions | None = None,
+        options: InstrumentationSettings | None = None,
     ) -> None:
         super().__init__(wrapped)
-        self.options = options or InstrumentationOptions()
+        self.options = options or InstrumentationSettings()
 
     async def request(
         self,

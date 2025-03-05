@@ -27,7 +27,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
-from pydantic_ai.models.instrumented import InstrumentationOptions, InstrumentedModel
+from pydantic_ai.models.instrumented import InstrumentationSettings, InstrumentedModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import Usage
 
@@ -103,7 +103,7 @@ class MyResponseStream(StreamedResponse):
 
 @requires_logfire_events
 async def test_instrumented_model(capfire: CaptureLogfire):
-    model = InstrumentedModel(MyModel(), InstrumentationOptions(event_mode='logs'))
+    model = InstrumentedModel(MyModel(), InstrumentationSettings(event_mode='logs'))
     assert model.system == 'my_system'
     assert model.model_name == 'my_model'
 
@@ -311,7 +311,7 @@ Fix the errors and try again.\
 async def test_instrumented_model_not_recording():
     model = InstrumentedModel(
         MyModel(),
-        InstrumentationOptions(tracer_provider=NoOpTracerProvider(), event_logger_provider=NoOpEventLoggerProvider()),
+        InstrumentationSettings(tracer_provider=NoOpTracerProvider(), event_logger_provider=NoOpEventLoggerProvider()),
     )
 
     messages: list[ModelMessage] = [ModelRequest(parts=[SystemPromptPart('system_prompt')])]
@@ -328,7 +328,7 @@ async def test_instrumented_model_not_recording():
 
 @requires_logfire_events
 async def test_instrumented_model_stream(capfire: CaptureLogfire):
-    model = InstrumentedModel(MyModel(), InstrumentationOptions(event_mode='logs'))
+    model = InstrumentedModel(MyModel(), InstrumentationSettings(event_mode='logs'))
 
     messages: list[ModelMessage] = [
         ModelRequest(
@@ -410,7 +410,7 @@ async def test_instrumented_model_stream(capfire: CaptureLogfire):
 
 @requires_logfire_events
 async def test_instrumented_model_stream_break(capfire: CaptureLogfire):
-    model = InstrumentedModel(MyModel(), InstrumentationOptions(event_mode='logs'))
+    model = InstrumentedModel(MyModel(), InstrumentationSettings(event_mode='logs'))
 
     messages: list[ModelMessage] = [
         ModelRequest(
@@ -503,7 +503,7 @@ async def test_instrumented_model_stream_break(capfire: CaptureLogfire):
 
 
 async def test_instrumented_model_attributes_mode(capfire: CaptureLogfire):
-    model = InstrumentedModel(MyModel(), InstrumentationOptions(event_mode='attributes'))
+    model = InstrumentedModel(MyModel(), InstrumentationSettings(event_mode='attributes'))
     assert model.system == 'my_system'
     assert model.model_name == 'my_model'
 
