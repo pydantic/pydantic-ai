@@ -190,12 +190,7 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                             # Look up the runner by its ref
                             if runner := self.system_prompt_dynamic_functions.get(part.dynamic_ref):
                                 updated_part_content = await runner.run(run_context)
-                                if updated_part_content is None:  # type: ignore[comparison-overlap]
-                                    raise exceptions.UserError(
-                                        f'system prompt function {runner.function} returned None'
-                                    )
-                                if not isinstance(updated_part_content, str):
-                                    updated_part_content = str(updated_part_content)
+
                                 msg.parts[i] = _messages.SystemPromptPart(
                                     updated_part_content, dynamic_ref=part.dynamic_ref
                                 )

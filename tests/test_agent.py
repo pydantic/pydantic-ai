@@ -1384,6 +1384,15 @@ def test_system_prompt_egde_cases(dynamic: bool, return_value: Any, valid: bool)
         with pytest.raises(UserError, match=f'returned {return_value}'):
             agent.run_sync('Hello')
 
+    if dynamic:
+        if return_value is None:
+            return_value = ''
+            res = agent.run_sync('Hello')
+        else:
+            return_value = None
+            with pytest.raises(UserError, match=f'returned {return_value}'):
+                agent.run_sync('Hello')
+
 
 def test_dynamic_false_no_reevaluate():
     """When dynamic is false (default), the system prompt is not reevaluated
