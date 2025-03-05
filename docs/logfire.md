@@ -156,3 +156,19 @@ For now, this won't look as good in the Logfire UI, but we're working on it. **O
 If you have very long conversations, the `events` span attribute may be truncated. Using `event_mode='logs'` will help avoid this issue.
 
 Note that the OpenTelemetry Semantic Conventions are still experimental and are likely to change.
+
+## Setting OpenTelemetry SDK providers
+
+By default, the global `TracerProvider` and `EventLoggerProvider` are used. These are set automatically by `logfire.configure()`. They can also be set by the `set_tracer_provider` and `set_event_logger_provider` functions in the OpenTelemetry Python SDK. You can set custom providers with `InstrumentationSettings`:
+
+```python {title="instrumentation_settings_providers.py"}
+from opentelemetry.sdk._events import EventLoggerProvider
+from opentelemetry.sdk.trace import TracerProvider
+
+from pydantic_ai.agent import InstrumentationSettings
+
+instrumentation_settings = InstrumentationSettings(
+    tracer_provider=TracerProvider(),
+    event_logger_provider=EventLoggerProvider(),
+)
+```
