@@ -3,6 +3,7 @@ from __future__ import annotations as _annotations
 import functools
 from collections.abc import AsyncGenerator
 from datetime import datetime, timedelta
+import json
 from pathlib import Path
 from typing import Literal
 
@@ -115,7 +116,10 @@ class _VertexAIAuth(httpx.Auth):
 
     async def _get_credentials(self) -> BaseCredentials | ServiceAccountCredentials:
         if self.service_account_file is not None:
-            creds = await _creds_from_file(self.service_account_file)
+            if isinstance(self.service_account_file, str) and not Path(self.service_account_file).exists():
+                creds = await _creds_from_string(self.service_account_file)
+            else:
+                creds = await _creds_from_file(self.service_account_file)
             assert creds.project_id is None or isinstance(creds.project_id, str)  # type: ignore[reportUnknownMemberType]
             creds_project_id: str | None = creds.project_id
             creds_source = 'service account file'
@@ -152,6 +156,14 @@ async def _creds_from_file(service_account_file: str | Path) -> ServiceAccountCr
         scopes=['https://www.googleapis.com/auth/cloud-platform'],
     )
     return await anyio.to_thread.run_sync(service_account_credentials_from_file, str(service_account_file))
+
+
+async def _creds_from_string(service_account_string: str) -> ServiceAccountCredentials:
+    service_account_credentials_from_string = functools.partial(
+        ServiceAccountCredentials.from_service_account_info,  # type: ignore[reportUnknownMemberType]
+        scopes=['https://www.googleapis.com/auth/cloud-platform'],
+    )
+    return await anyio.to_thread.run_sync(service_account_credentials_from_string, json.loads(service_account_string)
 
 
 VertexAiRegion = Literal[
