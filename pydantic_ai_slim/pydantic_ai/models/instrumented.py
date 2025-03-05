@@ -6,7 +6,6 @@ from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from typing import Any, Callable, Literal
 
-import logfire_api
 from opentelemetry._events import Event, EventLogger, EventLoggerProvider, get_event_logger_provider
 from opentelemetry.trace import Span, Tracer, TracerProvider, get_tracer_provider
 from opentelemetry.util.types import AttributeValue
@@ -59,26 +58,14 @@ class InstrumentedModel(WrapperModel):
         event_logger_provider: EventLoggerProvider | None = None,
         event_mode: Literal['attributes', 'logs'] = 'attributes',
     ):
+        from pydantic_ai import __version__
+
         super().__init__(wrapped)
         tracer_provider = tracer_provider or get_tracer_provider()
         event_logger_provider = event_logger_provider or get_event_logger_provider()
-        self.tracer = tracer_provider.get_tracer('pydantic-ai')
-        self.event_logger = event_logger_provider.get_event_logger('pydantic-ai')
+        self.tracer = tracer_provider.get_tracer('pydantic-ai', __version__)
+        self.event_logger = event_logger_provider.get_event_logger('pydantic-ai', __version__)
         self.event_mode = event_mode
-
-    @classmethod
-    def from_logfire(
-        cls,
-        wrapped: Model | KnownModelName,
-        logfire_instance: logfire_api.Logfire = logfire_api.DEFAULT_LOGFIRE_INSTANCE,
-        event_mode: Literal['attributes', 'logs'] = 'attributes',
-    ) -> InstrumentedModel:
-        if hasattr(logfire_instance.config, 'get_event_logger_provider'):
-            event_provider = logfire_instance.config.get_event_logger_provider()
-        else:
-            event_provider = None
-        tracer_provider = logfire_instance.config.get_tracer_provider()
-        return cls(wrapped, tracer_provider, event_provider, event_mode)
 
     async def request(
         self,
@@ -199,19 +186,30 @@ class InstrumentedModel(WrapperModel):
     @staticmethod
     def messages_to_otel_events(messages: list[ModelMessage]) -> list[Event]:
         result: list[Event] = []
-        for message in messages:
+        for message_index, message in enumerate(messages):
+            message_events: list[Event] = []
             if isinstance(message, ModelRequest):
                 for part in message.parts:
                     if hasattr(part, 'otel_event'):
-                        result.append(part.otel_event())
+                        message_events.append(part.otel_event())
             elif isinstance(message, ModelResponse):
-                result.extend(message.otel_events())
+                message_events = message.otel_events()
+            for event in message_events:
+                event.attributes = {
+                    'gen_ai.message.index': message_index,
+                    **(event.attributes or {}),
+                }
+            result.extend(message_events)
         for event in result:
-            try:
-                event.body = ANY_ADAPTER.dump_python(event.body, mode='json')
-            except Exception:
-                try:
-                    event.body = str(event.body)
-                except Exception:
-                    event.body = 'Unable to serialize event body'
+            event.body = InstrumentedModel.serialize_any(event.body)
         return result
+
+    @staticmethod
+    def serialize_any(value: Any) -> str:
+        try:
+            return ANY_ADAPTER.dump_python(value, mode='json')
+        except Exception:
+            try:
+                return str(value)
+            except Exception as e:
+                return f'Unable to serialize: {e}'

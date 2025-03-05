@@ -2,13 +2,14 @@ from __future__ import annotations as _annotations
 
 import asyncio
 import dataclasses
+import json
 from collections.abc import AsyncIterator, Iterator, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from dataclasses import field
 from typing import Any, Generic, Literal, Union, cast
 
-import logfire_api
+from opentelemetry.trace import Span, Tracer
 from typing_extensions import TypeGuard, TypeVar, assert_never
 
 from pydantic_graph import BaseNode, Graph, GraphRunContext
@@ -42,17 +43,6 @@ __all__ = (
     'capture_run_messages',
 )
 
-_logfire = logfire_api.Logfire(otel_scope='pydantic-ai')
-
-# while waiting for https://github.com/pydantic/logfire/issues/745
-try:
-    import logfire._internal.stack_info
-except ImportError:
-    pass
-else:
-    from pathlib import Path
-
-    logfire._internal.stack_info.NON_USER_CODE_PREFIXES += (str(Path(__file__).parent.absolute()),)
 
 T = TypeVar('T')
 S = TypeVar('S')
@@ -105,7 +95,8 @@ class GraphAgentDeps(Generic[DepsT, ResultDataT]):
 
     function_tools: dict[str, Tool[DepsT]] = dataclasses.field(repr=False)
 
-    run_span: logfire_api.LogfireSpan
+    run_span: Span
+    tracer: Tracer
 
 
 class AgentNode(BaseNode[GraphAgentState, GraphAgentDeps[DepsT, Any], result.FinalResult[NodeRunEndT]]):
@@ -330,7 +321,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         ctx.state.run_step += 1
 
         model_settings = merge_model_settings(ctx.deps.model_settings, None)
-        with _logfire.span('preparing model request params {run_step=}', run_step=ctx.state.run_step):
+        with ctx.deps.tracer.start_as_current_span(
+            'preparing model request params', attributes=dict(run_step=ctx.state.run_step)
+        ):
             model_request_parameters = await _prepare_request_parameters(ctx)
         return model_settings, model_request_parameters
 
@@ -380,26 +373,12 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
     ) -> AsyncIterator[AsyncIterator[_messages.HandleResponseEvent]]:
         """Process the model response and yield events for the start and end of each function tool call."""
-        with _logfire.span('handle model response', run_step=ctx.state.run_step) as handle_span:
-            stream = self._run_stream(ctx)
-            yield stream
+        stream = self._run_stream(ctx)
+        yield stream
 
-            # Run the stream to completion if it was not finished:
-            async for _event in stream:
-                pass
-
-            # Set the next node based on the final state of the stream
-            next_node = self._next_node
-            if isinstance(next_node, End):
-                handle_span.set_attribute('result', next_node.data)
-                handle_span.message = 'handle model response -> final result'
-            elif tool_responses := self._tool_responses:
-                # TODO: We could drop `self._tool_responses` if we drop this set_attribute
-                #   I'm thinking it might be better to just create a span for the handling of each tool
-                #   than to set an attribute here.
-                handle_span.set_attribute('tool_responses', tool_responses)
-                tool_responses_str = ' '.join(r.part_kind for r in tool_responses)
-                handle_span.message = f'handle model response -> {tool_responses_str}'
+        # Run the stream to completion if it was not finished:
+        async for _event in stream:
+            pass
 
     async def _run_stream(
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
@@ -494,10 +473,29 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         if tool_responses:
             messages.append(_messages.ModelRequest(parts=tool_responses))
 
-        run_span.set_attribute('usage', usage)
-        run_span.set_attribute(
-            'all_messages_events',
-            [InstrumentedModel.event_to_dict(e) for e in InstrumentedModel.messages_to_otel_events(messages)],
+        run_span.set_attributes(
+            {
+                **usage.opentelemetry_attributes(),
+                'all_messages_events': json.dumps(
+                    [InstrumentedModel.event_to_dict(e) for e in InstrumentedModel.messages_to_otel_events(messages)]
+                ),
+                'final_result': final_result.data
+                if isinstance(final_result.data, str)
+                else json.dumps(InstrumentedModel.serialize_any(final_result.data)),
+            }
+        )
+        run_span.set_attributes(
+            {
+                'logfire.json_schema': json.dumps(
+                    {
+                        'type': 'object',
+                        'properties': {
+                            'all_messages_events': {'type': 'array'},
+                            'final_result': {'type': 'object'},
+                        },
+                    }
+                ),
+            }
         )
 
         # End the run with self.data
@@ -619,7 +617,10 @@ async def process_function_tools(
 
     # Run all tool tasks in parallel
     results_by_index: dict[int, _messages.ModelRequestPart] = {}
-    with _logfire.span('running {tools=}', tools=[call.tool_name for _, call in calls_to_run]):
+    tool_names = [call.tool_name for _, call in calls_to_run]
+    with ctx.deps.tracer.start_as_current_span(
+        'running tools', attributes={'tools': tool_names, 'logfire.msg': f'running tools: {", ".join(tool_names)}'}
+    ):
         # TODO: Should we wrap each individual tool call in a dedicated span?
         tasks = [asyncio.create_task(tool.run(call, run_context), name=call.tool_name) for tool, call in calls_to_run]
         pending = tasks

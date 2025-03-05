@@ -8,7 +8,7 @@ from copy import deepcopy
 from types import FrameType
 from typing import Any, Callable, Generic, cast, final, overload
 
-import logfire_api
+from opentelemetry.trace import NoOpTracer, use_span
 from typing_extensions import TypeGuard, TypeVar, deprecated
 
 from pydantic_graph import End, Graph, GraphRun, GraphRunContext
@@ -58,17 +58,6 @@ __all__ = (
     'UserPromptNode',
 )
 
-_logfire = logfire_api.Logfire(otel_scope='pydantic-ai')
-
-# while waiting for https://github.com/pydantic/logfire/issues/745
-try:
-    import logfire._internal.stack_info
-except ImportError:
-    pass
-else:
-    from pathlib import Path
-
-    logfire._internal.stack_info.NON_USER_CODE_PREFIXES += (str(Path(__file__).parent.absolute()),)
 
 T = TypeVar('T')
 S = TypeVar('S')
@@ -123,6 +112,9 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
     The type of the result data, used to validate the result data, defaults to `str`.
     """
 
+    instrument: bool
+    """Automatically instrument with OpenTelemetry. Will use Logfire if it's configured."""
+
     _deps_type: type[AgentDepsT] = dataclasses.field(repr=False)
     _result_tool_name: str = dataclasses.field(repr=False)
     _result_tool_description: str | None = dataclasses.field(repr=False)
@@ -155,6 +147,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
         defer_model_check: bool = False,
         end_strategy: EndStrategy = 'early',
+        instrument: bool = False,
     ):
         """Create an agent.
 
@@ -184,6 +177,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
                 [override the model][pydantic_ai.Agent.override] for testing.
             end_strategy: Strategy for handling tool calls that are requested alongside a final result.
                 See [`EndStrategy`][pydantic_ai.agent.EndStrategy] for more information.
+            instrument: Automatically instrument with OpenTelemetry. Will use Logfire if it's configured.
         """
         if model is None or defer_model_check:
             self.model = model
@@ -194,6 +188,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         self.name = name
         self.model_settings = model_settings
         self.result_type = result_type
+        self.instrument = instrument
 
         self._deps_type = deps_type
 
@@ -396,6 +391,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         if infer_name and self.name is None:
             self._infer_name(inspect.currentframe())
         model_used = self._get_model(model)
+        del model
 
         deps = self._get_deps(deps)
         new_message_index = len(message_history) if message_history else 0
@@ -425,14 +421,20 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         model_settings = merge_model_settings(self.model_settings, model_settings)
         usage_limits = usage_limits or _usage.UsageLimits()
 
-        # Build the deps object for the graph
-        run_span = _logfire.span(
-            '{agent_name} run {prompt=}',
-            prompt=user_prompt,
-            agent=self,
-            model_name=model_used.model_name if model_used else 'no-model',
-            agent_name=self.name or 'agent',
+        if isinstance(model_used, InstrumentedModel):
+            tracer = model_used.tracer
+        else:
+            tracer = NoOpTracer()
+        agent_name = self.name or 'agent'
+        run_span = tracer.start_span(
+            'agent run',
+            attributes={
+                'model_name': model_used.model_name if model_used else 'no-model',
+                'agent_name': agent_name,
+                'logfire.msg': f'{agent_name} run',
+            },
         )
+
         graph_deps = _agent_graph.GraphAgentDeps[AgentDepsT, RunResultDataT](
             user_deps=deps,
             prompt=user_prompt,
@@ -447,6 +449,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
             result_validators=result_validators,
             function_tools=self._function_tools,
             run_span=run_span,
+            tracer=tracer,
         )
         start_node = _agent_graph.UserPromptNode[AgentDepsT](
             user_prompt=user_prompt,
@@ -460,7 +463,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
             state=state,
             deps=graph_deps,
             infer_name=False,
-            span=run_span,
+            span=use_span(run_span, end_on_exit=True),
         ) as graph_run:
             yield AgentRun(graph_run)
 
@@ -1116,7 +1119,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         else:
             raise exceptions.UserError('`model` must be set either when creating the agent or when calling it.')
 
-        if not isinstance(model_, InstrumentedModel):
+        if self.instrument and not isinstance(model_, InstrumentedModel):
             model_ = InstrumentedModel(model_)
 
         return model_

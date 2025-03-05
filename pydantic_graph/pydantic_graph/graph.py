@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 import inspect
 import types
 from collections.abc import AsyncIterator, Sequence
-from contextlib import ExitStack, asynccontextmanager
+from contextlib import AbstractContextManager, ExitStack, asynccontextmanager
 from dataclasses import dataclass, field
 from functools import cached_property
 from time import perf_counter
@@ -13,6 +13,7 @@ import logfire_api
 import pydantic
 import typing_extensions
 from logfire_api import LogfireSpan
+from typing_inspection import typing_objects
 
 from . import _utils, exceptions, mermaid
 from .nodes import BaseNode, DepsT, End, GraphRunContext, NodeDef, RunEndT
@@ -188,7 +189,7 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
         state: StateT = None,
         deps: DepsT = None,
         infer_name: bool = True,
-        span: LogfireSpan | None = None,
+        span: AbstractContextManager[Any] | None = None,
     ) -> AsyncIterator[GraphRun[StateT, DepsT, T]]:
         """A contextmanager which can be used to iterate over the graph's nodes as they are executed.
 
@@ -231,7 +232,6 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
                 state=state,
                 deps=deps,
                 auto_instrument=self._auto_instrument,
-                span=span,
             )
 
     def run_sync(
@@ -506,7 +506,7 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
                     args = typing_extensions.get_args(base)
                     if len(args) == 3:
                         t = args[2]
-                        if not _utils.is_never(t):
+                        if not typing_objects.is_never(t):
                             return t
                     # break the inner (bases) loop
                     break
@@ -622,7 +622,6 @@ class GraphRun(Generic[StateT, DepsT, RunEndT]):
         state: StateT,
         deps: DepsT,
         auto_instrument: bool,
-        span: LogfireSpan | None = None,
     ):
         """Create a new run for a given graph, starting at the specified node.
 
@@ -638,14 +637,12 @@ class GraphRun(Generic[StateT, DepsT, RunEndT]):
             deps: Optional dependencies that each node can access via `ctx.deps`, e.g. database connections,
                 configuration, or logging clients.
             auto_instrument: Whether to automatically create instrumentation spans during the run.
-            span: An optional existing Logfire span to nest node-level spans under (advanced usage).
         """
         self.graph = graph
         self.history = history
         self.state = state
         self.deps = deps
         self._auto_instrument = auto_instrument
-        self._span = span
 
         self._next_node: BaseNode[StateT, DepsT, RunEndT] | End[RunEndT] = start_node
 

@@ -2614,7 +2614,7 @@ wheels = [
 
 [[package]]
 name = "pydantic-ai"
-version = "0.0.31"
+version = "0.0.32"
 source = { editable = "." }
 dependencies = [
     { name = "pydantic-ai-slim", extra = ["anthropic", "cohere", "groq", "mistral", "openai", "vertexai"] },
@@ -2678,7 +2678,7 @@ lint = [
 
 [[package]]
 name = "pydantic-ai-examples"
-version = "0.0.31"
+version = "0.0.32"
 source = { editable = "examples" }
 dependencies = [
     { name = "asyncpg" },
@@ -2707,17 +2707,17 @@ requires-dist = [
 
 [[package]]
 name = "pydantic-ai-slim"
-version = "0.0.31"
+version = "0.0.32"
 source = { editable = "pydantic_ai_slim" }
 dependencies = [
     { name = "eval-type-backport" },
     { name = "exceptiongroup", marker = "python_full_version < '3.11'" },
     { name = "griffe" },
     { name = "httpx" },
-    { name = "logfire-api" },
     { name = "opentelemetry-api" },
     { name = "pydantic" },
     { name = "pydantic-graph" },
+    { name = "typing-inspection" },
 ]
 
 [package.optional-dependencies]
@@ -2778,7 +2778,6 @@ requires-dist = [
     { name = "groq", marker = "extra == 'groq'", specifier = ">=0.12.0" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "logfire", marker = "extra == 'logfire'", specifier = ">=2.3" },
-    { name = "logfire-api", specifier = ">=1.2.0" },
     { name = "mistralai", marker = "extra == 'mistral'", specifier = ">=1.2.5" },
     { name = "openai", marker = "extra == 'openai'", specifier = ">=1.65.1" },
     { name = "opentelemetry-api", specifier = ">=1.28.0" },
@@ -2786,6 +2785,7 @@ requires-dist = [
     { name = "pydantic-graph", editable = "pydantic_graph" },
     { name = "requests", marker = "extra == 'vertexai'", specifier = ">=2.32.3" },
     { name = "tavily-python", marker = "extra == 'tavily'", specifier = ">=0.5.0" },
+    { name = "typing-inspection", specifier = ">=0.4.0" },
 ]
 provides-extras = ["logfire", "openai", "cohere", "vertexai", "anthropic", "groq", "mistral", "duckduckgo", "tavily"]
 
@@ -2903,12 +2903,13 @@ wheels = [
 
 [[package]]
 name = "pydantic-graph"
-version = "0.0.31"
+version = "0.0.32"
 source = { editable = "pydantic_graph" }
 dependencies = [
     { name = "httpx" },
     { name = "logfire-api" },
     { name = "pydantic" },
+    { name = "typing-inspection" },
 ]
 
 [package.metadata]
@@ -2916,6 +2917,7 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.27" },
     { name = "logfire-api", specifier = ">=1.2.0" },
     { name = "pydantic", specifier = ">=2.10" },
+    { name = "typing-inspection", specifier = ">=0.4.0" },
 ]
 
 [[package]]
@@ -3586,6 +3588,18 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/dc/74/1789779d91f1961fa9438e9a8710cdae6bd138c80d7303996933d117264a/typing_inspect-0.9.0.tar.gz", hash = "sha256:b23fc42ff6f6ef6954e4852c1fb512cdd18dbea03134f91f856a95ccc9461f78", size = 13825 }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/65/f3/107a22063bf27bdccf2024833d3445f4eea42b2e598abfbd46f6a63b6cb0/typing_inspect-0.9.0-py3-none-any.whl", hash = "sha256:9ee6fc59062311ef8547596ab6b955e1b8aa46242d854bfc78f4f6b0eff35f9f", size = 8827 },
+]
+
+[[package]]
+name = "typing-inspection"
+version = "0.4.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/82/5c/e6082df02e215b846b4b8c0b887a64d7d08ffaba30605502639d44c06b82/typing_inspection-0.4.0.tar.gz", hash = "sha256:9765c87de36671694a67904bf2c96e395be9c6439bb6c87b5142569dcdd65122", size = 76222 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/31/08/aa4fdfb71f7de5176385bd9e90852eaf6b5d622735020ad600f2bab54385/typing_inspection-0.4.0-py3-none-any.whl", hash = "sha256:50e72559fcd2a6367a19f7a7e610e6afcb9fac940c650290eed893d61386832f", size = 14125 },
 ]
 
 [[package]]

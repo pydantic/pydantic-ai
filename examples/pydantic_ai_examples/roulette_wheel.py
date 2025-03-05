@@ -26,9 +26,9 @@ roulette_agent = Agent(
     retries=3,
     result_type=bool,
     system_prompt=(
-        'Use the `roulette_wheel` function to determine if the '
-        'customer has won based on the number they bet on.'
+        'Use the `roulette_wheel` function to determine if the customer has won based on the number they bet on.'
     ),
+    instrument=True,
 )
 
 

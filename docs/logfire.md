@@ -51,7 +51,7 @@ py-cli logfire projects new
 
 (Or use an existing project with `logfire projects use`)
 
-The last step is to add logfire to your code:
+Then add logfire to your code:
 
 ```python {title="adding_logfire.py"}
 import logfire
@@ -59,11 +59,19 @@ import logfire
 logfire.configure()
 ```
 
+and enable instrumentation in your agent:
+
+```python {title="instrument_agent.py"}
+from pydantic_ai import Agent
+
+agent = Agent('openai:gpt-4o', instrument=True)
+```
+
 The [logfire documentation](https://logfire.pydantic.dev/docs/) has more details on how to use logfire,
 including how to instrument other libraries like [Pydantic](https://logfire.pydantic.dev/docs/integrations/pydantic/),
 [HTTPX](https://logfire.pydantic.dev/docs/integrations/http-clients/httpx/) and [FastAPI](https://logfire.pydantic.dev/docs/integrations/web-frameworks/fastapi/).
 
-Since Logfire is build on [OpenTelemetry](https://opentelemetry.io/), you can use the Logfire Python SDK to send data to any OpenTelemetry collector.
+Since Logfire is built on [OpenTelemetry](https://opentelemetry.io/), you can use the Logfire Python SDK to send data to any OpenTelemetry collector.
 
 Once you have logfire set up, there are two primary ways it can help you understand your application:
 
@@ -105,10 +113,10 @@ from pydantic_ai import Agent
 logfire.configure()
 logfire.instrument_httpx(capture_all=True)  # (1)!
 
-agent = Agent('openai:gpt-4o')
+agent = Agent('openai:gpt-4o', instrument=True)
 result = agent.run_sync('What is the capital of France?')
 print(result.data)
-#> The capital of France is Paris.
+# > The capital of France is Paris.
 ```
 
 1. Capture all of headers, request body, and response body.

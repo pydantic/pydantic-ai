@@ -1,14 +1,14 @@
 from __future__ import annotations as _annotations
 
 import inspect
-import sys
-import types
 from collections.abc import Awaitable, Iterable, Iterator
 from dataclasses import dataclass, field
-from typing import Any, Callable, Generic, Literal, Union, cast, get_args, get_origin
+from typing import Any, Callable, Generic, Literal, Union, cast
 
 from pydantic import TypeAdapter, ValidationError
-from typing_extensions import TypeAliasType, TypedDict, TypeVar
+from typing_extensions import TypedDict, TypeVar, get_args, get_origin
+from typing_inspection import typing_objects
+from typing_inspection.introspection import is_union_origin
 
 from . import _utils, messages as _messages
 from .exceptions import ModelRetry
@@ -248,23 +248,12 @@ def extract_str_from_union(response_type: Any) -> _utils.Option[Any]:
 
 
 def get_union_args(tp: Any) -> tuple[Any, ...]:
-    """Extract the arguments of a Union type if `response_type` is a union, otherwise return an empty union."""
-    if isinstance(tp, TypeAliasType):
+    """Extract the arguments of a Union type if `response_type` is a union, otherwise return an empty tuple."""
+    if typing_objects.is_typealiastype(tp):
         tp = tp.__value__
 
     origin = get_origin(tp)
-    if origin_is_union(origin):
+    if is_union_origin(origin):
         return get_args(tp)
     else:
         return ()
-
-
-if sys.version_info < (3, 10):
-
-    def origin_is_union(tp: type[Any] | None) -> bool:
-        return tp is Union
-
-else:
-
-    def origin_is_union(tp: type[Any] | None) -> bool:
-        return tp is Union or tp is types.UnionType
