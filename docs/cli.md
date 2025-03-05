@@ -1,15 +1,15 @@
 # Command Line Interface (CLI)
 
-**PydanticAI** comes with a CLI that allows you to interact with various LLMs directly from your terminal.
+**PydanticAI** offers a CLI that lets you interact with various LLMs straight from your terminal.
 
-The idea is to provide a simple and easy-to-use interface to interact with the models, without having to write any code.
+The goal is to provide a user-friendly interface for engaging with the models without needing to write any code.
 
-This CLI is a copy from [`aicli`](https://github.com/samuelcolvin/aicli/) from Samuel Colvin, with some modifications
-to work with PydanticAI.
+This CLI is adapted from [`aicli`](https://github.com/samuelcolvin/aicli/) by Samuel Colvin, with modifications to
+work seamlessly with PydanticAI.
 
-At Pydantic, we extensively use the CLI during development to consult the models. We thought about sharing this tool
-with the PydanticAI, and open a new way to interact with the models. That said, we have plans to improve the CLI
-and add more features, like: ways to interact with MCP servers, access tools, and more.
+At Pydantic, we frequently use the CLI during development to query the models. We're sharing this tool with
+PydanticAI users, opening up a new way to interact with the models. Moreover, we plan to enhance the CLI
+with additional features, such as interaction with MCP servers, access to tools, and more.
 
 ## Installation
 
