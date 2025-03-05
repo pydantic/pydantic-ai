@@ -242,24 +242,17 @@ class GeminiModel(Model):
         if tool_config is not None:
             request_data['tool_config'] = tool_config
 
-        generation_config: _GeminiGenerationConfig = {}
-        if model_settings:
-            if (max_tokens := model_settings.get('max_tokens')) is not None:
-                generation_config['max_output_tokens'] = max_tokens
-            if (temperature := model_settings.get('temperature')) is not None:
-                generation_config['temperature'] = temperature
-            if (top_p := model_settings.get('top_p')) is not None:
-                generation_config['top_p'] = top_p
-            if (presence_penalty := model_settings.get('presence_penalty')) is not None:
-                generation_config['presence_penalty'] = presence_penalty
-            if (frequency_penalty := model_settings.get('frequency_penalty')) is not None:
-                generation_config['frequency_penalty'] = frequency_penalty
-            if gemini_safety_settings := model_settings.get('gemini_safety_settings'):
-                request_data['safety_settings'] = gemini_safety_settings
-            if gemini_labels := model_settings.get('gemini_labels'):
-                request_data['labels'] = gemini_labels
+        generation_config = _settings_to_generation_config(model_settings)
         if generation_config:
             request_data['generation_config'] = generation_config
+
+        if gemini_safety_settings := model_settings.get('gemini_safety_settings'):
+            request_data['safety_settings'] = gemini_safety_settings
+
+        if gemini_labels := model_settings.get('gemini_labels'):
+            provider_name = self._provider.name if isinstance(self._provider, Provider) else self._provider
+            if provider_name == 'google-vertex':
+                request_data['labels'] = gemini_labels
 
         headers = {
             'Content-Type': 'application/json',
@@ -389,6 +382,21 @@ class GeminiModel(Model):
                 else:
                     assert_never(item)
         return content
+
+
+def _settings_to_generation_config(model_settings: GeminiModelSettings) -> _GeminiGenerationConfig:
+    config: _GeminiGenerationConfig = {}
+    if (max_tokens := model_settings.get('max_tokens')) is not None:
+        config['max_output_tokens'] = max_tokens
+    if (temperature := model_settings.get('temperature')) is not None:
+        config['temperature'] = temperature
+    if (top_p := model_settings.get('top_p')) is not None:
+        config['top_p'] = top_p
+    if (presence_penalty := model_settings.get('presence_penalty')) is not None:
+        config['presence_penalty'] = presence_penalty
+    if (frequency_penalty := model_settings.get('frequency_penalty')) is not None:
+        config['frequency_penalty'] = frequency_penalty
+    return config
 
 
 class AuthProtocol(Protocol):
