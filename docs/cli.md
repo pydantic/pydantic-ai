@@ -4,6 +4,13 @@
 
 The idea is to provide a simple and easy-to-use interface to interact with the models, without having to write any code.
 
+This CLI is a copy from [`aicli`](https://github.com/samuelcolvin/aicli/) from Samuel Colvin, with some modifications
+to work with PydanticAI.
+
+At Pydantic, we extensively use the CLI during development to consult the models. We thought about sharing this tool
+with the PydanticAI, and open a new way to interact with the models. That said, we have plans to improve the CLI
+and add more features, like: ways to interact with MCP servers, access tools, and more.
+
 ## Installation
 
 To use the CLI, you need to either install [`pydantic-ai`](install.md), or install
@@ -38,9 +45,9 @@ $ pai
 
 This will start an interactive session where you can chat with the AI model. Special commands available in interactive mode:
 
-- `exit`: Exit the session
-- `markdown`: Show the last response in markdown format
-- `multiline`: Toggle multiline input mode (use Ctrl+D to submit)
+- `/exit`: Exit the session
+- `/markdown`: Show the last response in markdown format
+- `/multiline`: Toggle multiline input mode (use Ctrl+D to submit)
 
 ### Choose a model
 

@@ -51,16 +51,16 @@ class SimpleCodeBlock(CodeBlock):
 Markdown.elements['fence'] = SimpleCodeBlock
 
 
-def cli(args_list: Sequence[str] | None = None) -> int:
+def cli(args_list: Sequence[str] | None = None) -> int:  # noqa: C901
     parser = argparse.ArgumentParser(
         prog='pai',
         description=f"""\
 PydanticAI CLI v{__version__}\n\n
 
 Special prompt:
-* `exit` - exit the interactive mode
-* `markdown` - show the last markdown output of the last question
-* `multiline` - toggle multiline mode
+* `/exit` - exit the interactive mode
+* `/markdown` - show the last markdown output of the last question
+* `/multiline` - toggle multiline mode
 """,
         formatter_class=argparse.RawTextHelpFormatter,
     )
@@ -112,7 +112,7 @@ Special prompt:
 
     while True:
         try:
-            auto_suggest = CustomAutoSuggest(['markdown', 'multiline', 'exit'])
+            auto_suggest = CustomAutoSuggest(['/markdown', '/multiline', '/exit'])
             text = cast(str, session.prompt('pai ➤ ', auto_suggest=auto_suggest, multiline=multiline))
         except (KeyboardInterrupt, EOFError):
             return 0
@@ -121,14 +121,20 @@ Special prompt:
             continue
 
         ident_prompt = text.lower().strip(' ').replace(' ', '-').lstrip(' ')
-        if ident_prompt == 'markdown':
-            for part in messages[-1].parts:
+        if ident_prompt == '/markdown':
+            try:
+                parts = messages[-1].parts
+            except IndexError:
+                console.print('[dim]No markdown output available.[/dim]')
+                continue
+            for part in parts:
                 if part.part_kind == 'text':
                     last_content = part.content
                     console.print('[dim]Last markdown output of last question:[/dim]\n')
                     console.print(Syntax(last_content, lexer='markdown', background_color='default'))
+
             continue
-        if ident_prompt == 'multiline':
+        if ident_prompt == '/multiline':
             multiline = not multiline
             if multiline:
                 console.print(
@@ -138,7 +144,7 @@ Special prompt:
             else:
                 console.print('Disabling multiline mode.')
             continue
-        if ident_prompt == 'exit':
+        if ident_prompt == '/exit':
             console.print('[dim]Exiting…[/dim]')
             return 0
 
