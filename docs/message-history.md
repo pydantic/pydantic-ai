@@ -223,6 +223,45 @@ print(result2.all_messages())
 ```
 _(This example is complete, it can be run "as is")_
 
+## Storing and loading messages (to JSON)
+
+While maintaining conversation state in memory can work, often times you may want to write the messages to disk or a database. This might be for evals, for sharing from Python to JavaScript or any number of other cases.
+
+The most effective wany to do this is to use a `TypeAdapter`.
+
+
+```python {title="serialize messages to json"}
+from pydantic import TypeAdapter
+from pydantic_ai import Agent
+from pydantic_ai.messages import ModelMessage
+from pydantic_core import to_jsonable_python
+
+messages_adapter = TypeAdapter(list[ModelMessage])
+
+agent = Agent('openai:gpt-4o', system_prompt='Be a helpful assistant.')
+
+result1 = agent.run_sync('Tell me a good joke.')
+print(result1.data)
+"""
+Sure, here's one for you:
+
+Why don't scientists trust atoms?
+
+Because they make up everything!
+"""
+history_step_1 = result1.all_messages()
+as_python_objects = to_jsonable_python(history_step_1)
+same_history_as_step_1 = messages_adapter.validate_python(as_python_objects)
+result2 = agent.run_sync('Tell me a good joke.', message_history=same_history_different_object)
+print(result2.all_messages())
+"""
+[ModelRequest(parts=[SystemPromptPart(content='Be a helpful assistant.', dynamic_ref=None, part_kind='system-prompt'), UserPromptPart(content='Tell me a good joke.', timestamp=datetime.datetime(2025, 3, 5, 21, 32, 42, 842296, tzinfo=TzInfo(UTC)), part_kind='user-prompt')], kind='request'), 
+ModelResponse(parts=[TextPart(content="Why don't scientists trust atoms?\n\nBecause they make up everything!", part_kind='text')], model_name='gpt-4o-2024-08-06', timestamp=datetime.datetime(2025, 3, 5, 21, 32, 43, tzinfo=TzInfo(UTC)), kind='response'), 
+ModelRequest(parts=[UserPromptPart(content='Tell me another', timestamp=datetime.datetime(2025, 3, 5, 21, 32, 43, 822470, tzinfo=datetime.timezone.utc), part_kind='user-prompt')], kind='request'), 
+ModelResponse(parts=[TextPart(content='Why did the scarecrow win an award?\n\nBecause he was outstanding in his field!', part_kind='text')], model_name='gpt-4o-2024-08-06', timestamp=datetime.datetime(2025, 3, 5, 21, 32, 43, tzinfo=datetime.timezone.utc), kind='response')]
+"""
+```
+
 ## Other ways of using messages
 
 Since messages are defined by simple dataclasses, you can manually create and manipulate, e.g. for testing.
