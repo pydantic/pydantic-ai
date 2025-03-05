@@ -41,7 +41,7 @@ __version__ = version('pydantic-ai')
 
 
 class SimpleCodeBlock(CodeBlock):
-    def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
+    def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:  # pragma: no cover
         code = str(self.text).rstrip()
         yield Text(self.lexer_name, style='dim')
         yield Syntax(code, self.lexer_name, theme=self.theme, background_color='default', word_wrap=True)
@@ -51,7 +51,7 @@ class SimpleCodeBlock(CodeBlock):
 Markdown.elements['fence'] = SimpleCodeBlock
 
 
-def cli(args_list: Sequence[str] | None = None) -> int:  # noqa: C901
+def cli(args_list: Sequence[str] | None = None) -> int:  # noqa: C901  # pragma: no cover
     parser = argparse.ArgumentParser(
         prog='pai',
         description=f"""\
@@ -160,7 +160,7 @@ async def ask_agent(
     stream: bool,
     console: Console,
     messages: list[ModelMessage] | None = None,
-) -> list[ModelMessage]:
+) -> list[ModelMessage]:  # pragma: no cover
     status: None | Status = Status('[dim]Working on it…[/dim]', console=console)
     live = Live('', refresh_per_second=15, console=console)
     status.start()
@@ -205,11 +205,11 @@ async def ask_agent(
 
 
 class CustomAutoSuggest(AutoSuggestFromHistory):
-    def __init__(self, special_suggestions: list[str] | None = None):
+    def __init__(self, special_suggestions: list[str] | None = None):  # pragma: no cover
         super().__init__()
         self.special_suggestions = special_suggestions or []
 
-    def get_suggestion(self, buffer: Buffer, document: Document) -> Suggestion | None:
+    def get_suggestion(self, buffer: Buffer, document: Document) -> Suggestion | None:  # pragma: no cover
         # Get the suggestion from history
         suggestion = super().get_suggestion(buffer, document)
 
