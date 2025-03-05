@@ -6,7 +6,7 @@ from collections.abc import AsyncIterator, Awaitable, Iterator, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
 from copy import deepcopy
 from types import FrameType
-from typing import Any, Callable, Generic, cast, final, overload
+from typing import Any, Callable, ClassVar, Generic, cast, final, overload
 
 from opentelemetry.trace import NoOpTracer, use_span
 from typing_extensions import TypeGuard, TypeVar, deprecated
@@ -25,7 +25,7 @@ from . import (
     result,
     usage as _usage,
 )
-from .models.instrumented import InstrumentedModel
+from .models.instrumented import InstrumentationSettings, InstrumentedModel
 from .result import FinalResult, ResultDataT, StreamedRunResult
 from .settings import ModelSettings, merge_model_settings
 from .tools import (
@@ -56,6 +56,7 @@ __all__ = (
     'CallToolsNode',
     'ModelRequestNode',
     'UserPromptNode',
+    'InstrumentationSettings',
 )
 
 
@@ -112,8 +113,10 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
     The type of the result data, used to validate the result data, defaults to `str`.
     """
 
-    instrument: bool
-    """Automatically instrument with OpenTelemetry. Will use Logfire if it's configured."""
+    instrument: InstrumentationSettings | bool | None
+    """Options to automatically instrument with OpenTelemetry."""
+
+    _instrument_default: ClassVar[InstrumentationSettings | bool] = False
 
     _deps_type: type[AgentDepsT] = dataclasses.field(repr=False)
     _result_tool_name: str = dataclasses.field(repr=False)
@@ -147,7 +150,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
         defer_model_check: bool = False,
         end_strategy: EndStrategy = 'early',
-        instrument: bool = False,
+        instrument: InstrumentationSettings | bool | None = None,
     ):
         """Create an agent.
 
@@ -177,7 +180,12 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
                 [override the model][pydantic_ai.Agent.override] for testing.
             end_strategy: Strategy for handling tool calls that are requested alongside a final result.
                 See [`EndStrategy`][pydantic_ai.agent.EndStrategy] for more information.
-            instrument: Automatically instrument with OpenTelemetry. Will use Logfire if it's configured.
+            instrument: Set to True to automatically instrument with OpenTelemetry,
+                which will use Logfire if it's configured.
+                Set to an instance of [`InstrumentationSettings`][pydantic_ai.agent.InstrumentationSettings] to customize.
+                If this isn't set, then the last value set by
+                [`Agent.instrument_all()`][pydantic_ai.Agent.instrument_all]
+                will be used, which defaults to False.
         """
         if model is None or defer_model_check:
             self.model = model
@@ -212,6 +220,11 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
                 self._register_tool(tool)
             else:
                 self._register_tool(Tool(tool))
+
+    @staticmethod
+    def instrument_all(instrument: InstrumentationSettings | bool = True) -> None:
+        """Set the instrumentation options for all agents where `instrument` is not set."""
+        Agent._instrument_default = instrument
 
     @overload
     async def run(
@@ -422,7 +435,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         usage_limits = usage_limits or _usage.UsageLimits()
 
         if isinstance(model_used, InstrumentedModel):
-            tracer = model_used.tracer
+            tracer = model_used.options.tracer
         else:
             tracer = NoOpTracer()
         agent_name = self.name or 'agent'
@@ -1119,8 +1132,15 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         else:
             raise exceptions.UserError('`model` must be set either when creating the agent or when calling it.')
 
-        if self.instrument and not isinstance(model_, InstrumentedModel):
-            model_ = InstrumentedModel(model_)
+        instrument = self.instrument
+        if instrument is None:
+            instrument = self._instrument_default
+
+        if instrument and not isinstance(model_, InstrumentedModel):
+            if instrument is True:
+                instrument = InstrumentationSettings()
+
+            model_ = InstrumentedModel(model_, instrument)
 
         return model_
 
