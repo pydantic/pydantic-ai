@@ -329,6 +329,7 @@ from pydantic_ai.providers.google_vertex import GoogleVertexProvider
 
 model = GeminiModel(
     'gemini-2.0-flash',
+    # Also takes the JSON file contents string
     provider=GoogleVertexProvider(service_account_file='path/to/service-account.json'),
 )
 agent = Agent(model)
