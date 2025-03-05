@@ -9,6 +9,7 @@ from inline_snapshot import snapshot
 from typing_extensions import NotRequired, TypedDict
 
 from pydantic_ai import Agent
+from pydantic_ai.models.instrumented import InstrumentationSettings, InstrumentedModel
 from pydantic_ai.models.test import TestModel
 
 try:
@@ -58,8 +59,17 @@ def get_logfire_summary(capfire: CaptureLogfire) -> Callable[[], LogfireSummary]
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
-def test_logfire(get_logfire_summary: Callable[[], LogfireSummary]) -> None:
-    my_agent = Agent(model=TestModel(), instrument=True)
+@pytest.mark.parametrize(
+    'instrument',
+    [
+        True,
+        False,
+        InstrumentationSettings(event_mode='attributes'),
+        InstrumentationSettings(event_mode='logs'),
+    ],
+)
+def test_logfire(get_logfire_summary: Callable[[], LogfireSummary], instrument: InstrumentationSettings | bool) -> None:
+    my_agent = Agent(model=TestModel(), instrument=instrument)
 
     @my_agent.tool_plain
     async def my_ret(x: int) -> str:
@@ -69,6 +79,10 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary]) -> None:
     assert result.data == snapshot('{"my_ret":"1"}')
 
     summary = get_logfire_summary()
+    if instrument is False:
+        assert summary.traces == []
+        return
+
     assert summary.traces == snapshot(
         [
             {
@@ -120,6 +134,7 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary]) -> None:
                             'content': '1',
                             'role': 'tool',
                             'id': None,
+                            'name': 'my_ret',
                             'gen_ai.message.index': 2,
                             'event.name': 'gen_ai.tool.message',
                         },
@@ -150,7 +165,44 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary]) -> None:
             'logfire.msg': 'preparing model request params',
         }
     )
-    assert summary.attributes[2] == snapshot(
+    chat_span_attributes = summary.attributes[2]
+    if instrument is True or instrument.event_mode == 'attributes':
+        attribute_mode_attributes = {k: chat_span_attributes.pop(k) for k in ['events', 'logfire.json_schema']}
+        assert attribute_mode_attributes == snapshot(
+            {
+                'events': IsJson(
+                    snapshot(
+                        [
+                            {
+                                'event.name': 'gen_ai.user.message',
+                                'content': 'Hello',
+                                'role': 'user',
+                                'gen_ai.message.index': 0,
+                                'gen_ai.system': 'test',
+                            },
+                            {
+                                'event.name': 'gen_ai.choice',
+                                'index': 0,
+                                'message': {
+                                    'role': 'assistant',
+                                    'tool_calls': [
+                                        {
+                                            'id': None,
+                                            'type': 'function',
+                                            'function': {'name': 'my_ret', 'arguments': {'x': 0}},
+                                        }
+                                    ],
+                                },
+                                'gen_ai.system': 'test',
+                            },
+                        ]
+                    )
+                ),
+                'logfire.json_schema': '{"type": "object", "properties": {"events": {"type": "array"}}}',
+            }
+        )
+
+    assert chat_span_attributes == snapshot(
         {
             'gen_ai.operation.name': 'chat',
             'gen_ai.system': 'test',
@@ -160,34 +212,31 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary]) -> None:
             'gen_ai.response.model': 'test',
             'gen_ai.usage.input_tokens': 51,
             'gen_ai.usage.output_tokens': 4,
-            'events': IsJson(
-                snapshot(
-                    [
-                        {
-                            'event.name': 'gen_ai.user.message',
-                            'content': 'Hello',
-                            'role': 'user',
-                            'gen_ai.message.index': 0,
-                            'gen_ai.system': 'test',
-                        },
-                        {
-                            'event.name': 'gen_ai.choice',
-                            'index': 0,
-                            'message': {
-                                'role': 'assistant',
-                                'tool_calls': [
-                                    {
-                                        'id': None,
-                                        'type': 'function',
-                                        'function': {'name': 'my_ret', 'arguments': {'x': 0}},
-                                    }
-                                ],
-                            },
-                            'gen_ai.system': 'test',
-                        },
-                    ]
-                )
-            ),
-            'logfire.json_schema': '{"type": "object", "properties": {"events": {"type": "array"}}}',
         }
     )
+
+
+def test_instrument_all():
+    model = TestModel()
+    agent = Agent()
+
+    def get_model():
+        return agent._get_model(model)  # type: ignore
+
+    assert get_model() is model
+
+    Agent.instrument_all()
+    m = get_model()
+    assert isinstance(m, InstrumentedModel)
+    assert m.wrapped is model
+    assert m.options.event_mode == InstrumentationSettings().event_mode
+
+    options = InstrumentationSettings(event_mode='logs')
+    Agent.instrument_all(options)
+    m = get_model()
+    assert isinstance(m, InstrumentedModel)
+    assert m.wrapped is model
+    assert m.options is options
+
+    Agent.instrument_all(False)
+    assert get_model() is model
