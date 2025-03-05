@@ -1,5 +1,6 @@
 # pyright: reportUnknownMemberType=false, reportUnknownVariableType=false
 import json
+import urllib.parse
 from typing import TYPE_CHECKING, Any
 
 import yaml
@@ -59,19 +60,24 @@ def serialize(cassette_dict: Any):
             # update headers on source object
             data['headers'] = headers
 
-            content_type = headers.get('content-type', None)
-            if content_type != ['application/json']:
-                continue
-
-            # Parse the body as JSON
-            body: Any = data.get('body', None)
-            assert body is not None, data
-            if isinstance(body, dict):
-                # Responses will have the body under a field called 'string'
-                body = body.get('string')
-            if body is not None:
-                data['parsed_body'] = json.loads(body)
-                del data['body']
+            content_type = headers.get('content-type', [])
+            if any(header.startswith('application/json') for header in content_type):
+                # Parse the body as JSON
+                body: Any = data.get('body', None)
+                assert body is not None, data
+                if isinstance(body, dict):
+                    # Responses will have the body under a field called 'string'
+                    body = body.get('string')
+                if body is not None:
+                    data['parsed_body'] = json.loads(body)
+                    if 'access_token' in data['parsed_body']:
+                        data['parsed_body']['access_token'] = 'scrubbed'
+                    del data['body']
+            if content_type == ['application/x-www-form-urlencoded']:
+                query_params = urllib.parse.parse_qs(data['body'])
+                if 'client_secret' in query_params:
+                    query_params['client_secret'] = ['scrubbed']
+                    data['body'] = urllib.parse.urlencode(query_params)
 
     # Use our custom dumper
     return yaml.dump(cassette_dict, Dumper=LiteralDumper, allow_unicode=True, width=120)
