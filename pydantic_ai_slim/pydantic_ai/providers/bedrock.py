@@ -1,5 +1,7 @@
 from __future__ import annotations as _annotations
 
+from typing import overload
+
 from pydantic_ai.providers import Provider
 
 try:
@@ -27,5 +29,35 @@ class BedrockProvider(Provider[BaseClient]):
     def client(self) -> BaseClient:
         return self._client
 
-    def __init__(self, bedrock_client: BaseClient | None = None):
-        self._client = bedrock_client or boto3.client('bedrock-runtime')  # type: ignore[reportUnknownMemberType]
+    @overload
+    def __init__(self, *, bedrock_client: BaseClient) -> None: ...
+
+    @overload
+    def __init__(
+        self,
+        *,
+        aws_access_key_id: str | None = None,
+        aws_secret_access_key: str | None = None,
+        aws_session_token: str | None = None,
+        region_name: str | None = None,
+    ) -> None: ...
+
+    def __init__(
+        self,
+        *,
+        aws_access_key_id: str | None = None,
+        aws_secret_access_key: str | None = None,
+        aws_session_token: str | None = None,
+        region_name: str | None = None,
+        bedrock_client: BaseClient | None = None,
+    ):
+        if bedrock_client is not None:
+            self._client = bedrock_client
+        else:
+            self._client = boto3.client(  # type: ignore[reportUnknownMemberType]
+                'bedrock-runtime',
+                aws_access_key_id=aws_access_key_id,
+                aws_secret_access_key=aws_secret_access_key,
+                aws_session_token=aws_session_token,
+                region_name=region_name,
+            )

@@ -94,7 +94,7 @@ LatestBedrockModelNames = Literal[
 BedrockModelName = Union[str, LatestBedrockModelNames]
 """Possible Bedrock model names.
 
-Since Gemini supports a variety of date-stamped models, we explicitly list the latest models but allow any name in the type hints.
+Since Bedrock supports a variety of date-stamped models, we explicitly list the latest models but allow any name in the type hints.
 See [the Bedrock docs](https://docs.aws.amazon.com/bedrock/latest/userguide/models-supported.html) for a full list.
 """
 
@@ -269,7 +269,7 @@ class BedrockConverseModel(Model):
         return inference_config
 
     def _map_message(self, messages: list[ModelMessage]) -> tuple[str, list[MessageUnionTypeDef]]:
-        """Just maps a `pydantic_ai.Message` to a `anthropic.types.MessageParam`."""
+        """Just maps a `pydantic_ai.Message` to the Bedrock `MessageUnionTypeDef`."""
         system_prompt: str = ''
         bedrock_messages: list[MessageUnionTypeDef] = []
         for m in messages:
@@ -300,7 +300,8 @@ class BedrockConverseModel(Model):
                         )
                     elif isinstance(part, RetryPromptPart):
                         if part.tool_name is None:
-                            assert isinstance(part.content, str), 'TODO(Marcelo): Should we do something here?'
+                            # TODO(Marcelo): Support other content types.
+                            assert isinstance(part.content, str)
                             bedrock_messages.append({'role': 'user', 'content': [{'text': part.content}]})
                         else:
                             assert part.tool_call_id is not None

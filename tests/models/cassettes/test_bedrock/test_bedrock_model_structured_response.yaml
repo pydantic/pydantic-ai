@@ -12,7 +12,7 @@ interactions:
     headers:
       amz-sdk-invocation-id:
       - !!binary |
-        YTlkZWE4YjUtZDg5NC00YWNhLTk3NTktYzVmODJmMjBiMWJi
+        YjJhYTAzNDAtYzM3My00NTBlLWEzMWYtZGNiMWUxNzAxMjhl
       amz-sdk-request:
       - !!binary |
         YXR0ZW1wdD0x
@@ -28,40 +28,40 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '622'
+      - '643'
       content-type:
       - application/json
     parsed_body:
       metrics:
-        latencyMs: 605
+        latencyMs: 545
       output:
         message:
           content:
           - text: |
-              <thinking> To find the temperature in London on 1st January 2022, I will use the "temperature" tool. I will need to provide the date and the city name. The date is already provided as "1st January 2022" and the city name is "London". I will call the "temperature" tool with these parameters.</thinking>
+              <thinking> To find the temperature in London on 1st January 2022, I need to use the "temperature" tool with the appropriate arguments. The required arguments are "date" and "city". The date is provided as "1st January 2022" and the city is "London". I will use these arguments to call the "temperature" tool.</thinking>
           - toolUse:
               input:
                 city: London
                 date: '2022-01-01'
               name: temperature
-              toolUseId: tooluse_72V1-POFTp2399ewBfduMQ
+              toolUseId: tooluse_xTYmv3jIR0yGxOYLOxSLJg
           role: assistant
       stopReason: tool_use
       usage:
         inputTokens: 551
-        outputTokens: 133
-        totalTokens: 684
+        outputTokens: 136
+        totalTokens: 687
     status:
       code: 200
       message: OK
 - request:
     body: '{"messages": [{"role": "user", "content": [{"text": "What was the temperature in London 1st January 2022?"}]},
-      {"role": "assistant", "content": [{"text": "<thinking> To find the temperature in London on 1st January 2022, I will
-      use the \"temperature\" tool. I will need to provide the date and the city name. The date is already provided as \"1st
-      January 2022\" and the city name is \"London\". I will call the \"temperature\" tool with these parameters.</thinking>\n"},
-      {"toolUse": {"toolUseId": "tooluse_72V1-POFTp2399ewBfduMQ", "name": "temperature", "input": {"date": "2022-01-01", "city":
-      "London"}}}]}, {"role": "user", "content": [{"toolResult": {"toolUseId": "tooluse_72V1-POFTp2399ewBfduMQ", "content":
-      [{"text": "30\u00b0C"}], "status": "success"}}]}], "system": [{"text": "You are a helpful chatbot."}], "inferenceConfig":
+      {"role": "assistant", "content": [{"text": "<thinking> To find the temperature in London on 1st January 2022, I need
+      to use the \"temperature\" tool with the appropriate arguments. The required arguments are \"date\" and \"city\". The
+      date is provided as \"1st January 2022\" and the city is \"London\". I will use these arguments to call the \"temperature\"
+      tool.</thinking>\n"}, {"toolUse": {"toolUseId": "tooluse_xTYmv3jIR0yGxOYLOxSLJg", "name": "temperature", "input": {"date":
+      "2022-01-01", "city": "London"}}}]}, {"role": "user", "content": [{"toolResult": {"toolUseId": "tooluse_xTYmv3jIR0yGxOYLOxSLJg",
+      "content": [{"text": "30\u00b0C"}], "status": "success"}}]}], "system": [{"text": "You are a helpful chatbot."}], "inferenceConfig":
       {}, "toolConfig": {"tools": [{"toolSpec": {"name": "temperature", "description": "Get the temperature in a city on a
       specific date.", "inputSchema": {"json": {"properties": {"city": {"description": "The city name.", "title": "City",
       "type": "string"}, "date": {"description": "The date.", "format": "date", "title": "Date", "type": "string"}}, "required":
@@ -72,12 +72,12 @@ interactions:
     headers:
       amz-sdk-invocation-id:
       - !!binary |
-        YzJhMWQwM2YtNjc3OC00YjY2LWFhY2YtNzAwZDdiZTRmOTg1
+        OGEyNDE5NmYtMWJmNi00MDdhLThmODctNGI1ZjE5ZjA4Yzcz
       amz-sdk-request:
       - !!binary |
         YXR0ZW1wdD0x
       content-length:
-      - '1662'
+      - '1683'
       content-type:
       - !!binary |
         YXBwbGljYXRpb24vanNvbg==
@@ -88,31 +88,31 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '581'
+      - '593'
       content-type:
       - application/json
     parsed_body:
       metrics:
-        latencyMs: 527
+        latencyMs: 555
       output:
         message:
           content:
-          - text: '<thinking> The "temperature" tool has returned the temperature for the specified date and city. The temperature
-              in London on 1st January 2022 was 30°C. Now I will use the "final_result" tool to provide this information to
-              the user.</thinking> '
+          - text: '<thinking> The "temperature" tool has provided the temperature information for the specified date and city.
+              The temperature in London on 1st January 2022 was 30°C. I will now use the "final_result" tool to provide this
+              information to the user.</thinking> '
           - toolUse:
               input:
                 city: London
                 date: '2022-01-01'
                 temperature: 30°C
               name: final_result
-              toolUseId: tooluse_TPjEx1BESIqmrElHJ0b3sQ
+              toolUseId: tooluse_5S7Sx4hISqKlkDw6Q8ZaKw
           role: assistant
       stopReason: tool_use
       usage:
-        inputTokens: 686
-        outputTokens: 171
-        totalTokens: 857
+        inputTokens: 689
+        outputTokens: 172
+        totalTokens: 861
     status:
       code: 200
       message: OK
