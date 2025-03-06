@@ -3,7 +3,8 @@ from __future__ import annotations as _annotations
 import asyncio
 import sys
 import types
-from typing import Annotated, Any, TypeVar, Union, get_args, get_origin
+from functools import partial
+from typing import Annotated, Any, Callable, ParamSpec, TypeVar, Union, get_args, get_origin
 
 import typing_extensions
 
@@ -104,3 +105,15 @@ T = TypeVar('T')
 
 def is_set(t_or_unset: T | Unset) -> typing_extensions.TypeGuard[T]:
     return t_or_unset is not UNSET
+
+
+_P = ParamSpec('_P')
+_R = TypeVar('_R')
+
+
+async def run_in_executor(func: Callable[_P, _R], *args: _P.args, **kwargs: _P.kwargs) -> _R:
+    if kwargs:
+        # noinspection PyTypeChecker
+        return await asyncio.get_running_loop().run_in_executor(None, partial(func, *args, **kwargs))
+    else:
+        return await asyncio.get_running_loop().run_in_executor(None, func, *args)  # type: ignore

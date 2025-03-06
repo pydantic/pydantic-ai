@@ -11,7 +11,7 @@ from typing_extensions import Never, Self, TypeVar
 from . import _utils, exceptions
 
 if TYPE_CHECKING:
-    from .state import StateT
+    from .persistence import StateT
 else:
     StateT = TypeVar('StateT', default=None)
 

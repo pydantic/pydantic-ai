@@ -6,7 +6,7 @@ from typing import Any
 from typing_extensions import assert_type
 
 from pydantic_graph import BaseNode, End, FullStatePersistence, Graph, GraphRunContext
-from pydantic_graph.state import StatePersistence
+from pydantic_graph.persistence import StatePersistence
 
 
 @dataclass

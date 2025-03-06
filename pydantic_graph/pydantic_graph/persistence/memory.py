@@ -11,7 +11,14 @@ import pydantic
 from typing_extensions import TypeVar
 
 from ..nodes import BaseNode, End
-from . import EndSnapshot, NodeSnapshot, Snapshot, StatePersistence, _utils, build_snapshots_type_adapter
+from . import (
+    EndSnapshot,
+    NodeRunId,
+    NodeSnapshot,
+    Snapshot,
+    StatePersistence,
+    build_snapshot_list_type_adapter,
+)
 
 StateT = TypeVar('StateT', default=Any)
 RunEndT = TypeVar('RunEndT', default=Any)
@@ -24,31 +31,36 @@ class SimpleStatePersistence(StatePersistence[StateT, RunEndT]):
     deep_copy: bool = False
     last_snapshot: Snapshot[StateT, RunEndT] | None = None
 
-    async def snapshot_node(self, state: StateT, next_node: BaseNode[StateT, Any, RunEndT]) -> None:
+    async def snapshot_node(self, state: StateT, next_node: BaseNode[StateT, Any, RunEndT]) -> NodeRunId:
         self.last_snapshot = NodeSnapshot(
             state=self.prep_state(state),
             node=next_node.deep_copy() if self.deep_copy else next_node,
         )
+        return self.last_snapshot.run_id
 
-    async def snapshot_end(self, state: StateT, end: End[RunEndT]) -> None:
+    async def snapshot_end(self, state: StateT, end: End[RunEndT]) -> NodeRunId:
         self.last_snapshot = EndSnapshot(
             state=self.prep_state(state),
             result=end.deep_copy_data() if self.deep_copy else end,
         )
+        return self.last_snapshot.run_id
 
     @asynccontextmanager
-    async def record_run(self) -> AsyncIterator[None]:
-        last_snapshot = await self.restore()
-        if not isinstance(last_snapshot, NodeSnapshot):
-            yield
-            return
-
-        last_snapshot.start_ts = _utils.now_utc()
+    async def record_run(self, run_id: NodeRunId) -> AsyncIterator[None]:
+        assert self.last_snapshot is not None, 'No snapshot to record'
+        assert isinstance(self.last_snapshot, NodeSnapshot), 'Only NodeSnapshot can be recorded'
+        assert run_id == self.last_snapshot.run_id, 'run_id must match the last snapshot run_id'
+        self.last_snapshot.status = 'running'
         start = perf_counter()
         try:
             yield
-        finally:
-            last_snapshot.duration = perf_counter() - start
+        except Exception:
+            self.last_snapshot.duration = perf_counter() - start
+            self.last_snapshot.status = 'error'
+            raise
+        else:
+            self.last_snapshot.duration = perf_counter() - start
+            self.last_snapshot.status = 'success'
 
     async def restore(self) -> Snapshot[StateT, RunEndT] | None:
         return self.last_snapshot
@@ -71,35 +83,41 @@ class FullStatePersistence(StatePersistence[StateT, RunEndT]):
         default=None, init=False, repr=False
     )
 
-    async def snapshot_node(self, state: StateT, next_node: BaseNode[StateT, Any, RunEndT]) -> None:
-        self.history.append(
-            NodeSnapshot(
-                state=self.prep_state(state),
-                node=next_node.deep_copy() if self.deep_copy else next_node,
-            )
+    async def snapshot_node(self, state: StateT, next_node: BaseNode[StateT, Any, RunEndT]) -> NodeRunId:
+        last_snapshot = NodeSnapshot(
+            state=self.prep_state(state),
+            node=next_node.deep_copy() if self.deep_copy else next_node,
         )
+        self.history.append(last_snapshot)
+        return last_snapshot.run_id
 
-    async def snapshot_end(self, state: StateT, end: End[RunEndT]) -> None:
-        self.history.append(
-            EndSnapshot(
-                state=self.prep_state(state),
-                result=end.deep_copy_data() if self.deep_copy else end,
-            )
+    async def snapshot_end(self, state: StateT, end: End[RunEndT]) -> NodeRunId:
+        end = EndSnapshot(
+            state=self.prep_state(state),
+            result=end.deep_copy_data() if self.deep_copy else end,
         )
+        self.history.append(end)
+        return end.run_id
 
     @asynccontextmanager
-    async def record_run(self) -> AsyncIterator[None]:
-        last_snapshot = await self.restore()
-        if not isinstance(last_snapshot, NodeSnapshot):
-            yield
-            return
+    async def record_run(self, run_id: NodeRunId) -> AsyncIterator[None]:
+        try:
+            snapshot = next(s for s in self.history if s.run_id == run_id)
+        except StopIteration as e:
+            raise LookupError(f'No snapshot found for run_id {run_id}') from e
 
-        last_snapshot.start_ts = _utils.now_utc()
+        assert isinstance(snapshot, NodeSnapshot), 'Only NodeSnapshot can be recorded'
+        snapshot.status = 'running'
         start = perf_counter()
         try:
             yield
-        finally:
-            last_snapshot.duration = perf_counter() - start
+        except Exception:
+            snapshot.duration = perf_counter() - start
+            snapshot.status = 'error'
+            raise
+        else:
+            snapshot.duration = perf_counter() - start
+            snapshot.status = 'success'
 
     async def restore(self) -> Snapshot[StateT, RunEndT] | None:
         if self.history:
@@ -116,7 +134,7 @@ class FullStatePersistence(StatePersistence[StateT, RunEndT]):
     def set_types(self, get_types: Callable[[], tuple[type[StateT], type[RunEndT]]]) -> None:
         if self._snapshots_type_adapter is None:
             state_t, run_end_t = get_types()
-            self._snapshots_type_adapter = build_snapshots_type_adapter(state_t, run_end_t)
+            self._snapshots_type_adapter = build_snapshot_list_type_adapter(state_t, run_end_t)
 
     def prep_state(self, state: StateT) -> StateT:
         """Prepare state for snapshot, uses [`copy.deepcopy`][copy.deepcopy] by default."""

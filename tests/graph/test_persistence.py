@@ -201,3 +201,32 @@ def test_no_generic_arg():
             )
         ]
     )
+
+
+async def test_node_error():
+    @dataclass
+    class Foo(BaseNode):
+        async def run(self, ctx: GraphRunContext) -> Bar:
+            return Bar()
+
+    @dataclass
+    class Bar(BaseNode[None, None, int]):
+        async def run(self, ctx: GraphRunContext) -> End[int]:
+            raise RuntimeError('test error')
+
+    graph = Graph(nodes=[Foo, Bar])
+
+    sp = FullStatePersistence()
+    with pytest.raises(RuntimeError, match='test error'):
+        await graph.run(Foo(), persistence=sp)
+
+    assert sp.history == snapshot(
+        [
+            NodeSnapshot(
+                state=None,
+                node=Foo(),
+                start_ts=IsNow(tz=timezone.utc),
+                duration=IsFloat(),
+            ),
+        ]
+    )

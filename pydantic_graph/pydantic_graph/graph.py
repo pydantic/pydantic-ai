@@ -6,7 +6,7 @@ from collections.abc import AsyncIterator, Sequence
 from contextlib import ExitStack, asynccontextmanager
 from dataclasses import dataclass, field
 from functools import cached_property
-from typing import Any, Generic, TypeVar
+from typing import Any, Generic, TypeVar, cast
 
 import logfire_api
 import typing_extensions
@@ -14,8 +14,8 @@ from logfire_api import LogfireSpan
 
 from . import _utils, exceptions, mermaid
 from .nodes import BaseNode, DepsT, End, GraphRunContext, NodeDef, RunEndT
-from .state import StatePersistence, StateT, set_nodes_type_context
-from .state.memory import SimpleStatePersistence
+from .persistence import NodeRunId, StatePersistence, StateT, set_nodes_type_context
+from .persistence.memory import SimpleStatePersistence
 
 # while waiting for https://github.com/pydantic/logfire/issues/745
 try:
@@ -84,7 +84,7 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
     node_defs: dict[str, NodeDef[StateT, DepsT, RunEndT]]
     _state_type: type[StateT] | _utils.Unset = field(repr=False)
     _run_end_type: type[RunEndT] | _utils.Unset = field(repr=False)
-    _auto_instrument: bool = field(repr=False)
+    auto_instrument: bool = field(repr=False)
 
     def __init__(
         self,
@@ -109,7 +109,7 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
         self.name = name
         self._state_type = state_type
         self._run_end_type = run_end_type
-        self._auto_instrument = auto_instrument
+        self.auto_instrument = auto_instrument
 
         parent_namespace = _utils.get_parent_namespace(inspect.currentframe())
         self.node_defs: dict[str, NodeDef[StateT, DepsT, RunEndT]] = {}
@@ -174,6 +174,39 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
         assert final_result is not None, 'GraphRun should have a final result'
         return final_result
 
+    def run_sync(
+        self: Graph[StateT, DepsT, T],
+        start_node: BaseNode[StateT, DepsT, T],
+        *,
+        state: StateT = None,
+        deps: DepsT = None,
+        persistence: StatePersistence[StateT, T] | None = None,
+        infer_name: bool = True,
+    ) -> GraphRunResult[StateT, T]:
+        """Synchronously run the graph.
+
+        This is a convenience method that wraps [`self.run`][pydantic_graph.Graph.run] with `loop.run_until_complete(...)`.
+        You therefore can't use this method inside async code or if there's an active event loop.
+
+        Args:
+            start_node: the first node to run, since the graph definition doesn't define the entry point in the graph,
+                you need to provide the starting node.
+            state: The initial state of the graph.
+            deps: The dependencies of the graph.
+            persistence: State persistence interface, defaults to
+                [`SimpleStatePersistence`][pydantic_graph.state.memory.SimpleStatePersistence] if `None`.
+            infer_name: Whether to infer the graph name from the calling frame.
+
+        Returns:
+            The result type from ending the run and the history of the run.
+        """
+        if infer_name and self.name is None:
+            self._infer_name(inspect.currentframe())
+
+        return _utils.get_event_loop().run_until_complete(
+            self.run(start_node, state=state, deps=deps, persistence=persistence, infer_name=False)
+        )
+
     @asynccontextmanager
     async def iter(
         self: Graph[StateT, DepsT, T],
@@ -215,121 +248,26 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
         if infer_name and self.name is None:
             self._infer_name(inspect.currentframe())
 
-        if self._auto_instrument and span is None:
+        if self.auto_instrument and span is None:
             span = logfire_api.span('run graph {graph.name}', graph=self)
-
-        if persistence is None:
-            persistence = SimpleStatePersistence()
-
-        with ExitStack() as stack:
-            if span is not None:
-                stack.enter_context(span)
-            yield GraphRun[StateT, DepsT, T](
-                self,
-                start_node,
-                persistence=persistence,
-                state=state,
-                deps=deps,
-                auto_instrument=self._auto_instrument,
-                span=span,
-            )
-
-    def run_sync(
-        self: Graph[StateT, DepsT, T],
-        start_node: BaseNode[StateT, DepsT, T],
-        *,
-        state: StateT = None,
-        deps: DepsT = None,
-        persistence: StatePersistence[StateT, T] | None = None,
-        infer_name: bool = True,
-    ) -> GraphRunResult[StateT, T]:
-        """Synchronously run the graph.
-
-        This is a convenience method that wraps [`self.run`][pydantic_graph.Graph.run] with `loop.run_until_complete(...)`.
-        You therefore can't use this method inside async code or if there's an active event loop.
-
-        Args:
-            start_node: the first node to run, since the graph definition doesn't define the entry point in the graph,
-                you need to provide the starting node.
-            state: The initial state of the graph.
-            deps: The dependencies of the graph.
-            persistence: State persistence interface, defaults to
-                [`SimpleStatePersistence`][pydantic_graph.state.memory.SimpleStatePersistence] if `None`.
-            infer_name: Whether to infer the graph name from the calling frame.
-
-        Returns:
-            The result type from ending the run and the history of the run.
-        """
-        if infer_name and self.name is None:
-            self._infer_name(inspect.currentframe())
-
-        return _utils.get_event_loop().run_until_complete(
-            self.run(start_node, state=state, deps=deps, persistence=persistence, infer_name=False)
-        )
-
-    async def next(
-        self: Graph[StateT, DepsT, T],
-        node: BaseNode[StateT, DepsT, T],
-        *,
-        persistence: StatePersistence[StateT, T] | None = None,
-        state: StateT = None,
-        deps: DepsT = None,
-        infer_name: bool = True,
-    ) -> BaseNode[StateT, DepsT, Any] | End[T]:
-        """Run a node in the graph and return the next node to run.
-
-        Args:
-            node: The node to run.
-            persistence: State persistence interface, defaults to
-                [`SimpleStatePersistence`][pydantic_graph.state.memory.SimpleStatePersistence] if `None`.
-            state: The current state of the graph.
-            deps: The dependencies of the graph.
-            infer_name: Whether to infer the graph name from the calling frame.
-
-        Returns:
-            The next node to run or [`End`][pydantic_graph.nodes.End] if the graph has finished.
-        """
-        if infer_name and self.name is None:
-            self._infer_name(inspect.currentframe())
-
-        if isinstance(node, End):
-            # While technically this is not compatible with the documented method signature, it's an easy mistake to
-            # make, and we should eagerly provide a more helpful error message than you'd get otherwise.
-            raise exceptions.GraphRuntimeError(f'Cannot call `next` with an `End` node: {node!r}.')
 
         if persistence is None:
             persistence = SimpleStatePersistence()
         self.set_persistence_types(persistence)
 
-        return await self._next(node, persistence, state, deps)
-
-    async def _next(
-        self: Graph[StateT, DepsT, T],
-        node: BaseNode[StateT, DepsT, T],
-        persistence: StatePersistence[StateT, T],
-        state: StateT,
-        deps: DepsT,
-    ) -> BaseNode[StateT, DepsT, Any] | End[T]:
-        node_id = node.get_id()
-        if node_id not in self.node_defs:
-            raise exceptions.GraphRuntimeError(f'Node `{node}` is not in the graph.')
-
-        await persistence.snapshot_node(state, node)
-
         with ExitStack() as stack:
-            if self._auto_instrument:
-                stack.enter_context(_logfire.span('run node {node_id}', node_id=node_id, node=node))
-            ctx = GraphRunContext(state, deps)
-            async with persistence.record_run():
-                next_or_end = await node.run(ctx)
-
-        if isinstance(next_or_end, End):
-            await persistence.snapshot_end(state, next_or_end)
-        elif not isinstance(next_or_end, BaseNode):
-            raise exceptions.GraphRuntimeError(
-                f'Invalid node return type: `{type(next_or_end).__name__}`. Expected `BaseNode` or `End`.'
+            if span is not None:
+                stack.enter_context(span)
+            node_run_id = await persistence.snapshot_node(state, start_node)
+            yield GraphRun[StateT, DepsT, T](
+                graph=self,
+                start_node=start_node,
+                persistence=persistence,
+                node_run_id=node_run_id,
+                state=state,
+                deps=deps,
+                span=span,
             )
-        return next_or_end
 
     async def next_from_persistence(
         self: Graph[StateT, DepsT, T],
@@ -342,13 +280,16 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
             self._infer_name(inspect.currentframe())
 
         snapshot = await persistence.restore_node_snapshot()
-        return await self.next(
-            snapshot.node,
+        node_run_id = NotImplemented
+        run = GraphRun[StateT, DepsT, T](
+            graph=self,
+            start_node=snapshot.node,
             persistence=persistence,
+            node_run_id=node_run_id,
             state=snapshot.state,
             deps=deps,
-            infer_name=False,
         )
+        return await run.next()
 
     def set_persistence_types(self, persistence: StatePersistence[StateT, RunEndT]) -> None:
         with set_nodes_type_context([node_def.node for node_def in self.node_defs.values()]):
@@ -615,9 +556,9 @@ class GraphRun(Generic[StateT, DepsT, RunEndT]):
         graph: Graph[StateT, DepsT, RunEndT],
         start_node: BaseNode[StateT, DepsT, RunEndT],
         persistence: StatePersistence[StateT, RunEndT],
+        node_run_id: NodeRunId,
         state: StateT,
         deps: DepsT,
-        auto_instrument: bool,
         span: LogfireSpan | None = None,
     ):
         """Create a new run for a given graph, starting at the specified node.
@@ -628,18 +569,18 @@ class GraphRun(Generic[StateT, DepsT, RunEndT]):
             graph: The [`Graph`][pydantic_graph.graph.Graph] to run.
             start_node: The node where execution will begin.
             persistence: State persistence interface.
+            node_run_id: The ID of the current node run.
             state: A shared state object or primitive (like a counter, dataclass, etc.) that is available
                 to all nodes via `ctx.state`.
             deps: Optional dependencies that each node can access via `ctx.deps`, e.g. database connections,
                 configuration, or logging clients.
-            auto_instrument: Whether to automatically create instrumentation spans during the run.
             span: An optional existing Logfire span to nest node-level spans under (advanced usage).
         """
         self.graph = graph
         self.persistence = persistence
+        self._node_run_id = node_run_id
         self.state = state
         self.deps = deps
-        self._auto_instrument = auto_instrument
         self._span = span
 
         self._next_node: BaseNode[StateT, DepsT, RunEndT] | End[RunEndT] = start_node
@@ -708,15 +649,33 @@ class GraphRun(Generic[StateT, DepsT, RunEndT]):
             the run has completed.
         """
         if node is None:
-            if isinstance(self._next_node, End):
-                # Note: we could alternatively just return `self._next_node` here, but it's easier to start with an
-                # error and relax the behavior later, than vice versa.
-                raise exceptions.GraphRuntimeError('This graph run has already ended.')
-            node = self._next_node
+            node = cast(BaseNode[StateT, DepsT, T], self._next_node)
 
-        self._next_node = await self.graph.next(
-            node, persistence=self.persistence, state=self.state, deps=self.deps, infer_name=False
-        )
+        if isinstance(node, End):
+            # While technically this is not compatible with the documented method signature, it's an easy mistake to
+            # make, and we should eagerly provide a more helpful error message than you'd get otherwise.
+            raise exceptions.GraphRuntimeError(f'Cannot call `next` with an `End` node: {node!r}.')
+
+        node_id = node.get_id()
+        if node_id not in self.graph.node_defs:
+            raise exceptions.GraphRuntimeError(f'Node `{node}` is not in the graph.')
+
+        with ExitStack() as stack:
+            if self.graph.auto_instrument:
+                stack.enter_context(_logfire.span('run node {node_id}', node_id=node_id, node=node))
+
+            async with self.persistence.record_run(self._node_run_id):
+                ctx = GraphRunContext(self.state, self.deps)
+                self._next_node = await node.run(ctx)
+
+        if isinstance(self._next_node, End):
+            self._node_run_id = await self.persistence.snapshot_end(self.state, self._next_node)
+        elif isinstance(self._next_node, BaseNode):
+            self._node_run_id = await self.persistence.snapshot_node(self.state, self._next_node)
+        else:
+            raise exceptions.GraphRuntimeError(
+                f'Invalid node return type: `{type(self._next_node).__name__}`. Expected `BaseNode` or `End`.'
+            )
 
         return self._next_node
 
