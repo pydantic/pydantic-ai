@@ -60,5 +60,9 @@ def infer_provider(provider: str) -> Provider[Any]:
         from .google_gla import GoogleGLAProvider
 
         return GoogleGLAProvider()
+    elif provider == 'bedrock':
+        from .bedrock import BedrockProvider
+
+        return BedrockProvider()
     else:  # pragma: no cover
         raise ValueError(f'Unknown provider: {provider}')
