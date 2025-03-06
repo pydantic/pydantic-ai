@@ -155,15 +155,13 @@ async def _creds_from_file(service_account_file: str | Path) -> ServiceAccountCr
 
 
 VertexAiRegion = Literal[
-    'us-central1',
-    'us-east1',
-    'us-east4',
-    'us-south1',
-    'us-west1',
-    'us-west2',
-    'us-west3',
-    'us-west4',
-    'us-east5',
+    'asia-east1',
+    'asia-east2',
+    'asia-northeast1',
+    'asia-northeast3',
+    'asia-south1',
+    'asia-southeast1',
+    'australia-southeast1',
     'europe-central2',
     'europe-north1',
     'europe-southwest1',
@@ -174,27 +172,20 @@ VertexAiRegion = Literal[
     'europe-west6',
     'europe-west8',
     'europe-west9',
-    'europe-west12',
-    'africa-south1',
-    'asia-east1',
-    'asia-east2',
-    'asia-northeast1',
-    'asia-northeast2',
-    'asia-northeast3',
-    'asia-south1',
-    'asia-southeast1',
-    'asia-southeast2',
-    'australia-southeast1',
-    'australia-southeast2',
     'me-central1',
     'me-central2',
     'me-west1',
     'northamerica-northeast1',
-    'northamerica-northeast2',
     'southamerica-east1',
-    'southamerica-west1',
+    'us-central1',
+    'us-east1',
+    'us-east4',
+    'us-east5',
+    'us-south1',
+    'us-west1',
+    'us-west4',
 ]
 """Regions available for Vertex AI.
 
-More details [here](https://cloud.google.com/vertex-ai/docs/reference/rest#rest_endpoints).
+More details [here](https://cloud.google.com/vertex-ai/generative-ai/docs/learn/locations#genai-locations).
 """
