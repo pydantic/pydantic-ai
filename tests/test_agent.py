@@ -1364,8 +1364,12 @@ def test_dynamic_false_no_reevaluate():
     dynamic_value = 'A'
 
     @agent.system_prompt
-    async def func() -> str:
+    async def func() -> Union[str, None]:
         return dynamic_value
+
+    @agent.system_prompt
+    async def empty_func() -> Union[str, None]:
+        return None
 
     res = agent.run_sync('Hello')
 
@@ -1438,6 +1442,10 @@ def test_dynamic_true_reevaluate_system_prompt():
     @agent.system_prompt(dynamic=True)
     async def func():
         return dynamic_value
+
+    @agent.system_prompt(dynamic=True)
+    async def empty_func():
+        return None
 
     res = agent.run_sync('Hello')
 
