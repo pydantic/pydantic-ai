@@ -20,7 +20,7 @@ from ..conftest import IsDatetime, try_import
 
 with try_import() as imports_successful:
     from pydantic_ai.models.bedrock import BedrockConverseModel
-
+    from pydantic_ai.providers.bedrock import BedrockProvider
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='bedrock not installed'),
@@ -29,8 +29,8 @@ pytestmark = [
 ]
 
 
-async def test_bedrock_model():
-    model = BedrockConverseModel('us.amazon.nova-micro-v1:0')
+async def test_bedrock_model(allow_model_requests: None):
+    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=BedrockProvider())
     agent = Agent(model=model, system_prompt='You are a chatbot.')
 
     result = await agent.run('Hello!')
@@ -62,7 +62,7 @@ async def test_bedrock_model():
     )
 
 
-async def test_bedrock_model_structured_response():
+async def test_bedrock_model_structured_response(allow_model_requests: None):
     model = BedrockConverseModel('us.amazon.nova-micro-v1:0')
     agent = Agent(model=model, system_prompt='You are a helpful chatbot.', retries=5)
 

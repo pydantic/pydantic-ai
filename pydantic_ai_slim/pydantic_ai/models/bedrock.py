@@ -6,7 +6,7 @@ from collections.abc import AsyncIterator, Iterable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import TYPE_CHECKING, Generic, Literal, Union, overload
+from typing import TYPE_CHECKING, Generic, Literal, Union, cast, overload
 
 import anyio
 import anyio.to_thread
@@ -32,6 +32,7 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition
 
 if TYPE_CHECKING:
+    from botocore.client import BaseClient
     from botocore.eventstream import EventStream
     from mypy_boto3_bedrock_runtime import BedrockRuntimeClient
     from mypy_boto3_bedrock_runtime.type_defs import (
@@ -121,9 +122,13 @@ class BedrockConverseModel(Model):
         """The system / model provider, ex: openai."""
         return self._system
 
-    def __init__(self, model_name: str, *, provider: Literal['bedrock'] | Provider[BedrockRuntimeClient] = 'bedrock'):
+    def __init__(self, model_name: str, *, provider: Literal['bedrock'] | Provider[BaseClient] = 'bedrock'):
         self._model_name = model_name
-        self.client = infer_provider(provider).client if isinstance(provider, str) else provider.client
+
+        if isinstance(provider, str):
+            self.client = infer_provider(provider).client
+        else:
+            self.client = cast('BedrockRuntimeClient', provider.client)
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[ToolTypeDef]:
         tools = [self._map_tool_definition(r) for r in model_request_parameters.function_tools]

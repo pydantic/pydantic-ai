@@ -1,11 +1,6 @@
 from __future__ import annotations as _annotations
 
-from typing import TYPE_CHECKING, cast
-
 from pydantic_ai.providers import Provider
-
-if TYPE_CHECKING:
-    from mypy_boto3_bedrock_runtime.client import BedrockRuntimeClient
 
 try:
     import boto3
@@ -29,8 +24,8 @@ class BedrockProvider(Provider[BaseClient]):
         return self._client.meta.endpoint_url
 
     @property
-    def client(self) -> BedrockRuntimeClient:
-        return cast('BedrockRuntimeClient', self._client)
+    def client(self) -> BaseClient:
+        return self._client
 
-    def __init__(self, bedrock_client: BedrockRuntimeClient | None = None):
+    def __init__(self, bedrock_client: BaseClient | None = None):
         self._client = bedrock_client or boto3.client('bedrock-runtime')  # type: ignore[reportUnknownMemberType]
