@@ -38,7 +38,7 @@ class Whale(TypedDict):
     description: NotRequired[Annotated[str, Field(description='Short Description')]]
 
 
-agent = Agent('openai:gpt-4', result_type=list[Whale])
+agent = Agent('openai:gpt-4', result_type=list[Whale], instrument=True)
 
 
 async def main():

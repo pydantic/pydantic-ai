@@ -6,7 +6,7 @@ This module has to use numerous internal Pydantic APIs and is therefore brittle 
 from __future__ import annotations as _annotations
 
 from inspect import Parameter, signature
-from typing import TYPE_CHECKING, Any, Callable, TypedDict, cast, get_origin
+from typing import TYPE_CHECKING, Any, Callable, TypedDict, cast
 
 from pydantic import ConfigDict
 from pydantic._internal import _decorators, _generate_schema, _typing_extra
@@ -15,6 +15,7 @@ from pydantic.fields import FieldInfo
 from pydantic.json_schema import GenerateJsonSchema
 from pydantic.plugin._schema_validator import create_schema_validator
 from pydantic_core import SchemaValidator, core_schema
+from typing_extensions import get_origin
 
 from ._griffe import doc_descriptions
 from ._utils import check_object_json_schema, is_model_like
@@ -223,8 +224,7 @@ def _build_schema(
 
 
 def _is_call_ctx(annotation: Any) -> bool:
+    """Return whether the annotation is the `RunContext` class, parameterized or not."""
     from .tools import RunContext
 
-    return annotation is RunContext or (
-        _typing_extra.is_generic_alias(annotation) and get_origin(annotation) is RunContext
-    )
+    return annotation is RunContext or get_origin(annotation) is RunContext

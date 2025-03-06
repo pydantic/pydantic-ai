@@ -1,7 +1,8 @@
 from collections.abc import Iterator
-from typing import Any, get_args
+from typing import Any
 
 import pytest
+from typing_extensions import get_args
 
 from pydantic_ai.models import KnownModelName
 
@@ -42,6 +43,7 @@ def test_known_model_names():
         n for n in get_model_names(OpenAIModelName) if n.startswith('o1') or n.startswith('gpt') or n.startswith('o3')
     ]
     bedrock_names = [f'bedrock:{n}' for n in get_model_names(BedrockModelName)]
+    deepseek_names = ['deepseek:deepseek-chat', 'deepseek:deepseek-reasoner']
     extra_names = ['test']
 
     generated_names = sorted(
@@ -52,6 +54,7 @@ def test_known_model_names():
         + mistral_names
         + openai_names
         + bedrock_names
+        + deepseek_names
         + extra_names
     )
 

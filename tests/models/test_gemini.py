@@ -45,6 +45,7 @@ from pydantic_ai.models.gemini import (
     _GeminiTools,
     _GeminiUsageMetaData,
 )
+from pydantic_ai.providers.google_gla import GoogleGLAProvider
 from pydantic_ai.result import Usage
 from pydantic_ai.tools import ToolDefinition
 
@@ -55,9 +56,8 @@ pytestmark = pytest.mark.anyio
 
 def test_api_key_arg(env: TestEnv):
     env.set('GEMINI_API_KEY', 'via-env-var')
-    m = GeminiModel('gemini-1.5-flash', api_key='via-arg')
-    assert isinstance(m.auth, ApiKeyAuth)
-    assert m.auth.api_key == 'via-arg'
+    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key='via-arg'))
+    assert m.client.headers['x-goog-api-key'] == 'via-arg'
 
 
 def test_api_key_env_var(env: TestEnv):
@@ -80,11 +80,10 @@ def test_api_key_empty(env: TestEnv):
 
 
 async def test_model_simple(allow_model_requests: None):
-    m = GeminiModel('gemini-1.5-flash', api_key='via-arg')
-    assert isinstance(m.http_client, httpx.AsyncClient)
+    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key='via-arg'))
+    assert isinstance(m.client, httpx.AsyncClient)
     assert m.model_name == 'gemini-1.5-flash'
-    assert isinstance(m.auth, ApiKeyAuth)
-    assert m.auth.api_key == 'via-arg'
+    assert 'x-goog-api-key' in m.client.headers
 
     arc = ModelRequestParameters(function_tools=[], allow_text_result=True, result_tools=[])
     tools = m._get_tools(arc)
@@ -94,7 +93,7 @@ async def test_model_simple(allow_model_requests: None):
 
 
 async def test_model_tools(allow_model_requests: None):
-    m = GeminiModel('gemini-1.5-flash', api_key='via-arg')
+    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key='via-arg'))
     tools = [
         ToolDefinition(
             'foo',
@@ -153,7 +152,7 @@ async def test_model_tools(allow_model_requests: None):
 
 
 async def test_require_response_tool(allow_model_requests: None):
-    m = GeminiModel('gemini-1.5-flash', api_key='via-arg')
+    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key='via-arg'))
     result_tool = ToolDefinition(
         'result',
         'This is the tool for the final Result',
@@ -212,7 +211,7 @@ async def test_json_def_replaced(allow_model_requests: None):
         }
     )
 
-    m = GeminiModel('gemini-1.5-flash', api_key='via-arg')
+    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key='via-arg'))
     result_tool = ToolDefinition(
         'result',
         'This is the tool for the final Result',
@@ -259,7 +258,7 @@ async def test_json_def_replaced_any_of(allow_model_requests: None):
 
     json_schema = Locations.model_json_schema()
 
-    m = GeminiModel('gemini-1.5-flash', api_key='via-arg')
+    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key='via-arg'))
     result_tool = ToolDefinition(
         'result',
         'This is the tool for the final Result',
@@ -322,7 +321,7 @@ async def test_json_def_recursive(allow_model_requests: None):
         }
     )
 
-    m = GeminiModel('gemini-1.5-flash', api_key='via-arg')
+    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key='via-arg'))
     result_tool = ToolDefinition(
         'result',
         'This is the tool for the final Result',
@@ -354,7 +353,7 @@ async def test_json_def_date(allow_model_requests: None):
         }
     )
 
-    m = GeminiModel('gemini-1.5-flash', api_key='via-arg')
+    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key='via-arg'))
     result_tool = ToolDefinition(
         'result',
         'This is the tool for the final Result',
@@ -451,7 +450,7 @@ def example_usage() -> _GeminiUsageMetaData:
 async def test_text_success(get_gemini_client: GetGeminiClient):
     response = gemini_response(_content_model_response(ModelResponse(parts=[TextPart('Hello world')])))
     gemini_client = get_gemini_client(response)
-    m = GeminiModel('gemini-1.5-flash', http_client=gemini_client)
+    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(http_client=gemini_client))
     agent = Agent(m)
 
     result = await agent.run('Hello')
@@ -493,7 +492,7 @@ async def test_request_structured_response(get_gemini_client: GetGeminiClient):
         _content_model_response(ModelResponse(parts=[ToolCallPart('final_result', {'response': [1, 2, 123]})]))
     )
     gemini_client = get_gemini_client(response)
-    m = GeminiModel('gemini-1.5-flash', http_client=gemini_client)
+    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(http_client=gemini_client))
     agent = Agent(m, result_type=list[int])
 
     result = await agent.run('Hello')
@@ -540,7 +539,7 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
         gemini_response(_content_model_response(ModelResponse(parts=[TextPart('final response')]))),
     ]
     gemini_client = get_gemini_client(responses)
-    m = GeminiModel('gemini-1.5-flash', http_client=gemini_client)
+    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(http_client=gemini_client))
     agent = Agent(m, system_prompt='this is the system prompt')
 
     @agent.tool_plain
@@ -622,7 +621,7 @@ async def test_unexpected_response(client_with_handler: ClientWithHandler, env: 
         return httpx.Response(401, content='invalid request')
 
     gemini_client = client_with_handler(handler)
-    m = GeminiModel('gemini-1.5-flash', http_client=gemini_client)
+    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(http_client=gemini_client))
     agent = Agent(m, system_prompt='this is the system prompt')
 
     with pytest.raises(ModelHTTPError) as exc_info:
@@ -639,7 +638,7 @@ async def test_stream_text(get_gemini_client: GetGeminiClient):
     json_data = _gemini_streamed_response_ta.dump_json(responses, by_alias=True)
     stream = AsyncByteStreamList([json_data[:100], json_data[100:200], json_data[200:]])
     gemini_client = get_gemini_client(stream)
-    m = GeminiModel('gemini-1.5-flash', http_client=gemini_client)
+    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(http_client=gemini_client))
     agent = Agent(m)
 
     async with agent.run_stream('Hello') as result:
@@ -684,7 +683,7 @@ async def test_stream_invalid_unicode_text(get_gemini_client: GetGeminiClient):
 
     stream = AsyncByteStreamList(parts)
     gemini_client = get_gemini_client(stream)
-    m = GeminiModel('gemini-1.5-flash', http_client=gemini_client)
+    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(http_client=gemini_client))
     agent = Agent(m)
 
     async with agent.run_stream('Hello') as result:
@@ -698,7 +697,7 @@ async def test_stream_text_no_data(get_gemini_client: GetGeminiClient):
     json_data = _gemini_streamed_response_ta.dump_json(responses, by_alias=True)
     stream = AsyncByteStreamList([json_data[:100], json_data[100:200], json_data[200:]])
     gemini_client = get_gemini_client(stream)
-    m = GeminiModel('gemini-1.5-flash', http_client=gemini_client)
+    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(http_client=gemini_client))
     agent = Agent(m)
     with pytest.raises(UnexpectedModelBehavior, match='Streamed response ended without con'):
         async with agent.run_stream('Hello'):
@@ -714,7 +713,7 @@ async def test_stream_structured(get_gemini_client: GetGeminiClient):
     json_data = _gemini_streamed_response_ta.dump_json(responses, by_alias=True)
     stream = AsyncByteStreamList([json_data[:100], json_data[100:200], json_data[200:]])
     gemini_client = get_gemini_client(stream)
-    model = GeminiModel('gemini-1.5-flash', http_client=gemini_client)
+    model = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(http_client=gemini_client))
     agent = Agent(model, result_type=tuple[int, int])
 
     async with agent.run_stream('Hello') as result:
@@ -744,7 +743,7 @@ async def test_stream_structured_tool_calls(get_gemini_client: GetGeminiClient):
     second_stream = AsyncByteStreamList([d2[:100], d2[100:]])
 
     gemini_client = get_gemini_client([first_stream, second_stream])
-    model = GeminiModel('gemini-1.5-flash', http_client=gemini_client)
+    model = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(http_client=gemini_client))
     agent = Agent(model, result_type=tuple[int, int])
     tool_calls: list[str] = []
 
@@ -817,7 +816,7 @@ async def test_stream_text_heterogeneous(get_gemini_client: GetGeminiClient):
     json_data = _gemini_streamed_response_ta.dump_json(responses, by_alias=True)
     stream = AsyncByteStreamList([json_data[:100], json_data[100:200], json_data[200:]])
     gemini_client = get_gemini_client(stream)
-    m = GeminiModel('gemini-1.5-flash', http_client=gemini_client)
+    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(http_client=gemini_client))
     agent = Agent(m)
 
     @agent.tool_plain()
@@ -887,7 +886,7 @@ async def test_model_settings(client_with_handler: ClientWithHandler, env: TestE
         )
 
     gemini_client = client_with_handler(handler)
-    m = GeminiModel('gemini-1.5-flash', http_client=gemini_client, api_key='mock')
+    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(http_client=gemini_client, api_key='mock'))
     agent = Agent(m)
 
     result = await agent.run(
@@ -939,7 +938,8 @@ async def test_safety_settings_unsafe(
             )
 
         gemini_client = client_with_handler(handler)
-        m = GeminiModel('gemini-1.5-flash', http_client=gemini_client, api_key='mock')
+
+        m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(http_client=gemini_client, api_key='mock'))
         agent = Agent(m)
 
         await agent.run(
@@ -975,7 +975,7 @@ async def test_safety_settings_safe(
         )
 
     gemini_client = client_with_handler(handler)
-    m = GeminiModel('gemini-1.5-flash', http_client=gemini_client, api_key='mock')
+    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(http_client=gemini_client, api_key='mock'))
     agent = Agent(m)
 
     result = await agent.run(
@@ -994,7 +994,7 @@ async def test_safety_settings_safe(
 async def test_image_as_binary_content_input(
     allow_model_requests: None, gemini_api_key: str, image_content: BinaryContent
 ) -> None:
-    m = GeminiModel('gemini-2.0-flash', api_key=gemini_api_key)
+    m = GeminiModel('gemini-2.0-flash', provider=GoogleGLAProvider(api_key=gemini_api_key))
     agent = Agent(m)
 
     result = await agent.run(['What is the name of this fruit?', image_content])
@@ -1003,10 +1003,10 @@ async def test_image_as_binary_content_input(
 
 @pytest.mark.vcr()
 async def test_image_url_input(allow_model_requests: None, gemini_api_key: str) -> None:
-    m = GeminiModel('gemini-2.0-flash-exp', api_key=gemini_api_key)
+    m = GeminiModel('gemini-2.0-flash-exp', provider=GoogleGLAProvider(api_key=gemini_api_key))
     agent = Agent(m)
 
     image_url = ImageUrl(url='https://goo.gle/instrument-img')
 
     result = await agent.run(['What is the name of this fruit?', image_url])
-    assert result.data == snapshot('This is not a fruit, it is an organ console.')
+    assert result.data == snapshot("This is not a fruit; it's a pipe organ console.")

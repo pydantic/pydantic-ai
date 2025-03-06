@@ -28,6 +28,7 @@ nav:
       - multi-agent-applications.md
       - graph.md
       - input.md
+      - cli.md
   - Examples:
       - examples/index.md
       - examples/pydantic-model.md
@@ -61,6 +62,7 @@ nav:
       - api/models/test.md
       - api/models/function.md
       - api/models/fallback.md
+      - api/providers.md
       - api/pydantic_graph/graph.md
       - api/pydantic_graph/nodes.md
       - api/pydantic_graph/state.md

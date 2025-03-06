@@ -6,7 +6,6 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Generic, Union, cast
 
-import logfire_api
 from typing_extensions import TypeVar, assert_type
 
 from . import _result, _utils, exceptions, messages as _messages, models
@@ -48,8 +47,6 @@ A function that always takes and returns the same type of data (which is the res
 
 Usage `ResultValidatorFunc[AgentDepsT, T]`.
 """
-
-_logfire = logfire_api.Logfire(otel_scope='pydantic-ai')
 
 
 @dataclass
@@ -145,12 +142,14 @@ class AgentStream(Generic[AgentDepsT, ResultDataT]):
                 if isinstance(e, _messages.PartStartEvent):
                     new_part = e.part
                     if isinstance(new_part, _messages.ToolCallPart):
-                        if result_schema is not None and (match := result_schema.find_tool([new_part])):
-                            call, _ = match
-                            return _messages.FinalResultEvent(tool_name=call.tool_name)
+                        if result_schema:
+                            for call, _ in result_schema.find_tool([new_part]):
+                                return _messages.FinalResultEvent(
+                                    tool_name=call.tool_name, tool_call_id=call.tool_call_id
+                                )
                     elif allow_text_result:
                         assert_type(e, _messages.PartStartEvent)
-                        return _messages.FinalResultEvent(tool_name=None)
+                        return _messages.FinalResultEvent(tool_name=None, tool_call_id=None)
 
             usage_checking_stream = _get_usage_checking_stream_response(
                 self._raw_stream_response, self._usage_limits, self.usage
@@ -300,17 +299,14 @@ class StreamedRunResult(Generic[AgentDepsT, ResultDataT]):
         if self._result_schema and not self._result_schema.allow_text_result:
             raise exceptions.UserError('stream_text() can only be used with text responses')
 
-        with _logfire.span('response stream text') as lf_span:
-            if delta:
-                async for text in self._stream_response_text(delta=delta, debounce_by=debounce_by):
-                    yield text
-            else:
-                combined_validated_text = ''
-                async for text in self._stream_response_text(delta=delta, debounce_by=debounce_by):
-                    combined_validated_text = await self._validate_text_result(text)
-                    yield combined_validated_text
-                lf_span.set_attribute('combined_text', combined_validated_text)
-            await self._marked_completed(self._stream_response.get())
+        if delta:
+            async for text in self._stream_response_text(delta=delta, debounce_by=debounce_by):
+                yield text
+        else:
+            async for text in self._stream_response_text(delta=delta, debounce_by=debounce_by):
+                combined_validated_text = await self._validate_text_result(text)
+                yield combined_validated_text
+        await self._marked_completed(self._stream_response.get())
 
     async def stream_structured(
         self, *, debounce_by: float | None = 0.1
@@ -325,22 +321,20 @@ class StreamedRunResult(Generic[AgentDepsT, ResultDataT]):
         Returns:
             An async iterable of the structured response message and whether that is the last message.
         """
-        with _logfire.span('response stream structured') as lf_span:
-            # if the message currently has any parts with content, yield before streaming
-            msg = self._stream_response.get()
-            for part in msg.parts:
-                if part.has_content():
-                    yield msg, False
-                    break
-
-            async for msg in self._stream_response_structured(debounce_by=debounce_by):
+        # if the message currently has any parts with content, yield before streaming
+        msg = self._stream_response.get()
+        for part in msg.parts:
+            if part.has_content():
                 yield msg, False
+                break
 
-            msg = self._stream_response.get()
-            yield msg, True
+        async for msg in self._stream_response_structured(debounce_by=debounce_by):
+            yield msg, False
 
-            lf_span.set_attribute('structured_response', msg)
-            await self._marked_completed(msg)
+        msg = self._stream_response.get()
+        yield msg, True
+
+        await self._marked_completed(msg)
 
     async def get_data(self) -> ResultDataT:
         """Stream the whole response, validate and return it."""
@@ -472,6 +466,8 @@ class FinalResult(Generic[ResultDataT]):
     """The final result data."""
     tool_name: str | None
     """Name of the final result tool; `None` if the result came from unstructured text content."""
+    tool_call_id: str | None
+    """ID of the tool call that produced the final result; `None` if the result came from unstructured text content."""
 
 
 def _get_usage_checking_stream_response(

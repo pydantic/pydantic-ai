@@ -36,9 +36,9 @@ from pydantic_ai.models.test import TestModel
 from .conftest import ClientWithHandler, TestEnv
 
 try:
-    from pydantic_ai.models.vertexai import VertexAIModel
+    from pydantic_ai.providers.google_vertex import GoogleVertexProvider
 except ImportError:
-    VertexAIModel = None
+    GoogleVertexProvider = None
 
 
 try:
@@ -47,7 +47,9 @@ except ImportError:
     logfire = None
 
 
-pytestmark = pytest.mark.skipif(VertexAIModel is None or logfire is None, reason='google-auth or logfire not installed')
+pytestmark = pytest.mark.skipif(
+    GoogleVertexProvider is None or logfire is None, reason='google-auth or logfire not installed'
+)
 
 
 def find_filter_examples() -> Iterable[CodeExample]:

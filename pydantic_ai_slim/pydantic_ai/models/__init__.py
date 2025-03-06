@@ -28,9 +28,11 @@ if TYPE_CHECKING:
 
 
 KnownModelName = Literal[
+    'anthropic:claude-3-7-sonnet-latest',
     'anthropic:claude-3-5-haiku-latest',
     'anthropic:claude-3-5-sonnet-latest',
     'anthropic:claude-3-opus-latest',
+    'claude-3-7-sonnet-latest',
     'claude-3-5-haiku-latest',
     'bedrock:amazon.titan-tg1-large',
     'bedrock:amazon.titan-text-lite-v1',
@@ -88,6 +90,8 @@ KnownModelName = Literal[
     'cohere:command-r-plus-04-2024',
     'cohere:command-r-plus-08-2024',
     'cohere:command-r7b-12-2024',
+    'deepseek:deepseek-chat',
+    'deepseek:deepseek-reasoner',
     'google-gla:gemini-1.0-pro',
     'google-gla:gemini-1.5-flash',
     'google-gla:gemini-1.5-flash-8b',
@@ -97,6 +101,7 @@ KnownModelName = Literal[
     'google-gla:gemini-exp-1206',
     'google-gla:gemini-2.0-flash',
     'google-gla:gemini-2.0-flash-lite-preview-02-05',
+    'google-gla:gemini-2.0-pro-exp-02-05',
     'google-vertex:gemini-1.0-pro',
     'google-vertex:gemini-1.5-flash',
     'google-vertex:gemini-1.5-flash-8b',
@@ -106,6 +111,7 @@ KnownModelName = Literal[
     'google-vertex:gemini-exp-1206',
     'google-vertex:gemini-2.0-flash',
     'google-vertex:gemini-2.0-flash-lite-preview-02-05',
+    'google-vertex:gemini-2.0-pro-exp-02-05',
     'gpt-3.5-turbo',
     'gpt-3.5-turbo-0125',
     'gpt-3.5-turbo-0301',
@@ -357,58 +363,56 @@ def infer_model(model: Model | KnownModelName) -> Model:
         from .test import TestModel
 
         return TestModel()
-    elif model.startswith('cohere:'):
+
+    try:
+        provider, model_name = model.split(':')
+    except ValueError:
+        model_name = model
+        # TODO(Marcelo): We should deprecate this way.
+        if model_name.startswith(('gpt', 'o1', 'o3')):
+            provider = 'openai'
+        elif model_name.startswith('claude'):
+            provider = 'anthropic'
+        elif model_name.startswith('gemini'):
+            provider = 'google-gla'
+        else:
+            raise UserError(f'Unknown model: {model}')
+
+    if provider == 'vertexai':
+        provider = 'google-vertex'
+
+    if provider == 'cohere':
         from .cohere import CohereModel
 
-        return CohereModel(model[7:])
-    elif model.startswith('openai:'):
+        # TODO(Marcelo): Missing provider API.
+        return CohereModel(model_name)
+    elif provider in ('deepseek', 'openai'):
         from .openai import OpenAIModel
 
-        return OpenAIModel(model[7:])
-    elif model.startswith(('gpt', 'o1', 'o3')):
-        from .openai import OpenAIModel
-
-        return OpenAIModel(model)
-    elif model.startswith('google-gla'):
+        return OpenAIModel(model_name, provider=provider)
+    elif provider in ('google-gla', 'google-vertex'):
         from .gemini import GeminiModel
 
-        return GeminiModel(model[11:])
-    # backwards compatibility with old model names (ex, gemini-1.5-flash -> google-gla:gemini-1.5-flash)
-    elif model.startswith('gemini'):
-        from .gemini import GeminiModel
-
-        # noinspection PyTypeChecker
-        return GeminiModel(model)
-    elif model.startswith('groq:'):
+        return GeminiModel(model_name, provider=provider)
+    elif provider == 'groq':
         from .groq import GroqModel
 
-        return GroqModel(model[5:])
-    elif model.startswith('google-vertex'):
-        from .vertexai import VertexAIModel
-
-        return VertexAIModel(model[14:])
-    # backwards compatibility with old model names (ex, vertexai:gemini-1.5-flash -> google-vertex:gemini-1.5-flash)
-    elif model.startswith('vertexai:'):
-        from .vertexai import VertexAIModel
-
-        return VertexAIModel(model[9:])
-    elif model.startswith('mistral:'):
+        # TODO(Marcelo): Missing provider API.
+        return GroqModel(model_name)
+    elif provider == 'mistral':
         from .mistral import MistralModel
 
-        return MistralModel(model[8:])
-    elif model.startswith('anthropic'):
+        # TODO(Marcelo): Missing provider API.
+        return MistralModel(model_name)
+    elif provider == 'anthropic':
         from .anthropic import AnthropicModel
 
-        return AnthropicModel(model[10:])
-    # backwards compatibility with old model names (ex, claude-3-5-sonnet-latest -> anthropic:claude-3-5-sonnet-latest)
-    elif model.startswith('claude'):
-        from .anthropic import AnthropicModel
+        # TODO(Marcelo): Missing provider API.
+        return AnthropicModel(model_name)
+    elif provider == 'bedrock':
+        from .bedrock import BedrockConverseModel
 
-        return AnthropicModel(model)
-    elif model.startswith('bedrock:'):
-        from .bedrock import BedrockModel
-
-        return BedrockModel(model[8:])
+        return BedrockConverseModel(model_name)
     else:
         raise UserError(f'Unknown model: {model}')
 
