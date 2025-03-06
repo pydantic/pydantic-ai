@@ -35,21 +35,24 @@ async def test_bedrock_model():
 
     result = await agent.run('Hello!')
     assert result.data == snapshot(
-        "Hello! How can I assist you today? Whether you have a question, need some information, or just want to chat, I'm here to help."
+        "Hello! How can I assist you today? Whether you have questions, need information, or just want to chat, I'm here to help."
     )
-    assert result.usage() == snapshot(Usage(requests=1, request_tokens=7, response_tokens=32, total_tokens=39))
+    assert result.usage() == snapshot(Usage(requests=1, request_tokens=7, response_tokens=30, total_tokens=37))
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
                 parts=[
                     SystemPromptPart(content='You are a chatbot.'),
-                    UserPromptPart(content='Hello!', timestamp=IsDatetime()),
+                    UserPromptPart(
+                        content='Hello!',
+                        timestamp=IsDatetime(),
+                    ),
                 ]
             ),
             ModelResponse(
                 parts=[
                     TextPart(
-                        content="Hello! How can I assist you today? Whether you have a question, need some information, or just want to chat, I'm here to help."
+                        content="Hello! How can I assist you today? Whether you have questions, need information, or just want to chat, I'm here to help."
                     )
                 ],
                 model_name='us.amazon.nova-micro-v1:0',
@@ -83,26 +86,27 @@ async def test_bedrock_model_structured_response():
 
     result = await agent.run('What was the temperature in London 1st January 2022?', result_type=Response)
     assert result.data == snapshot({'temperature': '30°C', 'date': datetime.date(2022, 1, 1), 'city': 'London'})
-    assert result.usage() == snapshot(Usage(requests=2, request_tokens=1238, response_tokens=313, total_tokens=1551))
+    assert result.usage() == snapshot(Usage(requests=2, request_tokens=1237, response_tokens=304, total_tokens=1541))
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
                 parts=[
                     SystemPromptPart(content='You are a helpful chatbot.'),
                     UserPromptPart(
-                        content='What was the temperature in London 1st January 2022?', timestamp=IsDatetime()
+                        content='What was the temperature in London 1st January 2022?',
+                        timestamp=IsDatetime(),
                     ),
                 ]
             ),
             ModelResponse(
                 parts=[
                     TextPart(
-                        content='<thinking> To find the temperature in London on 1st January 2022, I need to use the "temperature" tool with the appropriate arguments. The required arguments are "date" and "city". The date provided is "1st January 2022" and the city is "London". I will use these to call the "temperature" tool.</thinking>\n'
+                        content='<thinking> To find the temperature in London on 1st January 2022, I will use the "temperature" tool. I will need to provide the date and the city name. The date is already provided as "1st January 2022" and the city name is "London". I will call the "temperature" tool with these parameters.</thinking>\n'
                     ),
                     ToolCallPart(
                         tool_name='temperature',
                         args={'date': '2022-01-01', 'city': 'London'},
-                        tool_call_id='tooluse_H6VziiLsSSuR_MwpCjKTbA',
+                        tool_call_id='tooluse_72V1-POFTp2399ewBfduMQ',
                     ),
                 ],
                 model_name='us.amazon.nova-micro-v1:0',
@@ -113,7 +117,7 @@ async def test_bedrock_model_structured_response():
                     ToolReturnPart(
                         tool_name='temperature',
                         content='30°C',
-                        tool_call_id='tooluse_H6VziiLsSSuR_MwpCjKTbA',
+                        tool_call_id='tooluse_72V1-POFTp2399ewBfduMQ',
                         timestamp=IsDatetime(),
                     )
                 ]
@@ -121,12 +125,12 @@ async def test_bedrock_model_structured_response():
             ModelResponse(
                 parts=[
                     TextPart(
-                        content='<thinking> The "temperature" tool has provided the temperature information for the specified date and city. The temperature in London on 1st January 2022 was 30°C. Now, I will use the "final_result" tool to present this information to the user in a clear and complete manner.</thinking> '
+                        content='<thinking> The "temperature" tool has returned the temperature for the specified date and city. The temperature in London on 1st January 2022 was 30°C. Now I will use the "final_result" tool to provide this information to the user.</thinking> '
                     ),
                     ToolCallPart(
                         tool_name='final_result',
                         args={'date': '2022-01-01', 'city': 'London', 'temperature': '30°C'},
-                        tool_call_id='tooluse_z0uEyRgcQYGbc6TiDN6Krg',
+                        tool_call_id='tooluse_TPjEx1BESIqmrElHJ0b3sQ',
                     ),
                 ],
                 model_name='us.amazon.nova-micro-v1:0',
@@ -137,7 +141,7 @@ async def test_bedrock_model_structured_response():
                     ToolReturnPart(
                         tool_name='final_result',
                         content='Final result processed.',
-                        tool_call_id='tooluse_z0uEyRgcQYGbc6TiDN6Krg',
+                        tool_call_id='tooluse_TPjEx1BESIqmrElHJ0b3sQ',
                         timestamp=IsDatetime(),
                     )
                 ]

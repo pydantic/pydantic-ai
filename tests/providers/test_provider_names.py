@@ -11,6 +11,7 @@ from pydantic_ai.providers import Provider, infer_provider
 from ..conftest import try_import
 
 with try_import() as imports_successful:
+    from pydantic_ai.providers.bedrock import BedrockProvider
     from pydantic_ai.providers.deepseek import DeepSeekProvider
     from pydantic_ai.providers.google_gla import GoogleGLAProvider
     from pydantic_ai.providers.google_vertex import GoogleVertexProvider
@@ -21,6 +22,7 @@ with try_import() as imports_successful:
         ('openai', OpenAIProvider, None),
         ('google-vertex', GoogleVertexProvider, None),
         ('google-gla', GoogleGLAProvider, 'GEMINI_API_KEY'),
+        ('bedrock', BedrockProvider, None),
     ]
 
 if not imports_successful():

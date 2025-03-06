@@ -32,21 +32,5 @@ class BedrockProvider(Provider[BaseClient]):
     def client(self) -> BedrockRuntimeClient:
         return cast('BedrockRuntimeClient', self._client)
 
-    def __init__(
-        self,
-        aws_access_key_id: str | None = None,
-        aws_secret_access_key: str | None = None,
-        aws_session_token: str | None = None,
-        region_name: str | None = None,
-        bedrock_client: BedrockRuntimeClient | None = None,
-    ):
-        if bedrock_client:
-            self._client = bedrock_client
-        else:
-            self._client = boto3.client(  # type: ignore[reportUnknownMemberType]
-                'bedrock-runtime',
-                aws_access_key_id=aws_access_key_id,
-                aws_secret_access_key=aws_secret_access_key,
-                aws_session_token=aws_session_token,
-                region_name=region_name,
-            )
+    def __init__(self, bedrock_client: BedrockRuntimeClient | None = None):
+        self._client = bedrock_client or boto3.client('bedrock-runtime')  # type: ignore[reportUnknownMemberType]
