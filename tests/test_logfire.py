@@ -134,6 +134,7 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary], instrument: 
                             'content': '1',
                             'role': 'tool',
                             'id': None,
+                            'name': 'my_ret',
                             'gen_ai.message.index': 2,
                             'event.name': 'gen_ai.tool.message',
                         },
@@ -222,6 +223,7 @@ def test_instrument_all():
     def get_model():
         return agent._get_model(model)  # type: ignore
 
+    Agent.instrument_all(False)
     assert get_model() is model
 
     Agent.instrument_all()
