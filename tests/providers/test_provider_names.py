@@ -22,7 +22,7 @@ with try_import() as imports_successful:
         ('openai', OpenAIProvider, None),
         ('google-vertex', GoogleVertexProvider, None),
         ('google-gla', GoogleGLAProvider, 'GEMINI_API_KEY'),
-        ('bedrock', BedrockProvider, None),
+        ('bedrock', BedrockProvider, 'You must provide a `region_name` or a boto3 client for Bedrock Runtime.'),
     ]
 
 if not imports_successful():

@@ -7,6 +7,7 @@ from pydantic_ai.providers import Provider
 try:
     import boto3
     from botocore.client import BaseClient
+    from botocore.exceptions import NoRegionError
 except ImportError as _import_error:
     raise ImportError(
         'Please install `boto3` to use the Bedrock provider, '
@@ -36,37 +37,40 @@ class BedrockProvider(Provider[BaseClient]):
     def __init__(
         self,
         *,
+        region_name: str,
         aws_access_key_id: str | None = None,
         aws_secret_access_key: str | None = None,
         aws_session_token: str | None = None,
-        region_name: str | None = None,
     ) -> None: ...
 
     def __init__(
         self,
         *,
+        bedrock_client: BaseClient | None = None,
+        region_name: str | None = None,
         aws_access_key_id: str | None = None,
         aws_secret_access_key: str | None = None,
         aws_session_token: str | None = None,
-        region_name: str | None = None,
-        bedrock_client: BaseClient | None = None,
     ) -> None:
         """Initialize the Bedrock provider.
 
         Args:
             bedrock_client: A boto3 client for Bedrock Runtime. If provided, other arguments are ignored.
+            region_name: The AWS region name.
             aws_access_key_id: The AWS access key ID.
             aws_secret_access_key: The AWS secret access key.
             aws_session_token: The AWS session token.
-            region_name: The AWS region name.
         """
         if bedrock_client is not None:
             self._client = bedrock_client
         else:
-            self._client = boto3.client(  # type: ignore[reportUnknownMemberType]
-                'bedrock-runtime',
-                aws_access_key_id=aws_access_key_id,
-                aws_secret_access_key=aws_secret_access_key,
-                aws_session_token=aws_session_token,
-                region_name=region_name,
-            )
+            try:
+                self._client = boto3.client(  # type: ignore[reportUnknownMemberType]
+                    'bedrock-runtime',
+                    aws_access_key_id=aws_access_key_id,
+                    aws_secret_access_key=aws_secret_access_key,
+                    aws_session_token=aws_session_token,
+                    region_name=region_name,
+                )
+            except NoRegionError as exc:
+                raise ValueError('You must provide a `region_name` or a boto3 client for Bedrock Runtime.') from exc
