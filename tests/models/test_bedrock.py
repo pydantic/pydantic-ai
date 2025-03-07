@@ -2,10 +2,10 @@ from __future__ import annotations as _annotations
 
 import datetime
 import os
-from typing import TypedDict
 
 import pytest
 from inline_snapshot import snapshot
+from typing_extensions import TypedDict
 
 from pydantic_ai.agent import Agent
 from pydantic_ai.messages import (

@@ -89,7 +89,7 @@ include = [
 ]
 
 [tool.ruff.lint]
-extend-select = ["Q", "RUF100", "C90", "UP", "I", "D"]
+extend-select = ["Q", "RUF100", "C90", "UP", "I", "D", "TID251"]
 flake8-quotes = { inline-quotes = "single", multiline-quotes = "double" }
 isort = { combine-as-imports = true, known-first-party = ["pydantic_ai"] }
 mccabe = { max-complexity = 15 }
@@ -103,6 +103,9 @@ ignore = [
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"typing.TypedDict".msg = "Use typing_extensions.TypedDict instead."
 
 [tool.ruff.format]
 # don't format python in docstrings, pytest-examples takes care of it

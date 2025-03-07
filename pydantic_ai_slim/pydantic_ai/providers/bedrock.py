@@ -37,7 +37,7 @@ class BedrockProvider(Provider[BaseClient]):
     def __init__(
         self,
         *,
-        region_name: str,
+        region_name: str | None = None,
         aws_access_key_id: str | None = None,
         aws_secret_access_key: str | None = None,
         aws_session_token: str | None = None,
