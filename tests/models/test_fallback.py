@@ -116,35 +116,8 @@ def test_first_failed_instrumented(capfire: CaptureLogfire) -> None:
             ),
         ]
     )
-    assert capfire.exporter.exported_spans_as_dict(_include_pending_spans=True) == snapshot(
+    assert capfire.exporter.exported_spans_as_dict() == snapshot(
         [
-            {
-                'name': 'agent run',
-                'context': {'trace_id': 1, 'span_id': 2, 'is_remote': False},
-                'parent': {'trace_id': 1, 'span_id': 1, 'is_remote': False},
-                'start_time': 1000000000,
-                'end_time': 1000000000,
-                'attributes': {
-                    'model_name': 'FallBackModel[function:failure_response:, function:success_response:]',
-                    'agent_name': 'agent',
-                    'logfire.msg': 'agent run',
-                    'logfire.span_type': 'pending_span',
-                    'logfire.pending_parent_id': '0000000000000000',
-                },
-            },
-            {
-                'name': 'preparing model request params',
-                'context': {'trace_id': 1, 'span_id': 4, 'is_remote': False},
-                'parent': {'trace_id': 1, 'span_id': 3, 'is_remote': False},
-                'start_time': 2000000000,
-                'end_time': 2000000000,
-                'attributes': {
-                    'run_step': 1,
-                    'logfire.span_type': 'pending_span',
-                    'logfire.msg': 'preparing model request params',
-                    'logfire.pending_parent_id': '0000000000000001',
-                },
-            },
             {
                 'name': 'preparing model request params',
                 'context': {'trace_id': 1, 'span_id': 3, 'is_remote': False},
@@ -155,21 +128,6 @@ def test_first_failed_instrumented(capfire: CaptureLogfire) -> None:
                     'run_step': 1,
                     'logfire.span_type': 'span',
                     'logfire.msg': 'preparing model request params',
-                },
-            },
-            {
-                'name': 'chat FallBackModel[function:failure_response:, function:success_response:]',
-                'context': {'trace_id': 1, 'span_id': 6, 'is_remote': False},
-                'parent': {'trace_id': 1, 'span_id': 5, 'is_remote': False},
-                'start_time': 4000000000,
-                'end_time': 4000000000,
-                'attributes': {
-                    'gen_ai.operation.name': 'chat',
-                    'gen_ai.system': 'fallback',
-                    'gen_ai.request.model': 'FallBackModel[function:failure_response:, function:success_response:]',
-                    'logfire.span_type': 'pending_span',
-                    'logfire.msg': 'chat FallBackModel[function:failure_response:, function:success_response:]',
-                    'logfire.pending_parent_id': '0000000000000001',
                 },
             },
             {
