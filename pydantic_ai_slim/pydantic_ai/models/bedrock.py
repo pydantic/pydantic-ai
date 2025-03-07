@@ -131,6 +131,14 @@ class BedrockConverseModel(Model):
         *,
         provider: Literal['bedrock'] | Provider[BaseClient] = 'bedrock',
     ):
+        """Initialize a Bedrock model.
+
+        Args:
+            model_name: The name of the model to use.
+            model_name: The name of the Bedrock model to use. List of model names available
+                [here](https://docs.aws.amazon.com/bedrock/latest/userguide/models-supported.html).
+            provider: The provider to use. Defaults to `'bedrock'`.
+        """
         self._model_name = model_name
 
         if isinstance(provider, str):
