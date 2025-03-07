@@ -69,6 +69,14 @@ TEST_CASES = [
         'cohere',
         'CohereModel',
     ),
+    (
+        'AWS_DEFAULT_REGION',
+        'bedrock:bedrock-claude-3-5-haiku-latest',
+        'bedrock-claude-3-5-haiku-latest',
+        'bedrock',
+        'bedrock',
+        'BedrockConverseModel',
+    ),
 ]
 
 
