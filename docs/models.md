@@ -569,7 +569,7 @@ export AWS_REGION='us-east-1'  # or your preferred region
 
 You can then use [`BedrockConverseModel`][pydantic_ai.models.bedrock.BedrockConverseModel] by name:
 
-```python {title="bedrock_model_by_name.py"}
+```python {title="bedrock_model_by_name.py", test="skip}
 from pydantic_ai import Agent
 
 agent = Agent('bedrock:anthropic.claude-3-sonnet-20240229-v1:0')
@@ -578,7 +578,7 @@ agent = Agent('bedrock:anthropic.claude-3-sonnet-20240229-v1:0')
 
 Or initialize the model directly with just the model name:
 
-```python {title="bedrock_model_init.py"}
+```python {title="bedrock_model_init.py" test="skip"}
 from pydantic_ai import Agent
 from pydantic_ai.models.bedrock import BedrockConverseModel
 

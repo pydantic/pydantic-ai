@@ -364,7 +364,7 @@ class BedrockStreamedResponse(StreamedResponse):
         """
         chunk: ConverseStreamOutputTypeDef
         tool_id: str | None = None
-        async for chunk in AsyncIteratorWrapper(self._event_stream):
+        async for chunk in _AsyncIteratorWrapper(self._event_stream):
             # TODO(Marcelo): Switch this to `match` when we drop Python 3.9 support.
             if 'messageStart' in chunk:
                 continue
@@ -422,7 +422,7 @@ class BedrockStreamedResponse(StreamedResponse):
         )
 
 
-class AsyncIteratorWrapper(Generic[T]):
+class _AsyncIteratorWrapper(Generic[T]):
     """Wrap a synchronous iterator in an async iterator."""
 
     def __init__(self, sync_iterator: Iterable[T]):
