@@ -2,7 +2,6 @@ import datetime
 import os
 from typing import TypedDict
 
-import boto3
 import pytest
 from inline_snapshot import snapshot
 
@@ -21,6 +20,8 @@ from pydantic_ai.usage import Usage
 from ..conftest import IsDatetime, try_import
 
 with try_import() as imports_successful:
+    import boto3
+
     from pydantic_ai.models.bedrock import BedrockConverseModel
     from pydantic_ai.providers.bedrock import BedrockProvider
 
