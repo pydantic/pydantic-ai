@@ -367,7 +367,7 @@ def infer_model(model: Model | KnownModelName) -> Model:
         return TestModel()
 
     try:
-        provider, model_name = model.split(':')
+        provider, model_name = model.split(':', maxsplit=1)
     except ValueError:
         model_name = model
         # TODO(Marcelo): We should deprecate this way.
