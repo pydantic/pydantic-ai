@@ -61,7 +61,9 @@ class FallbackModel(Model):
 
         for model in self.models:
             try:
-                return await model.request(messages, model_settings, model_request_parameters)
+                response, usage = await model.request(messages, model_settings, model_request_parameters)
+                response.model_used = model  # type: ignore
+                return response, usage
             except Exception as exc:
                 if self._fallback_on(exc):
                     exceptions.append(exc)
