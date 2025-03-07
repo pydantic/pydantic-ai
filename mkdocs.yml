@@ -54,6 +54,7 @@ nav:
       - api/models/base.md
       - api/models/openai.md
       - api/models/anthropic.md
+      - api/models/bedrock.md
       - api/models/cohere.md
       - api/models/gemini.md
       - api/models/vertexai.md
