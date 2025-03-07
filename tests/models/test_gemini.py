@@ -991,6 +991,33 @@ async def test_safety_settings_safe(
     assert result.data == 'world'
 
 
+async def test_labels_are_not_used_with_gla_provider(
+    client_with_handler: ClientWithHandler, env: TestEnv, allow_model_requests: None
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        labels = json.loads(request.content).get('labels')
+        assert labels is None
+
+        return httpx.Response(
+            200,
+            content=_gemini_response_ta.dump_json(
+                gemini_response(_content_model_response(ModelResponse(parts=[TextPart('world')]))),
+                by_alias=True,
+            ),
+            headers={'Content-Type': 'application/json'},
+        )
+
+    gemini_client = client_with_handler(handler)
+    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(http_client=gemini_client, api_key='mock'))
+    agent = Agent(m)
+
+    result = await agent.run(
+        'hello',
+        model_settings=GeminiModelSettings(gemini_labels={'environment': 'test', 'team': 'analytics'}),
+    )
+    assert result.data == 'world'
+
+
 @pytest.mark.vcr()
 async def test_image_as_binary_content_input(
     allow_model_requests: None, gemini_api_key: str, image_content: BinaryContent
