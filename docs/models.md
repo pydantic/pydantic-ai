@@ -336,6 +336,27 @@ agent = Agent(model)
 ...
 ```
 
+Alternatively, you can provide the loaded JSON file contents:
+
+```python {title="vertexai_service_account.py"}
+import json
+
+from pydantic_ai import Agent
+from pydantic_ai.models.gemini import GeminiModel
+from pydantic_ai.providers.google_vertex import GoogleVertexProvider
+
+model = GeminiModel(
+    'gemini-2.0-flash',
+    provider=GoogleVertexProvider(
+        service_account_info=json.loads(
+            '{ "type": "service_account", "project_id": "my-project-id" }'
+        )
+    ),
+)
+agent = Agent(model)
+...
+```
+
 ### Customising region
 
 Whichever way you authenticate, you can specify which region requests will be sent to via the [`region` argument][pydantic_ai.providers.google_vertex.GoogleVertexProvider].
