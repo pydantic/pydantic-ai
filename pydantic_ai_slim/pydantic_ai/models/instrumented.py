@@ -220,12 +220,14 @@ class InstrumentedModel(WrapperModel):
         if base_url := model.base_url:
             try:
                 parsed = urlparse(base_url)
+            except Exception:  # pragma: no cover
+                pass
+            else:
                 if parsed.hostname:
                     attributes['server.address'] = parsed.hostname
                 if parsed.port:
                     attributes['server.port'] = parsed.port
-            except Exception:  # pragma: no cover
-                pass
+
         return attributes
 
     @staticmethod
