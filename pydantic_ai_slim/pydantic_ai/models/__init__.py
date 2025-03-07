@@ -55,6 +55,8 @@ KnownModelName = Literal[
     'bedrock:us.anthropic.claude-3-opus-20240229-v1:0',
     'bedrock:anthropic.claude-3-5-sonnet-20240620-v1:0',
     'bedrock:us.anthropic.claude-3-5-sonnet-20240620-v1:0',
+    'bedrock:anthropic.claude-3-7-sonnet-20250219-v1:0',
+    'bedrock:us.anthropic.claude-3-7-sonnet-20250219-v1:0',
     'bedrock:cohere.command-text-v14',
     'bedrock:cohere.command-r-v1:0',
     'bedrock:cohere.command-r-plus-v1:0',
