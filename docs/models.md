@@ -329,15 +329,32 @@ from pydantic_ai.providers.google_vertex import GoogleVertexProvider
 
 model = GeminiModel(
     'gemini-2.0-flash',
-    provider=GoogleVertexProvider(
-        service_account_file='path/to/service-account.json'  # (1)!
-    ),
+    provider=GoogleVertexProvider(service_account_file='path/to/service-account.json'),
 )
 agent = Agent(model)
 ...
 ```
 
-1. Also accepts the JSON file contents string, e.g., `'{ "type":"service_account", "project_id": ... }'`
+Alternatively, you can provide the loaded JSON file contents:
+
+```python {title="vertexai_service_account.py"}
+import json
+
+from pydantic_ai import Agent
+from pydantic_ai.models.gemini import GeminiModel
+from pydantic_ai.providers.google_vertex import GoogleVertexProvider
+
+model = GeminiModel(
+    'gemini-2.0-flash',
+    provider=GoogleVertexProvider(
+        service_account_info=json.loads(
+            '{ "type":"service_account", "project_id": "my-project" }'
+        )
+    ),
+)
+agent = Agent(model)
+...
+```
 
 ### Customising region
 
