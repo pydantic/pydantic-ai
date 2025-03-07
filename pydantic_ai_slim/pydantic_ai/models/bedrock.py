@@ -303,9 +303,7 @@ class BedrockConverseModel(Model):
                         )
                     elif isinstance(part, RetryPromptPart):
                         if part.tool_name is None:
-                            # TODO(Marcelo): Support other content types.
-                            assert isinstance(part.content, str)
-                            bedrock_messages.append({'role': 'user', 'content': [{'text': part.content}]})
+                            bedrock_messages.append({'role': 'user', 'content': [{'text': part.model_response()}]})
                         else:
                             assert part.tool_call_id is not None
                             bedrock_messages.append(

@@ -8,9 +8,11 @@ from inline_snapshot import snapshot
 from typing_extensions import TypedDict
 
 from pydantic_ai.agent import Agent
+from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
+    RetryPromptPart,
     SystemPromptPart,
     TextPart,
     ToolCallPart,
@@ -206,3 +208,71 @@ async def test_bedrock_model_anthropic_model_without_tools(
     agent = Agent(model=model, system_prompt='You are a helpful chatbot.', model_settings={'temperature': 0.0})
     result = await agent.run('What is the capital of France?')
     assert result.data == snapshot('Paris is the capital of France.')
+
+
+async def test_bedrock_model_retry(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
+    agent = Agent(
+        model=model, system_prompt='You are a helpful chatbot.', model_settings={'temperature': 0.0}, retries=2
+    )
+
+    @agent.tool_plain
+    async def get_capital(country: str) -> str:
+        """Get the capital of a country.
+
+        Args:
+            country: The country name.
+        """
+        raise ModelRetry('The country is not supported.')
+
+    result = await agent.run('What is the capital of France?')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(content='You are a helpful chatbot.'),
+                    UserPromptPart(
+                        content='What is the capital of France?',
+                        timestamp=datetime.datetime(2025, 3, 7, 9, 18, 24, 818226, tzinfo=datetime.timezone.utc),
+                    ),
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content='<thinking> To find the capital of France, I will use the available tool "get_capital". I will input the country name "France" into the tool. </thinking>\n'
+                    ),
+                    ToolCallPart(
+                        tool_name='get_capital',
+                        args={'country': 'France'},
+                        tool_call_id='tooluse_F8LnaCMtQ0-chKTnPhNH2g',
+                    ),
+                ],
+                model_name='us.amazon.nova-micro-v1:0',
+                timestamp=datetime.datetime(2025, 3, 7, 9, 18, 25, 614733, tzinfo=datetime.timezone.utc),
+            ),
+            ModelRequest(
+                parts=[
+                    RetryPromptPart(
+                        content='The country is not supported.',
+                        tool_name='get_capital',
+                        tool_call_id='tooluse_F8LnaCMtQ0-chKTnPhNH2g',
+                        timestamp=datetime.datetime(2025, 3, 7, 9, 18, 25, 615589, tzinfo=datetime.timezone.utc),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content="""\
+<thinking> It seems there was an error in retrieving the capital of France. The tool returned a message saying "The country is not supported." This indicates that the tool does not support the country France. I will inform the user about this limitation and suggest alternative ways to find the information. </thinking>
+
+I'm sorry, but the tool I have does not support retrieving the capital of France. However, I can tell you that the capital of France is Paris. If you need information on a different country, please let me know!\
+"""
+                    )
+                ],
+                model_name='us.amazon.nova-micro-v1:0',
+                timestamp=datetime.datetime(2025, 3, 7, 9, 18, 26, 642657, tzinfo=datetime.timezone.utc),
+            ),
+        ]
+    )
