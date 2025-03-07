@@ -183,15 +183,22 @@ class InstrumentedModel(WrapperModel):
                             },
                         )
                     )
+
+                otel_usage_attributes = usage.opentelemetry_attributes()
                 span.set_attributes(
                     {
                         # TODO finish_reason (https://github.com/open-telemetry/semantic-conventions/issues/1277), id
                         #  https://github.com/pydantic/pydantic-ai/issues/886
                         'gen_ai.response.model': response.model_name or model_name,
-                        **usage.opentelemetry_attributes(),
+                        **otel_usage_attributes,
                     }
                 )
                 self._emit_events(system, span, events)
+                from pydantic_evals import increment_eval_metric  # import locally to prevent circular dependencies
+
+                increment_eval_metric('requests', 1)
+                for k, v in otel_usage_attributes.items():
+                    increment_eval_metric(k.split('.')[-1], v)
 
             yield finish
 
