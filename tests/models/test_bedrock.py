@@ -5,6 +5,7 @@ import os
 from typing import Any
 
 import pytest
+from dirty_equals import IsInstance
 from inline_snapshot import snapshot
 from typing_extensions import TypedDict
 
@@ -12,6 +13,8 @@ from pydantic_ai.agent import Agent
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import (
     FinalResultEvent,
+    FunctionToolCallEvent,
+    FunctionToolResultEvent,
     ModelRequest,
     ModelResponse,
     PartDeltaEvent,
@@ -356,6 +359,16 @@ async def test_bedrock_model_iter_stream(allow_model_requests: None, bedrock_pro
                 part=ToolCallPart(
                     tool_name='get_temperature', args='{"city":"Paris"}', tool_call_id='tooluse_lAG_zP8QRHmSYOwZzzaCqA'
                 ),
+            ),
+            IsInstance(FunctionToolCallEvent),
+            FunctionToolResultEvent(
+                result=ToolReturnPart(
+                    tool_name='get_temperature',
+                    content='30°C',
+                    tool_call_id='tooluse_lAG_zP8QRHmSYOwZzzaCqA',
+                    timestamp=IsDatetime(),
+                ),
+                tool_call_id='tooluse_lAG_zP8QRHmSYOwZzzaCqA',
             ),
             PartStartEvent(index=0, part=TextPart(content='The')),
             FinalResultEvent(tool_name=None, tool_call_id=None),
