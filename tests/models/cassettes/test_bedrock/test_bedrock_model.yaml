@@ -5,7 +5,7 @@ interactions:
     headers:
       amz-sdk-invocation-id:
       - !!binary |
-        OGJmZDI1NDMtZDg1MS00ZTc5LWJmMjQtYjkyYzEyNDkyNTRi
+        YTM5YzYyOTItMDAzYS00ODkwLTgwOTEtODI5MDI1MWRkZGQx
       amz-sdk-request:
       - !!binary |
         YXR0ZW1wdD0x
@@ -21,23 +21,23 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '327'
+      - '300'
       content-type:
       - application/json
     parsed_body:
       metrics:
-        latencyMs: 322
+        latencyMs: 248
       output:
         message:
           content:
-          - text: Hello! How can I assist you today? Whether you have a question, need some information, or just want to chat,
-              I'm here to help. What's on your mind?
+          - text: Hello! How can I assist you today? Whether you have questions, need information, or just want to chat, I'm
+              here to help.
           role: assistant
       stopReason: end_turn
       usage:
         inputTokens: 7
-        outputTokens: 39
-        totalTokens: 46
+        outputTokens: 30
+        totalTokens: 37
     status:
       code: 200
       message: OK

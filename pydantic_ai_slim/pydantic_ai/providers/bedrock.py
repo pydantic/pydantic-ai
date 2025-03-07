@@ -50,7 +50,16 @@ class BedrockProvider(Provider[BaseClient]):
         aws_session_token: str | None = None,
         region_name: str | None = None,
         bedrock_client: BaseClient | None = None,
-    ):
+    ) -> None:
+        """Initialize the Bedrock provider.
+
+        Args:
+            bedrock_client: A boto3 client for Bedrock Runtime. If provided, other arguments are ignored.
+            aws_access_key_id: The AWS access key ID.
+            aws_secret_access_key: The AWS secret access key.
+            aws_session_token: The AWS session token.
+            region_name: The AWS region name.
+        """
         if bedrock_client is not None:
             self._client = bedrock_client
         else:
