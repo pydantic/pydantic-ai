@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any, Callable
 import httpx
 import pytest
 from _pytest.assertion.rewrite import AssertionRewritingHook
+from pytest_mock import MockerFixture
 from typing_extensions import TypeAlias
 from vcr import VCR
 
@@ -247,3 +248,15 @@ def groq_api_key() -> str:
 @pytest.fixture(scope='session')
 def anthropic_api_key() -> str:
     return os.getenv('ANTHROPIC_API_KEY', 'mock-api-key')
+
+
+@pytest.fixture
+def mock_snapshot_id(mocker: MockerFixture):
+    i = 0
+
+    def generate_snapshot_id(node_id: str) -> str:
+        nonlocal i
+        i += 1
+        return f'{node_id}:{i}'
+
+    return mocker.patch('pydantic_graph.nodes.generate_snapshot_id', side_effect=generate_snapshot_id)

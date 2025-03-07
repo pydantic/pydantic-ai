@@ -13,10 +13,11 @@ from typing_extensions import TypeVar
 from ..nodes import BaseNode, End
 from . import (
     EndSnapshot,
-    NodeRunId,
     NodeSnapshot,
     Snapshot,
+    SnapshotId,
     StatePersistence,
+    _utils,
     build_snapshot_list_type_adapter,
 )
 
@@ -31,26 +32,28 @@ class SimpleStatePersistence(StatePersistence[StateT, RunEndT]):
     deep_copy: bool = False
     last_snapshot: Snapshot[StateT, RunEndT] | None = None
 
-    async def snapshot_node(self, state: StateT, next_node: BaseNode[StateT, Any, RunEndT]) -> NodeRunId:
+    async def snapshot_node(self, state: StateT, next_node: BaseNode[StateT, Any, RunEndT]) -> None:
         self.last_snapshot = NodeSnapshot(
             state=self.prep_state(state),
             node=next_node.deep_copy() if self.deep_copy else next_node,
         )
-        return self.last_snapshot.run_id
 
-    async def snapshot_end(self, state: StateT, end: End[RunEndT]) -> NodeRunId:
+    async def snapshot_end(self, state: StateT, end: End[RunEndT]) -> None:
         self.last_snapshot = EndSnapshot(
             state=self.prep_state(state),
             result=end.deep_copy_data() if self.deep_copy else end,
         )
-        return self.last_snapshot.run_id
 
     @asynccontextmanager
-    async def record_run(self, run_id: NodeRunId) -> AsyncIterator[None]:
+    async def record_run(self, snapshot_id: SnapshotId) -> AsyncIterator[None]:
         assert self.last_snapshot is not None, 'No snapshot to record'
         assert isinstance(self.last_snapshot, NodeSnapshot), 'Only NodeSnapshot can be recorded'
-        assert run_id == self.last_snapshot.run_id, 'run_id must match the last snapshot run_id'
+        assert snapshot_id == self.last_snapshot.id, (
+            f'snapshot_id must match the last snapshot ID: {snapshot_id!r} != {self.last_snapshot.id!r}'
+        )
         self.last_snapshot.status = 'running'
+        self.last_snapshot.start_ts = _utils.now_utc()
+
         start = perf_counter()
         try:
             yield
@@ -83,31 +86,30 @@ class FullStatePersistence(StatePersistence[StateT, RunEndT]):
         default=None, init=False, repr=False
     )
 
-    async def snapshot_node(self, state: StateT, next_node: BaseNode[StateT, Any, RunEndT]) -> NodeRunId:
-        last_snapshot = NodeSnapshot(
+    async def snapshot_node(self, state: StateT, next_node: BaseNode[StateT, Any, RunEndT]) -> None:
+        snapshot = NodeSnapshot(
             state=self.prep_state(state),
             node=next_node.deep_copy() if self.deep_copy else next_node,
         )
-        self.history.append(last_snapshot)
-        return last_snapshot.run_id
+        self.history.append(snapshot)
 
-    async def snapshot_end(self, state: StateT, end: End[RunEndT]) -> NodeRunId:
-        end = EndSnapshot(
+    async def snapshot_end(self, state: StateT, end: End[RunEndT]) -> None:
+        snapshot = EndSnapshot(
             state=self.prep_state(state),
             result=end.deep_copy_data() if self.deep_copy else end,
         )
-        self.history.append(end)
-        return end.run_id
+        self.history.append(snapshot)
 
     @asynccontextmanager
-    async def record_run(self, run_id: NodeRunId) -> AsyncIterator[None]:
+    async def record_run(self, snapshot_id: SnapshotId) -> AsyncIterator[None]:
         try:
-            snapshot = next(s for s in self.history if s.run_id == run_id)
+            snapshot = next(s for s in self.history if s.id == snapshot_id)
         except StopIteration as e:
-            raise LookupError(f'No snapshot found for run_id {run_id}') from e
+            raise LookupError(f'No snapshot found with id={snapshot_id}') from e
 
         assert isinstance(snapshot, NodeSnapshot), 'Only NodeSnapshot can be recorded'
         snapshot.status = 'running'
+        snapshot.start_ts = _utils.now_utc()
         start = perf_counter()
         try:
             yield

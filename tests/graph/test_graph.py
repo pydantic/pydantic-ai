@@ -64,7 +64,7 @@ async def test_graph():
     assert my_graph.name == 'my_graph'
 
 
-async def test_graph_history():
+async def test_graph_history(mock_snapshot_id):
     my_graph = Graph[None, None, int](nodes=(Float2String, String2Length, Double))
     assert my_graph.name is None
     assert my_graph._inferred_types == (type(None), int)
@@ -79,21 +79,27 @@ async def test_graph_history():
                 state=None,
                 node=Float2String(input_data=3.14),
                 start_ts=IsNow(tz=timezone.utc),
+                status='success',
+                id='Float2String:1',
                 duration=IsFloat(),
             ),
             NodeSnapshot(
                 state=None,
                 node=String2Length(input_data='3.14'),
                 start_ts=IsNow(tz=timezone.utc),
+                status='success',
+                id='String2Length:2',
                 duration=IsFloat(),
             ),
             NodeSnapshot(
                 state=None,
                 node=Double(input_data=4),
                 start_ts=IsNow(tz=timezone.utc),
+                status='success',
+                id='Double:3',
                 duration=IsFloat(),
             ),
-            EndSnapshot(state=None, result=End(data=8), ts=IsNow(tz=timezone.utc)),
+            EndSnapshot(state=None, result=End(data=8), ts=IsNow(tz=timezone.utc), id='end:4'),
         ]
     )
     sp = FullStatePersistence()
@@ -106,33 +112,43 @@ async def test_graph_history():
                 state=None,
                 node=Float2String(input_data=3.14159),
                 start_ts=IsNow(tz=timezone.utc),
+                status='success',
+                id='Float2String:5',
                 duration=IsFloat(),
             ),
             NodeSnapshot(
                 state=None,
                 node=String2Length(input_data='3.14159'),
                 start_ts=IsNow(tz=timezone.utc),
+                status='success',
+                id='String2Length:6',
                 duration=IsFloat(),
             ),
             NodeSnapshot(
                 state=None,
                 node=Double(input_data=7),
                 start_ts=IsNow(tz=timezone.utc),
+                status='success',
+                id='Double:7',
                 duration=IsFloat(),
             ),
             NodeSnapshot(
                 state=None,
                 node=String2Length(input_data='xxxxxxxxxxxxxxxxxxxxx'),
                 start_ts=IsNow(tz=timezone.utc),
+                status='success',
+                id='String2Length:8',
                 duration=IsFloat(),
             ),
             NodeSnapshot(
                 state=None,
                 node=Double(input_data=21),
                 start_ts=IsNow(tz=timezone.utc),
+                status='success',
+                id='Double:9',
                 duration=IsFloat(),
             ),
-            EndSnapshot(state=None, result=End(data=42), ts=IsNow(tz=timezone.utc)),
+            EndSnapshot(state=None, result=End(data=42), ts=IsNow(tz=timezone.utc), id='end:10'),
         ]
     )
     assert [e.node for e in sp.history] == snapshot(
@@ -231,7 +247,7 @@ def test_duplicate_id():
 
         @classmethod
         @cache
-        def get_id(cls) -> str:
+        def get_node_id(cls) -> str:
             return 'Foo'
 
     with pytest.raises(GraphSetupError) as exc_info:
@@ -263,7 +279,7 @@ async def test_run_node_not_in_graph():
     assert exc_info.value.message == snapshot('Node `test_run_node_not_in_graph.<locals>.Spam()` is not in the graph.')
 
 
-async def test_run_return_other():
+async def test_run_return_other(mock_snapshot_id):
     @dataclass
     class Foo(BaseNode):
         async def run(self, ctx: GraphRunContext) -> Bar:
@@ -282,7 +298,7 @@ async def test_run_return_other():
     assert exc_info.value.message == snapshot('Invalid node return type: `int`. Expected `BaseNode` or `End`.')
 
 
-async def test_next():
+async def test_next(mock_snapshot_id):
     @dataclass
     class Foo(BaseNode):
         async def run(self, ctx: GraphRunContext) -> Bar:
@@ -300,7 +316,17 @@ async def test_next():
     assert n == Bar()
     assert g.name == 'g'
     assert sp.history == snapshot(
-        [NodeSnapshot(state=None, node=Foo(), start_ts=IsNow(tz=timezone.utc), duration=IsFloat())]
+        [
+            NodeSnapshot(
+                state=None,
+                node=Foo(),
+                start_ts=IsNow(tz=timezone.utc),
+                duration=IsFloat(),
+                status='success',
+                id='Foo:1',
+            ),
+            NodeSnapshot(state=None, node=Bar(), id='Bar:2'),
+        ]
     )
 
     assert isinstance(n, Bar)
@@ -309,13 +335,28 @@ async def test_next():
 
     assert sp.history == snapshot(
         [
-            NodeSnapshot(state=None, node=Foo(), start_ts=IsNow(tz=timezone.utc), duration=IsFloat()),
-            NodeSnapshot(state=None, node=Bar(), start_ts=IsNow(tz=timezone.utc), duration=IsFloat()),
+            NodeSnapshot(
+                state=None,
+                node=Foo(),
+                start_ts=IsNow(tz=timezone.utc),
+                duration=IsFloat(),
+                status='success',
+                id='Foo:1',
+            ),
+            NodeSnapshot(
+                state=None,
+                node=Bar(),
+                start_ts=IsNow(tz=timezone.utc),
+                duration=IsFloat(),
+                status='success',
+                id='Bar:2',
+            ),
+            NodeSnapshot(state=None, node=Foo(), id='Foo:3'),
         ]
     )
 
 
-async def test_deps():
+async def test_deps(mock_snapshot_id):
     @dataclass
     class Deps:
         a: int
@@ -340,8 +381,22 @@ async def test_deps():
     assert result.output == 123
     assert sp.history == snapshot(
         [
-            NodeSnapshot(state=None, node=Foo(), start_ts=IsNow(tz=timezone.utc), duration=IsFloat()),
-            NodeSnapshot(state=None, node=Bar(), start_ts=IsNow(tz=timezone.utc), duration=IsFloat()),
-            EndSnapshot(state=None, result=End(123), ts=IsNow(tz=timezone.utc)),
+            NodeSnapshot(
+                state=None,
+                node=Foo(),
+                start_ts=IsNow(tz=timezone.utc),
+                duration=IsFloat(),
+                status='success',
+                id='Foo:1',
+            ),
+            NodeSnapshot(
+                state=None,
+                node=Bar(),
+                start_ts=IsNow(tz=timezone.utc),
+                duration=IsFloat(),
+                status='success',
+                id='Bar:2',
+            ),
+            EndSnapshot(state=None, result=End(data=123), ts=IsNow(tz=timezone.utc), id='end:3'),
         ]
     )

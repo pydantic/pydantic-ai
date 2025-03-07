@@ -28,7 +28,7 @@ class CustomNodeSchema:
         if len(nodes) == 1:
             nodes_type = nodes[0]
         else:
-            nodes_annotated = [Annotated[node, pydantic.Tag(node.get_id())] for node in nodes]
+            nodes_annotated = [Annotated[node, pydantic.Tag(node.get_node_id())] for node in nodes]
             nodes_type = Annotated[Union[tuple(nodes_annotated)], pydantic.Discriminator(self._node_discriminator)]
 
         schema = handler(nodes_type)
@@ -45,7 +45,7 @@ class CustomNodeSchema:
     @staticmethod
     def _node_serializer(node: Any, handler: pydantic.SerializerFunctionWrapHandler) -> dict[str, Any]:
         node_dict = handler(node)
-        node_dict['node_id'] = node.get_id()
+        node_dict['node_id'] = node.get_node_id()
         return node_dict
 
 

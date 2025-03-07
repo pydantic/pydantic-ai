@@ -4,7 +4,8 @@ import copy
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, is_dataclass
 from functools import cache
-from typing import TYPE_CHECKING, Any, ClassVar, Generic, get_origin, get_type_hints
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, NewType, get_origin, get_type_hints
+from uuid import uuid4
 
 from typing_extensions import Never, Self, TypeVar
 
@@ -15,7 +16,7 @@ if TYPE_CHECKING:
 else:
     StateT = TypeVar('StateT', default=None)
 
-__all__ = 'GraphRunContext', 'BaseNode', 'End', 'Edge', 'NodeDef', 'DepsT', 'RunEndT'
+__all__ = 'GraphRunContext', 'BaseNode', 'End', 'Edge', 'NodeDef', 'DepsT', 'RunEndT', 'SnapshotId'
 
 RunEndT = TypeVar('RunEndT', covariant=True, default=None)
 """Covariant type variable for the return type of a graph [`run`][pydantic_graph.graph.Graph.run]."""
@@ -23,6 +24,8 @@ NodeRunEndT = TypeVar('NodeRunEndT', covariant=True, default=Never)
 """Covariant type variable for the return type of a node [`run`][pydantic_graph.nodes.BaseNode.run]."""
 DepsT = TypeVar('DepsT', default=None, contravariant=True)
 """Type variable for the dependencies of a graph and node."""
+SnapshotId = NewType('SnapshotId', str)
+"""Unique ID for a node run."""
 
 
 @dataclass
@@ -67,9 +70,16 @@ class BaseNode(ABC, Generic[StateT, DepsT, NodeRunEndT]):
         """
         ...
 
+    def get_snapshot_id(self) -> SnapshotId:
+        if snapshot_id := getattr(self, '__snapshot_id', None):
+            return snapshot_id
+        else:
+            self.__dict__['__snapshot_id'] = snapshot_id = generate_snapshot_id(self.get_node_id())
+            return snapshot_id
+
     @classmethod
     @cache
-    def get_id(cls) -> str:
+    def get_node_id(cls) -> str:
         """Get the ID of the node."""
         return cls.__name__
 
@@ -115,13 +125,13 @@ class BaseNode(ABC, Generic[StateT, DepsT, NodeRunEndT]):
                 # TODO: Should we disallow this?
                 returns_base_node = True
             elif issubclass(return_type_origin, BaseNode):
-                next_node_edges[return_type.get_id()] = edge
+                next_node_edges[return_type.get_node_id()] = edge
             else:
                 raise exceptions.GraphSetupError(f'Invalid return type: {return_type}')
 
         return NodeDef(
             cls,
-            cls.get_id(),
+            cls.get_node_id(),
             cls.get_note(),
             next_node_edges,
             end_edge,
@@ -145,7 +155,24 @@ class End(Generic[RunEndT]):
         if self.data is None:
             return self
         else:
-            return End(copy.deepcopy(self.data))
+            end = End(copy.deepcopy(self.data))
+            end.set_snapshot_id(self.get_snapshot_id())
+            return end
+
+    def set_snapshot_id(self, set_id: str) -> None:
+        self.__dict__['__snapshot_id'] = SnapshotId(set_id)
+
+    def get_snapshot_id(self) -> SnapshotId:
+        if snapshot_id := getattr(self, '__snapshot_id', None):
+            return snapshot_id
+        else:
+            self.__dict__['__snapshot_id'] = snapshot_id = generate_snapshot_id('end')
+            return snapshot_id
+
+
+def generate_snapshot_id(node_id: str) -> SnapshotId:
+    # module method to allow mocking
+    return SnapshotId(f'{node_id}:{uuid4().hex}')
 
 
 @dataclass

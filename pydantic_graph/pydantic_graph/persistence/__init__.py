@@ -5,26 +5,21 @@ from collections.abc import Iterator, Sequence
 from contextlib import AbstractAsyncContextManager, contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Annotated, Any, Callable, Generic, Literal, NewType, Union
-from uuid import uuid4
+from typing import Annotated, Any, Callable, Generic, Literal, Union
 
 import pydantic
 from typing_extensions import TypeVar
 
 from .. import exceptions
-from ..nodes import BaseNode, End, RunEndT
+from ..nodes import BaseNode, End, RunEndT, SnapshotId
 from . import _utils
 
-__all__ = 'StateT', 'NodeRunId', 'NodeSnapshot', 'EndSnapshot', 'Snapshot', 'StatePersistence', 'set_nodes_type_context'
+__all__ = 'StateT', 'NodeSnapshot', 'EndSnapshot', 'Snapshot', 'StatePersistence', 'set_nodes_type_context'
 
 StateT = TypeVar('StateT', default=None)
 """Type variable for the state in a graph."""
-NodeRunId = NewType('NodeRunId', str)
-"""Unique ID for a node run."""
 
-
-def new_run_id() -> NodeRunId:
-    return NodeRunId(uuid4().hex)
+UNSET_ID = SnapshotId('__unset__')
 
 
 @dataclass
@@ -35,8 +30,6 @@ class NodeSnapshot(Generic[StateT, RunEndT]):
     """The state of the graph before the node is run."""
     node: Annotated[BaseNode[StateT, Any, RunEndT], _utils.CustomNodeSchema()]
     """The node to run next."""
-    run_id: NodeRunId = field(default_factory=new_run_id)
-    """Unique ID of the node run."""
     start_ts: datetime | None = None
     """The timestamp when the node started running, `None` until the run starts."""
     duration: float | None = None
@@ -44,6 +37,13 @@ class NodeSnapshot(Generic[StateT, RunEndT]):
     status: Literal['not_started', 'pending', 'running', 'success', 'error'] = 'not_started'
     kind: Literal['node'] = 'node'
     """The kind of history step, can be used as a discriminator when deserializing history."""
+
+    id: SnapshotId = UNSET_ID
+    """Unique ID of the snapshot."""
+
+    def __post_init__(self) -> None:
+        if self.id == UNSET_ID:
+            self.id = self.node.get_snapshot_id()
 
 
 @dataclass
@@ -54,12 +54,17 @@ class EndSnapshot(Generic[StateT, RunEndT]):
     """The state of the graph at the end of the run."""
     result: End[RunEndT]
     """The result of the graph run."""
-    run_id: NodeRunId = field(default_factory=new_run_id)
-    """Unique ID for the end of the graph run."""
     ts: datetime = field(default_factory=_utils.now_utc)
     """The timestamp when the graph run ended."""
     kind: Literal['end'] = 'end'
     """The kind of history step, can be used as a discriminator when deserializing history."""
+
+    id: SnapshotId = UNSET_ID
+    """Unique ID of the snapshot."""
+
+    def __post_init__(self) -> None:
+        if self.id == UNSET_ID:
+            self.id = self.node.get_snapshot_id()
 
     @property
     def node(self) -> End[RunEndT]:
@@ -82,11 +87,8 @@ class StatePersistence(ABC, Generic[StateT, RunEndT]):
     """Abstract base class for storing the state of a graph."""
 
     @abstractmethod
-    async def snapshot_node(self, state: StateT, next_node: BaseNode[StateT, Any, RunEndT]) -> NodeRunId:
+    async def snapshot_node(self, state: StateT, next_node: BaseNode[StateT, Any, RunEndT]) -> None:
         """Snapshot the state of a graph, when the next step is to run a node.
-
-        In particular this should set [`NodeSnapshot.duration`][pydantic_graph.state.NodeSnapshot.duration]
-        when the run finishes.
 
         Note: although the node
 
@@ -99,7 +101,7 @@ class StatePersistence(ABC, Generic[StateT, RunEndT]):
         raise NotImplementedError
 
     @abstractmethod
-    async def snapshot_end(self, state: StateT, end: End[RunEndT]) -> NodeRunId:
+    async def snapshot_end(self, state: StateT, end: End[RunEndT]) -> None:
         """Snapshot the state of a graph after a node has run, when the graph has ended.
 
         Args:
@@ -109,7 +111,7 @@ class StatePersistence(ABC, Generic[StateT, RunEndT]):
         raise NotImplementedError
 
     @abstractmethod
-    def record_run(self, run_id: NodeRunId) -> AbstractAsyncContextManager[None]:
+    def record_run(self, snapshot_id: SnapshotId) -> AbstractAsyncContextManager[None]:
         """Record the run of the node.
 
         In particular this should set:

@@ -13,8 +13,8 @@ import typing_extensions
 from logfire_api import LogfireSpan
 
 from . import _utils, exceptions, mermaid
-from .nodes import BaseNode, DepsT, End, GraphRunContext, NodeDef, RunEndT
-from .persistence import NodeRunId, StatePersistence, StateT, set_nodes_type_context
+from .nodes import BaseNode, DepsT, End, GraphRunContext, NodeDef, RunEndT, SnapshotId
+from .persistence import StatePersistence, StateT, set_nodes_type_context
 from .persistence.memory import SimpleStatePersistence
 
 # while waiting for https://github.com/pydantic/logfire/issues/745
@@ -258,16 +258,49 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
         with ExitStack() as stack:
             if span is not None:
                 stack.enter_context(span)
-            node_run_id = await persistence.snapshot_node(state, start_node)
             yield GraphRun[StateT, DepsT, T](
                 graph=self,
                 start_node=start_node,
                 persistence=persistence,
-                node_run_id=node_run_id,
                 state=state,
                 deps=deps,
                 span=span,
             )
+
+    # @deprecated('`graph.next` is deprecated, use `graph.iter` ... `run.next` instead')
+    async def next(
+        self: Graph[StateT, DepsT, T],
+        node: BaseNode[StateT, DepsT, T],
+        persistence: StatePersistence[StateT, T],
+        *,
+        state: StateT = None,
+        deps: DepsT = None,
+        infer_name: bool = True,
+    ) -> BaseNode[StateT, DepsT, Any] | End[T]:
+        """Run a node in the graph and return the next node to run.
+
+        Args:
+            node: The node to run.
+            persistence: State persistence interface, defaults to
+                [`SimpleStatePersistence`][pydantic_graph.state.memory.SimpleStatePersistence] if `None`.
+            state: The current state of the graph.
+            deps: The dependencies of the graph.
+            infer_name: Whether to infer the graph name from the calling frame.
+
+        Returns:
+            The next node to run or [`End`][pydantic_graph.nodes.End] if the graph has finished.
+        """
+        if infer_name and self.name is None:
+            self._infer_name(inspect.currentframe())
+
+        run = GraphRun[StateT, DepsT, T](
+            graph=self,
+            start_node=node,
+            persistence=persistence,
+            state=state,
+            deps=deps,
+        )
+        return await run.next(node)
 
     async def next_from_persistence(
         self: Graph[StateT, DepsT, T],
@@ -280,14 +313,13 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
             self._infer_name(inspect.currentframe())
 
         snapshot = await persistence.restore_node_snapshot()
-        node_run_id = NotImplemented
         run = GraphRun[StateT, DepsT, T](
             graph=self,
             start_node=snapshot.node,
             persistence=persistence,
-            node_run_id=node_run_id,
             state=snapshot.state,
             deps=deps,
+            snapshot_id=snapshot.id,
         )
         return await run.next()
 
@@ -455,7 +487,7 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
         node: type[BaseNode[StateT, DepsT, T]],
         parent_namespace: dict[str, Any] | None,
     ) -> None:
-        node_id = node.get_id()
+        node_id = node.get_node_id()
         if existing_node := self.node_defs.get(node_id):
             raise exceptions.GraphSetupError(
                 f'Node ID `{node_id}` is not unique — found on {existing_node.node} and {node}'
@@ -553,12 +585,13 @@ class GraphRun(Generic[StateT, DepsT, RunEndT]):
 
     def __init__(
         self,
+        *,
         graph: Graph[StateT, DepsT, RunEndT],
         start_node: BaseNode[StateT, DepsT, RunEndT],
         persistence: StatePersistence[StateT, RunEndT],
-        node_run_id: NodeRunId,
         state: StateT,
         deps: DepsT,
+        snapshot_id: SnapshotId | None = None,
         span: LogfireSpan | None = None,
     ):
         """Create a new run for a given graph, starting at the specified node.
@@ -569,16 +602,16 @@ class GraphRun(Generic[StateT, DepsT, RunEndT]):
             graph: The [`Graph`][pydantic_graph.graph.Graph] to run.
             start_node: The node where execution will begin.
             persistence: State persistence interface.
-            node_run_id: The ID of the current node run.
             state: A shared state object or primitive (like a counter, dataclass, etc.) that is available
                 to all nodes via `ctx.state`.
             deps: Optional dependencies that each node can access via `ctx.deps`, e.g. database connections,
                 configuration, or logging clients.
+            snapshot_id: The ID of the snapshot the node came from.
             span: An optional existing Logfire span to nest node-level spans under (advanced usage).
         """
         self.graph = graph
         self.persistence = persistence
-        self._node_run_id = node_run_id
+        self._snapshot_id: SnapshotId | None = snapshot_id
         self.state = state
         self.deps = deps
         self._span = span
@@ -650,13 +683,19 @@ class GraphRun(Generic[StateT, DepsT, RunEndT]):
         """
         if node is None:
             node = cast(BaseNode[StateT, DepsT, T], self._next_node)
+            node_snapshot_id = node.get_snapshot_id()
+        else:
+            node_snapshot_id = node.get_snapshot_id()
+            if node_snapshot_id != self._snapshot_id:
+                await self.persistence.snapshot_node(self.state, node)
+                self._snapshot_id = node_snapshot_id
 
-        if isinstance(node, End):
+        if not isinstance(node, BaseNode):
             # While technically this is not compatible with the documented method signature, it's an easy mistake to
             # make, and we should eagerly provide a more helpful error message than you'd get otherwise.
-            raise exceptions.GraphRuntimeError(f'Cannot call `next` with an `End` node: {node!r}.')
+            raise exceptions.GraphRuntimeError(f'`next` must be called with a `BaseNode` instance: {node!r}.')
 
-        node_id = node.get_id()
+        node_id = node.get_node_id()
         if node_id not in self.graph.node_defs:
             raise exceptions.GraphRuntimeError(f'Node `{node}` is not in the graph.')
 
@@ -664,14 +703,16 @@ class GraphRun(Generic[StateT, DepsT, RunEndT]):
             if self.graph.auto_instrument:
                 stack.enter_context(_logfire.span('run node {node_id}', node_id=node_id, node=node))
 
-            async with self.persistence.record_run(self._node_run_id):
+            async with self.persistence.record_run(node_snapshot_id):
                 ctx = GraphRunContext(self.state, self.deps)
                 self._next_node = await node.run(ctx)
 
         if isinstance(self._next_node, End):
-            self._node_run_id = await self.persistence.snapshot_end(self.state, self._next_node)
+            self._snapshot_id = self._next_node.get_snapshot_id()
+            await self.persistence.snapshot_end(self.state, self._next_node)
         elif isinstance(self._next_node, BaseNode):
-            self._node_run_id = await self.persistence.snapshot_node(self.state, self._next_node)
+            self._snapshot_id = self._next_node.get_snapshot_id()
+            await self.persistence.snapshot_node(self.state, self._next_node)
         else:
             raise exceptions.GraphRuntimeError(
                 f'Invalid node return type: `{type(self._next_node).__name__}`. Expected `BaseNode` or `End`.'
