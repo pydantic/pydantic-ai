@@ -140,6 +140,10 @@ class MistralModel(Model):
             api_key = os.getenv('MISTRAL_API_KEY') if api_key is None else api_key
             self.client = Mistral(api_key=api_key, async_client=http_client or cached_async_http_client())
 
+    @property
+    def base_url(self) -> str:
+        return str(self.client.sdk_configuration.get_server_details()[0])
+
     async def request(
         self,
         messages: list[ModelMessage],

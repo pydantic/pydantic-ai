@@ -58,6 +58,7 @@ def bedrock_provider():
 
 async def test_bedrock_model(allow_model_requests: None, bedrock_provider: BedrockProvider):
     model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
+    assert model.base_url == 'https://bedrock-runtime.us-east-1.amazonaws.com'
     agent = Agent(model=model, system_prompt='You are a chatbot.')
 
     result = await agent.run('Hello!')

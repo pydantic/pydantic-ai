@@ -106,6 +106,10 @@ class FallbackModel(Model):
         """The system / model provider, n/a for fallback models."""
         return None
 
+    @property
+    def base_url(self) -> str | None:
+        return self.models[0].base_url
+
 
 def _default_fallback_condition_factory(exceptions: tuple[type[Exception], ...]) -> Callable[[Exception], bool]:
     """Create a default fallback condition for the given exceptions."""

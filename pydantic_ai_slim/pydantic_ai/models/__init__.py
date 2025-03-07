@@ -266,6 +266,11 @@ class Model(ABC):
         """The system / model provider, ex: openai."""
         raise NotImplementedError()
 
+    @property
+    def base_url(self) -> str | None:
+        """The base URL for the provider API, if available."""
+        return None
+
 
 @dataclass
 class StreamedResponse(ABC):
