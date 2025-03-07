@@ -38,7 +38,7 @@ async def test_init_service_account(tmp_path: Path, allow_model_requests: None):
 
     await model.ainit()
 
-    assert model.url == snapshot(
+    assert model.base_url == snapshot(
         'https://us-central1-aiplatform.googleapis.com/v1/projects/my-project-id/locations/us-central1/'
         'publishers/google/models/gemini-1.5-flash:'
     )
@@ -66,7 +66,7 @@ async def test_init_env(mocker: MockerFixture, allow_model_requests: None):
 
     assert patch.call_count == 1
 
-    assert model.url == snapshot(
+    assert model.base_url == snapshot(
         'https://us-central1-aiplatform.googleapis.com/v1/projects/my-project-id/locations/us-central1/'
         'publishers/google/models/gemini-1.5-flash:'
     )
@@ -75,7 +75,7 @@ async def test_init_env(mocker: MockerFixture, allow_model_requests: None):
     assert model.system == snapshot('google-vertex')
 
     await model.ainit()
-    assert model.url is not None
+    assert model.base_url is not None
     assert model.auth is not None
     assert patch.call_count == 1
 
@@ -90,7 +90,7 @@ async def test_init_right_project_id(tmp_path: Path, allow_model_requests: None)
 
     await model.ainit()
 
-    assert model.url == snapshot(
+    assert model.base_url == snapshot(
         'https://us-central1-aiplatform.googleapis.com/v1/projects/my-project-id/locations/us-central1/'
         'publishers/google/models/gemini-1.5-flash:'
     )

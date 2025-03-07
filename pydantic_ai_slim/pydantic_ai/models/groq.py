@@ -123,6 +123,10 @@ class GroqModel(Model):
         else:
             self.client = AsyncGroq(api_key=api_key, http_client=cached_async_http_client())
 
+    @property
+    def base_url(self) -> str:
+        return str(self.client.base_url)
+
     async def request(
         self,
         messages: list[ModelMessage],

@@ -162,6 +162,10 @@ class BedrockConverseModel(Model):
             }
         }
 
+    @property
+    def base_url(self) -> str:
+        return str(self.client.meta.endpoint_url)
+
     async def request(
         self,
         messages: list[ModelMessage],
