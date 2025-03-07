@@ -60,7 +60,8 @@ def infer_provider(provider: str) -> Provider[Any]:
         from .google_gla import GoogleGLAProvider
 
         return GoogleGLAProvider()
-    elif provider == 'bedrock':
+    # NOTE: We don't test because there are many ways the `boto3.client` can retrieve the credentials.
+    elif provider == 'bedrock':  # pragma: no cover
         from .bedrock import BedrockProvider
 
         return BedrockProvider()

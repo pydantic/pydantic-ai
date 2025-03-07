@@ -22,7 +22,6 @@ with try_import() as imports_successful:
         ('openai', OpenAIProvider, None),
         ('google-vertex', GoogleVertexProvider, None),
         ('google-gla', GoogleGLAProvider, 'GEMINI_API_KEY'),
-        ('bedrock', BedrockProvider, None),
     ]
 
 if not imports_successful():
