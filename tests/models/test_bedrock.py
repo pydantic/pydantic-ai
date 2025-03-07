@@ -103,7 +103,7 @@ async def test_bedrock_model_structured_response(allow_model_requests: None, bed
 
     result = await agent.run('What was the temperature in London 1st January 2022?', result_type=Response)
     assert result.data == snapshot({'temperature': '30°C', 'date': datetime.date(2022, 1, 1), 'city': 'London'})
-    assert result.usage() == snapshot(Usage(requests=2, request_tokens=1238, response_tokens=311, total_tokens=1549))
+    assert result.usage() == snapshot(Usage(requests=2, request_tokens=1236, response_tokens=298, total_tokens=1534))
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -118,12 +118,12 @@ async def test_bedrock_model_structured_response(allow_model_requests: None, bed
             ModelResponse(
                 parts=[
                     TextPart(
-                        content='<thinking> To find the temperature in London on 1st January 2022, I need to use the "temperature" tool with the appropriate arguments. The required arguments are "date" and "city". The date provided is "1st January 2022" and the city is "London". I will use these to call the "temperature" tool.</thinking>\n'
+                        content='<thinking> To find the temperature in London on 1st January 2022, I will use the "temperature" tool. I need to provide the date and the city name. The date is already provided as "1st January 2022" and the city name is "London". I will call the "temperature" tool with these parameters.</thinking>\n'
                     ),
                     ToolCallPart(
                         tool_name='temperature',
                         args={'date': '2022-01-01', 'city': 'London'},
-                        tool_call_id='tooluse_caKIVK5IT_OcfrKtKLgM4w',
+                        tool_call_id='tooluse_5WEci1UmQ8ifMFkUcy2gHQ',
                     ),
                 ],
                 model_name='us.amazon.nova-micro-v1:0',
@@ -134,7 +134,7 @@ async def test_bedrock_model_structured_response(allow_model_requests: None, bed
                     ToolReturnPart(
                         tool_name='temperature',
                         content='30°C',
-                        tool_call_id='tooluse_caKIVK5IT_OcfrKtKLgM4w',
+                        tool_call_id='tooluse_5WEci1UmQ8ifMFkUcy2gHQ',
                         timestamp=IsDatetime(),
                     )
                 ]
@@ -142,12 +142,12 @@ async def test_bedrock_model_structured_response(allow_model_requests: None, bed
             ModelResponse(
                 parts=[
                     TextPart(
-                        content='<thinking> The "temperature" tool has provided the temperature information for the specified date and city. The temperature in London on 1st January 2022 was 30°C. Now, I will use the "final_result" tool to present this information to the user in the required format.</thinking> '
+                        content='<thinking> I have received the result from the "temperature" tool. The temperature in London on 1st January 2022 was 30°C. Now, I will use the "final_result" tool to provide this information to the user.</thinking> '
                     ),
                     ToolCallPart(
                         tool_name='final_result',
                         args={'date': '2022-01-01', 'city': 'London', 'temperature': '30°C'},
-                        tool_call_id='tooluse_orpaL-zsTGCl0L818gkMRQ',
+                        tool_call_id='tooluse_9AjloJSaQDKmpPFff-2Clg',
                     ),
                 ],
                 model_name='us.amazon.nova-micro-v1:0',
@@ -158,10 +158,51 @@ async def test_bedrock_model_structured_response(allow_model_requests: None, bed
                     ToolReturnPart(
                         tool_name='final_result',
                         content='Final result processed.',
-                        tool_call_id='tooluse_orpaL-zsTGCl0L818gkMRQ',
+                        tool_call_id='tooluse_9AjloJSaQDKmpPFff-2Clg',
                         timestamp=IsDatetime(),
                     )
                 ]
             ),
         ]
     )
+
+
+async def test_bedrock_model_stream(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
+    agent = Agent(model=model, system_prompt='You are a helpful chatbot.', model_settings={'temperature': 0.0})
+    async with agent.run_stream('What is the capital of France?') as result:
+        data = await result.get_data()
+    assert data == snapshot(
+        'The capital of France is Paris. Paris is not only the capital city but also the most populous city in France, known for its significant cultural, political, and economic influence. It is famous for landmarks such as the Eiffel Tower, the Louvre Museum, and Notre-Dame Cathedral, among many other attractions.'
+    )
+
+
+async def test_bedrock_model_anthropic_model_with_tools(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    model = BedrockConverseModel('anthropic.claude-v2', provider=bedrock_provider)
+    agent = Agent(model=model, system_prompt='You are a helpful chatbot.', model_settings={'temperature': 0.0})
+
+    @agent.tool_plain
+    async def get_current_temperature(city: str) -> str:
+        """Get the current temperature in a city.
+
+        Args:
+            city: The city name.
+
+        Returns:
+            The current temperature in degrees Celsius.
+        """
+        return '30°C'
+
+    # TODO(Marcelo): Anthropic models don't support tools on the Bedrock Converse Interface.
+    # I'm unsure what to do, so for the time being I'm just documenting the test. Let's see if someone complains.
+    with pytest.raises(Exception):
+        await agent.run('What is the current temperature in London?')
+
+
+async def test_bedrock_model_anthropic_model_without_tools(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    model = BedrockConverseModel('anthropic.claude-v2', provider=bedrock_provider)
+    agent = Agent(model=model, system_prompt='You are a helpful chatbot.', model_settings={'temperature': 0.0})
+    result = await agent.run('What is the capital of France?')
+    assert result.data == snapshot('Paris is the capital of France.')

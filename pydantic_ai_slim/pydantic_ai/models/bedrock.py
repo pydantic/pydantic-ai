@@ -46,6 +46,7 @@ if TYPE_CHECKING:
         ToolTypeDef,
     )
 
+
 LatestBedrockModelNames = Literal[
     'amazon.titan-tg1-large',
     'amazon.titan-text-lite-v1',
@@ -122,7 +123,12 @@ class BedrockConverseModel(Model):
         """The system / model provider, ex: openai."""
         return self._system
 
-    def __init__(self, model_name: str, *, provider: Literal['bedrock'] | Provider[BaseClient] = 'bedrock'):
+    def __init__(
+        self,
+        model_name: BedrockModelName,
+        *,
+        provider: Literal['bedrock'] | Provider[BaseClient] = 'bedrock',
+    ):
         self._model_name = model_name
 
         if isinstance(provider, str):
@@ -135,9 +141,6 @@ class BedrockConverseModel(Model):
         if model_request_parameters.result_tools:
             tools += [self._map_tool_definition(r) for r in model_request_parameters.result_tools]
         return tools
-
-    def name(self) -> str:
-        return self.model_name
 
     @staticmethod
     def _map_tool_definition(f: ToolDefinition) -> ToolTypeDef:
@@ -219,7 +222,7 @@ class BedrockConverseModel(Model):
         model_request_parameters: ModelRequestParameters,
     ) -> ConverseResponseTypeDef | EventStream[ConverseStreamOutputTypeDef]:
         tools = self._get_tools(model_request_parameters)
-        support_tools_choice = self.model_name.startswith('anthropic') or 'anthropic' in self.model_name
+        support_tools_choice = self.model_name.startswith(('anthropic', 'us.anthropic'))
         if not tools or not support_tools_choice:
             tool_choice: ToolChoiceTypeDef = {}
         elif not model_request_parameters.allow_text_result:
