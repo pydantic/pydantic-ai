@@ -233,7 +233,7 @@ async def test_bedrock_model_retry(allow_model_requests: None, bedrock_provider:
                     SystemPromptPart(content='You are a helpful chatbot.'),
                     UserPromptPart(
                         content='What is the capital of France?',
-                        timestamp=datetime.datetime(2025, 3, 7, 9, 18, 24, 818226, tzinfo=datetime.timezone.utc),
+                        timestamp=IsDatetime(),
                     ),
                 ]
             ),
@@ -249,7 +249,7 @@ async def test_bedrock_model_retry(allow_model_requests: None, bedrock_provider:
                     ),
                 ],
                 model_name='us.amazon.nova-micro-v1:0',
-                timestamp=datetime.datetime(2025, 3, 7, 9, 18, 25, 614733, tzinfo=datetime.timezone.utc),
+                timestamp=IsDatetime(),
             ),
             ModelRequest(
                 parts=[
@@ -257,7 +257,7 @@ async def test_bedrock_model_retry(allow_model_requests: None, bedrock_provider:
                         content='The country is not supported.',
                         tool_name='get_capital',
                         tool_call_id='tooluse_F8LnaCMtQ0-chKTnPhNH2g',
-                        timestamp=datetime.datetime(2025, 3, 7, 9, 18, 25, 615589, tzinfo=datetime.timezone.utc),
+                        timestamp=IsDatetime(),
                     )
                 ]
             ),
@@ -272,7 +272,7 @@ I'm sorry, but the tool I have does not support retrieving the capital of France
                     )
                 ],
                 model_name='us.amazon.nova-micro-v1:0',
-                timestamp=datetime.datetime(2025, 3, 7, 9, 18, 26, 642657, tzinfo=datetime.timezone.utc),
+                timestamp=IsDatetime(),
             ),
         ]
     )
