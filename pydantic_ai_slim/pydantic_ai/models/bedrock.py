@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Generic, Literal, Union, cast, overload
 
 import anyio
 import anyio.to_thread
+from mypy_boto3_bedrock_runtime.type_defs import ToolConfigurationTypeDef
 from typing_extensions import ParamSpec, assert_never
 
 from pydantic_ai import _utils, result
@@ -28,7 +29,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
 from pydantic_ai.providers import Provider, infer_provider
-from pydantic_ai.settings import ModelSettings
+from pydantic_ai.settings import ForcedFunctionToolChoice, ModelSettings
 from pydantic_ai.tools import ToolDefinition
 
 if TYPE_CHECKING:
@@ -42,7 +43,6 @@ if TYPE_CHECKING:
         ConverseStreamOutputTypeDef,
         InferenceConfigurationTypeDef,
         MessageUnionTypeDef,
-        ToolChoiceTypeDef,
         ToolTypeDef,
     )
 
@@ -172,7 +172,7 @@ class BedrockConverseModel(Model):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> tuple[ModelResponse, result.Usage]:
-        response = await self._messages_create(messages, False, model_settings, model_request_parameters)
+        response = await self._messages_create(messages, False, model_settings or {}, model_request_parameters)
         return await self._process_response(response)
 
     @asynccontextmanager
@@ -182,7 +182,7 @@ class BedrockConverseModel(Model):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> AsyncIterator[StreamedResponse]:
-        response = await self._messages_create(messages, True, model_settings, model_request_parameters)
+        response = await self._messages_create(messages, True, model_settings or {}, model_request_parameters)
         yield BedrockStreamedResponse(_model_name=self.model_name, _event_stream=response)
 
     async def _process_response(self, response: ConverseResponseTypeDef) -> tuple[ModelResponse, result.Usage]:
@@ -213,36 +213,28 @@ class BedrockConverseModel(Model):
         self,
         messages: list[ModelMessage],
         stream: Literal[True],
-        model_settings: ModelSettings | None,
+        model_settings: ModelSettings,
         model_request_parameters: ModelRequestParameters,
-    ) -> EventStream[ConverseStreamOutputTypeDef]:
-        pass
+    ) -> EventStream[ConverseStreamOutputTypeDef]: ...
 
     @overload
     async def _messages_create(
         self,
         messages: list[ModelMessage],
         stream: Literal[False],
-        model_settings: ModelSettings | None,
+        model_settings: ModelSettings,
         model_request_parameters: ModelRequestParameters,
-    ) -> ConverseResponseTypeDef:
-        pass
+    ) -> ConverseResponseTypeDef: ...
 
     async def _messages_create(
         self,
         messages: list[ModelMessage],
         stream: bool,
-        model_settings: ModelSettings | None,
+        model_settings: ModelSettings,
         model_request_parameters: ModelRequestParameters,
     ) -> ConverseResponseTypeDef | EventStream[ConverseStreamOutputTypeDef]:
         tools = self._get_tools(model_request_parameters)
-        support_tools_choice = self.model_name.startswith(('anthropic', 'us.anthropic'))
-        if not tools or not support_tools_choice:
-            tool_choice: ToolChoiceTypeDef = {}
-        elif not model_request_parameters.allow_text_result:
-            tool_choice = {'any': {}}
-        else:
-            tool_choice = {'auto': {}}
+        tool_config = self._get_tool_config(model_settings, model_request_parameters, tools)
 
         system_prompt, bedrock_messages = self._map_message(messages)
         inference_config = self._map_inference_config(model_settings)
@@ -252,11 +244,7 @@ class BedrockConverseModel(Model):
             'messages': bedrock_messages,
             'system': [{'text': system_prompt}],
             'inferenceConfig': inference_config,
-            **(
-                {'toolConfig': {'tools': tools, **({'toolChoice': tool_choice} if tool_choice else {})}}
-                if tools
-                else {}
-            ),
+            **tool_config,
         }
 
         if stream:
@@ -265,6 +253,30 @@ class BedrockConverseModel(Model):
         else:
             model_response = await anyio.to_thread.run_sync(functools.partial(self.client.converse, **params))
         return model_response
+
+    def _get_tool_config(
+        self,
+        model_settings: ModelSettings,
+        model_request_parameters: ModelRequestParameters,
+        tools: list[ToolTypeDef],
+    ) -> dict[str, ToolConfigurationTypeDef]:
+        support_tools_choice = self.model_name.startswith(('anthropic', 'us.anthropic'))
+        tool_choice = model_settings.get('tool_choice', 'auto')
+
+        if not tools or not support_tools_choice:
+            return {}
+        elif tool_choice == 'auto' and not model_request_parameters.allow_text_result:
+            return {'toolConfig': {'tools': tools, 'toolChoice': {'any': {}}}}
+        elif tool_choice == 'auto':
+            return {'toolConfig': {'tools': tools, 'toolChoice': {'auto': {}}}}
+        elif tool_choice == 'none':
+            return {}
+        elif tool_choice == 'required':
+            return {'toolConfig': {'tools': tools, 'toolChoice': {'any': {}}}}
+        elif isinstance(tool_choice, ForcedFunctionToolChoice):
+            return {'toolConfig': {'tools': tools, 'toolChoice': {'tool': {'name': tool_choice.name}}}}
+        else:
+            assert_never(tool_choice)
 
     @staticmethod
     def _map_inference_config(

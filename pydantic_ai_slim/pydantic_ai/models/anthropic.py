@@ -29,7 +29,7 @@ from ..messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from ..settings import ModelSettings
+from ..settings import ForcedFunctionToolChoice, ModelSettings
 from ..tools import ToolDefinition
 from . import (
     Model,
@@ -212,19 +212,7 @@ class AnthropicModel(Model):
     ) -> AnthropicMessage | AsyncStream[RawMessageStreamEvent]:
         # standalone function to make it easier to override
         tools = self._get_tools(model_request_parameters)
-        tool_choice: ToolChoiceParam | None
-
-        if not tools:
-            tool_choice = None
-        else:
-            if not model_request_parameters.allow_text_result:
-                tool_choice = {'type': 'any'}
-            else:
-                tool_choice = {'type': 'auto'}
-
-            if (allow_parallel_tool_calls := model_settings.get('parallel_tool_calls')) is not None:
-                tool_choice['disable_parallel_tool_use'] = not allow_parallel_tool_calls
-
+        tool_choice = self._map_tool_choice(model_settings, model_request_parameters, tools)
         system_prompt, anthropic_messages = await self._map_message(messages)
 
         try:
@@ -281,6 +269,32 @@ class AnthropicModel(Model):
         if model_request_parameters.result_tools:
             tools += [self._map_tool_definition(r) for r in model_request_parameters.result_tools]
         return tools
+
+    @staticmethod
+    def _map_tool_choice(
+        model_settings: AnthropicModelSettings,
+        model_request_parameters: ModelRequestParameters,
+        tools: list[ToolParam],
+    ) -> ToolChoiceParam | None:
+        """Determine the `tool_choice` setting for the model.
+
+        Anthropic only supports `'auto'`, `'any'`, `'none'`, and a named tool.
+        """
+        tool_choice = model_settings.get('tool_choice', 'auto')
+        disable_parallel_tool_use = not model_settings.get('parallel_tool_calls', True)
+
+        if tool_choice == 'auto' and tools and not model_request_parameters.allow_text_result:
+            return {'type': 'any', 'disable_parallel_tool_use': disable_parallel_tool_use}
+        elif tool_choice == 'required':
+            return {'type': 'any', 'disable_parallel_tool_use': disable_parallel_tool_use}
+        elif tool_choice == 'auto':
+            return {'type': 'auto', 'disable_parallel_tool_use': disable_parallel_tool_use}
+        elif tool_choice == 'none':
+            return {'type': 'none'}
+        elif isinstance(tool_choice, ForcedFunctionToolChoice):
+            return {'type': 'tool', 'name': tool_choice.name, 'disable_parallel_tool_use': disable_parallel_tool_use}
+        else:
+            assert_never(tool_choice)
 
     async def _map_message(self, messages: list[ModelMessage]) -> tuple[str, list[MessageParam]]:
         """Just maps a `pydantic_ai.Message` to a `anthropic.types.MessageParam`."""
