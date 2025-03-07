@@ -3,7 +3,9 @@ from collections.abc import AsyncIterator
 from datetime import timezone
 
 import pytest
+from dirty_equals import IsJson
 from inline_snapshot import snapshot
+from logfire.testing import CaptureLogfire
 
 from pydantic_ai import Agent, ModelHTTPError
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, UserPromptPart
@@ -62,9 +64,9 @@ def test_first_successful() -> None:
     )
 
 
-def test_first_failed() -> None:
+def test_first_failed(capfire: CaptureLogfire) -> None:
     fallback_model = FallbackModel(failure_model, success_model)
-    agent = Agent(model=fallback_model)
+    agent = Agent(model=fallback_model, instrument=True)
     result = agent.run_sync('hello')
     assert result.data == snapshot('success')
     assert result.all_messages() == snapshot(
@@ -82,6 +84,117 @@ def test_first_failed() -> None:
                 model_name='function:success_response:',
                 timestamp=IsNow(tz=timezone.utc),
             ),
+        ]
+    )
+    assert capfire.exporter.exported_spans_as_dict(_include_pending_spans=True) == snapshot(
+        [
+            {
+                'name': 'agent run',
+                'context': {'trace_id': 1, 'span_id': 2, 'is_remote': False},
+                'parent': {'trace_id': 1, 'span_id': 1, 'is_remote': False},
+                'start_time': 1000000000,
+                'end_time': 1000000000,
+                'attributes': {
+                    'model_name': 'FallBackModel[function:failure_response:, function:success_response:]',
+                    'agent_name': 'agent',
+                    'logfire.msg': 'agent run',
+                    'logfire.span_type': 'pending_span',
+                    'logfire.pending_parent_id': '0000000000000000',
+                },
+            },
+            {
+                'name': 'preparing model request params',
+                'context': {'trace_id': 1, 'span_id': 4, 'is_remote': False},
+                'parent': {'trace_id': 1, 'span_id': 3, 'is_remote': False},
+                'start_time': 2000000000,
+                'end_time': 2000000000,
+                'attributes': {
+                    'run_step': 1,
+                    'logfire.span_type': 'pending_span',
+                    'logfire.msg': 'preparing model request params',
+                    'logfire.pending_parent_id': '0000000000000001',
+                },
+            },
+            {
+                'name': 'preparing model request params',
+                'context': {'trace_id': 1, 'span_id': 3, 'is_remote': False},
+                'parent': {'trace_id': 1, 'span_id': 1, 'is_remote': False},
+                'start_time': 2000000000,
+                'end_time': 3000000000,
+                'attributes': {
+                    'run_step': 1,
+                    'logfire.span_type': 'span',
+                    'logfire.msg': 'preparing model request params',
+                },
+            },
+            {
+                'name': 'chat FallBackModel[function:failure_response:, function:success_response:]',
+                'context': {'trace_id': 1, 'span_id': 6, 'is_remote': False},
+                'parent': {'trace_id': 1, 'span_id': 5, 'is_remote': False},
+                'start_time': 4000000000,
+                'end_time': 4000000000,
+                'attributes': {
+                    'gen_ai.operation.name': 'chat',
+                    'gen_ai.system': 'fallback',
+                    'gen_ai.request.model': 'FallBackModel[function:failure_response:, function:success_response:]',
+                    'logfire.span_type': 'pending_span',
+                    'logfire.msg': 'chat FallBackModel[function:failure_response:, function:success_response:]',
+                    'logfire.pending_parent_id': '0000000000000001',
+                },
+            },
+            {
+                'name': 'chat function:success_response:',
+                'context': {'trace_id': 1, 'span_id': 5, 'is_remote': False},
+                'parent': {'trace_id': 1, 'span_id': 1, 'is_remote': False},
+                'start_time': 4000000000,
+                'end_time': 5000000000,
+                'attributes': {
+                    'gen_ai.operation.name': 'chat',
+                    'logfire.span_type': 'span',
+                    'logfire.msg': 'chat FallBackModel[function:failure_response:, function:success_response:]',
+                    'gen_ai.usage.input_tokens': 51,
+                    'gen_ai.usage.output_tokens': 1,
+                    'gen_ai.system': 'function',
+                    'gen_ai.request.model': 'function:success_response:',
+                    'gen_ai.response.model': 'function:success_response:',
+                    'events': IsJson(
+                        [
+                            {
+                                'content': 'hello',
+                                'role': 'user',
+                                'gen_ai.system': 'function',
+                                'gen_ai.message.index': 0,
+                                'event.name': 'gen_ai.user.message',
+                            },
+                            {
+                                'index': 0,
+                                'message': {'role': 'assistant', 'content': 'success'},
+                                'gen_ai.system': 'function',
+                                'event.name': 'gen_ai.choice',
+                            },
+                        ]
+                    ),
+                    'logfire.json_schema': '{"type": "object", "properties": {"events": {"type": "array"}}}',
+                },
+            },
+            {
+                'name': 'agent run',
+                'context': {'trace_id': 1, 'span_id': 1, 'is_remote': False},
+                'parent': None,
+                'start_time': 1000000000,
+                'end_time': 6000000000,
+                'attributes': {
+                    'model_name': 'FallBackModel[function:failure_response:, function:success_response:]',
+                    'agent_name': 'agent',
+                    'logfire.msg': 'agent run',
+                    'logfire.span_type': 'span',
+                    'gen_ai.usage.input_tokens': 51,
+                    'gen_ai.usage.output_tokens': 1,
+                    'all_messages_events': '[{"content": "hello", "role": "user", "gen_ai.message.index": 0, "event.name": "gen_ai.user.message"}, {"role": "assistant", "content": "success", "gen_ai.message.index": 1, "event.name": "gen_ai.assistant.message"}]',
+                    'final_result': 'success',
+                    'logfire.json_schema': '{"type": "object", "properties": {"all_messages_events": {"type": "array"}, "final_result": {"type": "object"}}}',
+                },
+            },
         ]
     )
 
