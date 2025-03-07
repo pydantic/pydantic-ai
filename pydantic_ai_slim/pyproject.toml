@@ -52,6 +52,7 @@ vertexai = ["google-auth>=2.36.0", "requests>=2.32.3"]
 anthropic = ["anthropic>=0.49.0"]
 groq = ["groq>=0.12.0"]
 mistral = ["mistralai>=1.2.5"]
+bedrock = ["boto3>=1.34.116"]
 # Tools
 duckduckgo = ["duckduckgo-search>=7.0.0"]
 tavily = ["tavily-python>=0.5.0"]
@@ -71,6 +72,7 @@ dev = [
     "pytest-pretty>=1.2.0",
     "pytest-recording>=0.13.2",
     "diff-cover>=9.2.0",
+    "boto3-stubs[bedrock-runtime]",
 ]
 
 [project.scripts]

@@ -7,6 +7,7 @@ PydanticAI is Model-agnostic and has built in support for the following model pr
 * [Groq](#groq)
 * [Mistral](#mistral)
 * [Cohere](#cohere)
+* [Bedrock](#bedrock)
 
 See [OpenAI-compatible models](#openai-compatible-models) for more examples on how to use models such as [OpenRouter](#openrouter), and [Grok (xAI)](#grok-xai) that support the OpenAI SDK.
 
@@ -536,6 +537,93 @@ from pydantic_ai import Agent
 from pydantic_ai.models.cohere import CohereModel
 
 model = CohereModel('command', api_key='your-api-key')
+agent = Agent(model)
+...
+```
+
+## Bedrock
+
+### Install
+
+To use [`BedrockConverseModel`][pydantic_ai.models.bedrock.BedrockConverseModel], you need to either install [`pydantic-ai`](install.md), or install [`pydantic-ai-slim`](install.md#slim-install) with the `bedrock` optional group:
+
+```bash
+pip/uv-add 'pydantic-ai-slim[bedrock]'
+```
+
+### Configuration
+
+To use [AWS Bedrock](https://aws.amazon.com/bedrock/), you'll need an AWS account with Bedrock enabled and appropriate credentials. You can use either AWS credentials directly or a pre-configured boto3 client.
+
+[`BedrockModelName`][pydantic_ai.models.bedrock.BedrockModelName] contains a list of available Bedrock models, including models from Anthropic, Amazon, Cohere, Meta, and Mistral.
+
+### Environment variables
+
+You can set your AWS credentials as environment variables:
+
+```bash
+export AWS_ACCESS_KEY_ID='your-access-key'
+export AWS_SECRET_ACCESS_KEY='your-secret-key'
+export AWS_REGION='us-east-1'  # or your preferred region
+```
+
+You can then use [`BedrockConverseModel`][pydantic_ai.models.bedrock.BedrockConverseModel] by name:
+
+```python {title="bedrock_model_by_name.py", test="skip"}
+from pydantic_ai import Agent
+
+agent = Agent('bedrock:anthropic.claude-3-sonnet-20240229-v1:0')
+...
+```
+
+Or initialize the model directly with just the model name:
+
+```python {title="bedrock_model_init.py" test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.models.bedrock import BedrockConverseModel
+
+model = BedrockConverseModel('anthropic.claude-3-sonnet-20240229-v1:0')
+agent = Agent(model)
+...
+```
+
+### `provider` argument
+
+You can provide a custom [`BedrockProvider`][pydantic_ai.providers.bedrock.BedrockProvider] via the [`provider` argument][pydantic_ai.models.bedrock.BedrockConverseModel.__init__]. This is useful when you want to specify credentials directly or use a custom boto3 client:
+
+```python {title="bedrock_model_provider.py"}
+from pydantic_ai import Agent
+from pydantic_ai.models.bedrock import BedrockConverseModel
+from pydantic_ai.providers.bedrock import BedrockProvider
+
+# Using AWS credentials directly
+model = BedrockConverseModel(
+    'anthropic.claude-3-sonnet-20240229-v1:0',
+    provider=BedrockProvider(
+        region_name='us-east-1',
+        aws_access_key_id='your-access-key',
+        aws_secret_access_key='your-secret-key',
+    ),
+)
+agent = Agent(model)
+...
+```
+
+You can also pass a pre-configured boto3 client:
+
+```python {title="bedrock_model_boto3.py"}
+import boto3
+
+from pydantic_ai import Agent
+from pydantic_ai.models.bedrock import BedrockConverseModel
+from pydantic_ai.providers.bedrock import BedrockProvider
+
+# Using a pre-configured boto3 client
+bedrock_client = boto3.client('bedrock-runtime', region_name='us-east-1')
+model = BedrockConverseModel(
+    'anthropic.claude-3-sonnet-20240229-v1:0',
+    provider=BedrockProvider(bedrock_client=bedrock_client),
+)
 agent = Agent(model)
 ...
 ```

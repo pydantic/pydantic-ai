@@ -1,10 +1,10 @@
 import functools
 from dataclasses import dataclass
-from typing import TypedDict
 
 import anyio
 import anyio.to_thread
 from pydantic import TypeAdapter
+from typing_extensions import TypedDict
 
 from pydantic_ai.tools import Tool
 
