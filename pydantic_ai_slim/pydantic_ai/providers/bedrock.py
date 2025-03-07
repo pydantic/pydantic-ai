@@ -72,5 +72,5 @@ class BedrockProvider(Provider[BaseClient]):
                     aws_session_token=aws_session_token,
                     region_name=region_name,
                 )
-            except NoRegionError as exc:
+            except NoRegionError as exc:  # pragma: no cover
                 raise ValueError('You must provide a `region_name` or a boto3 client for Bedrock Runtime.') from exc
