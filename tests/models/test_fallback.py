@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import sys
 from collections.abc import AsyncIterator
 from datetime import timezone
@@ -5,19 +7,22 @@ from datetime import timezone
 import pytest
 from dirty_equals import IsJson
 from inline_snapshot import snapshot
-from logfire.testing import CaptureLogfire
 
 from pydantic_ai import Agent, ModelHTTPError
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, UserPromptPart
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
-from ..conftest import IsNow
+from ..conftest import IsNow, try_import
 
 if sys.version_info < (3, 11):
     from exceptiongroup import ExceptionGroup as ExceptionGroup
 else:
     ExceptionGroup = ExceptionGroup
+
+with try_import() as logfire_imports_successful:
+    from logfire.testing import CaptureLogfire
+
 
 pytestmark = pytest.mark.anyio
 
@@ -64,7 +69,32 @@ def test_first_successful() -> None:
     )
 
 
-def test_first_failed(capfire: CaptureLogfire) -> None:
+def test_first_failed() -> None:
+    fallback_model = FallbackModel(failure_model, success_model)
+    agent = Agent(model=fallback_model)
+    result = agent.run_sync('hello')
+    assert result.data == snapshot('success')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='hello',
+                        timestamp=IsNow(tz=timezone.utc),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[TextPart(content='success')],
+                model_name='function:success_response:',
+                timestamp=IsNow(tz=timezone.utc),
+            ),
+        ]
+    )
+
+
+@pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
+def test_first_failed_instrumented(capfire: CaptureLogfire) -> None:
     fallback_model = FallbackModel(failure_model, success_model)
     agent = Agent(model=fallback_model, instrument=True)
     result = agent.run_sync('hello')
