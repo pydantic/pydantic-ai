@@ -6,7 +6,7 @@ from collections.abc import AsyncIterable, AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Literal, Union, cast, overload
+from typing import Any, Literal, Union, cast, overload
 
 from httpx import AsyncClient as AsyncHTTPClient
 from typing_extensions import assert_never, deprecated
@@ -83,6 +83,11 @@ class OpenAIModelSettings(ModelSettings):
     Currently supported values are `low`, `medium`, and `high`. Reducing reasoning effort can
     result in faster responses and fewer tokens used on reasoning in a response.
     """
+
+
+def non_annotated(model_settings: ModelSettings) -> dict[str, Any]:
+    """Extract non annotated key-value pairs from model_settings."""
+    return {k: v for (k, v) in model_settings.items() if k not in OpenAIModelSettings.__annotations__}
 
 
 @dataclass(init=False)
@@ -288,6 +293,7 @@ class OpenAIModel(Model):
                 frequency_penalty=model_settings.get('frequency_penalty', NOT_GIVEN),
                 logit_bias=model_settings.get('logit_bias', NOT_GIVEN),
                 reasoning_effort=model_settings.get('openai_reasoning_effort', NOT_GIVEN),
+                **non_annotated(model_settings),
             )
         except APIStatusError as e:
             if (status_code := e.status_code) >= 400:
