@@ -15,7 +15,7 @@ from logfire_api import LogfireSpan
 from . import _utils, exceptions, mermaid
 from .nodes import BaseNode, DepsT, End, GraphRunContext, NodeDef, RunEndT
 from .persistence import StatePersistence, StateT, set_nodes_type_context
-from .persistence.memory import SimpleStatePersistence
+from .persistence.in_mem import SimpleStatePersistence
 
 # while waiting for https://github.com/pydantic/logfire/issues/745
 try:
@@ -136,7 +136,7 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
             state: The initial state of the graph.
             deps: The dependencies of the graph.
             persistence: State persistence interface, defaults to
-                [`SimpleStatePersistence`][pydantic_graph.state.memory.SimpleStatePersistence] if `None`.
+                [`SimpleStatePersistence`][pydantic_graph.SimpleStatePersistence] if `None`.
             infer_name: Whether to infer the graph name from the calling frame.
             span: The span to use for the graph run. If not provided, a span will be created depending on the value of
                 the `_auto_instrument` field.
@@ -194,7 +194,7 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
             state: The initial state of the graph.
             deps: The dependencies of the graph.
             persistence: State persistence interface, defaults to
-                [`SimpleStatePersistence`][pydantic_graph.state.memory.SimpleStatePersistence] if `None`.
+                [`SimpleStatePersistence`][pydantic_graph.SimpleStatePersistence] if `None`.
             infer_name: Whether to infer the graph name from the calling frame.
 
         Returns:
@@ -238,7 +238,7 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
             state: The initial state of the graph.
             deps: The dependencies of the graph.
             persistence: State persistence interface, defaults to
-                [`SimpleStatePersistence`][pydantic_graph.state.memory.SimpleStatePersistence] if `None`.
+                [`SimpleStatePersistence`][pydantic_graph.SimpleStatePersistence] if `None`.
             infer_name: Whether to infer the graph name from the calling frame.
             span: The span to use for the graph run. If not provided, a new span will be created.
 
@@ -282,7 +282,7 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
         Args:
             node: The node to run.
             persistence: State persistence interface, defaults to
-                [`SimpleStatePersistence`][pydantic_graph.state.memory.SimpleStatePersistence] if `None`.
+                [`SimpleStatePersistence`][pydantic_graph.SimpleStatePersistence] if `None`.
             state: The current state of the graph.
             deps: The dependencies of the graph.
             infer_name: Whether to infer the graph name from the calling frame.

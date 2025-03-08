@@ -39,7 +39,7 @@ pip/uv-add pydantic-graph
 
 [`GraphRunContext`][pydantic_graph.nodes.GraphRunContext] — The context for the graph run, similar to PydanticAI's [`RunContext`][pydantic_ai.tools.RunContext]. This holds the state of the graph and dependencies and is passed to nodes when they're run.
 
-`GraphRunContext` is generic in the state type of the graph it's used in, [`StateT`][pydantic_graph.state.StateT].
+`GraphRunContext` is generic in the state type of the graph it's used in, [`StateT`][pydantic_graph.persistence.StateT].
 
 ### End
 
@@ -59,7 +59,7 @@ Nodes, which are generally [`dataclass`es][dataclasses.dataclass], generally con
 
 Nodes are generic in:
 
-* **state**, which must have the same type as the state of graphs they're included in, [`StateT`][pydantic_graph.state.StateT] has a default of `None`, so if you're not using state you can omit this generic parameter, see [stateful graphs](#stateful-graphs) for more information
+* **state**, which must have the same type as the state of graphs they're included in, [`StateT`][pydantic_graph.persistence.StateT] has a default of `None`, so if you're not using state you can omit this generic parameter, see [stateful graphs](#stateful-graphs) for more information
 * **deps**, which must have the same type as the deps of the graph they're included in, [`DepsT`][pydantic_graph.nodes.DepsT] has a default of `None`, so if you're not using deps you can omit this generic parameter, see [dependency injection](#dependency-injection) for more information
 * **graph return type** — this only applies if the node returns [`End`][pydantic_graph.nodes.End]. [`RunEndT`][pydantic_graph.nodes.RunEndT] has a default of [Never][typing.Never] so this generic parameter can be omitted if the node doesn't return `End`, but must be included if it does.
 
@@ -119,7 +119,7 @@ class MyNode(BaseNode[MyState, None, int]):  # (1)!
 
 `Graph` is generic in:
 
-* **state** the state type of the graph, [`StateT`][pydantic_graph.state.StateT]
+* **state** the state type of the graph, [`StateT`][pydantic_graph.persistence.StateT]
 * **deps** the deps type of the graph, [`DepsT`][pydantic_graph.nodes.DepsT]
 * **graph return type** the return type of the graph run, [`RunEndT`][pydantic_graph.nodes.RunEndT]
 
@@ -512,16 +512,22 @@ In this example, an AI asks the user a question, the user provides an answer, th
             )
             ctx.state.ask_agent_messages += result.all_messages()
             ctx.state.question = result.data
-            return Answer(result.data)
+            return Question(result.data)
+
+
+    @dataclass
+    class Question(BaseNode[QuestionState]):
+        question: str
+
+        async def run(self, ctx: GraphRunContext[QuestionState]) -> Answer:
+            raise NotImplementedError('Question nodes should not be run')
 
 
     @dataclass
     class Answer(BaseNode[QuestionState]):
-        question: str
-        answer: str | None = None
+        answer: str
 
         async def run(self, ctx: GraphRunContext[QuestionState]) -> Evaluate:
-            assert self.answer is not None
             return Evaluate(self.answer)
 
 
@@ -568,7 +574,7 @@ In this example, an AI asks the user a question, the user provides an answer, th
             return Ask()
 
 
-    question_graph = Graph(nodes=(Ask, Answer, Evaluate, Reprimand))
+    question_graph = Graph(nodes=(Ask, Question, Answer, Evaluate, Reprimand))
     ```
 
     _(This example is complete, it can be run "as is" with Python 3.10+)_
@@ -578,7 +584,7 @@ from rich.prompt import Prompt
 
 from pydantic_graph import End, FullStatePersistence
 
-from ai_q_and_a_graph import Ask, question_graph, QuestionState, Answer
+from ai_q_and_a_graph import Ask, question_graph, Question, QuestionState, Answer
 
 
 async def main():
@@ -589,8 +595,8 @@ async def main():
         node = await question_graph.next(  # (4)!
             node, persistence=persistence, state=state
         )
-        if isinstance(node, Answer):
-            node.answer = Prompt.ask(node.question)  # (5)!
+        if isinstance(node, Question):
+            node = Answer(Prompt.ask(node.question))  # (5)!
         elif isinstance(node, End):  # (6)!
             print(f'Correct answer! {node.data}')
             #> Correct answer! Well done, 1 + 1 = 2
@@ -598,11 +604,13 @@ async def main():
             """
             [
                 Ask(),
-                Answer(question='What is the capital of France?', answer=None),
+                Question(question='What is the capital of France?'),
+                Answer(answer='Vichy'),
                 Evaluate(answer='Vichy'),
                 Reprimand(comment='Vichy is no longer the capital of France.'),
                 Ask(),
-                Answer(question='what is 1 + 1?', answer=None),
+                Question(question='what is 1 + 1?'),
+                Answer(answer='2'),
                 Evaluate(answer='2'),
                 End(data='Well done, 1 + 1 = 2'),
             ]
@@ -613,9 +621,9 @@ async def main():
 
 1. Create the state object which will be mutated by [`next`][pydantic_graph.graph.Graph.next].
 2. The start node is `Ask` but will be updated by [`next`][pydantic_graph.graph.Graph.next] as the graph runs.
-3. The history of the graph run is stored using [`FullStatePersistence`][pydantic_graph.state.memory.FullStatePersistence]. Again [`next`][pydantic_graph.graph.Graph.next] will update this list in place.
+3. The history of the graph run is stored using [`FullStatePersistence`][pydantic_graph.FullStatePersistence]. Again [`next`][pydantic_graph.graph.Graph.next] will update this list in place.
 4. [Run][pydantic_graph.graph.Graph.next] the graph one node at a time, updating the state, current node and history as the graph runs.
-5. If the current node is an `Answer` node, prompt the user for an answer.
+5. If the current node is an `Question` node, prompt the user for an answer.
 6. Since we're using [`next`][pydantic_graph.graph.Graph.next] we have to manually check for an [`End`][pydantic_graph.nodes.End] and exit the loop if we get one.
 
 _(This example is complete, it can be run "as is" with Python 3.10+ — you'll need to add `asyncio.run(main())` to run `main`)_
@@ -634,7 +642,8 @@ title: question_graph
 ---
 stateDiagram-v2
   [*] --> Ask
-  Ask --> Answer
+  Ask --> Question
+  Question --> Answer
   Answer --> Evaluate
   Evaluate --> Reprimand
   Evaluate --> [*]

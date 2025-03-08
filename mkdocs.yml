@@ -63,7 +63,7 @@ nav:
       - api/models/fallback.md
       - api/pydantic_graph/graph.md
       - api/pydantic_graph/nodes.md
-      - api/pydantic_graph/state.md
+      - api/pydantic_graph/persistence.md
       - api/pydantic_graph/mermaid.md
       - api/pydantic_graph/exceptions.md
 

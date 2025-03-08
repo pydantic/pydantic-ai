@@ -78,7 +78,7 @@ class EndSnapshot(Generic[StateT, RunEndT]):
 
     @property
     def node(self) -> End[RunEndT]:
-        """Shim to get the [`result`][pydantic_graph.state.EndSnapshot.result].
+        """Shim to get the [`result`][pydantic_graph.persistence.EndSnapshot.result].
 
         Useful to allow `[snapshot.node for snapshot in persistence.history]`.
         """
@@ -126,10 +126,10 @@ class StatePersistence(ABC, Generic[StateT, RunEndT]):
 
         In particular this should set:
 
-        - [`NodeSnapshot.status`][pydantic_graph.state.NodeSnapshot.status] to `'running'` and
-          [`NodeSnapshot.start_ts`][pydantic_graph.state.NodeSnapshot.start_ts] when the run starts.
-        - [`NodeSnapshot.status`][pydantic_graph.state.NodeSnapshot.status] to `'success'` or `'error'` and
-          [`NodeSnapshot.duration`][pydantic_graph.state.NodeSnapshot.duration] when the run finishes.
+        - [`NodeSnapshot.status`][pydantic_graph.persistence.NodeSnapshot.status] to `'running'` and
+          [`NodeSnapshot.start_ts`][pydantic_graph.persistence.NodeSnapshot.start_ts] when the run starts.
+        - [`NodeSnapshot.status`][pydantic_graph.persistence.NodeSnapshot.status] to `'success'` or `'error'` and
+          [`NodeSnapshot.duration`][pydantic_graph.persistence.NodeSnapshot.duration] when the run finishes.
         """
         raise NotImplementedError
 
@@ -138,7 +138,7 @@ class StatePersistence(ABC, Generic[StateT, RunEndT]):
         """Retrieve the latest snapshot.
 
         Returns:
-            The most recent [`Snapshot`][pydantic_graph.state.Snapshot] of the run.
+            The most recent [`Snapshot`][pydantic_graph.persistence.Snapshot] of the run.
         """
         raise NotImplementedError
 
@@ -157,6 +157,14 @@ class StatePersistence(ABC, Generic[StateT, RunEndT]):
         raise NotImplementedError
 
     def set_types(self, get_types: Callable[[], tuple[type[StateT], type[RunEndT]]]) -> None:
+        """Set the types of the state and run end.
+
+        This can be used to create [type adapters][pydantic.TypeAdapter] for serializing and deserializing
+        snapshots.
+
+        Args:
+            get_types: A callback that returns the types of the state and run end.
+        """
         pass
 
     async def restore_node_snapshot(self) -> NodeSnapshot[StateT, RunEndT]:
