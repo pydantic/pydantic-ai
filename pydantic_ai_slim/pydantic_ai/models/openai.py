@@ -136,6 +136,7 @@ class OpenAIModel(Model):
         http_client: AsyncHTTPClient | None = None,
         system_prompt_role: OpenAISystemPromptRole | None = None,
         system: str | None = 'openai',
+        user: str | None = None,
     ):
         """Initialize an OpenAI model.
 
@@ -156,7 +157,9 @@ class OpenAIModel(Model):
                 In the future, this may be inferred from the model name.
             system: The model provider used, defaults to `openai`. This is for observability purposes, you must
                 customize the `base_url` and `api_key` to use a different provider.
+            user: The user to associate with the request. If not provided, defaults to `None`.
         """
+        self.user = user
         self._model_name = model_name
 
         if provider is not None:
@@ -288,6 +291,7 @@ class OpenAIModel(Model):
                 frequency_penalty=model_settings.get('frequency_penalty', NOT_GIVEN),
                 logit_bias=model_settings.get('logit_bias', NOT_GIVEN),
                 reasoning_effort=model_settings.get('openai_reasoning_effort', NOT_GIVEN),
+                user=self.user or NOT_GIVEN,
             )
         except APIStatusError as e:
             if (status_code := e.status_code) >= 400:
