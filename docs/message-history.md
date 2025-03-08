@@ -253,7 +253,7 @@ history_step_1 = result1.all_messages()
 as_python_objects = to_jsonable_python(history_step_1)
 same_history_as_step_1 = messages_adapter.validate_python(as_python_objects)
 result2 = agent.run_sync(
-    'Tell me a good joke.', message_history=same_history_different_object
+    'Tell me a good joke.', message_history=same_history_as_step_1
 )
 print(result2.all_messages())
 """
