@@ -223,6 +223,33 @@ print(result2.all_messages())
 ```
 _(This example is complete, it can be run "as is")_
 
+## Storing and loading messages (to JSON)
+
+While maintaining conversation state in memory can work, often times you may want to write the messages to disk or a database. This might be for evals, for sharing from Python to JavaScript or any number of other cases.
+
+The most effective wany to do this is to use a `TypeAdapter`.
+
+
+```python {title="serialize messages to json"}
+from pydantic import TypeAdapter
+from pydantic_core import to_jsonable_python
+
+from pydantic_ai import Agent
+from pydantic_ai.messages import ModelMessage
+
+messages_adapter = TypeAdapter(list[ModelMessage])
+
+agent = Agent('openai:gpt-4o', system_prompt='Be a helpful assistant.')
+
+result1 = agent.run_sync('Tell me a good joke.')
+history_step_1 = result1.all_messages()
+as_python_objects = to_jsonable_python(history_step_1)
+same_history_as_step_1 = messages_adapter.validate_python(as_python_objects)
+result2 = agent.run_sync('Tell me a good joke.', message_history=same_history_as_step_1)
+```
+_(This example is complete, it can be run "as is")_
+
+
 ## Other ways of using messages
 
 Since messages are defined by simple dataclasses, you can manually create and manipulate, e.g. for testing.
