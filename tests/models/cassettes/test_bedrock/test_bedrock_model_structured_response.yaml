@@ -1,0 +1,118 @@
+interactions:
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "What was the temperature in London 1st January 2022?"}]}],
+      "system": [{"text": "You are a helpful chatbot."}], "inferenceConfig": {}, "toolConfig": {"tools": [{"toolSpec": {"name":
+      "temperature", "description": "Get the temperature in a city on a specific date.", "inputSchema": {"json": {"properties":
+      {"city": {"description": "The city name.", "title": "City", "type": "string"}, "date": {"description": "The date.",
+      "format": "date", "title": "Date", "type": "string"}}, "required": ["city", "date"], "type": "object", "additionalProperties":
+      false}}}}, {"toolSpec": {"name": "final_result", "description": "The final response which ends this conversation", "inputSchema":
+      {"json": {"properties": {"temperature": {"title": "Temperature", "type": "string"}, "date": {"format": "date", "title":
+      "Date", "type": "string"}, "city": {"title": "City", "type": "string"}}, "required": ["temperature", "date", "city"],
+      "title": "Response", "type": "object"}}}}]}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        OGYxNWJmMWItNWM5NC00ZGJhLWFhZGYtNjI3YTk0Mzg5Njkx
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '1011'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.amazon.nova-micro-v1%3A0/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '617'
+      content-type:
+      - application/json
+    parsed_body:
+      metrics:
+        latencyMs: 569
+      output:
+        message:
+          content:
+          - text: |
+              <thinking> To find the temperature in London on 1st January 2022, I will use the "temperature" tool. I need to provide the date and the city name. The date is already provided as "1st January 2022" and the city name is "London". I will call the "temperature" tool with these parameters.</thinking>
+          - toolUse:
+              input:
+                city: London
+                date: '2022-01-01'
+              name: temperature
+              toolUseId: tooluse_5WEci1UmQ8ifMFkUcy2gHQ
+          role: assistant
+      stopReason: tool_use
+      usage:
+        inputTokens: 551
+        outputTokens: 132
+        totalTokens: 683
+    status:
+      code: 200
+      message: OK
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "What was the temperature in London 1st January 2022?"}]},
+      {"role": "assistant", "content": [{"text": "<thinking> To find the temperature in London on 1st January 2022, I will
+      use the \"temperature\" tool. I need to provide the date and the city name. The date is already provided as \"1st January
+      2022\" and the city name is \"London\". I will call the \"temperature\" tool with these parameters.</thinking>\n"},
+      {"toolUse": {"toolUseId": "tooluse_5WEci1UmQ8ifMFkUcy2gHQ", "name": "temperature", "input": {"date": "2022-01-01", "city":
+      "London"}}}]}, {"role": "user", "content": [{"toolResult": {"toolUseId": "tooluse_5WEci1UmQ8ifMFkUcy2gHQ", "content":
+      [{"text": "30\u00b0C"}], "status": "success"}}]}], "system": [{"text": "You are a helpful chatbot."}], "inferenceConfig":
+      {}, "toolConfig": {"tools": [{"toolSpec": {"name": "temperature", "description": "Get the temperature in a city on a
+      specific date.", "inputSchema": {"json": {"properties": {"city": {"description": "The city name.", "title": "City",
+      "type": "string"}, "date": {"description": "The date.", "format": "date", "title": "Date", "type": "string"}}, "required":
+      ["city", "date"], "type": "object", "additionalProperties": false}}}}, {"toolSpec": {"name": "final_result", "description":
+      "The final response which ends this conversation", "inputSchema": {"json": {"properties": {"temperature": {"title":
+      "Temperature", "type": "string"}, "date": {"format": "date", "title": "Date", "type": "string"}, "city": {"title": "City",
+      "type": "string"}}, "required": ["temperature", "date", "city"], "title": "Response", "type": "object"}}}}]}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        Y2I2OGUxZWEtMTJhOC00MzliLTk0OTMtMGQ4ZDFlYWNiMjJi
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '1657'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.amazon.nova-micro-v1%3A0/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '553'
+      content-type:
+      - application/json
+    parsed_body:
+      metrics:
+        latencyMs: 531
+      output:
+        message:
+          content:
+          - text: '<thinking> I have received the result from the "temperature" tool. The temperature in London on 1st January
+              2022 was 30°C. Now, I will use the "final_result" tool to provide this information to the user.</thinking> '
+          - toolUse:
+              input:
+                city: London
+                date: '2022-01-01'
+                temperature: 30°C
+              name: final_result
+              toolUseId: tooluse_9AjloJSaQDKmpPFff-2Clg
+          role: assistant
+      stopReason: tool_use
+      usage:
+        inputTokens: 685
+        outputTokens: 166
+        totalTokens: 851
+    status:
+      code: 200
+      message: OK
+version: 1

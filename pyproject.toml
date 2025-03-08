@@ -4,9 +4,14 @@ build-backend = "hatchling.build"
 
 [project]
 name = "pydantic-ai"
-version = "0.0.30"
+version = "0.0.36"
 description = "Agent Framework / shim to use Pydantic with LLMs"
-authors = [{ name = "Samuel Colvin", email = "samuel@pydantic.dev" }]
+authors = [
+    { name = "Samuel Colvin", email = "samuel@pydantic.dev" },
+    { name = "Marcelo Trylesinski", email = "marcelotryle@gmail.com" },
+    { name = "David Montague", email = "david@pydantic.dev" },
+    { name = "Alex Hall", email = "alex@pydantic.dev" },
+]
 license = "MIT"
 readme = "README.md"
 classifiers = [
@@ -30,9 +35,8 @@ classifiers = [
     "Framework :: Pydantic :: 2",
 ]
 requires-python = ">=3.9"
-
 dependencies = [
-    "pydantic-ai-slim[openai,vertexai,groq,anthropic,mistral,cohere]==0.0.30",
+    "pydantic-ai-slim[openai,vertexai,groq,anthropic,mistral,cohere,bedrock,cli]==0.0.36",
 ]
 
 [project.urls]
@@ -42,7 +46,7 @@ Documentation = "https://ai.pydantic.dev"
 Changelog = "https://github.com/pydantic/pydantic-ai/releases"
 
 [project.optional-dependencies]
-examples = ["pydantic-ai-examples==0.0.30"]
+examples = ["pydantic-ai-examples==0.0.36"]
 logfire = ["logfire>=2.3"]
 
 [tool.uv.sources]
@@ -85,7 +89,7 @@ include = [
 ]
 
 [tool.ruff.lint]
-extend-select = ["Q", "RUF100", "C90", "UP", "I", "D"]
+extend-select = ["Q", "RUF100", "C90", "UP", "I", "D", "TID251"]
 flake8-quotes = { inline-quotes = "single", multiline-quotes = "double" }
 isort = { combine-as-imports = true, known-first-party = ["pydantic_ai"] }
 mccabe = { max-complexity = 15 }
@@ -99,6 +103,9 @@ ignore = [
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"typing.TypedDict".msg = "Use typing_extensions.TypedDict instead."
 
 [tool.ruff.format]
 # don't format python in docstrings, pytest-examples takes care of it
@@ -129,7 +136,11 @@ strict = true
 [tool.pytest.ini_options]
 testpaths = "tests"
 xfail_strict = true
-filterwarnings = ["error"]
+filterwarnings = [
+    "error",
+    # boto3
+    "ignore::DeprecationWarning:botocore.*"
+]
 
 # https://coverage.readthedocs.io/en/latest/config.html#run
 [tool.coverage.run]
@@ -160,10 +171,14 @@ exclude_lines = [
     'typing.assert_never',
     '$\s*assert_never\(',
     'if __name__ == .__main__.:',
+    'except ImportError as _import_error:',
 ]
 
 [tool.logfire]
 ignore_no_config = true
+
+[tool.inline-snapshot]
+format-command = "ruff format --stdin-filename {filename}"
 
 [tool.inline-snapshot.shortcuts]
 snap-fix = ["create", "fix"]

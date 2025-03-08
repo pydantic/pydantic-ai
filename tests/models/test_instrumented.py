@@ -8,6 +8,8 @@ import pytest
 from dirty_equals import IsJson
 from inline_snapshot import snapshot
 from logfire_api import DEFAULT_LOGFIRE_INSTANCE
+from opentelemetry._events import NoOpEventLoggerProvider
+from opentelemetry.trace import NoOpTracerProvider
 
 from pydantic_ai.messages import (
     ModelMessage,
@@ -25,6 +27,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
+from pydantic_ai.models.instrumented import InstrumentationSettings, InstrumentedModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import Usage
 
@@ -32,11 +35,6 @@ from ..conftest import try_import
 
 with try_import() as imports_successful:
     from logfire.testing import CaptureLogfire
-    from opentelemetry._events import NoOpEventLoggerProvider
-    from opentelemetry.trace import NoOpTracerProvider
-
-    from pydantic_ai.models.instrumented import InstrumentedModel
-
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='logfire not installed'),
@@ -57,6 +55,10 @@ class MyModel(Model):
     @property
     def model_name(self) -> str:
         return 'my_model'
+
+    @property
+    def base_url(self) -> str:
+        return 'https://example.com:8000/foo'
 
     async def request(
         self,
@@ -103,10 +105,9 @@ class MyResponseStream(StreamedResponse):
         return datetime(2022, 1, 1)
 
 
-@pytest.mark.anyio
 @requires_logfire_events
 async def test_instrumented_model(capfire: CaptureLogfire):
-    model = InstrumentedModel.from_logfire(MyModel(), event_mode='logs')
+    model = InstrumentedModel(MyModel(), InstrumentationSettings(event_mode='logs'))
     assert model.system == 'my_system'
     assert model.model_name == 'my_model'
 
@@ -149,6 +150,8 @@ async def test_instrumented_model(capfire: CaptureLogfire):
                     'gen_ai.operation.name': 'chat',
                     'gen_ai.system': 'my_system',
                     'gen_ai.request.model': 'my_model',
+                    'server.address': 'example.com',
+                    'server.port': 8000,
                     'gen_ai.request.temperature': 1,
                     'logfire.msg': 'chat my_model',
                     'logfire.span_type': 'span',
@@ -168,6 +171,7 @@ async def test_instrumented_model(capfire: CaptureLogfire):
                 'severity_text': None,
                 'attributes': {
                     'gen_ai.system': 'my_system',
+                    'gen_ai.message.index': 0,
                     'event.name': 'gen_ai.system.message',
                 },
                 'timestamp': 2000000000,
@@ -182,6 +186,7 @@ async def test_instrumented_model(capfire: CaptureLogfire):
                 'severity_text': None,
                 'attributes': {
                     'gen_ai.system': 'my_system',
+                    'gen_ai.message.index': 0,
                     'event.name': 'gen_ai.user.message',
                 },
                 'timestamp': 4000000000,
@@ -191,11 +196,12 @@ async def test_instrumented_model(capfire: CaptureLogfire):
                 'trace_flags': 1,
             },
             {
-                'body': {'content': 'tool_return_content', 'role': 'tool', 'id': 'tool_call_3'},
+                'body': {'content': 'tool_return_content', 'role': 'tool', 'id': 'tool_call_3', 'name': 'tool3'},
                 'severity_number': 9,
                 'severity_text': None,
                 'attributes': {
                     'gen_ai.system': 'my_system',
+                    'gen_ai.message.index': 0,
                     'event.name': 'gen_ai.tool.message',
                 },
                 'timestamp': 6000000000,
@@ -213,11 +219,13 @@ Fix the errors and try again.\
 """,
                     'role': 'tool',
                     'id': 'tool_call_4',
+                    'name': 'tool4',
                 },
                 'severity_number': 9,
                 'severity_text': None,
                 'attributes': {
                     'gen_ai.system': 'my_system',
+                    'gen_ai.message.index': 0,
                     'event.name': 'gen_ai.tool.message',
                 },
                 'timestamp': 8000000000,
@@ -239,6 +247,7 @@ Fix the errors and try again.\
                 'severity_text': None,
                 'attributes': {
                     'gen_ai.system': 'my_system',
+                    'gen_ai.message.index': 0,
                     'event.name': 'gen_ai.user.message',
                 },
                 'timestamp': 10000000000,
@@ -253,6 +262,7 @@ Fix the errors and try again.\
                 'severity_text': None,
                 'attributes': {
                     'gen_ai.system': 'my_system',
+                    'gen_ai.message.index': 1,
                     'event.name': 'gen_ai.assistant.message',
                 },
                 'timestamp': 12000000000,
@@ -305,9 +315,11 @@ Fix the errors and try again.\
     )
 
 
-@pytest.mark.anyio
 async def test_instrumented_model_not_recording():
-    model = InstrumentedModel(MyModel(), NoOpTracerProvider(), NoOpEventLoggerProvider())
+    model = InstrumentedModel(
+        MyModel(),
+        InstrumentationSettings(tracer_provider=NoOpTracerProvider(), event_logger_provider=NoOpEventLoggerProvider()),
+    )
 
     messages: list[ModelMessage] = [ModelRequest(parts=[SystemPromptPart('system_prompt')])]
     await model.request(
@@ -321,10 +333,9 @@ async def test_instrumented_model_not_recording():
     )
 
 
-@pytest.mark.anyio
 @requires_logfire_events
 async def test_instrumented_model_stream(capfire: CaptureLogfire):
-    model = InstrumentedModel.from_logfire(MyModel(), event_mode='logs')
+    model = InstrumentedModel(MyModel(), InstrumentationSettings(event_mode='logs'))
 
     messages: list[ModelMessage] = [
         ModelRequest(
@@ -361,6 +372,8 @@ async def test_instrumented_model_stream(capfire: CaptureLogfire):
                     'gen_ai.operation.name': 'chat',
                     'gen_ai.system': 'my_system',
                     'gen_ai.request.model': 'my_model',
+                    'server.address': 'example.com',
+                    'server.port': 8000,
                     'gen_ai.request.temperature': 1,
                     'logfire.msg': 'chat my_model',
                     'logfire.span_type': 'span',
@@ -380,6 +393,7 @@ async def test_instrumented_model_stream(capfire: CaptureLogfire):
                 'severity_text': None,
                 'attributes': {
                     'gen_ai.system': 'my_system',
+                    'gen_ai.message.index': 0,
                     'event.name': 'gen_ai.user.message',
                 },
                 'timestamp': 2000000000,
@@ -403,10 +417,9 @@ async def test_instrumented_model_stream(capfire: CaptureLogfire):
     )
 
 
-@pytest.mark.anyio
 @requires_logfire_events
 async def test_instrumented_model_stream_break(capfire: CaptureLogfire):
-    model = InstrumentedModel.from_logfire(MyModel(), event_mode='logs')
+    model = InstrumentedModel(MyModel(), InstrumentationSettings(event_mode='logs'))
 
     messages: list[ModelMessage] = [
         ModelRequest(
@@ -442,6 +455,8 @@ async def test_instrumented_model_stream_break(capfire: CaptureLogfire):
                     'gen_ai.operation.name': 'chat',
                     'gen_ai.system': 'my_system',
                     'gen_ai.request.model': 'my_model',
+                    'server.address': 'example.com',
+                    'server.port': 8000,
                     'gen_ai.request.temperature': 1,
                     'logfire.msg': 'chat my_model',
                     'logfire.span_type': 'span',
@@ -474,6 +489,7 @@ async def test_instrumented_model_stream_break(capfire: CaptureLogfire):
                 'severity_text': None,
                 'attributes': {
                     'gen_ai.system': 'my_system',
+                    'gen_ai.message.index': 0,
                     'event.name': 'gen_ai.user.message',
                 },
                 'timestamp': 2000000000,
@@ -497,9 +513,8 @@ async def test_instrumented_model_stream_break(capfire: CaptureLogfire):
     )
 
 
-@pytest.mark.anyio
 async def test_instrumented_model_attributes_mode(capfire: CaptureLogfire):
-    model = InstrumentedModel(MyModel(), event_mode='attributes')
+    model = InstrumentedModel(MyModel(), InstrumentationSettings(event_mode='attributes'))
     assert model.system == 'my_system'
     assert model.model_name == 'my_model'
 
@@ -542,6 +557,8 @@ async def test_instrumented_model_attributes_mode(capfire: CaptureLogfire):
                     'gen_ai.operation.name': 'chat',
                     'gen_ai.system': 'my_system',
                     'gen_ai.request.model': 'my_model',
+                    'server.address': 'example.com',
+                    'server.port': 8000,
                     'gen_ai.request.temperature': 1,
                     'logfire.msg': 'chat my_model',
                     'logfire.span_type': 'span',
@@ -555,19 +572,23 @@ async def test_instrumented_model_attributes_mode(capfire: CaptureLogfire):
                                     'event.name': 'gen_ai.system.message',
                                     'content': 'system_prompt',
                                     'role': 'system',
+                                    'gen_ai.message.index': 0,
                                     'gen_ai.system': 'my_system',
                                 },
                                 {
                                     'event.name': 'gen_ai.user.message',
                                     'content': 'user_prompt',
                                     'role': 'user',
+                                    'gen_ai.message.index': 0,
                                     'gen_ai.system': 'my_system',
                                 },
                                 {
                                     'event.name': 'gen_ai.tool.message',
                                     'content': 'tool_return_content',
                                     'role': 'tool',
+                                    'name': 'tool3',
                                     'id': 'tool_call_3',
+                                    'gen_ai.message.index': 0,
                                     'gen_ai.system': 'my_system',
                                 },
                                 {
@@ -578,7 +599,9 @@ retry_prompt1
 Fix the errors and try again.\
 """,
                                     'role': 'tool',
+                                    'name': 'tool4',
                                     'id': 'tool_call_4',
+                                    'gen_ai.message.index': 0,
                                     'gen_ai.system': 'my_system',
                                 },
                                 {
@@ -589,12 +612,14 @@ retry_prompt2
 Fix the errors and try again.\
 """,
                                     'role': 'user',
+                                    'gen_ai.message.index': 0,
                                     'gen_ai.system': 'my_system',
                                 },
                                 {
                                     'event.name': 'gen_ai.assistant.message',
                                     'role': 'assistant',
                                     'content': 'text3',
+                                    'gen_ai.message.index': 1,
                                     'gen_ai.system': 'my_system',
                                 },
                                 {
@@ -641,7 +666,7 @@ def test_messages_to_otel_events_serialization_errors():
 
     class Bar:
         def __repr__(self):
-            raise ValueError
+            raise ValueError('error!')
 
     messages = [
         ModelResponse(parts=[ToolCallPart('tool', {'arg': Foo()})]),
@@ -654,10 +679,12 @@ def test_messages_to_otel_events_serialization_errors():
         [
             {
                 'body': "{'role': 'assistant', 'tool_calls': [{'id': None, 'type': 'function', 'function': {'name': 'tool', 'arguments': {'arg': Foo()}}}]}",
+                'gen_ai.message.index': 0,
                 'event.name': 'gen_ai.assistant.message',
             },
             {
-                'body': 'Unable to serialize event body',
+                'body': 'Unable to serialize: error!',
+                'gen_ai.message.index': 1,
                 'event.name': 'gen_ai.tool.message',
             },
         ]

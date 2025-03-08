@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 import inspect
 import types
 from collections.abc import AsyncIterator, Sequence
-from contextlib import ExitStack, asynccontextmanager
+from contextlib import AbstractContextManager, ExitStack, asynccontextmanager
 from dataclasses import dataclass, field
 from functools import cached_property
 from typing import Any, Generic, TypeVar, cast
@@ -11,6 +11,7 @@ from typing import Any, Generic, TypeVar, cast
 import logfire_api
 import typing_extensions
 from logfire_api import LogfireSpan
+from typing_inspection import typing_objects
 
 from . import _utils, exceptions, mermaid
 from .nodes import BaseNode, DepsT, End, GraphRunContext, NodeDef, RunEndT
@@ -139,7 +140,7 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
                 [`SimpleStatePersistence`][pydantic_graph.SimpleStatePersistence] if `None`.
             infer_name: Whether to infer the graph name from the calling frame.
             span: The span to use for the graph run. If not provided, a span will be created depending on the value of
-                the `_auto_instrument` field.
+                the `auto_instrument` field.
 
         Returns:
             A `GraphRunResult` containing information about the run, including its final result.
@@ -216,7 +217,7 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
         deps: DepsT = None,
         persistence: StatePersistence[StateT, T] | None = None,
         infer_name: bool = True,
-        span: LogfireSpan | None = None,
+        span: AbstractContextManager[Any] | None = None,
     ) -> AsyncIterator[GraphRun[StateT, DepsT, T]]:
         """A contextmanager which can be used to iterate over the graph's nodes as they are executed.
 
@@ -248,24 +249,13 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
         if infer_name and self.name is None:
             self._infer_name(inspect.currentframe())
 
-        if self.auto_instrument and span is None:
-            span = logfire_api.span('run graph {graph.name}', graph=self)
-
         if persistence is None:
             persistence = SimpleStatePersistence()
         self.set_persistence_types(persistence)
 
-        with ExitStack() as stack:
-            if span is not None:
-                stack.enter_context(span)
-            yield GraphRun[StateT, DepsT, T](
-                graph=self,
-                start_node=start_node,
-                persistence=persistence,
-                state=state,
-                deps=deps,
-                span=span,
-            )
+        yield GraphRun[StateT, DepsT, T](
+            graph=self, start_node=start_node, persistence=persistence, state=state, deps=deps
+        )
 
     # @deprecated('`graph.next` is deprecated, use `graph.iter` ... `run.next` instead')
     async def next(
@@ -467,10 +457,10 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
 
                     if not _utils.is_set(run_end_type) and len(args) == 3:
                         t = args[2]
-                        if not _utils.is_never(t):
+                        if not typing_objects.is_never(t):
                             run_end_type = t
                     if _utils.is_set(state_type) and _utils.is_set(run_end_type):
-                        return state_type, run_end_type
+                        return state_type, run_end_type  # pyright: ignore[reportReturnType]
                     # break the inner (bases) loop
                     break
 
@@ -592,7 +582,6 @@ class GraphRun(Generic[StateT, DepsT, RunEndT]):
         state: StateT,
         deps: DepsT,
         snapshot_id: str | None = None,
-        span: LogfireSpan | None = None,
     ):
         """Create a new run for a given graph, starting at the specified node.
 
@@ -607,14 +596,12 @@ class GraphRun(Generic[StateT, DepsT, RunEndT]):
             deps: Optional dependencies that each node can access via `ctx.deps`, e.g. database connections,
                 configuration, or logging clients.
             snapshot_id: The ID of the snapshot the node came from.
-            span: An optional existing Logfire span to nest node-level spans under (advanced usage).
         """
         self.graph = graph
         self.persistence = persistence
         self._snapshot_id: str | None = snapshot_id
         self.state = state
         self.deps = deps
-        self._span = span
 
         self._next_node: BaseNode[StateT, DepsT, RunEndT] | End[RunEndT] = start_node
 

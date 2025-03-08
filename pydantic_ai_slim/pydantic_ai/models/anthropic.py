@@ -42,6 +42,7 @@ from . import (
 try:
     from anthropic import NOT_GIVEN, APIStatusError, AsyncAnthropic, AsyncStream
     from anthropic.types import (
+        ContentBlock,
         ImageBlockParam,
         Message as AnthropicMessage,
         MessageParam,
@@ -69,6 +70,7 @@ except ImportError as _import_error:
     ) from _import_error
 
 LatestAnthropicModelNames = Literal[
+    'claude-3-7-sonnet-latest',
     'claude-3-5-haiku-latest',
     'claude-3-5-sonnet-latest',
     'claude-3-opus-latest',
@@ -140,6 +142,10 @@ class AnthropicModel(Model):
             self.client = AsyncAnthropic(api_key=api_key, http_client=http_client)
         else:
             self.client = AsyncAnthropic(api_key=api_key, http_client=cached_async_http_client())
+
+    @property
+    def base_url(self) -> str:
+        return str(self.client.base_url)
 
     async def request(
         self,
@@ -423,7 +429,7 @@ class AnthropicStreamedResponse(StreamedResponse):
     _timestamp: datetime
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
-        current_block: TextBlock | ToolUseBlock | None = None
+        current_block: ContentBlock | None = None
         current_json: str = ''
 
         async for event in self._response:
