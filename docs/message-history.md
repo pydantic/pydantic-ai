@@ -252,7 +252,9 @@ Because they make up everything!
 history_step_1 = result1.all_messages()
 as_python_objects = to_jsonable_python(history_step_1)
 same_history_as_step_1 = messages_adapter.validate_python(as_python_objects)
-result2 = agent.run_sync('Tell me a good joke.', message_history=same_history_different_object)
+result2 = agent.run_sync(
+    'Tell me a good joke.', message_history=same_history_different_object
+)
 print(result2.all_messages())
 """
 [ModelRequest(parts=[SystemPromptPart(content='Be a helpful assistant.', dynamic_ref=None, part_kind='system-prompt'), UserPromptPart(content='Tell me a good joke.', timestamp=datetime.datetime(2025, 3, 5, 21, 32, 42, 842296, tzinfo=TzInfo(UTC)), part_kind='user-prompt')], kind='request'),
