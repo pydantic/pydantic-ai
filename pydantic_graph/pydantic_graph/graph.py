@@ -247,7 +247,9 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
             A GraphRun that can be async iterated over to drive the graph to completion.
         """
         if infer_name and self.name is None:
-            self._infer_name(inspect.currentframe())
+            # f_back because `asynccontextmanager` adds one frame
+            if frame := inspect.currentframe():  # pragma: no branch
+                self._infer_name(frame.f_back)
 
         if persistence is None:
             persistence = SimpleStatePersistence()
@@ -725,8 +727,7 @@ class GraphRun(Generic[StateT, DepsT, RunEndT]):
         return await self.next(self._next_node)
 
     def __repr__(self) -> str:
-        step = -1  # TODO
-        return f'<GraphRun name={self.graph.name or "<unnamed>"} step={step}>'
+        return f'<GraphRun graph={self.graph.name or "[unnamed]"}>'
 
 
 @dataclass

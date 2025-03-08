@@ -298,6 +298,22 @@ async def test_run_return_other(mock_snapshot_id: object):
     assert exc_info.value.message == snapshot('Invalid node return type: `int`. Expected `BaseNode` or `End`.')
 
 
+async def test_iter():
+    my_graph = Graph(nodes=(Float2String, String2Length, Double))
+    assert my_graph.name is None
+    assert my_graph._inferred_types == (type(None), int)
+    node_reprs: list[str] = []
+    async with my_graph.iter(Float2String(3.14)) as graph_iter:
+        assert repr(graph_iter) == snapshot('<GraphRun graph=my_graph>')
+        async for node in graph_iter:
+            node_reprs.append(repr(node))
+        # len('3.14') * 2 == 8
+        assert graph_iter.result
+        assert graph_iter.result.output == 8
+
+    assert node_reprs == snapshot(["String2Length(input_data='3.14')", 'Double(input_data=4)', 'End(data=8)'])
+
+
 async def test_next(mock_snapshot_id: object):
     @dataclass
     class Foo(BaseNode):
