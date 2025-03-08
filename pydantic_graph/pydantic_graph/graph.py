@@ -13,7 +13,7 @@ import typing_extensions
 from logfire_api import LogfireSpan
 
 from . import _utils, exceptions, mermaid
-from .nodes import BaseNode, DepsT, End, GraphRunContext, NodeDef, RunEndT, SnapshotId
+from .nodes import BaseNode, DepsT, End, GraphRunContext, NodeDef, RunEndT
 from .persistence import StatePersistence, StateT, set_nodes_type_context
 from .persistence.memory import SimpleStatePersistence
 
@@ -591,7 +591,7 @@ class GraphRun(Generic[StateT, DepsT, RunEndT]):
         persistence: StatePersistence[StateT, RunEndT],
         state: StateT,
         deps: DepsT,
-        snapshot_id: SnapshotId | None = None,
+        snapshot_id: str | None = None,
         span: LogfireSpan | None = None,
     ):
         """Create a new run for a given graph, starting at the specified node.
@@ -611,7 +611,7 @@ class GraphRun(Generic[StateT, DepsT, RunEndT]):
         """
         self.graph = graph
         self.persistence = persistence
-        self._snapshot_id: SnapshotId | None = snapshot_id
+        self._snapshot_id: str | None = snapshot_id
         self.state = state
         self.deps = deps
         self._span = span
@@ -687,7 +687,9 @@ class GraphRun(Generic[StateT, DepsT, RunEndT]):
         else:
             node_snapshot_id = node.get_snapshot_id()
             if node_snapshot_id != self._snapshot_id:
-                await self.persistence.snapshot_node(self.state, node)
+                existing_snapshot = await self.persistence.get_node_snapshot(node_snapshot_id, status='created')
+                if not existing_snapshot:
+                    await self.persistence.snapshot_node(self.state, node)
                 self._snapshot_id = node_snapshot_id
 
         if not isinstance(node, BaseNode):

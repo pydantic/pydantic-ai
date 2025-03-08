@@ -15,7 +15,7 @@ from . import (
     EndSnapshot,
     NodeSnapshot,
     Snapshot,
-    SnapshotId,
+    SnapshotStatus,
     StatePersistence,
     _utils,
     build_snapshot_list_type_adapter,
@@ -45,7 +45,7 @@ class SimpleStatePersistence(StatePersistence[StateT, RunEndT]):
         )
 
     @asynccontextmanager
-    async def record_run(self, snapshot_id: SnapshotId) -> AsyncIterator[None]:
+    async def record_run(self, snapshot_id: str) -> AsyncIterator[None]:
         assert self.last_snapshot is not None, 'No snapshot to record'
         assert isinstance(self.last_snapshot, NodeSnapshot), 'Only NodeSnapshot can be recorded'
         assert snapshot_id == self.last_snapshot.id, (
@@ -67,6 +67,15 @@ class SimpleStatePersistence(StatePersistence[StateT, RunEndT]):
 
     async def restore(self) -> Snapshot[StateT, RunEndT] | None:
         return self.last_snapshot
+
+    async def get_node_snapshot(
+        self, snapshot_id: str, status: SnapshotStatus | None = None
+    ) -> NodeSnapshot[StateT, RunEndT] | None:
+        if isinstance(self.last_snapshot, NodeSnapshot) and self.last_snapshot.id == snapshot_id:
+            if status and self.last_snapshot.status != status:
+                return None
+            else:
+                return self.last_snapshot
 
     def prep_state(self, state: StateT) -> StateT:
         """Prepare state for snapshot, uses [`copy.deepcopy`][copy.deepcopy] by default."""
@@ -101,7 +110,7 @@ class FullStatePersistence(StatePersistence[StateT, RunEndT]):
         self.history.append(snapshot)
 
     @asynccontextmanager
-    async def record_run(self, snapshot_id: SnapshotId) -> AsyncIterator[None]:
+    async def record_run(self, snapshot_id: str) -> AsyncIterator[None]:
         try:
             snapshot = next(s for s in self.history if s.id == snapshot_id)
         except StopIteration as e:
@@ -124,6 +133,17 @@ class FullStatePersistence(StatePersistence[StateT, RunEndT]):
     async def restore(self) -> Snapshot[StateT, RunEndT] | None:
         if self.history:
             return self.history[-1]
+
+    async def get_node_snapshot(
+        self, snapshot_id: str, status: SnapshotStatus | None = None
+    ) -> Snapshot[StateT, RunEndT] | None:
+        for snapshot in self.history:
+            if (
+                isinstance(snapshot, NodeSnapshot)
+                and snapshot.id == snapshot_id
+                and (status is None or snapshot.status == status)
+            ):
+                return snapshot
 
     def dump_json(self, *, indent: int | None = None) -> bytes:
         assert self._snapshots_type_adapter is not None, 'type adapter must be set to use `dump_json`'

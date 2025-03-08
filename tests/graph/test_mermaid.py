@@ -67,7 +67,7 @@ class Eggs(BaseNode[None, None, None]):
 graph2 = Graph(nodes=(Spam, Foo, Bar, Eggs))
 
 
-async def test_run_graph():
+async def test_run_graph(mock_snapshot_id: object):
     sp = FullStatePersistence()
     result = await graph1.run(Foo(), persistence=sp)
     assert result.output is None
@@ -78,14 +78,18 @@ async def test_run_graph():
                 node=Foo(),
                 start_ts=IsNow(tz=timezone.utc),
                 duration=IsFloat(),
+                status='success',
+                id='Foo:1',
             ),
             NodeSnapshot(
                 state=None,
                 node=Bar(),
                 start_ts=IsNow(tz=timezone.utc),
                 duration=IsFloat(),
+                status='success',
+                id='Bar:2',
             ),
-            EndSnapshot(state=None, result=End(None), ts=IsNow(tz=timezone.utc)),
+            EndSnapshot(state=None, result=End(data=None), ts=IsNow(tz=timezone.utc), id='end:3'),
         ]
     )
 

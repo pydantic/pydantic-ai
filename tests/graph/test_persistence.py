@@ -53,16 +53,35 @@ class Bar(BaseNode[MyState, None, int]):
         Graph(nodes=(Foo, Bar)),
     ],
 )
-async def test_dump_load_history(graph: Graph[MyState, None, int]):
+async def test_dump_load_state(graph: Graph[MyState, None, int], mock_snapshot_id: object):
     sp = FullStatePersistence()
     result = await graph.run(Foo(), state=MyState(1, ''), persistence=sp)
     assert result.output == snapshot(4)
     assert result.state == snapshot(MyState(x=2, y='y'))
     assert sp.history == snapshot(
         [
-            NodeSnapshot(state=MyState(x=1, y=''), node=Foo(), start_ts=IsNow(tz=timezone.utc), duration=IsFloat()),
-            NodeSnapshot(state=MyState(x=2, y=''), node=Bar(), start_ts=IsNow(tz=timezone.utc), duration=IsFloat()),
-            EndSnapshot(state=MyState(x=2, y='y'), result=End(4), ts=IsNow(tz=timezone.utc)),
+            NodeSnapshot(
+                state=MyState(x=1, y=''),
+                node=Foo(),
+                start_ts=IsNow(tz=timezone.utc),
+                duration=IsFloat(),
+                status='success',
+                id='Foo:1',
+            ),
+            NodeSnapshot(
+                state=MyState(x=2, y=''),
+                node=Bar(),
+                start_ts=IsNow(tz=timezone.utc),
+                duration=IsFloat(),
+                status='success',
+                id='Bar:2',
+            ),
+            EndSnapshot(
+                state=MyState(x=2, y='y'),
+                result=End(data=4),
+                ts=IsNow(tz=timezone.utc),
+                id='end:3',
+            ),
         ]
     )
     history_json = sp.dump_json()
@@ -73,20 +92,25 @@ async def test_dump_load_history(graph: Graph[MyState, None, int]):
                 'node': {'node_id': 'Foo'},
                 'start_ts': IsStr(regex=r'20\d\d-\d\d-\d\dT.+'),
                 'duration': IsFloat(),
+                'status': 'success',
                 'kind': 'node',
+                'id': 'Foo:1',
             },
             {
                 'state': {'x': 2, 'y': ''},
                 'node': {'node_id': 'Bar'},
                 'start_ts': IsStr(regex=r'20\d\d-\d\d-\d\dT.+'),
                 'duration': IsFloat(),
+                'status': 'success',
                 'kind': 'node',
+                'id': 'Bar:2',
             },
             {
                 'state': {'x': 2, 'y': 'y'},
                 'result': {'data': 4},
                 'ts': IsStr(regex=r'20\d\d-\d\d-\d\dT.+'),
                 'kind': 'end',
+                'id': 'end:3',
             },
         ]
     )
@@ -122,15 +146,19 @@ async def test_dump_load_history(graph: Graph[MyState, None, int]):
                 node=Foo(),
                 start_ts=datetime(2025, 1, 1, 0, 0, tzinfo=timezone.utc),
                 duration=123.0,
+                id='Foo:4',
             ),
             EndSnapshot(
-                state=MyState(x=42, y='new'), result=End(data=42), ts=datetime(2025, 1, 1, 0, 0, tzinfo=timezone.utc)
+                state=MyState(x=42, y='new'),
+                result=End(data=42),
+                ts=datetime(2025, 1, 1, 0, 0, tzinfo=timezone.utc),
+                id='end:5',
             ),
         ]
     )
 
 
-def test_one_node():
+def test_one_node(mock_snapshot_id: object):
     @dataclass
     class MyNode(BaseNode[None, None, int]):
         node_field: int
@@ -159,12 +187,13 @@ def test_one_node():
                 node=MyNode(node_field=42),
                 start_ts=datetime(2025, 1, 1, 0, 0, tzinfo=timezone.utc),
                 duration=123.0,
+                id='MyNode:1',
             )
         ]
     )
 
 
-def test_no_generic_arg():
+def test_no_generic_arg(mock_snapshot_id: object):
     @dataclass
     class NoGenericArgsNode(BaseNode):
         async def run(self, ctx: GraphRunContext) -> NoGenericArgsNode:
@@ -198,23 +227,24 @@ def test_no_generic_arg():
                 node=NoGenericArgsNode(),
                 start_ts=datetime(2025, 1, 1, 0, 0, tzinfo=timezone.utc),
                 duration=123.0,
+                id='NoGenericArgsNode:1',
             )
         ]
     )
 
 
-async def test_node_error():
+async def test_node_error(mock_snapshot_id: object):
     @dataclass
     class Foo(BaseNode):
-        async def run(self, ctx: GraphRunContext) -> Bar:
-            return Bar()
+        async def run(self, ctx: GraphRunContext) -> Spam:
+            return Spam()
 
     @dataclass
-    class Bar(BaseNode[None, None, int]):
+    class Spam(BaseNode[None, None, int]):
         async def run(self, ctx: GraphRunContext) -> End[int]:
             raise RuntimeError('test error')
 
-    graph = Graph(nodes=[Foo, Bar])
+    graph = Graph(nodes=[Foo, Spam])
 
     sp = FullStatePersistence()
     with pytest.raises(RuntimeError, match='test error'):
@@ -225,8 +255,18 @@ async def test_node_error():
             NodeSnapshot(
                 state=None,
                 node=Foo(),
+                status='success',
                 start_ts=IsNow(tz=timezone.utc),
                 duration=IsFloat(),
+                id='Foo:1',
+            ),
+            NodeSnapshot(
+                state=None,
+                node=Spam(),
+                start_ts=IsNow(tz=timezone.utc),
+                duration=IsFloat(),
+                status='error',
+                id='Spam:2',
             ),
         ]
     )

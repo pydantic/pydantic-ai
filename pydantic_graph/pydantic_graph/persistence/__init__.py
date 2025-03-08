@@ -11,15 +11,24 @@ import pydantic
 from typing_extensions import TypeVar
 
 from .. import exceptions
-from ..nodes import BaseNode, End, RunEndT, SnapshotId
+from ..nodes import BaseNode, End, RunEndT
 from . import _utils
 
-__all__ = 'StateT', 'NodeSnapshot', 'EndSnapshot', 'Snapshot', 'StatePersistence', 'set_nodes_type_context'
+__all__ = (
+    'StateT',
+    'NodeSnapshot',
+    'EndSnapshot',
+    'Snapshot',
+    'StatePersistence',
+    'set_nodes_type_context',
+    'SnapshotStatus',
+)
 
 StateT = TypeVar('StateT', default=None)
 """Type variable for the state in a graph."""
 
-UNSET_ID = SnapshotId('__unset__')
+UNSET_SNAPSHOT_ID = '__unset__'
+SnapshotStatus = Literal['created', 'pending', 'running', 'success', 'error']
 
 
 @dataclass
@@ -34,15 +43,16 @@ class NodeSnapshot(Generic[StateT, RunEndT]):
     """The timestamp when the node started running, `None` until the run starts."""
     duration: float | None = None
     """The duration of the node run in seconds, if the node has been run."""
-    status: Literal['not_started', 'pending', 'running', 'success', 'error'] = 'not_started'
+    status: SnapshotStatus = 'created'
+    """The status of the snapshot."""
     kind: Literal['node'] = 'node'
     """The kind of history step, can be used as a discriminator when deserializing history."""
 
-    id: SnapshotId = UNSET_ID
+    id: str = UNSET_SNAPSHOT_ID
     """Unique ID of the snapshot."""
 
     def __post_init__(self) -> None:
-        if self.id == UNSET_ID:
+        if self.id == UNSET_SNAPSHOT_ID:
             self.id = self.node.get_snapshot_id()
 
 
@@ -59,11 +69,11 @@ class EndSnapshot(Generic[StateT, RunEndT]):
     kind: Literal['end'] = 'end'
     """The kind of history step, can be used as a discriminator when deserializing history."""
 
-    id: SnapshotId = UNSET_ID
+    id: str = UNSET_SNAPSHOT_ID
     """Unique ID of the snapshot."""
 
     def __post_init__(self) -> None:
-        if self.id == UNSET_ID:
+        if self.id == UNSET_SNAPSHOT_ID:
             self.id = self.node.get_snapshot_id()
 
     @property
@@ -111,7 +121,7 @@ class StatePersistence(ABC, Generic[StateT, RunEndT]):
         raise NotImplementedError
 
     @abstractmethod
-    def record_run(self, snapshot_id: SnapshotId) -> AbstractAsyncContextManager[None]:
+    def record_run(self, snapshot_id: str) -> AbstractAsyncContextManager[None]:
         """Record the run of the node.
 
         In particular this should set:
@@ -129,6 +139,20 @@ class StatePersistence(ABC, Generic[StateT, RunEndT]):
 
         Returns:
             The most recent [`Snapshot`][pydantic_graph.state.Snapshot] of the run.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    async def get_node_snapshot(
+        self, snapshot_id: str, status: SnapshotStatus | None = None
+    ) -> Snapshot[StateT, RunEndT] | None:
+        """Get a snapshot by ID.
+
+        Args:
+            snapshot_id: The ID of the snapshot to get.
+            status: The status of the snapshot to get, or `None` to get any status.
+
+        Returns: The snapshot with the given ID and status, or `None` if no snapshot with that ID exists.
         """
         raise NotImplementedError
 

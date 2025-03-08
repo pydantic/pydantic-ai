@@ -598,11 +598,11 @@ async def main():
             """
             [
                 Ask(),
-                Answer(question='What is the capital of France?', answer='Vichy'),
+                Answer(question='What is the capital of France?', answer=None),
                 Evaluate(answer='Vichy'),
                 Reprimand(comment='Vichy is no longer the capital of France.'),
                 Ask(),
-                Answer(question='what is 1 + 1?', answer='2'),
+                Answer(question='what is 1 + 1?', answer=None),
                 Evaluate(answer='2'),
                 End(data='Well done, 1 + 1 = 2'),
             ]
@@ -734,6 +734,7 @@ async def main():
             #> History Step: CountDown() CountDownState(counter=5)
             #> History Step: CountDown() CountDownState(counter=4)
             #> History Step: CountDown() CountDownState(counter=3)
+            #> History Step: CountDown() CountDownState(counter=2)
 ```
 
 1. We start by grabbing the first node that will be run in the agent's graph.

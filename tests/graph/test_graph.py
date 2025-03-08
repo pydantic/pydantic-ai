@@ -64,7 +64,7 @@ async def test_graph():
     assert my_graph.name == 'my_graph'
 
 
-async def test_graph_history(mock_snapshot_id):
+async def test_graph_history(mock_snapshot_id: object):
     my_graph = Graph[None, None, int](nodes=(Float2String, String2Length, Double))
     assert my_graph.name is None
     assert my_graph._inferred_types == (type(None), int)
@@ -279,7 +279,7 @@ async def test_run_node_not_in_graph():
     assert exc_info.value.message == snapshot('Node `test_run_node_not_in_graph.<locals>.Spam()` is not in the graph.')
 
 
-async def test_run_return_other(mock_snapshot_id):
+async def test_run_return_other(mock_snapshot_id: object):
     @dataclass
     class Foo(BaseNode):
         async def run(self, ctx: GraphRunContext) -> Bar:
@@ -298,7 +298,7 @@ async def test_run_return_other(mock_snapshot_id):
     assert exc_info.value.message == snapshot('Invalid node return type: `int`. Expected `BaseNode` or `End`.')
 
 
-async def test_next(mock_snapshot_id):
+async def test_next(mock_snapshot_id: object):
     @dataclass
     class Foo(BaseNode):
         async def run(self, ctx: GraphRunContext) -> Bar:
@@ -356,7 +356,7 @@ async def test_next(mock_snapshot_id):
     )
 
 
-async def test_deps(mock_snapshot_id):
+async def test_deps(mock_snapshot_id: object):
     @dataclass
     class Deps:
         a: int

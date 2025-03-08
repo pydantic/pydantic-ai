@@ -21,7 +21,7 @@ from ..conftest import IsFloat, IsNow
 pytestmark = pytest.mark.anyio
 
 
-async def test_run_graph():
+async def test_run_graph(mock_snapshot_id: object):
     @dataclass
     class MyState:
         x: int
@@ -52,14 +52,18 @@ async def test_run_graph():
                 node=Foo(),
                 start_ts=IsNow(tz=timezone.utc),
                 duration=IsFloat(),
+                status='success',
+                id='Foo:1',
             ),
             NodeSnapshot(
                 state=MyState(x=2, y=''),
                 node=Bar(),
                 start_ts=IsNow(tz=timezone.utc),
                 duration=IsFloat(),
+                status='success',
+                id='Bar:2',
             ),
-            EndSnapshot(state=MyState(x=2, y='y'), result=End('x=2 y=y'), ts=IsNow(tz=timezone.utc)),
+            EndSnapshot(state=MyState(x=2, y='y'), result=End(data='x=2 y=y'), ts=IsNow(tz=timezone.utc), id='end:3'),
         ]
     )
     assert state == MyState(x=2, y='y')
