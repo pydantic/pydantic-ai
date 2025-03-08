@@ -253,9 +253,15 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
             persistence = SimpleStatePersistence()
         self.set_persistence_types(persistence)
 
-        yield GraphRun[StateT, DepsT, T](
-            graph=self, start_node=start_node, persistence=persistence, state=state, deps=deps
-        )
+        if self.auto_instrument and span is None:
+            span = logfire_api.span('run graph {graph.name}', graph=self)
+
+        with ExitStack() as stack:
+            if span is not None:
+                stack.enter_context(span)
+            yield GraphRun[StateT, DepsT, T](
+                graph=self, start_node=start_node, persistence=persistence, state=state, deps=deps
+            )
 
     # @deprecated('`graph.next` is deprecated, use `graph.iter` ... `run.next` instead')
     async def next(
