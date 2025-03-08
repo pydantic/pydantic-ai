@@ -232,9 +232,10 @@ The most effective wany to do this is to use a `TypeAdapter`.
 
 ```python {title="serialize messages to json"}
 from pydantic import TypeAdapter
+from pydantic_core import to_jsonable_python
+
 from pydantic_ai import Agent
 from pydantic_ai.messages import ModelMessage
-from pydantic_core import to_jsonable_python
 
 messages_adapter = TypeAdapter(list[ModelMessage])
 
