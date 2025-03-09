@@ -692,7 +692,7 @@ class GraphRun(Generic[StateT, DepsT, RunEndT]):
         if not isinstance(node, BaseNode):
             # While technically this is not compatible with the documented method signature, it's an easy mistake to
             # make, and we should eagerly provide a more helpful error message than you'd get otherwise.
-            raise exceptions.GraphRuntimeError(f'`next` must be called with a `BaseNode` instance: {node!r}.')
+            raise TypeError(f'`next` must be called with a `BaseNode` instance, got {node!r}.')
 
         node_id = node.get_node_id()
         if node_id not in self.graph.node_defs:

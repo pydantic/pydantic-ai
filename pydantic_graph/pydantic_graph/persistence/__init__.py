@@ -201,9 +201,3 @@ def build_snapshot_list_type_adapter(
     state_t: type[StateT], run_end_t: type[RunEndT]
 ) -> pydantic.TypeAdapter[list[Snapshot[StateT, RunEndT]]]:
     return pydantic.TypeAdapter(list[Annotated[Snapshot[state_t, run_end_t], pydantic.Discriminator('kind')]])
-
-
-def build_snapshot_single_type_adapter(
-    state_t: type[StateT], run_end_t: type[RunEndT]
-) -> pydantic.TypeAdapter[Snapshot[StateT, RunEndT]]:
-    return pydantic.TypeAdapter(Annotated[Snapshot[state_t, run_end_t], pydantic.Discriminator('kind')])

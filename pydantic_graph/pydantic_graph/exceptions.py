@@ -31,7 +31,7 @@ class GraphNodeStatusError(GraphRuntimeError):
 
     def __init__(self, actual_status: 'SnapshotStatus'):
         self.actual_status = actual_status
-        super().__init__(f"Snapshot status is {actual_status!r}, not 'created' or 'pending'.")
+        super().__init__(f"Incorrect snapshot status {actual_status!r}, must be 'created' or 'pending'.")
 
     @classmethod
     def check(cls, status: 'SnapshotStatus') -> None:

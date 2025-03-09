@@ -136,3 +136,54 @@ async def test_next_from_persistence(tmp_path: Path, mock_snapshot_id: object):
             EndSnapshot(state=None, result=End(data=8), ts=IsNow(tz=timezone.utc), id='end:4'),
         ]
     )
+
+
+async def test_node_error(tmp_path: Path, mock_snapshot_id: object):
+    @dataclass
+    class Foo(BaseNode):
+        async def run(self, ctx: GraphRunContext) -> Bar:
+            return Bar()
+
+    @dataclass
+    class Bar(BaseNode[None, None, None]):
+        async def run(self, ctx: GraphRunContext) -> End[None]:
+            raise RuntimeError('test error')
+
+    g = Graph(nodes=(Foo, Bar))
+    p = tmp_path / 'test_graph.json'
+    persistence = FileStatePersistence(p)
+    with pytest.raises(RuntimeError, match='test error'):
+        await g.run(Foo(), persistence=persistence)
+
+    assert await persistence.load() == snapshot(
+        [
+            NodeSnapshot(
+                state=None,
+                node=Foo(),
+                start_ts=IsNow(tz=timezone.utc),
+                duration=IsFloat(),
+                status='success',
+                id='Foo:1',
+            ),
+            NodeSnapshot(
+                state=None,
+                node=Bar(),
+                start_ts=IsNow(tz=timezone.utc),
+                duration=IsFloat(),
+                status='error',
+                id='Bar:2',
+            ),
+        ]
+    )
+
+
+async def test_lock_timeout(tmp_path: Path):
+    p = tmp_path / 'test_graph.json'
+    persistence = FileStatePersistence(p)
+    async with persistence._lock():  # type: ignore[reportPrivateUsage]
+        pass
+
+    async with persistence._lock():  # type: ignore[reportPrivateUsage]
+        with pytest.raises(TimeoutError):
+            async with persistence._lock(timeout=0.1):  # type: ignore[reportPrivateUsage]
+                pass

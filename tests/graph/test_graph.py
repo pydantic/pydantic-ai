@@ -20,6 +20,7 @@ from pydantic_graph import (
     GraphRuntimeError,
     GraphSetupError,
     NodeSnapshot,
+    SimpleStatePersistence,
 )
 
 from ..conftest import IsFloat, IsNow
@@ -370,6 +371,30 @@ async def test_next(mock_snapshot_id: object):
             NodeSnapshot(state=None, node=Foo(), id='Foo:3'),
         ]
     )
+
+
+async def test_next_error(mock_snapshot_id: object):
+    @dataclass
+    class Foo(BaseNode):
+        async def run(self, ctx: GraphRunContext) -> Bar:
+            return Bar()
+
+    @dataclass
+    class Bar(BaseNode[None, None, None]):
+        async def run(self, ctx: GraphRunContext) -> End[None]:
+            return End(None)
+
+    g = Graph(nodes=(Foo, Bar))
+    sp = SimpleStatePersistence()
+    n = await g.next(Foo(), sp)
+    assert n == snapshot(Bar())
+
+    assert isinstance(n, BaseNode)
+    n = await g.next(n, sp)
+    assert n == snapshot(End(None))
+
+    with pytest.raises(TypeError, match=r'`next` must be called with a `BaseNode` instance, got End\(data=None\).'):
+        await g.next(n, sp)  # pyright: ignore[reportArgumentType]
 
 
 async def test_deps(mock_snapshot_id: object):

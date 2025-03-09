@@ -18,6 +18,7 @@ from pydantic_graph import (
     GraphRunContext,
     NodeSnapshot,
 )
+from pydantic_graph.exceptions import GraphNodeStatusError, GraphRuntimeError
 
 from ..conftest import IsFloat, IsNow
 
@@ -58,7 +59,7 @@ async def test_dump_load_state(graph: Graph[MyState, None, int], mock_snapshot_i
     result = await graph.run(Foo(), state=MyState(1, ''), persistence=sp)
     assert result.output == snapshot(4)
     assert result.state == snapshot(MyState(x=2, y='y'))
-    assert sp.history == snapshot(
+    assert await sp.load() == snapshot(
         [
             NodeSnapshot(
                 state=MyState(x=1, y=''),
@@ -270,3 +271,52 @@ async def test_node_error(mock_snapshot_id: object):
             ),
         ]
     )
+
+
+async def test_rerun_node(mock_snapshot_id: object):
+    @dataclass
+    class Foo(BaseNode[None, None, int]):
+        async def run(self, ctx: GraphRunContext) -> End[int]:
+            return End(123)
+
+    graph = Graph(nodes=[Foo])
+
+    sp = FullStatePersistence()
+    node = Foo()
+    end = await graph.next(node, sp)
+    assert end == snapshot(End(123))
+
+    msg = "Incorrect snapshot status 'success', must be 'created' or 'pending'."
+    with pytest.raises(GraphNodeStatusError, match=msg):
+        await graph.next(node, sp)
+
+
+async def test_next_from_persistence(mock_snapshot_id: object):
+    @dataclass
+    class Foo(BaseNode):
+        async def run(self, ctx: GraphRunContext) -> Spam:
+            return Spam()
+
+    @dataclass
+    class Spam(BaseNode[None, None, int]):
+        async def run(self, ctx: GraphRunContext) -> End[int]:
+            return End(123)
+
+    g1 = Graph(nodes=[Foo, Spam])
+
+    sp = FullStatePersistence()
+    node = Foo()
+    assert g1.name is None
+    node = await g1.next(node, sp)
+    assert g1.name == 'g1'
+    assert node == snapshot(Spam())
+
+    end = await g1.next_from_persistence(sp)
+    assert end == snapshot(End(123))
+
+    g2 = Graph(nodes=[Foo, Spam])
+    sp = FullStatePersistence()
+    assert g2.name is None
+    with pytest.raises(GraphRuntimeError, match='Unable to restore snapshot from state persistence.'):
+        await g2.next_from_persistence(sp)
+    assert g2.name == 'g2'
