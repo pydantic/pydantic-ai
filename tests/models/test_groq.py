@@ -1,11 +1,13 @@
 from __future__ import annotations as _annotations
 
 import json
+import os
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from functools import cached_property
 from typing import Any, Literal, Union, cast
+from unittest.mock import patch
 
 import httpx
 import pytest
@@ -25,7 +27,9 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.result import Usage
+from pydantic_ai.models.groq import GroqModel
+from pydantic_ai.providers.groq import GroqProvider
+from pydantic_ai.usage import Usage
 
 from ..conftest import IsNow, raise_if_exception, try_import
 from .mock_async_stream import MockAsyncStream
@@ -43,8 +47,6 @@ with try_import() as imports_successful:
     from groq.types.chat.chat_completion_message import ChatCompletionMessage
     from groq.types.chat.chat_completion_message_tool_call import Function
     from groq.types.completion_usage import CompletionUsage
-
-    from pydantic_ai.models.groq import GroqModel
 
     # note: we use Union here so that casting works with Python 3.9
     MockChatCompletion = Union[chat.ChatCompletion, Exception]
@@ -567,3 +569,44 @@ def test_model_status_error(allow_model_requests: None) -> None:
     assert str(exc_info.value) == snapshot(
         "status_code: 500, model_name: llama-3.3-70b-versatile, body: {'error': 'test error'}"
     )
+
+
+async def test_init_with_provider():
+    provider = GroqProvider(api_key='api-key')
+    model = GroqModel('llama3-8b-8192', provider=provider)
+    assert model.model_name == 'llama3-8b-8192'
+    assert model.client == provider.client
+
+
+async def test_init_with_provider_string():
+    with patch.dict(os.environ, {'GROQ_API_KEY': 'env-api-key'}, clear=False):
+        model = GroqModel('llama3-8b-8192', provider='groq')
+        assert model.model_name == 'llama3-8b-8192'
+        assert model.client is not None
+
+
+async def test_model_with_provider_integration(allow_model_requests: None):
+    # Create a valid ChatCompletionMessage with usage
+    usage_data = CompletionUsage(prompt_tokens=10, completion_tokens=5, total_tokens=15)
+    c = completion_message(
+        ChatCompletionMessage(content='Response from Groq provider', role='assistant'), usage=usage_data
+    )
+
+    # Create a mock client
+    mock_client = MockGroq.create_mock(c)
+
+    # Create a provider with our mock client
+    provider = GroqProvider(groq_client=mock_client)
+
+    # Create a model using our provider
+    model = GroqModel('llama3-8b-8192', provider=provider)
+
+    # Create an agent with our model
+    agent = Agent(model)
+
+    # Test the agent
+    result = await agent.run('Hello from provider')
+
+    # Verify the response is correct
+    assert result.data == 'Response from Groq provider'
+    # We can't directly check usage in the result, but we can verify the response is correct
