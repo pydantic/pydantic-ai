@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+from asyncio.exceptions import TimeoutError
 from dataclasses import dataclass
 from datetime import timezone
 from pathlib import Path
