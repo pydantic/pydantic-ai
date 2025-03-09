@@ -4,6 +4,7 @@ from __future__ import annotations as _annotations
 import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from typing import Any
 
 import pytest
 from dirty_equals import IsStr
@@ -17,8 +18,10 @@ from pydantic_graph import (
     Graph,
     GraphRunContext,
     NodeSnapshot,
+    SimpleStatePersistence,
 )
 from pydantic_graph.exceptions import GraphNodeStatusError, GraphRuntimeError
+from pydantic_graph.persistence import StatePersistence
 
 from ..conftest import IsFloat, IsNow
 
@@ -291,7 +294,8 @@ async def test_rerun_node(mock_snapshot_id: object):
         await graph.next(node, sp)
 
 
-async def test_next_from_persistence(mock_snapshot_id: object):
+@pytest.mark.parametrize('persistence_cls', [SimpleStatePersistence, FullStatePersistence])
+async def test_next_from_persistence(persistence_cls: type[StatePersistence[None, int]], mock_snapshot_id: object):
     @dataclass
     class Foo(BaseNode):
         async def run(self, ctx: GraphRunContext) -> Spam:
@@ -304,19 +308,31 @@ async def test_next_from_persistence(mock_snapshot_id: object):
 
     g1 = Graph(nodes=[Foo, Spam])
 
-    sp = FullStatePersistence()
+    sp = persistence_cls()
     node = Foo()
     assert g1.name is None
     node = await g1.next(node, sp)
     assert g1.name == 'g1'
-    assert node == snapshot(Spam())
+    assert node == Spam()
 
     end = await g1.next_from_persistence(sp)
-    assert end == snapshot(End(123))
+    assert end == End(123)
 
     g2 = Graph(nodes=[Foo, Spam])
-    sp = FullStatePersistence()
+    sp = persistence_cls()
     assert g2.name is None
     with pytest.raises(GraphRuntimeError, match='Unable to restore snapshot from state persistence.'):
         await g2.next_from_persistence(sp)
     assert g2.name == 'g2'
+
+
+@pytest.mark.parametrize('persistence_cls', [SimpleStatePersistence, FullStatePersistence])
+async def test_record_lookup_error(persistence_cls: type[StatePersistence[Any, Any]]):
+    persistence = persistence_cls()
+    my_graph = Graph(nodes=(Foo, Bar))
+    my_graph.set_persistence_types(persistence)
+    my_graph.set_persistence_types(persistence)
+
+    with pytest.raises(LookupError, match="No snapshot found with id='foobar'"):
+        async with persistence.record_run('foobar'):
+            pass

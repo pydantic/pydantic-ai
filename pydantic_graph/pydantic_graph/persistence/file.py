@@ -58,7 +58,7 @@ class FileStatePersistence(StatePersistence[StateT, RunEndT]):
             try:
                 snapshot = next(s for s in snapshots if s.id == snapshot_id)
             except StopIteration as e:
-                raise LookupError(f'No snapshot found with id={snapshot_id}') from e
+                raise LookupError(f'No snapshot found with id={snapshot_id!r}') from e
 
             assert isinstance(snapshot, NodeSnapshot), 'Only NodeSnapshot can be recorded'
             exceptions.GraphNodeStatusError.check(snapshot.status)

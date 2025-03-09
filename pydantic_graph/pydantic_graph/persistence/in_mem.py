@@ -21,7 +21,6 @@ from . import (
     EndSnapshot,
     NodeSnapshot,
     Snapshot,
-    SnapshotStatus,
     StatePersistence,
     _utils,
     build_snapshot_list_type_adapter,
@@ -38,19 +37,11 @@ class SimpleStatePersistence(StatePersistence[StateT, RunEndT]):
     If no state persistence implementation is provided when running a graph, this is used by default.
     """
 
-    deep_copy: bool = False
-    """Whether to deep copy the state and nodes when storing them.
-
-    Defaults to `False` so you can use nodes that don't support deep copying.
-    """
     last_snapshot: Snapshot[StateT, RunEndT] | None = None
     """The last snapshot."""
 
     async def snapshot_node(self, state: StateT, next_node: BaseNode[StateT, Any, RunEndT]) -> None:
-        self.last_snapshot = NodeSnapshot(
-            state=self._prep_state(state),
-            node=next_node.deep_copy() if self.deep_copy else next_node,
-        )
+        self.last_snapshot = NodeSnapshot(state=state, node=next_node)
 
     async def snapshot_node_if_new(
         self, snapshot_id: str, state: StateT, next_node: BaseNode[StateT, Any, RunEndT]
@@ -61,18 +52,14 @@ class SimpleStatePersistence(StatePersistence[StateT, RunEndT]):
             await self.snapshot_node(state, next_node)
 
     async def snapshot_end(self, state: StateT, end: End[RunEndT]) -> None:
-        self.last_snapshot = EndSnapshot(
-            state=self._prep_state(state),
-            result=end.deep_copy_data() if self.deep_copy else end,
-        )
+        self.last_snapshot = EndSnapshot(state=state, result=end)
 
     @asynccontextmanager
     async def record_run(self, snapshot_id: str) -> AsyncIterator[None]:
-        assert self.last_snapshot is not None, 'No snapshot to record'
+        if self.last_snapshot is None or snapshot_id != self.last_snapshot.id:
+            raise LookupError(f'No snapshot found with id={snapshot_id!r}')
+
         assert isinstance(self.last_snapshot, NodeSnapshot), 'Only NodeSnapshot can be recorded'
-        assert snapshot_id == self.last_snapshot.id, (
-            f'snapshot_id must match the last snapshot ID: {snapshot_id!r} != {self.last_snapshot.id!r}'
-        )
         exceptions.GraphNodeStatusError.check(self.last_snapshot.status)
         self.last_snapshot.status = 'running'
         self.last_snapshot.start_ts = _utils.now_utc()
@@ -95,13 +82,6 @@ class SimpleStatePersistence(StatePersistence[StateT, RunEndT]):
 
     async def load(self) -> list[Snapshot[StateT, RunEndT]]:
         raise NotImplementedError('load is not supported for SimpleStatePersistence')
-
-    def _prep_state(self, state: StateT) -> StateT:
-        """Prepare state for snapshot, uses [`copy.deepcopy`][copy.deepcopy] by default."""
-        if not self.deep_copy or state is None:
-            return state
-        else:
-            return copy.deepcopy(state)
 
 
 @dataclass
@@ -145,7 +125,7 @@ class FullStatePersistence(StatePersistence[StateT, RunEndT]):
         try:
             snapshot = next(s for s in self.history if s.id == snapshot_id)
         except StopIteration as e:
-            raise LookupError(f'No snapshot found with id={snapshot_id}') from e
+            raise LookupError(f'No snapshot found with id={snapshot_id!r}') from e
 
         assert isinstance(snapshot, NodeSnapshot), 'Only NodeSnapshot can be recorded'
         exceptions.GraphNodeStatusError.check(snapshot.status)
@@ -166,17 +146,6 @@ class FullStatePersistence(StatePersistence[StateT, RunEndT]):
         if snapshot := next((s for s in self.history if isinstance(s, NodeSnapshot) and s.status == 'created'), None):
             snapshot.status = 'pending'
             return snapshot
-
-    async def get_node_snapshot(
-        self, snapshot_id: str, status: SnapshotStatus | None = None
-    ) -> Snapshot[StateT, RunEndT] | None:
-        for snapshot in self.history:
-            if (
-                isinstance(snapshot, NodeSnapshot)
-                and snapshot.id == snapshot_id
-                and (status is None or snapshot.status == status)
-            ):
-                return snapshot
 
     async def load(self) -> list[Snapshot[StateT, RunEndT]]:
         return self.history

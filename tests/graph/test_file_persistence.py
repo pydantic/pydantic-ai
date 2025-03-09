@@ -45,7 +45,7 @@ class Double(BaseNode[None, None, int]):
     input_data: int
 
     async def run(self, ctx: GraphRunContext) -> Union[String2Length, End[int]]:  # noqa: UP007
-        if self.input_data == 7:
+        if self.input_data == 7:  # pragma: no cover
             return String2Length('x' * 21)
         else:
             return End(self.input_data * 2)
@@ -188,3 +188,15 @@ async def test_lock_timeout(tmp_path: Path):
         with pytest.raises(TimeoutError):
             async with persistence._lock(timeout=0.1):  # type: ignore[reportPrivateUsage]
                 pass
+
+
+async def test_record_lookup_error(tmp_path: Path):
+    p = tmp_path / 'test_graph.json'
+    persistence = FileStatePersistence(p)
+    my_graph = Graph(nodes=(Float2String, String2Length, Double))
+    my_graph.set_persistence_types(persistence)
+    my_graph.set_persistence_types(persistence)
+
+    with pytest.raises(LookupError, match="No snapshot found with id='foobar'"):
+        async with persistence.record_run('foobar'):
+            pass
