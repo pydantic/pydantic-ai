@@ -65,5 +65,9 @@ def infer_provider(provider: str) -> Provider[Any]:
         from .bedrock import BedrockProvider
 
         return BedrockProvider()
+    elif provider == 'groq':  # pragma: no cover
+        from .groq import GroqProvider
+
+        return GroqProvider()
     else:  # pragma: no cover
         raise ValueError(f'Unknown provider: {provider}')

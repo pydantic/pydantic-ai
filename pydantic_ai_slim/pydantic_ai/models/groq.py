@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from itertools import chain
-from typing import Literal, Union, cast, overload
+from typing import Any, Literal, Union, cast, overload
 
 from httpx import AsyncClient as AsyncHTTPClient
 from typing_extensions import assert_never
@@ -28,6 +28,7 @@ from ..messages import (
     ToolReturnPart,
     UserPromptPart,
 )
+from ..providers import Provider
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from . import (
@@ -97,6 +98,7 @@ class GroqModel(Model):
         self,
         model_name: GroqModelName,
         *,
+        provider: Literal['groq'] | Provider[Any] | None = None,
         api_key: str | None = None,
         groq_client: AsyncGroq | None = None,
         http_client: AsyncHTTPClient | None = None,
@@ -106,6 +108,9 @@ class GroqModel(Model):
         Args:
             model_name: The name of the Groq model to use. List of model names available
                 [here](https://console.groq.com/docs/models).
+            provider: The provider to use for authentication and API access. Can be either the string
+                'groq' or an instance of `Provider[AsyncGroq]`. If not provided, a new provider will be
+                created using the other parameters.
             api_key: The API key to use for authentication, if not provided, the `GROQ_API_KEY` environment variable
                 will be used if available.
             groq_client: An existing
@@ -114,7 +119,15 @@ class GroqModel(Model):
             http_client: An existing `httpx.AsyncClient` to use for making HTTP requests.
         """
         self._model_name = model_name
-        if groq_client is not None:
+
+        if provider is not None:
+            if isinstance(provider, str):
+                from ..providers import infer_provider
+
+                self.client = infer_provider(provider).client
+            else:
+                self.client = provider.client
+        elif groq_client is not None:
             assert http_client is None, 'Cannot provide both `groq_client` and `http_client`'
             assert api_key is None, 'Cannot provide both `groq_client` and `api_key`'
             self.client = groq_client
