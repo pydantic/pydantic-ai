@@ -10,7 +10,6 @@ from typing import Annotated, Any, Callable, Generic, Literal, Union
 import pydantic
 from typing_extensions import TypeVar
 
-from .. import exceptions
 from ..nodes import BaseNode, End, RunEndT
 from . import _utils
 
@@ -29,6 +28,15 @@ StateT = TypeVar('StateT', default=None)
 
 UNSET_SNAPSHOT_ID = '__unset__'
 SnapshotStatus = Literal['created', 'pending', 'running', 'success', 'error']
+"""The status of a snapshot.
+
+- `'created'`: The snapshot has been created but not yet run.
+- `'pending'`: The snapshot has been retrieved with
+  [`retrieve_next`][pydantic_graph.persistence.StatePersistence.retrieve_next] but not yet run.
+- `'running'`: The snapshot is currently running.
+- `'success'`: The snapshot has been run successfully.
+- `'error'`: The snapshot has been run but an error occurred.
+"""
 
 
 @dataclass
@@ -100,13 +108,22 @@ class StatePersistence(ABC, Generic[StateT, RunEndT]):
     async def snapshot_node(self, state: StateT, next_node: BaseNode[StateT, Any, RunEndT]) -> None:
         """Snapshot the state of a graph, when the next step is to run a node.
 
-        Note: although the node
-
         Args:
             state: The state of the graph.
-            next_node: The next node to run or end if the graph has ended
+            next_node: The next node to run.
+        """
+        raise NotImplementedError
 
-        Returns: an async context manager that wraps the run of the node.
+    @abstractmethod
+    async def snapshot_node_if_new(
+        self, snapshot_id: str, state: StateT, next_node: BaseNode[StateT, Any, RunEndT]
+    ) -> None:
+        """Snapshot the state of a graph, if the snapshot ID doesn't already exist in persistence.
+
+        Args:
+            snapshot_id: The ID of the snapshot to check.
+            state: The state of the graph.
+            next_node: The next node to run.
         """
         raise NotImplementedError
 
@@ -122,7 +139,17 @@ class StatePersistence(ABC, Generic[StateT, RunEndT]):
 
     @abstractmethod
     def record_run(self, snapshot_id: str) -> AbstractAsyncContextManager[None]:
-        """Record the run of the node.
+        """Record the run of the node, or error if the node is already running.
+
+        Args:
+            snapshot_id: The ID of the snapshot to record.
+
+        Raises:
+            GraphNodeRunningError: if the node status it not `'created'` or `'pending'`.
+            LookupError: if the snapshot ID is not found in persistence.
+
+        Returns:
+            An async context manager that records the run of the node.
 
         In particular this should set:
 
@@ -134,25 +161,18 @@ class StatePersistence(ABC, Generic[StateT, RunEndT]):
         raise NotImplementedError
 
     @abstractmethod
-    async def restore(self) -> Snapshot[StateT, RunEndT] | None:
-        """Retrieve the latest snapshot.
+    async def retrieve_next(self) -> NodeSnapshot[StateT, RunEndT] | None:
+        """Retrieve a node snapshot with status `'created`' and set its status to `'pending'`.
 
-        Returns:
-            The most recent [`Snapshot`][pydantic_graph.persistence.Snapshot] of the run.
+        Returns: The snapshot, or `None` if no snapshot with status `'created`' exists.
         """
         raise NotImplementedError
 
     @abstractmethod
-    async def get_node_snapshot(
-        self, snapshot_id: str, status: SnapshotStatus | None = None
-    ) -> Snapshot[StateT, RunEndT] | None:
-        """Get a snapshot by ID.
+    async def load(self) -> list[Snapshot[StateT, RunEndT]]:
+        """Load the entire history of snapshots.
 
-        Args:
-            snapshot_id: The ID of the snapshot to get.
-            status: The status of the snapshot to get, or `None` to get any status.
-
-        Returns: The snapshot with the given ID and status, or `None` if no snapshot with that ID exists.
+        Returns: The list of snapshots.
         """
         raise NotImplementedError
 
@@ -166,14 +186,6 @@ class StatePersistence(ABC, Generic[StateT, RunEndT]):
             get_types: A callback that returns the types of the state and run end.
         """
         pass
-
-    async def restore_node_snapshot(self) -> NodeSnapshot[StateT, RunEndT]:
-        snapshot = await self.restore()
-        if snapshot is None:
-            raise exceptions.GraphRuntimeError('Unable to restore snapshot from state persistence.')
-        elif not isinstance(snapshot, NodeSnapshot):
-            raise exceptions.GraphRuntimeError('Snapshot returned from persistence indicates the graph has ended.')
-        return snapshot
 
 
 @contextmanager

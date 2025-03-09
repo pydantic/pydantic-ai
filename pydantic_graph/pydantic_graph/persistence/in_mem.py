@@ -15,6 +15,7 @@ from typing import Any, Callable
 import pydantic
 from typing_extensions import TypeVar
 
+from .. import exceptions
 from ..nodes import BaseNode, End
 from . import (
     EndSnapshot,
@@ -51,6 +52,14 @@ class SimpleStatePersistence(StatePersistence[StateT, RunEndT]):
             node=next_node.deep_copy() if self.deep_copy else next_node,
         )
 
+    async def snapshot_node_if_new(
+        self, snapshot_id: str, state: StateT, next_node: BaseNode[StateT, Any, RunEndT]
+    ) -> None:
+        if self.last_snapshot and self.last_snapshot.id == snapshot_id:
+            return
+        else:
+            await self.snapshot_node(state, next_node)
+
     async def snapshot_end(self, state: StateT, end: End[RunEndT]) -> None:
         self.last_snapshot = EndSnapshot(
             state=self._prep_state(state),
@@ -64,6 +73,7 @@ class SimpleStatePersistence(StatePersistence[StateT, RunEndT]):
         assert snapshot_id == self.last_snapshot.id, (
             f'snapshot_id must match the last snapshot ID: {snapshot_id!r} != {self.last_snapshot.id!r}'
         )
+        exceptions.GraphNodeStatusError.check(self.last_snapshot.status)
         self.last_snapshot.status = 'running'
         self.last_snapshot.start_ts = _utils.now_utc()
 
@@ -78,17 +88,13 @@ class SimpleStatePersistence(StatePersistence[StateT, RunEndT]):
             self.last_snapshot.duration = perf_counter() - start
             self.last_snapshot.status = 'success'
 
-    async def restore(self) -> Snapshot[StateT, RunEndT] | None:
-        return self.last_snapshot
+    async def retrieve_next(self) -> NodeSnapshot[StateT, RunEndT] | None:
+        if isinstance(self.last_snapshot, NodeSnapshot) and self.last_snapshot.status == 'created':
+            self.last_snapshot.status = 'pending'
+            return self.last_snapshot
 
-    async def get_node_snapshot(
-        self, snapshot_id: str, status: SnapshotStatus | None = None
-    ) -> NodeSnapshot[StateT, RunEndT] | None:
-        if isinstance(self.last_snapshot, NodeSnapshot) and self.last_snapshot.id == snapshot_id:
-            if status and self.last_snapshot.status != status:
-                return None
-            else:
-                return self.last_snapshot
+    async def load(self) -> list[Snapshot[StateT, RunEndT]]:
+        raise NotImplementedError('load is not supported for SimpleStatePersistence')
 
     def _prep_state(self, state: StateT) -> StateT:
         """Prepare state for snapshot, uses [`copy.deepcopy`][copy.deepcopy] by default."""
@@ -121,6 +127,12 @@ class FullStatePersistence(StatePersistence[StateT, RunEndT]):
         )
         self.history.append(snapshot)
 
+    async def snapshot_node_if_new(
+        self, snapshot_id: str, state: StateT, next_node: BaseNode[StateT, Any, RunEndT]
+    ) -> None:
+        if not any(s.id == snapshot_id for s in self.history):
+            await self.snapshot_node(state, next_node)
+
     async def snapshot_end(self, state: StateT, end: End[RunEndT]) -> None:
         snapshot = EndSnapshot(
             state=self._prep_state(state),
@@ -136,6 +148,7 @@ class FullStatePersistence(StatePersistence[StateT, RunEndT]):
             raise LookupError(f'No snapshot found with id={snapshot_id}') from e
 
         assert isinstance(snapshot, NodeSnapshot), 'Only NodeSnapshot can be recorded'
+        exceptions.GraphNodeStatusError.check(snapshot.status)
         snapshot.status = 'running'
         snapshot.start_ts = _utils.now_utc()
         start = perf_counter()
@@ -149,9 +162,10 @@ class FullStatePersistence(StatePersistence[StateT, RunEndT]):
             snapshot.duration = perf_counter() - start
             snapshot.status = 'success'
 
-    async def restore(self) -> Snapshot[StateT, RunEndT] | None:
-        if self.history:
-            return self.history[-1]
+    async def retrieve_next(self) -> NodeSnapshot[StateT, RunEndT] | None:
+        if snapshot := next((s for s in self.history if isinstance(s, NodeSnapshot) and s.status == 'created'), None):
+            snapshot.status = 'pending'
+            return snapshot
 
     async def get_node_snapshot(
         self, snapshot_id: str, status: SnapshotStatus | None = None
@@ -163,6 +177,9 @@ class FullStatePersistence(StatePersistence[StateT, RunEndT]):
                 and (status is None or snapshot.status == status)
             ):
                 return snapshot
+
+    async def load(self) -> list[Snapshot[StateT, RunEndT]]:
+        return self.history
 
     def set_types(self, get_types: Callable[[], tuple[type[StateT], type[RunEndT]]]) -> None:
         if self._snapshots_type_adapter is None:

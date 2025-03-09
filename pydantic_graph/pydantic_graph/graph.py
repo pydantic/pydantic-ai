@@ -265,7 +265,6 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
                 graph=self, start_node=start_node, persistence=persistence, state=state, deps=deps
             )
 
-    # @deprecated('`graph.next` is deprecated, use `graph.iter` ... `run.next` instead')
     async def next(
         self: Graph[StateT, DepsT, T],
         node: BaseNode[StateT, DepsT, T],
@@ -291,6 +290,7 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
         if infer_name and self.name is None:
             self._infer_name(inspect.currentframe())
 
+        self.set_persistence_types(persistence)
         run = GraphRun[StateT, DepsT, T](
             graph=self,
             start_node=node,
@@ -310,7 +310,11 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
         if infer_name and self.name is None:
             self._infer_name(inspect.currentframe())
 
-        snapshot = await persistence.restore_node_snapshot()
+        snapshot = await persistence.retrieve_next()
+        if snapshot is None:
+            raise exceptions.GraphRuntimeError('Unable to restore snapshot from state persistence.')
+        snapshot.node.set_snapshot_id(snapshot.id)
+
         run = GraphRun[StateT, DepsT, T](
             graph=self,
             start_node=snapshot.node,
@@ -682,9 +686,7 @@ class GraphRun(Generic[StateT, DepsT, RunEndT]):
         else:
             node_snapshot_id = node.get_snapshot_id()
             if node_snapshot_id != self._snapshot_id:
-                existing_snapshot = await self.persistence.get_node_snapshot(node_snapshot_id, status='created')
-                if not existing_snapshot:
-                    await self.persistence.snapshot_node(self.state, node)
+                await self.persistence.snapshot_node_if_new(node_snapshot_id, self.state, node)
                 self._snapshot_id = node_snapshot_id
 
         if not isinstance(node, BaseNode):
