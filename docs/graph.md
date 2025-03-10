@@ -291,7 +291,7 @@ async def main():
 1. The state of the vending machine is defined as a dataclass with the user's balance and the product they've selected, if any.
 2. A dictionary of products mapped to prices.
 3. The `InsertCoin` node, [`BaseNode`][pydantic_graph.nodes.BaseNode] is parameterized with `MachineState` as that's the state used in this graph.
-4. The `InsertCoin` node prompts the user to insert coins. We keep things simple by just entering a monetary amount as a float. Before you start thinking this is a toy too since it's using [rich's `Prompt.ask`][rich.prompt.PromptBase.ask] within nodes, see [below](#example-qa-with-genai) for how control flow can be managed when nodes require external input.
+4. The `InsertCoin` node prompts the user to insert coins. We keep things simple by just entering a monetary amount as a float. Before you start thinking this is a toy too since it's using [rich's `Prompt.ask`][rich.prompt.PromptBase.ask] within nodes, see [below](#example-human-in-the-loop) for how control flow can be managed when nodes require external input.
 5. The `CoinsInserted` node; again this is a [`dataclass`][dataclasses.dataclass] with one field `amount`.
 6. Update the user's balance with the amount inserted.
 7. If the user has already selected a product, go to `Purchase`, otherwise go to `SelectProduct`.
@@ -628,7 +628,9 @@ async def run_node() -> bool:  # (3)!
 
 _(This example is complete, it can be run "as is" with Python 3.10+ — you'll need to add `asyncio.run(main())` to run `main`)_
 
-### Example: Q&A with GenAI
+### Example: Human in the loop.
+
+As noted above, state persistence allows graphs to be interrupted and resumed. One use case of this is to allow user input to continue.
 
 In this example, an AI asks the user a question, the user provides an answer, the AI evaluates the answer and ends if the user got it right or asks another question if they got it wrong.
 
@@ -787,246 +789,6 @@ _(This example is complete, it can be run "as is" with Python 3.10+ — you'll n
 
 For a complete example of this graph, see the [question graph example](examples/question-graph.md).
 
-## **Interrupting Graph Execution**
-
-### Example: Pausing and Resuming with Human Review
-
-This example shows a simple graph that processes an order.
-If the order amount is large, we require human review at a dedicated node and *pause* the workflow until that review occurs.
-
-We'll simulate persistence in a global dictionary rather than a real database.
-We also show how to resume execution once the human has approved the order.
-
-```python  {title="pause_and_resume.py" noqa="I001" py="3.10"}
-import asyncio
-from dataclasses import dataclass, field
-from typing import Literal
-
-from typing_extensions import TypedDict
-from pydantic import TypeAdapter
-
-from pydantic_graph import (
-    BaseNode,
-    End,
-    Graph,
-    GraphRunContext,
-    HistoryStep,
-    GraphRunResult,
-)
-
-
-@dataclass
-class OrderState:
-    """Order workflow state."""
-
-    order_id: str
-    amount: float
-    human_approved: bool = False  # set to True after human review
-
-
-class StoredRun(TypedDict):
-    """An object representing a mock-serialized run state."""
-
-    state: OrderState
-    history: bytes
-    node: bytes
-
-
-# We'll use a global dictionary to simulate persist/load:
-STORED_RUNS: dict[str, StoredRun] = {}
-
-
-@dataclass
-class CheckOrder(BaseNode[OrderState]):
-    """Check if this order needs human review."""
-
-    kind: Literal['check-order'] = field(default='check-order', init=False)
-
-    async def run(
-        self, ctx: GraphRunContext[OrderState]
-    ) -> 'HumanReview | ProcessOrder':
-        if ctx.state.amount < 1000:
-            return ProcessOrder()  # no human review required
-        else:
-            return HumanReview()  # human review required
-
-
-@dataclass
-class HumanReview(BaseNode[OrderState]):
-    """Pause graph execution until a human sets `approved=True` in the order state."""
-
-    kind: Literal['human-review'] = field(default='human-review', init=False)
-
-    async def run(
-        self, ctx: GraphRunContext[OrderState]
-    ) -> 'ProcessOrder | HumanReview':
-        if not ctx.state.human_approved:
-            # Still not approved: we'll stay on this node, effectively keeping the workflow paused
-            return self
-        return ProcessOrder()
-
-
-@dataclass
-class ProcessOrder(BaseNode[OrderState, None, str]):
-    """Final node: process the order."""
-
-    kind: Literal['process-order'] = field(default='process-order', init=False)
-
-    async def run(self, ctx: GraphRunContext[OrderState]) -> End[str]:
-        # In a real system, you'd charge payment, update inventory, etc.
-        return End(f'Order {ctx.state.order_id} processed successfully!')
-
-
-# Build the graph
-order_graph = Graph[OrderState, None, str](
-    nodes=[CheckOrder, HumanReview, ProcessOrder]
-)
-GraphNodeType = CheckOrder | HumanReview | ProcessOrder
-node_adapter = TypeAdapter[GraphNodeType](GraphNodeType)
-
-
-def persist_run_state(
-    run_id: str,
-    state: OrderState,
-    history: list[HistoryStep[OrderState, str]],
-    node: GraphNodeType,
-) -> None:
-    """Simulate storing run state in a global dictionary."""
-    STORED_RUNS[run_id] = StoredRun(
-        state=state,
-        history=order_graph.dump_history(history),
-        node=node_adapter.dump_json(node),
-    )
-
-
-def approve_order(run_id: str) -> None:
-    """Simulate a human approving an order."""
-    stored_run = STORED_RUNS[run_id]
-    stored_run['state'].human_approved = True
-
-
-def load_run_state(
-    run_id: str,
-) -> tuple[OrderState, list[HistoryStep[OrderState, str]], GraphNodeType]:
-    """Simulate loading run state from a global dictionary."""
-    stored_run = STORED_RUNS[run_id]
-    state = stored_run['state']
-    history = order_graph.load_history(stored_run['history'])
-    node = node_adapter.validate_json(stored_run['node'])
-    return state, history, node
-
-
-async def run_until_interrupted(
-    run_id: str,
-    state: OrderState,
-    history: list[HistoryStep[OrderState, str]],
-    start_node: GraphNodeType,
-) -> GraphRunResult[OrderState, str] | tuple[HumanReview, OrderState]:
-    """Continue the workflow from any point."""
-    async with order_graph.iter(start_node, state=state, history=history) as graph_run:
-        await graph_run.next()  # The first node will be yielded before it has been run, so we ensure it runs first
-        async for node in graph_run:
-            if isinstance(node, HumanReview):
-                persist_run_state(run_id, state, history, node)
-                return node, state  # Run is interrupted
-
-    assert graph_run.result is not None  # the graph run is complete at this point
-    return graph_run.result
-
-
-async def begin_run(
-    run_id: str, amount: int
-) -> GraphRunResult[OrderState, str] | tuple[HumanReview, OrderState]:
-    """Start the workflow. Possibly pause if human review is needed."""
-    state = OrderState(order_id=run_id, amount=amount)
-    history: list[HistoryStep[OrderState, str]] = []
-    node = CheckOrder()
-    return await run_until_interrupted(run_id, state, history, node)
-
-
-async def resume_run(
-    run_id: str,
-) -> GraphRunResult[OrderState, str] | tuple[HumanReview, OrderState]:
-    """Resume the workflow after human review."""
-    state, history, node = load_run_state(run_id)
-    return await run_until_interrupted(run_id, state, history, node)
-
-
-async def main():
-    results = []
-
-    # Begin a run that will not require human review:
-    results.append(await begin_run('order-1', 100))
-
-    # Begin a run that _will_ require human review:
-    results.append(await begin_run('order-2', 1500))
-
-    # ... human review happens ...
-    approve_order('order-2')
-
-    # Resume run after human review:
-    results.append(await resume_run('order-2'))
-
-    return results
-
-
-if __name__ == '__main__':
-    print(asyncio.run(main()))
-    """
-    [
-        GraphRunResult(
-            output='Order order-1 processed successfully!',
-            state=OrderState(order_id='order-1', amount=100, human_approved=False),
-        ),
-        (
-            HumanReview(kind='human-review'),
-            OrderState(order_id='order-2', amount=1500, human_approved=True),
-        ),
-        GraphRunResult(
-            output='Order order-2 processed successfully!',
-            state=OrderState(order_id='order-2', amount=1500, human_approved=True),
-        ),
-    ]
-    """
-```
-
-**How it works:**
-
-1. **`OrderState` and Node Classes**
-   - We define an `OrderState` dataclass that tracks the order ID, amount, and a `human_approved` flag.
-   - Three node classes (`CheckOrder`, `HumanReview`, `ProcessOrder`) use `pydantic-graph` generics to model a small state machine:
-     - `CheckOrder` decides whether we need human review (returns `HumanReview`) or can finalize directly.
-     - `HumanReview` loops on itself until someone sets `human_approved=True`.
-     - `ProcessOrder` completes the graph with an [`End`][pydantic_graph.nodes.End] node and a success message.
-
-2. **Global `STORED_RUNS` for Persistence**
-   - We simulate storing run state with a dictionary of typed-dict entries (`StoredRun`).
-   - For each "run," we store `OrderState`, serialized history (via [`graph.dump_history`][pydantic_graph.graph.Graph.dump_history]), and a serialized node.
-
-3. **`run_until_interrupted`**
-   - Accepts a starting node, plus the current `state` and `history`.
-   - Calls [`graph.iter`][pydantic_graph.graph.Graph.iter] to begin or continue the graph.
-   - If it encounters a `HumanReview` node, it persists the run and returns that node (thus "interrupting" the workflow).
-   - Otherwise, it continues until the graph ends.
-
-4. **`begin_run`**
-   - Creates a fresh `OrderState` (initializing the run) and starts from `CheckOrder`.
-   - It either completes immediately if no review is required or returns a `HumanReview` node if it needs sign-off.
-
-5. **`approve_order`**
-   - Emulates a real "human review" step by flipping `.human_approved` to True in the stored state.
-
-6. **`resume_run`**
-   - Loads the previously saved state, history, and node.
-   - Calls `run_until_interrupted` to continue from exactly where we left off, typically finalizing or pausing again.
-
-7. **In `main`**
-   - We run two orders: one small (`order-1`) that finishes immediately, and one large (`order-2`) that pauses.
-   - We call `approve_order("order-2")` to simulate a human approval, and then `resume_run("order-2")`.
-   - This finalizes the second order's workflow.
-
-While this is just a toy example, you can take a similar approach to build a persistent, interruptible workflow that uses `pydantic-graph` to pause execution at any node, store its state, and resume again after external events (like human approval) occur.
-
 ## Dependency Injection
 
 As with PydanticAI, `pydantic-graph` supports dependency injection via a generic parameter on [`Graph`][pydantic_graph.graph.Graph] and [`BaseNode`][pydantic_graph.nodes.BaseNode], and the [`GraphRunContext.deps`][pydantic_graph.nodes.GraphRunContext.deps] field.
@@ -1119,7 +881,7 @@ Beyond the diagrams shown above, you can also customize mermaid diagrams with th
 * [`BaseNode.docstring_notes`][pydantic_graph.nodes.BaseNode.docstring_notes] and [`BaseNode.get_note`][pydantic_graph.nodes.BaseNode.get_note] allows you to add notes to nodes
 * The [`highlighted_nodes`][pydantic_graph.graph.Graph.mermaid_code] parameter allows you to highlight specific node(s) in the diagram
 
-Putting that together, we can edit the last [`ai_q_and_a_graph.py`](#example-qa-with-genai) example to:
+Putting that together, we can edit the last [`ai_q_and_a_graph.py`](#example-human-in-the-loop) example to:
 
 * add labels to some edges
 * add a note to the `Ask` node
