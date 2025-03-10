@@ -225,12 +225,13 @@ _(This example is complete, it can be run "as is")_
 
 ## Storing and loading messages (to JSON)
 
-While maintaining conversation state in memory can work, often times you may want to write the messages to disk or a database. This might be for evals, for sharing from Python to JavaScript or any number of other cases.
+While maintaining conversation state in memory is enough for many applications, often times you may want to store the messages history of an agent run on disk or in a database. This might be for evals, for sharing data between Python and JavaScript/TypeScript, or any number of other use cases.
 
-The most effective wany to do this is to use a `TypeAdapter`.
+The intended way to do this is using a `TypeAdapter`.
 
-We export a [`ModelMessagesTypeAdapter`][pydantic_ai.messages.ModelMessagesTypeAdapter] that can be used for this, or you can create your own.
+We export [`ModelMessagesTypeAdapter`][pydantic_ai.messages.ModelMessagesTypeAdapter] that can be used for this, or you can create your own.
 
+Here's an example showing how:
 
 ```python {title="serialize messages to json"}
 from pydantic_core import to_jsonable_python
@@ -251,23 +252,21 @@ result2 = agent.run_sync(  # (3)!
 ```
 
 1. Alternatively, you can create a `TypeAdapter` from scratch:
-
    ```python {lint="skip" format="skip"}
    from pydantic import TypeAdapter
    from pydantic_ai.messages import ModelMessage
    ModelMessagesTypeAdapter = TypeAdapter(list[ModelMessage])
    ```
-
 2. Alternatively you can serialize to/from JSON directly:
-
    ```python {test="skip" lint="skip" format="skip"}
    from pydantic_core import to_json
    ...
    as_json_objects = to_json(history_step_1)
    same_history_as_step_1 = ModelMessagesTypeAdapter.validate_json(as_json_objects)
    ```
-
 3. You can now continue the conversation with history `same_history_as_step_1` despite creating a new agent run.
+
+_(This example is complete, it can be run "as is")_
 
 ## Other ways of using messages
 
