@@ -754,8 +754,9 @@ We also show how to resume execution once the human has approved the order.
 ```python  {title="pause_and_resume.py" noqa="I001" py="3.10"}
 import asyncio
 from dataclasses import dataclass, field
-from typing import TypedDict, Literal
+from typing import Literal
 
+from typing_extensions import TypedDict
 from pydantic import TypeAdapter
 
 from pydantic_graph import (
@@ -876,7 +877,7 @@ async def run_until_interrupted(
     start_node: GraphNodeType,
 ) -> GraphRunResult[OrderState, str] | tuple[HumanReview, OrderState]:
     """Continue the workflow from any point."""
-    with order_graph.iter(start_node, state=state, history=history) as graph_run:
+    async with order_graph.iter(start_node, state=state, history=history) as graph_run:
         await graph_run.next()  # The first node will be yielded before it has been run, so we ensure it runs first
         async for node in graph_run:
             if isinstance(node, HumanReview):
