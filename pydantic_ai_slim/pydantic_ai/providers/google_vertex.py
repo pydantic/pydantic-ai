@@ -1,10 +1,10 @@
 from __future__ import annotations as _annotations
 
 import functools
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Mapping
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Literal
+from typing import Literal, overload
 
 import anyio.to_thread
 import httpx
@@ -52,9 +52,33 @@ class GoogleVertexProvider(Provider[httpx.AsyncClient]):
     def client(self) -> httpx.AsyncClient:
         return self._client
 
+    @overload
     def __init__(
         self,
+        *,
         service_account_file: Path | str | None = None,
+        project_id: str | None = None,
+        region: VertexAiRegion = 'us-central1',
+        model_publisher: str = 'google',
+        http_client: httpx.AsyncClient | None = None,
+    ) -> None: ...
+
+    @overload
+    def __init__(
+        self,
+        *,
+        service_account_info: Mapping[str, str] | None = None,
+        project_id: str | None = None,
+        region: VertexAiRegion = 'us-central1',
+        model_publisher: str = 'google',
+        http_client: httpx.AsyncClient | None = None,
+    ) -> None: ...
+
+    def __init__(
+        self,
+        *,
+        service_account_file: Path | str | None = None,
+        service_account_info: Mapping[str, str] | None = None,
         project_id: str | None = None,
         region: VertexAiRegion = 'us-central1',
         model_publisher: str = 'google',
@@ -64,7 +88,9 @@ class GoogleVertexProvider(Provider[httpx.AsyncClient]):
 
         Args:
             service_account_file: Path to a service account file.
-                If not provided, the default environment credentials will be used.
+                If not provided, the service_account_info or default environment credentials will be used.
+            service_account_info: The loaded service_account_file contents.
+                If not provided, the service_account_file or default environment credentials will be used.
             project_id: The project ID to use, if not provided it will be taken from the credentials.
             region: The region to make requests to.
             model_publisher: The model publisher to use, I couldn't find a good list of available publishers,
@@ -73,13 +99,17 @@ class GoogleVertexProvider(Provider[httpx.AsyncClient]):
                 Please create an issue or PR if you know how to use other publishers.
             http_client: An existing `httpx.AsyncClient` to use for making HTTP requests.
         """
+        if service_account_file and service_account_info:
+            raise ValueError('Only one of `service_account_file` or `service_account_info` can be provided.')
+
         self._client = http_client or cached_async_http_client()
         self.service_account_file = service_account_file
+        self.service_account_info = service_account_info
         self.project_id = project_id
         self.region = region
         self.model_publisher = model_publisher
 
-        self._client.auth = _VertexAIAuth(service_account_file, project_id, region)
+        self._client.auth = _VertexAIAuth(service_account_file, service_account_info, project_id, region)
         self._client.base_url = self.base_url
 
 
@@ -91,10 +121,12 @@ class _VertexAIAuth(httpx.Auth):
     def __init__(
         self,
         service_account_file: Path | str | None = None,
+        service_account_info: Mapping[str, str] | None = None,
         project_id: str | None = None,
         region: VertexAiRegion = 'us-central1',
     ) -> None:
         self.service_account_file = service_account_file
+        self.service_account_info = service_account_info
         self.project_id = project_id
         self.region = region
 
@@ -119,6 +151,11 @@ class _VertexAIAuth(httpx.Auth):
             assert creds.project_id is None or isinstance(creds.project_id, str)  # type: ignore[reportUnknownMemberType]
             creds_project_id: str | None = creds.project_id
             creds_source = 'service account file'
+        elif self.service_account_info is not None:
+            creds = await _creds_from_info(self.service_account_info)
+            assert creds.project_id is None or isinstance(creds.project_id, str)  # type: ignore[reportUnknownMemberType]
+            creds_project_id: str | None = creds.project_id
+            creds_source = 'service account info'
         else:
             creds, creds_project_id = await _async_google_auth()
             creds_source = '`google.auth.default()`'
@@ -152,6 +189,14 @@ async def _creds_from_file(service_account_file: str | Path) -> ServiceAccountCr
         scopes=['https://www.googleapis.com/auth/cloud-platform'],
     )
     return await anyio.to_thread.run_sync(service_account_credentials_from_file, str(service_account_file))
+
+
+async def _creds_from_info(service_account_info: Mapping[str, str]) -> ServiceAccountCredentials:
+    service_account_credentials_from_string = functools.partial(
+        ServiceAccountCredentials.from_service_account_info,  # type: ignore[reportUnknownMemberType]
+        scopes=['https://www.googleapis.com/auth/cloud-platform'],
+    )
+    return await anyio.to_thread.run_sync(service_account_credentials_from_string, service_account_info)
 
 
 VertexAiRegion = Literal[
