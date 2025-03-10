@@ -58,7 +58,7 @@ class Double(BaseNode[None, None, int]):
 async def test_graph():
     my_graph = Graph(nodes=(Float2String, String2Length, Double))
     assert my_graph.name is None
-    assert my_graph._inferred_types == (type(None), int)
+    assert my_graph.inferred_types == (type(None), int)
     result = await my_graph.run(Float2String(3.14))
     # len('3.14') * 2 == 8
     assert result.output == 8
@@ -68,7 +68,7 @@ async def test_graph():
 async def test_graph_history(mock_snapshot_id: object):
     my_graph = Graph[None, None, int](nodes=(Float2String, String2Length, Double))
     assert my_graph.name is None
-    assert my_graph._inferred_types == (type(None), int)
+    assert my_graph.inferred_types == (type(None), int)
     sp = FullStatePersistence()
     result = await my_graph.run(Float2String(3.14), persistence=sp)
     # len('3.14') * 2 == 8
@@ -292,7 +292,7 @@ async def test_run_return_other(mock_snapshot_id: object):
             return 42  # type: ignore
 
     g = Graph(nodes=(Foo, Bar))
-    assert g._inferred_types == (type(None), type(None))
+    assert g.inferred_types == (type(None), type(None))
     with pytest.raises(GraphRuntimeError) as exc_info:
         await g.run(Foo())
 
@@ -302,7 +302,7 @@ async def test_run_return_other(mock_snapshot_id: object):
 async def test_iter():
     my_graph = Graph(nodes=(Float2String, String2Length, Double))
     assert my_graph.name is None
-    assert my_graph._inferred_types == (type(None), int)
+    assert my_graph.inferred_types == (type(None), int)
     node_reprs: list[str] = []
     async with my_graph.iter(Float2String(3.14)) as graph_iter:
         assert repr(graph_iter) == snapshot('<GraphRun graph=my_graph>')

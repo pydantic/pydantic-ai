@@ -291,7 +291,7 @@ async def main():
 1. The state of the vending machine is defined as a dataclass with the user's balance and the product they've selected, if any.
 2. A dictionary of products mapped to prices.
 3. The `InsertCoin` node, [`BaseNode`][pydantic_graph.nodes.BaseNode] is parameterized with `MachineState` as that's the state used in this graph.
-4. The `InsertCoin` node prompts the user to insert coins. We keep things simple by just entering a monetary amount as a float. Before you start thinking this is a toy too since it's using [rich's `Prompt.ask`][rich.prompt.PromptBase.ask] within nodes, see [below](#custom-control-flow) for how control flow can be managed when nodes require external input.
+4. The `InsertCoin` node prompts the user to insert coins. We keep things simple by just entering a monetary amount as a float. Before you start thinking this is a toy too since it's using [rich's `Prompt.ask`][rich.prompt.PromptBase.ask] within nodes, see [below](#example-qa-with-genai) for how control flow can be managed when nodes require external input.
 5. The `CoinsInserted` node; again this is a [`dataclass`][dataclasses.dataclass] with one field `amount`.
 6. Update the user's balance with the amount inserted.
 7. If the user has already selected a product, go to `Purchase`, otherwise go to `SelectProduct`.
@@ -585,40 +585,54 @@ At a high level the role of `StatePersistence` implementations is to store and r
 
 We can run the `count_down_graph` from [above](#iterating-over-a-graph), using [`graph.next_from_persistence()`][pydantic_graph.graph.Graph.next_from_persistence] and [`FileStatePersistence`][pydantic_graph.persistence.file.FileStatePersistence].
 
+As you can see in this code, `run_node` requires no external application state apart from state persistence to be run, meaning graphs can easily be executed by distributed execution and queueing systems.
+
 ```python {title="count_down_from_persistence.py" noqa="I001" py="3.10"}
 from pathlib import Path
+
 from pydantic_graph import End
 from pydantic_graph.persistence.file import FileStatePersistence
+
 from count_down import CountDown, CountDownState, count_down_graph
 
 
 async def main():
     persistence = FileStatePersistence(Path('count_down.json'))  # (1)!
     state = CountDownState(counter=5)
-    await count_down_graph.next(CountDown(), state=state, persistence=persistence)
+    await count_down_graph.next(  # (2)!
+        CountDown(), state=state, persistence=persistence
+    )
 
     done = False
     while not done:
         done = await run_node()
 
 
-async def run_node() -> bool:  # (2)!
+async def run_node() -> bool:  # (3)!
     persistence = FileStatePersistence(Path('count_down.json'))
-    node_or_end = await count_down_graph.next_from_persistence(persistence)  # (3)!
+    node_or_end = await count_down_graph.next_from_persistence(persistence)  # (4)!
     print('Node:', node_or_end)
     #> Node: CountDown()
     #> Node: CountDown()
     #> Node: CountDown()
     #> Node: CountDown()
     #> Node: End(data=0)
-    return isinstance(node_or_end, End)
+    return isinstance(node_or_end, End)  # (5)!
 ```
+
+1. Create a [`FileStatePersistence`][pydantic_graph.persistence.file.FileStatePersistence] to use to start the graph.
+2. Call [`graph.next()`][pydantic_graph.graph.Graph.next] to start the graph with the initial state.
+3. `run_node` is a pure function that doesn't need access to any other process state to run the next node of the graph.
+4. Call [`graph.next_from_persistence()`][pydantic_graph.graph.Graph.next_from_persistence] to run the next node of the graph from the state stored in persistence. This will return either a node or an `End` object.
+5. Check if the node is an `End` object, if it is, the graph run is complete.
 
 _(This example is complete, it can be run "as is" with Python 3.10+ — you'll need to add `asyncio.run(main())` to run `main`)_
 
 ### Example: Q&A with GenAI
 
 In this example, an AI asks the user a question, the user provides an answer, the AI evaluates the answer and ends if the user got it right or asks another question if they got it wrong.
+
+Instead of running the entire graph in a single process invocation, we run the graph by running the process repeatedly, optionally providing an answer to the question as a command line argument.
 
 ??? example "`ai_q_and_a_graph.py` — `question_graph` definition"
     ```python {title="ai_q_and_a_graph.py" noqa="I001" py="3.10"}
@@ -734,42 +748,44 @@ from ai_q_and_a_graph import Ask, question_graph, Evaluate, QuestionState, Answe
 async def main():
     answer: str | None = sys.argv[2] if len(sys.argv) > 2 else None  # (1)!
     persistence = FileStatePersistence(Path('question_graph.json'))  # (2)!
-    question_graph.set_persistence_types(persistence)  # (3)!
+    persistence.set_graph_types(question_graph)  # (3)!
 
     if snapshot := await persistence.retrieve_next():  # (4)!
         state = snapshot.state
         assert answer is not None
-        node = Evaluate(answer)  # (5)!
+        node = Evaluate(answer)
     else:
         state = QuestionState()
-        node = Ask()  # (6)!
+        node = Ask()  # (5)!
 
     while True:
-        node = await question_graph.next(  # (7)!
+        node = await question_graph.next(  # (6)!
             node, persistence=persistence, state=state
         )
-        if isinstance(node, End):
+        if isinstance(node, End):  # (7)!
             print('END:', node.data)
             history = await persistence.load()
             print([e.node for e in history])
             break
-        elif isinstance(node, Answer):
+        elif isinstance(node, Answer):  # (8)!
             print(node.question)
             #> What is the capital of France?
             break
         # otherwise just continue
 ```
 
-1. Create the state object which will be mutated by [`next`][pydantic_graph.graph.Graph.next].
-2. The start node is `Ask` but will be updated by [`next`][pydantic_graph.graph.Graph.next] as the graph runs.
-3. The history of the graph run is stored using [`FullStatePersistence`][pydantic_graph.FullStatePersistence]. Again [`next`][pydantic_graph.graph.Graph.next] will update this list in place.
-4. [Run][pydantic_graph.graph.Graph.next] the graph one node at a time, updating the state, current node and history as the graph runs.
-5. If the current node is an `Question` node, prompt the user for an answer.
-6. Since we're using [`next`][pydantic_graph.graph.Graph.next] we have to manually check for an [`End`][pydantic_graph.nodes.End] and exit the loop if we get one.
+1. Get the user's answer from the command line, if provided. See [question graph example](examples/question-graph.md) for a complete example.
+2. Create a state persistence instance the `'question_graph.json'` file may or may not already exist.
+3. Since we're using the [persistence interface][pydantic_graph.persistence.BaseStatePersistence] outside a graph, we need to call [`set_graph_types`][pydantic_graph.persistence.BaseStatePersistence.set_graph_types] to set the graph generic types `StateT` and `RunEndT` for the persistence instance. This is necessary to allow the persistence instance to know how to serialize and deserialize graph nodes.
+4. If we're run the graph before, [`retrieve_next`][pydantic_graph.persistence.BaseStatePersistence.retrieve_next] will return a snapshot of the next node to run, here we use `state` from that snapshot, and create a new `Evaluate` node with the answer provided on the command line.
+5. If the graph hasn't been run before, we create a new `QuestionState` and start with the `Ask` node.
+6. Call [`graph.next()`][pydantic_graph.graph.Graph.next] to run the node. This will return either a node or an `End` object.
+7. If the node is an `End` object, the graph run is complete. The `data` field of the `End` object contains the comment returned by the `evaluate_agent` about the correct answer.
+8. If the node is an `Answer` object, we print the question and break out of the loop to end the process and wait for user input.
 
 _(This example is complete, it can be run "as is" with Python 3.10+ — you'll need to add `asyncio.run(main(answer))` to run `main`)_
 
-For an example of genuine out-of-process control flow, see the [question graph example](examples/question-graph.md).
+For a complete example of this graph, see the [question graph example](examples/question-graph.md).
 
 ## Dependency Injection
 
@@ -863,7 +879,7 @@ Beyond the diagrams shown above, you can also customize mermaid diagrams with th
 * [`BaseNode.docstring_notes`][pydantic_graph.nodes.BaseNode.docstring_notes] and [`BaseNode.get_note`][pydantic_graph.nodes.BaseNode.get_note] allows you to add notes to nodes
 * The [`highlighted_nodes`][pydantic_graph.graph.Graph.mermaid_code] parameter allows you to highlight specific node(s) in the diagram
 
-Putting that together, we can edit the last [`ai_q_and_a_graph.py`](#custom-control-flow) example to:
+Putting that together, we can edit the last [`ai_q_and_a_graph.py`](#example-qa-with-genai) example to:
 
 * add labels to some edges
 * add a note to the `Ask` node

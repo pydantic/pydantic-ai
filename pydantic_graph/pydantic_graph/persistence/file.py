@@ -7,7 +7,7 @@ from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from time import perf_counter
-from typing import Any, Callable
+from typing import Any
 
 import pydantic
 
@@ -86,10 +86,12 @@ class FileStatePersistence(BaseStatePersistence[StateT, RunEndT]):
                 await self._save(snapshots)
                 return snapshot
 
-    def set_types(self, get_types: Callable[[], tuple[type[StateT], type[RunEndT]]]) -> None:
-        if self._snapshots_type_adapter is None:
-            state_t, run_end_t = get_types()
-            self._snapshots_type_adapter = build_snapshot_list_type_adapter(state_t, run_end_t)
+    def set_types(self, state_type: type[StateT], run_end_type: type[RunEndT]) -> None:
+        self._snapshots_type_adapter = build_snapshot_list_type_adapter(state_type, run_end_type)
+
+    def _should_set_types(self) -> bool:
+        """Whether types need to be set."""
+        return self._snapshots_type_adapter is None
 
     async def load(self) -> list[Snapshot[StateT, RunEndT]]:
         return await _graph_utils.run_in_executor(self._load_sync)

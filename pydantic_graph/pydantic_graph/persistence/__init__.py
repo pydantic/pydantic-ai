@@ -1,11 +1,10 @@
 from __future__ import annotations as _annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Iterator, Sequence
-from contextlib import AbstractAsyncContextManager, contextmanager
+from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Annotated, Any, Callable, Generic, Literal, Union
+from typing import TYPE_CHECKING, Annotated, Any, Generic, Literal, Union
 
 import pydantic
 from typing_extensions import TypeVar
@@ -13,18 +12,13 @@ from typing_extensions import TypeVar
 from ..nodes import BaseNode, End
 from . import _utils
 
-__all__ = (
-    'StateT',
-    'NodeSnapshot',
-    'EndSnapshot',
-    'Snapshot',
-    'BaseStatePersistence',
-    'set_nodes_type_context',
-    'SnapshotStatus',
-)
+if TYPE_CHECKING:
+    from .. import Graph
+
+__all__ = 'StateT', 'NodeSnapshot', 'EndSnapshot', 'Snapshot', 'BaseStatePersistence', 'SnapshotStatus'
 
 StateT = TypeVar('StateT', default=Any)
-RunEndT = TypeVar('RunEndT', covariant=True, default=Any)
+RunEndT = TypeVar('RunEndT', default=Any)
 
 UNSET_SNAPSHOT_ID = '__unset__'
 SnapshotStatus = Literal['created', 'pending', 'running', 'success', 'error']
@@ -179,25 +173,30 @@ class BaseStatePersistence(ABC, Generic[StateT, RunEndT]):
         """
         raise NotImplementedError
 
-    def set_types(self, get_types: Callable[[], tuple[type[StateT], type[RunEndT]]]) -> None:
+    def set_types(self, state_type: type[StateT], run_end_type: type[RunEndT]) -> None:
         """Set the types of the state and run end.
 
         This can be used to create [type adapters][pydantic.TypeAdapter] for serializing and deserializing
         snapshots.
 
         Args:
-            get_types: A callback that returns the types of the state and run end.
+            state_type: The state type.
+            run_end_type: The run end type.
         """
         pass
 
+    def _should_set_types(self) -> bool:
+        """Whether types need to be set.
 
-@contextmanager
-def set_nodes_type_context(nodes: Sequence[type[BaseNode[Any, Any, Any]]]) -> Iterator[None]:  # noqa: D103
-    token = _utils.nodes_type_context.set(nodes)
-    try:
-        yield
-    finally:
-        _utils.nodes_type_context.reset(token)
+        Implementations should override this method to return `True` when types have not been set if they are needed.
+        """
+        return False
+
+    def set_graph_types(self, graph: Graph[StateT, Any, RunEndT]) -> None:
+        """Set the types of the state and run end from a graph."""
+        if self._should_set_types():
+            with _utils.set_nodes_type_context(graph.get_nodes()):
+                self.set_types(*graph.inferred_types)
 
 
 def build_snapshot_list_type_adapter(

@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
+from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -52,3 +53,12 @@ class CustomNodeSchema:
 
 def now_utc() -> datetime:
     return datetime.now(tz=timezone.utc)
+
+
+@contextmanager
+def set_nodes_type_context(nodes: Sequence[type[BaseNode[Any, Any, Any]]]) -> Iterator[None]:
+    token = nodes_type_context.set(nodes)
+    try:
+        yield
+    finally:
+        nodes_type_context.reset(token)

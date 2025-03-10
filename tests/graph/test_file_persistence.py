@@ -194,8 +194,8 @@ async def test_record_lookup_error(tmp_path: Path):
     p = tmp_path / 'test_graph.json'
     persistence = FileStatePersistence(p)
     my_graph = Graph(nodes=(Float2String, String2Length, Double))
-    my_graph.set_persistence_types(persistence)
-    my_graph.set_persistence_types(persistence)
+    persistence.set_graph_types(my_graph)
+    persistence.set_graph_types(my_graph)
 
     with pytest.raises(LookupError, match="No snapshot found with id='foobar'"):
         async with persistence.record_run('foobar'):

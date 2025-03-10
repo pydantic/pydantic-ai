@@ -15,7 +15,7 @@ from typing_inspection import typing_objects
 
 from . import _utils, exceptions, mermaid
 from .nodes import BaseNode, DepsT, End, GraphRunContext, NodeDef, RunEndT, StateT
-from .persistence import BaseStatePersistence, set_nodes_type_context
+from .persistence import BaseStatePersistence
 from .persistence.in_mem import SimpleStatePersistence
 
 # while waiting for https://github.com/pydantic/logfire/issues/745
@@ -253,7 +253,7 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
 
         if persistence is None:
             persistence = SimpleStatePersistence()
-        self.set_persistence_types(persistence)
+        persistence.set_graph_types(self)
 
         if self.auto_instrument and span is None:
             span = logfire_api.span('run graph {graph.name}', graph=self)
@@ -290,7 +290,7 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
         if infer_name and self.name is None:
             self._infer_name(inspect.currentframe())
 
-        self.set_persistence_types(persistence)
+        persistence.set_graph_types(self)
         run = GraphRun[StateT, DepsT, T](
             graph=self,
             start_node=node,
@@ -310,7 +310,7 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
         """Run the next node in the graph from a snapshot stored in persistence."""
         if infer_name and self.name is None:
             self._infer_name(inspect.currentframe())
-        self.set_persistence_types(persistence)
+        persistence.set_graph_types(self)
 
         snapshot = await persistence.retrieve_next()
         if snapshot is None:
@@ -327,10 +327,6 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
             snapshot_id=snapshot.id,
         )
         return await run.next()
-
-    def set_persistence_types(self, persistence: BaseStatePersistence[StateT, RunEndT]) -> None:
-        with set_nodes_type_context([node_def.node for node_def in self.node_defs.values()]):
-            persistence.set_types(lambda: self._inferred_types)
 
     def mermaid_code(
         self,
@@ -455,8 +451,13 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
             kwargs['title'] = self.name
         mermaid.save_image(path, self, **kwargs)
 
+    def get_nodes(self) -> Sequence[type[BaseNode[StateT, DepsT, RunEndT]]]:
+        """Get the nodes in the graph."""
+        return [node_def.node for node_def in self.node_defs.values()]
+
     @cached_property
-    def _inferred_types(self) -> tuple[type[StateT], type[RunEndT]]:
+    def inferred_types(self) -> tuple[type[StateT], type[RunEndT]]:
+        # Get the types of the state and run end from the graph.
         if _utils.is_set(self._state_type) and _utils.is_set(self._run_end_type):
             return self._state_type, self._run_end_type
 

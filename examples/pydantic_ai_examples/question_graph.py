@@ -116,7 +116,7 @@ async def run_as_continuous():
 
 async def run_as_cli(answer: str | None):
     persistence = FileStatePersistence(Path('question_graph.json'))
-    question_graph.set_persistence_types(persistence)
+    persistence.set_graph_types(question_graph)
 
     if snapshot := await persistence.retrieve_next():
         state = snapshot.state

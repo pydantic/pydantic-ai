@@ -40,7 +40,7 @@ async def test_run_graph(mock_snapshot_id: object):
             return End(f'x={ctx.state.x} y={ctx.state.y}')
 
     graph = Graph(nodes=(Foo, Bar))
-    assert graph._inferred_types == (MyState, str)  # pyright: ignore[reportPrivateUsage]
+    assert graph.inferred_types == (MyState, str)
     state = MyState(1, '')
     sp = FullStatePersistence()
     result = await graph.run(Foo(), state=state, persistence=sp)

@@ -10,7 +10,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from time import perf_counter
-from typing import Any, Callable
+from typing import Any
 
 import pydantic
 
@@ -148,10 +148,11 @@ class FullStatePersistence(BaseStatePersistence[StateT, RunEndT]):
     async def load(self) -> list[Snapshot[StateT, RunEndT]]:
         return self.history
 
-    def set_types(self, get_types: Callable[[], tuple[type[StateT], type[RunEndT]]]) -> None:
-        if self._snapshots_type_adapter is None:
-            state_t, run_end_t = get_types()
-            self._snapshots_type_adapter = build_snapshot_list_type_adapter(state_t, run_end_t)
+    def set_types(self, state_type: type[StateT], run_end_type: type[RunEndT]) -> None:
+        self._snapshots_type_adapter = build_snapshot_list_type_adapter(state_type, run_end_type)
+
+    def _should_set_types(self) -> bool:
+        return self._snapshots_type_adapter is None
 
     def dump_json(self, *, indent: int | None = None) -> bytes:
         """Dump the history to JSON bytes."""

@@ -119,7 +119,7 @@ async def test_dump_load_state(graph: Graph[MyState, None, int], mock_snapshot_i
     )
 
     sp2 = FullStatePersistence()
-    graph.set_persistence_types(sp2)
+    sp2.set_graph_types(graph)
 
     sp2.load_json(history_json)
     assert sp.history == sp2.history
@@ -140,7 +140,7 @@ async def test_dump_load_state(graph: Graph[MyState, None, int], mock_snapshot_i
         },
     ]
     sp3 = FullStatePersistence()
-    graph.set_persistence_types(sp3)
+    sp3.set_graph_types(graph)
     sp3.load_json(json.dumps(custom_history))
     assert sp3.history == snapshot(
         [
@@ -181,7 +181,7 @@ def test_one_node(mock_snapshot_id: object):
         },
     ]
     sp = FullStatePersistence()
-    g.set_persistence_types(sp)
+    sp.set_graph_types(g)
     sp.load_json(json.dumps(custom_history))
     assert sp.history == snapshot(
         [
@@ -203,11 +203,11 @@ def test_no_generic_arg(mock_snapshot_id: object):
             return NoGenericArgsNode()
 
     g = Graph(nodes=[NoGenericArgsNode])
-    assert g._inferred_types == (None, None)
+    assert g.inferred_types == (None, None)
 
     g = Graph(nodes=[NoGenericArgsNode], run_end_type=None)  # pyright: ignore[reportArgumentType]
 
-    assert g._inferred_types == (None, None)
+    assert g.inferred_types == (None, None)
 
     custom_history = [
         {
@@ -220,7 +220,7 @@ def test_no_generic_arg(mock_snapshot_id: object):
     ]
 
     sp = FullStatePersistence()
-    g.set_persistence_types(sp)
+    sp.set_graph_types(g)
     sp.load_json(json.dumps(custom_history))
 
     assert sp.history == snapshot(
@@ -329,8 +329,8 @@ async def test_next_from_persistence(persistence_cls: type[BaseStatePersistence[
 async def test_record_lookup_error(persistence_cls: type[BaseStatePersistence]):
     persistence = persistence_cls()
     my_graph = Graph(nodes=(Foo, Bar))
-    my_graph.set_persistence_types(persistence)
-    my_graph.set_persistence_types(persistence)
+    persistence.set_graph_types(my_graph)
+    persistence.set_graph_types(my_graph)
 
     with pytest.raises(LookupError, match="No snapshot found with id='foobar'"):
         async with persistence.record_run('foobar'):
