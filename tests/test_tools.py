@@ -500,6 +500,28 @@ def test_dynamic_tool_decorator():
     assert r.data == snapshot('success (no tool calls)')
 
 
+def test_plain_tool_name():
+    agent = Agent(FunctionModel(get_json_schema))
+
+    def my_tool(arg: str) -> str: ...
+
+    agent.tool_plain(name='foo_tool')(my_tool)
+    result = agent.run_sync('Hello')
+    json_schema = json.loads(result.data)
+    assert json_schema['name'] == 'foo_tool'
+
+
+def test_tool_name():
+    agent = Agent(FunctionModel(get_json_schema))
+
+    def my_tool(ctx: RunContext, arg: str) -> str: ...
+
+    agent.tool(name='foo_tool')(my_tool)
+    result = agent.run_sync('Hello')
+    json_schema = json.loads(result.data)
+    assert json_schema['name'] == 'foo_tool'
+
+
 def test_dynamic_tool_use_messages():
     async def repeat_call_foobar(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if info.function_tools:

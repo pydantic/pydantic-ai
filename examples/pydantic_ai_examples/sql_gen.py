@@ -97,6 +97,7 @@ agent: Agent[Deps, Response] = Agent(
     # Type ignore while we wait for PEP-0747, nonetheless unions will work fine everywhere else
     result_type=Response,  # type: ignore
     deps_type=Deps,
+    instrument=True,
 )
 
 
@@ -171,7 +172,7 @@ async def database_connect(server_dsn: str, database: str) -> AsyncGenerator[Any
                     await conn.execute(
                         "CREATE TYPE log_level AS ENUM ('debug', 'info', 'warning', 'error', 'critical')"
                     )
-                await conn.execute(DB_SCHEMA)
+                    await conn.execute(DB_SCHEMA)
         yield conn
     finally:
         await conn.close()

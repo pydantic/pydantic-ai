@@ -28,10 +28,55 @@ if TYPE_CHECKING:
 
 
 KnownModelName = Literal[
+    'anthropic:claude-3-7-sonnet-latest',
     'anthropic:claude-3-5-haiku-latest',
     'anthropic:claude-3-5-sonnet-latest',
     'anthropic:claude-3-opus-latest',
+    'claude-3-7-sonnet-latest',
     'claude-3-5-haiku-latest',
+    'bedrock:amazon.titan-tg1-large',
+    'bedrock:amazon.titan-text-lite-v1',
+    'bedrock:amazon.titan-text-express-v1',
+    'bedrock:us.amazon.nova-pro-v1:0',
+    'bedrock:us.amazon.nova-lite-v1:0',
+    'bedrock:us.amazon.nova-micro-v1:0',
+    'bedrock:anthropic.claude-3-5-sonnet-20241022-v2:0',
+    'bedrock:us.anthropic.claude-3-5-sonnet-20241022-v2:0',
+    'bedrock:anthropic.claude-3-5-haiku-20241022-v1:0',
+    'bedrock:us.anthropic.claude-3-5-haiku-20241022-v1:0',
+    'bedrock:anthropic.claude-instant-v1',
+    'bedrock:anthropic.claude-v2:1',
+    'bedrock:anthropic.claude-v2',
+    'bedrock:anthropic.claude-3-sonnet-20240229-v1:0',
+    'bedrock:us.anthropic.claude-3-sonnet-20240229-v1:0',
+    'bedrock:anthropic.claude-3-haiku-20240307-v1:0',
+    'bedrock:us.anthropic.claude-3-haiku-20240307-v1:0',
+    'bedrock:anthropic.claude-3-opus-20240229-v1:0',
+    'bedrock:us.anthropic.claude-3-opus-20240229-v1:0',
+    'bedrock:anthropic.claude-3-5-sonnet-20240620-v1:0',
+    'bedrock:us.anthropic.claude-3-5-sonnet-20240620-v1:0',
+    'bedrock:anthropic.claude-3-7-sonnet-20250219-v1:0',
+    'bedrock:us.anthropic.claude-3-7-sonnet-20250219-v1:0',
+    'bedrock:cohere.command-text-v14',
+    'bedrock:cohere.command-r-v1:0',
+    'bedrock:cohere.command-r-plus-v1:0',
+    'bedrock:cohere.command-light-text-v14',
+    'bedrock:meta.llama3-8b-instruct-v1:0',
+    'bedrock:meta.llama3-70b-instruct-v1:0',
+    'bedrock:meta.llama3-1-8b-instruct-v1:0',
+    'bedrock:us.meta.llama3-1-8b-instruct-v1:0',
+    'bedrock:meta.llama3-1-70b-instruct-v1:0',
+    'bedrock:us.meta.llama3-1-70b-instruct-v1:0',
+    'bedrock:meta.llama3-1-405b-instruct-v1:0',
+    'bedrock:us.meta.llama3-2-11b-instruct-v1:0',
+    'bedrock:us.meta.llama3-2-90b-instruct-v1:0',
+    'bedrock:us.meta.llama3-2-1b-instruct-v1:0',
+    'bedrock:us.meta.llama3-2-3b-instruct-v1:0',
+    'bedrock:us.meta.llama3-3-70b-instruct-v1:0',
+    'bedrock:mistral.mistral-7b-instruct-v0:2',
+    'bedrock:mistral.mixtral-8x7b-instruct-v0:1',
+    'bedrock:mistral.mistral-large-2402-v1:0',
+    'bedrock:mistral.mistral-large-2407-v1:0',
     'claude-3-5-sonnet-latest',
     'claude-3-opus-latest',
     'cohere:c4ai-aya-expanse-32b',
@@ -47,6 +92,8 @@ KnownModelName = Literal[
     'cohere:command-r-plus-04-2024',
     'cohere:command-r-plus-08-2024',
     'cohere:command-r7b-12-2024',
+    'deepseek:deepseek-chat',
+    'deepseek:deepseek-reasoner',
     'google-gla:gemini-1.0-pro',
     'google-gla:gemini-1.5-flash',
     'google-gla:gemini-1.5-flash-8b',
@@ -56,6 +103,7 @@ KnownModelName = Literal[
     'google-gla:gemini-exp-1206',
     'google-gla:gemini-2.0-flash',
     'google-gla:gemini-2.0-flash-lite-preview-02-05',
+    'google-gla:gemini-2.0-pro-exp-02-05',
     'google-vertex:gemini-1.0-pro',
     'google-vertex:gemini-1.5-flash',
     'google-vertex:gemini-1.5-flash-8b',
@@ -65,6 +113,7 @@ KnownModelName = Literal[
     'google-vertex:gemini-exp-1206',
     'google-vertex:gemini-2.0-flash',
     'google-vertex:gemini-2.0-flash-lite-preview-02-05',
+    'google-vertex:gemini-2.0-pro-exp-02-05',
     'gpt-3.5-turbo',
     'gpt-3.5-turbo-0125',
     'gpt-3.5-turbo-0301',
@@ -84,6 +133,8 @@ KnownModelName = Literal[
     'gpt-4-turbo-2024-04-09',
     'gpt-4-turbo-preview',
     'gpt-4-vision-preview',
+    'gpt-4.5-preview',
+    'gpt-4.5-preview-2025-02-27',
     'gpt-4o',
     'gpt-4o-2024-05-13',
     'gpt-4o-2024-08-06',
@@ -138,6 +189,8 @@ KnownModelName = Literal[
     'openai:gpt-4-turbo-2024-04-09',
     'openai:gpt-4-turbo-preview',
     'openai:gpt-4-vision-preview',
+    'openai:gpt-4.5-preview',
+    'openai:gpt-4.5-preview-2025-02-27',
     'openai:gpt-4o',
     'openai:gpt-4o-2024-05-13',
     'openai:gpt-4o-2024-08-06',
@@ -212,6 +265,11 @@ class Model(ABC):
     def system(self) -> str | None:
         """The system / model provider, ex: openai."""
         raise NotImplementedError()
+
+    @property
+    def base_url(self) -> str | None:
+        """The base URL for the provider API, if available."""
+        return None
 
 
 @dataclass
@@ -312,54 +370,56 @@ def infer_model(model: Model | KnownModelName) -> Model:
         from .test import TestModel
 
         return TestModel()
-    elif model.startswith('cohere:'):
+
+    try:
+        provider, model_name = model.split(':', maxsplit=1)
+    except ValueError:
+        model_name = model
+        # TODO(Marcelo): We should deprecate this way.
+        if model_name.startswith(('gpt', 'o1', 'o3')):
+            provider = 'openai'
+        elif model_name.startswith('claude'):
+            provider = 'anthropic'
+        elif model_name.startswith('gemini'):
+            provider = 'google-gla'
+        else:
+            raise UserError(f'Unknown model: {model}')
+
+    if provider == 'vertexai':
+        provider = 'google-vertex'
+
+    if provider == 'cohere':
         from .cohere import CohereModel
 
-        return CohereModel(model[7:])
-    elif model.startswith('openai:'):
+        # TODO(Marcelo): Missing provider API.
+        return CohereModel(model_name)
+    elif provider in ('deepseek', 'openai'):
         from .openai import OpenAIModel
 
-        return OpenAIModel(model[7:])
-    elif model.startswith(('gpt', 'o1', 'o3')):
-        from .openai import OpenAIModel
-
-        return OpenAIModel(model)
-    elif model.startswith('google-gla'):
+        return OpenAIModel(model_name, provider=provider)
+    elif provider in ('google-gla', 'google-vertex'):
         from .gemini import GeminiModel
 
-        return GeminiModel(model[11:])
-    # backwards compatibility with old model names (ex, gemini-1.5-flash -> google-gla:gemini-1.5-flash)
-    elif model.startswith('gemini'):
-        from .gemini import GeminiModel
-
-        # noinspection PyTypeChecker
-        return GeminiModel(model)
-    elif model.startswith('groq:'):
+        return GeminiModel(model_name, provider=provider)
+    elif provider == 'groq':
         from .groq import GroqModel
 
-        return GroqModel(model[5:])
-    elif model.startswith('google-vertex'):
-        from .vertexai import VertexAIModel
-
-        return VertexAIModel(model[14:])
-    # backwards compatibility with old model names (ex, vertexai:gemini-1.5-flash -> google-vertex:gemini-1.5-flash)
-    elif model.startswith('vertexai:'):
-        from .vertexai import VertexAIModel
-
-        return VertexAIModel(model[9:])
-    elif model.startswith('mistral:'):
+        # TODO(Marcelo): Missing provider API.
+        return GroqModel(model_name)
+    elif provider == 'mistral':
         from .mistral import MistralModel
 
-        return MistralModel(model[8:])
-    elif model.startswith('anthropic'):
+        # TODO(Marcelo): Missing provider API.
+        return MistralModel(model_name)
+    elif provider == 'anthropic':
         from .anthropic import AnthropicModel
 
-        return AnthropicModel(model[10:])
-    # backwards compatibility with old model names (ex, claude-3-5-sonnet-latest -> anthropic:claude-3-5-sonnet-latest)
-    elif model.startswith('claude'):
-        from .anthropic import AnthropicModel
+        # TODO(Marcelo): Missing provider API.
+        return AnthropicModel(model_name)
+    elif provider == 'bedrock':
+        from .bedrock import BedrockConverseModel
 
-        return AnthropicModel(model)
+        return BedrockConverseModel(model_name)
     else:
         raise UserError(f'Unknown model: {model}')
 
