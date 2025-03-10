@@ -197,17 +197,14 @@ async def test_document_url_input(allow_model_requests: None, gemini_api_key: st
 
     result = await agent.run(['What is the main content on this document?', document_url])
     assert result.data == snapshot("""\
-The main content of this document is the introduction and evaluation of **Gemini 1.5 Pro**, a new large language model from Google DeepMind.
+The main content of this document is the introduction of **Gemini 1.5 Pro**, a new model in the Gemini family developed by Google DeepMind. The document focuses on the following key aspects of Gemini 1.5 Pro:
 
-**Key takeaways from the document are:**
+*   **Unlocking Multimodal Understanding with Extremely Long Contexts:**  Gemini 1.5 Pro is presented as a highly compute-efficient model capable of processing and reasoning over vast amounts of information, up to **millions of tokens of context**, encompassing text, video, and audio. This is a significant advancement compared to previous models like Claude 2.1 and GPT-4 Turbo.
+*   **Superior Performance on Long-Context Tasks:** The document highlights Gemini 1.5 Pro's near-perfect recall in long-context retrieval, and its state-of-the-art performance in long-document Question Answering (QA), long-video QA, and long-context Automatic Speech Recognition (ASR). It also matches or surpasses the performance of Gemini 1.0 Ultra on broader benchmarks.
+*   **Generational Leap in Context Window:** The document emphasizes the significant increase in context window size compared to existing models, reaching up to 10 million tokens and enabling processing of extremely long inputs like multiple documents, hours of video, and days of audio.
+*   **Emerging Capabilities like In-Context Learning:** It points out surprising new capabilities, such as the model's ability to learn and translate a low-resource language (Kalamang) from a grammar manual provided in the context, performing at a level comparable to a human learner.
+*   **Efficient Architecture:** Gemini 1.5 Pro is described as a multimodal mixture-of-experts model, emphasizing its efficiency and requiring significantly less compute to train compared to Gemini 1.0 Ultra while achieving comparable or better performance.
+*   **Evaluation and Benchmarking:** The document details various evaluations conducted to assess Gemini 1.5 Pro's long-context capabilities, including diagnostic "needle-in-a-haystack" tests and more realistic multimodal benchmarks. It also evaluates core capabilities across text, code, image, video, and audio.
 
-* **Gemini 1.5 Pro is a highly compute-efficient multimodal mixture-of-experts model.** It can process and reason over vast amounts of information, including millions of tokens of text, hours of video, and audio.
-* **Unprecedented Context Window:** Gemini 1.5 Pro boasts an exceptionally large context window, capable of processing up to **10 million tokens**, significantly surpassing previous models like Claude 2.1 (200k) and GPT-4 Turbo (128k).
-* **Near-Perfect Recall in Long Context:** The model demonstrates near-perfect recall (>99%) even with context windows up to 10 million tokens across different modalities (text, video, and audio).
-* **State-of-the-Art Performance:** Gemini 1.5 Pro achieves or surpasses state-of-the-art performance in long-context tasks like long-document QA, long-video QA, long-context ASR, and general benchmarks, often matching or exceeding Gemini 1.0 Ultra while using less compute.
-* **Emergent Capabilities:**  The model exhibits surprising new capabilities like in-context learning of new languages.  As an example, it can learn to translate English to Kalamang (a low-resource language) at a near-human level, solely from a grammar manual and limited linguistic resources provided in context.
-* **Rigorous Evaluation:** The document details extensive evaluations of Gemini 1.5 Pro's long-context capabilities, using both synthetic ("needle-in-a-haystack") and real-world tasks. It also covers core capabilities across various modalities, demonstrating overall performance improvements.
-* **Emphasis on Responsible Deployment:** The document addresses responsible deployment strategies including impact assessments, safety evaluations, and mitigation efforts for potential harms associated with such powerful models.
-
-In essence, the document highlights Gemini 1.5 Pro as a significant advancement in language models, particularly in its ability to handle and reason over extremely long contexts across multiple modalities, opening up new possibilities for applications requiring understanding of vast and complex information.\
+In essence, the document serves as a technical report introducing Gemini 1.5 Pro, showcasing its groundbreaking ability to handle extremely long contexts and its impressive performance across various multimodal tasks, marking a significant step forward in language model capabilities.\
 """)
