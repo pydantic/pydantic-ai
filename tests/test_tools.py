@@ -503,10 +503,9 @@ def test_dynamic_tool_decorator():
 def test_plain_tool_name():
     agent = Agent(FunctionModel(get_json_schema))
 
-    def mytool(arg: str) -> str:
-        return arg
+    def my_tool(arg: str) -> str: ...
 
-    agent.tool_plain(name='foo_tool')(mytool)
+    agent.tool_plain(name='foo_tool')(my_tool)
     result = agent.run_sync('Hello')
     json_schema = json.loads(result.data)
     assert json_schema['name'] == 'foo_tool'
@@ -515,10 +514,9 @@ def test_plain_tool_name():
 def test_tool_name():
     agent = Agent(FunctionModel(get_json_schema))
 
-    def mytool(ctx: RunContext, arg: str) -> str:
-        return arg
+    def my_tool(ctx: RunContext, arg: str) -> str: ...
 
-    agent.tool(name='foo_tool')(mytool)
+    agent.tool(name='foo_tool')(my_tool)
     result = agent.run_sync('Hello')
     json_schema = json.loads(result.data)
     assert json_schema['name'] == 'foo_tool'
