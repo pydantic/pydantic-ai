@@ -6,13 +6,14 @@ from typing import Any, Callable, Union
 
 import httpx
 import pytest
-from dirty_equals import IsJson
+from dirty_equals import IsDatetime, IsJson
 from inline_snapshot import snapshot
 from pydantic import BaseModel, field_validator
 from pydantic_core import to_json
 
 from pydantic_ai import Agent, ModelRetry, RunContext, UnexpectedModelBehavior, UserError, capture_run_messages
 from pydantic_ai.messages import (
+    BinaryContent,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -1572,3 +1573,29 @@ def test_custom_result_type_invalid() -> None:
 
     with pytest.raises(UserError, match='Cannot set a custom run `result_type` when the agent has result validators'):
         agent.run_sync('Hello', result_type=int)
+
+
+def test_binary_content_all_messages_json():
+    agent = Agent('test')
+
+    result = agent.run_sync(['Hello', BinaryContent(data=b'Hello', media_type='text/plain')])
+    assert json.loads(result.all_messages_json()) == snapshot(
+        [
+            {
+                'parts': [
+                    {
+                        'content': ['Hello', {'data': 'SGVsbG8=', 'media_type': 'text/plain', 'kind': 'binary'}],
+                        'timestamp': IsDatetime(iso_string=True),
+                        'part_kind': 'user-prompt',
+                    }
+                ],
+                'kind': 'request',
+            },
+            {
+                'parts': [{'content': 'success (no tool calls)', 'part_kind': 'text'}],
+                'model_name': 'test',
+                'timestamp': IsDatetime(iso_string=True),
+                'kind': 'response',
+            },
+        ]
+    )
