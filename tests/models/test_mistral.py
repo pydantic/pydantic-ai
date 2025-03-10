@@ -176,6 +176,7 @@ def func_chunk(
 def test_init():
     m = MistralModel('mistral-large-latest', api_key='foobar')
     assert m.model_name == 'mistral-large-latest'
+    assert m.base_url == 'https://api.mistral.ai'
 
 
 #####################

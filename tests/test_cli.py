@@ -46,7 +46,4 @@ def test_cli_help(capfd: CaptureFixture[str]):
 
 def test_invalid_model(capfd: CaptureFixture[str]):
     assert cli(['--model', 'invalid_model']) == 1
-    assert capfd.readouterr().out == snapshot("""\
-pai - PydanticAI CLI v0.0.35
-Invalid model "invalid_model"
-""")
+    assert capfd.readouterr().out.splitlines() == snapshot([IsStr(), 'Invalid model "invalid_model"'])

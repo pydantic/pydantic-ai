@@ -5,6 +5,7 @@ from collections.abc import AsyncIterator, Iterator, Mapping
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from typing import Any, Callable, Literal
+from urllib.parse import urlparse
 
 from opentelemetry._events import Event, EventLogger, EventLoggerProvider, get_event_logger_provider
 from opentelemetry.trace import Span, Tracer, TracerProvider, get_tracer_provider
@@ -142,8 +143,6 @@ class InstrumentedModel(WrapperModel):
         system = getattr(self.wrapped, 'system', '') or self.wrapped.__class__.__name__.removesuffix('Model').lower()
         system = {'google-gla': 'gemini', 'google-vertex': 'vertex_ai', 'mistral': 'mistral_ai'}.get(system, system)
         # TODO Missing attributes:
-        #  - server.address: requires a Model.base_url abstract method or similar
-        #  - server.port: to parse from the base_url
         #  - error.type: unclear if we should do something here or just always rely on span exceptions
         #  - gen_ai.request.stop_sequences/top_k: model_settings doesn't include these
         attributes: dict[str, AttributeValue] = {
@@ -151,6 +150,15 @@ class InstrumentedModel(WrapperModel):
             'gen_ai.system': system,
             'gen_ai.request.model': model_name,
         }
+        if base_url := self.wrapped.base_url:
+            try:
+                parsed = urlparse(base_url)
+                if parsed.hostname:
+                    attributes['server.address'] = parsed.hostname
+                if parsed.port:
+                    attributes['server.port'] = parsed.port
+            except Exception:  # pragma: no cover
+                pass
 
         if model_settings:
             for key in MODEL_SETTING_ATTRIBUTES:

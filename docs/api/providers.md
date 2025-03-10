@@ -7,3 +7,5 @@
 ::: pydantic_ai.providers.openai
 
 ::: pydantic_ai.providers.deepseek
+
+::: pydantic_ai.providers.bedrock
