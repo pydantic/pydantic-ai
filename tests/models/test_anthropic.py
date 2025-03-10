@@ -71,6 +71,7 @@ def test_init():
     assert m.client.api_key == 'foobar'
     assert m.model_name == 'claude-3-5-haiku-latest'
     assert m.system == 'anthropic'
+    assert m.base_url == 'https://api.anthropic.com'
 
 
 @dataclass

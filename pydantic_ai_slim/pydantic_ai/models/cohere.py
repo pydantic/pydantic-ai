@@ -127,6 +127,11 @@ class CohereModel(Model):
         else:
             self.client = AsyncClientV2(api_key=api_key, httpx_client=http_client)
 
+    @property
+    def base_url(self) -> str:
+        client_wrapper = self.client._client_wrapper  # type: ignore
+        return str(client_wrapper.get_base_url())
+
     async def request(
         self,
         messages: list[ModelMessage],

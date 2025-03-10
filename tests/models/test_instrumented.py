@@ -56,6 +56,10 @@ class MyModel(Model):
     def model_name(self) -> str:
         return 'my_model'
 
+    @property
+    def base_url(self) -> str:
+        return 'https://example.com:8000/foo'
+
     async def request(
         self,
         messages: list[ModelMessage],
@@ -146,6 +150,8 @@ async def test_instrumented_model(capfire: CaptureLogfire):
                     'gen_ai.operation.name': 'chat',
                     'gen_ai.system': 'my_system',
                     'gen_ai.request.model': 'my_model',
+                    'server.address': 'example.com',
+                    'server.port': 8000,
                     'gen_ai.request.temperature': 1,
                     'logfire.msg': 'chat my_model',
                     'logfire.span_type': 'span',
@@ -366,6 +372,8 @@ async def test_instrumented_model_stream(capfire: CaptureLogfire):
                     'gen_ai.operation.name': 'chat',
                     'gen_ai.system': 'my_system',
                     'gen_ai.request.model': 'my_model',
+                    'server.address': 'example.com',
+                    'server.port': 8000,
                     'gen_ai.request.temperature': 1,
                     'logfire.msg': 'chat my_model',
                     'logfire.span_type': 'span',
@@ -447,6 +455,8 @@ async def test_instrumented_model_stream_break(capfire: CaptureLogfire):
                     'gen_ai.operation.name': 'chat',
                     'gen_ai.system': 'my_system',
                     'gen_ai.request.model': 'my_model',
+                    'server.address': 'example.com',
+                    'server.port': 8000,
                     'gen_ai.request.temperature': 1,
                     'logfire.msg': 'chat my_model',
                     'logfire.span_type': 'span',
@@ -547,6 +557,8 @@ async def test_instrumented_model_attributes_mode(capfire: CaptureLogfire):
                     'gen_ai.operation.name': 'chat',
                     'gen_ai.system': 'my_system',
                     'gen_ai.request.model': 'my_model',
+                    'server.address': 'example.com',
+                    'server.port': 8000,
                     'gen_ai.request.temperature': 1,
                     'logfire.msg': 'chat my_model',
                     'logfire.span_type': 'span',

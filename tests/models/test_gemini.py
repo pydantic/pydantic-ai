@@ -58,6 +58,7 @@ def test_api_key_arg(env: TestEnv):
     env.set('GEMINI_API_KEY', 'via-env-var')
     m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key='via-arg'))
     assert m.client.headers['x-goog-api-key'] == 'via-arg'
+    assert m.base_url == 'https://generativelanguage.googleapis.com/v1beta/models/'
 
 
 def test_api_key_env_var(env: TestEnv):
