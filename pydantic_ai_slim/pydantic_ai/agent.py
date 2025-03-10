@@ -922,6 +922,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         self,
         /,
         *,
+        name: str | None = None,
         retries: int | None = None,
         prepare: ToolPrepareFunc[AgentDepsT] | None = None,
         docstring_format: DocstringFormat = 'auto',
@@ -933,6 +934,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         func: ToolFuncContext[AgentDepsT, ToolParams] | None = None,
         /,
         *,
+        name: str | None = None,
         retries: int | None = None,
         prepare: ToolPrepareFunc[AgentDepsT] | None = None,
         docstring_format: DocstringFormat = 'auto',
@@ -969,6 +971,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
 
         Args:
             func: The tool function to register.
+            name: The name of the tool, defaults to the function name.
             retries: The number of retries to allow for this tool, defaults to the agent's default retries,
                 which defaults to 1.
             prepare: custom method to prepare the tool definition for each step, return `None` to omit this
@@ -984,13 +987,17 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
                 func_: ToolFuncContext[AgentDepsT, ToolParams],
             ) -> ToolFuncContext[AgentDepsT, ToolParams]:
                 # noinspection PyTypeChecker
-                self._register_function(func_, True, retries, prepare, docstring_format, require_parameter_descriptions)
+                self._register_function(
+                    func_, True, name, retries, prepare, docstring_format, require_parameter_descriptions
+                )
                 return func_
 
             return tool_decorator
         else:
             # noinspection PyTypeChecker
-            self._register_function(func, True, retries, prepare, docstring_format, require_parameter_descriptions)
+            self._register_function(
+                func, True, name, retries, prepare, docstring_format, require_parameter_descriptions
+            )
             return func
 
     @overload
@@ -1001,6 +1008,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         self,
         /,
         *,
+        name: str | None = None,
         retries: int | None = None,
         prepare: ToolPrepareFunc[AgentDepsT] | None = None,
         docstring_format: DocstringFormat = 'auto',
@@ -1012,6 +1020,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         func: ToolFuncPlain[ToolParams] | None = None,
         /,
         *,
+        name: str | None = None,
         retries: int | None = None,
         prepare: ToolPrepareFunc[AgentDepsT] | None = None,
         docstring_format: DocstringFormat = 'auto',
@@ -1048,6 +1057,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
 
         Args:
             func: The tool function to register.
+            name: The name of the tool, defaults to the function name.
             retries: The number of retries to allow for this tool, defaults to the agent's default retries,
                 which defaults to 1.
             prepare: custom method to prepare the tool definition for each step, return `None` to omit this
@@ -1062,19 +1072,22 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
             def tool_decorator(func_: ToolFuncPlain[ToolParams]) -> ToolFuncPlain[ToolParams]:
                 # noinspection PyTypeChecker
                 self._register_function(
-                    func_, False, retries, prepare, docstring_format, require_parameter_descriptions
+                    func_, False, name, retries, prepare, docstring_format, require_parameter_descriptions
                 )
                 return func_
 
             return tool_decorator
         else:
-            self._register_function(func, False, retries, prepare, docstring_format, require_parameter_descriptions)
+            self._register_function(
+                func, False, name, retries, prepare, docstring_format, require_parameter_descriptions
+            )
             return func
 
     def _register_function(
         self,
         func: ToolFuncEither[AgentDepsT, ToolParams],
         takes_ctx: bool,
+        name: str | None,
         retries: int | None,
         prepare: ToolPrepareFunc[AgentDepsT] | None,
         docstring_format: DocstringFormat,
@@ -1085,6 +1098,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         tool = Tool[AgentDepsT](
             func,
             takes_ctx=takes_ctx,
+            name=name,
             max_retries=retries_,
             prepare=prepare,
             docstring_format=docstring_format,
