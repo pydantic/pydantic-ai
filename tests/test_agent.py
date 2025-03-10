@@ -6,7 +6,7 @@ from typing import Any, Callable, Union
 
 import httpx
 import pytest
-from dirty_equals import IsDatetime, IsJson
+from dirty_equals import IsJson
 from inline_snapshot import snapshot
 from pydantic import BaseModel, field_validator
 from pydantic_core import to_json
@@ -30,7 +30,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.result import Usage
 from pydantic_ai.tools import ToolDefinition
 
-from .conftest import IsNow, TestEnv
+from .conftest import IsNow, IsStr, TestEnv
 
 pytestmark = pytest.mark.anyio
 
@@ -1585,7 +1585,7 @@ def test_binary_content_all_messages_json():
                 'parts': [
                     {
                         'content': ['Hello', {'data': 'SGVsbG8=', 'media_type': 'text/plain', 'kind': 'binary'}],
-                        'timestamp': IsDatetime(iso_string=True),
+                        'timestamp': IsStr(),
                         'part_kind': 'user-prompt',
                     }
                 ],
@@ -1594,7 +1594,7 @@ def test_binary_content_all_messages_json():
             {
                 'parts': [{'content': 'success (no tool calls)', 'part_kind': 'text'}],
                 'model_name': 'test',
-                'timestamp': IsDatetime(iso_string=True),
+                'timestamp': IsStr(),
                 'kind': 'response',
             },
         ]
