@@ -91,7 +91,7 @@ async def test_google_vertex_provider_service_account_xor(allow_model_requests: 
     with pytest.raises(
         ValueError, match='Only one of `service_account_file` or `service_account_info` can be provided'
     ):
-        GoogleVertexProvider(
+        GoogleVertexProvider(  # type: ignore[reportCallIssue]
             service_account_file='path/to/service-account.json',
             service_account_info=prepare_service_account_contents('my-project-id'),
         )

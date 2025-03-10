@@ -4,7 +4,7 @@ import functools
 from collections.abc import AsyncGenerator, Mapping
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Literal
+from typing import Literal, overload
 
 import anyio.to_thread
 import httpx
@@ -52,8 +52,31 @@ class GoogleVertexProvider(Provider[httpx.AsyncClient]):
     def client(self) -> httpx.AsyncClient:
         return self._client
 
+    @overload
     def __init__(
         self,
+        *,
+        service_account_file: Path | str | None = None,
+        project_id: str | None = None,
+        region: VertexAiRegion = 'us-central1',
+        model_publisher: str = 'google',
+        http_client: httpx.AsyncClient | None = None,
+    ) -> None: ...
+
+    @overload
+    def __init__(
+        self,
+        *,
+        service_account_info: Mapping[str, str] | None = None,
+        project_id: str | None = None,
+        region: VertexAiRegion = 'us-central1',
+        model_publisher: str = 'google',
+        http_client: httpx.AsyncClient | None = None,
+    ) -> None: ...
+
+    def __init__(
+        self,
+        *,
         service_account_file: Path | str | None = None,
         service_account_info: Mapping[str, str] | None = None,
         project_id: str | None = None,
@@ -77,7 +100,7 @@ class GoogleVertexProvider(Provider[httpx.AsyncClient]):
             http_client: An existing `httpx.AsyncClient` to use for making HTTP requests.
         """
         if service_account_file and service_account_info:
-            raise ValueError('Only one of `service_account_file` or `service_account_info` can be provided')
+            raise ValueError('Only one of `service_account_file` or `service_account_info` can be provided.')
 
         self._client = http_client or cached_async_http_client()
         self.service_account_file = service_account_file
