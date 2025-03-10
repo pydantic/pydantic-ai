@@ -4,20 +4,18 @@ import copy
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, is_dataclass
 from functools import cache
-from typing import TYPE_CHECKING, Any, ClassVar, Generic, get_type_hints
+from typing import Any, ClassVar, Generic, get_type_hints
 from uuid import uuid4
 
 from typing_extensions import Never, Self, TypeVar, get_origin
 
 from . import _utils, exceptions
 
-if TYPE_CHECKING:
-    from .persistence import StateT
-else:
-    StateT = TypeVar('StateT', default=None)
+__all__ = 'GraphRunContext', 'BaseNode', 'End', 'Edge', 'NodeDef', 'DepsT', 'StateT', 'RunEndT'
 
-__all__ = 'GraphRunContext', 'BaseNode', 'End', 'Edge', 'NodeDef', 'DepsT', 'RunEndT'
 
+StateT = TypeVar('StateT', default=None)
+"""Type variable for the state in a graph."""
 RunEndT = TypeVar('RunEndT', covariant=True, default=None)
 """Covariant type variable for the return type of a graph [`run`][pydantic_graph.graph.Graph.run]."""
 NodeRunEndT = TypeVar('NodeRunEndT', covariant=True, default=Never)

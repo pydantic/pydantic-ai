@@ -14,8 +14,8 @@ from logfire_api import LogfireSpan
 from typing_inspection import typing_objects
 
 from . import _utils, exceptions, mermaid
-from .nodes import BaseNode, DepsT, End, GraphRunContext, NodeDef, RunEndT
-from .persistence import StatePersistence, StateT, set_nodes_type_context
+from .nodes import BaseNode, DepsT, End, GraphRunContext, NodeDef, RunEndT, StateT
+from .persistence import BaseStatePersistence, set_nodes_type_context
 from .persistence.in_mem import SimpleStatePersistence
 
 # while waiting for https://github.com/pydantic/logfire/issues/745
@@ -125,7 +125,7 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
         *,
         state: StateT = None,
         deps: DepsT = None,
-        persistence: StatePersistence[StateT, T] | None = None,
+        persistence: BaseStatePersistence[StateT, T] | None = None,
         infer_name: bool = True,
         span: LogfireSpan | None = None,
     ) -> GraphRunResult[StateT, T]:
@@ -181,7 +181,7 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
         *,
         state: StateT = None,
         deps: DepsT = None,
-        persistence: StatePersistence[StateT, T] | None = None,
+        persistence: BaseStatePersistence[StateT, T] | None = None,
         infer_name: bool = True,
     ) -> GraphRunResult[StateT, T]:
         """Synchronously run the graph.
@@ -215,7 +215,7 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
         *,
         state: StateT = None,
         deps: DepsT = None,
-        persistence: StatePersistence[StateT, T] | None = None,
+        persistence: BaseStatePersistence[StateT, T] | None = None,
         infer_name: bool = True,
         span: AbstractContextManager[Any] | None = None,
     ) -> AsyncIterator[GraphRun[StateT, DepsT, T]]:
@@ -268,7 +268,7 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
     async def next(
         self: Graph[StateT, DepsT, T],
         node: BaseNode[StateT, DepsT, T],
-        persistence: StatePersistence[StateT, T],
+        persistence: BaseStatePersistence[StateT, T],
         *,
         state: StateT = None,
         deps: DepsT = None,
@@ -302,17 +302,20 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
 
     async def next_from_persistence(
         self: Graph[StateT, DepsT, T],
-        persistence: StatePersistence[StateT, T],
+        persistence: BaseStatePersistence[StateT, T],
         *,
         deps: DepsT = None,
         infer_name: bool = True,
     ) -> BaseNode[StateT, DepsT, Any] | End[T]:
+        """Run the next node in the graph from a snapshot stored in persistence."""
         if infer_name and self.name is None:
             self._infer_name(inspect.currentframe())
+        self.set_persistence_types(persistence)
 
         snapshot = await persistence.retrieve_next()
         if snapshot is None:
             raise exceptions.GraphRuntimeError('Unable to restore snapshot from state persistence.')
+        assert snapshot.id is not None, 'Snapshot ID should be set'
         snapshot.node.set_snapshot_id(snapshot.id)
 
         run = GraphRun[StateT, DepsT, T](
@@ -325,7 +328,7 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
         )
         return await run.next()
 
-    def set_persistence_types(self, persistence: StatePersistence[StateT, RunEndT]) -> None:
+    def set_persistence_types(self, persistence: BaseStatePersistence[StateT, RunEndT]) -> None:
         with set_nodes_type_context([node_def.node for node_def in self.node_defs.values()]):
             persistence.set_types(lambda: self._inferred_types)
 
@@ -590,7 +593,7 @@ class GraphRun(Generic[StateT, DepsT, RunEndT]):
         *,
         graph: Graph[StateT, DepsT, RunEndT],
         start_node: BaseNode[StateT, DepsT, RunEndT],
-        persistence: StatePersistence[StateT, RunEndT],
+        persistence: BaseStatePersistence[StateT, RunEndT],
         state: StateT,
         deps: DepsT,
         snapshot_id: str | None = None,
@@ -738,4 +741,4 @@ class GraphRunResult(Generic[StateT, RunEndT]):
 
     output: RunEndT
     state: StateT
-    persistence: StatePersistence[StateT, RunEndT] = field(repr=False)
+    persistence: BaseStatePersistence[StateT, RunEndT] = field(repr=False)

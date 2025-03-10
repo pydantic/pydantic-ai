@@ -38,24 +38,24 @@ class QuestionState:
 
 
 @dataclass
-class GenerateQuestion(BaseNode[QuestionState]):
-    async def run(self, ctx: GraphRunContext[QuestionState]) -> Ask:
+class Ask(BaseNode[QuestionState]):
+    async def run(self, ctx: GraphRunContext[QuestionState]) -> Answer:
         result = await ask_agent.run(
             'Ask a simple question with a single correct answer.',
             message_history=ctx.state.ask_agent_messages,
         )
         ctx.state.ask_agent_messages += result.all_messages()
         ctx.state.question = result.data
-        return Ask(result.data)
+        return Answer(result.data)
 
 
 @dataclass
-class Ask(BaseNode[QuestionState]):
+class Answer(BaseNode[QuestionState]):
     question: str
 
-    async def run(self, ctx: GraphRunContext[QuestionState]) -> Answer:
+    async def run(self, ctx: GraphRunContext[QuestionState]) -> Evaluate:
         answer = input(f'{self.question}: ')
-        return Answer(answer)
+        return Evaluate(answer)
 
 
 class EvaluationResult(BaseModel, use_attribute_docstrings=True):
@@ -73,7 +73,7 @@ evaluate_agent = Agent(
 
 
 @dataclass
-class Answer(BaseNode[QuestionState, None, str]):
+class Evaluate(BaseNode[QuestionState, None, str]):
     answer: str
 
     async def run(
@@ -96,21 +96,20 @@ class Answer(BaseNode[QuestionState, None, str]):
 class Reprimand(BaseNode[QuestionState]):
     comment: str
 
-    async def run(self, ctx: GraphRunContext[QuestionState]) -> GenerateQuestion:
+    async def run(self, ctx: GraphRunContext[QuestionState]) -> Ask:
         print(f'Comment: {self.comment}')
-        # > Comment: Vichy is no longer the capital of France.
         ctx.state.question = None
-        return GenerateQuestion()
+        return Ask()
 
 
 question_graph = Graph(
-    nodes=(GenerateQuestion, Ask, Answer, Reprimand), state_type=QuestionState
+    nodes=(Ask, Answer, Evaluate, Reprimand), state_type=QuestionState
 )
 
 
 async def run_as_continuous():
     state = QuestionState()
-    node = GenerateQuestion()
+    node = Ask()
     end = await question_graph.run(node, state=state)
     print('END:', end.output)
 
@@ -124,10 +123,10 @@ async def run_as_cli(answer: str | None):
         assert answer is not None, (
             'answer required, usage "uv run -m pydantic_ai_examples.question_graph cli <answer>"'
         )
-        node = Answer(answer)
+        node = Evaluate(answer)
     else:
         state = QuestionState()
-        node = GenerateQuestion()
+        node = Ask()
     # debug(state, node)
 
     with logfire.span('run questions graph'):
@@ -139,7 +138,7 @@ async def run_as_cli(answer: str | None):
                 print('history:', '\n'.join(str(e.node) for e in history), sep='\n')
                 print('Finished!')
                 break
-            elif isinstance(node, Ask):
+            elif isinstance(node, Answer):
                 print(node.question)
                 break
             # otherwise just continue
@@ -165,12 +164,7 @@ if __name__ == '__main__':
         sys.exit(1)
 
     if sub_command == 'mermaid':
-        print(question_graph.mermaid_code(start_node=GenerateQuestion))
-        print(
-            question_graph.mermaid_save(
-                'question_graph.jpg', start_node=GenerateQuestion
-            )
-        )
+        print(question_graph.mermaid_code(start_node=Ask))
     elif sub_command == 'continuous':
         asyncio.run(run_as_continuous())
     else:

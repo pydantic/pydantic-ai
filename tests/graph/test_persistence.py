@@ -4,7 +4,6 @@ from __future__ import annotations as _annotations
 import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any
 
 import pytest
 from dirty_equals import IsStr
@@ -21,7 +20,7 @@ from pydantic_graph import (
     SimpleStatePersistence,
 )
 from pydantic_graph.exceptions import GraphNodeStatusError, GraphRuntimeError
-from pydantic_graph.persistence import StatePersistence
+from pydantic_graph.persistence import BaseStatePersistence, build_snapshot_list_type_adapter
 
 from ..conftest import IsFloat, IsNow
 
@@ -295,7 +294,7 @@ async def test_rerun_node(mock_snapshot_id: object):
 
 
 @pytest.mark.parametrize('persistence_cls', [SimpleStatePersistence, FullStatePersistence])
-async def test_next_from_persistence(persistence_cls: type[StatePersistence[None, int]], mock_snapshot_id: object):
+async def test_next_from_persistence(persistence_cls: type[BaseStatePersistence[None, int]], mock_snapshot_id: object):
     @dataclass
     class Foo(BaseNode):
         async def run(self, ctx: GraphRunContext) -> Spam:
@@ -327,7 +326,7 @@ async def test_next_from_persistence(persistence_cls: type[StatePersistence[None
 
 
 @pytest.mark.parametrize('persistence_cls', [SimpleStatePersistence, FullStatePersistence])
-async def test_record_lookup_error(persistence_cls: type[StatePersistence[Any, Any]]):
+async def test_record_lookup_error(persistence_cls: type[BaseStatePersistence]):
     persistence = persistence_cls()
     my_graph = Graph(nodes=(Foo, Bar))
     my_graph.set_persistence_types(persistence)
@@ -336,3 +335,8 @@ async def test_record_lookup_error(persistence_cls: type[StatePersistence[Any, A
     with pytest.raises(LookupError, match="No snapshot found with id='foobar'"):
         async with persistence.record_run('foobar'):
             pass
+
+
+def test_snapshot_type_adapter_error():
+    with pytest.raises(RuntimeError, match='Unable to build a Pydantic schema for `BaseNode` without setting'):
+        build_snapshot_list_type_adapter(int, int)

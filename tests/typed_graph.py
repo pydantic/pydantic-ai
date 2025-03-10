@@ -6,7 +6,7 @@ from typing import Any
 from typing_extensions import assert_type
 
 from pydantic_graph import BaseNode, End, FullStatePersistence, Graph, GraphRunContext
-from pydantic_graph.persistence import StatePersistence
+from pydantic_graph.persistence import BaseStatePersistence
 
 
 @dataclass
@@ -118,7 +118,7 @@ def run_g5() -> None:
 def run_g6() -> None:
     result = g5.run_sync(A(), state=MyState(x=1), deps=MyDeps(y='y'))
     assert_type(result.output, int)
-    assert_type(result.persistence, StatePersistence[MyState, int])
+    assert_type(result.persistence, BaseStatePersistence[MyState, int])
 
 
 p = FullStatePersistence()

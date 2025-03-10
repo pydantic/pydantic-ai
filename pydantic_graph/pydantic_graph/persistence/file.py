@@ -10,29 +10,28 @@ from time import perf_counter
 from typing import Any, Callable
 
 import pydantic
-from typing_extensions import TypeVar
 
 from .. import _utils as _graph_utils, exceptions
 from ..nodes import BaseNode, End
 from . import (
+    BaseStatePersistence,
     EndSnapshot,
     NodeSnapshot,
+    RunEndT,
     Snapshot,
     SnapshotStatus,
-    StatePersistence,
+    StateT,
     _utils,
     build_snapshot_list_type_adapter,
 )
 
-StateT = TypeVar('StateT', default=Any)
-RunEndT = TypeVar('RunEndT', default=Any)
-
 
 @dataclass
-class FileStatePersistence(StatePersistence[StateT, RunEndT]):
-    """State persistence that just hold the latest snapshot."""
+class FileStatePersistence(BaseStatePersistence[StateT, RunEndT]):
+    """File based state persistence that hold a list of snapshots in a JSON file."""
 
     json_file: Path
+    """Path to the JSON file where the snapshots are stored."""
     _snapshots_type_adapter: pydantic.TypeAdapter[list[Snapshot[StateT, RunEndT]]] | None = field(
         default=None, init=False, repr=False
     )

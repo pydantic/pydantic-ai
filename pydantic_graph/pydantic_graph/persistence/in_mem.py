@@ -13,25 +13,23 @@ from time import perf_counter
 from typing import Any, Callable
 
 import pydantic
-from typing_extensions import TypeVar
 
 from .. import exceptions
 from ..nodes import BaseNode, End
 from . import (
+    BaseStatePersistence,
     EndSnapshot,
     NodeSnapshot,
+    RunEndT,
     Snapshot,
-    StatePersistence,
+    StateT,
     _utils,
     build_snapshot_list_type_adapter,
 )
 
-StateT = TypeVar('StateT', default=Any)
-RunEndT = TypeVar('RunEndT', default=Any)
-
 
 @dataclass
-class SimpleStatePersistence(StatePersistence[StateT, RunEndT]):
+class SimpleStatePersistence(BaseStatePersistence[StateT, RunEndT]):
     """Simple in memory state persistence that just hold the latest snapshot.
 
     If no state persistence implementation is provided when running a graph, this is used by default.
@@ -85,8 +83,8 @@ class SimpleStatePersistence(StatePersistence[StateT, RunEndT]):
 
 
 @dataclass
-class FullStatePersistence(StatePersistence[StateT, RunEndT]):
-    """In memory state persistence that hold a history of nodes."""
+class FullStatePersistence(BaseStatePersistence[StateT, RunEndT]):
+    """In memory state persistence that hold a list of snapshots."""
 
     deep_copy: bool = True
     """Whether to deep copy the state and nodes when storing them.

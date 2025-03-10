@@ -23,7 +23,8 @@ class CustomNodeSchema:
             nodes = nodes_type_context.get()
         except LookupError as e:
             raise RuntimeError(
-                'Unable to build a Pydantic schema for `BaseNode` without setting `nodes_type_context`.'
+                'Unable to build a Pydantic schema for `BaseNode` without setting `nodes_type_context`. '
+                'You should build Pydantic schemas for snapshots using `StatePersistence.set_types()`.'
             ) from e
         if len(nodes) == 1:
             nodes_type = nodes[0]

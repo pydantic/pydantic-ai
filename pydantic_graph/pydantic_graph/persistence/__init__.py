@@ -10,7 +10,7 @@ from typing import Annotated, Any, Callable, Generic, Literal, Union
 import pydantic
 from typing_extensions import TypeVar
 
-from ..nodes import BaseNode, End, RunEndT
+from ..nodes import BaseNode, End
 from . import _utils
 
 __all__ = (
@@ -18,13 +18,13 @@ __all__ = (
     'NodeSnapshot',
     'EndSnapshot',
     'Snapshot',
-    'StatePersistence',
+    'BaseStatePersistence',
     'set_nodes_type_context',
     'SnapshotStatus',
 )
 
-StateT = TypeVar('StateT', default=None)
-"""Type variable for the state in a graph."""
+StateT = TypeVar('StateT', default=Any)
+RunEndT = TypeVar('RunEndT', covariant=True, default=Any)
 
 UNSET_SNAPSHOT_ID = '__unset__'
 SnapshotStatus = Literal['created', 'pending', 'running', 'success', 'error']
@@ -32,7 +32,7 @@ SnapshotStatus = Literal['created', 'pending', 'running', 'success', 'error']
 
 - `'created'`: The snapshot has been created but not yet run.
 - `'pending'`: The snapshot has been retrieved with
-  [`retrieve_next`][pydantic_graph.persistence.StatePersistence.retrieve_next] but not yet run.
+  [`retrieve_next`][pydantic_graph.persistence.BaseStatePersistence.retrieve_next] but not yet run.
 - `'running'`: The snapshot is currently running.
 - `'success'`: The snapshot has been run successfully.
 - `'error'`: The snapshot has been run but an error occurred.
@@ -101,7 +101,7 @@ together with the run return value.
 """
 
 
-class StatePersistence(ABC, Generic[StateT, RunEndT]):
+class BaseStatePersistence(ABC, Generic[StateT, RunEndT]):
     """Abstract base class for storing the state of a graph."""
 
     @abstractmethod
@@ -163,6 +163,9 @@ class StatePersistence(ABC, Generic[StateT, RunEndT]):
     @abstractmethod
     async def retrieve_next(self) -> NodeSnapshot[StateT, RunEndT] | None:
         """Retrieve a node snapshot with status `'created`' and set its status to `'pending'`.
+
+        This is used by [`Graph.next_from_persistence`][pydantic_graph.graph.Graph.next_from_persistence]
+        to get the next node to run.
 
         Returns: The snapshot, or `None` if no snapshot with status `'created`' exists.
         """
