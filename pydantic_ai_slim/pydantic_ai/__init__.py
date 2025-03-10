@@ -10,7 +10,7 @@ from .exceptions import (
     UsageLimitExceeded,
     UserError,
 )
-from .messages import AudioUrl, BinaryContent, ImageUrl
+from .messages import AudioUrl, BinaryContent, DocumentUrl, ImageUrl
 from .tools import RunContext, Tool
 
 __all__ = (
@@ -33,6 +33,7 @@ __all__ = (
     # messages
     'ImageUrl',
     'AudioUrl',
+    'DocumentUrl',
     'BinaryContent',
     # tools
     'Tool',

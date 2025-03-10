@@ -1016,10 +1016,27 @@ async def test_image_url_input(allow_model_requests: None, gemini_api_key: str) 
 
 @pytest.mark.vcr()
 async def test_document_url_input(allow_model_requests: None, gemini_api_key: str) -> None:
-    m = GeminiModel('gemini-1.0-pro', provider=GoogleGLAProvider(api_key=gemini_api_key))
+    m = GeminiModel('gemini-2.0-flash-thinking-exp-01-21', provider=GoogleGLAProvider(api_key=gemini_api_key))
     agent = Agent(m)
 
-    document_url = DocumentUrl(url='gs://cloud-samples-data/generative-ai/pdf/2403.05530.pdf')
+    document_url = DocumentUrl(url='https://storage.googleapis.com/cloud-samples-data/generative-ai/pdf/2403.05530.pdf')
 
     result = await agent.run(['What is the main content on this document?', document_url])
-    assert result.data == snapshot()
+    assert result.data == snapshot("""\
+The main content of this document is the introduction and evaluation of **Gemini 1.5 Pro**, a new multimodal large language model from Google DeepMind.
+
+Here are the key aspects highlighted:
+
+*   **Introduction of Gemini 1.5 Pro:** It is presented as the latest model in the Gemini family, emphasizing its highly compute-efficient mixture-of-experts architecture.
+*   **Exceptional Long-Context Handling:** The document focuses heavily on Gemini 1.5 Pro's ability to process and reason over extremely long contexts, up to **10 million tokens**, a significant leap compared to previous models. This capability extends to multimodal inputs, including text, audio (hours), and video (hours).
+*   **Performance Improvements:** Gemini 1.5 Pro is shown to achieve **near-perfect recall** in long-context retrieval tasks across different modalities. It also **improves state-of-the-art results** in long-document QA, long-video QA, and long-context ASR, while matching or surpassing the performance of Gemini 1.0 Ultra on a broader set of benchmarks but with **less compute**.
+*   **Novel Capabilities:** The document highlights surprising emergent capabilities, such as **in-context learning of new languages** from linguistic documentation (demonstrated with Kalamang translation).
+*   **Comprehensive Evaluation:** The report details a rigorous evaluation methodology covering:
+    *   **Qualitative long-context evaluations** showcasing novel capabilities.
+    *   **Quantitative long-context evaluations** using synthetic and real-world tasks (needle-in-a-haystack, long-document QA, etc.).
+    *   **Quantitative core evaluations** on established benchmarks for text, code, image, video, and audio capabilities.
+*   **Model Architecture and Training:** The document briefly touches upon the model's mixture-of-experts architecture and training infrastructure, indicating it builds upon Gemini 1.0 research and utilizes Google's TPUv4 accelerators.
+*   **Responsible Deployment:**  The report mentions Google's structured approach to responsible deployment, including impact assessment and mitigation efforts, consistent with their AI principles.
+
+In essence, the document showcases Gemini 1.5 Pro as a significant advancement in multimodal AI, primarily driven by its groundbreaking long-context window and maintained core capabilities, opening up new possibilities for processing and understanding vast amounts of information across different modalities.\
+""")

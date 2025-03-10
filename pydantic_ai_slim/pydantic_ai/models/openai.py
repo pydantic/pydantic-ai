@@ -419,7 +419,8 @@ class OpenAIModel(Model):
                         image_url = ImageURL(url=f'data:{item.media_type};base64,{base64_encoded}')
                         content.append(ChatCompletionContentPartImageParam(image_url=image_url, type='image_url'))
                     elif item.is_audio:
-                        audio = InputAudio(data=base64_encoded, format=item.audio_format)
+                        assert item.format in ('wav', 'mp3')
+                        audio = InputAudio(data=base64_encoded, format=item.format)
                         content.append(ChatCompletionContentPartInputAudioParam(input_audio=audio, type='input_audio'))
                     else:  # pragma: no cover
                         raise RuntimeError(f'Unsupported binary content type: {item.media_type}')

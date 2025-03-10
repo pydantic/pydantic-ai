@@ -11,6 +11,9 @@ from inline_snapshot import snapshot
 from pytest_mock import MockerFixture
 
 from pydantic_ai import UserError
+from pydantic_ai.agent import Agent
+from pydantic_ai.messages import DocumentUrl
+from pydantic_ai.models.gemini import GeminiModel
 
 from ..conftest import IsNow, try_import
 
@@ -183,3 +186,27 @@ def save_service_account(service_account_path: Path, project_id: str) -> None:
     }
 
     service_account_path.write_text(json.dumps(service_account, indent=2))
+
+
+@pytest.mark.vcr()
+async def test_document_url_input(allow_model_requests: None, gemini_api_key: str) -> None:
+    m = GeminiModel('gemini-2.0-flash-thinking-exp-01-21', provider='google-vertex')
+    agent = Agent(m)
+
+    document_url = DocumentUrl(url='gs://cloud-samples-data/generative-ai/pdf/2403.05530.pdf')
+
+    result = await agent.run(['What is the main content on this document?', document_url])
+    assert result.data == snapshot("""\
+The main content of this document is the **introduction of Gemini 1.5 Pro**, a new multimodal language model from Google DeepMind.
+
+Key highlights from the document are:
+
+*   **Gemini 1.5 Pro is a highly compute-efficient multimodal mixture-of-experts model.**
+*   **Unlocking multimodal understanding across millions of tokens of context:**  It can process significantly longer context windows than previous models (up to 10M tokens), enabling it to reason over massive amounts of text, audio, and video.
+*   **Near-perfect recall and improved performance:** It achieves near-perfect recall on long-context retrieval tasks and improves the state-of-the-art in long-document QA, long-video QA, and long-context ASR. It matches or surpasses the performance of Gemini 1.0 Ultra in various benchmarks.
+*   **Surprising new capabilities:**  The model demonstrates remarkable in-context learning abilities, such as learning to translate a new language (Kalamang) from a grammar manual provided as context, achieving translation quality comparable to a human learner using the same material.
+*   **Detailed evaluations:** The document provides extensive evaluations of Gemini 1.5 Pro's long-context capabilities and core multimodal abilities, comparing it to Gemini 1.0 family models and other leading models like Claude 2.1 and GPT-4 Turbo.
+*   **Discussion of responsible deployment:**  The document briefly mentions Google's approach to responsible deployment, including impact assessment and safety evaluations.
+
+In essence, the document announces Gemini 1.5 Pro as a significant advancement in multimodal AI, particularly in its ability to handle extremely long contexts and demonstrate strong reasoning and learning capabilities across various modalities.\
+""")

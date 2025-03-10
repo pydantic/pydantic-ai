@@ -364,22 +364,17 @@ class GeminiModel(Model):
                         _GeminiInlineDataPart(inline_data={'data': base64_encoded, 'mime_type': item.media_type})
                     )
                 elif isinstance(item, (AudioUrl, ImageUrl, DocumentUrl)):
-                    try:
-                        print(item.url, item.media_type)
-                        content.append(
-                            _GeminiFileDataPart(file_data={'file_uri': item.url, 'mime_type': item.media_type})
-                        )
-                    except ValueError:
-                        # Download the file if can't find the mime type.
-                        client = cached_async_http_client()
-                        response = await client.get(item.url, follow_redirects=True)
-                        response.raise_for_status()
-                        base64_encoded = base64.b64encode(response.content).decode('utf-8')
-                        content.append(
-                            _GeminiInlineDataPart(
-                                inline_data={'data': base64_encoded, 'mime_type': response.headers['Content-Type']}
-                            )
-                        )
+                    # Download the file if can't find the mime type.
+                    client = cached_async_http_client()
+                    response = await client.get(item.url, follow_redirects=True)
+                    response.raise_for_status()
+                    inline_data = _GeminiInlineDataPart(
+                        inline_data={
+                            'data': base64.b64encode(response.content).decode('utf-8'),
+                            'mime_type': response.headers['Content-Type'],
+                        }
+                    )
+                    content.append(inline_data)
                 else:
                     assert_never(item)
         return content

@@ -84,6 +84,13 @@ class ImageUrl:
         else:
             raise ValueError(f'Unknown image file extension: {self.url}')
 
+    def format(self) -> ImageFormat:
+        """The file format of the image.
+
+        The choice of supported formats were based on the Bedrock Converse API. Other APIs don't require to use a format.
+        """
+        return _image_format(self.media_type)
+
 
 @dataclass
 class DocumentUrl:
@@ -103,10 +110,30 @@ class DocumentUrl:
             raise RuntimeError(f'Unknown document file extension: {self.url}')
         return type_
 
+    @property
+    def format(self) -> DocumentFormat:
+        """The file format of the document.
+
+        The choice of supported formats were based on the Bedrock Converse API. Other APIs don't require to use a format.
+        """
+        return _document_format(self.media_type)
+
 
 AudioMediaType: TypeAlias = Literal['audio/wav', 'audio/mpeg']
 ImageMediaType: TypeAlias = Literal['image/jpeg', 'image/png', 'image/gif', 'image/webp']
-DocumentMediaType: TypeAlias = Literal['application/pdf', 'text/plain']
+DocumentMediaType: TypeAlias = Literal[
+    'application/pdf',
+    'text/plain',
+    'text/csv',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    'text/html',
+    'text/markdown',
+    'application/vnd.ms-excel',
+]
+AudioFormat: TypeAlias = Literal['wav', 'mp3']
+ImageFormat: TypeAlias = Literal['jpeg', 'png', 'gif', 'webp']
+DocumentFormat: TypeAlias = Literal['csv', 'doc', 'docx', 'html', 'md', 'pdf', 'txt', 'xls', 'xlsx']
 
 
 @dataclass
@@ -135,20 +162,67 @@ class BinaryContent:
     @property
     def is_document(self) -> bool:
         """Return `True` if the media type is a document type."""
-        return self.media_type in {'application/pdf', 'text/plain'}
+        return self.media_type in {
+            'application/pdf',
+            'text/plain',
+            'text/csv',
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'text/html',
+            'text/markdown',
+            'application/vnd.ms-excel',
+        }
 
     @property
-    def audio_format(self) -> Literal['mp3', 'wav']:
-        """Return the audio format given the media type."""
-        if self.media_type == 'audio/mpeg':
-            return 'mp3'
-        elif self.media_type == 'audio/wav':
-            return 'wav'
-        else:
-            raise ValueError(f'Unknown audio media type: {self.media_type}')
+    def format(self) -> str:
+        """The file format of the binary content."""
+        if self.is_audio:
+            if self.media_type == 'audio/mpeg':
+                return 'mp3'
+            elif self.media_type == 'audio/wav':
+                return 'wav'
+        elif self.is_image:
+            return _image_format(self.media_type)
+        elif self.is_document:
+            return _document_format(self.media_type)
+        raise ValueError(f'Unknown media type: {self.media_type}')
 
 
 UserContent: TypeAlias = 'str | ImageUrl | AudioUrl | DocumentUrl | BinaryContent'
+
+
+def _document_format(media_type: str) -> DocumentFormat:
+    if media_type == 'application/pdf':
+        return 'pdf'
+    elif media_type == 'text/plain':
+        return 'txt'
+    elif media_type == 'text/csv':
+        return 'csv'
+    elif media_type == 'application/vnd.openxmlformats-officedocument.wordprocessingml.document':
+        return 'docx'
+    elif media_type == 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet':
+        return 'xlsx'
+    elif media_type == 'text/html':
+        return 'html'
+    elif media_type == 'text/markdown':
+        return 'md'
+    elif media_type == 'application/vnd.ms-excel':
+        return 'xls'
+    else:
+        raise ValueError(f'Unknown document media type: {media_type}')
+
+
+def _image_format(media_type: str) -> ImageFormat:
+    if media_type == 'image/jpeg':
+        return 'jpeg'
+    elif media_type == 'image/png':
+        return 'png'
+    elif media_type == 'image/gif':
+        return 'gif'
+    elif media_type == 'image/webp':
+        return 'webp'
+    else:
+        raise ValueError(f'Unknown image media type: {media_type}')
 
 
 @dataclass
