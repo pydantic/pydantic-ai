@@ -21,7 +21,7 @@ pytestmark = pytest.mark.skipif(not imports_successful(), reason='groq not insta
 def test_groq_provider():
     provider = GroqProvider(api_key='api-key')
     assert provider.name == 'groq'
-    assert provider.base_url == 'https://api.groq.com/v1'
+    assert provider.base_url == 'https://api.groq.com'
     assert isinstance(provider.client, AsyncGroq)
     assert provider.client.api_key == 'api-key'
 

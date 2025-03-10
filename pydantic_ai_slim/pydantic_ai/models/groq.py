@@ -6,10 +6,13 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from itertools import chain
-from typing import Any, Literal, Union, cast, overload
+from typing import Literal, Union, cast, overload
 
+from groq import NOT_GIVEN, APIStatusError, AsyncGroq, AsyncStream
+from groq.types import chat
+from groq.types.chat.chat_completion_content_part_image_param import ImageURL
 from httpx import AsyncClient as AsyncHTTPClient
-from typing_extensions import assert_never
+from typing_extensions import assert_never, deprecated
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._utils import guard_tool_call_id as _guard_tool_call_id
@@ -38,16 +41,6 @@ from . import (
     cached_async_http_client,
     check_allow_model_requests,
 )
-
-try:
-    from groq import NOT_GIVEN, APIStatusError, AsyncGroq, AsyncStream
-    from groq.types import chat
-    from groq.types.chat.chat_completion_content_part_image_param import ImageURL
-except ImportError as _import_error:
-    raise ImportError(
-        'Please install `groq` to use the Groq model, '
-        "you can use the `groq` optional group — `pip install 'pydantic-ai-slim[groq]'`"
-    ) from _import_error
 
 LatestGroqModelNames = Literal[
     'llama-3.3-70b-versatile',
@@ -94,11 +87,31 @@ class GroqModel(Model):
     _model_name: GroqModelName = field(repr=False)
     _system: str | None = field(default='groq', repr=False)
 
+    @overload
     def __init__(
         self,
         model_name: GroqModelName,
         *,
-        provider: Literal['groq'] | Provider[Any] | None = None,
+        provider: Literal['groq'] | Provider[AsyncGroq] = 'groq',
+    ) -> None: ...
+
+    @deprecated('Use the `provider` parameter instead of `api_key`, `groq_client`, and `http_client`.')
+    @overload
+    def __init__(
+        self,
+        model_name: GroqModelName,
+        *,
+        provider: None = None,
+        api_key: str | None = None,
+        groq_client: AsyncGroq | None = None,
+        http_client: AsyncHTTPClient | None = None,
+    ) -> None: ...
+
+    def __init__(
+        self,
+        model_name: GroqModelName,
+        *,
+        provider: Literal['groq'] | Provider[AsyncGroq] | None = None,
         api_key: str | None = None,
         groq_client: AsyncGroq | None = None,
         http_client: AsyncHTTPClient | None = None,

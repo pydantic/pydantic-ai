@@ -50,8 +50,9 @@ def vertexai(http_client: httpx.AsyncClient, tmp_path: Path) -> Model:
 
 def groq(http_client: httpx.AsyncClient, _tmp_path: Path) -> Model:
     from pydantic_ai.models.groq import GroqModel
+    from pydantic_ai.providers.groq import GroqProvider
 
-    return GroqModel('llama-3.3-70b-versatile', http_client=http_client)
+    return GroqModel('llama-3.3-70b-versatile', provider=GroqProvider(http_client=http_client))
 
 
 def anthropic(http_client: httpx.AsyncClient, _tmp_path: Path) -> Model:
