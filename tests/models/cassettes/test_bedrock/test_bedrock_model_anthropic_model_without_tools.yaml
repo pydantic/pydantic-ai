@@ -1,0 +1,43 @@
+interactions:
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "What is the capital of France?"}]}], "system": [{"text": "You
+      are a helpful chatbot."}], "inferenceConfig": {}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        NTc1YTMxYWMtNjI4ZS00NWE4LWE0ZjQtYzk5OTZiNmMyZGJi
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '164'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/anthropic.claude-v2/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '212'
+      content-type:
+      - application/json
+    parsed_body:
+      metrics:
+        latencyMs: 707
+      output:
+        message:
+          content:
+          - text: Paris is the capital of France.
+          role: assistant
+      stopReason: end_turn
+      usage:
+        inputTokens: 23
+        outputTokens: 11
+        totalTokens: 34
+    status:
+      code: 200
+      message: OK
+version: 1

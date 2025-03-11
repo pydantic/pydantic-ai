@@ -61,7 +61,7 @@ def serialize(cassette_dict: Any):
             data['headers'] = headers
 
             content_type = headers.get('content-type', [])
-            if any(header.startswith('application/json') for header in content_type):
+            if any(isinstance(header, str) and header.startswith('application/json') for header in content_type):
                 # Parse the body as JSON
                 body: Any = data.get('body', None)
                 assert body is not None, data

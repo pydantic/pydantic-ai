@@ -52,6 +52,7 @@ def test_init():
     m = CohereModel('command-r7b-12-2024', api_key='foobar')
     assert m.model_name == 'command-r7b-12-2024'
     assert m.system == 'cohere'
+    assert m.base_url == 'https://api.cohere.com'
 
 
 @dataclass
