@@ -36,7 +36,6 @@ classifiers = [
 ]
 requires-python = ">=3.9"
 dependencies = [
-    "groq>=0.18.0",
     "pydantic-ai-slim[openai,vertexai,groq,anthropic,mistral,cohere,bedrock,cli]==0.0.36",
 ]
 

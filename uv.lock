@@ -2719,7 +2719,6 @@ name = "pydantic-ai"
 version = "0.0.36"
 source = { editable = "." }
 dependencies = [
-    { name = "groq" },
     { name = "pydantic-ai-slim", extra = ["anthropic", "bedrock", "cli", "cohere", "groq", "mistral", "openai", "vertexai"] },
 ]
 
@@ -2753,7 +2752,6 @@ lint = [
 
 [package.metadata]
 requires-dist = [
-    { name = "groq", specifier = ">=0.18.0" },
     { name = "logfire", marker = "extra == 'logfire'", specifier = ">=2.3" },
     { name = "pydantic-ai-examples", marker = "extra == 'examples'", editable = "examples" },
     { name = "pydantic-ai-slim", extras = ["openai", "vertexai", "groq", "anthropic", "mistral", "cohere", "bedrock", "cli"], editable = "pydantic_ai_slim" },
