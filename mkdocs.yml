@@ -28,6 +28,7 @@ nav:
       - multi-agent-applications.md
       - graph.md
       - input.md
+      - mcp_servers.md
       - cli.md
   - Examples:
       - examples/index.md
@@ -64,6 +65,7 @@ nav:
       - api/models/function.md
       - api/models/fallback.md
       - api/providers.md
+      - api/mcp.md
       - api/pydantic_graph/graph.md
       - api/pydantic_graph/nodes.md
       - api/pydantic_graph/state.md

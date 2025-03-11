@@ -9,9 +9,11 @@ from contextvars import ContextVar
 from dataclasses import field
 from typing import Any, Generic, Literal, Union, cast
 
+from mcp.types import CallToolResult
 from opentelemetry.trace import Span, Tracer
 from typing_extensions import TypeGuard, TypeVar, assert_never
 
+from pydantic_ai.mcp import MCPServer
 from pydantic_graph import BaseNode, Graph, GraphRunContext
 from pydantic_graph.nodes import End, NodeRunEndT
 
@@ -94,6 +96,7 @@ class GraphAgentDeps(Generic[DepsT, ResultDataT]):
     result_validators: list[_result.ResultValidator[DepsT, ResultDataT]]
 
     function_tools: dict[str, Tool[DepsT]] = dataclasses.field(repr=False)
+    mcp_servers: dict[str, MCPServer] = dataclasses.field(repr=False)
 
     run_span: Span
     tracer: Tracer
@@ -219,7 +222,12 @@ async def _prepare_request_parameters(
         if tool_def := await tool.prepare_tool_def(ctx):
             function_tool_defs.append(tool_def)
 
-    await asyncio.gather(*map(add_tool, ctx.deps.function_tools.values()))
+    async with asyncio.TaskGroup() as tg:
+        for tool in ctx.deps.function_tools.values():
+            tg.create_task(add_tool(tool))
+        for server in ctx.deps.mcp_servers.values():
+            tool_defs = await server.list_tools()
+            function_tool_defs.extend(tool_defs)
 
     result_schema = ctx.deps.result_schema
     return models.ModelRequestParameters(
@@ -594,6 +602,20 @@ async def process_function_tools(
                 yield event
                 call_index_to_event_id[len(calls_to_run)] = event.call_id
                 calls_to_run.append((tool, call))
+        elif mcp_tool := await _tool_from_mcp_server(call.tool_name, ctx):
+            if stub_function_tools:
+                output_parts.append(
+                    _messages.ToolReturnPart(
+                        tool_name=call.tool_name,
+                        content='Tool not executed - a final result was already processed.',
+                        tool_call_id=call.tool_call_id,
+                    )
+                )
+            else:
+                event = _messages.FunctionToolCallEvent(call)
+                yield event
+                call_index_to_event_id[len(calls_to_run)] = event.call_id
+                calls_to_run.append((mcp_tool, call))
         elif result_schema is not None and call.tool_name in result_schema.tools:
             # if tool_name is in _result_schema, it means we found a result tool but an error occurred in
             # validation, we don't add another part here
@@ -639,6 +661,20 @@ async def process_function_tools(
     # This is mostly just to simplify testing
     for k in sorted(results_by_index):
         output_parts.append(results_by_index[k])
+
+
+async def _tool_from_mcp_server(
+    tool_name: str,
+    ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
+) -> Tool[DepsT] | None:
+    async def run_tool(ctx: RunContext[DepsT], **args: Any) -> CallToolResult:
+        result = await server.call_tool(tool_name, args)
+        return result
+
+    for server in ctx.deps.mcp_servers.values():
+        if tool_name in server.tools:
+            return Tool(name=tool_name, function=run_tool, takes_ctx=True)
+    return None
 
 
 def _unknown_tool(
