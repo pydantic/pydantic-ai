@@ -38,7 +38,7 @@ async def main():
 
 ### Stdio Server
 
-For stdio-based servers,
+For stdio-based servers, you can use the [`MCPServer.stdio`][pydantic_ai.mcp.MCPServer.stdio] method:
 
 ```python {title="stdio_mcp_setup.py" test="skip"}
 from pydantic_ai.agent import Agent
