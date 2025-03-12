@@ -34,7 +34,7 @@ def test_cli_help(capfd: CaptureFixture[str]):
             '* `/multiline` - toggle multiline mode',
             '',
             'positional arguments:',
-            '  prompt           AI Prompt, if omitted fall into interactive mode',
+            '  prompt                AI Prompt, if omitted fall into interactive mode',
             '',
             IsStr(),
             '  -h, --help       show this help message and exit',
