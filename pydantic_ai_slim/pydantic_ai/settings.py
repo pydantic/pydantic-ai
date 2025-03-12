@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from dataclasses import dataclass
+from typing import Literal
 
 from httpx import Timeout
 from typing_extensions import TypedDict
 
-if TYPE_CHECKING:
-    pass
+from pydantic_ai.tools import Tool, ToolFuncEither
 
 
 class ModelSettings(TypedDict, total=False):
@@ -132,6 +132,42 @@ class ModelSettings(TypedDict, total=False):
     * OpenAI
     * Groq
     """
+
+    tool_choice: Literal['none', 'auto', 'required'] | ForcedFunctionToolChoice
+    """Decide the model's behavior regarding tool use.
+
+    - If `'none'`, the model will not use any tools.
+    - If `'auto'`, the model will decide whether to use a tool or not.
+    - If `'required'`, the model will be forced to use a tool.
+    - If a tool name is provided, the model will use the specified tool.
+
+    Supported by:
+
+    * Gemini
+    * Anthropic
+    * OpenAI
+    * Groq
+    * Cohere
+    * Mistral
+    * Bedrock
+    """
+
+
+@dataclass
+class ForcedFunctionToolChoice:
+    """A tool choice that forces the model to use a specific function."""
+
+    tool: Tool | ToolFuncEither | str
+    """The tool to call."""
+
+    @property
+    def name(self) -> str:
+        """The name of the tool to call."""
+        if isinstance(self.tool, Tool):
+            return self.tool.name
+        elif isinstance(self.tool, str):
+            return self.tool
+        return self.tool.__name__
 
 
 def merge_model_settings(base: ModelSettings | None, overrides: ModelSettings | None) -> ModelSettings | None:

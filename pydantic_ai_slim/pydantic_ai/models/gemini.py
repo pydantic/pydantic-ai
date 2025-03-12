@@ -34,7 +34,7 @@ from ..messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from ..settings import ModelSettings
+from ..settings import ForcedFunctionToolChoice, ModelSettings
 from ..tools import ToolDefinition
 from . import (
     Model,
@@ -206,15 +206,35 @@ class GeminiModel(Model):
             tools += [_function_from_abstract_tool(t) for t in model_request_parameters.result_tools]
         return _GeminiTools(function_declarations=tools) if tools else None
 
+    @staticmethod
     def _get_tool_config(
-        self, model_request_parameters: ModelRequestParameters, tools: _GeminiTools | None
+        model_settings: GeminiModelSettings,
+        model_request_parameters: ModelRequestParameters,
+        tools: _GeminiTools | None,
     ) -> _GeminiToolConfig | None:
-        if model_request_parameters.allow_text_result:
+        """Determine the `tool_choice` setting for the model.
+
+        AUTO: The default model behavior. The model decides to predict either a function call or a natural language response.
+        ANY: The model is constrained to always predict a function call. If allowed_function_names is not provided,
+            the model picks from all of the available function declarations. If allowed_function_names is provided,
+            the model picks from the set of allowed functions.
+        NONE: The model won't predict a function call. In this case, the model behavior is the same as if you don't
+            pass any function declarations.
+        """
+        tool_choice = model_settings.get('tool_choice', 'auto')
+
+        if tool_choice == 'auto' and tools and not model_request_parameters.allow_text_result:
+            return {'function_calling_config': {'mode': 'ANY'}}
+        elif tool_choice == 'auto':
             return None
-        elif tools:
-            return _tool_config([t['name'] for t in tools['function_declarations']])
+        elif tool_choice == 'none':
+            return {'function_calling_config': {'mode': 'NONE'}}
+        elif tool_choice == 'required':
+            return {'function_calling_config': {'mode': 'ANY'}}
+        elif isinstance(tool_choice, ForcedFunctionToolChoice):
+            return {'function_calling_config': {'mode': 'ANY', 'allowed_function_names': [tool_choice.name]}}
         else:
-            return _tool_config([])
+            assert_never(tool_choice)
 
     @asynccontextmanager
     async def _make_request(
@@ -225,7 +245,7 @@ class GeminiModel(Model):
         model_request_parameters: ModelRequestParameters,
     ) -> AsyncIterator[HTTPResponse]:
         tools = self._get_tools(model_request_parameters)
-        tool_config = self._get_tool_config(model_request_parameters, tools)
+        tool_config = self._get_tool_config(model_settings, model_request_parameters, tools)
         sys_prompt_parts, contents = await self._message_to_gemini_content(messages)
 
         request_data = _GeminiRequest(contents=contents)
@@ -712,15 +732,18 @@ class _GeminiToolConfig(TypedDict):
     function_calling_config: _GeminiFunctionCallingConfig
 
 
-def _tool_config(function_names: list[str]) -> _GeminiToolConfig:
-    return _GeminiToolConfig(
-        function_calling_config=_GeminiFunctionCallingConfig(mode='ANY', allowed_function_names=function_names)
-    )
-
-
 class _GeminiFunctionCallingConfig(TypedDict):
-    mode: Literal['ANY', 'AUTO']
-    allowed_function_names: list[str]
+    """The function calling config for the Gemini API.
+
+    See <https://ai.google.dev/gemini-api/docs/function-calling>
+    """
+
+    mode: Literal['ANY', 'AUTO', 'NONE']
+    allowed_function_names: NotRequired[list[str]]
+    """If not provided, all functions are allowed.
+
+    It can only be used with `mode` set to `'ANY'`.
+    """
 
 
 @pydantic.with_config(pydantic.ConfigDict(defer_build=True))
