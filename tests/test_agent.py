@@ -13,6 +13,7 @@ from pydantic_core import to_json
 
 from pydantic_ai import Agent, ModelRetry, RunContext, UnexpectedModelBehavior, UserError, capture_run_messages
 from pydantic_ai.messages import (
+    BinaryContent,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -29,7 +30,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.result import Usage
 from pydantic_ai.tools import ToolDefinition
 
-from .conftest import IsNow, TestEnv
+from .conftest import IsNow, IsStr, TestEnv
 
 pytestmark = pytest.mark.anyio
 
@@ -1572,3 +1573,29 @@ def test_custom_result_type_invalid() -> None:
 
     with pytest.raises(UserError, match='Cannot set a custom run `result_type` when the agent has result validators'):
         agent.run_sync('Hello', result_type=int)
+
+
+def test_binary_content_all_messages_json():
+    agent = Agent('test')
+
+    result = agent.run_sync(['Hello', BinaryContent(data=b'Hello', media_type='text/plain')])
+    assert json.loads(result.all_messages_json()) == snapshot(
+        [
+            {
+                'parts': [
+                    {
+                        'content': ['Hello', {'data': 'SGVsbG8=', 'media_type': 'text/plain', 'kind': 'binary'}],
+                        'timestamp': IsStr(),
+                        'part_kind': 'user-prompt',
+                    }
+                ],
+                'kind': 'request',
+            },
+            {
+                'parts': [{'content': 'success (no tool calls)', 'part_kind': 'text'}],
+                'model_name': 'test',
+                'timestamp': IsStr(),
+                'kind': 'response',
+            },
+        ]
+    )
