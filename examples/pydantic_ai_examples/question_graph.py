@@ -129,9 +129,9 @@ async def run_as_cli(answer: str | None):
         node = Ask()
     # debug(state, node)
 
-    with logfire.span('run questions graph'):
+    async with question_graph.iter(node, state=state, persistence=persistence) as run:
         while True:
-            node = await question_graph.next(node, persistence=persistence, state=state)
+            node = await run.next()
             if isinstance(node, End):
                 print('END:', node.data)
                 history = await persistence.load()

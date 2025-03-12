@@ -285,12 +285,14 @@ async def test_rerun_node(mock_snapshot_id: object):
 
     sp = FullStatePersistence()
     node = Foo()
-    end = await graph.next(node, sp)
-    assert end == snapshot(End(123))
+    async with graph.iter(node, persistence=sp) as run:
+        end = await run.next()
+        assert end == snapshot(End(123))
 
     msg = "Incorrect snapshot status 'success', must be 'created' or 'pending'."
     with pytest.raises(GraphNodeStatusError, match=msg):
-        await graph.next(node, sp)
+        async with graph.iter(node, persistence=sp) as run:
+            await run.next()
 
 
 @pytest.mark.parametrize('persistence_cls', [SimpleStatePersistence, FullStatePersistence])
@@ -307,21 +309,24 @@ async def test_next_from_persistence(persistence_cls: type[BaseStatePersistence[
 
     g1 = Graph(nodes=[Foo, Spam])
 
-    sp = persistence_cls()
+    persistence = persistence_cls()
     node = Foo()
     assert g1.name is None
-    node = await g1.next(node, sp)
+    await g1.initialize(node, persistence)
     assert g1.name == 'g1'
-    assert node == Spam()
 
-    end = await g1.next_from_persistence(sp)
-    assert end == End(123)
+    async with g1.iter_from_persistence(persistence) as run:
+        node = await run.next()
+        assert node == Spam()
+        end = await run.next()
+        assert end == End(123)
 
     g2 = Graph(nodes=[Foo, Spam])
-    sp = persistence_cls()
+    persistence2 = persistence_cls()
     assert g2.name is None
     with pytest.raises(GraphRuntimeError, match='Unable to restore snapshot from state persistence.'):
-        await g2.next_from_persistence(sp)
+        async with g2.iter_from_persistence(persistence2):
+            pass
     assert g2.name == 'g2'
 
 

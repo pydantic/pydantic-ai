@@ -95,18 +95,20 @@ async def test_next_from_persistence(tmp_path: Path, mock_snapshot_id: object):
     p = tmp_path / 'test_graph.json'
     persistence = FileStatePersistence(p)
 
-    node = await my_graph.next(Float2String(3.14), persistence=persistence)
-    assert node == snapshot(String2Length(input_data='3.14'))
-    assert node.get_snapshot_id() == snapshot('String2Length:2')
-    assert my_graph.name == 'my_graph'
+    async with my_graph.iter(Float2String(3.14), persistence=persistence) as run:
+        node = await run.next()
+        assert node == snapshot(String2Length(input_data='3.14'))
+        assert node.get_snapshot_id() == snapshot('String2Length:2')
+        assert my_graph.name == 'my_graph'
 
-    node = await my_graph.next_from_persistence(persistence)
-    assert node == snapshot(Double(input_data=4))
-    assert node.get_snapshot_id() == snapshot('Double:3')
+    async with my_graph.iter_from_persistence(persistence) as run:
+        node = await run.next()
+        assert node == snapshot(Double(input_data=4))
+        assert node.get_snapshot_id() == snapshot('Double:3')
 
-    node = await my_graph.next_from_persistence(persistence)
-    assert node == snapshot(End(data=8))
-    assert node.get_snapshot_id() == snapshot('end:4')
+        node = await run.next()
+        assert node == snapshot(End(data=8))
+        assert node.get_snapshot_id() == snapshot('end:4')
 
     assert await persistence.load() == snapshot(
         [

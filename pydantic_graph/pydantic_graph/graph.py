@@ -11,6 +11,7 @@ from typing import Any, Generic, TypeVar, cast
 import logfire_api
 import typing_extensions
 from logfire_api import LogfireSpan
+from typing_extensions import deprecated
 from typing_inspection import typing_objects
 
 from . import _utils, exceptions, mermaid
@@ -216,8 +217,8 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
         state: StateT = None,
         deps: DepsT = None,
         persistence: BaseStatePersistence[StateT, T] | None = None,
-        infer_name: bool = True,
         span: AbstractContextManager[Any] | None = None,
+        infer_name: bool = True,
     ) -> AsyncIterator[GraphRun[StateT, DepsT, T]]:
         """A contextmanager which can be used to iterate over the graph's nodes as they are executed.
 
@@ -240,11 +241,10 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
             deps: The dependencies of the graph.
             persistence: State persistence interface, defaults to
                 [`SimpleStatePersistence`][pydantic_graph.SimpleStatePersistence] if `None`.
-            infer_name: Whether to infer the graph name from the calling frame.
             span: The span to use for the graph run. If not provided, a new span will be created.
+            infer_name: Whether to infer the graph name from the calling frame.
 
-        Yields:
-            A GraphRun that can be async iterated over to drive the graph to completion.
+        Returns: A GraphRun that can be async iterated over to drive the graph to completion.
         """
         if infer_name and self.name is None:
             # f_back because `asynccontextmanager` adds one frame
@@ -265,6 +265,82 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
                 graph=self, start_node=start_node, persistence=persistence, state=state, deps=deps
             )
 
+    @asynccontextmanager
+    async def iter_from_persistence(
+        self: Graph[StateT, DepsT, T],
+        persistence: BaseStatePersistence[StateT, T],
+        *,
+        deps: DepsT = None,
+        span: AbstractContextManager[Any] | None = None,
+        infer_name: bool = True,
+    ) -> AsyncIterator[GraphRun[StateT, DepsT, T]]:
+        """A contextmanager to iterate over the graph's nodes as they are executed, created from a persistence object.
+
+        This method has similar functionality to [`iter`][pydantic_graph.graph.Graph.iter],
+        but instead of passing the node to run, it will restore the node and state from state persistence.
+
+        Args:
+            persistence: The state persistence interface to use.
+            deps: The dependencies of the graph.
+            span: The span to use for the graph run. If not provided, a new span will be created.
+            infer_name: Whether to infer the graph name from the calling frame.
+
+        Returns: A GraphRun that can be async iterated over to drive the graph to completion.
+        """
+        if infer_name and self.name is None:
+            # f_back because `asynccontextmanager` adds one frame
+            if frame := inspect.currentframe():  # pragma: no branch
+                self._infer_name(frame.f_back)
+
+        persistence.set_graph_types(self)
+
+        snapshot = await persistence.retrieve_next()
+        if snapshot is None:
+            raise exceptions.GraphRuntimeError('Unable to restore snapshot from state persistence.')
+
+        snapshot.node.set_snapshot_id(snapshot.id)
+
+        if self.auto_instrument and span is None:
+            span = logfire_api.span('run graph {graph.name}', graph=self)
+
+        with ExitStack() as stack:
+            if span is not None:
+                stack.enter_context(span)
+            yield GraphRun[StateT, DepsT, T](
+                graph=self,
+                start_node=snapshot.node,
+                persistence=persistence,
+                state=snapshot.state,
+                deps=deps,
+                snapshot_id=snapshot.id,
+            )
+
+    async def initialize(
+        self: Graph[StateT, DepsT, T],
+        node: BaseNode[StateT, DepsT, T],
+        persistence: BaseStatePersistence[StateT, T],
+        *,
+        state: StateT = None,
+        infer_name: bool = True,
+    ) -> None:
+        """Initialize a new graph run in persistence without running it.
+
+        This is useful if you want to set up a graph run to be run later, e.g. via
+        [`iter_from_persistence`][pydantic_graph.graph.Graph.iter_from_persistence].
+
+        Args:
+            node: The node to run first.
+            persistence: State persistence interface.
+            state: The start state of the graph.
+            infer_name: Whether to infer the graph name from the calling frame.
+        """
+        if infer_name and self.name is None:
+            self._infer_name(inspect.currentframe())
+
+        persistence.set_graph_types(self)
+        await persistence.snapshot_node(state, node)
+
+    @deprecated('`next` is deprecated, use `async with graph.iter(...) as run:  run.next()` instead')
     async def next(
         self: Graph[StateT, DepsT, T],
         node: BaseNode[StateT, DepsT, T],
@@ -299,34 +375,6 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
             deps=deps,
         )
         return await run.next(node)
-
-    async def next_from_persistence(
-        self: Graph[StateT, DepsT, T],
-        persistence: BaseStatePersistence[StateT, T],
-        *,
-        deps: DepsT = None,
-        infer_name: bool = True,
-    ) -> BaseNode[StateT, DepsT, Any] | End[T]:
-        """Run the next node in the graph from a snapshot stored in persistence."""
-        if infer_name and self.name is None:
-            self._infer_name(inspect.currentframe())
-        persistence.set_graph_types(self)
-
-        snapshot = await persistence.retrieve_next()
-        if snapshot is None:
-            raise exceptions.GraphRuntimeError('Unable to restore snapshot from state persistence.')
-        assert snapshot.id is not None, 'Snapshot ID should be set'
-        snapshot.node.set_snapshot_id(snapshot.id)
-
-        run = GraphRun[StateT, DepsT, T](
-            graph=self,
-            start_node=snapshot.node,
-            persistence=persistence,
-            state=snapshot.state,
-            deps=deps,
-            snapshot_id=snapshot.id,
-        )
-        return await run.next()
 
     def mermaid_code(
         self,
@@ -689,9 +737,10 @@ class GraphRun(Generic[StateT, DepsT, RunEndT]):
             node_snapshot_id = node.get_snapshot_id()
         else:
             node_snapshot_id = node.get_snapshot_id()
-            if node_snapshot_id != self._snapshot_id:
-                await self.persistence.snapshot_node_if_new(node_snapshot_id, self.state, node)
-                self._snapshot_id = node_snapshot_id
+
+        if node_snapshot_id != self._snapshot_id:
+            await self.persistence.snapshot_node_if_new(node_snapshot_id, self.state, node)
+            self._snapshot_id = node_snapshot_id
 
         if not isinstance(node, BaseNode):
             # While technically this is not compatible with the documented method signature, it's an easy mistake to

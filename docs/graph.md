@@ -591,9 +591,9 @@ In production applications, developers should implement their own state persiste
 
 At a high level the role of `StatePersistence` implementations is to store and retrieve [`NodeSnapshot`][pydantic_graph.persistence.NodeSnapshot] and [`EndSnapshot`][pydantic_graph.persistence.EndSnapshot] objects.
 
-[`graph.next_from_persistence()`][pydantic_graph.graph.Graph.next_from_persistence] may be used to run the next node of a graph run based on the state stored in persistence.
+[`graph.iter_from_persistence()`][pydantic_graph.graph.Graph.iter_from_persistence] may be used to run the graph based on the state stored in persistence.
 
-We can run the `count_down_graph` from [above](#iterating-over-a-graph), using [`graph.next_from_persistence()`][pydantic_graph.graph.Graph.next_from_persistence] and [`FileStatePersistence`][pydantic_graph.persistence.file.FileStatePersistence].
+We can run the `count_down_graph` from [above](#iterating-over-a-graph), using [`graph.iter_from_persistence()`][pydantic_graph.graph.Graph.iter_from_persistence] and [`FileStatePersistence`][pydantic_graph.persistence.file.FileStatePersistence].
 
 As you can see in this code, `run_node` requires no external application state (apart from state persistence) to be run, meaning graphs can easily be executed by distributed execution and queueing systems.
 
@@ -607,34 +607,39 @@ from count_down import CountDown, CountDownState, count_down_graph
 
 
 async def main():
-    persistence = FileStatePersistence(Path('count_down.json'))  # (1)!
+    run_id = 'run_abc123'
+    persistence = FileStatePersistence(Path(f'count_down_{run_id}.json'))  # (1)!
     state = CountDownState(counter=5)
-    await count_down_graph.next(  # (2)!
+    await count_down_graph.initialize(  # (2)!
         CountDown(), state=state, persistence=persistence
     )
 
     done = False
     while not done:
-        done = await run_node()
+        done = await run_node(run_id)
 
 
-async def run_node() -> bool:  # (3)!
-    persistence = FileStatePersistence(Path('count_down.json'))
-    node_or_end = await count_down_graph.next_from_persistence(persistence)  # (4)!
+async def run_node(run_id: str) -> bool:  # (3)!
+    persistence = FileStatePersistence(Path(f'count_down_{run_id}.json'))
+    async with count_down_graph.iter_from_persistence(persistence) as run:  # (4)!
+        node_or_end = await run.next()  # (5)!
+
     print('Node:', node_or_end)
     #> Node: CountDown()
     #> Node: CountDown()
     #> Node: CountDown()
     #> Node: CountDown()
+    #> Node: CountDown()
     #> Node: End(data=0)
-    return isinstance(node_or_end, End)  # (5)!
+    return isinstance(node_or_end, End)  # (6)!
 ```
 
 1. Create a [`FileStatePersistence`][pydantic_graph.persistence.file.FileStatePersistence] to use to start the graph.
-2. Call [`graph.next()`][pydantic_graph.graph.Graph.next] to start the graph with the initial state.
-3. `run_node` is a pure function that doesn't need access to any other process state to run the next node of the graph.
-4. Call [`graph.next_from_persistence()`][pydantic_graph.graph.Graph.next_from_persistence] to run the next node of the graph from the state stored in persistence. This will return either a node or an `End` object.
-5. Check if the node is an `End` object, if it is, the graph run is complete.
+2. Call [`graph.initialize()`][pydantic_graph.graph.Graph.initialize] to set the initial graph state in the persistence object.
+3. `run_node` is a pure function that doesn't need access to any other process state to run the next node of the graph, except the ID of the run.
+4. Call [`graph.iter_from_persistence()`][pydantic_graph.graph.Graph.iter_from_persistence] create a [`GraphRun`][pydantic_graph.graph.GraphRun] object that will run the next node of the graph from the state stored in persistence. This will return either a node or an `End` object.
+5. [`graph.run()`][pydantic_graph.graph.Graph.run] will return either a [node][pydantic_graph.nodes.BaseNode] or an [`End`][pydantic_graph.nodes.End] object.
+5. Check if the node is an [`End`][pydantic_graph.nodes.End] object, if it is, the graph run is complete.
 
 _(This example is complete, it can be run "as is" with Python 3.10+ — you'll need to add `asyncio.run(main())` to run `main`)_
 
@@ -770,20 +775,19 @@ async def main():
         state = QuestionState()
         node = Ask()  # (5)!
 
-    while True:
-        node = await question_graph.next(  # (6)!
-            node, persistence=persistence, state=state
-        )
-        if isinstance(node, End):  # (7)!
-            print('END:', node.data)
-            history = await persistence.load()
-            print([e.node for e in history])
-            break
-        elif isinstance(node, Answer):  # (8)!
-            print(node.question)
-            #> What is the capital of France?
-            break
-        # otherwise just continue
+    async with question_graph.iter(node, state=state, persistence=persistence) as run:
+        while True:
+            node = await run.next()  # (6)!
+            if isinstance(node, End):  # (7)!
+                print('END:', node.data)
+                history = await persistence.load()
+                print([e.node for e in history])
+                break
+            elif isinstance(node, Answer):  # (8)!
+                print(node.question)
+                #> What is the capital of France?
+                break
+            # otherwise just continue
 ```
 
 1. Get the user's answer from the command line, if provided. See [question graph example](examples/question-graph.md) for a complete example.
@@ -791,7 +795,7 @@ async def main():
 3. Since we're using the [persistence interface][pydantic_graph.persistence.BaseStatePersistence] outside a graph, we need to call [`set_graph_types`][pydantic_graph.persistence.BaseStatePersistence.set_graph_types] to set the graph generic types `StateT` and `RunEndT` for the persistence instance. This is necessary to allow the persistence instance to know how to serialize and deserialize graph nodes.
 4. If we're run the graph before, [`retrieve_next`][pydantic_graph.persistence.BaseStatePersistence.retrieve_next] will return a snapshot of the next node to run, here we use `state` from that snapshot, and create a new `Evaluate` node with the answer provided on the command line.
 5. If the graph hasn't been run before, we create a new `QuestionState` and start with the `Ask` node.
-6. Call [`graph.next()`][pydantic_graph.graph.Graph.next] to run the node. This will return either a node or an `End` object.
+6. Call [`GraphRun.next()`][pydantic_graph.graph.GraphRun.next] to run the node. This will return either a node or an `End` object.
 7. If the node is an `End` object, the graph run is complete. The `data` field of the `End` object contains the comment returned by the `evaluate_agent` about the correct answer.
 8. If the node is an `Answer` object, we print the question and break out of the loop to end the process and wait for user input.
 

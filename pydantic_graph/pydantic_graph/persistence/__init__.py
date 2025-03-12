@@ -96,7 +96,10 @@ together with the run return value.
 
 
 class BaseStatePersistence(ABC, Generic[StateT, RunEndT]):
-    """Abstract base class for storing the state of a graph."""
+    """Abstract base class for storing the state of a graph run.
+
+    Each instance of a `BaseStatePersistence` subclass should be used for a single graph run.
+    """
 
     @abstractmethod
     async def snapshot_node(self, state: StateT, next_node: BaseNode[StateT, Any, RunEndT]) -> None:
@@ -158,7 +161,7 @@ class BaseStatePersistence(ABC, Generic[StateT, RunEndT]):
     async def retrieve_next(self) -> NodeSnapshot[StateT, RunEndT] | None:
         """Retrieve a node snapshot with status `'created`' and set its status to `'pending'`.
 
-        This is used by [`Graph.next_from_persistence`][pydantic_graph.graph.Graph.next_from_persistence]
+        This is used by [`Graph.iter_from_persistence`][pydantic_graph.graph.Graph.iter_from_persistence]
         to get the next node to run.
 
         Returns: The snapshot, or `None` if no snapshot with status `'created`' exists.

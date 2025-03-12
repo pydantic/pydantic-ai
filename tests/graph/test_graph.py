@@ -315,7 +315,7 @@ async def test_iter():
     assert node_reprs == snapshot(["String2Length(input_data='3.14')", 'Double(input_data=4)', 'End(data=8)'])
 
 
-async def test_next(mock_snapshot_id: object):
+async def test_iter_next(mock_snapshot_id: object):
     @dataclass
     class Foo(BaseNode):
         async def run(self, ctx: GraphRunContext) -> Bar:
@@ -329,26 +329,27 @@ async def test_next(mock_snapshot_id: object):
     g = Graph(nodes=(Foo, Bar))
     assert g.name is None
     sp = FullStatePersistence()
-    n = await g.next(Foo(), persistence=sp)
-    assert n == Bar()
-    assert g.name == 'g'
-    assert sp.history == snapshot(
-        [
-            NodeSnapshot(
-                state=None,
-                node=Foo(),
-                start_ts=IsNow(tz=timezone.utc),
-                duration=IsFloat(),
-                status='success',
-                id='Foo:1',
-            ),
-            NodeSnapshot(state=None, node=Bar(), id='Bar:2'),
-        ]
-    )
+    async with g.iter(Foo(), persistence=sp) as run:
+        assert g.name == 'g'
+        n = await run.next()
+        assert n == Bar()
+        assert sp.history == snapshot(
+            [
+                NodeSnapshot(
+                    state=None,
+                    node=Foo(),
+                    start_ts=IsNow(tz=timezone.utc),
+                    duration=IsFloat(),
+                    status='success',
+                    id='Foo:1',
+                ),
+                NodeSnapshot(state=None, node=Bar(), id='Bar:2'),
+            ]
+        )
 
-    assert isinstance(n, Bar)
-    n2 = await g.next(n, persistence=sp)
-    assert n2 == Foo()
+        assert isinstance(n, Bar)
+        n2 = await run.next()
+        assert n2 == Foo()
 
     assert sp.history == snapshot(
         [
@@ -373,7 +374,7 @@ async def test_next(mock_snapshot_id: object):
     )
 
 
-async def test_next_error(mock_snapshot_id: object):
+async def test_iter_next_error(mock_snapshot_id: object):
     @dataclass
     class Foo(BaseNode):
         async def run(self, ctx: GraphRunContext) -> Bar:
@@ -386,15 +387,49 @@ async def test_next_error(mock_snapshot_id: object):
 
     g = Graph(nodes=(Foo, Bar))
     sp = SimpleStatePersistence()
-    n = await g.next(Foo(), sp)
-    assert n == snapshot(Bar())
+    async with g.iter(Foo(), persistence=sp) as run:
+        n = await run.next()
+        assert n == snapshot(Bar())
 
-    assert isinstance(n, BaseNode)
-    n = await g.next(n, sp)
-    assert n == snapshot(End(None))
+        assert isinstance(n, BaseNode)
+        n = await run.next()
+        assert n == snapshot(End(None))
 
-    with pytest.raises(TypeError, match=r'`next` must be called with a `BaseNode` instance, got End\(data=None\).'):
-        await g.next(n, sp)  # pyright: ignore[reportArgumentType]
+        with pytest.raises(TypeError, match=r'`next` must be called with a `BaseNode` instance, got End\(data=None\).'):
+            await run.next()
+
+
+async def test_next(mock_snapshot_id: object):
+    @dataclass
+    class Foo(BaseNode):
+        async def run(self, ctx: GraphRunContext) -> Bar:
+            return Bar()
+
+    @dataclass
+    class Bar(BaseNode):
+        async def run(self, ctx: GraphRunContext) -> Foo:
+            return Foo()
+
+    g = Graph(nodes=(Foo, Bar))
+    assert g.name is None
+    sp = FullStatePersistence()
+    with pytest.warns(DeprecationWarning, match='`next` is deprecated, use `async with graph.iter(...)'):
+        n = await g.next(Foo(), persistence=sp)  # pyright: ignore[reportDeprecated]
+    assert n == Bar()
+    assert g.name == 'g'
+    assert sp.history == snapshot(
+        [
+            NodeSnapshot(
+                state=None,
+                node=Foo(),
+                start_ts=IsNow(tz=timezone.utc),
+                duration=IsFloat(),
+                status='success',
+                id='Foo:1',
+            ),
+            NodeSnapshot(state=None, node=Bar(), id='Bar:2'),
+        ]
+    )
 
 
 async def test_deps(mock_snapshot_id: object):

@@ -28,10 +28,25 @@ from . import (
 
 @dataclass
 class FileStatePersistence(BaseStatePersistence[StateT, RunEndT]):
-    """File based state persistence that hold a list of snapshots in a JSON file."""
+    """File based state persistence that hold graph run state in a JSON file."""
 
     json_file: Path
-    """Path to the JSON file where the snapshots are stored."""
+    """Path to the JSON file where the snapshots are stored.
+
+    You should use a different file for each graph run, but a single file should be reused for multiple
+    steps of the same run.
+
+    For example if you have a run ID of the form `run_123abc`, you might create a `FileStatePersistence` thus:
+
+    ```py
+    from pathlib import Path
+
+    from pydantic_graph import FullStatePersistence
+
+    run_id = 'run_123abc'
+    persistence = FullStatePersistence(Path('runs') / f'{run_id}.json')
+    ```
+    """
     _snapshots_type_adapter: pydantic.TypeAdapter[list[Snapshot[StateT, RunEndT]]] | None = field(
         default=None, init=False, repr=False
     )
