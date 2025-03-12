@@ -59,7 +59,8 @@ class MCPServer:
                 async with MCPServer.stdio('python', ['-m', 'pydantic_ai.mcp']) as server:
                     agent = Agent('openai:gpt-4o', mcp_servers=[server])
                     result = await agent.run('Can you convert 30 degrees celsius to fahrenheit?')
-                    print(result)
+                print(result.data)
+                #> 30 degrees Celsius is equal to 86 degrees Fahrenheit.
 
 
             asyncio.run(main())

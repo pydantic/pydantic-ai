@@ -226,11 +226,8 @@ async def _prepare_request_parameters(
         tool_defs = await server.list_tools()
         function_tool_defs.extend(tool_defs)
 
-    async with asyncio.TaskGroup() as tg:
-        for tool in ctx.deps.function_tools.values():
-            tg.create_task(add_tool(tool))
-        for server in ctx.deps.mcp_servers:
-            tg.create_task(add_mcp_server_tools(server))
+    await asyncio.gather(*map(add_tool, ctx.deps.function_tools.values()))
+    await asyncio.gather(*map(add_mcp_server_tools, ctx.deps.mcp_servers))
 
     result_schema = ctx.deps.result_schema
     return models.ModelRequestParameters(
