@@ -27,7 +27,7 @@ class GraphRuntimeError(RuntimeError):
 
 
 class GraphNodeStatusError(GraphRuntimeError):
-    """Error caused by trying to run a node that has status other than `'created'` or `'pending'`."""
+    """Error caused by trying to run a node that already has status `'running'`, `'success'`, or `'error'`."""
 
     def __init__(self, actual_status: 'SnapshotStatus'):
         self.actual_status = actual_status
