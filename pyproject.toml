@@ -139,7 +139,8 @@ xfail_strict = true
 filterwarnings = [
     "error",
     # boto3
-    "ignore::DeprecationWarning:botocore.*"
+    "ignore::DeprecationWarning:botocore.*",
+    "ignore::RuntimeWarning:pydantic_ai.mcp",
 ]
 
 # https://coverage.readthedocs.io/en/latest/config.html#run
