@@ -23,7 +23,6 @@ pytestmark = [
 
 
 async def test_stdio_server():
-    """Test creating and connecting to an MCP server using stdio protocol."""
     async with MCPServer.stdio('python', ['-m', 'tests.mcp_server']) as server:
         tools = await server.list_tools()
         assert len(tools) == 1
@@ -35,9 +34,13 @@ async def test_stdio_server():
         assert result.content == snapshot([TextContent(type='text', text='32.0')])
 
 
+def test_sse_server():
+    sse_server = MCPServer.sse(url='http://localhost:8000/sse')
+    assert sse_server.url == 'http://localhost:8000/sse'
+
+
 @pytest.mark.skip("The MCP server from the mcp package side doesn't release resources properly.")
 async def test_agent_with_stdio_server(allow_model_requests: None):
-    """Test an agent that uses an MCP server."""
     async with MCPServer.stdio('python', ['-m', 'tests.mcp_server']) as server:
         agent = Agent('openai:gpt-4o', mcp_servers=[server])
         result = await agent.run('What is 0 degrees Celsius in Fahrenheit?')
