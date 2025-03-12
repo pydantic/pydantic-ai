@@ -25,22 +25,22 @@ stdio-based server.
 
 ### HTTP/SSE Server
 
-```python {title="basic_mcp_setup.py"}
+```python {title="basic_mcp_setup.py" test="skip"}
 from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPServer
 
-async with MCPServer.sse(url="http://localhost:8000/sse") as mcp_server:
-    agent = Agent("your-model", mcp_servers=[mcp_server])
-    # Use the agent here
+
+async def main():
+    async with MCPServer.sse(url='http://localhost:8000/sse') as mcp_server:
+        Agent('your-model', mcp_servers=[mcp_server])
+        # Use the agent here
 ```
 
 ### Stdio Server
 
 For stdio-based servers,
 
-```python {title="stdio_mcp_setup.py"}
-import asyncio
-
+```python {title="stdio_mcp_setup.py" test="skip"}
 from pydantic_ai.agent import Agent
 from pydantic_ai.mcp import MCPServer
 
@@ -50,21 +50,23 @@ async def main():
         agent = Agent('openai:gpt-4o', mcp_servers=[server])
         result = await agent.run('Can you convert 30 degrees celsius to fahrenheit?')
     print(result.data)
-
-
-asyncio.run(main())
+    #> 30 degrees Celsius is equal to 86 degrees Fahrenheit.
 ```
 
 ### Multiple Servers
 
 You can connect to multiple MCP servers simultaneously:
 
-```python {title="multiple_mcp_servers.py"}
+```python {title="multiple_mcp_servers.py" test="skip"}
 from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPServer
 
-async with MCPServer.sse(url="http://localhost:8000") as local_server, \
-         MCPServer.sse(url="https://remote-mcp.example.com") as remote_server:
-    agent = Agent("your-model", mcp_servers=[local_server, remote_server])
-    # Use the agent here
+
+async def main():
+    async with (
+        MCPServer.sse(url='http://localhost:8000') as local_server,
+        MCPServer.sse(url='https://remote-mcp.example.com') as remote_server,
+    ):
+        Agent('your-model', mcp_servers=[local_server, remote_server])
+        # Use the agent here...
 ```

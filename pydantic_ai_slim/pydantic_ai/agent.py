@@ -6,12 +6,11 @@ from collections.abc import AsyncIterator, Awaitable, Iterator, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
 from copy import deepcopy
 from types import FrameType
-from typing import Any, Callable, ClassVar, Generic, cast, final, overload
+from typing import TYPE_CHECKING, Any, Callable, ClassVar, Generic, cast, final, overload
 
 from opentelemetry.trace import NoOpTracer, use_span
 from typing_extensions import TypeGuard, TypeVar, deprecated
 
-from pydantic_ai.mcp import MCPServer
 from pydantic_graph import End, Graph, GraphRun, GraphRunContext
 from pydantic_graph._utils import get_event_loop
 
@@ -47,6 +46,9 @@ EndStrategy = _agent_graph.EndStrategy
 CallToolsNode = _agent_graph.CallToolsNode
 ModelRequestNode = _agent_graph.ModelRequestNode
 UserPromptNode = _agent_graph.UserPromptNode
+
+if TYPE_CHECKING:
+    from pydantic_ai.mcp import MCPServer
 
 __all__ = (
     'Agent',

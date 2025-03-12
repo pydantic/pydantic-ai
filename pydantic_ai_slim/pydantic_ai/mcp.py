@@ -48,12 +48,9 @@ class MCPServer:
         Example:
             For illustration, here's how you can use the MCP server to run an agent:
 
-            ```python
-            import asyncio
-
-            from pydantic_ai.agent import Agent
+            ```python {test="skip" lint="skip"}
+            from pydantic_ai import Agent
             from pydantic_ai.mcp import MCPServer
-
 
             async def main():
                 async with MCPServer.stdio('python', ['-m', 'pydantic_ai.mcp']) as server:
@@ -61,9 +58,6 @@ class MCPServer:
                     result = await agent.run('Can you convert 30 degrees celsius to fahrenheit?')
                 print(result.data)
                 #> 30 degrees Celsius is equal to 86 degrees Fahrenheit.
-
-
-            asyncio.run(main())
             ```
 
         Args:

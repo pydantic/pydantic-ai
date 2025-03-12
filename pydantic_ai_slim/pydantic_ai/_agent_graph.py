@@ -7,13 +7,12 @@ from collections.abc import AsyncIterator, Iterator, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from dataclasses import field
-from typing import Any, Generic, Literal, Union, cast
+from typing import TYPE_CHECKING, Any, Generic, Literal, Union, cast
 
 from mcp.types import CallToolResult
 from opentelemetry.trace import Span, Tracer
 from typing_extensions import TypeGuard, TypeVar, assert_never
 
-from pydantic_ai.mcp import MCPServer
 from pydantic_graph import BaseNode, Graph, GraphRunContext
 from pydantic_graph.nodes import End, NodeRunEndT
 
@@ -29,11 +28,10 @@ from . import (
 from .models.instrumented import InstrumentedModel
 from .result import ResultDataT
 from .settings import ModelSettings, merge_model_settings
-from .tools import (
-    RunContext,
-    Tool,
-    ToolDefinition,
-)
+from .tools import RunContext, Tool, ToolDefinition
+
+if TYPE_CHECKING:
+    from .mcp import MCPServer
 
 __all__ = (
     'GraphAgentState',
