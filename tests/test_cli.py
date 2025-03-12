@@ -37,10 +37,12 @@ def test_cli_help(capfd: CaptureFixture[str]):
             '  prompt                AI Prompt, if omitted fall into interactive mode',
             '',
             IsStr(),
-            '  -h, --help       show this help message and exit',
-            '  --model [MODEL]  Model to use, it should be "<provider>:<model>" e.g. "openai:gpt-4o". If omitted it will default to "openai:gpt-4o"',
-            '  --no-stream      Whether to stream responses from OpenAI',
-            '  --version        Show version and exit',
+            '  -h, --help            show this help message and exit',
+            '  --model [MODEL]       Model to use, it should be "<provider>:<model>" e.g. "openai:gpt-4o". If omitted it will default to "openai:gpt-4o"',
+            '  --openai_api_base_url OPENAI_API_BASE_URL',
+            '                        Base url to use with model',
+            '  --no-stream           Whether to stream responses from OpenAI',
+            '  --version             Show version and exit',
         ]
     )
 
