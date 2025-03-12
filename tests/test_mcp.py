@@ -1,7 +1,6 @@
 """Tests for the MCP (Model Context Protocol) server implementation."""
 
 import pytest
-from cohere import TextContent
 from dirty_equals import IsInstance
 from inline_snapshot import snapshot
 
@@ -12,7 +11,7 @@ from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, ToolCall
 from .conftest import IsDatetime, try_import
 
 with try_import() as imports_successful:
-    from mcp.types import CallToolResult
+    from mcp.types import CallToolResult, TextContent
 
 
 pytestmark = [
@@ -39,7 +38,6 @@ def test_sse_server():
     assert sse_server.url == 'http://localhost:8000/sse'
 
 
-@pytest.mark.skip("The MCP server from the mcp package side doesn't release resources properly.")
 async def test_agent_with_stdio_server(allow_model_requests: None):
     async with MCPServer.stdio('python', ['-m', 'tests.mcp_server']) as server:
         agent = Agent('openai:gpt-4o', mcp_servers=[server])
