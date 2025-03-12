@@ -93,9 +93,7 @@ Special prompt:
     tzname = now_utc.astimezone().tzinfo.tzname(now_utc)  # type: ignore
     try:
         if args.openai_api_base_url:
-            openaimodel = OpenAIModel(
-                model_name=args.model,
-                provider=OpenAIProvider(base_url=args.openai_api_base_url))
+            openaimodel = OpenAIModel(model_name=args.model, provider=OpenAIProvider(base_url=args.openai_api_base_url))
         else:
             openaimodel = None
 
