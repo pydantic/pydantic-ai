@@ -96,7 +96,7 @@ class GraphAgentDeps(Generic[DepsT, ResultDataT]):
     result_validators: list[_result.ResultValidator[DepsT, ResultDataT]]
 
     function_tools: dict[str, Tool[DepsT]] = dataclasses.field(repr=False)
-    mcp_servers: dict[str, MCPServer] = dataclasses.field(repr=False)
+    mcp_servers: Sequence[MCPServer] = dataclasses.field(repr=False)
 
     run_span: Span
     tracer: Tracer
@@ -222,12 +222,15 @@ async def _prepare_request_parameters(
         if tool_def := await tool.prepare_tool_def(ctx):
             function_tool_defs.append(tool_def)
 
+    async def add_mcp_server_tools(server: MCPServer) -> None:
+        tool_defs = await server.list_tools()
+        function_tool_defs.extend(tool_defs)
+
     async with asyncio.TaskGroup() as tg:
         for tool in ctx.deps.function_tools.values():
             tg.create_task(add_tool(tool))
-        for server in ctx.deps.mcp_servers.values():
-            tool_defs = await server.list_tools()
-            function_tool_defs.extend(tool_defs)
+        for server in ctx.deps.mcp_servers:
+            tg.create_task(add_mcp_server_tools(server))
 
     result_schema = ctx.deps.result_schema
     return models.ModelRequestParameters(
@@ -671,8 +674,9 @@ async def _tool_from_mcp_server(
         result = await server.call_tool(tool_name, args)
         return result
 
-    for server in ctx.deps.mcp_servers.values():
-        if tool_name in server.tools:
+    for server in ctx.deps.mcp_servers:
+        tools = await server.list_tools()
+        if tool_name in {tool.name for tool in tools}:
             return Tool(name=tool_name, function=run_tool, takes_ctx=True)
     return None
 

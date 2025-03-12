@@ -27,7 +27,7 @@ from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPServer
 
 async with MCPServer(config={'url': "http://localhost:8000"}) as mcp_server:
-    agent = Agent("your-model", mcp_servers={"local": mcp_server})
+    agent = Agent("your-model", mcp_servers=[mcp_server])
     # Use the agent here
 ```
 
@@ -53,7 +53,7 @@ async def main():
     async with MCPServer(config=config) as server:
         agent = Agent(
             'your-model',
-            mcp_servers={'your_service': server},
+            mcp_servers=[server],
             system_prompt="Your system prompt here"
         )
         result = await agent.run('Your prompt here')
@@ -73,6 +73,6 @@ from pydantic_ai.mcp import MCPServer
 
 async with MCPServer(url="http://localhost:8000") as local_server, \
          MCPServer(config={'url': "https://remote-mcp.example.com"}) as remote_server:
-    agent = Agent("your-model", mcp_servers={"local": local_server, "remote": remote_server})
+    agent = Agent("your-model", mcp_servers=[local_server, remote_server])
     # Use the agent here
 ```
