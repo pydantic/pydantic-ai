@@ -36,6 +36,8 @@ except ImportError as _import_error:
 
 from pydantic_ai.agent import Agent
 from pydantic_ai.messages import ModelMessage, PartDeltaEvent, TextPartDelta
+from pydantic_ai.models.openai import OpenAIModel
+from pydantic_ai.providers.openai import OpenAIProvider
 
 __version__ = version('pydantic-ai')
 
@@ -71,6 +73,11 @@ Special prompt:
         help='Model to use, it should be "<provider>:<model>" e.g. "openai:gpt-4o". If omitted it will default to "openai:gpt-4o"',
         default='openai:gpt-4o',
     ).completer = argcomplete.ChoicesCompleter(list(get_literal_values(KnownModelName)))  # type: ignore[reportPrivateUsage]
+    parser.add_argument(
+        '--openai_api_base_url',
+        help='Base url to use with model',
+        default=None,
+    )
     parser.add_argument('--no-stream', action='store_true', help='Whether to stream responses from OpenAI')
     parser.add_argument('--version', action='store_true', help='Show version and exit')
 
@@ -85,8 +92,15 @@ Special prompt:
     now_utc = datetime.now(timezone.utc)
     tzname = now_utc.astimezone().tzinfo.tzname(now_utc)  # type: ignore
     try:
+        if args.openai_api_base_url:
+            openaimodel = OpenAIModel(
+                model_name=args.model,
+                provider=OpenAIProvider(base_url=args.openai_api_base_url))
+        else:
+            openaimodel = None
+
         agent = Agent(
-            model=args.model or 'openai:gpt-4o',
+            model=openaimodel or args.model or 'openai:gpt-4o',
             system_prompt=f"""\
     Help the user by responding to their request, the output should be concise and always written in markdown.
     The current date and time is {datetime.now()} {tzname}.
