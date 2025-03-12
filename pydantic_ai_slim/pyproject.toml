@@ -59,7 +59,7 @@ tavily = ["tavily-python>=0.5.0"]
 # CLI
 cli = ["rich>=13", "prompt-toolkit>=3", "argcomplete>=3.5.0"]
 # MCP
-mcp = ["mcp[cli]>=0.1.0; python_version >= '3.10'"]
+mcp = ["mcp[cli] @ git+https://github.com/Kludex/python-sdk.git@close-resources ; python_version >= '3.10'"]
 
 [dependency-groups]
 dev = [
@@ -76,6 +76,9 @@ dev = [
     "diff-cover>=9.2.0",
     "boto3-stubs[bedrock-runtime]",
 ]
+
+[tool.hatch.metadata]
+allow-direct-references = true
 
 [project.scripts]
 pai = "pydantic_ai._cli:app"

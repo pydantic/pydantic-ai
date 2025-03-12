@@ -117,8 +117,12 @@ class MCPServer:
         else:
             read_stream, write_stream = await self.exit_stack.enter_async_context(sse_client(url=self.url))
 
-        client_session = ClientSession(read_stream=read_stream, write_stream=write_stream)
-        self._client = cast(ClientSession, await self.exit_stack.enter_async_context(client_session))
+        self._client = cast(
+            ClientSession,
+            await self.exit_stack.enter_async_context(
+                ClientSession(read_stream=read_stream, write_stream=write_stream)
+            ),
+        )
         await self._client.initialize()
         return self
 
