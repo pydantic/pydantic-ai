@@ -36,26 +36,22 @@ class MCPServer:
         self._config = config
         self.exit_stack = AsyncExitStack()
 
-    @property
-    def tools(self) -> dict[str, ToolDefinition]:
-        """The tools that the server has."""
-        return self._tools
-
     async def list_tools(self) -> list[ToolDefinition]:
-        """This is the only method that needs to be implemented by the server."""
+        """Retrieve the tools that the server has.
+
+        We don't cache it because the tools might change. We also don't
+        """
         tools = await self._client.list_tools()
-        self._tools = {
-            tool.name: ToolDefinition(
+        return [
+            ToolDefinition(
                 name=tool.name,
                 description=tool.description or '',
                 parameters_json_schema=tool.inputSchema,
             )
             for tool in tools.tools
-        }
-        return list(self.tools.values())
+        ]
 
     async def call_tool(self, tool_name: str, arguments: dict[str, Any]) -> CallToolResult:
-        """This is the only method that needs to be implemented by the server."""
         return await self._client.call_tool(tool_name, arguments)  # type: ignore
 
     async def __aenter__(self) -> MCPServer:
@@ -78,7 +74,10 @@ class MCPServer:
         return self
 
     async def __aexit__(
-        self, exc_type: type[Exception] | None, exc_value: Exception | None, traceback: TracebackType | None
+        self,
+        exc_type: type[Exception] | None,
+        exc_value: Exception | None,
+        traceback: TracebackType | None,
     ) -> None:
         await self.exit_stack.aclose()
 
