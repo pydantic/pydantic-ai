@@ -9,7 +9,6 @@ from contextvars import ContextVar
 from dataclasses import field
 from typing import TYPE_CHECKING, Any, Generic, Literal, Union, cast
 
-from mcp.types import CallToolResult
 from opentelemetry.trace import Span, Tracer
 from typing_extensions import TypeGuard, TypeVar, assert_never
 
@@ -31,6 +30,8 @@ from .settings import ModelSettings, merge_model_settings
 from .tools import RunContext, Tool, ToolDefinition
 
 if TYPE_CHECKING:
+    from mcp.types import CallToolResult
+
     from .mcp import MCPServer
 
 __all__ = (
