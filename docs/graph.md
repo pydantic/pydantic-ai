@@ -561,13 +561,13 @@ async def main():
 
 ## State Persistence
 
-The greatest value of finite state machine (FSM) graphs comes when their execution is interrupted. This can be for a variety of reasons:
+One of the biggest benefits of finite state machine (FSM) graphs is how they simplify the handling of interrupted execution. This might happen for a variety of reasons:
 
-- because the logic they encompass must be paused — e.g. the returns workflow for an e-commerce order needs to wait for the item to be posted to the returns center or because execution of the next node needs input from a user so needs to wait for a new http request,
-- because their execution takes long enough that the entire graph can't be executed in a single continuous run — e.g. a deep research agent that takes hours to run,
-- or, because multiple nodes can be run in parallel on different instances (note: parallel node execution is not yet supported in `pydantic-graph`, see [#704](https://github.com/pydantic/pydantic-ai/issues/704)).
+- the state machine logic might fundamentally need to be paused — e.g. the returns workflow for an e-commerce order needs to wait for the item to be posted to the returns center or because execution of the next node needs input from a user so needs to wait for a new http request,
+- the execution takes so long that the entire graph can't reliably be executed in a single continuous run — e.g. a deep research agent that might take hours to run,
+- you want to run multiple graph nodes in parallel in different processes / hardware instances (note: parallel node execution is not yet supported in `pydantic-graph`, see [#704](https://github.com/pydantic/pydantic-ai/issues/704)).
 
-In all these scenarios, conventional control flow (boolean logic and nest function calls) breaks down and application code becomes spaghetti with the logic required to interrupt and resume execution dominating the code.
+Trying to make a conventional control flow (i.e., boolean logic and nested function calls) implementation compatible with these usage scenarios generally results in brittle and over-complicated spaghetti code, with the logic required to interrupt and resume execution dominating the implementation.
 
 To allow graph runs to be interrupted and resumed, `pydantic-graph` provides state persistence — a system for snapshotting the state of a graph run before and after each node is run, allowing a graph run to be resumed from any point in the graph.
 
@@ -575,17 +575,17 @@ To allow graph runs to be interrupted and resumed, `pydantic-graph` provides sta
 
 - [`SimpleStatePersistence`][pydantic_graph.SimpleStatePersistence] — Simple in memory state persistence that just hold the latest snapshot. If no state persistence implementation is provided when running a graph, this is used by default.
 - [`FullStatePersistence`][pydantic_graph.FullStatePersistence] — In memory state persistence that hold a list of snapshots.
-- [`FileStatePersistence`][pydantic_graph.persistence.file.FileStatePersistence] — File based state persistence that saves snapshots to a JSON file.
+- [`FileStatePersistence`][pydantic_graph.persistence.file.FileStatePersistence] — File-based state persistence that saves snapshots to a JSON file.
 
-In production applications, developers should implement their own state persistence by subclassing [`BaseStatePersistence`][pydantic_graph.persistence.BaseStatePersistence] abstract base class.
+In production applications, developers should implement their own state persistence by subclassing [`BaseStatePersistence`][pydantic_graph.persistence.BaseStatePersistence] abstract base class, which might persist runs in a relational database like PostgresQL.
 
 At a high level the role of `StatePersistence` implementations is to store and retrieve [`NodeSnapshot`][pydantic_graph.persistence.NodeSnapshot] and [`EndSnapshot`][pydantic_graph.persistence.EndSnapshot] objects.
 
-[`graph.next_from_persistence()`][pydantic_graph.graph.Graph.next_from_persistence] may be used to run nodes of a graph based on its state stored in persistence.
+[`graph.next_from_persistence()`][pydantic_graph.graph.Graph.next_from_persistence] may be used to run the next node of a graph run based on the state stored in persistence.
 
 We can run the `count_down_graph` from [above](#iterating-over-a-graph), using [`graph.next_from_persistence()`][pydantic_graph.graph.Graph.next_from_persistence] and [`FileStatePersistence`][pydantic_graph.persistence.file.FileStatePersistence].
 
-As you can see in this code, `run_node` requires no external application state apart from state persistence to be run, meaning graphs can easily be executed by distributed execution and queueing systems.
+As you can see in this code, `run_node` requires no external application state (apart from state persistence) to be run, meaning graphs can easily be executed by distributed execution and queueing systems.
 
 ```python {title="count_down_from_persistence.py" noqa="I001" py="3.10"}
 from pathlib import Path
