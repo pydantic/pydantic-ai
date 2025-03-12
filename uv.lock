@@ -2740,7 +2740,8 @@ name = "pydantic-ai"
 version = "0.0.40"
 source = { editable = "." }
 dependencies = [
-    { name = "pydantic-ai-slim", extra = ["anthropic", "bedrock", "cli", "cohere", "groq", "mcp", "mistral", "openai", "vertexai"] },
+    { name = "pydantic-ai-slim", extra = ["anthropic", "bedrock", "cli", "cohere", "groq", "mistral", "openai", "vertexai"] },
+    { name = "pydantic-ai-slim", extra = ["mcp"], marker = "python_full_version >= '3.10'" },
 ]
 
 [package.optional-dependencies]
@@ -2775,7 +2776,8 @@ lint = [
 requires-dist = [
     { name = "logfire", marker = "extra == 'logfire'", specifier = ">=2.3" },
     { name = "pydantic-ai-examples", marker = "extra == 'examples'", editable = "examples" },
-    { name = "pydantic-ai-slim", extras = ["openai", "vertexai", "groq", "anthropic", "mistral", "cohere", "bedrock", "cli", "mcp"], editable = "pydantic_ai_slim" },
+    { name = "pydantic-ai-slim", extras = ["mcp"], marker = "python_full_version >= '3.10'", editable = "pydantic_ai_slim" },
+    { name = "pydantic-ai-slim", extras = ["openai", "vertexai", "groq", "anthropic", "mistral", "cohere", "bedrock", "cli"], editable = "pydantic_ai_slim" },
 ]
 provides-extras = ["examples", "logfire"]
 
