@@ -9,7 +9,7 @@ from collections.abc import Sequence
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
 from types import TracebackType
-from typing import Any, cast
+from typing import Any
 
 from pydantic_ai.tools import ToolDefinition
 
@@ -117,11 +117,8 @@ class MCPServer:
         else:
             read_stream, write_stream = await self.exit_stack.enter_async_context(sse_client(url=self.url))
 
-        self._client = cast(
-            ClientSession,
-            await self.exit_stack.enter_async_context(
-                ClientSession(read_stream=read_stream, write_stream=write_stream)
-            ),
+        self._client = await self.exit_stack.enter_async_context(
+            ClientSession(read_stream=read_stream, write_stream=write_stream)
         )
         await self._client.initialize()
         return self
