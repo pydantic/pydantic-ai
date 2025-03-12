@@ -1,7 +1,9 @@
 # MCP Servers
 
-PydanticAI supports integration with MCP (Model Control Protocol) Servers, allowing you to extend agent capabilities
-through external services. This integration enables dynamic tool discovery and remote execution.
+**PydanticAI** supports integration with
+[MCP (Model Control Protocol) Servers](https://modelcontextprotocol.io/introduction),
+allowing you to extend agent capabilities through external services. This integration enables
+dynamic tool discovery and remote execution.
 
 ## Install
 
@@ -17,8 +19,9 @@ pip/uv-add 'pydantic-ai-slim[mcp]'
 
 ## Usage
 
-The [MCPServer][pydantic_ai.mcp.MCPServer] must be used within a context manager to ensure proper initialization and cleanup of
-resources. You can use either an HTTP/SSE server or a stdio-based server.
+The [MCPServer][pydantic_ai.mcp.MCPServer] must be used within an async context manager to ensure
+proper initialization and cleanup of resources. You can use either an HTTP/SSE server or a
+stdio-based server.
 
 ### HTTP/SSE Server
 
@@ -26,41 +29,30 @@ resources. You can use either an HTTP/SSE server or a stdio-based server.
 from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPServer
 
-async with MCPServer(config={'url': "http://localhost:8000"}) as mcp_server:
+async with MCPServer.sse(url="http://localhost:8000/sse") as mcp_server:
     agent = Agent("your-model", mcp_servers=[mcp_server])
     # Use the agent here
 ```
 
 ### Stdio Server
 
-For stdio-based servers, you can use the [`StdioMCPServerConfig`][pydantic_ai.mcp.StdioMCPServerConfig] class to configure the server.
+For stdio-based servers,
 
 ```python {title="stdio_mcp_setup.py"}
-import os
-from pydantic_ai import Agent
-from pydantic_ai.mcp import MCPServer, StdioMCPServerConfig
+import asyncio
 
-# Configure the stdio server
-config = StdioMCPServerConfig(
-    command='/path/to/your/python',  # Path to Python interpreter
-    args=['-m', 'your_mcp_module'],  # Module to run
-    env={
-        'API_TOKEN': os.getenv('API_TOKEN'),
-    },
-)
+from pydantic_ai.agent import Agent
+from pydantic_ai.mcp import MCPServer
+
 
 async def main():
-    async with MCPServer(config=config) as server:
-        agent = Agent(
-            'your-model',
-            mcp_servers=[server],
-            system_prompt="Your system prompt here"
-        )
-        result = await agent.run('Your prompt here')
-        print(result.data)
+    async with MCPServer.stdio('python', ['-m', 'pydantic_ai.mcp']) as server:
+        agent = Agent('openai:gpt-4o', mcp_servers=[server])
+        result = await agent.run('Can you convert 30 degrees celsius to fahrenheit?')
+    print(result.data)
 
-if __name__ == '__main__':
-    asyncio.run(main())
+
+asyncio.run(main())
 ```
 
 ### Multiple Servers
@@ -71,8 +63,8 @@ You can connect to multiple MCP servers simultaneously:
 from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPServer
 
-async with MCPServer(url="http://localhost:8000") as local_server, \
-         MCPServer(config={'url': "https://remote-mcp.example.com"}) as remote_server:
+async with MCPServer.sse(url="http://localhost:8000") as local_server, \
+         MCPServer.sse(url="https://remote-mcp.example.com") as remote_server:
     agent = Agent("your-model", mcp_servers=[local_server, remote_server])
     # Use the agent here
 ```
