@@ -4,7 +4,6 @@ import json
 import os
 import re
 import sys
-import warnings
 from collections.abc import AsyncIterator, Iterable
 from dataclasses import dataclass
 from pathlib import Path
