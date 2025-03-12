@@ -30,8 +30,6 @@ from .settings import ModelSettings, merge_model_settings
 from .tools import RunContext, Tool, ToolDefinition
 
 if TYPE_CHECKING:
-    from mcp.types import CallToolResult
-
     from .mcp import MCPServer
 
 __all__ = (
@@ -666,7 +664,7 @@ async def _tool_from_mcp_server(
     tool_name: str,
     ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
 ) -> Tool[DepsT] | None:
-    async def run_tool(ctx: RunContext[DepsT], **args: Any) -> CallToolResult:
+    async def run_tool(ctx: RunContext[DepsT], **args: Any) -> Any:
         result = await server.call_tool(tool_name, args)
         return result
 
