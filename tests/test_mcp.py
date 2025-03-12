@@ -5,13 +5,14 @@ from dirty_equals import IsInstance
 from inline_snapshot import snapshot
 
 from pydantic_ai.agent import Agent
-from pydantic_ai.mcp import MCPServer
 from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart, UserPromptPart
 
 from .conftest import IsDatetime, try_import
 
 with try_import() as imports_successful:
     from mcp.types import CallToolResult, TextContent
+
+    from pydantic_ai.mcp import MCPServer
 
 
 pytestmark = [
