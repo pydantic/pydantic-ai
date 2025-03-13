@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Callable, Generic, Literal, Union, cast
 
 from pydantic import ValidationError
+from pydantic.json_schema import GenerateJsonSchema
 from pydantic_core import SchemaValidator
 from typing_extensions import Concatenate, ParamSpec, TypeAlias, TypeVar
 
@@ -154,6 +155,7 @@ class Tool(Generic[AgentDepsT]):
     prepare: ToolPrepareFunc[AgentDepsT] | None
     docstring_format: DocstringFormat
     require_parameter_descriptions: bool
+    schema_generator: type[GenerateJsonSchema]
     _is_async: bool = field(init=False)
     _single_arg_name: str | None = field(init=False)
     _positional_fields: list[str] = field(init=False)
@@ -176,6 +178,7 @@ class Tool(Generic[AgentDepsT]):
         prepare: ToolPrepareFunc[AgentDepsT] | None = None,
         docstring_format: DocstringFormat = 'auto',
         require_parameter_descriptions: bool = False,
+        schema_generator: type[GenerateJsonSchema] = GenerateJsonSchema,
     ):
         """Create a new tool instance.
 
@@ -225,11 +228,14 @@ class Tool(Generic[AgentDepsT]):
             docstring_format: The format of the docstring, see [`DocstringFormat`][pydantic_ai.tools.DocstringFormat].
                 Defaults to `'auto'`, such that the format is inferred from the structure of the docstring.
             require_parameter_descriptions: If True, raise an error if a parameter description is missing. Defaults to False.
+            schema_generator: The JSON schema generator class to use. Defaults to `GenerateJsonSchema`.
         """
         if takes_ctx is None:
             takes_ctx = _pydantic.takes_ctx(function)
 
-        f = _pydantic.function_schema(function, takes_ctx, docstring_format, require_parameter_descriptions)
+        f = _pydantic.function_schema(
+            function, takes_ctx, docstring_format, require_parameter_descriptions, schema_generator
+        )
         self.function = function
         self.takes_ctx = takes_ctx
         self.max_retries = max_retries
