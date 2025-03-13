@@ -15,6 +15,7 @@ from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._utils import guard_tool_call_id as _guard_tool_call_id
 from ..messages import (
     BinaryContent,
+    DocumentUrl,
     ImageUrl,
     ModelMessage,
     ModelRequest,
@@ -342,8 +343,11 @@ class GroqModel(Model):
                         content.append(chat.ChatCompletionContentPartImageParam(image_url=image_url, type='image_url'))
                     else:
                         raise RuntimeError('Only images are supported for binary content in Groq.')
+                elif isinstance(item, DocumentUrl):  # pragma: no cover
+                    raise RuntimeError('DocumentUrl is not supported in Groq.')
                 else:  # pragma: no cover
                     raise RuntimeError(f'Unsupported content type: {type(item)}')
+
         return chat.ChatCompletionUserMessageParam(role='user', content=content)
 
 
