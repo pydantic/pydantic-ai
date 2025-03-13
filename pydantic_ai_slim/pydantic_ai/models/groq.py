@@ -29,16 +29,10 @@ from ..messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from ..providers import Provider
+from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
-from . import (
-    Model,
-    ModelRequestParameters,
-    StreamedResponse,
-    cached_async_http_client,
-    check_allow_model_requests,
-)
+from . import Model, ModelRequestParameters, StreamedResponse, cached_async_http_client, check_allow_model_requests
 
 try:
     from groq import NOT_GIVEN, APIStatusError, AsyncGroq, AsyncStream
@@ -144,8 +138,6 @@ class GroqModel(Model):
 
         if provider is not None:
             if isinstance(provider, str):
-                from ..providers import infer_provider
-
                 self.client = infer_provider(provider).client
             else:
                 self.client = provider.client
