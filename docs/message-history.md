@@ -223,6 +223,51 @@ print(result2.all_messages())
 ```
 _(This example is complete, it can be run "as is")_
 
+## Storing and loading messages (to JSON)
+
+While maintaining conversation state in memory is enough for many applications, often times you may want to store the messages history of an agent run on disk or in a database. This might be for evals, for sharing data between Python and JavaScript/TypeScript, or any number of other use cases.
+
+The intended way to do this is using a `TypeAdapter`.
+
+We export [`ModelMessagesTypeAdapter`][pydantic_ai.messages.ModelMessagesTypeAdapter] that can be used for this, or you can create your own.
+
+Here's an example showing how:
+
+```python {title="serialize messages to json"}
+from pydantic_core import to_jsonable_python
+
+from pydantic_ai import Agent
+from pydantic_ai.messages import ModelMessagesTypeAdapter  # (1)!
+
+agent = Agent('openai:gpt-4o', system_prompt='Be a helpful assistant.')
+
+result1 = agent.run_sync('Tell me a joke.')
+history_step_1 = result1.all_messages()
+as_python_objects = to_jsonable_python(history_step_1)  # (2)!
+same_history_as_step_1 = ModelMessagesTypeAdapter.validate_python(as_python_objects)
+
+result2 = agent.run_sync(  # (3)!
+    'Tell me a different joke.', message_history=same_history_as_step_1
+)
+```
+
+1. Alternatively, you can create a `TypeAdapter` from scratch:
+   ```python {lint="skip" format="skip"}
+   from pydantic import TypeAdapter
+   from pydantic_ai.messages import ModelMessage
+   ModelMessagesTypeAdapter = TypeAdapter(list[ModelMessage])
+   ```
+2. Alternatively you can serialize to/from JSON directly:
+   ```python {test="skip" lint="skip" format="skip"}
+   from pydantic_core import to_json
+   ...
+   as_json_objects = to_json(history_step_1)
+   same_history_as_step_1 = ModelMessagesTypeAdapter.validate_json(as_json_objects)
+   ```
+3. You can now continue the conversation with history `same_history_as_step_1` despite creating a new agent run.
+
+_(This example is complete, it can be run "as is")_
+
 ## Other ways of using messages
 
 Since messages are defined by simple dataclasses, you can manually create and manipulate, e.g. for testing.
