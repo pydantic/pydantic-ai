@@ -434,15 +434,38 @@ agent = Agent(model)
 ...
 ```
 
-### `api_key` argument
+### `provider` argument
 
-If you don't want to or can't set the environment variable, you can pass it at runtime via the [`api_key` argument][pydantic_ai.models.groq.GroqModel.__init__]:
+You can provide a custom [`Provider`][pydantic_ai.providers.Provider] via the
+[`provider` argument][pydantic_ai.models.groq.GroqModel.__init__]:
 
-```python {title="groq_model_api_key.py"}
+```python {title="groq_model_provider.py"}
 from pydantic_ai import Agent
 from pydantic_ai.models.groq import GroqModel
+from pydantic_ai.providers.groq import GroqProvider
 
-model = GroqModel('llama-3.3-70b-versatile', api_key='your-api-key')
+model = GroqModel(
+    'llama-3.3-70b-versatile', provider=GroqProvider(api_key='your-api-key')
+)
+agent = Agent(model)
+...
+```
+
+You can also customize the [`GroqProvider`][pydantic_ai.providers.groq.GroqProvider] with a
+custom [`AsyncHTTPClient`][httpx.AsyncHTTPClient]:
+
+```python {title="groq_model_custom_provider.py"}
+from httpx import AsyncClient
+
+from pydantic_ai import Agent
+from pydantic_ai.models.groq import GroqModel
+from pydantic_ai.providers.groq import GroqProvider
+
+custom_http_client = AsyncClient(timeout=30)
+model = GroqModel(
+    'llama-3.3-70b-versatile',
+    provider=GroqProvider(api_key='your-api-key', http_client=custom_http_client),
+)
 agent = Agent(model)
 ...
 ```
