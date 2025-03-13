@@ -77,7 +77,7 @@ class GroqModelSettings(ModelSettings):
 
 
 @dataclass(init=False)
-class GroqModel(Model):
+class GroqInterface(Model):
     """A model that uses the Groq API.
 
     Internally, this uses the [Groq Python client](https://github.com/groq/groq-python) to interact with the API.
@@ -436,3 +436,8 @@ def _map_usage(completion: chat.ChatCompletionChunk | chat.ChatCompletion) -> us
         response_tokens=response_usage.completion_tokens,
         total_tokens=response_usage.total_tokens,
     )
+
+
+@deprecated('Use GroqInterface instead.')
+class GroqModel(GroqInterface):
+    """A backwards-compatible alias for GroqInterface."""

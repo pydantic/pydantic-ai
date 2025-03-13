@@ -17,7 +17,7 @@ from ..exceptions import UserError
 from ..messages import ModelMessage, ModelResponse
 from ..settings import ModelSettings
 from . import ModelRequestParameters, StreamedResponse, cached_async_http_client
-from .gemini import GeminiModel, GeminiModelName
+from .gemini import GeminiInterface, GeminiModelName
 
 try:
     import google.auth
@@ -59,7 +59,7 @@ The template is used thus:
 
 @deprecated('Please use `GeminiModel(provider=GoogleVertexProvider(...))` instead.')
 @dataclass(init=False)
-class VertexAIModel(GeminiModel):
+class VertexAIModel(GeminiInterface):
     """A model that uses Gemini via the `*-aiplatform.googleapis.com` VertexAI API."""
 
     service_account_file: Path | str | None

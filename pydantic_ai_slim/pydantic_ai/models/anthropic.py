@@ -11,7 +11,7 @@ from typing import Any, Literal, Union, cast, overload
 
 from anthropic.types import DocumentBlockParam
 from httpx import AsyncClient as AsyncHTTPClient
-from typing_extensions import assert_never
+from typing_extensions import assert_never, deprecated
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._utils import guard_tool_call_id as _guard_tool_call_id
@@ -100,7 +100,7 @@ class AnthropicModelSettings(ModelSettings):
 
 
 @dataclass(init=False)
-class AnthropicModel(Model):
+class AnthropicInterface(Model):
     """A model that uses the Anthropic API.
 
     Internally, this uses the [Anthropic Python client](https://github.com/anthropics/anthropic-sdk-python) to interact with the API.
@@ -513,3 +513,8 @@ class AnthropicStreamedResponse(StreamedResponse):
     def timestamp(self) -> datetime:
         """Get the timestamp of the response."""
         return self._timestamp
+
+
+@deprecated('Use AnthropicInterface instead.')
+class AnthropicModel(AnthropicInterface):
+    """A backwards-compatible alias for AnthropicInterface."""

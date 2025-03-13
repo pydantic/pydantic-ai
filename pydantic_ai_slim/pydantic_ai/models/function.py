@@ -9,7 +9,7 @@ from datetime import datetime
 from itertools import chain
 from typing import Callable, Union
 
-from typing_extensions import TypeAlias, assert_never, overload
+from typing_extensions import TypeAlias, assert_never, deprecated, overload
 
 from .. import _utils, usage
 from .._utils import PeekableAsyncStream
@@ -35,7 +35,7 @@ from . import Model, ModelRequestParameters, StreamedResponse
 
 
 @dataclass(init=False)
-class FunctionModel(Model):
+class FunctionInterface(Model):
     """A model controlled by a local function.
 
     Apart from `__init__`, all methods are private or match those of the base class.
@@ -295,3 +295,8 @@ def _estimate_string_tokens(content: str | Sequence[UserContent]) -> int:
             else:
                 tokens += 0
         return tokens
+
+
+@deprecated('Use FunctionInterface instead.')
+class FunctionModel(FunctionInterface):
+    """A backwards-compatible alias for FunctionInterface."""

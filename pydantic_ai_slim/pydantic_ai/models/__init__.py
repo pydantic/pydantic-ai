@@ -15,7 +15,7 @@ from functools import cache
 from typing import TYPE_CHECKING
 
 import httpx
-from typing_extensions import Literal
+from typing_extensions import Literal, deprecated
 
 from .._parts_manager import ModelResponsePartsManager
 from ..exceptions import UserError
@@ -227,7 +227,7 @@ class ModelRequestParameters:
     result_tools: list[ToolDefinition]
 
 
-class Model(ABC):
+class Interface(ABC):
     """Abstract class for a model."""
 
     @abstractmethod
@@ -270,6 +270,11 @@ class Model(ABC):
     def base_url(self) -> str | None:
         """The base URL for the provider API, if available."""
         return None
+
+
+@deprecated('Use Interface instead.')
+class Model(Interface):
+    """A backwards-compatible alias for Interface."""
 
 
 @dataclass

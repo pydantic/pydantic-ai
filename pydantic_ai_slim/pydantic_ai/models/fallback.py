@@ -5,6 +5,8 @@ from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Callable
 
+from typing_extensions import deprecated
+
 from ..exceptions import FallbackExceptionGroup, ModelHTTPError
 from . import KnownModelName, Model, ModelRequestParameters, StreamedResponse, infer_model
 
@@ -15,7 +17,7 @@ if TYPE_CHECKING:
 
 
 @dataclass(init=False)
-class FallbackModel(Model):
+class FallbackInterface(Model):
     """A model that uses one or more fallback models upon failure.
 
     Apart from `__init__`, all methods are private or match those of the base class.
@@ -120,3 +122,8 @@ def _default_fallback_condition_factory(exceptions: tuple[type[Exception], ...])
         return isinstance(exception, exceptions)
 
     return fallback_condition
+
+
+@deprecated('Use FallbackInterface instead.')
+class FallbackModel(FallbackInterface):
+    """A backwards-compatible alias for FallbackInterface."""

@@ -9,6 +9,7 @@ from datetime import date, datetime, timedelta
 from typing import Any, Literal
 
 import pydantic_core
+from typing_extensions import deprecated
 
 from .. import _utils
 from ..messages import (
@@ -48,7 +49,7 @@ class _FunctionToolResult:
 
 
 @dataclass
-class TestModel(Model):
+class TestInterface(Model):
     """A model specifically for testing purposes.
 
     This will (by default) call all tools in the agent, then return a tool response if possible,
@@ -429,3 +430,8 @@ class _JsonSchemaTestData:
 def _get_string_usage(text: str) -> Usage:
     response_tokens = _estimate_string_tokens(text)
     return Usage(response_tokens=response_tokens, total_tokens=response_tokens)
+
+
+@deprecated('Use TestInterface instead.')
+class TestModel(TestInterface):
+    """A backwards-compatible alias for TestInterface."""

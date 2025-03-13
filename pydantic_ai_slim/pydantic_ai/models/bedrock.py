@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Generic, Literal, Union, cast, overload
 
 import anyio
 import anyio.to_thread
-from typing_extensions import ParamSpec, assert_never
+from typing_extensions import ParamSpec, assert_never, deprecated
 
 from pydantic_ai import _utils, result
 from pydantic_ai.messages import (
@@ -113,7 +113,7 @@ T = typing.TypeVar('T')
 
 
 @dataclass(init=False)
-class BedrockConverseModel(Model):
+class BedrockConverseInterface(Model):
     """A model that uses the Bedrock Converse API."""
 
     client: BedrockRuntimeClient
@@ -497,3 +497,8 @@ class _AsyncIteratorWrapper(Generic[T]):
                 raise StopAsyncIteration
             else:
                 raise e
+
+
+@deprecated('Use BedrockConverseInterface instead.')
+class BedrockConverseModel(BedrockConverseInterface):
+    """A backwards-compatible alias for BedrockConverseInterface."""

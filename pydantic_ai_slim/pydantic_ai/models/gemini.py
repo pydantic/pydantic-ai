@@ -76,7 +76,7 @@ class GeminiModelSettings(ModelSettings):
 
 
 @dataclass(init=False)
-class GeminiModel(Model):
+class GeminiInterface(Model):
     """A model that uses Gemini via `generativelanguage.googleapis.com` API.
 
     This is implemented from scratch rather than using a dedicated SDK, good API documentation is
@@ -891,3 +891,8 @@ def _ensure_decodeable(content: bytearray) -> bytearray:
             content = content[:-1]  # this will definitely succeed before we run out of bytes
         else:
             return content
+
+
+@deprecated('Use GeminiInterface instead.')
+class GeminiModel(GeminiInterface):
+    """A backwards-compatible alias for GeminiInterface."""

@@ -87,7 +87,7 @@ class OpenAIModelSettings(ModelSettings):
 
 
 @dataclass(init=False)
-class OpenAIModel(Model):
+class OpenAIInterface(Model):
     """A model that uses the OpenAI API.
 
     Internally, this uses the [OpenAI Python client](https://github.com/openai/openai-python) to interact with the API.
@@ -514,3 +514,8 @@ def _map_usage(response: chat.ChatCompletion | ChatCompletionChunk) -> usage.Usa
             total_tokens=response_usage.total_tokens,
             details=details,
         )
+
+
+@deprecated('Use OpenAIInterface instead.')
+class OpenAIModel(OpenAIInterface):
+    """A backwards-compatible alias for OpenAIInterface."""

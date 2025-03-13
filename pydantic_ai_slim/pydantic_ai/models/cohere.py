@@ -7,7 +7,7 @@ from typing import Literal, Union, cast
 
 from cohere import TextAssistantMessageContentItem
 from httpx import AsyncClient as AsyncHTTPClient
-from typing_extensions import assert_never
+from typing_extensions import assert_never, deprecated
 
 from .. import ModelHTTPError, result
 from .._utils import guard_tool_call_id as _guard_tool_call_id
@@ -86,7 +86,7 @@ class CohereModelSettings(ModelSettings):
 
 
 @dataclass(init=False)
-class CohereModel(Model):
+class CohereInterface(Model):
     """A model that uses the Cohere API.
 
     Internally, this uses the [Cohere Python client](
@@ -300,3 +300,8 @@ def _map_usage(response: ChatResponse) -> result.Usage:
             total_tokens=(request_tokens or 0) + (response_tokens or 0),
             details=details,
         )
+
+
+@deprecated('Use CohereInterface instead.')
+class CohereModel(CohereInterface):
+    """A backwards-compatible alias for CohereInterface."""

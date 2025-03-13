@@ -5,6 +5,8 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any
 
+from typing_extensions import deprecated
+
 from ..messages import ModelMessage, ModelResponse
 from ..settings import ModelSettings
 from ..usage import Usage
@@ -12,7 +14,7 @@ from . import KnownModelName, Model, ModelRequestParameters, StreamedResponse, i
 
 
 @dataclass(init=False)
-class WrapperModel(Model):
+class WrapperInterface(Model):
     """Model which wraps another model."""
 
     wrapped: Model
@@ -43,3 +45,8 @@ class WrapperModel(Model):
 
     def __getattr__(self, item: str):
         return getattr(self.wrapped, item)
+
+
+@deprecated('Use WrapperInterface instead.')
+class WrapperModel(WrapperInterface):
+    """A backwards-compatible alias for WrapperInterface."""

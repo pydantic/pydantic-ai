@@ -11,7 +11,7 @@ from typing import Any, Callable, Literal, Union, cast
 
 import pydantic_core
 from httpx import AsyncClient as AsyncHTTPClient, Timeout
-from typing_extensions import assert_never
+from typing_extensions import assert_never, deprecated
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils
 from .._utils import now_utc as _now_utc
@@ -98,7 +98,7 @@ class MistralModelSettings(ModelSettings):
 
 
 @dataclass(init=False)
-class MistralModel(Model):
+class MistralInterface(Model):
     """A model that uses Mistral.
 
     Internally, this uses the [Mistral Python client](https://github.com/mistralai/client-python) to interact with the API.
@@ -662,3 +662,8 @@ def _map_content(content: MistralOptionalNullable[MistralContent]) -> str | None
         result = None
 
     return result
+
+
+@deprecated('Use MistralInterface instead.')
+class MistralModel(MistralInterface):
+    """A backwards-compatible alias for MistralInterface."""

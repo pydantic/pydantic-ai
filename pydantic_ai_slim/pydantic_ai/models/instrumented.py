@@ -11,6 +11,7 @@ from opentelemetry._events import Event, EventLogger, EventLoggerProvider, get_e
 from opentelemetry.trace import Span, Tracer, TracerProvider, get_tracer_provider
 from opentelemetry.util.types import AttributeValue
 from pydantic import TypeAdapter
+from typing_extensions import deprecated
 
 from ..messages import (
     ModelMessage,
@@ -20,7 +21,7 @@ from ..messages import (
 from ..settings import ModelSettings
 from ..usage import Usage
 from . import KnownModelName, Model, ModelRequestParameters, StreamedResponse
-from .wrapper import WrapperModel
+from .wrapper import WrapperInterface
 
 MODEL_SETTING_ATTRIBUTES: tuple[
     Literal[
@@ -93,7 +94,7 @@ GEN_AI_REQUEST_MODEL_ATTRIBUTE = 'gen_ai.request.model'
 
 
 @dataclass
-class InstrumentedModel(WrapperModel):
+class InstrumentedInterface(WrapperInterface):
     """Model which is instrumented with OpenTelemetry."""
 
     options: InstrumentationSettings
@@ -272,3 +273,8 @@ class InstrumentedModel(WrapperModel):
                 return str(value)
             except Exception as e:
                 return f'Unable to serialize: {e}'
+
+
+@deprecated('Use InstrumentedInterface instead.')
+class InstrumentedModel(InstrumentedInterface):
+    """A backwards-compatible alias for InstrumentedInterface."""
