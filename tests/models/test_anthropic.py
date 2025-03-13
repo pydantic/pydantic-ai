@@ -15,6 +15,7 @@ from inline_snapshot import snapshot
 from pydantic_ai import Agent, ModelHTTPError, ModelRetry
 from pydantic_ai.messages import (
     BinaryContent,
+    DocumentUrl,
     ImageUrl,
     ModelRequest,
     ModelResponse,
@@ -616,3 +617,41 @@ def test_model_status_error(allow_model_requests: None) -> None:
     assert str(exc_info.value) == snapshot(
         "status_code: 500, model_name: claude-3-5-sonnet-latest, body: {'error': 'test error'}"
     )
+
+
+@pytest.mark.vcr()
+async def test_document_url_input(allow_model_requests: None, anthropic_api_key: str):
+    m = AnthropicModel('claude-3-5-sonnet-latest', api_key=anthropic_api_key)
+    agent = Agent(m)
+
+    document_url = DocumentUrl(url='https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf')
+
+    result = await agent.run(['What is the main content on this document?', document_url])
+    assert result.data == snapshot(
+        'The document appears to be a simple PDF file with only the text "Dummy PDF file" displayed at the top. It seems to be a blank or template document with minimal content.'
+    )
+
+
+@pytest.mark.vcr()
+async def test_text_document_url_input(allow_model_requests: None, anthropic_api_key: str):
+    m = AnthropicModel('claude-3-5-sonnet-latest', api_key=anthropic_api_key)
+    agent = Agent(m)
+
+    text_document_url = DocumentUrl(url='https://example-files.online-convert.com/document/txt/example.txt')
+
+    result = await agent.run(['What is the main content on this document?', text_document_url])
+    assert result.data == snapshot("""\
+This document is a TXT test file that primarily contains information about the use of placeholder names, specifically focusing on "John Doe" and its variants. The main content explains how these placeholder names are used in legal contexts and popular culture, particularly in English-speaking countries. The text describes:
+
+1. The various placeholder names used:
+- "John Doe" for males
+- "Jane Doe" or "Jane Roe" for females
+- "Jonnie Doe" and "Janie Doe" for children
+- "Baby Doe" for unknown children
+
+2. The usage of these names in different English-speaking countries, noting that while common in the US and Canada, they're less used in the UK, where "Joe Bloggs" or "John Smith" are preferred.
+
+3. How these names are used in legal contexts, forms, and popular culture.
+
+The document is formatted as a test file with metadata including its purpose, file type, and version. It also includes attribution information indicating the content is from Wikipedia and is licensed under Attribution-ShareAlike 4.0.\
+""")

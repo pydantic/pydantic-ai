@@ -4,6 +4,7 @@ import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime
+from mimetypes import guess_type
 from typing import Annotated, Any, Literal, Union, cast, overload
 
 import pydantic
@@ -83,9 +84,57 @@ class ImageUrl:
         else:
             raise ValueError(f'Unknown image file extension: {self.url}')
 
+    @property
+    def format(self) -> ImageFormat:
+        """The file format of the image.
+
+        The choice of supported formats were based on the Bedrock Converse API. Other APIs don't require to use a format.
+        """
+        return _image_format(self.media_type)
+
+
+@dataclass
+class DocumentUrl:
+    """The URL of the document."""
+
+    url: str
+    """The URL of the document."""
+
+    kind: Literal['document-url'] = 'document-url'
+    """Type identifier, this is available on all parts as a discriminator."""
+
+    @property
+    def media_type(self) -> str:
+        """Return the media type of the document, based on the url."""
+        type_, _ = guess_type(self.url)
+        if type_ is None:
+            raise RuntimeError(f'Unknown document file extension: {self.url}')
+        return type_
+
+    @property
+    def format(self) -> DocumentFormat:
+        """The file format of the document.
+
+        The choice of supported formats were based on the Bedrock Converse API. Other APIs don't require to use a format.
+        """
+        return _document_format(self.media_type)
+
 
 AudioMediaType: TypeAlias = Literal['audio/wav', 'audio/mpeg']
 ImageMediaType: TypeAlias = Literal['image/jpeg', 'image/png', 'image/gif', 'image/webp']
+DocumentMediaType: TypeAlias = Literal[
+    'application/pdf',
+    'text/plain',
+    'text/csv',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    'text/html',
+    'text/markdown',
+    'application/vnd.ms-excel',
+]
+AudioFormat: TypeAlias = Literal['wav', 'mp3']
+ImageFormat: TypeAlias = Literal['jpeg', 'png', 'gif', 'webp']
+DocumentFormat: TypeAlias = Literal['csv', 'doc', 'docx', 'html', 'md', 'pdf', 'txt', 'xls', 'xlsx']
 
 
 @dataclass
@@ -95,7 +144,7 @@ class BinaryContent:
     data: bytes
     """The binary data."""
 
-    media_type: AudioMediaType | ImageMediaType | str
+    media_type: AudioMediaType | ImageMediaType | DocumentMediaType | str
     """The media type of the binary data."""
 
     kind: Literal['binary'] = 'binary'
@@ -112,17 +161,69 @@ class BinaryContent:
         return self.media_type.startswith('image/')
 
     @property
-    def audio_format(self) -> Literal['mp3', 'wav']:
-        """Return the audio format given the media type."""
-        if self.media_type == 'audio/mpeg':
-            return 'mp3'
-        elif self.media_type == 'audio/wav':
-            return 'wav'
-        else:
-            raise ValueError(f'Unknown audio media type: {self.media_type}')
+    def is_document(self) -> bool:
+        """Return `True` if the media type is a document type."""
+        return self.media_type in {
+            'application/pdf',
+            'text/plain',
+            'text/csv',
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'text/html',
+            'text/markdown',
+            'application/vnd.ms-excel',
+        }
+
+    @property
+    def format(self) -> str:
+        """The file format of the binary content."""
+        if self.is_audio:
+            if self.media_type == 'audio/mpeg':
+                return 'mp3'
+            elif self.media_type == 'audio/wav':
+                return 'wav'
+        elif self.is_image:
+            return _image_format(self.media_type)
+        elif self.is_document:
+            return _document_format(self.media_type)
+        raise ValueError(f'Unknown media type: {self.media_type}')
 
 
-UserContent: TypeAlias = 'str | ImageUrl | AudioUrl | BinaryContent'
+UserContent: TypeAlias = 'str | ImageUrl | AudioUrl | DocumentUrl | BinaryContent'
+
+
+def _document_format(media_type: str) -> DocumentFormat:
+    if media_type == 'application/pdf':
+        return 'pdf'
+    elif media_type == 'text/plain':
+        return 'txt'
+    elif media_type == 'text/csv':
+        return 'csv'
+    elif media_type == 'application/vnd.openxmlformats-officedocument.wordprocessingml.document':
+        return 'docx'
+    elif media_type == 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet':
+        return 'xlsx'
+    elif media_type == 'text/html':
+        return 'html'
+    elif media_type == 'text/markdown':
+        return 'md'
+    elif media_type == 'application/vnd.ms-excel':
+        return 'xls'
+    else:
+        raise ValueError(f'Unknown document media type: {media_type}')
+
+
+def _image_format(media_type: str) -> ImageFormat:
+    if media_type == 'image/jpeg':
+        return 'jpeg'
+    elif media_type == 'image/png':
+        return 'png'
+    elif media_type == 'image/gif':
+        return 'gif'
+    elif media_type == 'image/webp':
+        return 'webp'
+    else:
+        raise ValueError(f'Unknown image media type: {media_type}')
 
 
 @dataclass
