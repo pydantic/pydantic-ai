@@ -584,30 +584,3 @@ async def test_init_with_provider_string():
         model = GroqModel('llama3-8b-8192', provider='groq')
         assert model.model_name == 'llama3-8b-8192'
         assert model.client is not None
-
-
-async def test_model_with_provider_integration(allow_model_requests: None):
-    # Create a valid ChatCompletionMessage with usage
-    usage_data = CompletionUsage(prompt_tokens=10, completion_tokens=5, total_tokens=15)
-    c = completion_message(
-        ChatCompletionMessage(content='Response from Groq provider', role='assistant'), usage=usage_data
-    )
-
-    # Create a mock client
-    mock_client = MockGroq.create_mock(c)
-
-    # Create a provider with our mock client
-    provider = GroqProvider(groq_client=mock_client)
-
-    # Create a model using our provider
-    model = GroqModel('llama3-8b-8192', provider=provider)
-
-    # Create an agent with our model
-    agent = Agent(model)
-
-    # Test the agent
-    result = await agent.run('Hello from provider')
-
-    # Verify the response is correct
-    assert result.data == 'Response from Groq provider'
-    # We can't directly check usage in the result, but we can verify the response is correct

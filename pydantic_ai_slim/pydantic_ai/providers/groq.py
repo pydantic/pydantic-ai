@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import os
+from typing import overload
 
 from httpx import AsyncClient as AsyncHTTPClient
 
@@ -32,6 +33,12 @@ class GroqProvider(Provider[AsyncGroq]):
     @property
     def client(self) -> AsyncGroq:
         return self._client
+
+    @overload
+    def __init__(self, *, groq_client: AsyncGroq | None = None) -> None: ...
+
+    @overload
+    def __init__(self, *, api_key: str | None = None, http_client: AsyncHTTPClient | None = None) -> None: ...
 
     def __init__(
         self,
