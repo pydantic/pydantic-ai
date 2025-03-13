@@ -37,8 +37,8 @@ except ImportError as _import_error:
 from pydantic_ai.agent import Agent
 from pydantic_ai.messages import ModelMessage, PartDeltaEvent, TextPartDelta
 from pydantic_ai.models.openai import OpenAIModel
-from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.providers import infer_provider
+from pydantic_ai.providers.openai import OpenAIProvider
 
 __version__ = version('pydantic-ai')
 
@@ -102,7 +102,9 @@ Special prompt:
         custom_model = None
     except ValueError:
         console.print('Model not in well known list.')
-        custom_model = OpenAIModel(model_name=args.model, provider=OpenAIProvider(base_url=args.base_url, api_key=args.api_key))
+        custom_model = OpenAIModel(
+            model_name=args.model, provider=OpenAIProvider(base_url=args.base_url, api_key=args.api_key)
+        )
 
     now_utc = datetime.now(timezone.utc)
     tzname = now_utc.astimezone().tzinfo.tzname(now_utc)  # type: ignore
