@@ -87,6 +87,10 @@ jobs:
             --var GIT_COMMIT_SHA:${{ github.event.workflow_run.head_sha }}
             --var GIT_BRANCH:${{ github.event.workflow_run.head_branch }}
 
+      - run: echo "$GITHUB_EVENT_JSON"
+        env:
+          GITHUB_EVENT_JSON: ${{ toJSON(github.event) }}
+
       - name: Set preview URL
         run: uv run --with httpx .github/set_docs_preview_url.py
         env:
