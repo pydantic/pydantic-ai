@@ -9,12 +9,13 @@ from itertools import chain
 from typing import Literal, Union, cast, overload
 
 from httpx import AsyncClient as AsyncHTTPClient
-from typing_extensions import assert_never
+from typing_extensions import assert_never, deprecated
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._utils import guard_tool_call_id as _guard_tool_call_id
 from ..messages import (
     BinaryContent,
+    DocumentUrl,
     ImageUrl,
     ModelMessage,
     ModelRequest,
@@ -28,15 +29,10 @@ from ..messages import (
     ToolReturnPart,
     UserPromptPart,
 )
+from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
-from . import (
-    Model,
-    ModelRequestParameters,
-    StreamedResponse,
-    cached_async_http_client,
-    check_allow_model_requests,
-)
+from . import Model, ModelRequestParameters, StreamedResponse, cached_async_http_client, check_allow_model_requests
 
 try:
     from groq import NOT_GIVEN, APIStatusError, AsyncGroq, AsyncStream
@@ -47,6 +43,7 @@ except ImportError as _import_error:
         'Please install `groq` to use the Groq model, '
         "you can use the `groq` optional group — `pip install 'pydantic-ai-slim[groq]'`"
     ) from _import_error
+
 
 LatestGroqModelNames = Literal[
     'llama-3.3-70b-versatile',
@@ -93,10 +90,31 @@ class GroqModel(Model):
     _model_name: GroqModelName = field(repr=False)
     _system: str | None = field(default='groq', repr=False)
 
+    @overload
     def __init__(
         self,
         model_name: GroqModelName,
         *,
+        provider: Literal['groq'] | Provider[AsyncGroq] = 'groq',
+    ) -> None: ...
+
+    @deprecated('Use the `provider` parameter instead of `api_key`, `groq_client`, and `http_client`.')
+    @overload
+    def __init__(
+        self,
+        model_name: GroqModelName,
+        *,
+        provider: None = None,
+        api_key: str | None = None,
+        groq_client: AsyncGroq | None = None,
+        http_client: AsyncHTTPClient | None = None,
+    ) -> None: ...
+
+    def __init__(
+        self,
+        model_name: GroqModelName,
+        *,
+        provider: Literal['groq'] | Provider[AsyncGroq] | None = None,
         api_key: str | None = None,
         groq_client: AsyncGroq | None = None,
         http_client: AsyncHTTPClient | None = None,
@@ -106,6 +124,9 @@ class GroqModel(Model):
         Args:
             model_name: The name of the Groq model to use. List of model names available
                 [here](https://console.groq.com/docs/models).
+            provider: The provider to use for authentication and API access. Can be either the string
+                'groq' or an instance of `Provider[AsyncGroq]`. If not provided, a new provider will be
+                created using the other parameters.
             api_key: The API key to use for authentication, if not provided, the `GROQ_API_KEY` environment variable
                 will be used if available.
             groq_client: An existing
@@ -114,7 +135,13 @@ class GroqModel(Model):
             http_client: An existing `httpx.AsyncClient` to use for making HTTP requests.
         """
         self._model_name = model_name
-        if groq_client is not None:
+
+        if provider is not None:
+            if isinstance(provider, str):
+                self.client = infer_provider(provider).client
+            else:
+                self.client = provider.client
+        elif groq_client is not None:
             assert http_client is None, 'Cannot provide both `groq_client` and `http_client`'
             assert api_key is None, 'Cannot provide both `groq_client` and `api_key`'
             self.client = groq_client
@@ -342,8 +369,11 @@ class GroqModel(Model):
                         content.append(chat.ChatCompletionContentPartImageParam(image_url=image_url, type='image_url'))
                     else:
                         raise RuntimeError('Only images are supported for binary content in Groq.')
+                elif isinstance(item, DocumentUrl):  # pragma: no cover
+                    raise RuntimeError('DocumentUrl is not supported in Groq.')
                 else:  # pragma: no cover
                     raise RuntimeError(f'Unsupported content type: {type(item)}')
+
         return chat.ChatCompletionUserMessageParam(role='user', content=content)
 
 

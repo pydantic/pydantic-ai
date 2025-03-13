@@ -27,10 +27,17 @@ gh_headers = {
 }
 
 # now create or update a comment on the PR with the preview URL
+if not PULL_REQUEST_NUMBER:
+    print('Pull request number not set')
+    exit(1)
 
 comments_url = f'https://api.github.com/repos/{REPOSITORY}/issues/{PULL_REQUEST_NUMBER}/comments'
 r = httpx.get(comments_url, headers=gh_headers)
-print(f'GET {comments_url} {r.status_code}')
+print(f'{r.request.method} {r.request.url} {r.status_code}')
+if r.status_code != 200:
+    print(f'Failed to get comments, status {r.status_code}, response:\n{r.text}')
+    exit(1)
+
 comment_update_url = None
 
 for comment in r.json():
@@ -61,5 +68,5 @@ else:
     print('Creating new comment...')
     r = httpx.post(comments_url, headers=gh_headers, json=comment_data)
 
-print(f'{r.request.method} {comments_url} {r.status_code}')
+print(f'{r.request.method} {r.request.url} {r.status_code}')
 r.raise_for_status()

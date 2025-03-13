@@ -50,8 +50,9 @@ def vertexai(http_client: httpx.AsyncClient, tmp_path: Path) -> Model:
 
 def groq(http_client: httpx.AsyncClient, _tmp_path: Path) -> Model:
     from pydantic_ai.models.groq import GroqModel
+    from pydantic_ai.providers.groq import GroqProvider
 
-    return GroqModel('llama-3.3-70b-versatile', http_client=http_client)
+    return GroqModel('llama-3.3-70b-versatile', provider=GroqProvider(http_client=http_client))
 
 
 def anthropic(http_client: httpx.AsyncClient, _tmp_path: Path) -> Model:
@@ -75,10 +76,11 @@ def mistral(http_client: httpx.AsyncClient, _tmp_path: Path) -> Model:
     return MistralModel('mistral-small-latest', http_client=http_client)
 
 
-def cohere(http_client: httpx.AsyncClient, _tmp_path: Path) -> Model:
-    from pydantic_ai.models.cohere import CohereModel
+# TODO(Marcelo): We've surpassed the limit of our API key on Cohere.
+# def cohere(http_client: httpx.AsyncClient, _tmp_path: Path) -> Model:
+#     from pydantic_ai.models.cohere import CohereModel
 
-    return CohereModel('command-r7b-12-2024', http_client=http_client)
+#     return CohereModel('command-r7b-12-2024', http_client=http_client)
 
 
 params = [
@@ -89,7 +91,8 @@ params = [
     pytest.param(anthropic, id='anthropic'),
     pytest.param(ollama, id='ollama'),
     pytest.param(mistral, id='mistral'),
-    pytest.param(cohere, id='cohere'),
+    # TODO(Marcelo): We've surpassed the limit of our API key on Cohere.
+    # pytest.param(cohere, id='cohere'),
 ]
 GetModel = Callable[[httpx.AsyncClient, Path], Model]
 

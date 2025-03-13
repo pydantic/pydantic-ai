@@ -17,6 +17,7 @@ from .. import ModelHTTPError, UnexpectedModelBehavior, _utils
 from .._utils import now_utc as _now_utc
 from ..messages import (
     BinaryContent,
+    DocumentUrl,
     ImageUrl,
     ModelMessage,
     ModelRequest,
@@ -495,6 +496,8 @@ class MistralModel(Model):
                         content.append(MistralImageURLChunk(image_url=image_url, type='image_url'))
                     else:
                         raise RuntimeError('Only image binary content is supported for Mistral.')
+                elif isinstance(item, DocumentUrl):
+                    raise RuntimeError('DocumentUrl is not supported in Mistral.')
                 else:  # pragma: no cover
                     raise RuntimeError(f'Unsupported content type: {type(item)}')
         return MistralUserMessage(content=content)
