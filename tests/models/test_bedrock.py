@@ -12,9 +12,11 @@ from typing_extensions import TypedDict
 from pydantic_ai.agent import Agent
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import (
+    DocumentUrl,
     FinalResultEvent,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
+    ImageUrl,
     ModelRequest,
     ModelResponse,
     PartDeltaEvent,
@@ -378,4 +380,33 @@ async def test_bedrock_model_iter_stream(allow_model_requests: None, bedrock_pro
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' is 30°C')),
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='.')),
         ]
+    )
+
+
+@pytest.mark.vcr()
+async def test_image_url_input(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    m = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
+    agent = Agent(m, system_prompt='You are a helpful chatbot.')
+
+    result = await agent.run(
+        [
+            'What is this vegetable?',
+            ImageUrl(url='https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg'),
+        ]
+    )
+    assert result.data == snapshot(
+        'The image shows a potato. It is oval in shape and has a yellow skin with numerous dark brown patches. These patches are known as lenticels, which are pores that allow the potato to breathe. The potato is a root vegetable that is widely cultivated and consumed around the world. It is a versatile ingredient that can be used in a variety of dishes, including mashed potatoes, fries, and potato salad.'
+    )
+
+
+@pytest.mark.vcr()
+async def test_document_url_input(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    m = BedrockConverseModel('anthropic.claude-v2', provider=bedrock_provider)
+    agent = Agent(m, system_prompt='You are a helpful chatbot.')
+
+    document_url = DocumentUrl(url='https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf')
+
+    result = await agent.run(['What is the main content on this document?', document_url])
+    assert result.data == snapshot(
+        'Based on the provided XML data, the main content of the document is "Dummy PDF file". This is contained in the <document_content> tag for the document with index="1".'
     )

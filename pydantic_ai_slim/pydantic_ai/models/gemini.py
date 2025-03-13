@@ -364,7 +364,6 @@ class GeminiModel(Model):
                         _GeminiInlineDataPart(inline_data={'data': base64_encoded, 'mime_type': item.media_type})
                     )
                 elif isinstance(item, (AudioUrl, ImageUrl, DocumentUrl)):
-                    # Download the file if can't find the mime type.
                     client = cached_async_http_client()
                     response = await client.get(item.url, follow_redirects=True)
                     response.raise_for_status()
