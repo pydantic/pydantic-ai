@@ -59,7 +59,7 @@ async def test_run(tmp_path: Path, mock_snapshot_id: object):
     # len('3.14') * 2 == 8
     assert result.output == 8
     assert my_graph.name == 'my_graph'
-    assert await persistence.load() == snapshot(
+    assert await persistence.load_all() == snapshot(
         [
             NodeSnapshot(
                 state=None,
@@ -110,7 +110,7 @@ async def test_next_from_persistence(tmp_path: Path, mock_snapshot_id: object):
         assert node == snapshot(End(data=8))
         assert node.get_snapshot_id() == snapshot('end:4')
 
-    assert await persistence.load() == snapshot(
+    assert await persistence.load_all() == snapshot(
         [
             NodeSnapshot(
                 state=None,
@@ -158,7 +158,7 @@ async def test_node_error(tmp_path: Path, mock_snapshot_id: object):
     with pytest.raises(RuntimeError, match='test error'):
         await g.run(Foo(), persistence=persistence)
 
-    assert await persistence.load() == snapshot(
+    assert await persistence.load_all() == snapshot(
         [
             NodeSnapshot(
                 state=None,

@@ -767,7 +767,7 @@ async def main():
     persistence = FileStatePersistence(Path('question_graph.json'))  # (2)!
     persistence.set_graph_types(question_graph)  # (3)!
 
-    if snapshot := await persistence.retrieve_next():  # (4)!
+    if snapshot := await persistence.load_next():  # (4)!
         state = snapshot.state
         assert answer is not None
         node = Evaluate(answer)
@@ -780,10 +780,10 @@ async def main():
             node = await run.next()  # (6)!
             if isinstance(node, End):  # (7)!
                 print('END:', node.data)
-                history = await persistence.load()
+                history = await persistence.load_all()  # (8)!
                 print([e.node for e in history])
                 break
-            elif isinstance(node, Answer):  # (8)!
+            elif isinstance(node, Answer):  # (9)!
                 print(node.question)
                 #> What is the capital of France?
                 break
@@ -793,11 +793,12 @@ async def main():
 1. Get the user's answer from the command line, if provided. See [question graph example](examples/question-graph.md) for a complete example.
 2. Create a state persistence instance the `'question_graph.json'` file may or may not already exist.
 3. Since we're using the [persistence interface][pydantic_graph.persistence.BaseStatePersistence] outside a graph, we need to call [`set_graph_types`][pydantic_graph.persistence.BaseStatePersistence.set_graph_types] to set the graph generic types `StateT` and `RunEndT` for the persistence instance. This is necessary to allow the persistence instance to know how to serialize and deserialize graph nodes.
-4. If we're run the graph before, [`retrieve_next`][pydantic_graph.persistence.BaseStatePersistence.retrieve_next] will return a snapshot of the next node to run, here we use `state` from that snapshot, and create a new `Evaluate` node with the answer provided on the command line.
+4. If we're run the graph before, [`load_next`][pydantic_graph.persistence.BaseStatePersistence.load_next] will return a snapshot of the next node to run, here we use `state` from that snapshot, and create a new `Evaluate` node with the answer provided on the command line.
 5. If the graph hasn't been run before, we create a new `QuestionState` and start with the `Ask` node.
 6. Call [`GraphRun.next()`][pydantic_graph.graph.GraphRun.next] to run the node. This will return either a node or an `End` object.
 7. If the node is an `End` object, the graph run is complete. The `data` field of the `End` object contains the comment returned by the `evaluate_agent` about the correct answer.
-8. If the node is an `Answer` object, we print the question and break out of the loop to end the process and wait for user input.
+8. To demonstrate the state persistence, we call [`load_all`][pydantic_graph.persistence.BaseStatePersistence.load_all] to get all the snapshots from the persistence instance. This will return a list of [`Snapshot`][pydantic_graph.persistence.Snapshot] objects.
+9. If the node is an `Answer` object, we print the question and break out of the loop to end the process and wait for user input.
 
 _(This example is complete, it can be run "as is" with Python 3.10+ — you'll need to add `asyncio.run(main(answer))` to run `main`)_
 

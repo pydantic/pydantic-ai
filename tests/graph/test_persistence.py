@@ -61,7 +61,7 @@ async def test_dump_load_state(graph: Graph[MyState, None, int], mock_snapshot_i
     result = await graph.run(Foo(), state=MyState(1, ''), persistence=sp)
     assert result.output == snapshot(4)
     assert result.state == snapshot(MyState(x=2, y='y'))
-    assert await sp.load() == snapshot(
+    assert await sp.load_all() == snapshot(
         [
             NodeSnapshot(
                 state=MyState(x=1, y=''),

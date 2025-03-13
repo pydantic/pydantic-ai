@@ -58,7 +58,7 @@ class FileStatePersistence(BaseStatePersistence[StateT, RunEndT]):
         self, snapshot_id: str, state: StateT, next_node: BaseNode[StateT, Any, RunEndT]
     ) -> None:
         async with self._lock():
-            snapshots = await self.load()
+            snapshots = await self.load_all()
             if not any(s.id == snapshot_id for s in snapshots):
                 await self._append_save(NodeSnapshot(state=state, node=next_node), lock=False)
 
@@ -68,7 +68,7 @@ class FileStatePersistence(BaseStatePersistence[StateT, RunEndT]):
     @asynccontextmanager
     async def record_run(self, snapshot_id: str) -> AsyncIterator[None]:
         async with self._lock():
-            snapshots = await self.load()
+            snapshots = await self.load_all()
             try:
                 snapshot = next(s for s in snapshots if s.id == snapshot_id)
             except StopIteration as e:
@@ -93,22 +93,22 @@ class FileStatePersistence(BaseStatePersistence[StateT, RunEndT]):
             async with self._lock():
                 await _graph_utils.run_in_executor(self._after_run_sync, snapshot_id, snapshot.duration, 'success')
 
-    async def retrieve_next(self) -> NodeSnapshot[StateT, RunEndT] | None:
+    async def load_next(self) -> NodeSnapshot[StateT, RunEndT] | None:
         async with self._lock():
-            snapshots = await self.load()
+            snapshots = await self.load_all()
             if snapshot := next((s for s in snapshots if isinstance(s, NodeSnapshot) and s.status == 'created'), None):
                 snapshot.status = 'pending'
                 await self._save(snapshots)
                 return snapshot
 
-    def set_types(self, state_type: type[StateT], run_end_type: type[RunEndT]) -> None:
+    def _set_types(self, state_type: type[StateT], run_end_type: type[RunEndT]) -> None:
         self._snapshots_type_adapter = build_snapshot_list_type_adapter(state_type, run_end_type)
 
     def _should_set_types(self) -> bool:
         """Whether types need to be set."""
         return self._snapshots_type_adapter is None
 
-    async def load(self) -> list[Snapshot[StateT, RunEndT]]:
+    async def load_all(self) -> list[Snapshot[StateT, RunEndT]]:
         return await _graph_utils.run_in_executor(self._load_sync)
 
     def _load_sync(self) -> list[Snapshot[StateT, RunEndT]]:
@@ -140,7 +140,7 @@ class FileStatePersistence(BaseStatePersistence[StateT, RunEndT]):
         async with AsyncExitStack() as stack:
             if lock:
                 await stack.enter_async_context(self._lock())
-            snapshots = await self.load()
+            snapshots = await self.load_all()
             snapshots.append(snapshot)
             await self._save(snapshots)
 

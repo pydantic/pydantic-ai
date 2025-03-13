@@ -294,7 +294,7 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
 
         persistence.set_graph_types(self)
 
-        snapshot = await persistence.retrieve_next()
+        snapshot = await persistence.load_next()
         if snapshot is None:
             raise exceptions.GraphRuntimeError('Unable to restore snapshot from state persistence.')
 

@@ -15,7 +15,15 @@ from . import _utils
 if TYPE_CHECKING:
     from .. import Graph
 
-__all__ = 'StateT', 'NodeSnapshot', 'EndSnapshot', 'Snapshot', 'BaseStatePersistence', 'SnapshotStatus'
+__all__ = (
+    'StateT',
+    'NodeSnapshot',
+    'EndSnapshot',
+    'Snapshot',
+    'BaseStatePersistence',
+    'SnapshotStatus',
+    'build_snapshot_list_type_adapter',
+)
 
 StateT = TypeVar('StateT', default=Any)
 RunEndT = TypeVar('RunEndT', default=Any)
@@ -26,7 +34,7 @@ SnapshotStatus = Literal['created', 'pending', 'running', 'success', 'error']
 
 - `'created'`: The snapshot has been created but not yet run.
 - `'pending'`: The snapshot has been retrieved with
-  [`retrieve_next`][pydantic_graph.persistence.BaseStatePersistence.retrieve_next] but not yet run.
+  [`load_next`][pydantic_graph.persistence.BaseStatePersistence.load_next] but not yet run.
 - `'running'`: The snapshot is currently running.
 - `'success'`: The snapshot has been run successfully.
 - `'error'`: The snapshot has been run but an error occurred.
@@ -105,6 +113,8 @@ class BaseStatePersistence(ABC, Generic[StateT, RunEndT]):
     async def snapshot_node(self, state: StateT, next_node: BaseNode[StateT, Any, RunEndT]) -> None:
         """Snapshot the state of a graph, when the next step is to run a node.
 
+        This method should add a [`NodeSnapshot`][pydantic_graph.persistence.NodeSnapshot] to persistence.
+
         Args:
             state: The state of the graph.
             next_node: The next node to run.
@@ -115,7 +125,10 @@ class BaseStatePersistence(ABC, Generic[StateT, RunEndT]):
     async def snapshot_node_if_new(
         self, snapshot_id: str, state: StateT, next_node: BaseNode[StateT, Any, RunEndT]
     ) -> None:
-        """Snapshot the state of a graph, if the snapshot ID doesn't already exist in persistence.
+        """Snapshot the state of a graph if the snapshot ID doesn't already exist in persistence.
+
+        This method will generally call [`snapshot_node`][pydantic_graph.persistence.BaseStatePersistence.snapshot_node]
+        but should do so in an atomic way.
 
         Args:
             snapshot_id: The ID of the snapshot to check.
@@ -126,7 +139,9 @@ class BaseStatePersistence(ABC, Generic[StateT, RunEndT]):
 
     @abstractmethod
     async def snapshot_end(self, state: StateT, end: End[RunEndT]) -> None:
-        """Snapshot the state of a graph after a node has run, when the graph has ended.
+        """Snapshot the state of a graph when the graph has ended.
+
+        This method should add an [`EndSnapshot`][pydantic_graph.persistence.EndSnapshot] to persistence.
 
         Args:
             state: The state of the graph.
@@ -158,7 +173,7 @@ class BaseStatePersistence(ABC, Generic[StateT, RunEndT]):
         raise NotImplementedError
 
     @abstractmethod
-    async def retrieve_next(self) -> NodeSnapshot[StateT, RunEndT] | None:
+    async def load_next(self) -> NodeSnapshot[StateT, RunEndT] | None:
         """Retrieve a node snapshot with status `'created`' and set its status to `'pending'`.
 
         This is used by [`Graph.iter_from_persistence`][pydantic_graph.graph.Graph.iter_from_persistence]
@@ -169,18 +184,39 @@ class BaseStatePersistence(ABC, Generic[StateT, RunEndT]):
         raise NotImplementedError
 
     @abstractmethod
-    async def load(self) -> list[Snapshot[StateT, RunEndT]]:
+    async def load_all(self) -> list[Snapshot[StateT, RunEndT]]:
         """Load the entire history of snapshots.
+
+        `load_all` is not used by pydantic-graph itself, instead it's provided to make it convenient to
+        get all [snapshots][pydantic_graph.persistence.Snapshot] from persistence.
 
         Returns: The list of snapshots.
         """
         raise NotImplementedError
 
+    def set_graph_types(self, graph: Graph[StateT, Any, RunEndT]) -> None:
+        """Set the types of the state and run end from a graph.
+
+        You generally won't need to customise this method, instead implement
+        [`set_types`][pydantic_graph.persistence.BaseStatePersistence.set_types] and
+        [`should_set_types`][pydantic_graph.persistence.BaseStatePersistence.should_set_types].
+        """
+        if self.should_set_types():
+            with _utils.set_nodes_type_context(graph.get_nodes()):
+                self.set_types(*graph.inferred_types)
+
+    def should_set_types(self) -> bool:
+        """Whether types need to be set.
+
+        Implementations should override this method to return `True` when types have not been set if they are needed.
+        """
+        return False
+
     def set_types(self, state_type: type[StateT], run_end_type: type[RunEndT]) -> None:
         """Set the types of the state and run end.
 
-        This can be used to create [type adapters][pydantic.TypeAdapter] for serializing and deserializing
-        snapshots.
+        This can be used to create [type adapters][pydantic.TypeAdapter] for serializing and deserializing snapshots,
+        e.g. with [`build_snapshot_list_type_adapter`][pydantic_graph.persistence.build_snapshot_list_type_adapter].
 
         Args:
             state_type: The state type.
@@ -188,21 +224,15 @@ class BaseStatePersistence(ABC, Generic[StateT, RunEndT]):
         """
         pass
 
-    def _should_set_types(self) -> bool:
-        """Whether types need to be set.
-
-        Implementations should override this method to return `True` when types have not been set if they are needed.
-        """
-        return False
-
-    def set_graph_types(self, graph: Graph[StateT, Any, RunEndT]) -> None:
-        """Set the types of the state and run end from a graph."""
-        if self._should_set_types():
-            with _utils.set_nodes_type_context(graph.get_nodes()):
-                self.set_types(*graph.inferred_types)
-
 
 def build_snapshot_list_type_adapter(
     state_t: type[StateT], run_end_t: type[RunEndT]
 ) -> pydantic.TypeAdapter[list[Snapshot[StateT, RunEndT]]]:
+    """Build a type adapter for a list of snapshots.
+
+    This method should be called from within
+    [`set_types`][pydantic_graph.persistence.BaseStatePersistence.set_types]
+    where context variables will be set such that Pydantic can create a schema for
+    [`NodeSnapshot.node`][pydantic_graph.persistence.NodeSnapshot.node].
+    """
     return pydantic.TypeAdapter(list[Annotated[Snapshot[state_t, run_end_t], pydantic.Discriminator('kind')]])

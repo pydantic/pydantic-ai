@@ -118,7 +118,7 @@ async def run_as_cli(answer: str | None):
     persistence = FileStatePersistence(Path('question_graph.json'))
     persistence.set_graph_types(question_graph)
 
-    if snapshot := await persistence.retrieve_next():
+    if snapshot := await persistence.load_next():
         state = snapshot.state
         assert answer is not None, (
             'answer required, usage "uv run -m pydantic_ai_examples.question_graph cli <answer>"'
@@ -134,7 +134,7 @@ async def run_as_cli(answer: str | None):
             node = await run.next()
             if isinstance(node, End):
                 print('END:', node.data)
-                history = await persistence.load()
+                history = await persistence.load_all()
                 print('history:', '\n'.join(str(e.node) for e in history), sep='\n')
                 print('Finished!')
                 break
