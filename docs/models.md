@@ -172,15 +172,38 @@ agent = Agent(model)
 ...
 ```
 
-### `api_key` argument
+### `provider` argument
 
-If you don't want to or can't set the environment variable, you can pass it at runtime via the [`api_key` argument][pydantic_ai.models.anthropic.AnthropicModel.__init__]:
+You can provide a custom [`Provider`][pydantic_ai.providers.Provider] via the [`provider` argument][pydantic_ai.models.anthropic.AnthropicModel.__init__]:
 
-```py title="anthropic_model_api_key.py"
+```py title="anthropic_model_provider.py"
 from pydantic_ai import Agent
 from pydantic_ai.models.anthropic import AnthropicModel
+from pydantic_ai.providers.anthropic import AnthropicProvider
 
-model = AnthropicModel('claude-3-5-sonnet-latest', api_key='your-api-key')
+model = AnthropicModel(
+    'claude-3-5-sonnet-latest', provider=AnthropicProvider(api_key='your-api-key')
+)
+agent = Agent(model)
+...
+```
+
+### Custom HTTP Client
+
+You can customize the `AnthropicProvider` with a custom `httpx.AsyncClient`:
+
+```py title="anthropic_model_custom_provider.py"
+from httpx import AsyncClient
+
+from pydantic_ai import Agent
+from pydantic_ai.models.anthropic import AnthropicModel
+from pydantic_ai.providers.anthropic import AnthropicProvider
+
+custom_http_client = AsyncClient(timeout=30)
+model = AnthropicModel(
+    'claude-3-5-sonnet-latest',
+    provider=AnthropicProvider(api_key='your-api-key', http_client=custom_http_client),
+)
 agent = Agent(model)
 ...
 ```
