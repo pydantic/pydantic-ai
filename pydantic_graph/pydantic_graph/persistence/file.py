@@ -101,12 +101,12 @@ class FileStatePersistence(BaseStatePersistence[StateT, RunEndT]):
                 await self._save(snapshots)
                 return snapshot
 
-    def _set_types(self, state_type: type[StateT], run_end_type: type[RunEndT]) -> None:
-        self._snapshots_type_adapter = build_snapshot_list_type_adapter(state_type, run_end_type)
-
-    def _should_set_types(self) -> bool:
+    def should_set_types(self) -> bool:
         """Whether types need to be set."""
         return self._snapshots_type_adapter is None
+
+    def set_types(self, state_type: type[StateT], run_end_type: type[RunEndT]) -> None:
+        self._snapshots_type_adapter = build_snapshot_list_type_adapter(state_type, run_end_type)
 
     async def load_all(self) -> list[Snapshot[StateT, RunEndT]]:
         return await _graph_utils.run_in_executor(self._load_sync)

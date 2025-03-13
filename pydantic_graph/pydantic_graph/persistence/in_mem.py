@@ -148,11 +148,11 @@ class FullStatePersistence(BaseStatePersistence[StateT, RunEndT]):
     async def load_all(self) -> list[Snapshot[StateT, RunEndT]]:
         return self.history
 
-    def _set_types(self, state_type: type[StateT], run_end_type: type[RunEndT]) -> None:
-        self._snapshots_type_adapter = build_snapshot_list_type_adapter(state_type, run_end_type)
-
-    def _should_set_types(self) -> bool:
+    def should_set_types(self) -> bool:
         return self._snapshots_type_adapter is None
+
+    def set_types(self, state_type: type[StateT], run_end_type: type[RunEndT]) -> None:
+        self._snapshots_type_adapter = build_snapshot_list_type_adapter(state_type, run_end_type)
 
     def dump_json(self, *, indent: int | None = None) -> bytes:
         """Dump the history to JSON bytes."""
