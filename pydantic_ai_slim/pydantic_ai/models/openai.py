@@ -54,7 +54,6 @@ try:
     )
     from openai.types.chat.chat_completion_content_part_image_param import ImageURL
     from openai.types.chat.chat_completion_content_part_input_audio_param import InputAudio
-    from openai.types.chat.chat_completion_content_part_param import File
 except ImportError as _import_error:
     raise ImportError(
         'Please install `openai` to use the OpenAI model, '
