@@ -75,10 +75,11 @@ def mistral(http_client: httpx.AsyncClient, _tmp_path: Path) -> Model:
     return MistralModel('mistral-small-latest', http_client=http_client)
 
 
-def cohere(http_client: httpx.AsyncClient, _tmp_path: Path) -> Model:
-    from pydantic_ai.models.cohere import CohereModel
+# TODO(Marcelo): We've surpassed the limit of our API key on Cohere.
+# def cohere(http_client: httpx.AsyncClient, _tmp_path: Path) -> Model:
+#     from pydantic_ai.models.cohere import CohereModel
 
-    return CohereModel('command-r7b-12-2024', http_client=http_client)
+#     return CohereModel('command-r7b-12-2024', http_client=http_client)
 
 
 params = [
@@ -89,7 +90,8 @@ params = [
     pytest.param(anthropic, id='anthropic'),
     pytest.param(ollama, id='ollama'),
     pytest.param(mistral, id='mistral'),
-    pytest.param(cohere, id='cohere'),
+    # TODO(Marcelo): We've surpassed the limit of our API key on Cohere.
+    # pytest.param(cohere, id='cohere'),
 ]
 GetModel = Callable[[httpx.AsyncClient, Path], Model]
 
