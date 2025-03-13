@@ -10,7 +10,6 @@ from typing import TYPE_CHECKING, Generic, Literal, Union, cast, overload
 
 import anyio
 import anyio.to_thread
-from mypy_boto3_bedrock_runtime.type_defs import ImageBlockTypeDef
 from typing_extensions import ParamSpec, assert_never
 
 from pydantic_ai import _utils, result
@@ -46,6 +45,7 @@ if TYPE_CHECKING:
         ConverseResponseTypeDef,
         ConverseStreamMetadataEventTypeDef,
         ConverseStreamOutputTypeDef,
+        ImageBlockTypeDef,
         InferenceConfigurationTypeDef,
         MessageUnionTypeDef,
         ToolChoiceTypeDef,

@@ -38,10 +38,6 @@ Provides the ability to [stream](results.md#streamed-results) LLM outputs contin
 * __Graph Support__:
 [Pydantic Graph](graph.md) provides a powerful way to define graphs using typing hints, this is useful in complex applications where standard control flow can degrade to spaghetti code.
 
-!!! example "In Beta"
-    PydanticAI is in early beta, the API is still subject to change and there's a lot more to do.
-    [Feedback](https://github.com/pydantic/pydantic-ai/issues) is very welcome!
-
 ## Hello World Example
 
 Here's a minimal example of PydanticAI:
