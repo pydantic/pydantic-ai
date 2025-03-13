@@ -1,0 +1,107 @@
+interactions:
+- request:
+    body: ''
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      host:
+      - example-files.online-convert.com
+    method: GET
+    uri: https://example-files.online-convert.com/document/txt/example.txt
+  response:
+    body:
+      string: |-
+        TXT test file
+        Purpose: Provide example of this file type
+        Document file type: TXT
+        Version: 1.0
+        Remark:
+
+        Example content:
+        The names "John Doe" for males, "Jane Doe" or "Jane Roe" for females, or "Jonnie Doe" and "Janie Doe" for children, or just "Doe" non-gender-specifically are used as placeholder names for a party whose true identity is unknown or must be withheld in a legal action, case, or discussion. The names are also used to refer to acorpse or hospital patient whose identity is unknown. This practice is widely used in the United States and Canada, but is rarely used in other English-speaking countries including the United Kingdom itself, from where the use of "John Doe" in a legal context originates. The names Joe Bloggs or John Smith are used in the UK instead, as well as in Australia and New Zealand.
+
+        John Doe is sometimes used to refer to a typical male in other contexts as well, in a similar manner to John Q. Public, known in Great Britain as Joe Public, John Smith or Joe Bloggs. For example, the first name listed on a form is often John Doe, along with a fictional address or other fictional information to provide an example of how to fill in the form. The name is also used frequently in popular culture, for example in the Frank Capra film Meet John Doe. John Doe was also the name of a 2002 American television series.
+
+        Similarly, a child or baby whose identity is unknown may be referred to as Baby Doe. A notorious murder case in Kansas City, Missouri, referred to the baby victim as Precious Doe. Other unidentified female murder victims are Cali Doe and Princess Doe. Additional persons may be called James Doe, Judy Doe, etc. However, to avoid possible confusion, if two anonymous or unknown parties are cited in a specific case or action, the surnames Doe and Roe may be used simultaneously; for example, "John Doe v. Jane Roe". If several anonymous parties are referenced, they may simply be labelled John Doe #1, John Doe #2, etc. (the U.S. Operation Delego cited 21 (numbered) "John Doe"s) or labelled with other variants of Doe / Roe / Poe / etc. Other early alternatives such as John Stiles and Richard Miles are now rarely used, and Mary Major has been used in some American federal cases.
+
+
+
+        File created by https://www.online-convert.com
+        More example files: https://www.online-convert.com/file-type
+        Text of Example content: Wikipedia (https://en.wikipedia.org/wiki/John_Doe)
+        License: Attribution-ShareAlike 4.0 (https://creativecommons.org/licenses/by-sa/4.0/)
+
+        Feel free to use and share the file according to the license above.
+    headers:
+      cache-control:
+      - max-age=604800
+      - public
+      connection:
+      - keep-alive
+      content-length:
+      - '2574'
+      content-type:
+      - text/plain; charset=UTF-8
+      etag:
+      - W/"61efea10-a0e"
+      expires:
+      - Thu, 20 Mar 2025 09:43:37 GMT
+      last-modified:
+      - Tue, 25 Jan 2022 12:16:16 GMT
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    status:
+      code: 200
+      message: OK
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "What is the main content on this document?"}, {"document":
+      {"name": "Document 1", "format": "txt", "source": {"bytes": "VFhUIHRlc3QgZmlsZQpQdXJwb3NlOiBQcm92aWRlIGV4YW1wbGUgb2YgdGhpcyBmaWxlIHR5cGUKRG9jdW1lbnQgZmlsZSB0eXBlOiBUWFQKVmVyc2lvbjogMS4wClJlbWFyazoKCkV4YW1wbGUgY29udGVudDoKVGhlIG5hbWVzICJKb2huIERvZSIgZm9yIG1hbGVzLCAiSmFuZSBEb2UiIG9yICJKYW5lIFJvZSIgZm9yIGZlbWFsZXMsIG9yICJKb25uaWUgRG9lIiBhbmQgIkphbmllIERvZSIgZm9yIGNoaWxkcmVuLCBvciBqdXN0ICJEb2UiIG5vbi1nZW5kZXItc3BlY2lmaWNhbGx5IGFyZSB1c2VkIGFzIHBsYWNlaG9sZGVyIG5hbWVzIGZvciBhIHBhcnR5IHdob3NlIHRydWUgaWRlbnRpdHkgaXMgdW5rbm93biBvciBtdXN0IGJlIHdpdGhoZWxkIGluIGEgbGVnYWwgYWN0aW9uLCBjYXNlLCBvciBkaXNjdXNzaW9uLiBUaGUgbmFtZXMgYXJlIGFsc28gdXNlZCB0byByZWZlciB0byBhY29ycHNlIG9yIGhvc3BpdGFsIHBhdGllbnQgd2hvc2UgaWRlbnRpdHkgaXMgdW5rbm93bi4gVGhpcyBwcmFjdGljZSBpcyB3aWRlbHkgdXNlZCBpbiB0aGUgVW5pdGVkIFN0YXRlcyBhbmQgQ2FuYWRhLCBidXQgaXMgcmFyZWx5IHVzZWQgaW4gb3RoZXIgRW5nbGlzaC1zcGVha2luZyBjb3VudHJpZXMgaW5jbHVkaW5nIHRoZSBVbml0ZWQgS2luZ2RvbSBpdHNlbGYsIGZyb20gd2hlcmUgdGhlIHVzZSBvZiAiSm9obiBEb2UiIGluIGEgbGVnYWwgY29udGV4dCBvcmlnaW5hdGVzLiBUaGUgbmFtZXMgSm9lIEJsb2dncyBvciBKb2huIFNtaXRoIGFyZSB1c2VkIGluIHRoZSBVSyBpbnN0ZWFkLCBhcyB3ZWxsIGFzIGluIEF1c3RyYWxpYSBhbmQgTmV3IFplYWxhbmQuCgpKb2huIERvZSBpcyBzb21ldGltZXMgdXNlZCB0byByZWZlciB0byBhIHR5cGljYWwgbWFsZSBpbiBvdGhlciBjb250ZXh0cyBhcyB3ZWxsLCBpbiBhIHNpbWlsYXIgbWFubmVyIHRvIEpvaG4gUS4gUHVibGljLCBrbm93biBpbiBHcmVhdCBCcml0YWluIGFzIEpvZSBQdWJsaWMsIEpvaG4gU21pdGggb3IgSm9lIEJsb2dncy4gRm9yIGV4YW1wbGUsIHRoZSBmaXJzdCBuYW1lIGxpc3RlZCBvbiBhIGZvcm0gaXMgb2Z0ZW4gSm9obiBEb2UsIGFsb25nIHdpdGggYSBmaWN0aW9uYWwgYWRkcmVzcyBvciBvdGhlciBmaWN0aW9uYWwgaW5mb3JtYXRpb24gdG8gcHJvdmlkZSBhbiBleGFtcGxlIG9mIGhvdyB0byBmaWxsIGluIHRoZSBmb3JtLiBUaGUgbmFtZSBpcyBhbHNvIHVzZWQgZnJlcXVlbnRseSBpbiBwb3B1bGFyIGN1bHR1cmUsIGZvciBleGFtcGxlIGluIHRoZSBGcmFuayBDYXByYSBmaWxtIE1lZXQgSm9obiBEb2UuIEpvaG4gRG9lIHdhcyBhbHNvIHRoZSBuYW1lIG9mIGEgMjAwMiBBbWVyaWNhbiB0ZWxldmlzaW9uIHNlcmllcy4KClNpbWlsYXJseSwgYSBjaGlsZCBvciBiYWJ5IHdob3NlIGlkZW50aXR5IGlzIHVua25vd24gbWF5IGJlIHJlZmVycmVkIHRvIGFzIEJhYnkgRG9lLiBBIG5vdG9yaW91cyBtdXJkZXIgY2FzZSBpbiBLYW5zYXMgQ2l0eSwgTWlzc291cmksIHJlZmVycmVkIHRvIHRoZSBiYWJ5IHZpY3RpbSBhcyBQcmVjaW91cyBEb2UuIE90aGVyIHVuaWRlbnRpZmllZCBmZW1hbGUgbXVyZGVyIHZpY3RpbXMgYXJlIENhbGkgRG9lIGFuZCBQcmluY2VzcyBEb2UuIEFkZGl0aW9uYWwgcGVyc29ucyBtYXkgYmUgY2FsbGVkIEphbWVzIERvZSwgSnVkeSBEb2UsIGV0Yy4gSG93ZXZlciwgdG8gYXZvaWQgcG9zc2libGUgY29uZnVzaW9uLCBpZiB0d28gYW5vbnltb3VzIG9yIHVua25vd24gcGFydGllcyBhcmUgY2l0ZWQgaW4gYSBzcGVjaWZpYyBjYXNlIG9yIGFjdGlvbiwgdGhlIHN1cm5hbWVzIERvZSBhbmQgUm9lIG1heSBiZSB1c2VkIHNpbXVsdGFuZW91c2x5OyBmb3IgZXhhbXBsZSwgIkpvaG4gRG9lIHYuIEphbmUgUm9lIi4gSWYgc2V2ZXJhbCBhbm9ueW1vdXMgcGFydGllcyBhcmUgcmVmZXJlbmNlZCwgdGhleSBtYXkgc2ltcGx5IGJlIGxhYmVsbGVkIEpvaG4gRG9lICMxLCBKb2huIERvZSAjMiwgZXRjLiAodGhlIFUuUy4gT3BlcmF0aW9uIERlbGVnbyBjaXRlZCAyMSAobnVtYmVyZWQpICJKb2huIERvZSJzKSBvciBsYWJlbGxlZCB3aXRoIG90aGVyIHZhcmlhbnRzIG9mIERvZSAvIFJvZSAvIFBvZSAvIGV0Yy4gT3RoZXIgZWFybHkgYWx0ZXJuYXRpdmVzIHN1Y2ggYXMgSm9obiBTdGlsZXMgYW5kIFJpY2hhcmQgTWlsZXMgYXJlIG5vdyByYXJlbHkgdXNlZCwgYW5kIE1hcnkgTWFqb3IgaGFzIGJlZW4gdXNlZCBpbiBzb21lIEFtZXJpY2FuIGZlZGVyYWwgY2FzZXMuCgoKCkZpbGUgY3JlYXRlZCBieSBodHRwczovL3d3dy5vbmxpbmUtY29udmVydC5jb20KTW9yZSBleGFtcGxlIGZpbGVzOiBodHRwczovL3d3dy5vbmxpbmUtY29udmVydC5jb20vZmlsZS10eXBlClRleHQgb2YgRXhhbXBsZSBjb250ZW50OiBXaWtpcGVkaWEgKGh0dHBzOi8vZW4ud2lraXBlZGlhLm9yZy93aWtpL0pvaG5fRG9lKQpMaWNlbnNlOiBBdHRyaWJ1dGlvbi1TaGFyZUFsaWtlIDQuMCAoaHR0cHM6Ly9jcmVhdGl2ZWNvbW1vbnMub3JnL2xpY2Vuc2VzL2J5LXNhLzQuMC8pCgpGZWVsIGZyZWUgdG8gdXNlIGFuZCBzaGFyZSB0aGUgZmlsZSBhY2NvcmRpbmcgdG8gdGhlIGxpY2Vuc2UgYWJvdmUu"}}}]}],
+      "system": [{"text": "You are a helpful chatbot."}], "inferenceConfig": {}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        Zjk2NzA2Y2UtOGVjZC00MTVkLWI1NTYtZGJmMDhjY2M0ZDYx
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '3688'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/anthropic.claude-v2/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '890'
+      content-type:
+      - application/json
+    parsed_body:
+      metrics:
+        latencyMs: 5791
+      output:
+        message:
+          content:
+          - text: |-
+              Based on the text in the <document_content> tag, the main content of this document appears to be:
+
+              An example text describing the use of "John Doe" as a placeholder name in legal cases, hospitals, and other contexts where a party's real identity is unknown or needs to be withheld. It provides background on how "John Doe" and "Jane Doe" are commonly used in the United States and Canada for this purpose, in contrast to other English speaking countries that use names like "Joe Bloggs". The text gives examples of using John/Jane Doe for legal cases, unidentified corpses, and as generic names on forms. It also mentions how "Baby Doe" and "Precious Doe" are used for unidentified children.
+          role: assistant
+      stopReason: end_turn
+      usage:
+        inputTokens: 681
+        outputTokens: 157
+        totalTokens: 838
+    status:
+      code: 200
+      message: OK
+version: 1
