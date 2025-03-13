@@ -820,7 +820,8 @@ from pydantic_ai.providers.openai import OpenAIProvider
 model = OpenAIModel(
     'anthropic/claude-3.5-sonnet',
     provider=OpenAIProvider(
-        base_url='https://openrouter.ai/api/v1', api_key='your-openrouter-api-key'
+        base_url='https://openrouter.ai/api/v1',
+        api_key='your-openrouter-api-key',
     ),
 )
 agent = Agent(model)
@@ -858,7 +859,50 @@ from pydantic_ai.providers.openai import OpenAIProvider
 model = OpenAIModel(
     'sonar-pro',
     provider=OpenAIProvider(
-        base_url='https://api.perplexity.ai', api_key='your-perplexity-api-key'
+        base_url='https://api.perplexity.ai',
+        api_key='your-perplexity-api-key',
+    ),
+)
+agent = Agent(model)
+...
+```
+
+### Fireworks AI
+
+Go to [Fireworks.AI](https://fireworks.ai/) and create an API key in your account settings.
+Once you have the API key, you can use it with the [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider]:
+
+```python {title="fireworks_model_init.py"}
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIModel
+from pydantic_ai.providers.openai import OpenAIProvider
+
+model = OpenAIModel(
+    'accounts/fireworks/models/qwq-32b',  # model library available at https://fireworks.ai/models
+    provider=OpenAIProvider(
+        base_url='https://api.fireworks.ai/inference/v1',
+        api_key='your-fireworks-api-key',
+    ),
+)
+agent = Agent(model)
+...
+```
+
+### Together AI
+
+Go to [Together.ai](https://www.together.ai/) and create an API key in your account settings.
+Once you have the API key, you can use it with the [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider]:
+
+```python {title="together_model_init.py"}
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIModel
+from pydantic_ai.providers.openai import OpenAIProvider
+
+model = OpenAIModel(
+    'meta-llama/Llama-3.3-70B-Instruct-Turbo-Free',  # model library available at https://www.together.ai/models
+    provider=OpenAIProvider(
+        base_url='https://api.together.xyz/v1',
+        api_key='your-together-api-key',
     ),
 )
 agent = Agent(model)
