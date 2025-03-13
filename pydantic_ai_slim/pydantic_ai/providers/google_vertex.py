@@ -179,24 +179,31 @@ class _VertexAIAuth(httpx.Auth):
         return self.credentials.token
 
 
+VERTEX_AI_SCOPES = ['https://www.googleapis.com/auth/cloud-platform']
+
+
 async def _async_google_auth() -> tuple[BaseCredentials, str | None]:
-    return await anyio.to_thread.run_sync(google.auth.default, ['https://www.googleapis.com/auth/cloud-platform'])  # type: ignore
+    return await anyio.to_thread.run_sync(google.auth.default, VERTEX_AI_SCOPES)  # type: ignore
 
 
 async def _creds_from_file(service_account_file: str | Path) -> ServiceAccountCredentials:
-    service_account_credentials_from_file = functools.partial(
-        ServiceAccountCredentials.from_service_account_file,  # type: ignore[reportUnknownMemberType]
-        scopes=['https://www.googleapis.com/auth/cloud-platform'],
+    return await anyio.to_thread.run_sync(
+        functools.partial(
+            ServiceAccountCredentials.from_service_account_file,  # type: ignore[reportUnknownMemberType]
+            filename=str(service_account_file),
+            scopes=VERTEX_AI_SCOPES,
+        )
     )
-    return await anyio.to_thread.run_sync(service_account_credentials_from_file, str(service_account_file))
 
 
 async def _creds_from_info(service_account_info: Mapping[str, str]) -> ServiceAccountCredentials:
-    service_account_credentials_from_string = functools.partial(
-        ServiceAccountCredentials.from_service_account_info,  # type: ignore[reportUnknownMemberType]
-        scopes=['https://www.googleapis.com/auth/cloud-platform'],
+    return await anyio.to_thread.run_sync(
+        functools.partial(
+            ServiceAccountCredentials.from_service_account_info,  # type: ignore[reportUnknownMemberType]
+            info=service_account_info,
+            scopes=VERTEX_AI_SCOPES,
+        )
     )
-    return await anyio.to_thread.run_sync(service_account_credentials_from_string, service_account_info)
 
 
 VertexAiRegion = Literal[
