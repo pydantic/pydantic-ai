@@ -55,7 +55,7 @@ class OpenAIProvider(Provider[AsyncOpenAI]):
                 client to use. If provided, `base_url`, `api_key`, and `http_client` must be `None`.
             http_client: An existing `httpx.AsyncClient` to use for making HTTP requests.
         """
-        self._base_url = base_url or os.environ.get('OPENAI_BASE_URL', 'https://api.openai.com/v1')
+        self._base_url = base_url or os.getenv('OPENAI_BASE_URL', 'https://api.openai.com/v1')
         # This is a workaround for the OpenAI client requiring an API key, whilst locally served,
         # openai compatible models do not always need an API key, but a placeholder (non-empty) key is required.
         if api_key is None and 'OPENAI_API_KEY' not in os.environ and openai_client is None:
