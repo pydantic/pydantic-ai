@@ -24,7 +24,7 @@ class GroqProvider(Provider[AsyncGroq]):
 
     @property
     def name(self) -> str:
-        return 'groq'  # pragma: no cover
+        return 'groq'
 
     @property
     def base_url(self) -> str:
