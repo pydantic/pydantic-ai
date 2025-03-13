@@ -73,8 +73,9 @@ def ollama(http_client: httpx.AsyncClient, _tmp_path: Path) -> Model:
 
 def mistral(http_client: httpx.AsyncClient, _tmp_path: Path) -> Model:
     from pydantic_ai.models.mistral import MistralModel
+    from pydantic_ai.providers.mistral import MistralProvider
 
-    return MistralModel('mistral-small-latest', http_client=http_client)
+    return MistralModel('mistral-small-latest', provider=MistralProvider(http_client=http_client))
 
 
 # TODO(Marcelo): We've surpassed the limit of our API key on Cohere.

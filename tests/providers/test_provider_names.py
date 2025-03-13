@@ -15,6 +15,7 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.google_gla import GoogleGLAProvider
     from pydantic_ai.providers.google_vertex import GoogleVertexProvider
     from pydantic_ai.providers.groq import GroqProvider
+    from pydantic_ai.providers.mistral import MistralProvider
     from pydantic_ai.providers.openai import OpenAIProvider
 
     test_infer_provider_params = [
@@ -23,6 +24,7 @@ with try_import() as imports_successful:
         ('google-vertex', GoogleVertexProvider, None),
         ('google-gla', GoogleGLAProvider, 'GEMINI_API_KEY'),
         ('groq', GroqProvider, 'GROQ_API_KEY'),
+        ('mistral', MistralProvider, 'MISTRAL_API_KEY'),
     ]
 
 if not imports_successful():
