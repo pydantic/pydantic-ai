@@ -95,10 +95,8 @@ Special prompt:
     if args.version:
         return 0
 
-    model_provider = args.model.split(':')[0]
-
     try:
-        provider = infer_provider(args.model.split(':')[0])
+        infer_provider(args.model.split(':')[0])
         custom_model = None
     except ValueError:
         console.print('Model not in well known list.')
