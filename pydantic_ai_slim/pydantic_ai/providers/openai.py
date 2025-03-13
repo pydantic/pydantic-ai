@@ -1,7 +1,6 @@
 from __future__ import annotations as _annotations
 
 import os
-from typing import TypeVar
 
 import httpx
 
@@ -11,14 +10,12 @@ try:
     from openai import AsyncOpenAI
 except ImportError as _import_error:  # pragma: no cover
     raise ImportError(
-        'Please install `openai` to use the OpenAI provider, '
+        'Please install the `openai` package to use the OpenAI provider, '
         "you can use the `openai` optional group — `pip install 'pydantic-ai-slim[openai]'`"
     ) from _import_error
 
 
 from . import Provider
-
-InterfaceClient = TypeVar('InterfaceClient')
 
 
 class OpenAIProvider(Provider[AsyncOpenAI]):
@@ -55,7 +52,7 @@ class OpenAIProvider(Provider[AsyncOpenAI]):
                 client to use. If provided, `base_url`, `api_key`, and `http_client` must be `None`.
             http_client: An existing `httpx.AsyncClient` to use for making HTTP requests.
         """
-        self._base_url = base_url or 'https://api.openai.com/v1'
+        self._base_url = base_url or os.getenv('OPENAI_BASE_URL', 'https://api.openai.com/v1')
         # This is a workaround for the OpenAI client requiring an API key, whilst locally served,
         # openai compatible models do not always need an API key, but a placeholder (non-empty) key is required.
         if api_key is None and 'OPENAI_API_KEY' not in os.environ and openai_client is None:

@@ -11,3 +11,5 @@
 ::: pydantic_ai.providers.bedrock
 
 ::: pydantic_ai.providers.groq
+
+::: pydantic_ai.providers.azure

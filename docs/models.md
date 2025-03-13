@@ -806,6 +806,28 @@ Usage(requests=1, request_tokens=57, response_tokens=8, total_tokens=65, details
 1. The name of the model running on the remote server
 2. The url of the remote server
 
+### Azure AI Foundry
+
+If you want to use [Azure AI Foundry](https://ai.azure.com/) as your provider, you can do so by using the
+[`AzureProvider`][pydantic_ai.providers.azure.AzureProvider] class.
+
+```python {title="azure_provider_example.py"}
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIModel
+from pydantic_ai.providers.azure import AzureProvider
+
+model = OpenAIModel(
+    'gpt-4o',
+    provider=AzureProvider(
+        azure_endpoint='your-azure-endpoint',
+        api_version='your-api-version',
+        api_key='your-api-key',
+    ),
+)
+agent = Agent(model)
+...
+```
+
 ### OpenRouter
 
 To use [OpenRouter](https://openrouter.ai), first create an API key at [openrouter.ai/keys](https://openrouter.ai/keys).
