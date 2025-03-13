@@ -452,7 +452,7 @@ agent = Agent(model)
 ```
 
 You can also customize the [`GroqProvider`][pydantic_ai.providers.groq.GroqProvider] with a
-custom [`AsyncHTTPClient`][httpx.AsyncHTTPClient]:
+custom `httpx.AsyncHTTPClient`:
 
 ```python {title="groq_model_custom_provider.py"}
 from httpx import AsyncClient
