@@ -444,7 +444,9 @@ from pydantic_ai import Agent
 from pydantic_ai.models.groq import GroqModel
 from pydantic_ai.providers.groq import GroqProvider
 
-model = GroqModel('llama-3.3-70b-versatile', provider=GroqProvider(api_key='your-api-key'))
+model = GroqModel(
+    'llama-3.3-70b-versatile', provider=GroqProvider(api_key='your-api-key')
+)
 agent = Agent(model)
 ...
 ```
