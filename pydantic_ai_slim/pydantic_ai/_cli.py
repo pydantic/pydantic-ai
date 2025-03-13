@@ -38,6 +38,7 @@ from pydantic_ai.agent import Agent
 from pydantic_ai.messages import ModelMessage, PartDeltaEvent, TextPartDelta
 from pydantic_ai.models.openai import OpenAIModel
 from pydantic_ai.providers.openai import OpenAIProvider
+from pydantic_ai.providers import infer_provider
 
 __version__ = version('pydantic-ai')
 
@@ -74,8 +75,13 @@ Special prompt:
         default='openai:gpt-4o',
     ).completer = argcomplete.ChoicesCompleter(list(get_literal_values(KnownModelName)))  # type: ignore[reportPrivateUsage]
     parser.add_argument(
-        '--openai_api_base_url',
+        '--base-url',
         help='Base url to use with model',
+        default=None,
+    )
+    parser.add_argument(
+        '--api-key',
+        help='api key (or set in env, see documentation)',
         default=None,
     )
     parser.add_argument('--no-stream', action='store_true', help='Whether to stream responses from OpenAI')
@@ -89,17 +95,23 @@ Special prompt:
     if args.version:
         return 0
 
+    model_provider = args.model.split(':')[0]
+
+    try:
+        provider = infer_provider(args.model.split(':')[0])
+        custom_model = None
+    except ValueError:
+        console.print('Model not in well known list.')
+        custom_model = OpenAIModel(model_name=args.model, provider=OpenAIProvider(base_url=args.base_url, api_key=args.api_key))
+
     now_utc = datetime.now(timezone.utc)
     tzname = now_utc.astimezone().tzinfo.tzname(now_utc)  # type: ignore
-    try:
-        if args.openai_api_base_url:
-            openaimodel = OpenAIModel(model_name=args.model, provider=OpenAIProvider(base_url=args.openai_api_base_url))
-        else:
-            openaimodel = None
 
+    try:
         agent = Agent(
-            model=openaimodel or args.model or 'openai:gpt-4o',
+            model=custom_model or args.model or 'openai:gpt-4o',
             system_prompt=f"""\
+
     Help the user by responding to their request, the output should be concise and always written in markdown.
     The current date and time is {datetime.now()} {tzname}.
     The user is running {sys.platform}.""",
