@@ -45,11 +45,11 @@ if TYPE_CHECKING:
         ConverseResponseTypeDef,
         ConverseStreamMetadataEventTypeDef,
         ConverseStreamOutputTypeDef,
+        ImageBlockTypeDef,
         InferenceConfigurationTypeDef,
         MessageUnionTypeDef,
         ToolChoiceTypeDef,
         ToolTypeDef,
-        ImageBlockTypeDef,
     )
 
 
