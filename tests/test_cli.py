@@ -23,9 +23,7 @@ def test_cli_help(capfd: CaptureFixture[str]):
 
     assert capfd.readouterr().out.splitlines() == snapshot(
         [
-            'usage: pai [-h] [--model [MODEL]] [--base-url BASE_URL] [--api-key API_KEY]',
-            '           [--no-stream] [--version]',
-            '           [prompt]',
+            'usage: pai [-h] [--model [MODEL]] [--base-url BASE_URL] [--api-key API_KEY] [--no-stream] [--version] [prompt]',
             '',
             IsStr(),
             '',
