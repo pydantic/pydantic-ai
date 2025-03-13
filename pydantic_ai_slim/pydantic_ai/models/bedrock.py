@@ -386,7 +386,7 @@ class BedrockConverseModel(Model):
                         name = f'Document {document_count}'
                         data = response.content
                         content.append({'document': {'name': name, 'format': item.format, 'source': {'bytes': data}}})
-                elif isinstance(item, AudioUrl):
+                elif isinstance(item, AudioUrl):  # pragma: no cover
                     raise NotImplementedError('Audio is not supported yet.')
                 else:
                     assert_never(item)

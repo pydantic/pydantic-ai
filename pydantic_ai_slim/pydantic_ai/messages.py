@@ -84,6 +84,7 @@ class ImageUrl:
         else:
             raise ValueError(f'Unknown image file extension: {self.url}')
 
+    @property
     def format(self) -> ImageFormat:
         """The file format of the image.
 
