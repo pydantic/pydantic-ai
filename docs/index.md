@@ -2,9 +2,6 @@
 
 --8<-- "docs/.partials/index-header.html"
 
-PydanticAI is a Python Agent Framework designed to make it less painful to
-build production grade applications with Generative AI.
-
 FastAPI revolutionized web development by offering an innovative and ergonomic design, built on the foundation of [Pydantic](https://docs.pydantic.dev).
 
 Similarly, virtually every agent framework and LLM library in Python uses Pydantic, yet when we began to use LLMs in [Pydantic Logfire](https://pydantic.dev/logfire), we couldn't find anything that gave us the same feeling.
