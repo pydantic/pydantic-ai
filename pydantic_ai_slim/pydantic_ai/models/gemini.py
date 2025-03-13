@@ -368,11 +368,9 @@ class GeminiModel(Model):
                     client = cached_async_http_client()
                     response = await client.get(item.url, follow_redirects=True)
                     response.raise_for_status()
+                    mime_type = response.headers['Content-Type'].split(';')[0]
                     inline_data = _GeminiInlineDataPart(
-                        inline_data={
-                            'data': base64.b64encode(response.content).decode('utf-8'),
-                            'mime_type': response.headers['Content-Type'],
-                        }
+                        inline_data={'data': base64.b64encode(response.content).decode('utf-8'), 'mime_type': mime_type}
                     )
                     content.append(inline_data)
                 else:

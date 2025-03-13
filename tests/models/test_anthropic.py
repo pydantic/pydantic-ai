@@ -624,35 +624,9 @@ async def test_document_url_input(allow_model_requests: None, anthropic_api_key:
     m = AnthropicModel('claude-3-5-sonnet-latest', api_key=anthropic_api_key)
     agent = Agent(m)
 
-    result = await agent.run(
-        [
-            'What is the main content on this document?',
-            DocumentUrl(url='https://storage.googleapis.com/cloud-samples-data/generative-ai/pdf/2403.05530.pdf'),
-        ]
+    document_url = DocumentUrl(url='https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf')
+
+    result = await agent.run(['What is the main content on this document?', document_url])
+    assert result.data == snapshot(
+        'The document appears to be a simple PDF file with only the text "Dummy PDF file" displayed at the top. It seems to be a blank or template document with minimal content.'
     )
-    assert result.data == snapshot("""\
-This document is the technical report introducing Gemini 1.5, Google's latest large language model. The main content includes:
-
-1. Introduction to Gemini 1.5 Pro, the first model in the Gemini 1.5 family, which can process and reason over extremely long contexts of up to 10 million tokens across text, audio, and video.
-
-2. Detailed evaluation and benchmarking of the model's capabilities, particularly focusing on:
-
-- Long-context understanding and retrieval across modalities
-- Core capabilities in areas like math, reasoning, coding, and multilingual tasks
-- Comparison with previous Gemini models (1.0 Pro and Ultra) and other LLMs
-
-3. Technical details about:
-- Model architecture (mixture-of-experts based)
-- Training infrastructure and datasets
-- Responsible deployment considerations
-
-4. Results showing that Gemini 1.5 Pro:
-- Achieves near-perfect recall on long-context retrieval tasks
-- Outperforms previous models on many benchmarks
-- Can effectively process multiple hours of video/audio
-- Demonstrates novel capabilities like learning to translate low-resource languages from documentation
-
-5. Extensive documentation of evaluation methodologies, prompting strategies, and model limitations
-
-The report provides comprehensive technical documentation of this new model's capabilities, architecture, and evaluation, positioning it as a significant advance in long-context AI models while maintaining strong performance on core tasks.\
-""")
