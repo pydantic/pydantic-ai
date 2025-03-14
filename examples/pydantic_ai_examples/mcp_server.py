@@ -23,4 +23,5 @@ async def celsius_to_fahrenheit(celsius: float) -> float:
     return (celsius * 9 / 5) + 32
 
 
-mcp.run()
+if __name__ == '__main__':
+    mcp.run()
