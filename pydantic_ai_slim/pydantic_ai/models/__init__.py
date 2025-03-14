@@ -265,7 +265,10 @@ class Model(ABC):
     def system(self) -> str:
         """The system / model provider, ex: openai.
 
-        Use to populate the `gen_ai.system` OpenTelemetry semantic convention attribute.
+        Use to populate the `gen_ai.system` OpenTelemetry semantic convention attribute,
+        so should use well-known values listed in
+        https://opentelemetry.io/docs/specs/semconv/attributes-registry/gen-ai/#gen-ai-system
+        when applicable.
         """
         raise NotImplementedError()
 
