@@ -119,7 +119,7 @@ class BedrockConverseModel(Model):
     client: BedrockRuntimeClient
 
     _model_name: BedrockModelName = field(repr=False)
-    _system: str | None = field(default='bedrock', repr=False)
+    _system: str = field(default='bedrock', repr=False)
 
     @property
     def model_name(self) -> str:
@@ -127,7 +127,7 @@ class BedrockConverseModel(Model):
         return self._model_name
 
     @property
-    def system(self) -> str | None:
+    def system(self) -> str:
         """The system / model provider, ex: openai."""
         return self._system
 

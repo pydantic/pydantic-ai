@@ -88,7 +88,7 @@ class GroqModel(Model):
     client: AsyncGroq = field(repr=False)
 
     _model_name: GroqModelName = field(repr=False)
-    _system: str | None = field(default='groq', repr=False)
+    _system: str = field(default='groq', repr=False)
 
     @overload
     def __init__(
@@ -186,7 +186,7 @@ class GroqModel(Model):
         return self._model_name
 
     @property
-    def system(self) -> str | None:
+    def system(self) -> str:
         """The system / model provider."""
         return self._system
 

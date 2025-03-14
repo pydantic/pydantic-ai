@@ -79,7 +79,7 @@ class TestModel(Model):
     This is set when a request is made, so will reflect the function tools from the last step of the last run.
     """
     _model_name: str = field(default='test', repr=False)
-    _system: str | None = field(default=None, repr=False)
+    _system: str = field(default='test', repr=False)
 
     async def request(
         self,
@@ -113,7 +113,7 @@ class TestModel(Model):
         return self._model_name
 
     @property
-    def system(self) -> str | None:
+    def system(self) -> str:
         """The system / model provider."""
         return self._system
 
