@@ -83,8 +83,8 @@ mcp.run('sse', port=8000)
 
 PydanticAI comes with two ways to connect to MCP servers:
 
-- [`MCPRemoteServer`][pydantic_ai.mcp.MCPRemoteServer] which connects to an MCP server using the [HTTP SSE](TODO) transport
-- [`MCPSubprocessServer`][pydantic_ai.mcp.MCPSubprocessServer] which runs the server as a subprocess and connects to it using the [stdio](TODO) transport
+- [`MCPRemoteServer`][pydantic_ai.mcp.MCPRemoteServer] which connects to an MCP server using the [HTTP SSE](https://modelcontextprotocol.io/docs/concepts/transports#server-sent-events-sse) transport
+- [`MCPSubprocessServer`][pydantic_ai.mcp.MCPSubprocessServer] which runs the server as a subprocess and connects to it using the [stdio](https://modelcontextprotocol.io/docs/concepts/transports#standard-input%2Foutput-stdio) transport
 
 Examples of both are shown below.
 
