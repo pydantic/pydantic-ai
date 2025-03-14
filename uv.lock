@@ -1680,8 +1680,8 @@ wheels = [
 
 [[package]]
 name = "mcp"
-version = "1.4.0.dev0"
-source = { git = "https://github.com/Kludex/python-sdk.git?rev=close-resources#a02d8f3964fb3951b3aa40b96e671ec4693fc64f" }
+version = "1.4.0"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio", marker = "python_full_version >= '3.10'" },
     { name = "httpx", marker = "python_full_version >= '3.10'" },
@@ -1692,11 +1692,9 @@ dependencies = [
     { name = "starlette", marker = "python_full_version >= '3.10'" },
     { name = "uvicorn", marker = "python_full_version >= '3.10'" },
 ]
-
-[package.optional-dependencies]
-cli = [
-    { name = "python-dotenv", marker = "python_full_version >= '3.10'" },
-    { name = "typer", marker = "python_full_version >= '3.10'" },
+sdist = { url = "https://files.pythonhosted.org/packages/00/9d/ac1aaa3de8655a72fe07c0c2901ed35f0da2b3ffb2a1bfc4f46bbd7b6710/mcp-1.4.0.tar.gz", hash = "sha256:5b750b14ca178eeb7b2addbd94adb21785d7b4de5d5f3577ae193d787869e2dd", size = 155809 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/93/05/1cbc9f93900d4348f4e782811f251541d860e7d13c30cd68b402cd9edbd4/mcp-1.4.0-py3-none-any.whl", hash = "sha256:d2760e1ea7635b1e70da516698620a016cde214976416dd894f228600b08984c", size = 73036 },
 ]
 
 [[package]]
@@ -2740,8 +2738,7 @@ name = "pydantic-ai"
 version = "0.0.40"
 source = { editable = "." }
 dependencies = [
-    { name = "pydantic-ai-slim", extra = ["anthropic", "bedrock", "cli", "cohere", "groq", "mistral", "openai", "vertexai"] },
-    { name = "pydantic-ai-slim", extra = ["mcp"], marker = "python_full_version >= '3.10'" },
+    { name = "pydantic-ai-slim", extra = ["anthropic", "bedrock", "cli", "cohere", "groq", "mcp", "mistral", "openai", "vertexai"] },
 ]
 
 [package.optional-dependencies]
@@ -2776,8 +2773,7 @@ lint = [
 requires-dist = [
     { name = "logfire", marker = "extra == 'logfire'", specifier = ">=2.3" },
     { name = "pydantic-ai-examples", marker = "extra == 'examples'", editable = "examples" },
-    { name = "pydantic-ai-slim", extras = ["mcp"], marker = "python_full_version >= '3.10'", editable = "pydantic_ai_slim" },
-    { name = "pydantic-ai-slim", extras = ["openai", "vertexai", "groq", "anthropic", "mistral", "cohere", "bedrock", "cli"], editable = "pydantic_ai_slim" },
+    { name = "pydantic-ai-slim", extras = ["openai", "vertexai", "groq", "anthropic", "mistral", "cohere", "bedrock", "cli", "mcp"], editable = "pydantic_ai_slim" },
 ]
 provides-extras = ["examples", "logfire"]
 
@@ -2870,7 +2866,7 @@ logfire = [
     { name = "logfire" },
 ]
 mcp = [
-    { name = "mcp", extra = ["cli"], marker = "python_full_version >= '3.10'" },
+    { name = "mcp", marker = "python_full_version >= '3.10'" },
 ]
 mistral = [
     { name = "mistralai" },
@@ -2917,7 +2913,7 @@ requires-dist = [
     { name = "groq", marker = "extra == 'groq'", specifier = ">=0.12.0" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "logfire", marker = "extra == 'logfire'", specifier = ">=2.3" },
-    { name = "mcp", extras = ["cli"], marker = "python_full_version >= '3.10' and extra == 'mcp'", git = "https://github.com/Kludex/python-sdk.git?rev=close-resources" },
+    { name = "mcp", marker = "python_full_version >= '3.10' and extra == 'mcp'", specifier = ">=1.4.0" },
     { name = "mistralai", marker = "extra == 'mistral'", specifier = ">=1.2.5" },
     { name = "openai", marker = "extra == 'openai'", specifier = ">=1.65.1" },
     { name = "opentelemetry-api", specifier = ">=1.28.0" },
