@@ -5,6 +5,7 @@ from dirty_equals import IsInstance
 from inline_snapshot import snapshot
 
 from pydantic_ai.agent import Agent
+from pydantic_ai.mcp import MCPRemoteServer, MCPSubprocessServer
 from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart, UserPromptPart
 
 from .conftest import IsDatetime, try_import
@@ -12,7 +13,6 @@ from .conftest import IsDatetime, try_import
 with try_import() as imports_successful:
     from mcp.types import CallToolResult, TextContent
 
-    from pydantic_ai.mcp import MCPServer
     from pydantic_ai.models.openai import OpenAIModel
 
 
@@ -24,7 +24,8 @@ pytestmark = [
 
 
 async def test_stdio_server():
-    async with MCPServer.stdio('python', ['-m', 'tests.mcp_server']) as server:
+    server = MCPSubprocessServer('python', ['-m', 'tests.mcp_server'])
+    async with server:
         tools = await server.list_tools()
         assert len(tools) == 1
         assert tools[0].name == 'celsius_to_fahrenheit'
@@ -36,14 +37,15 @@ async def test_stdio_server():
 
 
 def test_sse_server():
-    sse_server = MCPServer.sse(url='http://localhost:8000/sse')
+    sse_server = MCPRemoteServer(url='http://localhost:8000/sse')
     assert sse_server.url == 'http://localhost:8000/sse'
 
 
 async def test_agent_with_stdio_server(allow_model_requests: None):
-    async with MCPServer.stdio('python', ['-m', 'tests.mcp_server']) as server:
-        model = OpenAIModel('gpt-4o')
-        agent = Agent(model, mcp_servers=[server])
+    server = MCPSubprocessServer('python', ['-m', 'tests.mcp_server'])
+    model = OpenAIModel('gpt-4o')
+    agent = Agent(model, mcp_servers=[server])
+    async with agent.run_mcp_servers():
         result = await agent.run('What is 0 degrees Celsius in Fahrenheit?')
         assert result.data == snapshot('0 degrees Celsius is 32.0 degrees Fahrenheit.')
         assert result.all_messages() == snapshot(
@@ -79,3 +81,11 @@ async def test_agent_with_stdio_server(allow_model_requests: None):
                 ),
             ]
         )
+
+
+async def test_agent_with_server_not_running():
+    server = MCPSubprocessServer('python', ['-m', 'tests.mcp_server'])
+    model = OpenAIModel('gpt-4o')
+    agent = Agent(model, mcp_servers=[server])
+    with pytest.raises(RuntimeError, match='MCP server is not running'):
+        await agent.run('What is 0 degrees Celsius in Fahrenheit?')
