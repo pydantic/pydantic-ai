@@ -2,10 +2,10 @@ from __future__ import annotations as _annotations
 
 import asyncio
 import types
-from datetime import datetime, timezone
-from typing import Any, TypeVar
+from functools import partial
+from typing import Any, Callable, TypeVar
 
-from typing_extensions import TypeIs, get_args, get_origin
+from typing_extensions import ParamSpec, TypeIs, get_args, get_origin
 from typing_inspection import typing_objects
 from typing_inspection.introspection import is_union_origin
 
@@ -73,10 +73,6 @@ def get_parent_namespace(frame: types.FrameType | None) -> dict[str, Any] | None
                 return back.f_locals
 
 
-def now_utc() -> datetime:
-    return datetime.now(tz=timezone.utc)
-
-
 class Unset:
     """A singleton to represent an unset value.
 
@@ -92,3 +88,15 @@ T = TypeVar('T')
 
 def is_set(t_or_unset: T | Unset) -> TypeIs[T]:
     return t_or_unset is not UNSET
+
+
+_P = ParamSpec('_P')
+_R = TypeVar('_R')
+
+
+async def run_in_executor(func: Callable[_P, _R], *args: _P.args, **kwargs: _P.kwargs) -> _R:
+    if kwargs:
+        # noinspection PyTypeChecker
+        return await asyncio.get_running_loop().run_in_executor(None, partial(func, *args, **kwargs))
+    else:
+        return await asyncio.get_running_loop().run_in_executor(None, func, *args)  # type: ignore
