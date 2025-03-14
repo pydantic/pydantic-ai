@@ -220,11 +220,15 @@ async def _prepare_request_parameters(
             function_tool_defs.append(tool_def)
 
     async def add_mcp_server_tools(server: MCPServer) -> None:
+        if not server.is_running:
+            raise RuntimeError(f'MCP server is not running: {server}')
         tool_defs = await server.list_tools()
         function_tool_defs.extend(tool_defs)
 
-    await asyncio.gather(*map(add_tool, ctx.deps.function_tools.values()))
-    await asyncio.gather(*map(add_mcp_server_tools, ctx.deps.mcp_servers))
+    await asyncio.gather(
+        *map(add_tool, ctx.deps.function_tools.values()),
+        *map(add_mcp_server_tools, ctx.deps.mcp_servers),
+    )
 
     result_schema = ctx.deps.result_schema
     return models.ModelRequestParameters(
@@ -665,6 +669,10 @@ async def _tool_from_mcp_server(
     ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
 ) -> Tool[DepsT] | None:
     async def run_tool(ctx: RunContext[DepsT], **args: Any) -> Any:
+        # There's no normal situation where the server will not be running at this point, we check just in case
+        # some weird edge case occurs.
+        if not server.is_running:  # pragma: no cover
+            raise RuntimeError(f'MCP server is not running: {server}')
         result = await server.call_tool(tool_name, args)
         return result
 

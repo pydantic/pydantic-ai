@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 import dataclasses
 import inspect
 from collections.abc import AsyncIterator, Awaitable, Iterator, Sequence
-from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
+from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager, contextmanager
 from copy import deepcopy
 from types import FrameType
 from typing import TYPE_CHECKING, Any, Callable, ClassVar, Generic, cast, final, overload
@@ -1261,6 +1261,17 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         This method preserves the generic parameters while narrowing the type, unlike a direct call to `isinstance`.
         """
         return isinstance(node, End)
+
+    @asynccontextmanager
+    async def run_mcp_servers(self) -> AsyncIterator[None]:
+        """Run the agent with MCP servers."""
+        exit_stack = AsyncExitStack()
+        try:
+            for mcp_server in self._mcp_servers:
+                await exit_stack.enter_async_context(mcp_server)
+            yield
+        finally:
+            await exit_stack.aclose()
 
 
 @dataclasses.dataclass(repr=False)
