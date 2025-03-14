@@ -5,6 +5,10 @@ from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Callable
 
+from opentelemetry.trace import get_current_span
+
+from pydantic_ai.models.instrumented import InstrumentedModel
+
 from ..exceptions import FallbackExceptionGroup, ModelHTTPError
 from . import KnownModelName, Model, ModelRequestParameters, StreamedResponse, infer_model
 
@@ -62,7 +66,11 @@ class FallbackModel(Model):
         for model in self.models:
             try:
                 response, usage = await model.request(messages, model_settings, model_request_parameters)
-                response.model_used = model  # type: ignore
+                span = get_current_span()
+                if span.is_recording():
+                    attributes = getattr(span, 'attributes', {})
+                    if attributes.get('gen_ai.request.model') == self.model_name:
+                        span.set_attributes(InstrumentedModel.model_attributes(model))
                 return response, usage
             except Exception as exc:
                 if self._fallback_on(exc):
