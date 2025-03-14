@@ -13,10 +13,11 @@ with try_import() as imports_successful:
     from mcp.types import CallToolResult, TextContent
 
     from pydantic_ai.mcp import MCPServer
+    from pydantic_ai.models.openai import OpenAIModel
 
 
 pytestmark = [
-    pytest.mark.skipif(not imports_successful(), reason='mcp not installed'),
+    pytest.mark.skipif(not imports_successful(), reason='mcp and openai not installed'),
     pytest.mark.anyio,
     pytest.mark.vcr,
 ]
@@ -41,7 +42,8 @@ def test_sse_server():
 
 async def test_agent_with_stdio_server(allow_model_requests: None):
     async with MCPServer.stdio('python', ['-m', 'tests.mcp_server']) as server:
-        agent = Agent('openai:gpt-4o', mcp_servers=[server])
+        model = OpenAIModel('gpt-4o')
+        agent = Agent(model, mcp_servers=[server])
         result = await agent.run('What is 0 degrees Celsius in Fahrenheit?')
         assert result.data == snapshot('0 degrees Celsius is 32.0 degrees Fahrenheit.')
         assert result.all_messages() == snapshot(
