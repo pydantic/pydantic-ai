@@ -355,8 +355,17 @@ class AnthropicModel(Model):
                             source={'data': io.BytesIO(item.data), 'media_type': item.media_type, 'type': 'base64'},  # type: ignore
                             type='image',
                         )
+                    elif item.media_type == 'application/pdf':
+                        yield DocumentBlockParam(
+                            source=Base64PDFSourceParam(
+                                data=io.BytesIO(item.data),
+                                media_type='application/pdf',
+                                type='base64',
+                            ),
+                            type='document',
+                        )
                     else:
-                        raise RuntimeError('Only images are supported for binary content')
+                        raise RuntimeError('Only images and PDFs are supported for binary content')
                 elif isinstance(item, ImageUrl):
                     try:
                         response = await cached_async_http_client().get(item.url)

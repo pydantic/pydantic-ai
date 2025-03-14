@@ -598,7 +598,7 @@ async def test_audio_as_binary_content_input(allow_model_requests: None, media_t
 
     base64_content = b'//uQZ'
 
-    with pytest.raises(RuntimeError, match='Only images are supported for binary content'):
+    with pytest.raises(RuntimeError, match='Only images and PDFs are supported for binary content'):
         await agent.run(['hello', BinaryContent(data=base64_content, media_type=media_type)])
 
 
