@@ -30,7 +30,7 @@ pip/uv-add 'mcp[cli]'
 
 Here's a simple MCP server that provides a temperature conversion tool:
 
-```python {title="temperature_server.py" test="skip"}
+```python {title="temperature_server.py" py="3.10" test="skip"}
 from mcp.server.fastmcp import FastMCP
 
 mcp = FastMCP('Temperature Conversion Server')
@@ -56,7 +56,7 @@ mcp.run('stdio')
 The same server can be run with [SSE transport](https://modelcontextprotocol.io/docs/concepts/transports#server-sent-events-sse)
 for HTTP communication:
 
-```python {title="temperature_server_sse.py" test="skip"}
+```python {title="temperature_server_sse.py" py="3.10" test="skip"}
 from mcp.server.fastmcp import FastMCP
 
 mcp = FastMCP('Temperature Conversion Server')
@@ -93,7 +93,7 @@ Examples of both are shown below.
 You can have a MCP server running on a remote server. In this case, you'd use the
 [`MCPRemoteServer`][pydantic_ai.mcp.MCPRemoteServer] class:
 
-```python {title="basic_mcp_setup.py" test="skip"}
+```python {title="basic_mcp_setup.py" py="3.10" test="skip"}
 from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPRemoteServer
 
@@ -118,7 +118,7 @@ In this case, you'd use the [`MCPSubprocessServer`][pydantic_ai.mcp.MCPSubproces
 when using `MCPSubprocessServer` you need to run the server with the [`run_mcp_servers`][pydantic_ai.Agent.run_mcp_servers]
 context manager before running the server.
 
-```python {title="stdio_mcp_setup.py"}
+```python {title="stdio_mcp_setup.py" py="3.10"}
 from pydantic_ai.agent import Agent
 from pydantic_ai.mcp import MCPSubprocessServer
 
