@@ -6,18 +6,18 @@ from collections.abc import AsyncIterator, Sequence
 from contextlib import AbstractContextManager, ExitStack, asynccontextmanager
 from dataclasses import dataclass, field
 from functools import cached_property
-from time import perf_counter
-from typing import TYPE_CHECKING, Annotated, Any, Callable, Generic, TypeVar
+from typing import Any, Generic, TypeVar, cast
 
 import logfire_api
-import pydantic
 import typing_extensions
 from logfire_api import LogfireSpan
+from typing_extensions import deprecated
 from typing_inspection import typing_objects
 
 from . import _utils, exceptions, mermaid
-from .nodes import BaseNode, DepsT, End, GraphRunContext, NodeDef, RunEndT
-from .state import EndStep, HistoryStep, NodeStep, StateT, deep_copy_state, nodes_schema_var
+from .nodes import BaseNode, DepsT, End, GraphRunContext, NodeDef, RunEndT, StateT
+from .persistence import BaseStatePersistence
+from .persistence.in_mem import SimpleStatePersistence
 
 # while waiting for https://github.com/pydantic/logfire/issues/745
 try:
@@ -30,7 +30,7 @@ else:
     logfire._internal.stack_info.NON_USER_CODE_PREFIXES += (str(Path(__file__).parent.absolute()),)
 
 
-__all__ = ('Graph', 'GraphRun', 'GraphRunResult')
+__all__ = 'Graph', 'GraphRun', 'GraphRunResult'
 
 _logfire = logfire_api.Logfire(otel_scope='pydantic-graph')
 
@@ -84,10 +84,9 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
 
     name: str | None
     node_defs: dict[str, NodeDef[StateT, DepsT, RunEndT]]
-    snapshot_state: Callable[[StateT], StateT]
     _state_type: type[StateT] | _utils.Unset = field(repr=False)
     _run_end_type: type[RunEndT] | _utils.Unset = field(repr=False)
-    _auto_instrument: bool = field(repr=False)
+    auto_instrument: bool = field(repr=False)
 
     def __init__(
         self,
@@ -96,7 +95,6 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
         name: str | None = None,
         state_type: type[StateT] | _utils.Unset = _utils.UNSET,
         run_end_type: type[RunEndT] | _utils.Unset = _utils.UNSET,
-        snapshot_state: Callable[[StateT], StateT] = deep_copy_state,
         auto_instrument: bool = True,
     ):
         """Create a graph from a sequence of nodes.
@@ -108,16 +106,12 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
                 on the first call to a graph method.
             state_type: The type of the state for the graph, this can generally be inferred from `nodes`.
             run_end_type: The type of the result of running the graph, this can generally be inferred from `nodes`.
-            snapshot_state: A function to snapshot the state of the graph, this is used in
-                [`NodeStep`][pydantic_graph.state.NodeStep] and [`EndStep`][pydantic_graph.state.EndStep] to record
-                the state before each step.
             auto_instrument: Whether to create a span for the graph run and the execution of each node's run method.
         """
         self.name = name
         self._state_type = state_type
         self._run_end_type = run_end_type
-        self._auto_instrument = auto_instrument
-        self.snapshot_state = snapshot_state
+        self.auto_instrument = auto_instrument
 
         parent_namespace = _utils.get_parent_namespace(inspect.currentframe())
         self.node_defs: dict[str, NodeDef[StateT, DepsT, RunEndT]] = {}
@@ -132,6 +126,7 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
         *,
         state: StateT = None,
         deps: DepsT = None,
+        persistence: BaseStatePersistence[StateT, T] | None = None,
         infer_name: bool = True,
         span: LogfireSpan | None = None,
     ) -> GraphRunResult[StateT, T]:
@@ -142,9 +137,11 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
                 you need to provide the starting node.
             state: The initial state of the graph.
             deps: The dependencies of the graph.
+            persistence: State persistence interface, defaults to
+                [`SimpleStatePersistence`][pydantic_graph.SimpleStatePersistence] if `None`.
             infer_name: Whether to infer the graph name from the calling frame.
             span: The span to use for the graph run. If not provided, a span will be created depending on the value of
-                the `_auto_instrument` field.
+                the `auto_instrument` field.
 
         Returns:
             A `GraphRunResult` containing information about the run, including its final result.
@@ -156,24 +153,22 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
 
         async def main():
             state = MyState(1)
-            graph_run_result = await never_42_graph.run(Increment(), state=state)
+            await never_42_graph.run(Increment(), state=state)
             print(state)
             #> MyState(number=2)
-            print(len(graph_run_result.history))
-            #> 3
 
             state = MyState(41)
-            graph_run_result = await never_42_graph.run(Increment(), state=state)
+            await never_42_graph.run(Increment(), state=state)
             print(state)
             #> MyState(number=43)
-            print(len(graph_run_result.history))
-            #> 5
         ```
         """
         if infer_name and self.name is None:
             self._infer_name(inspect.currentframe())
 
-        async with self.iter(start_node, state=state, deps=deps, infer_name=infer_name, span=span) as graph_run:
+        async with self.iter(
+            start_node, state=state, deps=deps, persistence=persistence, span=span, infer_name=False
+        ) as graph_run:
             async for _node in graph_run:
                 pass
 
@@ -181,16 +176,49 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
         assert final_result is not None, 'GraphRun should have a final result'
         return final_result
 
+    def run_sync(
+        self: Graph[StateT, DepsT, T],
+        start_node: BaseNode[StateT, DepsT, T],
+        *,
+        state: StateT = None,
+        deps: DepsT = None,
+        persistence: BaseStatePersistence[StateT, T] | None = None,
+        infer_name: bool = True,
+    ) -> GraphRunResult[StateT, T]:
+        """Synchronously run the graph.
+
+        This is a convenience method that wraps [`self.run`][pydantic_graph.Graph.run] with `loop.run_until_complete(...)`.
+        You therefore can't use this method inside async code or if there's an active event loop.
+
+        Args:
+            start_node: the first node to run, since the graph definition doesn't define the entry point in the graph,
+                you need to provide the starting node.
+            state: The initial state of the graph.
+            deps: The dependencies of the graph.
+            persistence: State persistence interface, defaults to
+                [`SimpleStatePersistence`][pydantic_graph.SimpleStatePersistence] if `None`.
+            infer_name: Whether to infer the graph name from the calling frame.
+
+        Returns:
+            The result type from ending the run and the history of the run.
+        """
+        if infer_name and self.name is None:
+            self._infer_name(inspect.currentframe())
+
+        return _utils.get_event_loop().run_until_complete(
+            self.run(start_node, state=state, deps=deps, persistence=persistence, infer_name=False)
+        )
+
     @asynccontextmanager
     async def iter(
         self: Graph[StateT, DepsT, T],
         start_node: BaseNode[StateT, DepsT, T],
         *,
-        history: list[HistoryStep[StateT, T]] | None = None,
         state: StateT = None,
         deps: DepsT = None,
-        infer_name: bool = True,
+        persistence: BaseStatePersistence[StateT, T] | None = None,
         span: AbstractContextManager[Any] | None = None,
+        infer_name: bool = True,
     ) -> AsyncIterator[GraphRun[StateT, DepsT, T]]:
         """A contextmanager which can be used to iterate over the graph's nodes as they are executed.
 
@@ -209,66 +237,114 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
         Args:
             start_node: the first node to run. Since the graph definition doesn't define the entry point in the graph,
                 you need to provide the starting node.
-            history: The history of the graph run so far. If not provided, a new list will be created.
             state: The initial state of the graph.
             deps: The dependencies of the graph.
-            infer_name: Whether to infer the graph name from the calling frame.
+            persistence: State persistence interface, defaults to
+                [`SimpleStatePersistence`][pydantic_graph.SimpleStatePersistence] if `None`.
             span: The span to use for the graph run. If not provided, a new span will be created.
+            infer_name: Whether to infer the graph name from the calling frame.
 
-        Yields:
-            A GraphRun that can be async iterated over to drive the graph to completion.
+        Returns: A GraphRun that can be async iterated over to drive the graph to completion.
         """
         if infer_name and self.name is None:
-            self._infer_name(inspect.currentframe())
+            # f_back because `asynccontextmanager` adds one frame
+            if frame := inspect.currentframe():  # pragma: no branch
+                self._infer_name(frame.f_back)
 
-        if self._auto_instrument and span is None:
+        if persistence is None:
+            persistence = SimpleStatePersistence()
+        persistence.set_graph_types(self)
+
+        if self.auto_instrument and span is None:
             span = logfire_api.span('run graph {graph.name}', graph=self)
 
         with ExitStack() as stack:
             if span is not None:
                 stack.enter_context(span)
             yield GraphRun[StateT, DepsT, T](
-                self,
-                start_node,
-                history=history if history is not None else [],
-                state=state,
-                deps=deps,
-                auto_instrument=self._auto_instrument,
+                graph=self, start_node=start_node, persistence=persistence, state=state, deps=deps
             )
 
-    def run_sync(
+    @asynccontextmanager
+    async def iter_from_persistence(
         self: Graph[StateT, DepsT, T],
-        start_node: BaseNode[StateT, DepsT, T],
+        persistence: BaseStatePersistence[StateT, T],
         *,
-        state: StateT = None,
         deps: DepsT = None,
+        span: AbstractContextManager[Any] | None = None,
         infer_name: bool = True,
-    ) -> GraphRunResult[StateT, T]:
-        """Synchronously run the graph.
+    ) -> AsyncIterator[GraphRun[StateT, DepsT, T]]:
+        """A contextmanager to iterate over the graph's nodes as they are executed, created from a persistence object.
 
-        This is a convenience method that wraps [`self.run`][pydantic_graph.Graph.run] with `loop.run_until_complete(...)`.
-        You therefore can't use this method inside async code or if there's an active event loop.
+        This method has similar functionality to [`iter`][pydantic_graph.graph.Graph.iter],
+        but instead of passing the node to run, it will restore the node and state from state persistence.
 
         Args:
-            start_node: the first node to run, since the graph definition doesn't define the entry point in the graph,
-                you need to provide the starting node.
-            state: The initial state of the graph.
+            persistence: The state persistence interface to use.
             deps: The dependencies of the graph.
+            span: The span to use for the graph run. If not provided, a new span will be created.
             infer_name: Whether to infer the graph name from the calling frame.
 
-        Returns:
-            The result type from ending the run and the history of the run.
+        Returns: A GraphRun that can be async iterated over to drive the graph to completion.
+        """
+        if infer_name and self.name is None:
+            # f_back because `asynccontextmanager` adds one frame
+            if frame := inspect.currentframe():  # pragma: no branch
+                self._infer_name(frame.f_back)
+
+        persistence.set_graph_types(self)
+
+        snapshot = await persistence.load_next()
+        if snapshot is None:
+            raise exceptions.GraphRuntimeError('Unable to restore snapshot from state persistence.')
+
+        snapshot.node.set_snapshot_id(snapshot.id)
+
+        if self.auto_instrument and span is None:
+            span = logfire_api.span('run graph {graph.name}', graph=self)
+
+        with ExitStack() as stack:
+            if span is not None:
+                stack.enter_context(span)
+            yield GraphRun[StateT, DepsT, T](
+                graph=self,
+                start_node=snapshot.node,
+                persistence=persistence,
+                state=snapshot.state,
+                deps=deps,
+                snapshot_id=snapshot.id,
+            )
+
+    async def initialize(
+        self: Graph[StateT, DepsT, T],
+        node: BaseNode[StateT, DepsT, T],
+        persistence: BaseStatePersistence[StateT, T],
+        *,
+        state: StateT = None,
+        infer_name: bool = True,
+    ) -> None:
+        """Initialize a new graph run in persistence without running it.
+
+        This is useful if you want to set up a graph run to be run later, e.g. via
+        [`iter_from_persistence`][pydantic_graph.graph.Graph.iter_from_persistence].
+
+        Args:
+            node: The node to run first.
+            persistence: State persistence interface.
+            state: The start state of the graph.
+            infer_name: Whether to infer the graph name from the calling frame.
         """
         if infer_name and self.name is None:
             self._infer_name(inspect.currentframe())
-        return _utils.get_event_loop().run_until_complete(
-            self.run(start_node, state=state, deps=deps, infer_name=False)
-        )
 
+        persistence.set_graph_types(self)
+        await persistence.snapshot_node(state, node)
+
+    @deprecated('`next` is deprecated, use `async with graph.iter(...) as run:  run.next()` instead')
     async def next(
         self: Graph[StateT, DepsT, T],
         node: BaseNode[StateT, DepsT, T],
-        history: list[HistoryStep[StateT, T]],
+        persistence: BaseStatePersistence[StateT, T],
         *,
         state: StateT = None,
         deps: DepsT = None,
@@ -278,7 +354,8 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
 
         Args:
             node: The node to run.
-            history: The history of the graph run so far. NOTE: this will be mutated to add the new step.
+            persistence: State persistence interface, defaults to
+                [`SimpleStatePersistence`][pydantic_graph.SimpleStatePersistence] if `None`.
             state: The current state of the graph.
             deps: The dependencies of the graph.
             infer_name: Whether to infer the graph name from the calling frame.
@@ -289,76 +366,15 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
         if infer_name and self.name is None:
             self._infer_name(inspect.currentframe())
 
-        if isinstance(node, End):
-            # While technically this is not compatible with the documented method signature, it's an easy mistake to
-            # make, and we should eagerly provide a more helpful error message than you'd get otherwise.
-            raise exceptions.GraphRuntimeError(f'Cannot call `next` with an `End` node: {node!r}.')
-
-        node_id = node.get_id()
-        if node_id not in self.node_defs:
-            raise exceptions.GraphRuntimeError(f'Node `{node}` is not in the graph.')
-
-        with ExitStack() as stack:
-            if self._auto_instrument:
-                stack.enter_context(_logfire.span('run node {node_id}', node_id=node_id, node=node))
-            ctx = GraphRunContext(state, deps)
-            start_ts = _utils.now_utc()
-            start = perf_counter()
-            next_node = await node.run(ctx)
-            duration = perf_counter() - start
-
-        history.append(
-            NodeStep(state=state, node=node, start_ts=start_ts, duration=duration, snapshot_state=self.snapshot_state)
+        persistence.set_graph_types(self)
+        run = GraphRun[StateT, DepsT, T](
+            graph=self,
+            start_node=node,
+            persistence=persistence,
+            state=state,
+            deps=deps,
         )
-
-        if isinstance(next_node, End):
-            history.append(EndStep(result=next_node))
-        elif not isinstance(next_node, BaseNode):
-            if TYPE_CHECKING:
-                typing_extensions.assert_never(next_node)
-            else:
-                raise exceptions.GraphRuntimeError(
-                    f'Invalid node return type: `{type(next_node).__name__}`. Expected `BaseNode` or `End`.'
-                )
-
-        return next_node
-
-    def dump_history(
-        self: Graph[StateT, DepsT, T], history: list[HistoryStep[StateT, T]], *, indent: int | None = None
-    ) -> bytes:
-        """Dump the history of a graph run as JSON.
-
-        Args:
-            history: The history of the graph run.
-            indent: The number of spaces to indent the JSON.
-
-        Returns:
-            The JSON representation of the history.
-        """
-        return self.history_type_adapter.dump_json(history, indent=indent)
-
-    def load_history(self, json_bytes: str | bytes | bytearray) -> list[HistoryStep[StateT, RunEndT]]:
-        """Load the history of a graph run from JSON.
-
-        Args:
-            json_bytes: The JSON representation of the history.
-
-        Returns:
-            The history of the graph run.
-        """
-        return self.history_type_adapter.validate_json(json_bytes)
-
-    @cached_property
-    def history_type_adapter(self) -> pydantic.TypeAdapter[list[HistoryStep[StateT, RunEndT]]]:
-        nodes = [node_def.node for node_def in self.node_defs.values()]
-        state_t = self._get_state_type()
-        end_t = self._get_run_end_type()
-        token = nodes_schema_var.set(nodes)
-        try:
-            ta = pydantic.TypeAdapter(list[Annotated[HistoryStep[state_t, end_t], pydantic.Discriminator('kind')]])
-        finally:
-            nodes_schema_var.reset(token)
-        return ta
+        return await run.next(node)
 
     def mermaid_code(
         self,
@@ -483,43 +499,49 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
             kwargs['title'] = self.name
         mermaid.save_image(path, self, **kwargs)
 
-    def _get_state_type(self) -> type[StateT]:
-        if _utils.is_set(self._state_type):
-            return self._state_type
+    def get_nodes(self) -> Sequence[type[BaseNode[StateT, DepsT, RunEndT]]]:
+        """Get the nodes in the graph."""
+        return [node_def.node for node_def in self.node_defs.values()]
+
+    @cached_property
+    def inferred_types(self) -> tuple[type[StateT], type[RunEndT]]:
+        # Get the types of the state and run end from the graph.
+        if _utils.is_set(self._state_type) and _utils.is_set(self._run_end_type):
+            return self._state_type, self._run_end_type
+
+        state_type = self._state_type
+        run_end_type = self._run_end_type
 
         for node_def in self.node_defs.values():
             for base in typing_extensions.get_original_bases(node_def.node):
                 if typing_extensions.get_origin(base) is BaseNode:
                     args = typing_extensions.get_args(base)
-                    if args:
-                        return args[0]
-                    # break the inner (bases) loop
-                    break
-        # state defaults to None, so use that if we can't infer it
-        return type(None)  # pyright: ignore[reportReturnType]
+                    if not _utils.is_set(state_type) and args:
+                        state_type = args[0]
 
-    def _get_run_end_type(self) -> type[RunEndT]:
-        if _utils.is_set(self._run_end_type):
-            return self._run_end_type
-
-        for node_def in self.node_defs.values():
-            for base in typing_extensions.get_original_bases(node_def.node):
-                if typing_extensions.get_origin(base) is BaseNode:
-                    args = typing_extensions.get_args(base)
-                    if len(args) == 3:
+                    if not _utils.is_set(run_end_type) and len(args) == 3:
                         t = args[2]
                         if not typing_objects.is_never(t):
-                            return t
+                            run_end_type = t
+                    if _utils.is_set(state_type) and _utils.is_set(run_end_type):
+                        return state_type, run_end_type  # pyright: ignore[reportReturnType]
                     # break the inner (bases) loop
                     break
-        raise exceptions.GraphSetupError('Could not infer run end type from nodes, please set `run_end_type`.')
+
+        if not _utils.is_set(state_type):
+            # state defaults to None, so use that if we can't infer it
+            state_type = None
+        if not _utils.is_set(run_end_type):
+            # this happens if a graph has no return nodes, use None so any downstream errors are clear
+            run_end_type = None
+        return state_type, run_end_type  # pyright: ignore[reportReturnType]
 
     def _register_node(
         self: Graph[StateT, DepsT, T],
         node: type[BaseNode[StateT, DepsT, T]],
         parent_namespace: dict[str, Any] | None,
     ) -> None:
-        node_id = node.get_id()
+        node_id = node.get_node_id()
         if existing_node := self.node_defs.get(node_id):
             raise exceptions.GraphSetupError(
                 f'Node ID `{node_id}` is not unique — found on {existing_node.node} and {node}'
@@ -617,13 +639,13 @@ class GraphRun(Generic[StateT, DepsT, RunEndT]):
 
     def __init__(
         self,
+        *,
         graph: Graph[StateT, DepsT, RunEndT],
         start_node: BaseNode[StateT, DepsT, RunEndT],
-        *,
-        history: list[HistoryStep[StateT, RunEndT]],
+        persistence: BaseStatePersistence[StateT, RunEndT],
         state: StateT,
         deps: DepsT,
-        auto_instrument: bool,
+        snapshot_id: str | None = None,
     ):
         """Create a new run for a given graph, starting at the specified node.
 
@@ -632,19 +654,18 @@ class GraphRun(Generic[StateT, DepsT, RunEndT]):
         Args:
             graph: The [`Graph`][pydantic_graph.graph.Graph] to run.
             start_node: The node where execution will begin.
-            history: A list of [`HistoryStep`][pydantic_graph.state.HistoryStep] objects that describe
-                each step of the run. Usually starts empty; can be populated if resuming.
+            persistence: State persistence interface.
             state: A shared state object or primitive (like a counter, dataclass, etc.) that is available
                 to all nodes via `ctx.state`.
             deps: Optional dependencies that each node can access via `ctx.deps`, e.g. database connections,
                 configuration, or logging clients.
-            auto_instrument: Whether to automatically create instrumentation spans during the run.
+            snapshot_id: The ID of the snapshot the node came from.
         """
         self.graph = graph
-        self.history = history
+        self.persistence = persistence
+        self._snapshot_id: str | None = snapshot_id
         self.state = state
         self.deps = deps
-        self._auto_instrument = auto_instrument
 
         self._next_node: BaseNode[StateT, DepsT, RunEndT] | End[RunEndT] = start_node
 
@@ -664,7 +685,7 @@ class GraphRun(Generic[StateT, DepsT, RunEndT]):
         return GraphRunResult(
             self._next_node.data,
             state=self.state,
-            history=self.history,
+            persistence=self.persistence,
         )
 
     async def next(
@@ -712,17 +733,42 @@ class GraphRun(Generic[StateT, DepsT, RunEndT]):
             the run has completed.
         """
         if node is None:
-            if isinstance(self._next_node, End):
-                # Note: we could alternatively just return `self._next_node` here, but it's easier to start with an
-                # error and relax the behavior later, than vice versa.
-                raise exceptions.GraphRuntimeError('This graph run has already ended.')
-            node = self._next_node
+            node = cast(BaseNode[StateT, DepsT, T], self._next_node)
+            node_snapshot_id = node.get_snapshot_id()
+        else:
+            node_snapshot_id = node.get_snapshot_id()
 
-        history = self.history
-        state = self.state
-        deps = self.deps
+        if node_snapshot_id != self._snapshot_id:
+            await self.persistence.snapshot_node_if_new(node_snapshot_id, self.state, node)
+            self._snapshot_id = node_snapshot_id
 
-        self._next_node = await self.graph.next(node, history, state=state, deps=deps, infer_name=False)
+        if not isinstance(node, BaseNode):
+            # While technically this is not compatible with the documented method signature, it's an easy mistake to
+            # make, and we should eagerly provide a more helpful error message than you'd get otherwise.
+            raise TypeError(f'`next` must be called with a `BaseNode` instance, got {node!r}.')
+
+        node_id = node.get_node_id()
+        if node_id not in self.graph.node_defs:
+            raise exceptions.GraphRuntimeError(f'Node `{node}` is not in the graph.')
+
+        with ExitStack() as stack:
+            if self.graph.auto_instrument:
+                stack.enter_context(_logfire.span('run node {node_id}', node_id=node_id, node=node))
+
+            async with self.persistence.record_run(node_snapshot_id):
+                ctx = GraphRunContext(self.state, self.deps)
+                self._next_node = await node.run(ctx)
+
+        if isinstance(self._next_node, End):
+            self._snapshot_id = self._next_node.get_snapshot_id()
+            await self.persistence.snapshot_end(self.state, self._next_node)
+        elif isinstance(self._next_node, BaseNode):
+            self._snapshot_id = self._next_node.get_snapshot_id()
+            await self.persistence.snapshot_node(self.state, self._next_node)
+        else:
+            raise exceptions.GraphRuntimeError(
+                f'Invalid node return type: `{type(self._next_node).__name__}`. Expected `BaseNode` or `End`.'
+            )
 
         return self._next_node
 
@@ -736,7 +782,7 @@ class GraphRun(Generic[StateT, DepsT, RunEndT]):
         return await self.next(self._next_node)
 
     def __repr__(self) -> str:
-        return f'<GraphRun name={self.graph.name or "<unnamed>"} step={len(self.history) + 1}>'
+        return f'<GraphRun graph={self.graph.name or "[unnamed]"}>'
 
 
 @dataclass
@@ -745,4 +791,4 @@ class GraphRunResult(Generic[StateT, RunEndT]):
 
     output: RunEndT
     state: StateT
-    history: list[HistoryStep[StateT, RunEndT]] = field(repr=False)
+    persistence: BaseStatePersistence[StateT, RunEndT] = field(repr=False)
