@@ -1,7 +1,7 @@
 from __future__ import annotations as _annotations
 
 from collections.abc import AsyncIterator
-from contextlib import AsyncExitStack, asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager, suppress
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Callable
 
@@ -66,17 +66,19 @@ class FallbackModel(Model):
         for model in self.models:
             try:
                 response, usage = await model.request(messages, model_settings, model_request_parameters)
-                span = get_current_span()
-                if span.is_recording():
-                    attributes = getattr(span, 'attributes', {})
-                    if attributes.get('gen_ai.request.model') == self.model_name:
-                        span.set_attributes(InstrumentedModel.model_attributes(model))
-                return response, usage
             except Exception as exc:
                 if self._fallback_on(exc):
                     exceptions.append(exc)
                     continue
                 raise exc
+            else:
+                with suppress(Exception):
+                    span = get_current_span()
+                    if span.is_recording():
+                        attributes = getattr(span, 'attributes', {})
+                        if attributes.get('gen_ai.request.model') == self.model_name:
+                            span.set_attributes(InstrumentedModel.model_attributes(model))
+                return response, usage
 
         raise FallbackExceptionGroup('All models from FallbackModel failed', exceptions)
 
