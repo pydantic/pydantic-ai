@@ -75,7 +75,6 @@ dev = [
     "pytest-recording>=0.13.2",
     "diff-cover>=9.2.0",
     "boto3-stubs[bedrock-runtime]",
-    "mcp[cli]>=1.4.1; python_version >= '3.10'"
 ]
 
 [tool.hatch.metadata]

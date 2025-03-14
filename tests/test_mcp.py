@@ -5,6 +5,7 @@ from dirty_equals import IsInstance
 from inline_snapshot import snapshot
 
 from pydantic_ai.agent import Agent
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart, UserPromptPart
 
 from .conftest import IsDatetime, try_import
@@ -88,5 +89,5 @@ async def test_agent_with_server_not_running(openai_api_key: str):
     server = MCPSubprocessServer('python', ['-m', 'tests.mcp_server'])
     model = OpenAIModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(model, mcp_servers=[server])
-    with pytest.raises(RuntimeError, match='MCP server is not running'):
+    with pytest.raises(UserError, match='MCP server is not running'):
         await agent.run('What is 0 degrees Celsius in Fahrenheit?')

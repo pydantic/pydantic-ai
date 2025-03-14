@@ -5,7 +5,7 @@ See <https://docs.cursor.com/context/model-context-protocol> for more informatio
 
 from __future__ import annotations
 
-from abc import abstractmethod, ABC
+from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass
@@ -59,7 +59,6 @@ class MCPServer(ABC):
         """Retrieve tools that are currently active on the server.
 
         Note:
-
         - We don't cache tools as they might change.
         - We also don't subscribe to the server to avoid complexity.
         """
@@ -158,26 +157,3 @@ class MCPRemoteServer(MCPServer):
     ]:
         async with sse_client(url=self.url) as (read_stream, write_stream):
             yield read_stream, write_stream
-
-
-# This is a simple example of how to use the MCP server.
-# It's not used in the agent, but it's a good example of how to use the MCP server.
-# You can run it directly with `python -m pydantic_ai.mcp`.
-if __name__ == '__main__':
-    from mcp.server.fastmcp import FastMCP
-
-    mcp = FastMCP('PydanticAI MCP Server')
-
-    @mcp.tool()
-    async def celsius_to_fahrenheit(celsius: float) -> float:
-        """Convert Celsius to Fahrenheit.
-
-        Args:
-            celsius: Temperature in Celsius
-
-        Returns:
-            Temperature in Fahrenheit
-        """
-        return (celsius * 9 / 5) + 32
-
-    mcp.run()
