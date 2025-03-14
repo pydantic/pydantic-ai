@@ -3,7 +3,7 @@
 **PydanticAI** supports integration with
 [MCP (Model Control Protocol) Servers](https://modelcontextprotocol.io/introduction),
 allowing you to extend agent capabilities through external services. This integration enables
-dynamic tool discovery and remote execution.
+dynamic tool discovery.
 
 ## Install
 
@@ -23,35 +23,47 @@ The [MCPServer][pydantic_ai.mcp.MCPServer] must be used within an async context 
 proper initialization and cleanup of resources. You can use either an HTTP/SSE server or a
 stdio-based server.
 
-### HTTP/SSE Server
+### MCP Remote Server
+
+You can have a MCP server running on a remote server. In this case, you'd use the
+[`MCPRemoteServer`][pydantic_ai.mcp.MCPRemoteServer] class:
 
 ```python {title="basic_mcp_setup.py" test="skip"}
 from pydantic_ai import Agent
-from pydantic_ai.mcp import MCPServer
+from pydantic_ai.mcp import MCPRemoteServer
 
 
 async def main():
-    async with MCPServer.sse(url='http://localhost:8000/sse') as mcp_server:
-        Agent('your-model', mcp_servers=[mcp_server])
-        # Use the agent here
+    server = MCPRemoteServer(url='http://localhost:8000/sse')
+    agent = Agent('your-model', mcp_servers=[server])
+    async with agent.run_mcp_servers():
+        result = await agent.run('Can you convert 30 degrees celsius to fahrenheit?')
+    print(result.data)
+    #> '30 degrees Celsius is equal to 86 degrees Fahrenheit.'
 ```
 
-### Stdio Server
+This will connect to the MCP server at the given URL and use the SSE transport.
 
-For stdio-based servers, you can use the [`MCPServer.stdio`][pydantic_ai.mcp.MCPServer.stdio] method:
+### MCP Subprocess Server
+
+We also have a subprocess-based server that can be used to run the MCP server in a separate process.
+In this case, you'd use the [`MCPSubprocessServer`][pydantic_ai.mcp.MCPSubprocessServer] class:
 
 ```python {title="stdio_mcp_setup.py" test="skip"}
 from pydantic_ai.agent import Agent
-from pydantic_ai.mcp import MCPServer
+from pydantic_ai.mcp import MCPSubprocessServer
 
 
 async def main():
-    async with MCPServer.stdio('python', ['-m', 'pydantic_ai.mcp']) as server:
-        agent = Agent('openai:gpt-4o', mcp_servers=[server])
+    server = MCPSubprocessServer('python', ['-m', 'pydantic_ai.mcp'])
+    agent = Agent('openai:gpt-4o', mcp_servers=[server])
+    async with agent.run_mcp_servers():
         result = await agent.run('Can you convert 30 degrees celsius to fahrenheit?')
     print(result.data)
     #> 30 degrees Celsius is equal to 86 degrees Fahrenheit.
 ```
+
+This will start the MCP server in a separate process and connect to it using the stdio transport.
 
 ### Multiple Servers
 
@@ -59,14 +71,15 @@ You can connect to multiple MCP servers simultaneously:
 
 ```python {title="multiple_mcp_servers.py" test="skip"}
 from pydantic_ai import Agent
-from pydantic_ai.mcp import MCPServer
+from pydantic_ai.mcp import MCPRemoteServer, MCPSubprocessServer
 
 
 async def main():
-    async with (
-        MCPServer.sse(url='http://localhost:8000') as local_server,
-        MCPServer.sse(url='https://remote-mcp.example.com') as remote_server,
-    ):
-        Agent('your-model', mcp_servers=[local_server, remote_server])
-        # Use the agent here...
+    local_server = MCPRemoteServer(url='http://localhost:8000/sse')
+    subprocess_server = MCPSubprocessServer('python', ['-m', 'pydantic_ai.mcp'])
+    agent = Agent('your-model', mcp_servers=[local_server, subprocess_server])
+    async with agent.run_mcp_servers():
+        result = await agent.run('Can you convert 30 degrees celsius to fahrenheit?')
+    print(result.data)
+    #> 30 degrees Celsius is equal to 86 degrees Fahrenheit.
 ```
