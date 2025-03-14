@@ -5,7 +5,7 @@ See <https://docs.cursor.com/context/model-context-protocol> for more informatio
 
 from __future__ import annotations
 
-from abc import abstractmethod
+from abc import abstractmethod, ABC
 from collections.abc import AsyncIterator, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass
