@@ -31,8 +31,8 @@ except ImportError as _import_error:
 __all__ = ('MCPServer', 'MCPSubprocessServer', 'MCPRemoteServer')
 
 
-class MCPServer:
-    """The MCP server that can be used to run a command or connect to an SSE server.
+class MCPServer(ABC):
+    """Base class for MCP servers that can be used to run a command or connect to an SSE server.
 
     See <https://modelcontextprotocol.io/introduction> for more information.
     """
@@ -56,10 +56,11 @@ class MCPServer:
         yield
 
     async def list_tools(self) -> list[ToolDefinition]:
-        """Retrieve the tools that the server has.
+        """Retrieve tools that are currently active on the server.
 
         Note:
-        - We don't cache it because the tools might change.
+
+        - We don't cache tools as they might change.
         - We also don't subscribe to the server to avoid complexity.
         """
         tools = await self._client.list_tools()
