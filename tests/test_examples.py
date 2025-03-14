@@ -183,6 +183,7 @@ def rich_prompt_ask(prompt: str, *_args: Any, **_kwargs: Any) -> str:
 
 
 text_responses: dict[str, str | ToolCallPart] = {
+    'Can you convert 30 degrees celsius to fahrenheit?': '30 degrees Celsius is equal to 86 degrees Fahrenheit.',
     'What is the weather like in West London and in Wiltshire?': (
         'The weather in West London is raining, while in Wiltshire it is sunny.'
     ),
