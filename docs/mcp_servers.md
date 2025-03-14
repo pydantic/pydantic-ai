@@ -17,6 +17,68 @@ pip/uv-add 'pydantic-ai-slim[mcp]'
 !!! note
     MCP integration requires Python 3.10 or higher.
 
+## Running MCP Servers
+
+Before diving into how to use MCP servers with PydanticAI, let's look at how to run MCP servers
+with different transports.
+
+To run MCP servers, you'll need to install the MCP CLI package:
+
+```bash
+pip/uv-add 'mcp[cli]'
+```
+
+Here's a simple MCP server that provides a temperature conversion tool:
+
+```python {title="temperature_server.py" test="skip"}
+from mcp.server.fastmcp import FastMCP
+
+mcp = FastMCP('Temperature Conversion Server')
+
+
+@mcp.tool()
+async def celsius_to_fahrenheit(celsius: float) -> float:
+    """Convert Celsius to Fahrenheit.
+
+    Args:
+        celsius: Temperature in Celsius
+
+    Returns:
+        Temperature in Fahrenheit
+    """
+    return (celsius * 9 / 5) + 32
+
+
+# Run with stdio transport (for subprocess communication)
+mcp.run('stdio')
+```
+
+The same server can be run with [SSE transport](https://modelcontextprotocol.io/docs/concepts/transports#server-sent-events-sse)
+for HTTP communication:
+
+```python {title="temperature_server_sse.py" test="skip"}
+from mcp.server.fastmcp import FastMCP
+
+mcp = FastMCP('Temperature Conversion Server')
+
+
+@mcp.tool()
+async def celsius_to_fahrenheit(celsius: float) -> float:
+    """Convert Celsius to Fahrenheit.
+
+    Args:
+        celsius: Temperature in Celsius
+
+    Returns:
+        Temperature in Fahrenheit
+    """
+    return (celsius * 9 / 5) + 32
+
+
+# Run with SSE transport on port 8000
+mcp.run('sse', port=8000)
+```
+
 ## Usage
 
 PydanticAI comes with two ways to connect to MCP servers:

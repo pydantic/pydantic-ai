@@ -110,10 +110,11 @@ class MCPSubprocessServer(MCPServer):
     See <https://modelcontextprotocol.io/docs/concepts/transports#standard-input%2Foutput-stdio> for more information.
 
     Example:
-        ```python {test="skip" lint="skip"}
+        ```python
+        from pydantic_ai import Agent
         from pydantic_ai.mcp import MCPSubprocessServer
 
-        server = MCPSubprocessServer('python', ['-m', 'pydantic_ai.mcp'])
+        server = MCPSubprocessServer('python', ['-m', 'pydantic_ai_examples.mcp_server'])
         agent = Agent('openai:gpt-4o', mcp_servers=[server])
         ```
     """
