@@ -668,6 +668,16 @@ async def _tool_from_mcp_server(
     tool_name: str,
     ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
 ) -> Tool[DepsT] | None:
+    """Call each MCP server to find the tool with the given name.
+
+    Args:
+        tool_name: The name of the tool to find.
+        ctx: The current run context.
+
+    Returns:
+        The tool with the given name, or `None` if no tool with the given name is found.
+    """
+
     async def run_tool(ctx: RunContext[DepsT], **args: Any) -> Any:
         # There's no normal situation where the server will not be running at this point, we check just in case
         # some weird edge case occurs.
