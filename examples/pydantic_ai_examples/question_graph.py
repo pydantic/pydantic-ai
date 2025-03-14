@@ -9,11 +9,16 @@ from __future__ import annotations as _annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Annotated
 
 import logfire
-from devtools import debug
-from pydantic_graph import BaseNode, Edge, End, Graph, GraphRunContext, HistoryStep
+from groq import BaseModel
+from pydantic_graph import (
+    BaseNode,
+    End,
+    Graph,
+    GraphRunContext,
+)
+from pydantic_graph.persistence.file import FileStatePersistence
 
 from pydantic_ai import Agent
 from pydantic_ai.format_as_xml import format_as_xml
@@ -41,22 +46,23 @@ class Ask(BaseNode[QuestionState]):
         )
         ctx.state.ask_agent_messages += result.all_messages()
         ctx.state.question = result.data
-        return Answer()
+        return Answer(result.data)
 
 
 @dataclass
 class Answer(BaseNode[QuestionState]):
-    answer: str | None = None
+    question: str
 
     async def run(self, ctx: GraphRunContext[QuestionState]) -> Evaluate:
-        assert self.answer is not None
-        return Evaluate(self.answer)
+        answer = input(f'{self.question}: ')
+        return Evaluate(answer)
 
 
-@dataclass
-class EvaluationResult:
+class EvaluationResult(BaseModel, use_attribute_docstrings=True):
     correct: bool
+    """Whether the answer is correct."""
     comment: str
+    """Comment on the answer, reprimand the user if the answer is wrong."""
 
 
 evaluate_agent = Agent(
@@ -67,13 +73,13 @@ evaluate_agent = Agent(
 
 
 @dataclass
-class Evaluate(BaseNode[QuestionState]):
+class Evaluate(BaseNode[QuestionState, None, str]):
     answer: str
 
     async def run(
         self,
         ctx: GraphRunContext[QuestionState],
-    ) -> Congratulate | Reprimand:
+    ) -> End[str] | Reprimand:
         assert ctx.state.question is not None
         result = await evaluate_agent.run(
             format_as_xml({'question': ctx.state.question, 'answer': self.answer}),
@@ -81,20 +87,9 @@ class Evaluate(BaseNode[QuestionState]):
         )
         ctx.state.evaluate_agent_messages += result.all_messages()
         if result.data.correct:
-            return Congratulate(result.data.comment)
+            return End(result.data.comment)
         else:
             return Reprimand(result.data.comment)
-
-
-@dataclass
-class Congratulate(BaseNode[QuestionState, None, None]):
-    comment: str
-
-    async def run(
-        self, ctx: GraphRunContext[QuestionState]
-    ) -> Annotated[End, Edge(label='success')]:
-        print(f'Correct answer! {self.comment}')
-        return End(None)
 
 
 @dataclass
@@ -103,64 +98,50 @@ class Reprimand(BaseNode[QuestionState]):
 
     async def run(self, ctx: GraphRunContext[QuestionState]) -> Ask:
         print(f'Comment: {self.comment}')
-        # > Comment: Vichy is no longer the capital of France.
         ctx.state.question = None
         return Ask()
 
 
 question_graph = Graph(
-    nodes=(Ask, Answer, Evaluate, Congratulate, Reprimand), state_type=QuestionState
+    nodes=(Ask, Answer, Evaluate, Reprimand), state_type=QuestionState
 )
 
 
 async def run_as_continuous():
     state = QuestionState()
     node = Ask()
-    history: list[HistoryStep[QuestionState, None]] = []
-    with logfire.span('run questions graph'):
-        while True:
-            node = await question_graph.next(node, history, state=state)
-            if isinstance(node, End):
-                debug([e.data_snapshot() for e in history])
-                break
-            elif isinstance(node, Answer):
-                assert state.question
-                node.answer = input(f'{state.question} ')
-            # otherwise just continue
+    end = await question_graph.run(node, state=state)
+    print('END:', end.output)
 
 
 async def run_as_cli(answer: str | None):
-    history_file = Path('question_graph_history.json')
-    history = (
-        question_graph.load_history(history_file.read_bytes())
-        if history_file.exists()
-        else []
-    )
+    persistence = FileStatePersistence(Path('question_graph.json'))
+    persistence.set_graph_types(question_graph)
 
-    if history:
-        last = history[-1]
-        assert last.kind == 'node', 'expected last step to be a node'
-        state = last.state
-        assert answer is not None, 'answer is required to continue from history'
-        node = Answer(answer)
+    if snapshot := await persistence.load_next():
+        state = snapshot.state
+        assert answer is not None, (
+            'answer required, usage "uv run -m pydantic_ai_examples.question_graph cli <answer>"'
+        )
+        node = Evaluate(answer)
     else:
         state = QuestionState()
         node = Ask()
-    debug(state, node)
+    # debug(state, node)
 
-    with logfire.span('run questions graph'):
+    async with question_graph.iter(node, state=state, persistence=persistence) as run:
         while True:
-            node = await question_graph.next(node, history, state=state)
+            node = await run.next()
             if isinstance(node, End):
-                debug([e.data_snapshot() for e in history])
+                print('END:', node.data)
+                history = await persistence.load_all()
+                print('history:', '\n'.join(str(e.node) for e in history), sep='\n')
                 print('Finished!')
                 break
             elif isinstance(node, Answer):
-                print(state.question)
+                print(node.question)
                 break
             # otherwise just continue
-
-    history_file.write_bytes(question_graph.dump_history(history, indent=2))
 
 
 if __name__ == '__main__':

@@ -3,6 +3,7 @@
 ::: pydantic_graph.nodes
     options:
         members:
+            - StateT
             - GraphRunContext
             - BaseNode
             - End
