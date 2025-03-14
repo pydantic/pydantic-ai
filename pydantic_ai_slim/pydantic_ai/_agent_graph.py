@@ -221,7 +221,7 @@ async def _prepare_request_parameters(
 
     async def add_mcp_server_tools(server: MCPServer) -> None:
         if not server.is_running:
-            raise RuntimeError(f'MCP server is not running: {server}')
+            raise exceptions.UserError(f'MCP server is not running: {server}')
         tool_defs = await server.list_tools()
         function_tool_defs.extend(tool_defs)
 
