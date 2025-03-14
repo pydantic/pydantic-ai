@@ -6,8 +6,9 @@ import pydantic_core
 import pytest
 from _pytest.logging import LogCaptureFixture
 from inline_snapshot import snapshot
-from pydantic import BaseModel, Field
-from pydantic_core import PydanticSerializationError
+from pydantic import BaseModel, Field, WithJsonSchema
+from pydantic.json_schema import GenerateJsonSchema, JsonSchemaValue
+from pydantic_core import PydanticSerializationError, core_schema
 
 from pydantic_ai import Agent, RunContext, Tool, UserError
 from pydantic_ai.messages import (
@@ -706,3 +707,47 @@ def test_call_tool_without_unrequired_parameters(set_event_loop: None):
         ]
     )
     assert tool_returns == snapshot([15, 17, 51, 68])
+
+
+def test_schema_generator():
+    class MyGenerateJsonSchema(GenerateJsonSchema):
+        def typed_dict_schema(self, schema: core_schema.TypedDictSchema) -> JsonSchemaValue:
+            # TODO: Should we always do this, rather than requiring a subclass of GenerateJsonSchema?
+            #   While there are other potential uses of subclassing GenerateJsonSchema, removing the titles
+            #   from properties seems like a more universally good idea when building the schema for a tool call..
+            # Remove useless property titles
+            s = super().typed_dict_schema(schema)
+            for p in s.get('properties', {}):
+                s['properties'][p].pop('title')
+            return s
+
+    agent = Agent(FunctionModel(get_json_schema))
+
+    def my_tool(x: Annotated[str | None, WithJsonSchema({'type': 'string'})] = None, **kwargs: Any):
+        return x
+
+    agent.tool_plain(name='my_tool_1')(my_tool)
+    agent.tool_plain(name='my_tool_2', schema_generator=MyGenerateJsonSchema)(my_tool)
+
+    result = agent.run_sync('Hello')
+    json_schema = json.loads(result.data)
+    assert json_schema == snapshot(
+        [
+            {
+                'description': '',
+                'name': 'my_tool_1',
+                'outer_typed_dict_key': None,
+                'parameters_json_schema': {
+                    'additionalProperties': True,
+                    'properties': {'x': {'title': 'X', 'type': 'string'}},
+                    'type': 'object',
+                },
+            },
+            {
+                'description': '',
+                'name': 'my_tool_2',
+                'outer_typed_dict_key': None,
+                'parameters_json_schema': {'properties': {'x': {'type': 'string'}}, 'type': 'object'},
+            },
+        ]
+    )
