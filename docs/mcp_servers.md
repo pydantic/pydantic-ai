@@ -19,10 +19,12 @@ pip/uv-add 'pydantic-ai-slim[mcp]'
 
 ## Usage
 
-The [MCPServer][pydantic_ai.mcp.MCPServer] must be used within an async context manager to ensure
-proper initialization and cleanup of resources. You can use either use the
-[`MCPSubprocessServer`][pydantic_ai.mcp.MCPSubprocessServer] or the
-[`MCPRemoteServer`][pydantic_ai.mcp.MCPRemoteServer] class.
+PydanticAI comes with two ways to connect to MCP servers:
+
+- [`MCPRemoteServer`][pydantic_ai.mcp.MCPRemoteServer] which connects to an MCP server using the [HTTP SSE](TODO) transport
+- [`MCPSubprocessServer`][pydantic_ai.mcp.MCPSubprocessServer] which runs the server as a subprocess and connects to it using the [stdio](TODO) transport
+
+Examples of both are shown below.
 
 ### MCP Remote Server
 
@@ -48,7 +50,8 @@ This will connect to the MCP server at the given URL and use the SSE transport.
 ### MCP Subprocess Server
 
 We also have a subprocess-based server that can be used to run the MCP server in a separate process.
-In this case, you'd use the [`MCPSubprocessServer`][pydantic_ai.mcp.MCPSubprocessServer] class:
+In this case, you'd use the [`MCPSubprocessServer`][pydantic_ai.mcp.MCPSubprocessServer] class,
+when using `MCPSubprocessServer` you need to run the server with the [`run_mcp_servers`][pydantic_ai.Agent.run_mcp_servers] context manager before running the server.
 
 ```python {title="stdio_mcp_setup.py" test="skip"}
 from pydantic_ai.agent import Agent

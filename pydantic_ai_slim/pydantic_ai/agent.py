@@ -1264,7 +1264,10 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
 
     @asynccontextmanager
     async def run_mcp_servers(self) -> AsyncIterator[None]:
-        """Run the agent with MCP servers."""
+        """Run [`MCPSubprocessServer`s][pydantic_ai.mcp.MCPSubprocessServer] so they can be used by the agent.
+        
+        Returns: a context manager to start and shutdown the servers.
+        """
         exit_stack = AsyncExitStack()
         try:
             for mcp_server in self._mcp_servers:
