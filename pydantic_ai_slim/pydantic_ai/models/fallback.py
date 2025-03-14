@@ -44,7 +44,6 @@ class FallbackModel(Model):
             fallback_on: A callable or tuple of exceptions that should trigger a fallback.
         """
         self.models = [infer_model(default_model), *[infer_model(m) for m in fallback_models]]
-        self._model_name = f'FallBackModel[{", ".join(model.model_name for model in self.models)}]'
 
         if isinstance(fallback_on, tuple):
             self._fallback_on = _default_fallback_condition_factory(fallback_on)
@@ -111,11 +110,11 @@ class FallbackModel(Model):
     @property
     def model_name(self) -> str:
         """The model name."""
-        return self._model_name
+        return f'fallback:{", ".join(model.model_name for model in self.models)}'
 
     @property
     def system(self) -> str:
-        return 'fallback'
+        return f'fallback:{", ".join(model.system for model in self.models)}'
 
     @property
     def base_url(self) -> str | None:
