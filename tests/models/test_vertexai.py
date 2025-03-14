@@ -44,7 +44,7 @@ async def test_init_service_account(tmp_path: Path, allow_model_requests: None):
     )
     assert model.auth is not None
     assert model.model_name == snapshot('gemini-1.5-flash')
-    assert model.system == snapshot('google-vertex')
+    assert model.system == snapshot('vertex_ai')
 
 
 class NoOpCredentials:
@@ -72,7 +72,7 @@ async def test_init_env(mocker: MockerFixture, allow_model_requests: None):
     )
     assert model.auth is not None
     assert model.model_name == snapshot('gemini-1.5-flash')
-    assert model.system == snapshot('google-vertex')
+    assert model.system == snapshot('vertex_ai')
 
     await model.ainit()
     assert model.base_url is not None

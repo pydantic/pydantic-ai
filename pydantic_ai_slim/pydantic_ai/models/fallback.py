@@ -104,9 +104,8 @@ class FallbackModel(Model):
         return self._model_name
 
     @property
-    def system(self) -> str | None:
-        """The system / model provider, n/a for fallback models."""
-        return None
+    def system(self) -> str:
+        return 'fallback'
 
     @property
     def base_url(self) -> str | None:

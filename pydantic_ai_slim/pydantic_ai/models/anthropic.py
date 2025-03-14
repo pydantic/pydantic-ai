@@ -115,7 +115,7 @@ class AnthropicModel(Model):
     client: AsyncAnthropic = field(repr=False)
 
     _model_name: AnthropicModelName = field(repr=False)
-    _system: str | None = field(default='anthropic', repr=False)
+    _system: str = field(default='anthropic', repr=False)
 
     def __init__(
         self,
@@ -183,7 +183,7 @@ class AnthropicModel(Model):
         return self._model_name
 
     @property
-    def system(self) -> str | None:
+    def system(self) -> str:
         """The system / model provider."""
         return self._system
 

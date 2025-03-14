@@ -99,7 +99,7 @@ class OpenAIModel(Model):
     system_prompt_role: OpenAISystemPromptRole | None = field(default=None)
 
     _model_name: OpenAIModelName = field(repr=False)
-    _system: str | None = field(repr=False)
+    _system: str = field(repr=False)
 
     @overload
     def __init__(
@@ -108,7 +108,6 @@ class OpenAIModel(Model):
         *,
         provider: Literal['openai', 'deepseek', 'azure'] | Provider[AsyncOpenAI] = 'openai',
         system_prompt_role: OpenAISystemPromptRole | None = None,
-        system: str | None = 'openai',
     ) -> None: ...
 
     @deprecated('Use the `provider` parameter instead of `base_url`, `api_key`, `openai_client` and `http_client`.')
@@ -123,7 +122,6 @@ class OpenAIModel(Model):
         openai_client: AsyncOpenAI | None = None,
         http_client: AsyncHTTPClient | None = None,
         system_prompt_role: OpenAISystemPromptRole | None = None,
-        system: str | None = 'openai',
     ) -> None: ...
 
     def __init__(
@@ -136,7 +134,6 @@ class OpenAIModel(Model):
         openai_client: AsyncOpenAI | None = None,
         http_client: AsyncHTTPClient | None = None,
         system_prompt_role: OpenAISystemPromptRole | None = None,
-        system: str | None = 'openai',
     ):
         """Initialize an OpenAI model.
 
@@ -155,8 +152,6 @@ class OpenAIModel(Model):
             http_client: An existing `httpx.AsyncClient` to use for making HTTP requests.
             system_prompt_role: The role to use for the system prompt message. If not provided, defaults to `'system'`.
                 In the future, this may be inferred from the model name.
-            system: The model provider used, defaults to `openai`. This is for observability purposes, you must
-                customize the `base_url` and `api_key` to use a different provider.
         """
         self._model_name = model_name
 
@@ -186,7 +181,6 @@ class OpenAIModel(Model):
             else:
                 self.client = AsyncOpenAI(base_url=base_url, api_key=api_key, http_client=cached_async_http_client())
         self.system_prompt_role = system_prompt_role
-        self._system = system
 
     @property
     def base_url(self) -> str:
@@ -224,7 +218,7 @@ class OpenAIModel(Model):
         return self._model_name
 
     @property
-    def system(self) -> str | None:
+    def system(self) -> str:
         """The system / model provider."""
         return self._system
 

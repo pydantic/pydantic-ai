@@ -69,7 +69,7 @@ class VertexAIModel(GeminiModel):
     url_template: str
 
     _model_name: GeminiModelName = field(repr=False)
-    _system: str | None = field(default='google-vertex', repr=False)
+    _system: str = field(default='vertex_ai', repr=False)
 
     # TODO __init__ can be removed once we drop 3.9 and we can set kw_only correctly on the dataclass
     def __init__(
@@ -175,7 +175,7 @@ class VertexAIModel(GeminiModel):
         return self._model_name
 
     @property
-    def system(self) -> str | None:
+    def system(self) -> str:
         """The system / model provider."""
         return self._system
 

@@ -213,10 +213,8 @@ class InstrumentedModel(WrapperModel):
 
     @staticmethod
     def model_attributes(model: Model):
-        system = getattr(model, 'system', '') or model.__class__.__name__.removesuffix('Model').lower()
-        system = {'google-gla': 'gemini', 'google-vertex': 'vertex_ai', 'mistral': 'mistral_ai'}.get(system, system)
         attributes: dict[str, AttributeValue] = {
-            GEN_AI_SYSTEM_ATTRIBUTE: system,
+            GEN_AI_SYSTEM_ATTRIBUTE: model.system,
             GEN_AI_REQUEST_MODEL_ATTRIBUTE: model.model_name,
         }
         if base_url := model.base_url:
