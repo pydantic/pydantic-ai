@@ -20,8 +20,9 @@ pip/uv-add 'pydantic-ai-slim[mcp]'
 ## Usage
 
 The [MCPServer][pydantic_ai.mcp.MCPServer] must be used within an async context manager to ensure
-proper initialization and cleanup of resources. You can use either an HTTP/SSE server or a
-stdio-based server.
+proper initialization and cleanup of resources. You can use either use the
+[`MCPSubprocessServer`][pydantic_ai.mcp.MCPSubprocessServer] or the
+[`MCPRemoteServer`][pydantic_ai.mcp.MCPRemoteServer] class.
 
 ### MCP Remote Server
 
