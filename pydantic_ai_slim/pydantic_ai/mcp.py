@@ -110,7 +110,7 @@ class MCPSubprocessServer(MCPServer):
     See <https://modelcontextprotocol.io/docs/concepts/transports#standard-input%2Foutput-stdio> for more information.
 
     Example:
-        ```python
+        ```python {py="3.10"}
         from pydantic_ai import Agent
         from pydantic_ai.mcp import MCPSubprocessServer
 
