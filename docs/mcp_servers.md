@@ -46,7 +46,8 @@ async def main():
     #> '30 degrees Celsius is equal to 86 degrees Fahrenheit.'
 ```
 
-This will connect to the MCP server at the given URL and use the SSE transport.
+This will connect to the MCP server at the given URL and use the
+[SSE transport](https://modelcontextprotocol.io/docs/concepts/transports#server-sent-events-sse).
 
 ### MCP Subprocess Server
 
@@ -70,4 +71,5 @@ async def main():
     #> 30 degrees Celsius is equal to 86 degrees Fahrenheit.
 ```
 
-This will start the MCP server in a separate process and connect to it using the stdio transport.
+This will start the MCP server in a separate process and connect to it using the
+[stdio transport](https://modelcontextprotocol.io/docs/concepts/transports#standard-input%2Foutput-stdio).
