@@ -100,7 +100,7 @@ class MCPServer:
 
     async def call_tool(self, tool_name: str, arguments: dict[str, Any]) -> CallToolResult:
         """Call a tool on the server."""
-        return await self._client.call_tool(tool_name, arguments)  # type: ignore
+        return await self._client.call_tool(tool_name, arguments)
 
     async def __aenter__(self) -> MCPServer:
         if self.url is None:

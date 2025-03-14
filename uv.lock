@@ -1680,8 +1680,8 @@ wheels = [
 
 [[package]]
 name = "mcp"
-version = "1.4.0"
-source = { registry = "https://pypi.org/simple" }
+version = "1.4.1.dev2+7e5dd78"
+source = { git = "https://github.com/modelcontextprotocol/python-sdk.git?rev=revert-239-davidsp%2Fraw-request#7e5dd78d6e8bc07cda978b30839d03bd08db542c" }
 dependencies = [
     { name = "anyio", marker = "python_full_version >= '3.10'" },
     { name = "httpx", marker = "python_full_version >= '3.10'" },
@@ -1692,9 +1692,11 @@ dependencies = [
     { name = "starlette", marker = "python_full_version >= '3.10'" },
     { name = "uvicorn", marker = "python_full_version >= '3.10'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/00/9d/ac1aaa3de8655a72fe07c0c2901ed35f0da2b3ffb2a1bfc4f46bbd7b6710/mcp-1.4.0.tar.gz", hash = "sha256:5b750b14ca178eeb7b2addbd94adb21785d7b4de5d5f3577ae193d787869e2dd", size = 155809 }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/93/05/1cbc9f93900d4348f4e782811f251541d860e7d13c30cd68b402cd9edbd4/mcp-1.4.0-py3-none-any.whl", hash = "sha256:d2760e1ea7635b1e70da516698620a016cde214976416dd894f228600b08984c", size = 73036 },
+
+[package.optional-dependencies]
+cli = [
+    { name = "python-dotenv", marker = "python_full_version >= '3.10'" },
+    { name = "typer", marker = "python_full_version >= '3.10'" },
 ]
 
 [[package]]
@@ -2892,6 +2894,7 @@ dev = [
     { name = "diff-cover", version = "9.2.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.9.17'" },
     { name = "dirty-equals" },
     { name = "inline-snapshot" },
+    { name = "mcp", extra = ["cli"], marker = "python_full_version >= '3.10'" },
     { name = "pytest" },
     { name = "pytest-examples" },
     { name = "pytest-mock" },
@@ -2913,7 +2916,7 @@ requires-dist = [
     { name = "groq", marker = "extra == 'groq'", specifier = ">=0.12.0" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "logfire", marker = "extra == 'logfire'", specifier = ">=2.3" },
-    { name = "mcp", marker = "python_full_version >= '3.10' and extra == 'mcp'", specifier = ">=1.4.0" },
+    { name = "mcp", marker = "python_full_version >= '3.10' and extra == 'mcp'", git = "https://github.com/modelcontextprotocol/python-sdk.git?rev=revert-239-davidsp%2Fraw-request" },
     { name = "mistralai", marker = "extra == 'mistral'", specifier = ">=1.2.5" },
     { name = "openai", marker = "extra == 'openai'", specifier = ">=1.65.1" },
     { name = "opentelemetry-api", specifier = ">=1.28.0" },
@@ -2936,6 +2939,7 @@ dev = [
     { name = "diff-cover", specifier = ">=9.2.0" },
     { name = "dirty-equals", specifier = ">=0.9.0" },
     { name = "inline-snapshot", specifier = ">=0.19.3" },
+    { name = "mcp", extras = ["cli"], marker = "python_full_version >= '3.10'", git = "https://github.com/modelcontextprotocol/python-sdk.git?rev=revert-239-davidsp%2Fraw-request" },
     { name = "pytest", specifier = ">=8.3.3" },
     { name = "pytest-examples", specifier = ">=0.0.14" },
     { name = "pytest-mock", specifier = ">=3.14.0" },
