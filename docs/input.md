@@ -1,4 +1,4 @@
-# Image, Audio & Document Input
+# Image, Audio, Document & File URL Input
 
 Some LLMs are now capable of understanding both audio, image and document content.
 
@@ -60,10 +60,7 @@ You can provide audio input using either [`AudioUrl`][pydantic_ai.AudioUrl] or [
 !!! warning
     When using Gemini models, the document content will always be sent as binary data, regardless of whether you use `DocumentUrl` or `BinaryContent`. This is due to differences in how Vertex AI and Google AI handle document inputs.
 
-    For more details, see [this discussion](https://discuss.ai.google.dev/t/i-am-using-google-generative-ai-model-gemini-1-5-pro-for-image-analysis-but-getting-error/34866/4).
-
-    If you are unsatisfied with this behavior, please let us know by opening an issue on
-    [GitHub](https://github.com/pydantic/pydantic-ai/issues).
+    On Vertex AI, you can instead use [`FileUrl`][pydantic_ai.FileUrl] to instruct Gemini models to fetch the content themselves as explained in the [section below](#file-url-input).
 
 You can provide document input using either [`DocumentUrl`][pydantic_ai.DocumentUrl] or [`BinaryContent`][pydantic_ai.BinaryContent]. The process is similar to the examples above.
 
@@ -101,4 +98,34 @@ result = agent.run_sync(
 )
 print(result.data)
 #> The document discusses...
+```
+
+## File URL input
+
+!!! info
+    Only Gemini models on Vertex AI support direct file URL as input.
+
+You can provide a file URL directly to a Vertex AI Gemini model by using [`FileUrl`][pydantic_ai.FileUrl]. The process is similar to the examples above, but no download is performed by PydanticAI and more formats and URL types are supported:
+
+- Cloud Storage bucket URI (whose protocol is `gs://`)
+- Public HTTP URL
+- Public YouTube video URL
+
+See the [Gemini API docs](https://cloud.google.com/vertex-ai/generative-ai/docs/model-reference/inference#filedata) for use cases and limitations.
+
+```py {title="main.py" test="skip" lint="skip"}
+from pydantic_ai import Agent, FileUrl
+
+agent = Agent(model='google-vertex:gemini-2.0-flash')
+result = agent.run_sync(
+    [
+        'What is the main content of this document?',
+        FileUrl(
+            url='https://storage.googleapis.com/cloud-samples-data/generative-ai/pdf/2403.05530.pdf',
+            media_type='application/pdf',
+        ),
+    ]
+)
+print(result.data)
+#> The document is...
 ```
