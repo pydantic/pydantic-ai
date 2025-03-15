@@ -769,6 +769,7 @@ def _metadata_as_usage(response: _GeminiResponse) -> usage.Usage:
         request_tokens=metadata.get('prompt_token_count', 0),
         response_tokens=metadata.get('candidates_token_count', 0),
         total_tokens=metadata.get('total_token_count', 0),
+        cached_tokens=metadata.get('cached_content_token_count', 0),
         details=details,
     )
 

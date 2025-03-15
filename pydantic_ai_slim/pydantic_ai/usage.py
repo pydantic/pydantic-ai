@@ -23,6 +23,8 @@ class Usage:
     """Tokens used in processing requests."""
     response_tokens: int | None = None
     """Tokens used in generating responses."""
+    cached_tokens: int | None = None
+    """Number of input tokens that were a cache hit."""
     total_tokens: int | None = None
     """Total tokens used in the whole run, should generally be equal to `request_tokens + response_tokens`."""
     details: dict[str, int] | None = None
@@ -36,7 +38,7 @@ class Usage:
             requests: The number of requests to increment by in addition to `incr_usage.requests`.
         """
         self.requests += requests
-        for f in 'requests', 'request_tokens', 'response_tokens', 'total_tokens':
+        for f in 'requests', 'request_tokens', 'response_tokens', 'total_tokens', 'cached_tokens':
             self_value = getattr(self, f)
             other_value = getattr(incr_usage, f)
             if self_value is not None or other_value is not None:
@@ -61,6 +63,7 @@ class Usage:
         result = {
             'gen_ai.usage.input_tokens': self.request_tokens,
             'gen_ai.usage.output_tokens': self.response_tokens,
+            'gen_ai.usage.cached_tokens': self.cached_tokens,
         }
         for key, value in (self.details or {}).items():
             result[f'gen_ai.usage.details.{key}'] = value
