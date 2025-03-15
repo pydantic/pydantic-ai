@@ -53,9 +53,10 @@ logfire = ["logfire>=2.3"]
 pydantic-ai-slim = { workspace = true }
 pydantic-graph = { workspace = true }
 pydantic-ai-examples = { workspace = true }
+mcp-run-python = { workspace = true }
 
 [tool.uv.workspace]
-members = ["pydantic_ai_slim", "pydantic_graph", "examples"]
+members = ["pydantic_ai_slim", "pydantic_graph", "examples", "mcp-run-python"]
 
 [dependency-groups]
 # dev dependencies are defined in `pydantic-ai-slim/pyproject.toml` to allow for minimal testing

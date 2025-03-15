@@ -76,7 +76,7 @@ function runSse(mcpServer: McpServer) {
 
   const port = process.env.PORT ? parseInt(process.env.PORT) : 3001
   const host = process.env.HOST || 'localhost'
-  console.log(`Running MCP SSE server on ${host}:${port}`)
+  console.log(`Running MCP server with SSE transport on ${host}:${port}`)
   app.listen(port, host)
 }
 
@@ -85,6 +85,8 @@ function runSse(mcpServer: McpServer) {
  */
 async function runStdio(mcpServer: McpServer) {
   const transport = new StdioServerTransport()
+  // using console.error to print to stderr to avoid conflicts with the stdio transport
+  console.error(`Running MCP server with Stdio transport`)
   await mcpServer.connect(transport)
 }
 

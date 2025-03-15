@@ -215,10 +215,32 @@ jobs:
       - run: uv run coverage report --fail-under 95
       - run: uv run diff-cover coverage.xml --fail-under 100
 
+  test-mcp-run-python:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      UV_PYTHON: "3.12"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - uses: actions/setup-node@v4
+
+      - run: npm install
+        working-directory: mcp-run-python
+
+      - run: npm run build
+        working-directory: mcp-run-python
+
+      - run: uv run --package mcp-run-python pytest mcp-run-python
+
   # https://github.com/marketplace/actions/alls-green#why used for branch protection checks
   check:
     if: always()
-    needs: [lint, mypy, docs, test-live, test, coverage]
+    needs: [lint, mypy, docs, test-live, test, coverage, test-mcp-run-python]
     runs-on: ubuntu-latest
 
     steps:

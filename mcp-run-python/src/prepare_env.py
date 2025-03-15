@@ -35,7 +35,7 @@ class File(TypedDict):
 
 @dataclass
 class Success:
-    message: str
+    dependencies: list[str]
     kind: Literal['success'] = 'success'
 
 
@@ -62,41 +62,18 @@ async def prepare_env(files: list[File]) -> Success | Error:
             dependencies = await _find_import_dependencies(python_code)
 
     if dependencies:
-        install_dependencies = _add_extra_dependencies(dependencies)
+        dependencies = _add_extra_dependencies(dependencies)
 
         with _micropip_logging() as logs_filename:
             try:
-                await micropip.install(install_dependencies, keep_going=True)
+                await micropip.install(dependencies, keep_going=True)
                 importlib.invalidate_caches()
             except Exception:
                 with open(logs_filename) as f:
                     logs = f.read()
                 return Error(message=f'{logs}\n{traceback.format_exc()}')
 
-    # temporary hack until the debug prints in https://github.com/encode/httpx/pull/3330 are used/merged
-    try:
-        from httpx import AsyncClient
-    except ImportError:
-        pass
-    else:
-        original_send = AsyncClient.send
-
-        def print_monkeypatch(*args, **kwargs):
-            pass
-
-        async def send_monkeypatch_print(self, *args, **kwargs):
-            import builtins
-            original_print = builtins.print
-            builtins.print = print_monkeypatch
-            try:
-                return await original_send(self, *args, **kwargs)
-            finally:
-                builtins.print = original_print
-
-        AsyncClient.send = send_monkeypatch_print
-    # end temporary hack for httpx debug prints
-
-    return Success(message=', '.join(dependencies))
+    return Success(dependencies=dependencies)
 
 
 def dump_json(value: Any) -> str | None:
@@ -132,7 +109,7 @@ def _add_extra_dependencies(dependencies: list[str]) -> list[str]:
     pygments seems to be required to get rich to work properly, ssl is required for FastAPI and HTTPX,
     pydantic_ai requires newest typing_extensions.
     """
-    extras = ['pydantic_core']
+    extras = []
     for d in dependencies:
         if d.startswith(('logfire', 'rich')):
             extras.append('pygments')
