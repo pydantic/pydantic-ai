@@ -1,7 +1,7 @@
 """
-Logic for installing dependencies in Pyodide and running user code.
+Logic for installing dependencies in Pyodide.
 
-Some of this is taken from https://github.com/alexmojaki/pyodide-worker-runner/blob/master/lib/pyodide_worker_runner.py
+Mostly taken from https://github.com/pydantic/pydantic.run/blob/main/src/frontend/src/prepare_env.py
 """
 from __future__ import annotations as _annotations
 import importlib
@@ -99,9 +99,14 @@ async def prepare_env(files: list[File]) -> Success | Error:
     return Success(message=', '.join(dependencies))
 
 
-def dump_json(value: Any) -> str:
+def dump_json(value: Any) -> str | None:
     from pydantic_core import to_json
-    return to_json(value, indent=2, fallback=_json_fallback).decode()
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value
+    else:
+        return to_json(value, indent=2, fallback=_json_fallback).decode()
 
 
 def _json_fallback(value: Any) -> Any:

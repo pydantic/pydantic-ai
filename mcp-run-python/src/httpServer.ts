@@ -4,22 +4,25 @@ import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js'
 import { server } from './mcpServer.js'
 
 const app = express()
-let transport: SSEServerTransport | null = null
+const transports: { [sessionId: string]: SSEServerTransport } = {}
 
 app.get('/sse', async (_: Request, res: Response) => {
-  transport = new SSEServerTransport('/messages', res)
+  const transport = new SSEServerTransport('/messages', res)
+  transports[transport.sessionId] = transport
+  res.on('close', () => {
+    delete transports[transport.sessionId]
+  })
   await server.connect(transport)
 })
 
 app.post('/messages', async (req: Request, res: Response) => {
-  // Note: to support multiple simultaneous connections, these messages will
-  // need to be routed to a specific matching transport. (This logic isn't
-  // implemented here, for simplicity.)
-  if (!transport) {
-    res.status(400).send('No transport connected')
-    return
+  const sessionId = req.query.sessionId as string
+  const transport = transports[sessionId]
+  if (transport) {
+    await transport.handlePostMessage(req, res)
+  } else {
+    res.status(400).send('No transport found for sessionId')
   }
-  await transport.handlePostMessage(req, res)
 })
 
 app.listen(3001)

@@ -6,10 +6,12 @@
   "type": "module",
   "scripts": {
     "format": "prettier --write -- .",
-    "lint": "eslint --max-warnings=0 src/*/src && prettier --check -- .",
-    "start-http": "node --experimental-wasm-stack-switching dist/httpServer.js",
-    "start-stdio": "node --experimental-wasm-stack-switching dist/stdioServer.js",
-    "build": "tsc && node inline_python.cjs"
+    "lint": "eslint --max-warnings=0 src && prettier --check -- . && tsc --noEmit",
+    "build": "tsc && node inline_python.cjs",
+    "start-http": "node dist/httpServer.js",
+    "start-stdio": "node dist/stdioServer.js",
+    "dev-http": "npm run build && npm run start-http",
+    "dev-stdio": "npm run build && npm run start-stdio"
   },
   "prettier": {
     "singleQuote": true,
@@ -25,10 +27,11 @@
     "zod": "^3.24.2"
   },
   "devDependencies": {
-    "@eslint/js": "^9.22.0",
     "@types/express": "^5.0.0",
     "@types/node": "^22.13.10",
+    "eslint": "^9.22.0",
     "prettier": "^3.5.3",
-    "typescript": "^5.8.2"
+    "typescript": "^5.8.2",
+    "typescript-eslint": "^8.26.1"
   }
 }

@@ -1,3 +1,4 @@
+/* eslint @typescript-eslint/no-explicit-any: off */
 import { loadPyodide } from 'pyodide'
 import { preparePythonCode } from './prepareEnvCode.js'
 
@@ -5,20 +6,6 @@ export interface CodeFile {
   name: string
   content: string
   active: boolean
-}
-
-interface RunSuccess {
-  status: 'success'
-  // we could record stdout and stderr separately, but I suspect simplicity is more important
-  output: string
-  returnValue: any
-  pythonVersion: string
-}
-
-interface RunError {
-  status: 'prepare-error' | 'run-error'
-  output: string
-  error: string
 }
 
 export async function runCode(files: CodeFile[]): Promise<RunSuccess | RunError> {
@@ -31,9 +18,14 @@ export async function runCode(files: CodeFile[]): Promise<RunSuccess | RunError>
       output.push(msg)
     },
   })
-  await pyodide.loadPackage(['micropip', 'pydantic'])
+  await pyodide.loadPackage(['micropip', 'pydantic'], {
+    // stop pyodide printing to stdout/stderr
+    messageCallback: () => {},
+    errorCallback: (msg: string) => {
+      output.push(`install error: ${msg}`)
+    },
+  })
   const sys = pyodide.pyimport('sys')
-  const pythonVersion = `${sys.version_info.major}.${sys.version_info.minor}.${sys.version_info.micro}`
 
   const dirPath = '/tmp/mcp_run_python'
   sys.path.append(dirPath)
@@ -50,7 +42,7 @@ export async function runCode(files: CodeFile[]): Promise<RunSuccess | RunError>
   if (prepareStatus.kind == 'error') {
     return {
       status: 'prepare-error',
-      output: output.join(''),
+      output,
       error: prepareStatus.message,
     }
   }
@@ -60,28 +52,70 @@ export async function runCode(files: CodeFile[]): Promise<RunSuccess | RunError>
       globals: pyodide.toPy({ __name__: '__main__' }),
       filename: activeFile.name,
     })
-    const returnValue = JSON.parse(preparePyEnv.dump_json(rawValue))
+    const returnValueJson = preparePyEnv.dump_json(rawValue)
     sys.stdout.flush()
     sys.stderr.flush()
     return {
       status: 'success',
-      output: output.join(''),
-      returnValue,
-      pythonVersion,
+      output,
+      returnValueJson,
     }
   } catch (err) {
     sys.stdout.flush()
     sys.stderr.flush()
     return {
       status: 'run-error',
-      output: output.join(''),
+      output,
       error: formatError(err),
     }
   }
 }
 
+interface RunSuccess {
+  status: 'success'
+  // we could record stdout and stderr separately, but I suspect simplicity is more important
+  output: string[]
+  returnValueJson: string | null
+}
+
+interface RunError {
+  status: 'prepare-error' | 'install-error' | 'run-error'
+  output: string[]
+  error: string
+}
+
+export function asXml(runResult: RunSuccess | RunError): string {
+  const xml = [`<status>${runResult.status}</status>`]
+  if (runResult.output.length) {
+    xml.push('<output>')
+    const escapeXml = escapeClosing('output')
+    xml.push(...runResult.output.map(escapeXml))
+    xml.push('</output>')
+  }
+  if (runResult.status == 'success') {
+    if (runResult.returnValueJson) {
+      xml.push('<return_value>')
+      xml.push(escapeClosing('return_value')(runResult.returnValueJson))
+      xml.push('</return_value>')
+    }
+  } else {
+    xml.push('<error>')
+    xml.push(escapeClosing('error')(runResult.error))
+    xml.push('</error>')
+  }
+  return xml.join('\n')
+}
+
+function escapeClosing(closingTag: string): (str: string) => string {
+  const regex = new RegExp(`</?\\s*${closingTag}(?:.*?>)?`, 'gi')
+  const onMatch = (match: string) => {
+    return match.replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  }
+  return (str) => str.replace(regex, onMatch)
+}
+
 function formatError(err: any): string {
-  let errStr = (err as any).toString()
+  let errStr = err.toString()
   errStr = errStr.replace(/^PythonError: +/, '')
   // remove frames from inside pyodide
   errStr = errStr.replace(/ {2}File "\/lib\/python\d+\.zip\/_pyodide\/.*\n {4}.*\n(?: {4,}\^+\n)?/g, '')
@@ -97,6 +131,6 @@ interface PrepareError {
   message: string
 }
 interface PreparePyEnv {
-  prepare_env: (files: any) => Promise<PrepareSuccess | PrepareError>
-  dump_json: (value: any) => string
+  prepare_env: (files: CodeFile[]) => Promise<PrepareSuccess | PrepareError>
+  dump_json: (value: any) => string | null
 }

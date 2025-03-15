@@ -1,7 +1,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { z } from 'zod'
 
-import { runCode } from './runCode.js'
+import { runCode, asXml } from './runCode.js'
 
 export const server = new McpServer({
   name: 'Run Python',
@@ -15,6 +15,8 @@ interface ToolParams {
 const toolDescription = `Tool to execute Python code and return stdout, stderr, and return value.
 
 The code may be async, and the value on the last line will be returned as the return value.
+
+The code will be executed with Python 3.12.
 
 Dependencies may be defined via PEP 723 script metadata, e.g. to install "pydantic", the script should start
 with a comment of the form:
@@ -31,7 +33,7 @@ server.tool(
   async ({ python_code }: ToolParams) => {
     const result = await runCode([{ name: 'main.py', content: python_code, active: true }])
     return {
-      content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+      content: [{ type: 'text', text: asXml(result) }],
     }
   },
 )
