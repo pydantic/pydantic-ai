@@ -7,11 +7,11 @@ from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING
 
 import pytest
-from inline_snapshot import snapshot
 from httpx import AsyncClient, HTTPError
-from mcp import ClientSession, StdioServerParameters
-from mcp.client.stdio import stdio_client
+from inline_snapshot import snapshot
+from mcp import ClientSession, StdioServerParameters, types
 from mcp.client.sse import sse_client
+from mcp.client.stdio import stdio_client
 
 if TYPE_CHECKING:
     from mcp import ClientSession
@@ -40,7 +40,7 @@ async def fixture_mcp_session(request: pytest.FixtureRequest) -> AsyncIterator[C
         p = subprocess.Popen(['node', CLI_JS_PATH, 'sse'], env=env)
         url = f'http://localhost:{port}'
         async with AsyncClient() as client:
-            for i in range(5):
+            for _ in range(5):
                 try:
                     await client.get(url, timeout=0.01)
                 except HTTPError:
@@ -65,6 +65,7 @@ async def test_stdio_list_tools(mcp_session: ClientSession) -> None:
     assert len(tools.tools) == 1
     tool = tools.tools[0]
     assert tool.name == 'run_python_code'
+    assert tool.description
     assert tool.description.startswith('Tool to execute Python code and return stdout, stderr, and return value.')
     assert tool.inputSchema['properties'] == snapshot(
         {'python_code': {'type': 'string', 'description': 'Python code to run'}}
@@ -133,4 +134,5 @@ async def test_stdio_run_python_code(mcp_session: ClientSession, code: list[str]
     result = await mcp_session.call_tool('run_python_code', {'python_code': '\n'.join(code)})
     assert len(result.content) == 1
     content = result.content[0]
+    assert isinstance(content, types.TextContent)
     assert content.text == expected_output

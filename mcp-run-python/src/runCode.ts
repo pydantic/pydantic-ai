@@ -10,13 +10,6 @@ export interface CodeFile {
 
 
 export async function runCode(files: CodeFile[]): Promise<RunSuccess | RunError> {
-  // hack while waiting for https://github.com/pyodide/pyodide/discussions/5512 to be solved
-  const realConsoleLog = console.log
-  console.log = () => {}
-
-  // console.log = (...args: any[]) => {
-  //   console.error('console.log:', ...args)
-  // }
   const output: string[] = []
   const pyodide = await loadPyodide({
     stdout: (msg) => {
@@ -26,13 +19,19 @@ export async function runCode(files: CodeFile[]): Promise<RunSuccess | RunError>
       output.push(msg)
     },
   })
-  await pyodide.loadPackage(['micropip', 'pydantic'], {
-    // stop pyodide printing to stdout/stderr
-    messageCallback: () => {},
-    errorCallback: (msg: string) => {
+
+  // see https://github.com/pyodide/pyodide/discussions/5512
+  const origLoadPackage = pyodide.loadPackage
+  pyodide.loadPackage = function (pkgs, options) {
+      return origLoadPackage(pkgs, {
+        // stop pyodide printing to stdout/stderr
+        messageCallback: () => {},
+        errorCallback: (msg: string) => {
       output.push(`install error: ${msg}`)
-    },
-  })
+    }, ...options})
+  }
+
+  await pyodide.loadPackage(['micropip', 'pydantic'])
   const sys = pyodide.pyimport('sys')
 
   const dirPath = '/tmp/mcp_run_python'
@@ -48,7 +47,6 @@ export async function runCode(files: CodeFile[]): Promise<RunSuccess | RunError>
   const prepareStatus = await preparePyEnv.prepare_env(pyodide.toPy(files))
   sys.stdout.flush()
   sys.stderr.flush()
-  console.log = realConsoleLog
   if (prepareStatus.kind == 'error') {
     return {
       status: 'prepare-error',
@@ -88,14 +86,14 @@ interface RunSuccess {
   status: 'success'
   // we could record stdout and stderr separately, but I suspect simplicity is more important
   output: string[]
-  dependencies: string[]
+  dependencies: string[] | null
   returnValueJson: string | null
 }
 
 interface RunError {
   status: 'prepare-error' | 'install-error' | 'run-error'
   output: string[]
-  dependencies?: string[]
+  dependencies?: string[] | null
   error: string
 }
 

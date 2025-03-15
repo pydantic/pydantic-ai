@@ -1256,6 +1256,7 @@ dev = [
     { name = "httpx" },
     { name = "inline-snapshot" },
     { name = "mcp" },
+    { name = "micropip" },
     { name = "pytest" },
     { name = "pytest-pretty" },
 ]
@@ -1269,6 +1270,7 @@ dev = [
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "inline-snapshot", specifier = ">=0.19.3" },
     { name = "mcp", specifier = ">=1.4.1" },
+    { name = "micropip", specifier = ">=0.9.0" },
     { name = "pytest", specifier = ">=8.3.3" },
     { name = "pytest-pretty", specifier = ">=1.2.0" },
 ]
@@ -1314,6 +1316,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/3a/41/580bb4006e3ed0361b8151a01d324fb03f420815446c7def45d02f74c270/mergedeep-1.3.4.tar.gz", hash = "sha256:0096d52e9dad9939c3d975a774666af186eda617e6ca84df4c94dec30004f2a8", size = 4661 }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/2c/19/04f9b178c2d8a15b076c8b5140708fa6ffc5601fb6f1e975537072df5b2a/mergedeep-1.3.4-py3-none-any.whl", hash = "sha256:70775750742b25c0d8f36c55aed03d24c3384d17c951b3175d898bd778ef0307", size = 6354 },
+]
+
+[[package]]
+name = "micropip"
+version = "0.9.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/3d/6f/aeef5f7696480704c133206511ff785dd86b76b6eba77391d14de162c1ab/micropip-0.9.0.tar.gz", hash = "sha256:d72c3224537a14e5d9d02f29e945bf7cde02404ec744291e8f6a310cedf60b66", size = 1783814 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/27/6d/195810e3e73e5f351dc6082cada41bb4d5b0746a6804155ba6bae4304612/micropip-0.9.0-py3-none-any.whl", hash = "sha256:babcf68c1849e229aa887564bc5f2de50273c3212e73c9aff8e3e6e80f2b6a23", size = 114896 },
 ]
 
 [[package]]

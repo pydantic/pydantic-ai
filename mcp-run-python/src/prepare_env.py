@@ -1,28 +1,26 @@
-"""
-Logic for installing dependencies in Pyodide.
+"""Logic for installing dependencies in Pyodide.
 
 Mostly taken from https://github.com/pydantic/pydantic.run/blob/main/src/frontend/src/prepare_env.py
 """
+
 from __future__ import annotations as _annotations
+
 import importlib
+import importlib.util
 import logging
 import re
 import sys
 import traceback
+from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, TypedDict, Iterable, Literal
-import importlib.util
+from typing import Any, Literal, TypedDict
 
+import micropip
+import pyodide_js
 import tomllib
-
-import micropip  # noqa
-from micropip import transaction  # noqa
-from micropip.wheelinfo import WheelInfo, Tag, Version  # noqa
-
-from pyodide.code import find_imports  # noqa
-import pyodide_js  # noqa
+from pyodide.code import find_imports
 
 __all__ = 'prepare_env', 'dump_json'
 
@@ -35,7 +33,7 @@ class File(TypedDict):
 
 @dataclass
 class Success:
-    dependencies: list[str]
+    dependencies: list[str] | None
     kind: Literal['success'] = 'success'
 
 
@@ -78,6 +76,7 @@ async def prepare_env(files: list[File]) -> Success | Error:
 
 def dump_json(value: Any) -> str | None:
     from pydantic_core import to_json
+
     if value is None:
         return None
     if isinstance(value, str):
@@ -109,7 +108,7 @@ def _add_extra_dependencies(dependencies: list[str]) -> list[str]:
     pygments seems to be required to get rich to work properly, ssl is required for FastAPI and HTTPX,
     pydantic_ai requires newest typing_extensions.
     """
-    extras = []
+    extras: list[str] = []
     for d in dependencies:
         if d.startswith(('logfire', 'rich')):
             extras.append('pygments')
@@ -126,8 +125,8 @@ def _add_extra_dependencies(dependencies: list[str]) -> list[str]:
 
 
 @contextmanager
-def _micropip_logging() -> Iterable[str]:
-    from micropip import logging as micropip_logging  # noqa
+def _micropip_logging() -> Iterator[str]:
+    from micropip import logging as micropip_logging
 
     micropip_logging.setup_logging()
     logger = logging.getLogger('micropip')
@@ -148,7 +147,7 @@ def _micropip_logging() -> Iterable[str]:
 def _find_pep723_dependencies(code: str) -> list[str] | None:
     """Extract dependencies from a script with PEP 723 metadata."""
     metadata = _read_pep723_metadata(code)
-    dependencies = metadata.get('dependencies')
+    dependencies: list[str] | None = metadata.get('dependencies')
     if dependencies is None:
         return None
     else:
@@ -164,9 +163,7 @@ def _read_pep723_metadata(code: str) -> dict[str, Any]:
     """
     name = 'script'
     magic_comment_regex = r'(?m)^# /// (?P<type>[a-zA-Z0-9-]+)$\s(?P<content>(^#(| .*)$\s)+)^# ///$'
-    matches = list(
-        filter(lambda m: m.group('type') == name, re.finditer(magic_comment_regex, code))
-    )
+    matches = list(filter(lambda m: m.group('type') == name, re.finditer(magic_comment_regex, code)))
     if len(matches) > 1:
         raise ValueError(f'Multiple {name} blocks found')
     elif len(matches) == 1:
@@ -189,7 +186,7 @@ async def _find_import_dependencies(code: str) -> list[str] | None:
         return list(_find_imports_to_install(imports))
 
 
-TO_PACKAGE_NAME: dict[str, str] = pyodide_js._api._import_name_to_package_name.to_py()
+TO_PACKAGE_NAME: dict[str, str] = pyodide_js._api._import_name_to_package_name.to_py()  # pyright: ignore[reportPrivateUsage]
 
 
 def _find_imports_to_install(imports: list[str]) -> Iterable[str]:
