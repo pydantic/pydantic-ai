@@ -1,18 +1,22 @@
 {
-  "name": "run-code",
+  "name": "mcp-run-python",
   "version": "0.0.0",
-  "main": "run.mjs",
+  "main": "dist/cli.js",
   "license": "MIT",
   "type": "module",
   "scripts": {
     "format": "prettier --write -- .",
     "lint": "eslint --max-warnings=0 src && prettier --check -- . && tsc --noEmit",
-    "build": "tsc && node inline_python.cjs",
-    "start-http": "node dist/httpServer.js",
-    "start-stdio": "node dist/stdioServer.js",
-    "dev-http": "npm run build && npm run start-http",
-    "dev-stdio": "npm run build && npm run start-stdio"
+    "build": "rm -rf dist && tsc && node inline_python.cjs",
+    "sse": "node dist/cli.js sse",
+    "stdio": "node dist/cli.js stdio",
+    "dev-sse": "npm run build && npm run sse",
+    "dev-stdio": "npm run build && npm run stdio"
   },
+  "bin": {
+    "mcp-run-python": "./dist/cli.js"
+  },
+  "files": ["dist"],
   "prettier": {
     "singleQuote": true,
     "semi": false,
