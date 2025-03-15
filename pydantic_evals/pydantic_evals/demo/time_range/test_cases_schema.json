@@ -1,0 +1,149 @@
+{
+  "$defs": {
+    "DatasetRow_TimeRangeInputs_Union_TimeRangeBuilderSuccess__TimeRangeBuilderError__dict_str__Any__": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "inputs": {
+          "$ref": "#/$defs/TimeRangeInputs"
+        },
+        "metadata": {
+          "title": "Metadata",
+          "type": "object"
+        },
+        "expected_output": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TimeRangeBuilderSuccess"
+            },
+            {
+              "$ref": "#/$defs/TimeRangeBuilderError"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Expected Output"
+        },
+        "assertions": {
+          "items": {
+            "$ref": "#/$defs/SerializedAssertion"
+          },
+          "title": "Assertions",
+          "type": "array"
+        }
+      },
+      "required": [
+        "name",
+        "inputs",
+        "metadata"
+      ],
+      "title": "DatasetRow[TimeRangeInputs, Union[TimeRangeBuilderSuccess, TimeRangeBuilderError], dict[str, Any]]",
+      "type": "object"
+    },
+    "SerializedAssertion": {
+      "additionalProperties": true,
+      "properties": {
+        "call": {
+          "title": "Call",
+          "type": "string"
+        }
+      },
+      "required": [
+        "call"
+      ],
+      "title": "SerializedAssertion",
+      "type": "object"
+    },
+    "TimeRangeBuilderError": {
+      "description": "Response when a time range cannot not be generated.",
+      "properties": {
+        "error_message": {
+          "title": "Error Message",
+          "type": "string"
+        }
+      },
+      "required": [
+        "error_message"
+      ],
+      "title": "TimeRangeBuilderError",
+      "type": "object"
+    },
+    "TimeRangeBuilderSuccess": {
+      "description": "Response when a time range could be successfully generated.",
+      "properties": {
+        "min_timestamp_with_offset": {
+          "description": "A datetime in ISO format with timezone offset.",
+          "format": "date-time",
+          "title": "Min Timestamp With Offset",
+          "type": "string"
+        },
+        "max_timestamp_with_offset": {
+          "description": "A datetime in ISO format with timezone offset.",
+          "format": "date-time",
+          "title": "Max Timestamp With Offset",
+          "type": "string"
+        },
+        "explanation": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "A brief explanation of the time range that was selected.\n\nFor example, if a user only mentions a specific point in time, you might explain that you selected a 10 minute\nwindow around that time.",
+          "title": "Explanation"
+        }
+      },
+      "required": [
+        "min_timestamp_with_offset",
+        "max_timestamp_with_offset",
+        "explanation"
+      ],
+      "title": "TimeRangeBuilderSuccess",
+      "type": "object"
+    },
+    "TimeRangeInputs": {
+      "description": "The inputs for the time range inference agent.",
+      "properties": {
+        "prompt": {
+          "title": "Prompt",
+          "type": "string"
+        },
+        "now": {
+          "format": "date-time",
+          "title": "Now",
+          "type": "string"
+        }
+      },
+      "required": [
+        "prompt",
+        "now"
+      ],
+      "title": "TimeRangeInputs",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "A dataset of examples for the time range inference agent.",
+  "properties": {
+    "rows": {
+      "items": {
+        "$ref": "#/$defs/DatasetRow_TimeRangeInputs_Union_TimeRangeBuilderSuccess__TimeRangeBuilderError__dict_str__Any__"
+      },
+      "title": "Rows",
+      "type": "array"
+    }
+  },
+  "required": [
+    "rows"
+  ],
+  "title": "TimeRangeDataset",
+  "type": "object"
+}
