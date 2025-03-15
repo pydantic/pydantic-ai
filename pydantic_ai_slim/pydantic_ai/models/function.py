@@ -45,7 +45,7 @@ class FunctionModel(Model):
     stream_function: StreamFunctionDef | None = None
 
     _model_name: str = field(repr=False)
-    _system: str | None = field(default=None, repr=False)
+    _system: str = field(default='function', repr=False)
 
     @overload
     def __init__(self, function: FunctionDef, *, model_name: str | None = None) -> None: ...
@@ -140,7 +140,7 @@ class FunctionModel(Model):
         return self._model_name
 
     @property
-    def system(self) -> str | None:
+    def system(self) -> str:
         """The system / model provider."""
         return self._system
 

@@ -1,9 +1,13 @@
 from __future__ import annotations as _annotations
 
 from collections.abc import AsyncIterator
-from contextlib import AsyncExitStack, asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager, suppress
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Callable
+
+from opentelemetry.trace import get_current_span
+
+from pydantic_ai.models.instrumented import InstrumentedModel
 
 from ..exceptions import FallbackExceptionGroup, ModelHTTPError
 from . import KnownModelName, Model, ModelRequestParameters, StreamedResponse, infer_model
@@ -40,7 +44,6 @@ class FallbackModel(Model):
             fallback_on: A callable or tuple of exceptions that should trigger a fallback.
         """
         self.models = [infer_model(default_model), *[infer_model(m) for m in fallback_models]]
-        self._model_name = f'FallBackModel[{", ".join(model.model_name for model in self.models)}]'
 
         if isinstance(fallback_on, tuple):
             self._fallback_on = _default_fallback_condition_factory(fallback_on)
@@ -62,13 +65,19 @@ class FallbackModel(Model):
         for model in self.models:
             try:
                 response, usage = await model.request(messages, model_settings, model_request_parameters)
-                response.model_used = model  # type: ignore
-                return response, usage
             except Exception as exc:
                 if self._fallback_on(exc):
                     exceptions.append(exc)
                     continue
                 raise exc
+            else:
+                with suppress(Exception):
+                    span = get_current_span()
+                    if span.is_recording():
+                        attributes = getattr(span, 'attributes', {})
+                        if attributes.get('gen_ai.request.model') == self.model_name:
+                            span.set_attributes(InstrumentedModel.model_attributes(model))
+                return response, usage
 
         raise FallbackExceptionGroup('All models from FallbackModel failed', exceptions)
 
@@ -101,12 +110,11 @@ class FallbackModel(Model):
     @property
     def model_name(self) -> str:
         """The model name."""
-        return self._model_name
+        return f'fallback:{",".join(model.model_name for model in self.models)}'
 
     @property
-    def system(self) -> str | None:
-        """The system / model provider, n/a for fallback models."""
-        return None
+    def system(self) -> str:
+        return f'fallback:{",".join(model.system for model in self.models)}'
 
     @property
     def base_url(self) -> str | None:

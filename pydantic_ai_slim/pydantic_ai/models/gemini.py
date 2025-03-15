@@ -98,7 +98,7 @@ class GeminiModel(Model):
     _provider: Literal['google-gla', 'google-vertex'] | Provider[AsyncHTTPClient] | None = field(repr=False)
     _auth: AuthProtocol | None = field(repr=False)
     _url: str | None = field(repr=False)
-    _system: str | None = field(default='google-gla', repr=False)
+    _system: str = field(default='gemini', repr=False)
 
     @overload
     def __init__(
@@ -204,7 +204,7 @@ class GeminiModel(Model):
         return self._model_name
 
     @property
-    def system(self) -> str | None:
+    def system(self) -> str:
         """The system / model provider."""
         return self._system
 

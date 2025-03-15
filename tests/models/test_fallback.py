@@ -41,10 +41,8 @@ failure_model = FunctionModel(failure_response)
 
 def test_init() -> None:
     fallback_model = FallbackModel(failure_model, success_model)
-    assert fallback_model.model_name == snapshot(
-        'FallBackModel[function:failure_response:, function:success_response:]'
-    )
-    assert fallback_model.system is None
+    assert fallback_model.model_name == snapshot('fallback:function:failure_response:,function:success_response:')
+    assert fallback_model.system == 'fallback:function,function'
     assert fallback_model.base_url is None
 
 
@@ -139,7 +137,7 @@ def test_first_failed_instrumented(capfire: CaptureLogfire) -> None:
                 'attributes': {
                     'gen_ai.operation.name': 'chat',
                     'logfire.span_type': 'span',
-                    'logfire.msg': 'chat FallBackModel[function:failure_response:, function:success_response:]',
+                    'logfire.msg': 'chat fallback:function:failure_response:,function:success_response:',
                     'gen_ai.usage.input_tokens': 51,
                     'gen_ai.usage.output_tokens': 1,
                     'gen_ai.system': 'function',
@@ -172,7 +170,7 @@ def test_first_failed_instrumented(capfire: CaptureLogfire) -> None:
                 'start_time': 1000000000,
                 'end_time': 6000000000,
                 'attributes': {
-                    'model_name': 'FallBackModel[function:failure_response:, function:success_response:]',
+                    'model_name': 'fallback:function:failure_response:,function:success_response:',
                     'agent_name': 'agent',
                     'logfire.msg': 'agent run',
                     'logfire.span_type': 'span',
