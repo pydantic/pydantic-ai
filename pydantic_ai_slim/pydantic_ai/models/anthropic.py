@@ -441,12 +441,17 @@ def _map_usage(message: AnthropicMessage | RawMessageStreamEvent) -> usage.Usage
         return usage.Usage()
 
     request_tokens = getattr(response_usage, 'input_tokens', None)
+    cache_creation_input_tokens = getattr(response_usage, 'cache_creation_input_tokens', None)
+    cache_read_input_tokens = getattr(response_usage, 'cache_read_input_tokens', None)
+
+    total_request_tokens = (request_tokens or 0) + (cache_creation_input_tokens or 0) + (cache_read_input_tokens or 0)
 
     return usage.Usage(
         # Usage coming from the RawMessageDeltaEvent doesn't have input token data, hence this getattr
-        request_tokens=request_tokens,
+        request_tokens=total_request_tokens,
         response_tokens=response_usage.output_tokens,
-        total_tokens=(request_tokens or 0) + response_usage.output_tokens,
+        cached_tokens=cache_read_input_tokens,
+        total_tokens=total_request_tokens + response_usage.output_tokens,
     )
 
 

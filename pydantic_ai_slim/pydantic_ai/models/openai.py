@@ -508,9 +508,16 @@ def _map_usage(response: chat.ChatCompletion | ChatCompletionChunk) -> usage.Usa
             details.update(response_usage.completion_tokens_details.model_dump(exclude_none=True))
         if response_usage.prompt_tokens_details is not None:
             details.update(response_usage.prompt_tokens_details.model_dump(exclude_none=True))
+        cached_tokens = 0
+        if (
+            response_usage.prompt_tokens_details is not None
+            and response_usage.prompt_tokens_details.cached_tokens is not None
+        ):
+            cached_tokens = response_usage.prompt_tokens_details.cached_tokens
         return usage.Usage(
             request_tokens=response_usage.prompt_tokens,
             response_tokens=response_usage.completion_tokens,
+            cached_tokens=cached_tokens,
             total_tokens=response_usage.total_tokens,
             details=details,
         )

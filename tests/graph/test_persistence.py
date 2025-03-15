@@ -287,7 +287,7 @@ async def test_rerun_node(mock_snapshot_id: object):
     node = Foo()
     async with graph.iter(node, persistence=sp) as run:
         end = await run.next()
-        assert end == snapshot(End(123))
+        assert end == snapshot(End(data=123))
 
     msg = "Incorrect snapshot status 'success', must be 'created' or 'pending'."
     with pytest.raises(GraphNodeStatusError, match=msg):

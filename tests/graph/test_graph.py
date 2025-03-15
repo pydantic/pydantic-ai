@@ -393,7 +393,7 @@ async def test_iter_next_error(mock_snapshot_id: object):
 
         assert isinstance(n, BaseNode)
         n = await run.next()
-        assert n == snapshot(End(None))
+        assert n == snapshot(End(data=None))
 
         with pytest.raises(TypeError, match=r'`next` must be called with a `BaseNode` instance, got End\(data=None\).'):
             await run.next()
