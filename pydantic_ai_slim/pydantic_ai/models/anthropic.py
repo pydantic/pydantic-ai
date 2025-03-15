@@ -33,13 +33,7 @@ from ..messages import (
 )
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
-from . import (
-    Model,
-    ModelRequestParameters,
-    StreamedResponse,
-    cached_async_http_client,
-    check_allow_model_requests,
-)
+from . import Model, ModelRequestParameters, StreamedResponse, cached_async_http_client, check_allow_model_requests
 
 try:
     from anthropic import NOT_GIVEN, APIStatusError, AsyncAnthropic, AsyncStream

@@ -221,6 +221,12 @@ def image_content(assets_path: Path) -> BinaryContent:
 
 
 @pytest.fixture(scope='session')
+def document_content(assets_path: Path) -> BinaryContent:
+    pdf_bytes = assets_path.joinpath('dummy.pdf').read_bytes()
+    return BinaryContent(data=pdf_bytes, media_type='application/pdf')
+
+
+@pytest.fixture(scope='session')
 def openai_api_key() -> str:
     return os.getenv('OPENAI_API_KEY', 'mock-api-key')
 

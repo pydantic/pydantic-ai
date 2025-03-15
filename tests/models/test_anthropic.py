@@ -620,6 +620,19 @@ def test_model_status_error(allow_model_requests: None) -> None:
 
 
 @pytest.mark.vcr()
+async def test_document_binary_content_input(
+    allow_model_requests: None, anthropic_api_key: str, document_content: BinaryContent
+):
+    m = AnthropicModel('claude-3-5-sonnet-latest', api_key=anthropic_api_key)
+    agent = Agent(m)
+
+    result = await agent.run(['What is the main content on this document?', document_content])
+    assert result.data == snapshot(
+        'The document appears to be a simple PDF file with only the text "Dummy PDF file" displayed at the top. It appears to be mostly blank otherwise, likely serving as a template or placeholder document.'
+    )
+
+
+@pytest.mark.vcr()
 async def test_document_url_input(allow_model_requests: None, anthropic_api_key: str):
     m = AnthropicModel('claude-3-5-sonnet-latest', api_key=anthropic_api_key)
     agent = Agent(m)
