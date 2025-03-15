@@ -18,6 +18,7 @@ from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.messages import (
     BinaryContent,
     DocumentUrl,
+    FileUrl,
     ImageUrl,
     ModelRequest,
     ModelResponse,
@@ -990,6 +991,24 @@ async def test_safety_settings_safe(
         ),
     )
     assert result.data == 'world'
+
+
+async def test_file_url_input_not_supported(
+    client_with_handler: ClientWithHandler, env: TestEnv, allow_model_requests: None
+) -> None:
+    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key='mock'))
+    agent = Agent(m)
+
+    with pytest.raises(RuntimeError, match='Direct file Url is only supported with provider google-vertex.'):
+        await agent.run(
+            [
+                'What is the main content of this document?',
+                FileUrl(
+                    url='https://storage.googleapis.com/cloud-samples-data/generative-ai/pdf/2403.05530.pdf',
+                    media_type='application/pdf',
+                ),
+            ]
+        )
 
 
 @pytest.mark.vcr()
