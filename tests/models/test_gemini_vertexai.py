@@ -55,9 +55,13 @@ async def test_file_url_input(
     save_service_account(service_account_path, 'my-project-id')
 
     def handler(request: httpx.Request) -> httpx.Response:
-        print(json.loads(request.content))
         text = json.loads(request.content)['contents'][0]['parts'][0]['text']
         assert text == 'What is the main content of this document?'
+        file_data = json.loads(request.content)['contents'][0]['parts'][1]['fileData']
+        assert file_data == {
+            'fileUri': 'https://storage.googleapis.com/cloud-samples-data/generative-ai/pdf/2403.05530.pdf',
+            'mimeType': 'application/pdf',
+        }
 
         return httpx.Response(
             200,

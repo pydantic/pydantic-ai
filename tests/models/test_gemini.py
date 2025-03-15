@@ -993,22 +993,40 @@ async def test_safety_settings_safe(
     assert result.data == 'world'
 
 
-async def test_file_url_input_not_supported(
-    client_with_handler: ClientWithHandler, env: TestEnv, allow_model_requests: None
-) -> None:
-    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key='mock'))
-    agent = Agent(m)
+# Only for testing purposes, but PDF URLs are not supported by Gemini GLA. YouTube URLs seem to be supported instead.
+async def test_file_url_input(client_with_handler: ClientWithHandler, env: TestEnv, allow_model_requests: None) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        text = json.loads(request.content)['contents'][0]['parts'][0]['text']
+        assert text == 'What is the main content of this document?'
+        file_data = json.loads(request.content)['contents'][0]['parts'][1]['fileData']
+        assert file_data == {
+            'fileUri': 'https://storage.googleapis.com/cloud-samples-data/generative-ai/pdf/2403.05530.pdf',
+            'mimeType': 'application/pdf',
+        }
 
-    with pytest.raises(RuntimeError, match='Direct file Url is only supported with provider google-vertex.'):
-        await agent.run(
-            [
-                'What is the main content of this document?',
-                FileUrl(
-                    url='https://storage.googleapis.com/cloud-samples-data/generative-ai/pdf/2403.05530.pdf',
-                    media_type='application/pdf',
-                ),
-            ]
+        return httpx.Response(
+            200,
+            content=_gemini_response_ta.dump_json(
+                gemini_response(_content_model_response(ModelResponse(parts=[TextPart('...')]))),
+                by_alias=True,
+            ),
+            headers={'Content-Type': 'application/json'},
         )
+
+    gemini_client = client_with_handler(handler)
+    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(http_client=gemini_client, api_key='mock'))
+    agent = Agent(m)
+    result = await agent.run(
+        [
+            'What is the main content of this document?',
+            FileUrl(
+                url='https://storage.googleapis.com/cloud-samples-data/generative-ai/pdf/2403.05530.pdf',
+                media_type='application/pdf',
+            ),
+        ]
+    )
+
+    assert result.data == '...'
 
 
 @pytest.mark.vcr()

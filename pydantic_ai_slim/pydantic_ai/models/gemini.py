@@ -226,11 +226,9 @@ class GeminiModel(Model):
         model_settings: GeminiModelSettings,
         model_request_parameters: ModelRequestParameters,
     ) -> AsyncIterator[HTTPResponse]:
-        provider_name = self._provider.name if isinstance(self._provider, Provider) else self._provider
-
         tools = self._get_tools(model_request_parameters)
         tool_config = self._get_tool_config(model_request_parameters, tools)
-        sys_prompt_parts, contents = await self._message_to_gemini_content(messages, provider_name)
+        sys_prompt_parts, contents = await self._message_to_gemini_content(messages)
 
         request_data = _GeminiRequest(contents=contents)
         if sys_prompt_parts:
@@ -319,7 +317,7 @@ class GeminiModel(Model):
 
     @classmethod
     async def _message_to_gemini_content(
-        cls, messages: list[ModelMessage], provider_name: str | None = None
+        cls, messages: list[ModelMessage]
     ) -> tuple[list[_GeminiTextPart], list[_GeminiContent]]:
         sys_prompt_parts: list[_GeminiTextPart] = []
         contents: list[_GeminiContent] = []
@@ -331,7 +329,7 @@ class GeminiModel(Model):
                     if isinstance(part, SystemPromptPart):
                         sys_prompt_parts.append(_GeminiTextPart(text=part.content))
                     elif isinstance(part, UserPromptPart):
-                        message_parts.extend(await cls._map_user_prompt(part, provider_name))
+                        message_parts.extend(await cls._map_user_prompt(part))
                     elif isinstance(part, ToolReturnPart):
                         message_parts.append(_response_part_from_response(part.tool_name, part.model_response_object()))
                     elif isinstance(part, RetryPromptPart):
@@ -353,7 +351,7 @@ class GeminiModel(Model):
         return sys_prompt_parts, contents
 
     @staticmethod
-    async def _map_user_prompt(part: UserPromptPart, provider_name: str | None = None) -> list[_GeminiPartUnion]:
+    async def _map_user_prompt(part: UserPromptPart) -> list[_GeminiPartUnion]:
         if isinstance(part.content, str):
             return [{'text': part.content}]
         else:
@@ -376,8 +374,6 @@ class GeminiModel(Model):
                     )
                     content.append(inline_data)
                 elif isinstance(item, FileUrl):
-                    if provider_name != 'google-vertex':
-                        raise RuntimeError('Direct file Url is only supported with provider google-vertex.')
                     file_data = _GeminiFileDataPart(file_data={'file_uri': item.url, 'mime_type': item.media_type})
                     content.append(file_data)
                 else:

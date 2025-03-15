@@ -41,9 +41,10 @@ class SystemPromptPart:
 
 @dataclass
 class FileUrl:
-    """A URL to a file. Supported only by Gemini models on Vertex AI.
+    """A URL to a file. Supported only by Gemini models.
 
-    See the [Gemini API docs](https://cloud.google.com/vertex-ai/generative-ai/docs/model-reference/inference#filedata) for use cases and limitations.
+    See the [Vertex AI Gemini API docs](https://cloud.google.com/vertex-ai/generative-ai/docs/model-reference/inference#filedata)
+    and the [GLA Gemini API docs](https://ai.google.dev/api/caching#FileData) for use cases and limitations.
     """
 
     url: str
