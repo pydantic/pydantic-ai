@@ -262,7 +262,7 @@ class ToolReturnPart:
     tool_name: str
     """The name of the "tool" was called."""
 
-    content: Any
+    content: Sequence[UserContent | Any] | Any
     """The return value."""
 
     tool_call_id: str | None = None
@@ -281,13 +281,35 @@ class ToolReturnPart:
         else:
             return tool_return_ta.dump_json(self.content).decode()
 
-    def model_response_object(self) -> dict[str, Any]:
-        """Return a dictionary representation of the content, wrapping non-dict types appropriately."""
-        # gemini supports JSON dict return values, but no other JSON types, hence we wrap anything else in a dict
-        if isinstance(self.content, dict):
-            return tool_return_ta.dump_python(self.content, mode='json')  # pyright: ignore[reportUnknownMemberType]
+    def segregate_content(self) -> tuple[list[UserContent], list[Any]]:
+        """Segregate the content into a list of `UserContent` objects and a list of other types."""
+        user_content: list[UserContent] = []
+        other_content: list[Any] = []
+        if not isinstance(self.content, Sequence):
+            other_content.append(self.content)
         else:
-            return {'return_value': tool_return_ta.dump_python(self.content, mode='json')}
+            for item in self.content:
+                if not isinstance(item, UserContent):
+                    other_content.append(item)
+                else:
+                    user_content.append(item)
+        return user_content, other_content
+
+    # def model_response_object(self) -> dict[str, Any]:
+    #     """Return a dictionary representation of the content, wrapping non-dict types appropriately."""
+    #     user_content_sequence: bool = True
+    #     if not isinstance(self.content, Sequence):
+    #         user_content_sequence = False
+    #     else:
+    #         for item in self.content:
+    #             if not isinstance(item, UserContent):
+    #                 user_content_sequence = False
+    #                 break
+
+    #     if user_content_sequence:
+    #         return tool_return_ta.dump_python(self.content, mode='json')  # pyright: ignore[reportUnknownMemberType]
+    #     else:
+    #         return {'return_value': tool_return_ta.dump_python(self.content, mode='json')}
 
     def otel_event(self) -> Event:
         return Event(

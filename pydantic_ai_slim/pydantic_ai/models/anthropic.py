@@ -10,6 +10,7 @@ from json import JSONDecodeError, loads as json_loads
 from typing import Any, Literal, Union, cast, overload
 
 from anthropic.types import DocumentBlockParam
+from anthropic.types.tool_result_block_param import Content
 from httpx import AsyncClient as AsyncHTTPClient
 from typing_extensions import assert_never
 
@@ -30,6 +31,7 @@ from ..messages import (
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
+    tool_return_ta,
 )
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
@@ -296,10 +298,67 @@ class AnthropicModel(Model):
                         async for content in self._map_user_prompt(request_part):
                             user_content_params.append(content)
                     elif isinstance(request_part, ToolReturnPart):
+                        user_content, other_content = request_part.segregate_content()
+                        tool_return_content: list[Content] = []
+                        if len(user_content) > 0:
+                            for item in user_content:
+                                # Default fallback conversion to text
+                                def text_param(i: Any) -> TextBlockParam:
+                                    return TextBlockParam(text=tool_return_ta.dump_json(i).decode(), type='text')
+
+                                if isinstance(item, str):
+                                    tool_return_content.append(TextBlockParam(text=item, type='text'))
+                                elif isinstance(item, ImageUrl):
+                                    try:
+                                        client = cached_async_http_client()
+                                        response = await client.get(item.url, follow_redirects=True)
+                                        response.raise_for_status()
+                                        mime_type = response.headers['Content-Type'].split(';')[0]
+                                        if mime_type in ('image/jpeg', 'image/png', 'image/gif', 'image/webp'):
+                                            base64_encoded = base64.b64encode(response.content).decode('utf-8')
+                                            tool_return_content.append(
+                                                ImageBlockParam(
+                                                    source={
+                                                        'data': base64_encoded,
+                                                        'media_type': mime_type,
+                                                        'type': 'base64',
+                                                    },
+                                                    type='image',
+                                                )
+                                            )
+                                        else:
+                                            # Convert non-image URLs to text
+                                            tool_return_content.append(text_param(item))
+                                    except Exception:
+                                        # If any error occurs, fall back to text
+                                        tool_return_content.append(text_param(item))
+                                elif isinstance(item, BinaryContent):
+                                    if item.is_image:
+                                        base64_encoded = base64.b64encode(item.data).decode('utf-8')
+                                        tool_return_content.append(
+                                            ImageBlockParam(
+                                                source={
+                                                    'data': base64_encoded,
+                                                    'media_type': item.media_type,
+                                                    'type': 'base64',
+                                                },  # type: ignore
+                                                type='image',
+                                            )
+                                        )
+                                    else:
+                                        # Convert non-image binary content to text
+                                        tool_return_content.append(text_param(item))
+                                else:
+                                    tool_return_content.append(text_param(item))
+                        if len(other_content) > 0:
+                            for item in other_content:
+                                tool_return_content.append(
+                                    TextBlockParam(text=tool_return_ta.dump_json(item).decode(), type='text')
+                                )
                         tool_result_block_param = ToolResultBlockParam(
                             tool_use_id=_guard_tool_call_id(t=request_part, model_source='Anthropic'),
                             type='tool_result',
-                            content=request_part.model_response_str(),
+                            content=tool_return_content,
                             is_error=False,
                         )
                         user_content_params.append(tool_result_block_param)
