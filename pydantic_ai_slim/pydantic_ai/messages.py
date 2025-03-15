@@ -390,6 +390,22 @@ class TextPart:
         return bool(self.content)
 
 
+# TODO(Marcelo): Maybe we can use the `BinaryContent` class instead? Makes it easier
+# the case where user pass the `message_history`.
+@dataclass
+class BinaryPart:
+    """A binary response from a model."""
+
+    data: str
+    """The base64 encoded data."""
+
+    mime_type: str
+    """The MIME type of the binary data."""
+
+    part_kind: Literal['binary'] = 'binary'
+    """Part type identifier, this is available on all parts as a discriminator."""
+
+
 @dataclass
 class ToolCallPart:
     """A tool call from a model."""
@@ -439,7 +455,7 @@ class ToolCallPart:
             return bool(self.args)
 
 
-ModelResponsePart = Annotated[Union[TextPart, ToolCallPart], pydantic.Discriminator('part_kind')]
+ModelResponsePart = Annotated[Union[TextPart, BinaryPart, ToolCallPart], pydantic.Discriminator('part_kind')]
 """A message part returned by a model."""
 
 

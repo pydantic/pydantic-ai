@@ -21,6 +21,7 @@ from .. import ModelHTTPError, UnexpectedModelBehavior, UserError, _utils, usage
 from ..messages import (
     AudioUrl,
     BinaryContent,
+    BinaryPart,
     DocumentUrl,
     ImageUrl,
     ModelMessage,
@@ -69,10 +70,12 @@ See [the Gemini API docs](https://ai.google.dev/gemini-api/docs/models/gemini#mo
 """
 
 
-class GeminiModelSettings(ModelSettings):
+class GeminiModelSettings(ModelSettings, total=False):
     """Settings used for a Gemini model request."""
 
     gemini_safety_settings: list[GeminiSafetySettings]
+
+    response_modalities: tuple[Literal['Text', 'Image'], ...]
 
 
 @dataclass(init=False)
@@ -249,6 +252,8 @@ class GeminiModel(Model):
                 generation_config['presence_penalty'] = presence_penalty
             if (frequency_penalty := model_settings.get('frequency_penalty')) is not None:
                 generation_config['frequency_penalty'] = frequency_penalty
+            if (response_modalities := model_settings.get('response_modalities')) is not None:
+                generation_config['response_modalities'] = response_modalities
             if (gemini_safety_settings := model_settings.get('gemini_safety_settings')) != []:
                 request_data['safety_settings'] = gemini_safety_settings
         if generation_config:
@@ -543,6 +548,7 @@ class _GeminiGenerationConfig(TypedDict, total=False):
     top_p: float
     presence_penalty: float
     frequency_penalty: float
+    response_modalities: NotRequired[tuple[Literal['Text', 'Image']]]
 
 
 class _GeminiContent(TypedDict):
@@ -604,6 +610,8 @@ def _process_response_from_parts(
     for part in parts:
         if 'text' in part:
             items.append(TextPart(content=part['text']))
+        elif 'inline_data' in part:
+            items.append(BinaryPart(data=part['inline_data']['data'], mime_type=part['inline_data']['mime_type']))
         elif 'function_call' in part:
             items.append(
                 ToolCallPart(

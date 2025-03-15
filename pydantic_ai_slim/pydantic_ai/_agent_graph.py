@@ -389,11 +389,14 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
             async def _run_stream() -> AsyncIterator[_messages.HandleResponseEvent]:
                 texts: list[str] = []
                 tool_calls: list[_messages.ToolCallPart] = []
+                binary_parts: list[_messages.BinaryPart] = []
                 for part in self.model_response.parts:
                     if isinstance(part, _messages.TextPart):
                         # ignore empty content for text parts, see #437
                         if part.content:
                             texts.append(part.content)
+                    elif isinstance(part, _messages.BinaryPart):
+                        binary_parts.append(part)
                     elif isinstance(part, _messages.ToolCallPart):
                         tool_calls.append(part)
                     else:
@@ -409,6 +412,9 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                 elif texts:
                     # No events are emitted during the handling of text responses, so we don't need to yield anything
                     self._next_node = await self._handle_text_response(ctx, texts)
+                elif binary_parts:
+                    assert len(binary_parts) == 1, 'Only one binary part is supported at the moment'
+                    self._next_node = await self._handle_binary_response(ctx, binary_parts[0])
                 else:
                     raise exceptions.UnexpectedModelBehavior('Received empty model response')
 
@@ -530,6 +536,16 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                     ]
                 )
             )
+
+    async def _handle_binary_response(
+        self,
+        ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
+        binary_part: _messages.BinaryPart,
+    ) -> ModelRequestNode[DepsT, NodeRunEndT] | End[result.FinalResult[NodeRunEndT]]:
+        # TODO(Marcelo): We don't validate the output. Is this a problem?
+        # If it's an image, shall we return a PIL image? Shall we return a `BytesIO`? Should the user handle it?
+        result_data_input = cast(NodeRunEndT, binary_part)
+        return self._handle_final_result(ctx, result.FinalResult(result_data_input, None, None), [])
 
 
 def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]]) -> RunContext[DepsT]:
