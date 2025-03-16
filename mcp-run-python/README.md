@@ -12,5 +12,6 @@ npx @pydantic/mcp-run-python [stdio|sse]
 ```
 
 where:
-* `stdio` runs the server with the [Stdio MCP transport](https://modelcontextprotocol.io/docs/concepts/transports#standard-input%2Foutput-stdio) — suitable for running the process as a subprocess locally
-* and `sse` runs the server with the [SSE MCP transport](https://modelcontextprotocol.io/docs/concepts/transports#server-sent-events-sse) — running the server as an HTTP server to connect locally or remotely
+
+- `stdio` runs the server with the [Stdio MCP transport](https://modelcontextprotocol.io/docs/concepts/transports#standard-input%2Foutput-stdio) — suitable for running the process as a subprocess locally
+- and `sse` runs the server with the [SSE MCP transport](https://modelcontextprotocol.io/docs/concepts/transports#server-sent-events-sse) — running the server as an HTTP server to connect locally or remotely
