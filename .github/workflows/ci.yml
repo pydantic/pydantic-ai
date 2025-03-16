@@ -29,6 +29,11 @@ jobs:
       - name: Install dependencies
         run: uv sync --all-extras --all-packages --group lint
 
+      - uses: actions/setup-node@v4
+
+      - run: npm install
+        working-directory: mcp-run-python
+
       - uses: pre-commit/action@v3.0.0
         with:
           extra_args: --all-files --verbose
