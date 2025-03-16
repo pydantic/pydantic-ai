@@ -50,7 +50,7 @@ openai = ["openai>=1.65.1"]
 cohere = ["cohere>=5.13.11"]
 vertexai = ["google-auth>=2.36.0", "requests>=2.32.3"]
 anthropic = ["anthropic>=0.49.0"]
-groq = ["groq>=0.12.0"]
+groq = ["groq>=0.15.0"]
 mistral = ["mistralai>=1.2.5"]
 bedrock = ["boto3>=1.34.116"]
 # Tools
