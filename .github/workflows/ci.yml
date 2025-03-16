@@ -235,7 +235,7 @@ jobs:
       - run: npm run build
         working-directory: mcp-run-python
 
-      - run: uv run --package mcp-run-python pytest mcp-run-python
+      - run: uv run --package mcp-run-python pytest mcp-run-python -sv --timeout 20
 
   # https://github.com/marketplace/actions/alls-green#why used for branch protection checks
   check:
