@@ -3,7 +3,6 @@ name = "mcp-run-python"
 version = "0.0.1"
 readme = "README.md"
 classifiers = ["Private :: do not release"]
-requires-python = ">=3.12"
 
 [dependency-groups]
 dev = [
@@ -11,8 +10,8 @@ dev = [
     "dirty-equals>=0.9.0",
     "httpx>=0.28.1",
     "inline-snapshot>=0.19.3",
-    "mcp>=1.4.1",
-    "micropip>=0.9.0",
+    "mcp>=1.4.1; python_version >= '3.10'",
+    "micropip>=0.9.0; python_version >= '3.12'",
     "pytest>=8.3.3",
     "pytest-pretty>=1.2.0",
 ]
