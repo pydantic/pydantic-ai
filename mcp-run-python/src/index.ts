@@ -118,8 +118,6 @@ function runSse() {
 async function runStdio() {
   const mcpServer = createServer()
   const transport = new StdioServerTransport()
-  // using console.error to print to stderr to avoid conflicts with the stdio transport
-  console.error('Running MCP server with Stdio transport')
   await mcpServer.connect(transport)
 }
 
