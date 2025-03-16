@@ -1,7 +1,7 @@
 /* eslint @typescript-eslint/no-explicit-any: off */
 import { loadPyodide } from 'pyodide'
 import { preparePythonCode } from './prepareEnvCode.js'
-import type { LogLevel } from './index.js'
+import type { LoggingLevel } from '@modelcontextprotocol/sdk/types.js'
 
 export interface CodeFile {
   name: string
@@ -11,7 +11,7 @@ export interface CodeFile {
 
 export async function runCode(
   files: CodeFile[],
-  log: (level: LogLevel, data: string) => void,
+  log: (level: LoggingLevel, data: string) => void,
 ): Promise<RunSuccess | RunError> {
   // remove once https://github.com/pyodide/pyodide/pull/5514 is released
   const realConsoleLog = console.log

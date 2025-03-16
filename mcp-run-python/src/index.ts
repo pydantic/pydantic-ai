@@ -1,7 +1,7 @@
 import express, { Request, Response } from 'express'
 import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
-import { SetLevelRequestSchema } from '@modelcontextprotocol/sdk/types.js'
+import { SetLevelRequestSchema, LoggingLevel } from '@modelcontextprotocol/sdk/types.js'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { z } from 'zod'
 
@@ -52,7 +52,7 @@ with a comment of the form:
 # ///
 `
 
-  let setLogLevel: LogLevel = 'emergency'
+  let setLogLevel: LoggingLevel = 'emergency'
 
   server.server.setRequestHandler(SetLevelRequestSchema, async (request) => {
     setLogLevel = request.params.level
@@ -67,7 +67,7 @@ with a comment of the form:
       const logPromises: Promise<void>[] = []
       const result = await runCode(
         [{ name: 'main.py', content: python_code, active: true }],
-        (level: LogLevel, data: string) => {
+        (level, data) => {
           if (LogLevels.indexOf(level) >= LogLevels.indexOf(setLogLevel)) {
             logPromises.push(server.server.sendLoggingMessage({ level, data }))
           }
@@ -137,13 +137,13 @@ a = numpy.array([1, 2, 3])
 print('numpy array:', a)
 a
 `
-  const result = await runCode([{ name: 'warmup.py', content: code, active: true }], (level: LogLevel, data: string) =>
-    console.log(`${level}: ${data}`),
+  const result = await runCode([{ name: 'warmup.py', content: code, active: true }], (level, data) =>
+    // use warn to avoid recursion since console.log is patched in runCode
+    console.error(`${level}: ${data}`),
   )
   console.log('Tool return value:')
   console.log(asXml(result))
   console.log('\nwarmup successful 🎉')
 }
 
-export type LogLevel = 'debug' | 'info' | 'notice' | 'warning' | 'error' | 'critical' | 'alert' | 'emergency'
-const LogLevels: LogLevel[] = ['debug', 'info', 'notice', 'warning', 'error', 'critical', 'alert', 'emergency']
+const LogLevels: LoggingLevel[] = ['debug', 'info', 'notice', 'warning', 'error', 'critical', 'alert', 'emergency']

@@ -19,7 +19,8 @@
     "lint": "eslint --max-warnings=0 src && prettier --check -- . && tsc --noEmit",
     "prepare": "rm -rf dist && tsc && node inline_python.js",
     "dev-sse": "npm run prepare && npx . sse",
-    "dev-stdio": "npm run prepare && npx . stdio"
+    "dev-stdio": "npm run prepare && npx . stdio",
+    "dev-warmup": "npm run prepare && npx . warmup"
   },
   "bin": "./cli.js",
   "files": [
