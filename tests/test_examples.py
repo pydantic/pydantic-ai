@@ -70,7 +70,6 @@ def test_docs_examples(
     mocker.patch('pydantic_ai.agent.models.infer_model', side_effect=mock_infer_model)
     mocker.patch('pydantic_ai._utils.group_by_temporal', side_effect=mock_group_by_temporal)
     mocker.patch('pydantic_ai.models.vertexai._creds_from_file', return_value=MockCredentials())
-    mocker.patch('pydantic_ai.mcp.MCPRemoteServer', return_value=MockMCPServer())
 
     mocker.patch('httpx.Client.get', side_effect=http_request)
     mocker.patch('httpx.Client.post', side_effect=http_request)
@@ -78,7 +77,10 @@ def test_docs_examples(
     mocker.patch('httpx.AsyncClient.post', side_effect=async_http_request)
     mocker.patch('random.randint', return_value=4)
     mocker.patch('rich.prompt.Prompt.ask', side_effect=rich_prompt_ask)
-    mocker.patch('mcp.server.fastmcp.FastMCP')
+
+    if sys.version_info >= (3, 10):
+        mocker.patch('pydantic_ai.mcp.MCPRemoteServer', return_value=MockMCPServer())
+        mocker.patch('mcp.server.fastmcp.FastMCP')
 
     env.set('OPENAI_API_KEY', 'testing')
     env.set('GEMINI_API_KEY', 'testing')
