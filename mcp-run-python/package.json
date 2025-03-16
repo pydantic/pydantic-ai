@@ -8,6 +8,7 @@
     "format": "prettier --write -- .",
     "lint": "eslint --max-warnings=0 src && prettier --check -- . && tsc --noEmit",
     "build": "rm -rf dist && tsc && node inline_python.cjs",
+    "warmup": "node warmup.js",
     "sse": "node dist/cli.js sse",
     "stdio": "node dist/cli.js stdio",
     "dev-sse": "npm run build && npm run sse",
@@ -16,7 +17,9 @@
   "bin": {
     "mcp-run-python": "./dist/cli.js"
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "prettier": {
     "singleQuote": true,
     "semi": false,

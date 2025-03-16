@@ -232,7 +232,13 @@ jobs:
       - run: npm install
         working-directory: mcp-run-python
 
+      - run: npm run lint
+        working-directory: mcp-run-python
+
       - run: npm run build
+        working-directory: mcp-run-python
+
+      - run: npm run warmup
         working-directory: mcp-run-python
 
       - run: uv run --package mcp-run-python pytest mcp-run-python -sv --timeout 20

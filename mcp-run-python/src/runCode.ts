@@ -8,7 +8,6 @@ export interface CodeFile {
   active: boolean
 }
 
-
 export async function runCode(files: CodeFile[]): Promise<RunSuccess | RunError> {
   const output: string[] = []
   const pyodide = await loadPyodide({
@@ -23,12 +22,14 @@ export async function runCode(files: CodeFile[]): Promise<RunSuccess | RunError>
   // see https://github.com/pyodide/pyodide/discussions/5512
   const origLoadPackage = pyodide.loadPackage
   pyodide.loadPackage = function (pkgs, options) {
-      return origLoadPackage(pkgs, {
-        // stop pyodide printing to stdout/stderr
-        messageCallback: () => {},
-        errorCallback: (msg: string) => {
-      output.push(`install error: ${msg}`)
-    }, ...options})
+    return origLoadPackage(pkgs, {
+      // stop pyodide printing to stdout/stderr
+      messageCallback: () => {},
+      errorCallback: (msg: string) => {
+        output.push(`install error: ${msg}`)
+      },
+      ...options,
+    })
   }
 
   await pyodide.loadPackage(['micropip', 'pydantic'])
@@ -54,7 +55,7 @@ export async function runCode(files: CodeFile[]): Promise<RunSuccess | RunError>
       error: prepareStatus.message,
     }
   }
-  const {dependencies} = prepareStatus
+  const { dependencies } = prepareStatus
   const activeFile = files.find((f) => f.active)! || files[0]
   try {
     const rawValue = await pyodide.runPythonAsync(activeFile.content, {
