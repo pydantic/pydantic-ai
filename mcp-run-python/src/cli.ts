@@ -51,7 +51,8 @@ with a comment of the form:
 /*
  * Run the MCP server using the SSE transport, e.g. over HTTP.
  */
-function runSse(mcpServer: McpServer) {
+function runSse() {
+  const mcpServer = createServer()
   const app = express()
   const transports: { [sessionId: string]: SSEServerTransport } = {}
 
@@ -83,19 +84,35 @@ function runSse(mcpServer: McpServer) {
 /*
  * Run the MCP server using the Stdio transport.
  */
-async function runStdio(mcpServer: McpServer) {
+async function runStdio() {
+  const mcpServer = createServer()
   const transport = new StdioServerTransport()
   // using console.error to print to stderr to avoid conflicts with the stdio transport
-  console.error(`Running MCP server with Stdio transport`)
+  console.error('Running MCP server with Stdio transport')
   await mcpServer.connect(transport)
 }
 
+/*
+ * Run pyodide to download packages which can otherwise interrupt the server
+ */
+async function warmup() {
+  console.error('Running warmup script...')
+  const code = `
+import numpy
+print('numpy array:', numpy.array([1, 2, 3]))
+`
+  const result = await runCode([{ name: 'warmup.py', content: code, active: true }])
+  console.log(asXml(result))
+  console.log('\nwarmup successful 🎉')
+}
+
 const args = process.argv.slice(2)
-const mcpServer = createServer()
 if (args.length === 1 && args[0] === 'stdio') {
-  await runStdio(mcpServer)
+  await runStdio()
 } else if (args.length === 1 && args[0] === 'sse') {
-  runSse(mcpServer)
+  runSse()
+} else if (args.length === 1 && args[0] === 'warmup') {
+  warmup()
 } else {
   console.error('Usage: node cli.js [stdio|sse]')
   process.exit(1)
