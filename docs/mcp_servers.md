@@ -30,7 +30,7 @@ pip/uv-add 'mcp[cli]'
 
 Here's a simple MCP server that provides a temperature conversion tool:
 
-```python {title="temperature_server.py" py="3.10" test="skip"}
+```python {title="temperature_mcp_server.py" py="3.10"}
 from mcp.server.fastmcp import FastMCP
 
 mcp = FastMCP('Temperature Conversion Server')
@@ -42,42 +42,27 @@ async def celsius_to_fahrenheit(celsius: float) -> float:
 
     Args:
         celsius: Temperature in Celsius
-
-    Returns:
-        Temperature in Fahrenheit
     """
     return (celsius * 9 / 5) + 32
 
 
-# Run with stdio transport (for subprocess communication)
-mcp.run('stdio')
+if __name__ == '__main__':
+    mcp.run('stdio')  # (1)!
 ```
+
+1. Run with stdio transport (for subprocess communication).
 
 The same server can be run with [SSE transport](https://modelcontextprotocol.io/docs/concepts/transports#server-sent-events-sse)
 for HTTP communication:
 
-```python {title="temperature_server_sse.py" py="3.10" test="skip"}
-from mcp.server.fastmcp import FastMCP
+```python {title="temperature_mcp_server_sse.py" py="3.10"}
+from temperature_mcp_server import mcp
 
-mcp = FastMCP('Temperature Conversion Server')
-
-
-@mcp.tool()
-async def celsius_to_fahrenheit(celsius: float) -> float:
-    """Convert Celsius to Fahrenheit.
-
-    Args:
-        celsius: Temperature in Celsius
-
-    Returns:
-        Temperature in Fahrenheit
-    """
-    return (celsius * 9 / 5) + 32
-
-
-# Run with SSE transport on port 8000
-mcp.run('sse', port=8000)
+if __name__ == '__main__':
+    mcp.run('sse', port=8000)  # (1)!
 ```
+
+1. Run with SSE transport on port 8000.
 
 ## Usage
 
@@ -105,7 +90,7 @@ async def main():
     async with agent.run_mcp_servers():
         result = await agent.run('Can you convert 30 degrees celsius to fahrenheit?')
     print(result.data)
-    #> '30 degrees Celsius is equal to 86 degrees Fahrenheit.'
+    #> 30 degrees Celsius is equal to 86 degrees Fahrenheit.
 ```
 
 This will connect to the MCP server at the given URL and use the
