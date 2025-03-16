@@ -65,14 +65,11 @@ with a comment of the form:
     { python_code: z.string().describe('Python code to run') },
     async ({ python_code }: { python_code: string }) => {
       const logPromises: Promise<void>[] = []
-      const result = await runCode(
-        [{ name: 'main.py', content: python_code, active: true }],
-        (level, data) => {
-          if (LogLevels.indexOf(level) >= LogLevels.indexOf(setLogLevel)) {
-            logPromises.push(server.server.sendLoggingMessage({ level, data }))
-          }
-        },
-      )
+      const result = await runCode([{ name: 'main.py', content: python_code, active: true }], (level, data) => {
+        if (LogLevels.indexOf(level) >= LogLevels.indexOf(setLogLevel)) {
+          logPromises.push(server.server.sendLoggingMessage({ level, data }))
+        }
+      })
       await Promise.all(logPromises)
       return {
         content: [{ type: 'text', text: asXml(result) }],
