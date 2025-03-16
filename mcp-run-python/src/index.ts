@@ -143,4 +143,5 @@ a
   console.log('\nwarmup successful 🎉')
 }
 
+// list of log levels to use for level comparison
 const LogLevels: LoggingLevel[] = ['debug', 'info', 'notice', 'warning', 'error', 'critical', 'alert', 'emergency']
