@@ -406,6 +406,8 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                             texts.append(part.content)
                     elif isinstance(part, _messages.ToolCallPart):
                         tool_calls.append(part)
+                    elif isinstance(part, _messages.ThinkingPart):
+                        ...
                     else:
                         assert_never(part)
 

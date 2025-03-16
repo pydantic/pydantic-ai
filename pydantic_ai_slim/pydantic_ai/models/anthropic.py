@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from json import JSONDecodeError, loads as json_loads
 from typing import Any, Literal, Union, cast, overload
 
-from anthropic.types import DocumentBlockParam
+from anthropic.types import DocumentBlockParam, ThinkingBlock, ThinkingBlockParam
 from httpx import AsyncClient as AsyncHTTPClient
 from typing_extensions import assert_never, deprecated
 
@@ -27,6 +27,7 @@ from ..messages import (
     RetryPromptPart,
     SystemPromptPart,
     TextPart,
+    ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
@@ -256,13 +257,14 @@ class AnthropicModel(Model):
 
         try:
             return await self.client.messages.create(
-                max_tokens=model_settings.get('max_tokens', 1024),
+                max_tokens=model_settings.get('max_tokens', 2048),
                 system=system_prompt or NOT_GIVEN,
                 messages=anthropic_messages,
                 model=self._model_name,
                 tools=tools or NOT_GIVEN,
                 tool_choice=tool_choice or NOT_GIVEN,
                 stream=stream,
+                thinking={'budget_tokens': 1024, 'type': 'enabled'},
                 temperature=model_settings.get('temperature', NOT_GIVEN),
                 top_p=model_settings.get('top_p', NOT_GIVEN),
                 timeout=model_settings.get('timeout', NOT_GIVEN),
@@ -279,6 +281,8 @@ class AnthropicModel(Model):
         for item in response.content:
             if isinstance(item, TextBlock):
                 items.append(TextPart(content=item.text))
+            elif isinstance(item, ThinkingBlock):
+                items.append(ThinkingPart(content=item.thinking, signature=item.signature))
             else:
                 assert isinstance(item, ToolUseBlock), 'unexpected item type'
                 items.append(
@@ -345,10 +349,17 @@ class AnthropicModel(Model):
                         user_content_params.append(retry_param)
                 anthropic_messages.append(MessageParam(role='user', content=user_content_params))
             elif isinstance(m, ModelResponse):
-                assistant_content_params: list[TextBlockParam | ToolUseBlockParam] = []
+                assistant_content_params: list[TextBlockParam | ToolUseBlockParam | ThinkingBlockParam] = []
                 for response_part in m.parts:
                     if isinstance(response_part, TextPart):
                         assistant_content_params.append(TextBlockParam(text=response_part.content, type='text'))
+                    elif isinstance(response_part, ThinkingPart):
+                        assert response_part.signature is not None, 'Thinking part must have a signature'
+                        assistant_content_params.append(
+                            ThinkingBlockParam(
+                                thinking=response_part.content, signature=response_part.signature, type='thinking'
+                            )
+                        )
                     else:
                         tool_use_block_param = ToolUseBlockParam(
                             id=_guard_tool_call_id(t=response_part, model_source='Anthropic'),
