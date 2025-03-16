@@ -9,6 +9,12 @@ export interface CodeFile {
 }
 
 export async function runCode(files: CodeFile[]): Promise<RunSuccess | RunError> {
+  // remove once https://github.com/pyodide/pyodide/pull/5514 is released
+  const realConsoleLog = console.log
+  console.log = (...args: any[]) => {
+    console.error('console.log:', ...args)
+  }
+
   const output: string[] = []
   const pyodide = await loadPyodide({
     stdout: (msg) => {
@@ -21,8 +27,8 @@ export async function runCode(files: CodeFile[]): Promise<RunSuccess | RunError>
 
   // see https://github.com/pyodide/pyodide/discussions/5512
   const origLoadPackage = pyodide.loadPackage
-  pyodide.loadPackage = function (pkgs, options) {
-    return origLoadPackage(pkgs, {
+  pyodide.loadPackage = (pkgs, options) =>
+    origLoadPackage(pkgs, {
       // stop pyodide printing to stdout/stderr
       messageCallback: () => {},
       errorCallback: (msg: string) => {
@@ -30,7 +36,6 @@ export async function runCode(files: CodeFile[]): Promise<RunSuccess | RunError>
       },
       ...options,
     })
-  }
 
   await pyodide.loadPackage(['micropip', 'pydantic'])
   const sys = pyodide.pyimport('sys')
@@ -48,6 +53,7 @@ export async function runCode(files: CodeFile[]): Promise<RunSuccess | RunError>
   const prepareStatus = await preparePyEnv.prepare_env(pyodide.toPy(files))
   sys.stdout.flush()
   sys.stderr.flush()
+  console.log = realConsoleLog
   if (prepareStatus.kind == 'error') {
     return {
       status: 'prepare-error',
@@ -87,14 +93,14 @@ interface RunSuccess {
   status: 'success'
   // we could record stdout and stderr separately, but I suspect simplicity is more important
   output: string[]
-  dependencies: string[] | null
+  dependencies: string[]
   returnValueJson: string | null
 }
 
 interface RunError {
   status: 'prepare-error' | 'install-error' | 'run-error'
   output: string[]
-  dependencies?: string[] | null
+  dependencies?: string[]
   error: string
 }
 
