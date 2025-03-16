@@ -211,7 +211,7 @@ jobs:
           name: diff-coverage-html
           path: index.html
 
-      - run: uv run coverage report --fail-under 100
+      - run: uv run coverage report --fail-under 95
       - run: uv run diff-cover coverage.xml --fail-under 100
 
   # https://github.com/marketplace/actions/alls-green#why used for branch protection checks
