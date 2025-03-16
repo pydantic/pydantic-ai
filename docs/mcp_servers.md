@@ -93,11 +93,11 @@ Examples of both are shown below.
 You can have a MCP server running on a remote server. In this case, you'd use the
 [`MCPRemoteServer`][pydantic_ai.mcp.MCPRemoteServer] class:
 
-```python {title="basic_mcp_setup.py" py="3.10" test="skip"}
+```python {title="mcp_remote_server.py" py="3.10"}
 from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPRemoteServer
 
-server = MCPRemoteServer(url='http://localhost:8000/sse')
+server = MCPRemoteServer(url='http://localhost:8005/sse')
 agent = Agent('openai:gpt-4o', mcp_servers=[server])
 
 
@@ -118,7 +118,7 @@ In this case, you'd use the [`MCPSubprocessServer`][pydantic_ai.mcp.MCPSubproces
 when using `MCPSubprocessServer` you need to run the server with the [`run_mcp_servers`][pydantic_ai.Agent.run_mcp_servers]
 context manager before running the server.
 
-```python {title="stdio_mcp_setup.py" py="3.10"}
+```python {title="mcp_subprocess_server.py" py="3.10"}
 from pydantic_ai.agent import Agent
 from pydantic_ai.mcp import MCPSubprocessServer
 

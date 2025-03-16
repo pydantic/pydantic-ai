@@ -141,6 +141,9 @@ filterwarnings = [
     # boto3
     "ignore::DeprecationWarning:botocore.*",
     "ignore::RuntimeWarning:pydantic_ai.mcp",
+    # uvicorn (mcp server)
+    "ignore:websockets.legacy is deprecated.*:DeprecationWarning:websockets.legacy",
+    "ignore:websockets.server.WebSocketServerProtocol is deprecated:DeprecationWarning"
 ]
 
 # https://coverage.readthedocs.io/en/latest/config.html#run
