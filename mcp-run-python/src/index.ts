@@ -6,6 +6,20 @@ import { z } from 'zod'
 
 import { runCode, asXml } from './runCode.js'
 
+export async function main() {
+  const args = process.argv.slice(2)
+  if (args.length === 1 && args[0] === 'stdio') {
+    await runStdio()
+  } else if (args.length === 1 && args[0] === 'sse') {
+    runSse()
+  } else if (args.length === 1 && args[0] === 'warmup') {
+    await warmup()
+  } else {
+    console.error('Usage: npx @pydantic/mcp-run-python [stdio|sse|warmup]')
+    process.exit(1)
+  }
+}
+
 /*
  * Create an MCP server with the `run_python_code` tool registered.
  */
@@ -104,16 +118,4 @@ print('numpy array:', numpy.array([1, 2, 3]))
   const result = await runCode([{ name: 'warmup.py', content: code, active: true }])
   console.log(asXml(result))
   console.log('\nwarmup successful 🎉')
-}
-
-const args = process.argv.slice(2)
-if (args.length === 1 && args[0] === 'stdio') {
-  await runStdio()
-} else if (args.length === 1 && args[0] === 'sse') {
-  runSse()
-} else if (args.length === 1 && args[0] === 'warmup') {
-  warmup()
-} else {
-  console.error('Usage: node cli.js [stdio|sse]')
-  process.exit(1)
 }

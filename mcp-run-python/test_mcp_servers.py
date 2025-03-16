@@ -16,7 +16,7 @@ from mcp.client.stdio import stdio_client
 if TYPE_CHECKING:
     from mcp import ClientSession
 
-CLI_JS_PATH = 'mcp-run-python/dist/cli.js'
+CLI_JS_PATH = 'mcp-run-python/cli.js'
 pytestmark = pytest.mark.anyio
 
 
