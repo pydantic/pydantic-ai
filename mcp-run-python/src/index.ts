@@ -116,6 +116,7 @@ import numpy
 print('numpy array:', numpy.array([1, 2, 3]))
 `
   const result = await runCode([{ name: 'warmup.py', content: code, active: true }])
+  console.log('Tool return value:')
   console.log(asXml(result))
   console.log('\nwarmup successful 🎉')
 }
