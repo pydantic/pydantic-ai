@@ -38,17 +38,17 @@ async def fixture_mcp_session(request: pytest.FixtureRequest) -> AsyncIterator[C
         env = dict(os.environ)
         env['PORT'] = str(port)
         p = subprocess.Popen(['node', CLI_JS_PATH, 'sse'], env=env)
-        url = f'http://localhost:{port}'
-        async with AsyncClient() as client:
-            for _ in range(5):
-                try:
-                    await client.get(url, timeout=0.01)
-                except HTTPError:
-                    await asyncio.sleep(0.1)
-                else:
-                    break
-
         try:
+            url = f'http://localhost:{port}'
+            async with AsyncClient() as client:
+                for _ in range(5):
+                    try:
+                        await client.get(url, timeout=0.01)
+                    except HTTPError:
+                        await asyncio.sleep(0.1)
+                    else:
+                        break
+
             async with sse_client(f'{url}/sse') as (read, write):
                 async with ClientSession(read, write) as session:
                     yield session
@@ -56,7 +56,7 @@ async def fixture_mcp_session(request: pytest.FixtureRequest) -> AsyncIterator[C
             p.terminate()
             exit_code = p.wait()
             if exit_code > 0:
-                raise RuntimeError(f'Process exited with code {exit_code}')
+                pytest.fail(f'Process exited with code {exit_code}')
 
 
 async def test_stdio_list_tools(mcp_session: ClientSession) -> None:

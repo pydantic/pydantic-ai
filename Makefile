@@ -64,7 +64,7 @@ testcov: test ## Run tests and generate a coverage report
 
 .PHONY: test-mrp
 test-mrp: ## Build and  tests of mcp-run-python
-	cd mcp-run-python && npm run build
+	cd mcp-run-python && npm run prepare
 	uv run --package mcp-run-python pytest mcp-run-python -v
 
 .PHONY: update-examples

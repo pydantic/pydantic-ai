@@ -1,6 +1,7 @@
 import express, { Request, Response } from 'express'
 import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
+import { SetLevelRequestSchema } from '@modelcontextprotocol/sdk/types.js'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { z } from 'zod'
 
@@ -31,6 +32,9 @@ function createServer(): McpServer {
     },
     {
       instructions: 'Call the "run_python_code" tool with the Python code to run.',
+      capabilities: {
+        logging: {},
+      },
     },
   )
 
@@ -48,12 +52,28 @@ with a comment of the form:
 # ///
 `
 
+  let setLogLevel: LogLevel = 'emergency'
+
+  server.server.setRequestHandler(SetLevelRequestSchema, async (request) => {
+    setLogLevel = request.params.level
+    return {}
+  })
+
   server.tool(
     'run_python_code',
     toolDescription,
     { python_code: z.string().describe('Python code to run') },
     async ({ python_code }: { python_code: string }) => {
-      const result = await runCode([{ name: 'main.py', content: python_code, active: true }])
+      const logPromises: Promise<void>[] = []
+      const result = await runCode(
+        [{ name: 'main.py', content: python_code, active: true }],
+        (level: LogLevel, data: string) => {
+          if (LogLevels.indexOf(level) >= LogLevels.indexOf(setLogLevel)) {
+            logPromises.push(server.server.sendLoggingMessage({ level, data }))
+          }
+        },
+      )
+      await Promise.all(logPromises)
       return {
         content: [{ type: 'text', text: asXml(result) }],
       }
@@ -113,10 +133,17 @@ async function warmup() {
   console.error('Running warmup script...')
   const code = `
 import numpy
-print('numpy array:', numpy.array([1, 2, 3]))
+a = numpy.array([1, 2, 3])
+print('numpy array:', a)
+a
 `
-  const result = await runCode([{ name: 'warmup.py', content: code, active: true }])
+  const result = await runCode([{ name: 'warmup.py', content: code, active: true }], (level: LogLevel, data: string) =>
+    console.log(`${level}: ${data}`),
+  )
   console.log('Tool return value:')
   console.log(asXml(result))
   console.log('\nwarmup successful 🎉')
 }
+
+export type LogLevel = 'debug' | 'info' | 'notice' | 'warning' | 'error' | 'critical' | 'alert' | 'emergency'
+const LogLevels: LogLevel[] = ['debug', 'info', 'notice', 'warning', 'error', 'critical', 'alert', 'emergency']

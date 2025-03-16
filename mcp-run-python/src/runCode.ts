@@ -1,6 +1,7 @@
 /* eslint @typescript-eslint/no-explicit-any: off */
 import { loadPyodide } from 'pyodide'
 import { preparePythonCode } from './prepareEnvCode.js'
+import type { LogLevel } from './index.js'
 
 export interface CodeFile {
   name: string
@@ -8,19 +9,22 @@ export interface CodeFile {
   active: boolean
 }
 
-export async function runCode(files: CodeFile[]): Promise<RunSuccess | RunError> {
+export async function runCode(
+  files: CodeFile[],
+  log: (level: LogLevel, data: string) => void,
+): Promise<RunSuccess | RunError> {
   // remove once https://github.com/pyodide/pyodide/pull/5514 is released
   const realConsoleLog = console.log
-  console.log = (...args: any[]) => {
-    console.error('console.log:', ...args)
-  }
+  console.log = (...args: any[]) => log('debug', args.join(' '))
 
   const output: string[] = []
   const pyodide = await loadPyodide({
     stdout: (msg) => {
+      log('info', msg)
       output.push(msg)
     },
     stderr: (msg) => {
+      log('warning', msg)
       output.push(msg)
     },
   })
@@ -30,8 +34,9 @@ export async function runCode(files: CodeFile[]): Promise<RunSuccess | RunError>
   pyodide.loadPackage = (pkgs, options) =>
     origLoadPackage(pkgs, {
       // stop pyodide printing to stdout/stderr
-      messageCallback: () => {},
+      messageCallback: (msg: string) => log('debug', `loadPackage: ${msg}`),
       errorCallback: (msg: string) => {
+        log('error', `loadPackage: ${msg}`)
         output.push(`install error: ${msg}`)
       },
       ...options,
@@ -51,42 +56,41 @@ export async function runCode(files: CodeFile[]): Promise<RunSuccess | RunError>
   const preparePyEnv: PreparePyEnv = pyodide.pyimport(moduleName)
 
   const prepareStatus = await preparePyEnv.prepare_env(pyodide.toPy(files))
-  sys.stdout.flush()
-  sys.stderr.flush()
-  console.log = realConsoleLog
+
+  let runResult: RunSuccess | RunError
   if (prepareStatus.kind == 'error') {
-    return {
-      status: 'prepare-error',
+    runResult = {
+      status: 'install-error',
       output,
       error: prepareStatus.message,
     }
-  }
-  const { dependencies } = prepareStatus
-  const activeFile = files.find((f) => f.active)! || files[0]
-  try {
-    const rawValue = await pyodide.runPythonAsync(activeFile.content, {
-      globals: pyodide.toPy({ __name__: '__main__' }),
-      filename: activeFile.name,
-    })
-    const returnValueJson = preparePyEnv.dump_json(rawValue)
-    sys.stdout.flush()
-    sys.stderr.flush()
-    return {
-      status: 'success',
-      dependencies,
-      output,
-      returnValueJson,
-    }
-  } catch (err) {
-    sys.stdout.flush()
-    sys.stderr.flush()
-    return {
-      status: 'run-error',
-      dependencies,
-      output,
-      error: formatError(err),
+  } else {
+    const { dependencies } = prepareStatus
+    const activeFile = files.find((f) => f.active)! || files[0]
+    try {
+      const rawValue = await pyodide.runPythonAsync(activeFile.content, {
+        globals: pyodide.toPy({ __name__: '__main__' }),
+        filename: activeFile.name,
+      })
+      runResult = {
+        status: 'success',
+        dependencies,
+        output,
+        returnValueJson: preparePyEnv.dump_json(rawValue),
+      }
+    } catch (err) {
+      runResult = {
+        status: 'run-error',
+        dependencies,
+        output,
+        error: formatError(err),
+      }
     }
   }
+  sys.stdout.flush()
+  sys.stderr.flush()
+  console.log = realConsoleLog
+  return runResult
 }
 
 interface RunSuccess {
@@ -98,7 +102,7 @@ interface RunSuccess {
 }
 
 interface RunError {
-  status: 'prepare-error' | 'install-error' | 'run-error'
+  status: 'install-error' | 'run-error'
   output: string[]
   dependencies?: string[]
   error: string

@@ -235,7 +235,7 @@ jobs:
       - run: npm run lint
         working-directory: mcp-run-python
 
-      - run: npm run build
+      - run: npm run prepare
         working-directory: mcp-run-python
 
       - run: uv run --package mcp-run-python pytest mcp-run-python -v
