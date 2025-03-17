@@ -14,6 +14,7 @@ from typing import Any
 
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
 from mcp.types import JSONRPCMessage
+from typing_extensions import Self
 
 from pydantic_ai.tools import ToolDefinition
 
