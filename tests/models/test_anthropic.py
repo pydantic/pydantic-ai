@@ -626,7 +626,7 @@ def test_model_status_error(allow_model_requests: None) -> None:
 async def test_document_binary_content_input(
     allow_model_requests: None, anthropic_api_key: str, document_content: BinaryContent
 ):
-    m = AnthropicModel('claude-3-5-sonnet-latest', api_key=anthropic_api_key)
+    m = AnthropicModel('claude-3-5-sonnet-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(m)
 
     result = await agent.run(['What is the main content on this document?', document_content])

@@ -11,7 +11,7 @@ try:
     from anthropic import AsyncAnthropic
 except ImportError as _import_error:  # pragma: no cover
     raise ImportError(
-        'Please install `anthropic` to use the Anthropic provider, '
+        'Please install the `anthropic` package to use the Anthropic provider, '
         "you can use the `anthropic` optional group — `pip install 'pydantic-ai-slim[anthropic]'`"
     ) from _import_error
 
@@ -28,9 +28,7 @@ class AnthropicProvider(Provider[AsyncAnthropic]):
 
     @property
     def base_url(self) -> str:
-        if hasattr(self, '_client'):
-            return str(self._client.base_url)
-        return os.getenv('ANTHROPIC_BASE_URL', 'https://api.anthropic.com')
+        return str(self._client.base_url)
 
     @property
     def client(self) -> AsyncAnthropic:
@@ -54,9 +52,8 @@ class AnthropicProvider(Provider[AsyncAnthropic]):
         Args:
             api_key: The API key to use for authentication, if not provided, the `ANTHROPIC_API_KEY` environment variable
                 will be used if available.
-            anthropic_client: An existing
-                [`AsyncAnthropic`](https://github.com/anthropics/anthropic-sdk-python)
-                client to use. If provided, `base_url`, `api_key`, and `http_client` must be `None`.
+            anthropic_client: An existing [`AsyncAnthropic`](https://github.com/anthropics/anthropic-sdk-python)
+                client to use. If provided, the `api_key` and `http_client` arguments will be ignored.
             http_client: An existing `httpx.AsyncClient` to use for making HTTP requests.
         """
         if anthropic_client is not None:
@@ -72,8 +69,6 @@ class AnthropicProvider(Provider[AsyncAnthropic]):
                 )
 
             if http_client is not None:
-                self._client = AsyncAnthropic(api_key=api_key, base_url=self.base_url, http_client=http_client)
+                self._client = AsyncAnthropic(api_key=api_key, http_client=http_client)
             else:
-                self._client = AsyncAnthropic(
-                    api_key=api_key, base_url=self.base_url, http_client=cached_async_http_client()
-                )
+                self._client = AsyncAnthropic(api_key=api_key, http_client=cached_async_http_client())
