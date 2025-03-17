@@ -162,7 +162,8 @@ class MistralModel(Model):
 
         if provider is not None:
             if isinstance(provider, str):
-                provider = infer_provider(provider)
+                # TODO(Marcelo): We should add an integration test with VCR when I get the API key.
+                provider = infer_provider(provider)  # pragma: no cover
             self.client = provider.client
         elif client is not None:
             assert http_client is None, 'Cannot provide both `mistral_client` and `http_client`'
