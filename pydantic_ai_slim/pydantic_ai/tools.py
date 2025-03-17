@@ -181,7 +181,7 @@ class Tool(Generic[AgentDepsT]):
     max_retries: int | None
     name: str
     description: str
-    function_schema: _pydantic.FunctionSchema | None
+    function_schema: FunctionSchema | None
     prepare: ToolPrepareFunc[AgentDepsT] | None
     docstring_format: DocstringFormat
     require_parameter_descriptions: bool
@@ -204,7 +204,7 @@ class Tool(Generic[AgentDepsT]):
         max_retries: int | None = None,
         name: str | None = None,
         description: str | None = None,
-        function_schema: _pydantic.FunctionSchema | None = None,
+        function_schema: FunctionSchema | None = None,
         prepare: ToolPrepareFunc[AgentDepsT] | None = None,
         docstring_format: DocstringFormat = 'auto',
         require_parameter_descriptions: bool = False,
