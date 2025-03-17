@@ -265,6 +265,7 @@ def print_schema(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse
     print(tool.parameters_json_schema)
     """
     {
+        'additionalProperties': False,
         'properties': {
             'a': {'description': 'apple pie', 'type': 'integer'},
             'b': {'description': 'banana cake', 'type': 'string'},
@@ -276,7 +277,6 @@ def print_schema(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse
         },
         'required': ['a', 'b', 'c'],
         'type': 'object',
-        'additionalProperties': False,
     }
     """
     return ModelResponse(parts=[TextPart('foobar')])
@@ -431,12 +431,12 @@ print(test_model.last_model_request_parameters.function_tools)
         name='greet',
         description='',
         parameters_json_schema={
+            'additionalProperties': False,
             'properties': {
                 'name': {'type': 'string', 'description': 'Name of the human to greet.'}
             },
             'required': ['name'],
             'type': 'object',
-            'additionalProperties': False,
         },
         outer_typed_dict_key=None,
     )
