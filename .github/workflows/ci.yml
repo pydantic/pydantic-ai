@@ -157,6 +157,7 @@ jobs:
 
       # this must run last as it modifies the environment!
       - name: test lowest versions
+        if: matrix.python-version != '3.9'
         run: |
           unset UV_FROZEN
           uv run --all-extras --resolution lowest-direct coverage run -m pytest

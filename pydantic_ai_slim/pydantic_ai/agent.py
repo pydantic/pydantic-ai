@@ -3,10 +3,10 @@ from __future__ import annotations as _annotations
 import dataclasses
 import inspect
 from collections.abc import AsyncIterator, Awaitable, Iterator, Sequence
-from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
+from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager, contextmanager
 from copy import deepcopy
 from types import FrameType
-from typing import Any, Callable, ClassVar, Generic, cast, final, overload
+from typing import TYPE_CHECKING, Any, Callable, ClassVar, Generic, cast, final, overload
 
 from opentelemetry.trace import NoOpTracer, use_span
 from typing_extensions import TypeGuard, TypeVar, deprecated
@@ -46,6 +46,9 @@ EndStrategy = _agent_graph.EndStrategy
 CallToolsNode = _agent_graph.CallToolsNode
 ModelRequestNode = _agent_graph.ModelRequestNode
 UserPromptNode = _agent_graph.UserPromptNode
+
+if TYPE_CHECKING:
+    from pydantic_ai.mcp import MCPServer
 
 __all__ = (
     'Agent',
@@ -129,6 +132,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         repr=False
     )
     _function_tools: dict[str, Tool[AgentDepsT]] = dataclasses.field(repr=False)
+    _mcp_servers: Sequence[MCPServer] = dataclasses.field(repr=False)
     _default_retries: int = dataclasses.field(repr=False)
     _max_result_retries: int = dataclasses.field(repr=False)
     _override_deps: _utils.Option[AgentDepsT] = dataclasses.field(default=None, repr=False)
@@ -148,6 +152,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         result_tool_description: str | None = None,
         result_retries: int | None = None,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
+        mcp_servers: Sequence[MCPServer] = (),
         defer_model_check: bool = False,
         end_strategy: EndStrategy = 'early',
         instrument: InstrumentationSettings | bool | None = None,
@@ -173,6 +178,8 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
             result_retries: The maximum number of retries to allow for result validation, defaults to `retries`.
             tools: Tools to register with the agent, you can also register tools via the decorators
                 [`@agent.tool`][pydantic_ai.Agent.tool] and [`@agent.tool_plain`][pydantic_ai.Agent.tool_plain].
+            mcp_servers: MCP servers to register with the agent. You should register a [`MCPServer`][pydantic_ai.mcp.MCPServer]
+                for each server you want the agent to connect to.
             defer_model_check: by default, if you provide a [named][pydantic_ai.models.KnownModelName] model,
                 it's evaluated to create a [`Model`][pydantic_ai.models.Model] instance immediately,
                 which checks for the necessary environment variables. Set this to `false`
@@ -215,6 +222,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
 
         self._default_retries = retries
         self._max_result_retries = result_retries if result_retries is not None else retries
+        self._mcp_servers = mcp_servers
         for tool in tools:
             if isinstance(tool, Tool):
                 self._register_tool(tool)
@@ -461,6 +469,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
             result_tools=self._result_schema.tool_defs() if self._result_schema else [],
             result_validators=result_validators,
             function_tools=self._function_tools,
+            mcp_servers=self._mcp_servers,
             run_span=run_span,
             tracer=tracer,
         )
@@ -1252,6 +1261,20 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         This method preserves the generic parameters while narrowing the type, unlike a direct call to `isinstance`.
         """
         return isinstance(node, End)
+
+    @asynccontextmanager
+    async def run_mcp_servers(self) -> AsyncIterator[None]:
+        """Run [`MCPServerStdio`s][pydantic_ai.mcp.MCPServerStdio] so they can be used by the agent.
+
+        Returns: a context manager to start and shutdown the servers.
+        """
+        exit_stack = AsyncExitStack()
+        try:
+            for mcp_server in self._mcp_servers:
+                await exit_stack.enter_async_context(mcp_server)
+            yield
+        finally:
+            await exit_stack.aclose()
 
 
 @dataclasses.dataclass(repr=False)

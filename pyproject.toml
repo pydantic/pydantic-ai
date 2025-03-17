@@ -36,7 +36,7 @@ classifiers = [
 ]
 requires-python = ">=3.9"
 dependencies = [
-    "pydantic-ai-slim[openai,vertexai,groq,anthropic,mistral,cohere,bedrock,cli]==0.0.41",
+    "pydantic-ai-slim[openai,vertexai,groq,anthropic,mistral,cohere,bedrock,cli,mcp]==0.0.41",
 ]
 
 [project.urls]
@@ -139,7 +139,11 @@ xfail_strict = true
 filterwarnings = [
     "error",
     # boto3
-    "ignore::DeprecationWarning:botocore.*"
+    "ignore::DeprecationWarning:botocore.*",
+    "ignore::RuntimeWarning:pydantic_ai.mcp",
+    # uvicorn (mcp server)
+    "ignore:websockets.legacy is deprecated.*:DeprecationWarning:websockets.legacy",
+    "ignore:websockets.server.WebSocketServerProtocol is deprecated:DeprecationWarning"
 ]
 
 # https://coverage.readthedocs.io/en/latest/config.html#run

@@ -1679,6 +1679,31 @@ wheels = [
 ]
 
 [[package]]
+name = "mcp"
+version = "1.4.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "anyio", marker = "python_full_version >= '3.10'" },
+    { name = "httpx", marker = "python_full_version >= '3.10'" },
+    { name = "httpx-sse", marker = "python_full_version >= '3.10'" },
+    { name = "pydantic", marker = "python_full_version >= '3.10'" },
+    { name = "pydantic-settings", marker = "python_full_version >= '3.10'" },
+    { name = "sse-starlette", marker = "python_full_version >= '3.10'" },
+    { name = "starlette", marker = "python_full_version >= '3.10'" },
+    { name = "uvicorn", marker = "python_full_version >= '3.10'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/50/cc/5c5bb19f1a0f8f89a95e25cb608b0b07009e81fd4b031e519335404e1422/mcp-1.4.1.tar.gz", hash = "sha256:b9655d2de6313f9d55a7d1df62b3c3fe27a530100cc85bf23729145b0dba4c7a", size = 154942 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e8/0e/885f156ade60108e67bf044fada5269da68e29d758a10b0c513f4d85dd76/mcp-1.4.1-py3-none-any.whl", hash = "sha256:a7716b1ec1c054e76f49806f7d96113b99fc1166fc9244c2c6f19867cb75b593", size = 72448 },
+]
+
+[package.optional-dependencies]
+cli = [
+    { name = "python-dotenv", marker = "python_full_version >= '3.10'" },
+    { name = "typer", marker = "python_full_version >= '3.10'" },
+]
+
+[[package]]
 name = "mdurl"
 version = "0.1.2"
 source = { registry = "https://pypi.org/simple" }
@@ -2719,7 +2744,7 @@ name = "pydantic-ai"
 version = "0.0.41"
 source = { editable = "." }
 dependencies = [
-    { name = "pydantic-ai-slim", extra = ["anthropic", "bedrock", "cli", "cohere", "groq", "mistral", "openai", "vertexai"] },
+    { name = "pydantic-ai-slim", extra = ["anthropic", "bedrock", "cli", "cohere", "groq", "mcp", "mistral", "openai", "vertexai"] },
 ]
 
 [package.optional-dependencies]
@@ -2754,7 +2779,7 @@ lint = [
 requires-dist = [
     { name = "logfire", marker = "extra == 'logfire'", specifier = ">=2.3" },
     { name = "pydantic-ai-examples", marker = "extra == 'examples'", editable = "examples" },
-    { name = "pydantic-ai-slim", extras = ["openai", "vertexai", "groq", "anthropic", "mistral", "cohere", "bedrock", "cli"], editable = "pydantic_ai_slim" },
+    { name = "pydantic-ai-slim", extras = ["openai", "vertexai", "groq", "anthropic", "mistral", "cohere", "bedrock", "cli", "mcp"], editable = "pydantic_ai_slim" },
 ]
 provides-extras = ["examples", "logfire"]
 
@@ -2788,6 +2813,7 @@ dependencies = [
     { name = "fastapi" },
     { name = "gradio", marker = "python_full_version >= '3.10'" },
     { name = "logfire", extra = ["asyncpg", "fastapi", "sqlite3"] },
+    { name = "mcp", extra = ["cli"], marker = "python_full_version >= '3.10'" },
     { name = "pydantic-ai-slim", extra = ["anthropic", "groq", "openai", "vertexai"] },
     { name = "python-multipart" },
     { name = "rich" },
@@ -2801,6 +2827,7 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.115.4" },
     { name = "gradio", marker = "python_full_version >= '3.10'", specifier = ">=5.9.0" },
     { name = "logfire", extras = ["asyncpg", "fastapi", "sqlite3"], specifier = ">=2.6" },
+    { name = "mcp", extras = ["cli"], marker = "python_full_version >= '3.10'", specifier = ">=1.4.1" },
     { name = "pydantic-ai-slim", extras = ["openai", "vertexai", "groq", "anthropic"], editable = "pydantic_ai_slim" },
     { name = "python-multipart", specifier = ">=0.0.17" },
     { name = "rich", specifier = ">=13.9.2" },
@@ -2845,6 +2872,9 @@ groq = [
 ]
 logfire = [
     { name = "logfire" },
+]
+mcp = [
+    { name = "mcp", marker = "python_full_version >= '3.10'" },
 ]
 mistral = [
     { name = "mistralai" },
@@ -2891,6 +2921,7 @@ requires-dist = [
     { name = "groq", marker = "extra == 'groq'", specifier = ">=0.12.0" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "logfire", marker = "extra == 'logfire'", specifier = ">=2.3" },
+    { name = "mcp", marker = "python_full_version >= '3.10' and extra == 'mcp'", specifier = ">=1.4.1" },
     { name = "mistralai", marker = "extra == 'mistral'", specifier = ">=1.2.5" },
     { name = "openai", marker = "extra == 'openai'", specifier = ">=1.65.1" },
     { name = "opentelemetry-api", specifier = ">=1.28.0" },
@@ -2902,7 +2933,7 @@ requires-dist = [
     { name = "tavily-python", marker = "extra == 'tavily'", specifier = ">=0.5.0" },
     { name = "typing-inspection", specifier = ">=0.4.0" },
 ]
-provides-extras = ["logfire", "openai", "cohere", "vertexai", "anthropic", "groq", "mistral", "bedrock", "duckduckgo", "tavily", "cli"]
+provides-extras = ["logfire", "openai", "cohere", "vertexai", "anthropic", "groq", "mistral", "bedrock", "duckduckgo", "tavily", "cli", "mcp"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -3037,6 +3068,19 @@ requires-dist = [
 ]
 
 [[package]]
+name = "pydantic-settings"
+version = "2.8.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pydantic", marker = "python_full_version >= '3.10'" },
+    { name = "python-dotenv", marker = "python_full_version >= '3.10'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/88/82/c79424d7d8c29b994fb01d277da57b0a9b09cc03c3ff875f9bd8a86b2145/pydantic_settings-2.8.1.tar.gz", hash = "sha256:d5c663dfbe9db9d5e1c646b2e161da12f0d734d422ee56f567d0ea2cee4e8585", size = 83550 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/0b/53/a64f03044927dc47aafe029c42a5b7aabc38dfb813475e0e1bf71c4a59d0/pydantic_settings-2.8.1-py3-none-any.whl", hash = "sha256:81942d5ac3d905f7f3ee1a70df5dfb62d5569c12f51a5a647defc1c3d9ee2e9c", size = 30839 },
+]
+
+[[package]]
 name = "pydub"
 version = "0.25.1"
 source = { registry = "https://pypi.org/simple" }
@@ -3160,6 +3204,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/66/c0/0c8b6ad9f17a802ee498c46e004a0eb49bc148f2fd230864601a86dcf6db/python-dateutil-2.9.0.post0.tar.gz", hash = "sha256:37dd54208da7e1cd875388217d5e00ebd4179249f90fb72437e91a35459a0ad3", size = 342432 }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/ec/57/56b9bcc3c9c6a792fcbaf139543cee77261f3651ca9da0c93f5c1221264b/python_dateutil-2.9.0.post0-py2.py3-none-any.whl", hash = "sha256:a8b2bc7bffae282281c8140a97d3aa9c14da0b136dfe83f850eea9a5f7470427", size = 229892 },
+]
+
+[[package]]
+name = "python-dotenv"
+version = "1.0.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/bc/57/e84d88dfe0aec03b7a2d4327012c1627ab5f03652216c63d49846d7a6c58/python-dotenv-1.0.1.tar.gz", hash = "sha256:e324ee90a023d808f1959c46bcbc04446a10ced277783dc6ee09987c37ec10ca", size = 39115 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/6a/3e/b68c118422ec867fa7ab88444e1274aa40681c606d59ac27de5a5588f082/python_dotenv-1.0.1-py3-none-any.whl", hash = "sha256:f7b63ef50f1b690dddf550d03497b66d609393b40b564ed0d674909a68ebf16a", size = 19863 },
 ]
 
 [[package]]
@@ -3464,6 +3517,19 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/d7/ce/fbaeed4f9fb8b2daa961f90591662df6a86c1abf25c548329a86920aedfb/soupsieve-2.6.tar.gz", hash = "sha256:e2e68417777af359ec65daac1057404a3c8a5455bb8abc36f1a9866ab1a51abb", size = 101569 }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/d1/c2/fe97d779f3ef3b15f05c94a2f1e3d21732574ed441687474db9d342a7315/soupsieve-2.6-py3-none-any.whl", hash = "sha256:e72c4ff06e4fb6e4b5a9f0f55fe6e81514581fca1515028625d0f299c602ccc9", size = 36186 },
+]
+
+[[package]]
+name = "sse-starlette"
+version = "2.2.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "anyio", marker = "python_full_version >= '3.10'" },
+    { name = "starlette", marker = "python_full_version >= '3.10'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/71/a4/80d2a11af59fe75b48230846989e93979c892d3a20016b42bb44edb9e398/sse_starlette-2.2.1.tar.gz", hash = "sha256:54470d5f19274aeed6b2d473430b08b4b379ea851d953b11d7f1c4a2c118b419", size = 17376 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d9/e0/5b8bd393f27f4a62461c5cf2479c75a2cc2ffa330976f9f00f5f6e4f50eb/sse_starlette-2.2.1-py3-none-any.whl", hash = "sha256:6410a3d3ba0c89e7675d4c273a301d64649c03a5ef1ca101f10b47f895fd0e99", size = 10120 },
 ]
 
 [[package]]
