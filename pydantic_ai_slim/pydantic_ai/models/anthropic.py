@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from json import JSONDecodeError, loads as json_loads
 from typing import Any, Literal, Union, cast, overload
 
+from anthropic.types import DocumentBlockParam
 from httpx import AsyncClient as AsyncHTTPClient
 from typing_extensions import assert_never
 
@@ -16,6 +17,7 @@ from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._utils import guard_tool_call_id as _guard_tool_call_id
 from ..messages import (
     BinaryContent,
+    DocumentUrl,
     ImageUrl,
     ModelMessage,
     ModelRequest,
@@ -31,22 +33,18 @@ from ..messages import (
 )
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
-from . import (
-    Model,
-    ModelRequestParameters,
-    StreamedResponse,
-    cached_async_http_client,
-    check_allow_model_requests,
-)
+from . import Model, ModelRequestParameters, StreamedResponse, cached_async_http_client, check_allow_model_requests
 
 try:
     from anthropic import NOT_GIVEN, APIStatusError, AsyncAnthropic, AsyncStream
     from anthropic.types import (
+        Base64PDFSourceParam,
         ContentBlock,
         ImageBlockParam,
         Message as AnthropicMessage,
         MessageParam,
         MetadataParam,
+        PlainTextSourceParam,
         RawContentBlockDeltaEvent,
         RawContentBlockStartEvent,
         RawContentBlockStopEvent,
@@ -111,7 +109,7 @@ class AnthropicModel(Model):
     client: AsyncAnthropic = field(repr=False)
 
     _model_name: AnthropicModelName = field(repr=False)
-    _system: str | None = field(default='anthropic', repr=False)
+    _system: str = field(default='anthropic', repr=False)
 
     def __init__(
         self,
@@ -179,7 +177,7 @@ class AnthropicModel(Model):
         return self._model_name
 
     @property
-    def system(self) -> str | None:
+    def system(self) -> str:
         """The system / model provider."""
         return self._system
 
@@ -288,7 +286,9 @@ class AnthropicModel(Model):
         anthropic_messages: list[MessageParam] = []
         for m in messages:
             if isinstance(m, ModelRequest):
-                user_content_params: list[ToolResultBlockParam | TextBlockParam | ImageBlockParam] = []
+                user_content_params: list[
+                    ToolResultBlockParam | TextBlockParam | ImageBlockParam | DocumentBlockParam
+                ] = []
                 for request_part in m.parts:
                     if isinstance(request_part, SystemPromptPart):
                         system_prompt += request_part.content
@@ -334,7 +334,9 @@ class AnthropicModel(Model):
         return system_prompt, anthropic_messages
 
     @staticmethod
-    async def _map_user_prompt(part: UserPromptPart) -> AsyncGenerator[ImageBlockParam | TextBlockParam]:
+    async def _map_user_prompt(
+        part: UserPromptPart,
+    ) -> AsyncGenerator[ImageBlockParam | TextBlockParam | DocumentBlockParam]:
         if isinstance(part.content, str):
             yield TextBlockParam(text=part.content, type='text')
         else:
@@ -347,8 +349,17 @@ class AnthropicModel(Model):
                             source={'data': io.BytesIO(item.data), 'media_type': item.media_type, 'type': 'base64'},  # type: ignore
                             type='image',
                         )
+                    elif item.media_type == 'application/pdf':
+                        yield DocumentBlockParam(
+                            source=Base64PDFSourceParam(
+                                data=io.BytesIO(item.data),
+                                media_type='application/pdf',
+                                type='base64',
+                            ),
+                            type='document',
+                        )
                     else:
-                        raise RuntimeError('Only images are supported for binary content')
+                        raise RuntimeError('Only images and PDFs are supported for binary content')
                 elif isinstance(item, ImageUrl):
                     try:
                         response = await cached_async_http_client().get(item.url)
@@ -379,6 +390,25 @@ class AnthropicModel(Model):
                             )
                         else:  # pragma: no cover
                             raise RuntimeError(f'Unsupported image type: {mime_type}')
+                elif isinstance(item, DocumentUrl):
+                    response = await cached_async_http_client().get(item.url)
+                    response.raise_for_status()
+                    if item.media_type == 'application/pdf':
+                        yield DocumentBlockParam(
+                            source=Base64PDFSourceParam(
+                                data=io.BytesIO(response.content),
+                                media_type=item.media_type,
+                                type='base64',
+                            ),
+                            type='document',
+                        )
+                    elif item.media_type == 'text/plain':
+                        yield DocumentBlockParam(
+                            source=PlainTextSourceParam(data=response.text, media_type=item.media_type, type='text'),
+                            type='document',
+                        )
+                    else:  # pragma: no cover
+                        raise RuntimeError(f'Unsupported media type: {item.media_type}')
                 else:
                     raise RuntimeError(f'Unsupported content type: {type(item)}')
 

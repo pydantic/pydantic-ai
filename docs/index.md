@@ -2,9 +2,6 @@
 
 --8<-- "docs/.partials/index-header.html"
 
-PydanticAI is a Python Agent Framework designed to make it less painful to
-build production grade applications with Generative AI.
-
 FastAPI revolutionized web development by offering an innovative and ergonomic design, built on the foundation of [Pydantic](https://docs.pydantic.dev).
 
 Similarly, virtually every agent framework and LLM library in Python uses Pydantic, yet when we began to use LLMs in [Pydantic Logfire](https://pydantic.dev/logfire), we couldn't find anything that gave us the same feeling.
@@ -40,10 +37,6 @@ Provides the ability to [stream](results.md#streamed-results) LLM outputs contin
 
 * __Graph Support__:
 [Pydantic Graph](graph.md) provides a powerful way to define graphs using typing hints, this is useful in complex applications where standard control flow can degrade to spaghetti code.
-
-!!! example "In Beta"
-    PydanticAI is in early beta, the API is still subject to change and there's a lot more to do.
-    [Feedback](https://github.com/pydantic/pydantic-ai/issues) is very welcome!
 
 ## Hello World Example
 

@@ -17,6 +17,7 @@ from .. import ModelHTTPError, UnexpectedModelBehavior, _utils
 from .._utils import now_utc as _now_utc
 from ..messages import (
     BinaryContent,
+    DocumentUrl,
     ImageUrl,
     ModelMessage,
     ModelRequest,
@@ -109,7 +110,7 @@ class MistralModel(Model):
     json_mode_schema_prompt: str = """Answer in JSON Object, respect the format:\n```\n{schema}\n```\n"""
 
     _model_name: MistralModelName = field(repr=False)
-    _system: str | None = field(default='mistral', repr=False)
+    _system: str = field(default='mistral_ai', repr=False)
 
     def __init__(
         self,
@@ -178,7 +179,7 @@ class MistralModel(Model):
         return self._model_name
 
     @property
-    def system(self) -> str | None:
+    def system(self) -> str:
         """The system / model provider."""
         return self._system
 
@@ -495,6 +496,8 @@ class MistralModel(Model):
                         content.append(MistralImageURLChunk(image_url=image_url, type='image_url'))
                     else:
                         raise RuntimeError('Only image binary content is supported for Mistral.')
+                elif isinstance(item, DocumentUrl):
+                    raise RuntimeError('DocumentUrl is not supported in Mistral.')
                 else:  # pragma: no cover
                     raise RuntimeError(f'Unsupported content type: {type(item)}')
         return MistralUserMessage(content=content)

@@ -38,7 +38,7 @@ class WrapperModel(Model):
         return self.wrapped.model_name
 
     @property
-    def system(self) -> str | None:
+    def system(self) -> str:
         return self.wrapped.system
 
     def __getattr__(self, item: str):

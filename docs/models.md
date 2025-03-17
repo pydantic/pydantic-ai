@@ -434,15 +434,38 @@ agent = Agent(model)
 ...
 ```
 
-### `api_key` argument
+### `provider` argument
 
-If you don't want to or can't set the environment variable, you can pass it at runtime via the [`api_key` argument][pydantic_ai.models.groq.GroqModel.__init__]:
+You can provide a custom [`Provider`][pydantic_ai.providers.Provider] via the
+[`provider` argument][pydantic_ai.models.groq.GroqModel.__init__]:
 
-```python {title="groq_model_api_key.py"}
+```python {title="groq_model_provider.py"}
 from pydantic_ai import Agent
 from pydantic_ai.models.groq import GroqModel
+from pydantic_ai.providers.groq import GroqProvider
 
-model = GroqModel('llama-3.3-70b-versatile', api_key='your-api-key')
+model = GroqModel(
+    'llama-3.3-70b-versatile', provider=GroqProvider(api_key='your-api-key')
+)
+agent = Agent(model)
+...
+```
+
+You can also customize the [`GroqProvider`][pydantic_ai.providers.groq.GroqProvider] with a
+custom `httpx.AsyncHTTPClient`:
+
+```python {title="groq_model_custom_provider.py"}
+from httpx import AsyncClient
+
+from pydantic_ai import Agent
+from pydantic_ai.models.groq import GroqModel
+from pydantic_ai.providers.groq import GroqProvider
+
+custom_http_client = AsyncClient(timeout=30)
+model = GroqModel(
+    'llama-3.3-70b-versatile',
+    provider=GroqProvider(api_key='your-api-key', http_client=custom_http_client),
+)
 agent = Agent(model)
 ...
 ```
@@ -783,6 +806,28 @@ Usage(requests=1, request_tokens=57, response_tokens=8, total_tokens=65, details
 1. The name of the model running on the remote server
 2. The url of the remote server
 
+### Azure AI Foundry
+
+If you want to use [Azure AI Foundry](https://ai.azure.com/) as your provider, you can do so by using the
+[`AzureProvider`][pydantic_ai.providers.azure.AzureProvider] class.
+
+```python {title="azure_provider_example.py"}
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIModel
+from pydantic_ai.providers.azure import AzureProvider
+
+model = OpenAIModel(
+    'gpt-4o',
+    provider=AzureProvider(
+        azure_endpoint='your-azure-endpoint',
+        api_version='your-api-version',
+        api_key='your-api-key',
+    ),
+)
+agent = Agent(model)
+...
+```
+
 ### OpenRouter
 
 To use [OpenRouter](https://openrouter.ai), first create an API key at [openrouter.ai/keys](https://openrouter.ai/keys).
@@ -797,7 +842,8 @@ from pydantic_ai.providers.openai import OpenAIProvider
 model = OpenAIModel(
     'anthropic/claude-3.5-sonnet',
     provider=OpenAIProvider(
-        base_url='https://openrouter.ai/api/v1', api_key='your-openrouter-api-key'
+        base_url='https://openrouter.ai/api/v1',
+        api_key='your-openrouter-api-key',
     ),
 )
 agent = Agent(model)
@@ -835,7 +881,50 @@ from pydantic_ai.providers.openai import OpenAIProvider
 model = OpenAIModel(
     'sonar-pro',
     provider=OpenAIProvider(
-        base_url='https://api.perplexity.ai', api_key='your-perplexity-api-key'
+        base_url='https://api.perplexity.ai',
+        api_key='your-perplexity-api-key',
+    ),
+)
+agent = Agent(model)
+...
+```
+
+### Fireworks AI
+
+Go to [Fireworks.AI](https://fireworks.ai/) and create an API key in your account settings.
+Once you have the API key, you can use it with the [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider]:
+
+```python {title="fireworks_model_init.py"}
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIModel
+from pydantic_ai.providers.openai import OpenAIProvider
+
+model = OpenAIModel(
+    'accounts/fireworks/models/qwq-32b',  # model library available at https://fireworks.ai/models
+    provider=OpenAIProvider(
+        base_url='https://api.fireworks.ai/inference/v1',
+        api_key='your-fireworks-api-key',
+    ),
+)
+agent = Agent(model)
+...
+```
+
+### Together AI
+
+Go to [Together.ai](https://www.together.ai/) and create an API key in your account settings.
+Once you have the API key, you can use it with the [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider]:
+
+```python {title="together_model_init.py"}
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIModel
+from pydantic_ai.providers.openai import OpenAIProvider
+
+model = OpenAIModel(
+    'meta-llama/Llama-3.3-70B-Instruct-Turbo-Free',  # model library available at https://www.together.ai/models
+    provider=OpenAIProvider(
+        base_url='https://api.together.xyz/v1',
+        api_key='your-together-api-key',
     ),
 )
 agent = Agent(model)
