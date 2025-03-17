@@ -13,7 +13,7 @@ from .conftest import IsDatetime, try_import
 with try_import() as imports_successful:
     from mcp.types import CallToolResult, TextContent
 
-    from pydantic_ai.mcp import MCPRemoteServer, MCPSubprocessServer
+    from pydantic_ai.mcp import MCPServerSSE, MCPServerStdio
     from pydantic_ai.models.openai import OpenAIModel
     from pydantic_ai.providers.openai import OpenAIProvider
 
@@ -26,7 +26,7 @@ pytestmark = [
 
 
 async def test_stdio_server():
-    server = MCPSubprocessServer('python', ['-m', 'tests.mcp_server'])
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
     async with server:
         tools = await server.list_tools()
         assert len(tools) == 1
@@ -39,12 +39,12 @@ async def test_stdio_server():
 
 
 def test_sse_server():
-    sse_server = MCPRemoteServer(url='http://localhost:8000/sse')
+    sse_server = MCPServerSSE(url='http://localhost:8000/sse')
     assert sse_server.url == 'http://localhost:8000/sse'
 
 
 async def test_agent_with_stdio_server(allow_model_requests: None, openai_api_key: str):
-    server = MCPSubprocessServer('python', ['-m', 'tests.mcp_server'])
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
     model = OpenAIModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(model, mcp_servers=[server])
     async with agent.run_mcp_servers():
@@ -86,7 +86,7 @@ async def test_agent_with_stdio_server(allow_model_requests: None, openai_api_ke
 
 
 async def test_agent_with_server_not_running(openai_api_key: str):
-    server = MCPSubprocessServer('python', ['-m', 'tests.mcp_server'])
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
     model = OpenAIModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(model, mcp_servers=[server])
     with pytest.raises(UserError, match='MCP server is not running'):

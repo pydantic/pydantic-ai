@@ -28,7 +28,7 @@ except ImportError as _import_error:
         "you can use the `mcp` optional group — `pip install 'pydantic-ai-slim[mcp]'`"
     ) from _import_error
 
-__all__ = ('MCPServer', 'MCPSubprocessServer', 'MCPRemoteServer')
+__all__ = ('MCPServer', 'MCPServerStdio', 'MCPServerSSE')
 
 
 class MCPServer(ABC):
@@ -103,7 +103,7 @@ class MCPServer(ABC):
 
 
 @dataclass
-class MCPSubprocessServer(MCPServer):
+class MCPServerStdio(MCPServer):
     """An MCP server that runs a subprocess.
 
     This class implements the stdio transport from the MCP specification.
@@ -112,9 +112,9 @@ class MCPSubprocessServer(MCPServer):
     Example:
     ```python {py="3.10"}
     from pydantic_ai import Agent
-    from pydantic_ai.mcp import MCPSubprocessServer
+    from pydantic_ai.mcp import MCPServerStdio
 
-    server = MCPSubprocessServer('python', ['-m', 'pydantic_ai_examples.mcp_server'])
+    server = MCPServerStdio('python', ['-m', 'pydantic_ai_examples.mcp_server'])
     agent = Agent('openai:gpt-4o', mcp_servers=[server])
     ```
     """
@@ -140,7 +140,7 @@ class MCPSubprocessServer(MCPServer):
 
 
 @dataclass
-class MCPRemoteServer(MCPServer):
+class MCPServerSSE(MCPServer):
     """An MCP server that connects to a remote server.
 
     This class implements the SSE transport from the MCP specification.
@@ -155,6 +155,6 @@ class MCPRemoteServer(MCPServer):
         self,
     ) -> AsyncIterator[
         tuple[MemoryObjectReceiveStream[JSONRPCMessage | Exception], MemoryObjectSendStream[JSONRPCMessage]]
-    ]:
+    ]:  # pragma: no cover
         async with sse_client(url=self.url) as (read_stream, write_stream):
             yield read_stream, write_stream

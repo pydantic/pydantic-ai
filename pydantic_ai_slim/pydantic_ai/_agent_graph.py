@@ -605,7 +605,8 @@ async def process_function_tools(
                 calls_to_run.append((tool, call))
         elif mcp_tool := await _tool_from_mcp_server(call.tool_name, ctx):
             if stub_function_tools:
-                output_parts.append(
+                # TODO(Marcelo): We should add coverage for this part of the code.
+                output_parts.append(  # pragma: no cover
                     _messages.ToolReturnPart(
                         tool_name=call.tool_name,
                         content='Tool not executed - a final result was already processed.',

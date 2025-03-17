@@ -68,21 +68,21 @@ if __name__ == '__main__':
 
 PydanticAI comes with two ways to connect to MCP servers:
 
-- [`MCPRemoteServer`][pydantic_ai.mcp.MCPRemoteServer] which connects to an MCP server using the [HTTP SSE](https://modelcontextprotocol.io/docs/concepts/transports#server-sent-events-sse) transport
-- [`MCPSubprocessServer`][pydantic_ai.mcp.MCPSubprocessServer] which runs the server as a subprocess and connects to it using the [stdio](https://modelcontextprotocol.io/docs/concepts/transports#standard-input%2Foutput-stdio) transport
+- [`MCPServerSSE`][pydantic_ai.mcp.MCPServerSSE] which connects to an MCP server using the [HTTP SSE](https://modelcontextprotocol.io/docs/concepts/transports#server-sent-events-sse) transport
+- [`MCPServerStdio`][pydantic_ai.mcp.MCPServerStdio] which runs the server as a subprocess and connects to it using the [stdio](https://modelcontextprotocol.io/docs/concepts/transports#standard-input%2Foutput-stdio) transport
 
 Examples of both are shown below.
 
 ### MCP Remote Server
 
 You can have a MCP server running on a remote server. In this case, you'd use the
-[`MCPRemoteServer`][pydantic_ai.mcp.MCPRemoteServer] class:
+[`MCPServerSSE`][pydantic_ai.mcp.MCPServerSSE] class:
 
 ```python {title="mcp_remote_server.py" py="3.10"}
 from pydantic_ai import Agent
-from pydantic_ai.mcp import MCPRemoteServer
+from pydantic_ai.mcp import MCPServerSSE
 
-server = MCPRemoteServer(url='http://localhost:8005/sse')
+server = MCPServerSSE(url='http://localhost:8005/sse')
 agent = Agent('openai:gpt-4o', mcp_servers=[server])
 
 
@@ -99,15 +99,15 @@ This will connect to the MCP server at the given URL and use the
 ### MCP Subprocess Server
 
 We also have a subprocess-based server that can be used to run the MCP server in a separate process.
-In this case, you'd use the [`MCPSubprocessServer`][pydantic_ai.mcp.MCPSubprocessServer] class,
-when using `MCPSubprocessServer` you need to run the server with the [`run_mcp_servers`][pydantic_ai.Agent.run_mcp_servers]
+In this case, you'd use the [`MCPServerStdio`][pydantic_ai.mcp.MCPServerStdio] class,
+when using `MCPServerStdio` you need to run the server with the [`run_mcp_servers`][pydantic_ai.Agent.run_mcp_servers]
 context manager before running the server.
 
 ```python {title="mcp_subprocess_server.py" py="3.10"}
 from pydantic_ai.agent import Agent
-from pydantic_ai.mcp import MCPSubprocessServer
+from pydantic_ai.mcp import MCPServerStdio
 
-server = MCPSubprocessServer('python', ['-m', 'pydantic_ai_examples.mcp_server'])
+server = MCPServerStdio('python', ['-m', 'pydantic_ai_examples.mcp_server'])
 agent = Agent('openai:gpt-4o', mcp_servers=[server])
 
 
