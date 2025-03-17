@@ -366,7 +366,7 @@ def test_init_tool_with_function_schema():
     assert agent._function_tools['x_tool']._parameters_json_schema == snapshot(
         {
             'additionalProperties': False,
-            'properties': {'y': {'title': 'Y', 'type': 'string'}},
+            'properties': {'y': {'type': 'string'}},
             'required': ['y'],
             'type': 'object',
         }
@@ -392,7 +392,7 @@ def test_init_tool_ctx_with_function_schema():
     assert agent._function_tools['x_tool']._parameters_json_schema == snapshot(
         {
             'additionalProperties': False,
-            'properties': {'y': {'title': 'Y', 'type': 'string'}},
+            'properties': {'y': {'type': 'string'}},
             'required': ['y'],
             'type': 'object',
         }
