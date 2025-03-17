@@ -28,7 +28,7 @@ To run MCP servers, you'll need to install the MCP CLI package:
 pip/uv-add 'mcp[cli]'
 ```
 
-Here's a simple MCP server that provides a temperature conversion tool:
+Here's a simple MCP server that provides a temperature conversion tool. We will later assume this is the server we connect to from our agent:
 
 ```python {title="temperature_mcp_server.py" py="3.10"}
 from mcp.server.fastmcp import FastMCP
