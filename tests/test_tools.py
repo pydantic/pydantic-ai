@@ -712,13 +712,10 @@ def test_call_tool_without_unrequired_parameters(set_event_loop: None):
 def test_schema_generator():
     class MyGenerateJsonSchema(GenerateJsonSchema):
         def typed_dict_schema(self, schema: core_schema.TypedDictSchema) -> JsonSchemaValue:
-            # TODO: Should we always do this, rather than requiring a subclass of GenerateJsonSchema?
-            #   While there are other potential uses of subclassing GenerateJsonSchema, removing the titles
-            #   from properties seems like a more universally good idea when building the schema for a tool call..
-            # Remove useless property titles
+            # Add useless property titles just to show we can
             s = super().typed_dict_schema(schema)
             for p in s.get('properties', {}):
-                s['properties'][p].pop('title')
+                s['properties'][p]['title'] = f'{s["properties"][p].get("title")} title'
             return s
 
     agent = Agent(FunctionModel(get_json_schema))
@@ -747,7 +744,10 @@ def test_schema_generator():
                 'description': '',
                 'name': 'my_tool_2',
                 'outer_typed_dict_key': None,
-                'parameters_json_schema': {'properties': {'x': {'type': 'string'}}, 'type': 'object'},
+                'parameters_json_schema': {
+                    'properties': {'x': {'type': 'string', 'title': 'X title'}},
+                    'type': 'object',
+                },
             },
         ]
     )
