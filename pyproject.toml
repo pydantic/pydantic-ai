@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "pydantic-ai"
-version = "0.0.40"
+version = "0.0.41"
 description = "Agent Framework / shim to use Pydantic with LLMs"
 authors = [
     { name = "Samuel Colvin", email = "samuel@pydantic.dev" },
@@ -36,7 +36,7 @@ classifiers = [
 ]
 requires-python = ">=3.9"
 dependencies = [
-    "pydantic-ai-slim[openai,vertexai,groq,anthropic,mistral,cohere,bedrock,cli,mcp]==0.0.40",
+    "pydantic-ai-slim[openai,vertexai,groq,anthropic,mistral,cohere,bedrock,cli,mcp]==0.0.41",
 ]
 
 [project.urls]
@@ -46,7 +46,7 @@ Documentation = "https://ai.pydantic.dev"
 Changelog = "https://github.com/pydantic/pydantic-ai/releases"
 
 [project.optional-dependencies]
-examples = ["pydantic-ai-examples==0.0.40"]
+examples = ["pydantic-ai-examples==0.0.41"]
 logfire = ["logfire>=2.3"]
 
 [tool.uv.sources]

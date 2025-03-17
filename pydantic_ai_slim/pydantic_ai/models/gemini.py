@@ -139,11 +139,9 @@ class GeminiModel(Model):
 
         if provider is not None:
             if isinstance(provider, str):
-                self._system = provider
-                self.client = infer_provider(provider).client
-            else:
-                self._system = provider.name
-                self.client = provider.client
+                provider = infer_provider(provider)
+            self._system = provider.name
+            self.client = provider.client
             self._url = str(self.client.base_url)
         else:
             if api_key is None:
