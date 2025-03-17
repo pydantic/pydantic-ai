@@ -99,16 +99,16 @@ class OpenAIModel(Model):
     system_prompt_role: OpenAISystemPromptRole | None = field(default=None)
 
     _model_name: OpenAIModelName = field(repr=False)
-    _system: str | None = field(repr=False)
+    _system: str = field(repr=False)
 
     @overload
     def __init__(
         self,
         model_name: OpenAIModelName,
         *,
-        provider: Literal['openai', 'deepseek'] | Provider[AsyncOpenAI] = 'openai',
+        provider: Literal['openai', 'deepseek', 'azure'] | Provider[AsyncOpenAI] = 'openai',
         system_prompt_role: OpenAISystemPromptRole | None = None,
-        system: str | None = 'openai',
+        system: str = 'openai',
     ) -> None: ...
 
     @deprecated('Use the `provider` parameter instead of `base_url`, `api_key`, `openai_client` and `http_client`.')
@@ -123,20 +123,20 @@ class OpenAIModel(Model):
         openai_client: AsyncOpenAI | None = None,
         http_client: AsyncHTTPClient | None = None,
         system_prompt_role: OpenAISystemPromptRole | None = None,
-        system: str | None = 'openai',
+        system: str = 'openai',
     ) -> None: ...
 
     def __init__(
         self,
         model_name: OpenAIModelName,
         *,
-        provider: Literal['openai', 'deepseek'] | Provider[AsyncOpenAI] | None = None,
+        provider: Literal['openai', 'deepseek', 'azure'] | Provider[AsyncOpenAI] | None = None,
         base_url: str | None = None,
         api_key: str | None = None,
         openai_client: AsyncOpenAI | None = None,
         http_client: AsyncHTTPClient | None = None,
         system_prompt_role: OpenAISystemPromptRole | None = None,
-        system: str | None = 'openai',
+        system: str = 'openai',
     ):
         """Initialize an OpenAI model.
 
@@ -224,7 +224,7 @@ class OpenAIModel(Model):
         return self._model_name
 
     @property
-    def system(self) -> str | None:
+    def system(self) -> str:
         """The system / model provider."""
         return self._system
 

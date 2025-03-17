@@ -11,7 +11,7 @@ try:
     from groq import AsyncGroq
 except ImportError as _import_error:  # pragma: no cover
     raise ImportError(
-        'Please install `groq` to use the Groq provider, '
+        'Please install the `groq` package to use the Groq provider, '
         "you can use the `groq` optional group — `pip install 'pydantic-ai-slim[groq]'`"
     ) from _import_error
 
@@ -66,8 +66,6 @@ class GroqProvider(Provider[AsyncGroq]):
             )
 
         if groq_client is not None:
-            assert http_client is None, 'Cannot provide both `groq_client` and `http_client`'
-            assert api_key is None, 'Cannot provide both `groq_client` and `api_key`'
             self._client = groq_client
         elif http_client is not None:
             self._client = AsyncGroq(base_url=self.base_url, api_key=api_key, http_client=http_client)

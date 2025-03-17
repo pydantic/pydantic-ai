@@ -475,8 +475,8 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
             start_node,
             state=state,
             deps=graph_deps,
-            infer_name=False,
             span=use_span(run_span, end_on_exit=True),
+            infer_name=False,
         ) as graph_run:
             yield AgentRun(graph_run)
 

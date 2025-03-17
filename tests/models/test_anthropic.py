@@ -601,7 +601,7 @@ async def test_audio_as_binary_content_input(allow_model_requests: None, media_t
 
     base64_content = b'//uQZ'
 
-    with pytest.raises(RuntimeError, match='Only images are supported for binary content'):
+    with pytest.raises(RuntimeError, match='Only images and PDFs are supported for binary content'):
         await agent.run(['hello', BinaryContent(data=base64_content, media_type=media_type)])
 
 
@@ -619,6 +619,19 @@ def test_model_status_error(allow_model_requests: None) -> None:
         agent.run_sync('hello')
     assert str(exc_info.value) == snapshot(
         "status_code: 500, model_name: claude-3-5-sonnet-latest, body: {'error': 'test error'}"
+    )
+
+
+@pytest.mark.vcr()
+async def test_document_binary_content_input(
+    allow_model_requests: None, anthropic_api_key: str, document_content: BinaryContent
+):
+    m = AnthropicModel('claude-3-5-sonnet-latest', api_key=anthropic_api_key)
+    agent = Agent(m)
+
+    result = await agent.run(['What is the main content on this document?', document_content])
+    assert result.data == snapshot(
+        'The document appears to be a simple PDF file with only the text "Dummy PDF file" displayed at the top. It appears to be mostly blank otherwise, likely serving as a template or placeholder document.'
     )
 
 

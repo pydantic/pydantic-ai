@@ -107,6 +107,8 @@ def test_docs_examples(
         examples = [{'request': f'sql prompt {i}', 'sql': f'SELECT {i}'} for i in range(15)]
         with (tmp_path / 'examples.json').open('w') as f:
             json.dump(examples, f)
+    elif opt_title in {'ai_q_and_a_run.py', 'count_down_from_persistence.py'}:
+        os.chdir(tmp_path)
 
     ruff_ignore: list[str] = ['D', 'Q001']
     # `from bank_database import DatabaseConn` wrongly sorted in imports

@@ -110,7 +110,7 @@ class MistralModel(Model):
     json_mode_schema_prompt: str = """Answer in JSON Object, respect the format:\n```\n{schema}\n```\n"""
 
     _model_name: MistralModelName = field(repr=False)
-    _system: str | None = field(default='mistral', repr=False)
+    _system: str = field(default='mistral_ai', repr=False)
 
     def __init__(
         self,
@@ -179,7 +179,7 @@ class MistralModel(Model):
         return self._model_name
 
     @property
-    def system(self) -> str | None:
+    def system(self) -> str:
         """The system / model provider."""
         return self._system
 

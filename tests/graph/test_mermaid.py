@@ -11,7 +11,17 @@ import httpx
 import pytest
 from inline_snapshot import snapshot
 
-from pydantic_graph import BaseNode, Edge, End, EndStep, Graph, GraphRunContext, GraphSetupError, NodeStep
+from pydantic_graph import (
+    BaseNode,
+    Edge,
+    End,
+    EndSnapshot,
+    FullStatePersistence,
+    Graph,
+    GraphRunContext,
+    GraphSetupError,
+    NodeSnapshot,
+)
 from pydantic_graph.nodes import NodeDef
 
 from ..conftest import IsFloat, IsNow
@@ -57,24 +67,29 @@ class Eggs(BaseNode[None, None, None]):
 graph2 = Graph(nodes=(Spam, Foo, Bar, Eggs))
 
 
-async def test_run_graph():
-    result = await graph1.run(Foo())
+async def test_run_graph(mock_snapshot_id: object):
+    sp = FullStatePersistence()
+    result = await graph1.run(Foo(), persistence=sp)
     assert result.output is None
-    assert result.history == snapshot(
+    assert sp.history == snapshot(
         [
-            NodeStep(
+            NodeSnapshot(
                 state=None,
                 node=Foo(),
                 start_ts=IsNow(tz=timezone.utc),
                 duration=IsFloat(),
+                status='success',
+                id='Foo:1',
             ),
-            NodeStep(
+            NodeSnapshot(
                 state=None,
                 node=Bar(),
                 start_ts=IsNow(tz=timezone.utc),
                 duration=IsFloat(),
+                status='success',
+                id='Bar:2',
             ),
-            EndStep(result=End(data=None), ts=IsNow(tz=timezone.utc)),
+            EndSnapshot(state=None, result=End(data=None), ts=IsNow(tz=timezone.utc), id='end:3'),
         ]
     )
 

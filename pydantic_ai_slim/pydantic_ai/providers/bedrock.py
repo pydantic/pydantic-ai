@@ -10,7 +10,7 @@ try:
     from botocore.exceptions import NoRegionError
 except ImportError as _import_error:
     raise ImportError(
-        'Please install `boto3` to use the Bedrock provider, '
+        'Please install the `boto3` package to use the Bedrock provider, '
         "you can use the `bedrock` optional group — `pip install 'pydantic-ai-slim[bedrock]'`"
     ) from _import_error
 

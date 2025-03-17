@@ -14,7 +14,7 @@ else:
         from yaml import Dumper, Loader
 
 FILTERED_HEADER_PREFIXES = ['anthropic-', 'cf-', 'x-']
-FILTERED_HEADERS = {'authorization', 'date', 'request-id', 'server', 'user-agent', 'via', 'set-cookie'}
+FILTERED_HEADERS = {'authorization', 'date', 'request-id', 'server', 'user-agent', 'via', 'set-cookie', 'api-key'}
 
 
 class LiteralDumper(Dumper):
