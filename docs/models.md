@@ -507,7 +507,7 @@ pip/uv-add 'pydantic-ai-slim[mistral]'
 
 To use [Mistral](https://mistral.ai) through their API, go to [console.mistral.ai/api-keys/](https://console.mistral.ai/api-keys/) and follow your nose until you find the place to generate an API key.
 
-[`MistralModelName`][pydantic_ai.models.mistral.MistralModelName] contains a list of the most popular Mistral models.
+[`LatestMistralModelNames`][pydantic_ai.models.mistral.LatestMistralModelNames] contains a list of the most popular Mistral models.
 
 ### Environment variable
 
@@ -537,15 +537,37 @@ agent = Agent(model)
 ...
 ```
 
-### `api_key` argument
+### `provider` argument
 
-If you don't want to or can't set the environment variable, you can pass it at runtime via the [`api_key` argument][pydantic_ai.models.mistral.MistralModel.__init__]:
+You can provide a custom [`Provider`][pydantic_ai.providers.Provider] via the
+[`provider` argument][pydantic_ai.models.mistral.MistralModel.__init__]:
 
-```python {title="mistral_model_api_key.py"}
+```python {title="groq_model_provider.py"}
 from pydantic_ai import Agent
 from pydantic_ai.models.mistral import MistralModel
+from pydantic_ai.providers.mistral import MistralProvider
 
-model = MistralModel('mistral-small-latest', api_key='your-api-key')
+model = MistralModel(
+    'mistral-large-latest', provider=MistralProvider(api_key='your-api-key')
+)
+agent = Agent(model)
+...
+```
+
+You can also customize the provider with a custom `httpx.AsyncHTTPClient`:
+
+```python {title="groq_model_custom_provider.py"}
+from httpx import AsyncClient
+
+from pydantic_ai import Agent
+from pydantic_ai.models.mistral import MistralModel
+from pydantic_ai.providers.mistral import MistralProvider
+
+custom_http_client = AsyncClient(timeout=30)
+model = MistralModel(
+    'mistral-large-latest',
+    provider=MistralProvider(api_key='your-api-key', http_client=custom_http_client),
+)
 agent = Agent(model)
 ...
 ```

@@ -11,22 +11,26 @@ from pydantic_ai.providers import Provider, infer_provider
 from ..conftest import try_import
 
 with try_import() as imports_successful:
+    from pydantic_ai.providers.anthropic import AnthropicProvider
     from pydantic_ai.providers.deepseek import DeepSeekProvider
     from pydantic_ai.providers.google_gla import GoogleGLAProvider
     from pydantic_ai.providers.google_vertex import GoogleVertexProvider
     from pydantic_ai.providers.groq import GroqProvider
+    from pydantic_ai.providers.mistral import MistralProvider
     from pydantic_ai.providers.openai import OpenAIProvider
 
     test_infer_provider_params = [
+        ('anthropic', AnthropicProvider, 'ANTHROPIC_API_KEY'),
         ('deepseek', DeepSeekProvider, 'DEEPSEEK_API_KEY'),
         ('openai', OpenAIProvider, None),
         ('google-vertex', GoogleVertexProvider, None),
         ('google-gla', GoogleGLAProvider, 'GEMINI_API_KEY'),
         ('groq', GroqProvider, 'GROQ_API_KEY'),
+        ('mistral', MistralProvider, 'MISTRAL_API_KEY'),
     ]
 
 if not imports_successful():
-    test_infer_provider_params = []
+    test_infer_provider_params = []  # pragma: no cover
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='need to install all extra packages')
 
