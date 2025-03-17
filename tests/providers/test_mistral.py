@@ -56,12 +56,3 @@ def test_mistral_provider_with_base_url() -> None:
         mistral_client=Mistral(api_key='test-api-key', server_url='https://custom.mistral.com/v1'),
     )
     assert provider.base_url == 'https://custom.mistral.com/v1'
-
-
-def test_infer_mistral_provider() -> None:
-    with patch.dict(os.environ, {'MISTRAL_API_KEY': 'test-api-key'}, clear=False):
-        from pydantic_ai.providers import infer_provider
-
-        provider = infer_provider('mistral')
-        assert provider.name == 'mistral'
-        assert isinstance(provider, MistralProvider)

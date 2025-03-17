@@ -11,7 +11,7 @@ try:
     from mistralai import Mistral
 except ImportError as e:  # pragma: no cover
     raise ImportError(
-        'Please install `mistral` to use the Mistral model, '
+        'Please install the `mistral` package to use the Mistral provider, '
         "you can use the `mistral` optional group — `pip install 'pydantic-ai-slim[mistral]'`"
     ) from e
 

@@ -54,11 +54,3 @@ def test_anthropic_provider_with_env_base_url(monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.setenv('ANTHROPIC_BASE_URL', custom_base_url)
     provider = AnthropicProvider(api_key='api-key')
     assert provider.base_url.rstrip('/') == custom_base_url.rstrip('/')
-
-
-def test_infer_anthropic_provider():
-    with patch.dict(os.environ, {'ANTHROPIC_API_KEY': 'test-api-key'}, clear=False):
-        from pydantic_ai.providers import infer_provider
-
-        provider = infer_provider('anthropic')
-        assert isinstance(provider, AnthropicProvider)

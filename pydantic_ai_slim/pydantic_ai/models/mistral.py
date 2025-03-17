@@ -162,15 +162,14 @@ class MistralModel(Model):
 
         if provider is not None:
             if isinstance(provider, str):
-                self.client = infer_provider(provider).client
-            else:
-                self.client = provider.client
+                provider = infer_provider(provider)
+            self.client = provider.client
         elif client is not None:
             assert http_client is None, 'Cannot provide both `mistral_client` and `http_client`'
             assert api_key is None, 'Cannot provide both `mistral_client` and `api_key`'
             self.client = client
         else:
-            api_key = os.getenv('MISTRAL_API_KEY') if api_key is None else api_key
+            api_key = api_key or os.getenv('MISTRAL_API_KEY')
             self.client = Mistral(api_key=api_key, async_client=http_client or cached_async_http_client())
 
     @property
