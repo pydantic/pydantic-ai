@@ -49,6 +49,7 @@ search_agent = Agent[Deps, FlightDetails | NoFlightFound](
     system_prompt=(
         'Your job is to find the cheapest flight for the user on the given date. '
     ),
+    instrument=True,
 )
 
 
@@ -105,9 +106,7 @@ class Failed(BaseModel):
 
 
 # This agent is responsible for extracting the user's seat selection
-seat_preference_agent = Agent[
-    None, SeatPreference | Failed
-](
+seat_preference_agent = Agent[None, SeatPreference | Failed](
     'openai:gpt-4o',
     result_type=SeatPreference | Failed,  # type: ignore
     system_prompt=(

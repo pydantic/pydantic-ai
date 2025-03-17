@@ -4,6 +4,9 @@
     options:
         members:
             - Agent
+            - AgentRun
+            - AgentRunResult
             - EndStrategy
-            - RunResultData
+            - RunResultDataT
             - capture_run_messages
+            - InstrumentationSettings

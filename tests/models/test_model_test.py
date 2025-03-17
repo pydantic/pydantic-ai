@@ -13,6 +13,9 @@ from pydantic import BaseModel, Field
 from pydantic_ai import Agent, ModelRetry, RunContext
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.messages import (
+    AudioUrl,
+    BinaryContent,
+    ImageUrl,
     ModelRequest,
     ModelResponse,
     RetryPromptPart,
@@ -22,6 +25,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models.test import TestModel, _chars, _JsonSchemaTestData  # pyright: ignore[reportPrivateUsage]
+from pydantic_ai.usage import Usage
 
 from ..conftest import IsNow
 
@@ -96,7 +100,7 @@ def test_tool_retry():
         [
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
-                parts=[ToolCallPart('my_ret', {'x': 0})],
+                parts=[ToolCallPart(tool_name='my_ret', args={'x': 0})],
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -106,7 +110,7 @@ def test_tool_retry():
                 ]
             ),
             ModelResponse(
-                parts=[ToolCallPart('my_ret', {'x': 0})],
+                parts=[ToolCallPart(tool_name='my_ret', args={'x': 0})],
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -271,3 +275,18 @@ def test_max_items():
     }
     data = _JsonSchemaTestData(json_schema).generate()
     assert data == snapshot([])
+
+
+@pytest.mark.parametrize(
+    'content',
+    [
+        AudioUrl(url='https://example.com'),
+        ImageUrl(url='https://example.com'),
+        BinaryContent(data=b'', media_type='image/png'),
+    ],
+)
+def test_different_content_input(content: AudioUrl | ImageUrl | BinaryContent):
+    agent = Agent()
+    result = agent.run_sync('x', model=TestModel(custom_result_text='custom'))
+    assert result.data == snapshot('custom')
+    assert result.usage() == snapshot(Usage(requests=1, request_tokens=51, response_tokens=1, total_tokens=52))

@@ -16,6 +16,7 @@ from devtools import debug
 from pytest_examples import CodeExample, EvalExample, find_examples
 from pytest_mock import MockerFixture
 
+from pydantic_ai import ModelHTTPError
 from pydantic_ai._utils import group_by_temporal
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.messages import (
@@ -27,16 +28,17 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.models import KnownModelName, Model
+from pydantic_ai.models import KnownModelName, Model, infer_model
+from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 
 from .conftest import ClientWithHandler, TestEnv
 
 try:
-    from pydantic_ai.models.vertexai import VertexAIModel
+    from pydantic_ai.providers.google_vertex import GoogleVertexProvider
 except ImportError:
-    VertexAIModel = None
+    GoogleVertexProvider = None
 
 
 try:
@@ -45,7 +47,9 @@ except ImportError:
     logfire = None
 
 
-pytestmark = pytest.mark.skipif(VertexAIModel is None or logfire is None, reason='google-auth or logfire not installed')
+pytestmark = pytest.mark.skipif(
+    GoogleVertexProvider is None or logfire is None, reason='google-auth or logfire not installed'
+)
 
 
 def find_filter_examples() -> Iterable[CodeExample]:
@@ -74,9 +78,14 @@ def test_docs_examples(
     mocker.patch('random.randint', return_value=4)
     mocker.patch('rich.prompt.Prompt.ask', side_effect=rich_prompt_ask)
 
+    if sys.version_info >= (3, 10):
+        mocker.patch('pydantic_ai.mcp.MCPServerSSE', return_value=MockMCPServer())
+        mocker.patch('mcp.server.fastmcp.FastMCP')
+
     env.set('OPENAI_API_KEY', 'testing')
     env.set('GEMINI_API_KEY', 'testing')
     env.set('GROQ_API_KEY', 'testing')
+    env.set('CO_API_KEY', 'testing')
 
     sys.path.append('tests/example_modules')
 
@@ -102,6 +111,8 @@ def test_docs_examples(
         examples = [{'request': f'sql prompt {i}', 'sql': f'SELECT {i}'} for i in range(15)]
         with (tmp_path / 'examples.json').open('w') as f:
             json.dump(examples, f)
+    elif opt_title in {'ai_q_and_a_run.py', 'count_down_from_persistence.py'}:
+        os.chdir(tmp_path)
 
     ruff_ignore: list[str] = ['D', 'Q001']
     # `from bank_database import DatabaseConn` wrongly sorted in imports
@@ -175,11 +186,30 @@ def rich_prompt_ask(prompt: str, *_args: Any, **_kwargs: Any) -> str:
         raise ValueError(f'Unexpected prompt: {prompt}')
 
 
+class MockMCPServer:
+    is_running = True
+
+    async def __aenter__(self) -> MockMCPServer:
+        return self
+
+    async def __aexit__(self, *args: Any) -> None:
+        pass
+
+    @staticmethod
+    async def list_tools() -> list[None]:
+        return []
+
+
 text_responses: dict[str, str | ToolCallPart] = {
+    'Can you convert 30 degrees celsius to fahrenheit?': '30 degrees Celsius is equal to 86 degrees Fahrenheit.',
     'What is the weather like in West London and in Wiltshire?': (
         'The weather in West London is raining, while in Wiltshire it is sunny.'
     ),
+    'What will the weather be like in Paris on Tuesday?': ToolCallPart(
+        tool_name='weather_forecast', args={'location': 'Paris', 'forecast_date': '2030-01-01'}, tool_call_id='0001'
+    ),
     'Tell me a joke.': 'Did you hear about the toothpaste scandal? They called it Colgate.',
+    'Tell me a different joke.': 'No.',
     'Explain?': 'This is an excellent joke invented by Samuel Colvin, it needs no explanation.',
     'What is the capital of France?': 'Paris',
     'What is the capital of Italy?': 'Rome',
@@ -267,10 +297,18 @@ text_responses: dict[str, str | ToolCallPart] = {
     ),
 }
 
+tool_responses: dict[tuple[str, str], str] = {
+    (
+        'weather_forecast',
+        'The forecast in Paris on 2030-01-01 is 24°C and sunny.',
+    ): 'It will be warm and sunny in Paris on Tuesday.',
+}
+
 
 async def model_logic(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:  # pragma: no cover  # noqa: C901
     m = messages[-1].parts[-1]
     if isinstance(m, UserPromptPart):
+        assert isinstance(m.content, str)
         if m.content == 'Tell me a joke.' and any(t.name == 'joke_factory' for t in info.function_tools):
             return ModelResponse(parts=[ToolCallPart(tool_name='joke_factory', args={'count': 5})])
         elif m.content == 'Please generate 5 jokes.' and any(t.name == 'get_jokes' for t in info.function_tools):
@@ -344,43 +382,87 @@ async def model_logic(messages: list[ModelMessage], info: AgentInfo) -> ModelRes
         raise RuntimeError(f'Unexpected message: {m}')
 
 
-async def stream_model_logic(
+async def stream_model_logic(  # noqa C901
     messages: list[ModelMessage], info: AgentInfo
 ) -> AsyncIterator[str | DeltaToolCalls]:  # pragma: no cover
-    m = messages[-1].parts[-1]
-    if isinstance(m, UserPromptPart):
-        if response := text_responses.get(m.content):
-            if isinstance(response, str):
-                words = response.split(' ')
-                chunk: list[str] = []
-                for work in words:
-                    chunk.append(work)
-                    if len(chunk) == 3:
-                        yield ' '.join(chunk) + ' '
-                        chunk.clear()
-                if chunk:
-                    yield ' '.join(chunk)
-                return
-            else:
-                json_text = response.args_as_json_str()
+    async def stream_text_response(r: str) -> AsyncIterator[str]:
+        if isinstance(r, str):
+            words = r.split(' ')
+            chunk: list[str] = []
+            for word in words:
+                chunk.append(word)
+                if len(chunk) == 3:
+                    yield ' '.join(chunk) + ' '
+                    chunk.clear()
+            if chunk:
+                yield ' '.join(chunk)
 
-                yield {1: DeltaToolCall(name=response.tool_name)}
-                for chunk_index in range(0, len(json_text), 15):
-                    text_chunk = json_text[chunk_index : chunk_index + 15]
-                    yield {1: DeltaToolCall(json_args=text_chunk)}
-                return
+    async def stream_tool_call_response(r: ToolCallPart) -> AsyncIterator[DeltaToolCalls]:
+        json_text = r.args_as_json_str()
+
+        yield {1: DeltaToolCall(name=r.tool_name, tool_call_id=r.tool_call_id)}
+        for chunk_index in range(0, len(json_text), 15):
+            text_chunk = json_text[chunk_index : chunk_index + 15]
+            yield {1: DeltaToolCall(json_args=text_chunk)}
+
+    async def stream_part_response(r: str | ToolCallPart) -> AsyncIterator[str | DeltaToolCalls]:
+        if isinstance(r, str):
+            async for chunk in stream_text_response(r):
+                yield chunk
+        else:
+            async for chunk in stream_tool_call_response(r):
+                yield chunk
+
+    last_part = messages[-1].parts[-1]
+    if isinstance(last_part, UserPromptPart):
+        assert isinstance(last_part.content, str)
+        if response := text_responses.get(last_part.content):
+            async for chunk in stream_part_response(response):
+                yield chunk
+            return
+    elif isinstance(last_part, ToolReturnPart):
+        assert isinstance(last_part.content, str)
+        if response := tool_responses.get((last_part.tool_name, last_part.content)):
+            async for chunk in stream_part_response(response):
+                yield chunk
+            return
 
     sys.stdout.write(str(debug.format(messages, info)))
-    raise RuntimeError(f'Unexpected message: {m}')
+    raise RuntimeError(f'Unexpected message: {last_part}')
 
 
 def mock_infer_model(model: Model | KnownModelName) -> Model:
+    if model == 'test':
+        return TestModel()
+
+    if isinstance(model, str):
+        # Use the non-mocked model inference to ensure we get the same model name the user would
+        model = infer_model(model)
+
+    if isinstance(model, FallbackModel):
+        # When a fallback model is encountered, replace any OpenAIModel with a model that will raise a ModelHTTPError.
+        # Otherwise, do the usual inference.
+        def raise_http_error(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:  # pragma: no cover
+            raise ModelHTTPError(401, 'Invalid API Key')
+
+        mock_fallback_models: list[Model] = []
+        for m in model.models:
+            try:
+                from pydantic_ai.models.openai import OpenAIModel
+            except ImportError:
+                OpenAIModel = type(None)
+
+            if isinstance(m, OpenAIModel):
+                # Raise an HTTP error for OpenAIModel
+                mock_fallback_models.append(FunctionModel(raise_http_error, model_name=m.model_name))
+            else:
+                mock_fallback_models.append(mock_infer_model(m))
+        return FallbackModel(*mock_fallback_models)
     if isinstance(model, (FunctionModel, TestModel)):
         return model
-    elif model == 'test':
-        return TestModel()
     else:
-        return FunctionModel(model_logic, stream_function=stream_model_logic)
+        model_name = model if isinstance(model, str) else model.model_name
+        return FunctionModel(model_logic, stream_function=stream_model_logic, model_name=model_name)
 
 
 def mock_group_by_temporal(aiter: Any, soft_max_interval: float | None) -> Any:

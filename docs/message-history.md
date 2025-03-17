@@ -6,12 +6,12 @@ PydanticAI provides access to messages exchanged during an agent run. These mess
 
 After running an agent, you can access the messages exchanged during that run from the `result` object.
 
-Both [`RunResult`][pydantic_ai.result.RunResult]
+Both [`RunResult`][pydantic_ai.agent.AgentRunResult]
 (returned by [`Agent.run`][pydantic_ai.Agent.run], [`Agent.run_sync`][pydantic_ai.Agent.run_sync])
 and [`StreamedRunResult`][pydantic_ai.result.StreamedRunResult] (returned by [`Agent.run_stream`][pydantic_ai.Agent.run_stream]) have the following methods:
 
-* [`all_messages()`][pydantic_ai.result.RunResult.all_messages]: returns all messages, including messages from prior runs. There's also a variant that returns JSON bytes, [`all_messages_json()`][pydantic_ai.result.RunResult.all_messages_json].
-* [`new_messages()`][pydantic_ai.result.RunResult.new_messages]: returns only the messages from the current run. There's also a variant that returns JSON bytes, [`new_messages_json()`][pydantic_ai.result.RunResult.new_messages_json].
+* [`all_messages()`][pydantic_ai.agent.AgentRunResult.all_messages]: returns all messages, including messages from prior runs. There's also a variant that returns JSON bytes, [`all_messages_json()`][pydantic_ai.agent.AgentRunResult.all_messages_json].
+* [`new_messages()`][pydantic_ai.agent.AgentRunResult.new_messages]: returns only the messages from the current run. There's also a variant that returns JSON bytes, [`new_messages_json()`][pydantic_ai.agent.AgentRunResult.new_messages_json].
 
 !!! info "StreamedRunResult and complete messages"
     On [`StreamedRunResult`][pydantic_ai.result.StreamedRunResult], the messages returned from these methods will only include the final result message once the stream has finished.
@@ -25,7 +25,7 @@ and [`StreamedRunResult`][pydantic_ai.result.StreamedRunResult] (returned by [`A
 
     **Note:** The final result message will NOT be added to result messages if you use [`.stream_text(delta=True)`][pydantic_ai.result.StreamedRunResult.stream_text] since in this case the result content is never built as one string.
 
-Example of accessing methods on a [`RunResult`][pydantic_ai.result.RunResult] :
+Example of accessing methods on a [`RunResult`][pydantic_ai.agent.AgentRunResult] :
 
 ```python {title="run_result_messages.py" hl_lines="10 28"}
 from pydantic_ai import Agent
@@ -62,7 +62,7 @@ print(result.all_messages())
                 part_kind='text',
             )
         ],
-        model_name='function:model_logic',
+        model_name='gpt-4o',
         timestamp=datetime.datetime(...),
         kind='response',
     ),
@@ -136,7 +136,7 @@ async def main():
                         part_kind='text',
                     )
                 ],
-                model_name='function:stream_model_logic',
+                model_name='gpt-4o',
                 timestamp=datetime.datetime(...),
                 kind='response',
             ),
@@ -193,7 +193,7 @@ print(result2.all_messages())
                 part_kind='text',
             )
         ],
-        model_name='function:model_logic',
+        model_name='gpt-4o',
         timestamp=datetime.datetime(...),
         kind='response',
     ),
@@ -214,13 +214,58 @@ print(result2.all_messages())
                 part_kind='text',
             )
         ],
-        model_name='function:model_logic',
+        model_name='gpt-4o',
         timestamp=datetime.datetime(...),
         kind='response',
     ),
 ]
 """
 ```
+_(This example is complete, it can be run "as is")_
+
+## Storing and loading messages (to JSON)
+
+While maintaining conversation state in memory is enough for many applications, often times you may want to store the messages history of an agent run on disk or in a database. This might be for evals, for sharing data between Python and JavaScript/TypeScript, or any number of other use cases.
+
+The intended way to do this is using a `TypeAdapter`.
+
+We export [`ModelMessagesTypeAdapter`][pydantic_ai.messages.ModelMessagesTypeAdapter] that can be used for this, or you can create your own.
+
+Here's an example showing how:
+
+```python {title="serialize messages to json"}
+from pydantic_core import to_jsonable_python
+
+from pydantic_ai import Agent
+from pydantic_ai.messages import ModelMessagesTypeAdapter  # (1)!
+
+agent = Agent('openai:gpt-4o', system_prompt='Be a helpful assistant.')
+
+result1 = agent.run_sync('Tell me a joke.')
+history_step_1 = result1.all_messages()
+as_python_objects = to_jsonable_python(history_step_1)  # (2)!
+same_history_as_step_1 = ModelMessagesTypeAdapter.validate_python(as_python_objects)
+
+result2 = agent.run_sync(  # (3)!
+    'Tell me a different joke.', message_history=same_history_as_step_1
+)
+```
+
+1. Alternatively, you can create a `TypeAdapter` from scratch:
+   ```python {lint="skip" format="skip"}
+   from pydantic import TypeAdapter
+   from pydantic_ai.messages import ModelMessage
+   ModelMessagesTypeAdapter = TypeAdapter(list[ModelMessage])
+   ```
+2. Alternatively you can serialize to/from JSON directly:
+   ```python {test="skip" lint="skip" format="skip"}
+   from pydantic_core import to_json
+   ...
+   as_json_objects = to_json(history_step_1)
+   same_history_as_step_1 = ModelMessagesTypeAdapter.validate_json(as_json_objects)
+   ```
+3. You can now continue the conversation with history `same_history_as_step_1` despite creating a new agent run.
+
 _(This example is complete, it can be run "as is")_
 
 ## Other ways of using messages
@@ -273,7 +318,7 @@ print(result2.all_messages())
                 part_kind='text',
             )
         ],
-        model_name='function:model_logic',
+        model_name='gpt-4o',
         timestamp=datetime.datetime(...),
         kind='response',
     ),
@@ -294,7 +339,7 @@ print(result2.all_messages())
                 part_kind='text',
             )
         ],
-        model_name='function:model_logic',
+        model_name='gemini-1.5-pro',
         timestamp=datetime.datetime(...),
         kind='response',
     ),

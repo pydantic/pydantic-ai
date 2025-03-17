@@ -1,7 +1,8 @@
 from collections.abc import Iterator
-from typing import Any, get_args
+from typing import Any
 
 import pytest
+from typing_extensions import get_args
 
 from pydantic_ai.models import KnownModelName
 
@@ -9,6 +10,7 @@ from ..conftest import try_import
 
 with try_import() as imports_successful:
     from pydantic_ai.models.anthropic import AnthropicModelName
+    from pydantic_ai.models.bedrock import BedrockModelName
     from pydantic_ai.models.cohere import CohereModelName
     from pydantic_ai.models.gemini import GeminiModelName
     from pydantic_ai.models.groq import GroqModelName
@@ -40,10 +42,20 @@ def test_known_model_names():
     openai_names = [f'openai:{n}' for n in get_model_names(OpenAIModelName)] + [
         n for n in get_model_names(OpenAIModelName) if n.startswith('o1') or n.startswith('gpt') or n.startswith('o3')
     ]
+    bedrock_names = [f'bedrock:{n}' for n in get_model_names(BedrockModelName)]
+    deepseek_names = ['deepseek:deepseek-chat', 'deepseek:deepseek-reasoner']
     extra_names = ['test']
 
     generated_names = sorted(
-        anthropic_names + cohere_names + google_names + groq_names + mistral_names + openai_names + extra_names
+        anthropic_names
+        + cohere_names
+        + google_names
+        + groq_names
+        + mistral_names
+        + openai_names
+        + bedrock_names
+        + deepseek_names
+        + extra_names
     )
 
     known_model_names = sorted(get_args(KnownModelName))

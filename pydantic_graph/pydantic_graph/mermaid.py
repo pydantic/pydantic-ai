@@ -127,7 +127,7 @@ def _node_ids(node_idents: Sequence[NodeIdent] | NodeIdent) -> Iterable[str]:
         if isinstance(node, str):
             yield node
         else:
-            yield node.get_id()
+            yield node.get_node_id()
 
 
 def request_image(

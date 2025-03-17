@@ -9,7 +9,7 @@ from cohere import TextAssistantMessageContentItem
 from httpx import AsyncClient as AsyncHTTPClient
 from typing_extensions import assert_never
 
-from .. import result
+from .. import ModelHTTPError, result
 from .._utils import guard_tool_call_id as _guard_tool_call_id
 from ..messages import (
     ModelMessage,
@@ -45,6 +45,7 @@ try:
         ToolV2Function,
         UserChatMessageV2,
     )
+    from cohere.core.api_error import ApiError
     from cohere.v2.client import OMIT
 except ImportError as _import_error:
     raise ImportError(
@@ -97,7 +98,7 @@ class CohereModel(Model):
     client: AsyncClientV2 = field(repr=False)
 
     _model_name: CohereModelName = field(repr=False)
-    _system: str | None = field(default='cohere', repr=False)
+    _system: str = field(default='cohere', repr=False)
 
     def __init__(
         self,
@@ -124,7 +125,12 @@ class CohereModel(Model):
             assert api_key is None, 'Cannot provide both `cohere_client` and `api_key`'
             self.client = cohere_client
         else:
-            self.client = AsyncClientV2(api_key=api_key, httpx_client=http_client)  # type: ignore
+            self.client = AsyncClientV2(api_key=api_key, httpx_client=http_client)
+
+    @property
+    def base_url(self) -> str:
+        client_wrapper = self.client._client_wrapper  # type: ignore
+        return str(client_wrapper.get_base_url())
 
     async def request(
         self,
@@ -136,6 +142,16 @@ class CohereModel(Model):
         response = await self._chat(messages, cast(CohereModelSettings, model_settings or {}), model_request_parameters)
         return self._process_response(response), _map_usage(response)
 
+    @property
+    def model_name(self) -> CohereModelName:
+        """The model name."""
+        return self._model_name
+
+    @property
+    def system(self) -> str:
+        """The system / model provider."""
+        return self._system
+
     async def _chat(
         self,
         messages: list[ModelMessage],
@@ -144,17 +160,22 @@ class CohereModel(Model):
     ) -> ChatResponse:
         tools = self._get_tools(model_request_parameters)
         cohere_messages = list(chain(*(self._map_message(m) for m in messages)))
-        return await self.client.chat(
-            model=self._model_name,
-            messages=cohere_messages,
-            tools=tools or OMIT,
-            max_tokens=model_settings.get('max_tokens', OMIT),
-            temperature=model_settings.get('temperature', OMIT),
-            p=model_settings.get('top_p', OMIT),
-            seed=model_settings.get('seed', OMIT),
-            presence_penalty=model_settings.get('presence_penalty', OMIT),
-            frequency_penalty=model_settings.get('frequency_penalty', OMIT),
-        )
+        try:
+            return await self.client.chat(
+                model=self._model_name,
+                messages=cohere_messages,
+                tools=tools or OMIT,
+                max_tokens=model_settings.get('max_tokens', OMIT),
+                temperature=model_settings.get('temperature', OMIT),
+                p=model_settings.get('top_p', OMIT),
+                seed=model_settings.get('seed', OMIT),
+                presence_penalty=model_settings.get('presence_penalty', OMIT),
+                frequency_penalty=model_settings.get('frequency_penalty', OMIT),
+            )
+        except ApiError as e:
+            if (status_code := e.status_code) and status_code >= 400:
+                raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
+            raise
 
     def _process_response(self, response: ChatResponse) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
@@ -232,7 +253,10 @@ class CohereModel(Model):
             if isinstance(part, SystemPromptPart):
                 yield SystemChatMessageV2(role='system', content=part.content)
             elif isinstance(part, UserPromptPart):
-                yield UserChatMessageV2(role='user', content=part.content)
+                if isinstance(part.content, str):
+                    yield UserChatMessageV2(role='user', content=part.content)
+                else:
+                    raise RuntimeError('Cohere does not yet support multi-modal inputs.')
             elif isinstance(part, ToolReturnPart):
                 yield ToolChatMessageV2(
                     role='tool',

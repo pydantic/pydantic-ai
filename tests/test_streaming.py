@@ -2,14 +2,18 @@ from __future__ import annotations as _annotations
 
 import datetime
 import json
+import re
 from collections.abc import AsyncIterator
+from copy import deepcopy
 from datetime import timezone
+from typing import Union
 
 import pytest
 from inline_snapshot import snapshot
 from pydantic import BaseModel
 
 from pydantic_ai import Agent, UnexpectedModelBehavior, UserError, capture_run_messages
+from pydantic_ai.agent import AgentRun
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
@@ -22,7 +26,8 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.result import Usage
+from pydantic_ai.result import AgentStream, FinalResult, Usage
+from pydantic_graph import End
 
 from .conftest import IsNow
 
@@ -277,7 +282,7 @@ async def test_call_tool():
                 ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
                 ModelResponse(
                     parts=[ToolCallPart(tool_name='ret_a', args='{"x": "hello"}')],
-                    model_name='function:stream_structured_function',
+                    model_name='function::stream_structured_function',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 ModelRequest(
@@ -291,7 +296,7 @@ async def test_call_tool():
                 ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
                 ModelResponse(
                     parts=[ToolCallPart(tool_name='ret_a', args='{"x": "hello"}')],
-                    model_name='function:stream_structured_function',
+                    model_name='function::stream_structured_function',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 ModelRequest(
@@ -304,7 +309,7 @@ async def test_call_tool():
                             args='{"response": ["hello world", 2]}',
                         )
                     ],
-                    model_name='function:stream_structured_function',
+                    model_name='function::stream_structured_function',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 ModelRequest(
@@ -335,14 +340,18 @@ async def test_call_tool_wrong_name():
     async def stream_structured_function(_messages: list[ModelMessage], _: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
         yield {0: DeltaToolCall(name='foobar', json_args='{}')}
 
-    agent = Agent(FunctionModel(stream_function=stream_structured_function), result_type=tuple[str, int])
+    agent = Agent(
+        FunctionModel(stream_function=stream_structured_function),
+        result_type=tuple[str, int],
+        retries=0,
+    )
 
     @agent.tool_plain
     async def ret_a(x: str) -> str:  # pragma: no cover
         return x
 
     with capture_run_messages() as messages:
-        with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum retries \(1\) for result validation'):
+        with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum retries \(0\) for result validation'):
             async with agent.run_stream('hello'):
                 pass  # pragma: no cover
 
@@ -351,16 +360,8 @@ async def test_call_tool_wrong_name():
             ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='foobar', args='{}')],
-                model_name='function:stream_structured_function',
+                model_name='function::stream_structured_function',
                 timestamp=IsNow(tz=timezone.utc),
-            ),
-            ModelRequest(
-                parts=[
-                    RetryPromptPart(
-                        content="Unknown tool name: 'foobar'. Available tools: ret_a, final_result",
-                        timestamp=IsNow(tz=timezone.utc),
-                    )
-                ]
             ),
         ]
     )
@@ -414,7 +415,7 @@ async def test_early_strategy_stops_after_first_final_result():
                     ToolCallPart(tool_name='regular_tool', args='{"x": 1}'),
                     ToolCallPart(tool_name='another_tool', args='{"y": 2}'),
                 ],
-                model_name='function:sf',
+                model_name='function::sf',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
@@ -466,7 +467,7 @@ async def test_early_strategy_uses_first_final_result():
                     ToolCallPart(tool_name='final_result', args='{"value": "first"}'),
                     ToolCallPart(tool_name='final_result', args='{"value": "second"}'),
                 ],
-                model_name='function:sf',
+                model_name='function::sf',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
@@ -528,7 +529,7 @@ async def test_exhaustive_strategy_executes_all_tools():
                     ToolCallPart(tool_name='final_result', args='{"value": "second"}'),
                     ToolCallPart(tool_name='unknown_tool', args='{"value": "???"}'),
                 ],
-                model_name='function:sf',
+                model_name='function::sf',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
@@ -594,7 +595,7 @@ async def test_early_strategy_with_final_result_in_middle():
             ModelRequest(
                 parts=[
                     UserPromptPart(
-                        content='test early strategy with final ' 'result in middle',
+                        content='test early strategy with final result in middle',
                         timestamp=IsNow(tz=datetime.timezone.utc),
                         part_kind='user-prompt',
                     )
@@ -628,7 +629,7 @@ async def test_early_strategy_with_final_result_in_middle():
                         part_kind='tool-call',
                     ),
                 ],
-                model_name='function:sf',
+                model_name='function::sf',
                 timestamp=IsNow(tz=datetime.timezone.utc),
                 kind='response',
             ),
@@ -636,7 +637,7 @@ async def test_early_strategy_with_final_result_in_middle():
                 parts=[
                     ToolReturnPart(
                         tool_name='regular_tool',
-                        content='Tool not executed - a final ' 'result was already processed.',
+                        content='Tool not executed - a final result was already processed.',
                         tool_call_id=None,
                         timestamp=IsNow(tz=datetime.timezone.utc),
                         part_kind='tool-return',
@@ -650,7 +651,7 @@ async def test_early_strategy_with_final_result_in_middle():
                     ),
                     ToolReturnPart(
                         tool_name='another_tool',
-                        content='Tool not executed - a final ' 'result was already processed.',
+                        content='Tool not executed - a final result was already processed.',
                         tool_call_id=None,
                         timestamp=IsNow(tz=datetime.timezone.utc),
                         part_kind='tool-return',
@@ -743,3 +744,109 @@ async def test_custom_result_type_default_structured() -> None:
     async with agent.run_stream('test', result_type=str) as result:
         response = await result.get_data()
         assert response == snapshot('success (no tool calls)')
+
+
+async def test_iter_stream_output():
+    m = TestModel(custom_result_text='The cat sat on the mat.')
+
+    agent = Agent(m)
+
+    @agent.result_validator
+    def result_validator_simple(data: str) -> str:
+        # Make a substitution in the validated results
+        return re.sub('cat sat', 'bat sat', data)
+
+    run: AgentRun
+    stream: AgentStream
+    messages: list[str] = []
+
+    stream_usage: Usage | None = None
+    async with agent.iter('Hello') as run:
+        async for node in run:
+            if agent.is_model_request_node(node):
+                async with node.stream(run.ctx) as stream:
+                    async for chunk in stream.stream_output(debounce_by=None):
+                        messages.append(chunk)
+                stream_usage = deepcopy(stream.usage())
+    assert run.next_node == End(data=FinalResult(data='The bat sat on the mat.', tool_name=None, tool_call_id=None))
+    assert (
+        run.usage()
+        == stream_usage
+        == Usage(requests=1, request_tokens=51, response_tokens=7, total_tokens=58, details=None)
+    )
+
+    assert messages == [
+        '',
+        'The ',
+        'The cat ',
+        'The bat sat ',
+        'The bat sat on ',
+        'The bat sat on the ',
+        'The bat sat on the mat.',
+        'The bat sat on the mat.',
+    ]
+
+
+async def test_iter_stream_responses():
+    m = TestModel(custom_result_text='The cat sat on the mat.')
+
+    agent = Agent(m)
+
+    @agent.result_validator
+    def result_validator_simple(data: str) -> str:
+        # Make a substitution in the validated results
+        return re.sub('cat sat', 'bat sat', data)
+
+    run: AgentRun
+    stream: AgentStream
+    messages: list[ModelResponse] = []
+    async with agent.iter('Hello') as run:
+        async for node in run:
+            if agent.is_model_request_node(node):
+                async with node.stream(run.ctx) as stream:
+                    async for chunk in stream.stream_responses(debounce_by=None):
+                        messages.append(chunk)
+
+    assert messages == [
+        ModelResponse(
+            parts=[TextPart(content=text, part_kind='text')],
+            model_name='test',
+            timestamp=IsNow(tz=timezone.utc),
+            kind='response',
+        )
+        for text in [
+            '',
+            '',
+            'The ',
+            'The cat ',
+            'The cat sat ',
+            'The cat sat on ',
+            'The cat sat on the ',
+            'The cat sat on the mat.',
+        ]
+    ]
+
+    # Note: as you can see above, the result validator is not applied to the streamed responses, just the final result:
+    assert run.result is not None
+    assert run.result.data == 'The bat sat on the mat.'
+
+
+async def test_stream_iter_structured_validator() -> None:
+    class NotResultType(BaseModel):
+        not_value: str
+
+    agent = Agent[None, Union[ResultType, NotResultType]]('test', result_type=Union[ResultType, NotResultType])  # pyright: ignore[reportArgumentType]
+
+    @agent.result_validator
+    def result_validator(data: ResultType | NotResultType) -> ResultType | NotResultType:
+        assert isinstance(data, ResultType)
+        return ResultType(value=data.value + ' (validated)')
+
+    outputs: list[ResultType] = []
+    async with agent.iter('test') as run:
+        async for node in run:
+            if agent.is_model_request_node(node):
+                async with node.stream(run.ctx) as stream:
+                    async for output in stream.stream_output(debounce_by=None):
+                        outputs.append(output)
+    assert outputs == [ResultType(value='a (validated)'), ResultType(value='a (validated)')]

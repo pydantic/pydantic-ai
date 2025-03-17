@@ -16,38 +16,33 @@ from typing import TYPE_CHECKING, Any, Callable
 import httpx
 import pytest
 from _pytest.assertion.rewrite import AssertionRewritingHook
+from pytest_mock import MockerFixture
 from typing_extensions import TypeAlias
+from vcr import VCR
 
 import pydantic_ai.models
+from pydantic_ai.messages import BinaryContent
+from pydantic_ai.models import cached_async_http_client
 
-__all__ = 'IsNow', 'IsFloat', 'TestEnv', 'ClientWithHandler', 'try_import'
+__all__ = 'IsDatetime', 'IsFloat', 'IsNow', 'IsStr', 'TestEnv', 'ClientWithHandler', 'try_import'
 
 
 pydantic_ai.models.ALLOW_MODEL_REQUESTS = False
 
 if TYPE_CHECKING:
 
-    def IsNow(*args: Any, **kwargs: Any) -> datetime: ...
+    def IsDatetime(*args: Any, **kwargs: Any) -> datetime: ...
     def IsFloat(*args: Any, **kwargs: Any) -> float: ...
+    def IsNow(*args: Any, **kwargs: Any) -> datetime: ...
+    def IsStr(*args: Any, **kwargs: Any) -> str: ...
 else:
-    from dirty_equals import IsFloat, IsNow as _IsNow
+    from dirty_equals import IsDatetime, IsFloat, IsNow as _IsNow, IsStr
 
     def IsNow(*args: Any, **kwargs: Any):
         # Increase the default value of `delta` to 10 to reduce test flakiness on overburdened machines
         if 'delta' not in kwargs:
             kwargs['delta'] = 10
         return _IsNow(*args, **kwargs)
-
-
-try:
-    from logfire.testing import CaptureLogfire
-except ImportError:
-    pass
-else:
-
-    @pytest.fixture(autouse=True)
-    def logfire_disable(capfire: CaptureLogfire):
-        pass
 
 
 class TestEnv:
@@ -179,3 +174,85 @@ def set_event_loop() -> Iterator[None]:
     asyncio.set_event_loop(new_loop)
     yield
     new_loop.close()
+
+
+def raise_if_exception(e: Any) -> None:
+    if isinstance(e, Exception):
+        raise e
+
+
+def pytest_recording_configure(config: Any, vcr: VCR):
+    from . import json_body_serializer
+
+    vcr.register_serializer('yaml', json_body_serializer)
+
+
+@pytest.fixture(scope='module')
+def vcr_config():
+    return {
+        'ignore_localhost': True,
+        # Note: additional header filtering is done inside the serializer
+        'filter_headers': ['authorization', 'x-api-key'],
+        'decode_compressed_response': True,
+    }
+
+
+@pytest.fixture(autouse=True)
+async def close_cached_httpx_client() -> AsyncIterator[None]:
+    yield
+    await cached_async_http_client().aclose()
+
+
+@pytest.fixture(scope='session')
+def assets_path() -> Path:
+    return Path(__file__).parent / 'assets'
+
+
+@pytest.fixture(scope='session')
+def audio_content(assets_path: Path) -> BinaryContent:
+    audio_bytes = assets_path.joinpath('marcelo.mp3').read_bytes()
+    return BinaryContent(data=audio_bytes, media_type='audio/mpeg')
+
+
+@pytest.fixture(scope='session')
+def image_content(assets_path: Path) -> BinaryContent:
+    image_bytes = assets_path.joinpath('kiwi.png').read_bytes()
+    return BinaryContent(data=image_bytes, media_type='image/png')
+
+
+@pytest.fixture(scope='session')
+def document_content(assets_path: Path) -> BinaryContent:
+    pdf_bytes = assets_path.joinpath('dummy.pdf').read_bytes()
+    return BinaryContent(data=pdf_bytes, media_type='application/pdf')
+
+
+@pytest.fixture(scope='session')
+def openai_api_key() -> str:
+    return os.getenv('OPENAI_API_KEY', 'mock-api-key')
+
+
+@pytest.fixture(scope='session')
+def gemini_api_key() -> str:
+    return os.getenv('GEMINI_API_KEY', 'mock-api-key')
+
+
+@pytest.fixture(scope='session')
+def groq_api_key() -> str:
+    return os.getenv('GROQ_API_KEY', 'mock-api-key')
+
+
+@pytest.fixture(scope='session')
+def anthropic_api_key() -> str:
+    return os.getenv('ANTHROPIC_API_KEY', 'mock-api-key')
+
+
+@pytest.fixture
+def mock_snapshot_id(mocker: MockerFixture):
+    i = 0
+
+    def generate_snapshot_id(node_id: str) -> str:
+        nonlocal i
+        i += 1
+        return f'{node_id}:{i}'
+
+    return mocker.patch('pydantic_graph.nodes.generate_snapshot_id', side_effect=generate_snapshot_id)

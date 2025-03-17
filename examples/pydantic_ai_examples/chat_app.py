@@ -39,7 +39,7 @@ from pydantic_ai.messages import (
 # 'if-token-present' means nothing will be sent (and the example will work) if you don't have logfire configured
 logfire.configure(send_to_logfire='if-token-present')
 
-agent = Agent('openai:gpt-4o')
+agent = Agent('openai:gpt-4o', instrument=True)
 THIS_DIR = Path(__file__).parent
 
 
@@ -89,6 +89,7 @@ def to_chat_message(m: ModelMessage) -> ChatMessage:
     first_part = m.parts[0]
     if isinstance(m, ModelRequest):
         if isinstance(first_part, UserPromptPart):
+            assert isinstance(first_part.content, str)
             return {
                 'role': 'user',
                 'timestamp': first_part.timestamp.isoformat(),

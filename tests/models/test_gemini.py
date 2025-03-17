@@ -14,7 +14,11 @@ from pydantic import BaseModel, Field
 from typing_extensions import Literal, TypeAlias
 
 from pydantic_ai import Agent, ModelRetry, UnexpectedModelBehavior, UserError
+from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.messages import (
+    BinaryContent,
+    DocumentUrl,
+    ImageUrl,
     ModelRequest,
     ModelResponse,
     RetryPromptPart,
@@ -30,7 +34,6 @@ from pydantic_ai.models.gemini import (
     GeminiModel,
     GeminiModelSettings,
     _content_model_response,
-    _function_call_part_from_call,
     _gemini_response_ta,
     _gemini_streamed_response_ta,
     _GeminiCandidates,
@@ -39,11 +42,11 @@ from pydantic_ai.models.gemini import (
     _GeminiFunctionCallingConfig,
     _GeminiResponse,
     _GeminiSafetyRating,
-    _GeminiTextPart,
     _GeminiToolConfig,
     _GeminiTools,
     _GeminiUsageMetaData,
 )
+from pydantic_ai.providers.google_gla import GoogleGLAProvider
 from pydantic_ai.result import Usage
 from pydantic_ai.tools import ToolDefinition
 
@@ -54,9 +57,9 @@ pytestmark = pytest.mark.anyio
 
 def test_api_key_arg(env: TestEnv):
     env.set('GEMINI_API_KEY', 'via-env-var')
-    m = GeminiModel('gemini-1.5-flash', api_key='via-arg')
-    assert isinstance(m.auth, ApiKeyAuth)
-    assert m.auth.api_key == 'via-arg'
+    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key='via-arg'))
+    assert m.client.headers['x-goog-api-key'] == 'via-arg'
+    assert m.base_url == 'https://generativelanguage.googleapis.com/v1beta/models/'
 
 
 def test_api_key_env_var(env: TestEnv):
@@ -79,11 +82,10 @@ def test_api_key_empty(env: TestEnv):
 
 
 async def test_model_simple(allow_model_requests: None):
-    m = GeminiModel('gemini-1.5-flash', api_key='via-arg')
-    assert isinstance(m.http_client, httpx.AsyncClient)
+    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key='via-arg'))
+    assert isinstance(m.client, httpx.AsyncClient)
     assert m.model_name == 'gemini-1.5-flash'
-    assert isinstance(m.auth, ApiKeyAuth)
-    assert m.auth.api_key == 'via-arg'
+    assert 'x-goog-api-key' in m.client.headers
 
     arc = ModelRequestParameters(function_tools=[], allow_text_result=True, result_tools=[])
     tools = m._get_tools(arc)
@@ -93,7 +95,7 @@ async def test_model_simple(allow_model_requests: None):
 
 
 async def test_model_tools(allow_model_requests: None):
-    m = GeminiModel('gemini-1.5-flash', api_key='via-arg')
+    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key='via-arg'))
     tools = [
         ToolDefinition(
             'foo',
@@ -152,7 +154,7 @@ async def test_model_tools(allow_model_requests: None):
 
 
 async def test_require_response_tool(allow_model_requests: None):
-    m = GeminiModel('gemini-1.5-flash', api_key='via-arg')
+    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key='via-arg'))
     result_tool = ToolDefinition(
         'result',
         'This is the tool for the final Result',
@@ -211,7 +213,7 @@ async def test_json_def_replaced(allow_model_requests: None):
         }
     )
 
-    m = GeminiModel('gemini-1.5-flash', api_key='via-arg')
+    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key='via-arg'))
     result_tool = ToolDefinition(
         'result',
         'This is the tool for the final Result',
@@ -258,7 +260,7 @@ async def test_json_def_replaced_any_of(allow_model_requests: None):
 
     json_schema = Locations.model_json_schema()
 
-    m = GeminiModel('gemini-1.5-flash', api_key='via-arg')
+    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key='via-arg'))
     result_tool = ToolDefinition(
         'result',
         'This is the tool for the final Result',
@@ -321,7 +323,7 @@ async def test_json_def_recursive(allow_model_requests: None):
         }
     )
 
-    m = GeminiModel('gemini-1.5-flash', api_key='via-arg')
+    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key='via-arg'))
     result_tool = ToolDefinition(
         'result',
         'This is the tool for the final Result',
@@ -353,7 +355,7 @@ async def test_json_def_date(allow_model_requests: None):
         }
     )
 
-    m = GeminiModel('gemini-1.5-flash', api_key='via-arg')
+    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key='via-arg'))
     result_tool = ToolDefinition(
         'result',
         'This is the tool for the final Result',
@@ -365,7 +367,7 @@ async def test_json_def_date(allow_model_requests: None):
         _GeminiTools(
             function_declarations=[
                 _GeminiFunction(
-                    description='This is the tool for the final ' 'Result',
+                    description='This is the tool for the final Result',
                     name='result',
                     parameters={
                         'properties': {
@@ -450,7 +452,7 @@ def example_usage() -> _GeminiUsageMetaData:
 async def test_text_success(get_gemini_client: GetGeminiClient):
     response = gemini_response(_content_model_response(ModelResponse(parts=[TextPart('Hello world')])))
     gemini_client = get_gemini_client(response)
-    m = GeminiModel('gemini-1.5-flash', http_client=gemini_client)
+    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(http_client=gemini_client))
     agent = Agent(m)
 
     result = await agent.run('Hello')
@@ -492,7 +494,7 @@ async def test_request_structured_response(get_gemini_client: GetGeminiClient):
         _content_model_response(ModelResponse(parts=[ToolCallPart('final_result', {'response': [1, 2, 123]})]))
     )
     gemini_client = get_gemini_client(response)
-    m = GeminiModel('gemini-1.5-flash', http_client=gemini_client)
+    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(http_client=gemini_client))
     agent = Agent(m, result_type=list[int])
 
     result = await agent.run('Hello')
@@ -539,7 +541,7 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
         gemini_response(_content_model_response(ModelResponse(parts=[TextPart('final response')]))),
     ]
     gemini_client = get_gemini_client(responses)
-    m = GeminiModel('gemini-1.5-flash', http_client=gemini_client)
+    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(http_client=gemini_client))
     agent = Agent(m, system_prompt='this is the system prompt')
 
     @agent.tool_plain
@@ -621,13 +623,13 @@ async def test_unexpected_response(client_with_handler: ClientWithHandler, env: 
         return httpx.Response(401, content='invalid request')
 
     gemini_client = client_with_handler(handler)
-    m = GeminiModel('gemini-1.5-flash', http_client=gemini_client)
+    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(http_client=gemini_client))
     agent = Agent(m, system_prompt='this is the system prompt')
 
-    with pytest.raises(UnexpectedModelBehavior) as exc_info:
+    with pytest.raises(ModelHTTPError) as exc_info:
         await agent.run('Hello')
 
-    assert str(exc_info.value) == snapshot('Unexpected response from gemini 401, body:\ninvalid request')
+    assert str(exc_info.value) == snapshot('status_code: 401, model_name: gemini-1.5-flash, body: invalid request')
 
 
 async def test_stream_text(get_gemini_client: GetGeminiClient):
@@ -638,7 +640,7 @@ async def test_stream_text(get_gemini_client: GetGeminiClient):
     json_data = _gemini_streamed_response_ta.dump_json(responses, by_alias=True)
     stream = AsyncByteStreamList([json_data[:100], json_data[100:200], json_data[200:]])
     gemini_client = get_gemini_client(stream)
-    m = GeminiModel('gemini-1.5-flash', http_client=gemini_client)
+    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(http_client=gemini_client))
     agent = Agent(m)
 
     async with agent.run_stream('Hello') as result:
@@ -660,12 +662,44 @@ async def test_stream_text(get_gemini_client: GetGeminiClient):
     assert result.usage() == snapshot(Usage(requests=1, request_tokens=2, response_tokens=4, total_tokens=6))
 
 
+async def test_stream_invalid_unicode_text(get_gemini_client: GetGeminiClient):
+    # Probably safe to remove this test once https://github.com/pydantic/pydantic-core/issues/1633 is resolved
+    responses = [
+        gemini_response(_content_model_response(ModelResponse(parts=[TextPart('abc')]))),
+        gemini_response(_content_model_response(ModelResponse(parts=[TextPart('€def')]))),
+    ]
+    json_data = _gemini_streamed_response_ta.dump_json(responses, by_alias=True)
+
+    for i in range(10, 1000):
+        parts = [json_data[:i], json_data[i:]]
+        try:
+            parts[0].decode()
+        except UnicodeDecodeError:
+            break
+    else:  # pragma: no cover
+        assert False, 'failed to find a spot in payload that would break unicode parsing'
+
+    with pytest.raises(UnicodeDecodeError):
+        # Ensure the first part is _not_ valid unicode
+        parts[0].decode()
+
+    stream = AsyncByteStreamList(parts)
+    gemini_client = get_gemini_client(stream)
+    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(http_client=gemini_client))
+    agent = Agent(m)
+
+    async with agent.run_stream('Hello') as result:
+        chunks = [chunk async for chunk in result.stream(debounce_by=None)]
+        assert chunks == snapshot(['abc', 'abc€def', 'abc€def'])
+    assert result.usage() == snapshot(Usage(requests=1, request_tokens=2, response_tokens=4, total_tokens=6))
+
+
 async def test_stream_text_no_data(get_gemini_client: GetGeminiClient):
     responses = [_GeminiResponse(candidates=[], usage_metadata=example_usage())]
     json_data = _gemini_streamed_response_ta.dump_json(responses, by_alias=True)
     stream = AsyncByteStreamList([json_data[:100], json_data[100:200], json_data[200:]])
     gemini_client = get_gemini_client(stream)
-    m = GeminiModel('gemini-1.5-flash', http_client=gemini_client)
+    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(http_client=gemini_client))
     agent = Agent(m)
     with pytest.raises(UnexpectedModelBehavior, match='Streamed response ended without con'):
         async with agent.run_stream('Hello'):
@@ -681,7 +715,7 @@ async def test_stream_structured(get_gemini_client: GetGeminiClient):
     json_data = _gemini_streamed_response_ta.dump_json(responses, by_alias=True)
     stream = AsyncByteStreamList([json_data[:100], json_data[100:200], json_data[200:]])
     gemini_client = get_gemini_client(stream)
-    model = GeminiModel('gemini-1.5-flash', http_client=gemini_client)
+    model = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(http_client=gemini_client))
     agent = Agent(model, result_type=tuple[int, int])
 
     async with agent.run_stream('Hello') as result:
@@ -711,7 +745,7 @@ async def test_stream_structured_tool_calls(get_gemini_client: GetGeminiClient):
     second_stream = AsyncByteStreamList([d2[:100], d2[100:]])
 
     gemini_client = get_gemini_client([first_stream, second_stream])
-    model = GeminiModel('gemini-1.5-flash', http_client=gemini_client)
+    model = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(http_client=gemini_client))
     agent = Agent(model, result_type=tuple[int, int])
     tool_calls: list[str] = []
 
@@ -775,13 +809,8 @@ async def test_stream_text_heterogeneous(get_gemini_client: GetGeminiClient):
             _GeminiContent(
                 role='model',
                 parts=[
-                    _GeminiTextPart(text='foo'),
-                    _function_call_part_from_call(
-                        ToolCallPart(
-                            tool_name='get_location',
-                            args={'loc_name': 'San Fransisco'},
-                        )
-                    ),
+                    {'text': 'foo'},
+                    {'function_call': {'name': 'get_location', 'args': {'loc_name': 'San Fransisco'}}},
                 ],
             )
         ),
@@ -789,8 +818,12 @@ async def test_stream_text_heterogeneous(get_gemini_client: GetGeminiClient):
     json_data = _gemini_streamed_response_ta.dump_json(responses, by_alias=True)
     stream = AsyncByteStreamList([json_data[:100], json_data[100:200], json_data[200:]])
     gemini_client = get_gemini_client(stream)
-    m = GeminiModel('gemini-1.5-flash', http_client=gemini_client)
+    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(http_client=gemini_client))
     agent = Agent(m)
+
+    @agent.tool_plain()
+    def get_location(loc_name: str) -> str:
+        return f'Location for {loc_name}'
 
     async with agent.run_stream('Hello') as result:
         data = await result.get_data()
@@ -855,7 +888,7 @@ async def test_model_settings(client_with_handler: ClientWithHandler, env: TestE
         )
 
     gemini_client = client_with_handler(handler)
-    m = GeminiModel('gemini-1.5-flash', http_client=gemini_client, api_key='mock')
+    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(http_client=gemini_client, api_key='mock'))
     agent = Agent(m)
 
     result = await agent.run(
@@ -907,7 +940,8 @@ async def test_safety_settings_unsafe(
             )
 
         gemini_client = client_with_handler(handler)
-        m = GeminiModel('gemini-1.5-flash', http_client=gemini_client, api_key='mock')
+
+        m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(http_client=gemini_client, api_key='mock'))
         agent = Agent(m)
 
         await agent.run(
@@ -943,7 +977,7 @@ async def test_safety_settings_safe(
         )
 
     gemini_client = client_with_handler(handler)
-    m = GeminiModel('gemini-1.5-flash', http_client=gemini_client, api_key='mock')
+    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(http_client=gemini_client, api_key='mock'))
     agent = Agent(m)
 
     result = await agent.run(
@@ -956,3 +990,36 @@ async def test_safety_settings_safe(
         ),
     )
     assert result.data == 'world'
+
+
+@pytest.mark.vcr()
+async def test_image_as_binary_content_input(
+    allow_model_requests: None, gemini_api_key: str, image_content: BinaryContent
+) -> None:
+    m = GeminiModel('gemini-2.0-flash', provider=GoogleGLAProvider(api_key=gemini_api_key))
+    agent = Agent(m)
+
+    result = await agent.run(['What is the name of this fruit?', image_content])
+    assert result.data == snapshot('The fruit in the image is a kiwi.')
+
+
+@pytest.mark.vcr()
+async def test_image_url_input(allow_model_requests: None, gemini_api_key: str) -> None:
+    m = GeminiModel('gemini-2.0-flash-exp', provider=GoogleGLAProvider(api_key=gemini_api_key))
+    agent = Agent(m)
+
+    image_url = ImageUrl(url='https://goo.gle/instrument-img')
+
+    result = await agent.run(['What is the name of this fruit?', image_url])
+    assert result.data == snapshot("This is not a fruit; it's a pipe organ console.")
+
+
+@pytest.mark.vcr()
+async def test_document_url_input(allow_model_requests: None, gemini_api_key: str) -> None:
+    m = GeminiModel('gemini-2.0-flash-thinking-exp-01-21', provider=GoogleGLAProvider(api_key=gemini_api_key))
+    agent = Agent(m)
+
+    document_url = DocumentUrl(url='https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf')
+
+    result = await agent.run(['What is the main content on this document?', document_url])
+    assert result.data == snapshot('The main content of this document is that it is a **dummy PDF file**.')

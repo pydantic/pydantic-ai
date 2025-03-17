@@ -211,8 +211,7 @@ def _build_schema(
 
 
 def _is_call_ctx(annotation: Any) -> bool:
+    """Return whether the annotation is the `RunContext` class, parameterized or not."""
     from .tools import RunContext
 
-    return annotation is RunContext or (
-        _typing_extra.is_generic_alias(annotation) and get_origin(annotation) is RunContext
-    )
+    return annotation is RunContext or get_origin(annotation) is RunContext

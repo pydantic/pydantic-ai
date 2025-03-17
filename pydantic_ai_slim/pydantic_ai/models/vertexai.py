@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+import warnings
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -8,6 +9,7 @@ from pathlib import Path
 from typing import Literal
 
 from httpx import AsyncClient as AsyncHTTPClient
+from typing_extensions import deprecated
 
 from .. import usage
 from .._utils import run_in_executor
@@ -55,6 +57,7 @@ The template is used thus:
 """
 
 
+@deprecated('Please use `GeminiModel(provider=GoogleVertexProvider(...))` instead.')
 @dataclass(init=False)
 class VertexAIModel(GeminiModel):
     """A model that uses Gemini via the `*-aiplatform.googleapis.com` VertexAI API."""
@@ -66,7 +69,7 @@ class VertexAIModel(GeminiModel):
     url_template: str
 
     _model_name: GeminiModelName = field(repr=False)
-    _system: str | None = field(default='google-vertex', repr=False)
+    _system: str = field(default='vertex_ai', repr=False)
 
     # TODO __init__ can be removed once we drop 3.9 and we can set kw_only correctly on the dataclass
     def __init__(
@@ -103,11 +106,16 @@ class VertexAIModel(GeminiModel):
         self.project_id = project_id
         self.region = region
         self.model_publisher = model_publisher
-        self.http_client = http_client or cached_async_http_client()
+        self.client = http_client or cached_async_http_client()
         self.url_template = url_template
 
         self._auth = None
         self._url = None
+        warnings.warn(
+            'VertexAIModel is deprecated, please use `GeminiModel(provider=GoogleVertexProvider(...))` instead.',
+            DeprecationWarning,
+        )
+        self._provider = None
 
     async def ainit(self) -> None:
         """Initialize the model, setting the URL and auth.
@@ -161,6 +169,16 @@ class VertexAIModel(GeminiModel):
         async with super().request_stream(messages, model_settings, model_request_parameters) as value:
             yield value
 
+    @property
+    def model_name(self) -> GeminiModelName:
+        """The model name."""
+        return self._model_name
+
+    @property
+    def system(self) -> str:
+        """The system / model provider."""
+        return self._system
+
 
 # pyright: reportUnknownMemberType=false
 def _creds_from_file(service_account_file: str | Path) -> ServiceAccountCredentials:
@@ -206,15 +224,13 @@ class BearerTokenAuth:
 
 
 VertexAiRegion = Literal[
-    'us-central1',
-    'us-east1',
-    'us-east4',
-    'us-south1',
-    'us-west1',
-    'us-west2',
-    'us-west3',
-    'us-west4',
-    'us-east5',
+    'asia-east1',
+    'asia-east2',
+    'asia-northeast1',
+    'asia-northeast3',
+    'asia-south1',
+    'asia-southeast1',
+    'australia-southeast1',
     'europe-central2',
     'europe-north1',
     'europe-southwest1',
@@ -225,27 +241,20 @@ VertexAiRegion = Literal[
     'europe-west6',
     'europe-west8',
     'europe-west9',
-    'europe-west12',
-    'africa-south1',
-    'asia-east1',
-    'asia-east2',
-    'asia-northeast1',
-    'asia-northeast2',
-    'asia-northeast3',
-    'asia-south1',
-    'asia-southeast1',
-    'asia-southeast2',
-    'australia-southeast1',
-    'australia-southeast2',
     'me-central1',
     'me-central2',
     'me-west1',
     'northamerica-northeast1',
-    'northamerica-northeast2',
     'southamerica-east1',
-    'southamerica-west1',
+    'us-central1',
+    'us-east1',
+    'us-east4',
+    'us-east5',
+    'us-south1',
+    'us-west1',
+    'us-west4',
 ]
 """Regions available for Vertex AI.
 
-More details [here](https://cloud.google.com/vertex-ai/docs/reference/rest#rest_endpoints).
+More details [here](https://cloud.google.com/vertex-ai/generative-ai/docs/learn/locations#genai-locations).
 """

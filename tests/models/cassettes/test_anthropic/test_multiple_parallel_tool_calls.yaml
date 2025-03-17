@@ -1,0 +1,212 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '793'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 1024
+      messages:
+      - content:
+        - text: Alice, Bob, Charlie and Daisy are a family. Who is the youngest?
+          type: text
+        role: user
+      model: claude-3-5-haiku-latest
+      stream: false
+      system: "\n    Use the `retrieve_entity_info` tool to get information about a specific person.\n    If you need to use
+        `retrieve_entity_info` to get information about multiple people, try\n    to call them in parallel as much as possible.\n
+        \   Think step by step and then provide a single most probable concise answer.\n    "
+      tool_choice:
+        type: auto
+      tools:
+      - description: Get the knowledge about the given entity.
+        input_schema:
+          additionalProperties: false
+          properties:
+            name:
+              title: Name
+              type: string
+          required:
+          - name
+          type: object
+        name: retrieve_entity_info
+    uri: https://api.anthropic.com/v1/messages
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '833'
+      content-type:
+      - application/json
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      content:
+      - text: I'll retrieve the information about each family member to determine their ages.
+        type: text
+      - id: toolu_01GqTEj62q5VBiG1mMFcZ7hE
+        input:
+          name: Alice
+        name: retrieve_entity_info
+        type: tool_use
+      - id: toolu_01HEMkf9mGmss65HbM4E1K8Z
+        input:
+          name: Bob
+        name: retrieve_entity_info
+        type: tool_use
+      - id: toolu_01VodXtCizVDfWstMmmgf2Wm
+        input:
+          name: Charlie
+        name: retrieve_entity_info
+        type: tool_use
+      - id: toolu_01EEJV6Tiy89J1qcBHVoVeRc
+        input:
+          name: Daisy
+        name: retrieve_entity_info
+        type: tool_use
+      id: msg_01KwuP4ctUBBfVFMZRqpWJ45
+      model: claude-3-5-haiku-20241022
+      role: assistant
+      stop_reason: tool_use
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        input_tokens: 429
+        output_tokens: 186
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '1926'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 1024
+      messages:
+      - content:
+        - text: Alice, Bob, Charlie and Daisy are a family. Who is the youngest?
+          type: text
+        role: user
+      - content:
+        - text: I'll retrieve the information about each family member to determine their ages.
+          type: text
+        - id: toolu_01GqTEj62q5VBiG1mMFcZ7hE
+          input:
+            name: Alice
+          name: retrieve_entity_info
+          type: tool_use
+        - id: toolu_01HEMkf9mGmss65HbM4E1K8Z
+          input:
+            name: Bob
+          name: retrieve_entity_info
+          type: tool_use
+        - id: toolu_01VodXtCizVDfWstMmmgf2Wm
+          input:
+            name: Charlie
+          name: retrieve_entity_info
+          type: tool_use
+        - id: toolu_01EEJV6Tiy89J1qcBHVoVeRc
+          input:
+            name: Daisy
+          name: retrieve_entity_info
+          type: tool_use
+        role: assistant
+      - content:
+        - content: alice is bob's wife
+          is_error: false
+          tool_use_id: toolu_01GqTEj62q5VBiG1mMFcZ7hE
+          type: tool_result
+        - content: bob is alice's husband
+          is_error: false
+          tool_use_id: toolu_01HEMkf9mGmss65HbM4E1K8Z
+          type: tool_result
+        - content: charlie is alice's son
+          is_error: false
+          tool_use_id: toolu_01VodXtCizVDfWstMmmgf2Wm
+          type: tool_result
+        - content: daisy is bob's daughter and charlie's younger sister
+          is_error: false
+          tool_use_id: toolu_01EEJV6Tiy89J1qcBHVoVeRc
+          type: tool_result
+        role: user
+      model: claude-3-5-haiku-latest
+      stream: false
+      system: "\n    Use the `retrieve_entity_info` tool to get information about a specific person.\n    If you need to use
+        `retrieve_entity_info` to get information about multiple people, try\n    to call them in parallel as much as possible.\n
+        \   Think step by step and then provide a single most probable concise answer.\n    "
+      tool_choice:
+        type: auto
+      tools:
+      - description: Get the knowledge about the given entity.
+        input_schema:
+          additionalProperties: false
+          properties:
+            name:
+              title: Name
+              type: string
+          required:
+          - name
+          type: object
+        name: retrieve_entity_info
+    uri: https://api.anthropic.com/v1/messages
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '634'
+      content-type:
+      - application/json
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      content:
+      - text: |-
+          Based on the retrieved information, I can determine the family relationships:
+          - Alice and Bob are married
+          - Charlie is their son
+          - Daisy is their daughter and Charlie's younger sister
+
+          Since Daisy is explicitly mentioned as Charlie's younger sister, Daisy is the youngest in this family.
+
+          The answer is: Daisy is the youngest.
+        type: text
+      id: msg_01QB2s6yNf6c4HaZdgXAgVpT
+      model: claude-3-5-haiku-20241022
+      role: assistant
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        input_tokens: 761
+        output_tokens: 79
+    status:
+      code: 200
+      message: OK
+version: 1

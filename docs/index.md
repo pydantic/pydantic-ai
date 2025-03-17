@@ -2,9 +2,6 @@
 
 --8<-- "docs/.partials/index-header.html"
 
-PydanticAI is a Python Agent Framework designed to make it less painful to
-build production grade applications with Generative AI.
-
 FastAPI revolutionized web development by offering an innovative and ergonomic design, built on the foundation of [Pydantic](https://docs.pydantic.dev).
 
 Similarly, virtually every agent framework and LLM library in Python uses Pydantic, yet when we began to use LLMs in [Pydantic Logfire](https://pydantic.dev/logfire), we couldn't find anything that gave us the same feeling.
@@ -40,10 +37,6 @@ Provides the ability to [stream](results.md#streamed-results) LLM outputs contin
 
 * __Graph Support__:
 [Pydantic Graph](graph.md) provides a powerful way to define graphs using typing hints, this is useful in complex applications where standard control flow can degrade to spaghetti code.
-
-!!! example "In Beta"
-    PydanticAI is in early beta, the API is still subject to change and there's a lot more to do.
-    [Feedback](https://github.com/pydantic/pydantic-ai/issues) is very welcome!
 
 ## Hello World Example
 
@@ -168,14 +161,29 @@ To understand the flow of the above runs, we can watch the agent in action using
 
 To do this, we need to set up logfire, and add the following to our code:
 
-```python {title="bank_support_with_logfire.py" hl_lines="4-6" test="skip" lint="skip"}
+```python {title="bank_support_with_logfire.py" hl_lines="6-9 21" test="skip" lint="skip"}
 ...
+from pydantic_ai import Agent, RunContext
+
 from bank_database import DatabaseConn
 
 import logfire
+
 logfire.configure()  # (1)!
 logfire.instrument_asyncpg()  # (2)!
+
 ...
+
+support_agent = Agent(
+    'openai:gpt-4o',
+    deps_type=SupportDependencies,
+    result_type=SupportResult,
+    system_prompt=(
+        'You are a support agent in our bank, give the '
+        'customer support and judge the risk level of their query.'
+    ),
+    instrument=True,
+)
 ```
 
 1. Configure logfire, this will fail if project is not set up.

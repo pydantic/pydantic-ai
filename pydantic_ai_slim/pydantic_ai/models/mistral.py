@@ -1,20 +1,24 @@
 from __future__ import annotations as _annotations
 
+import base64
 import os
 from collections.abc import AsyncIterable, AsyncIterator, Iterable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from itertools import chain
-from typing import Any, Callable, Literal, Union, cast
+from typing import Any, Callable, Literal, Union, cast, overload
 
 import pydantic_core
 from httpx import AsyncClient as AsyncHTTPClient, Timeout
-from typing_extensions import assert_never
+from typing_extensions import assert_never, deprecated
 
-from .. import UnexpectedModelBehavior, _utils
+from .. import ModelHTTPError, UnexpectedModelBehavior, _utils
 from .._utils import now_utc as _now_utc
 from ..messages import (
+    BinaryContent,
+    DocumentUrl,
+    ImageUrl,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -27,6 +31,7 @@ from ..messages import (
     ToolReturnPart,
     UserPromptPart,
 )
+from ..providers import Provider, infer_provider
 from ..result import Usage
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
@@ -45,6 +50,8 @@ try:
         Content as MistralContent,
         ContentChunk as MistralContentChunk,
         FunctionCall as MistralFunctionCall,
+        ImageURL as MistralImageURL,
+        ImageURLChunk as MistralImageURLChunk,
         Mistral,
         OptionalNullable as MistralOptionalNullable,
         TextChunk as MistralTextChunk,
@@ -54,6 +61,7 @@ try:
         ChatCompletionResponse as MistralChatCompletionResponse,
         CompletionEvent as MistralCompletionEvent,
         Messages as MistralMessages,
+        SDKError,
         Tool as MistralTool,
         ToolCall as MistralToolCall,
     )
@@ -103,12 +111,35 @@ class MistralModel(Model):
     json_mode_schema_prompt: str = """Answer in JSON Object, respect the format:\n```\n{schema}\n```\n"""
 
     _model_name: MistralModelName = field(repr=False)
-    _system: str | None = field(default='mistral', repr=False)
+    _system: str = field(default='mistral_ai', repr=False)
+
+    @overload
+    def __init__(
+        self,
+        model_name: MistralModelName,
+        *,
+        provider: Literal['mistral'] | Provider[Mistral] = 'mistral',
+        json_mode_schema_prompt: str = """Answer in JSON Object, respect the format:\n```\n{schema}\n```\n""",
+    ) -> None: ...
+
+    @overload
+    @deprecated('Use the `provider` parameter instead of `api_key`, `client` and `http_client`.')
+    def __init__(
+        self,
+        model_name: MistralModelName,
+        *,
+        provider: None = None,
+        api_key: str | Callable[[], str | None] | None = None,
+        client: Mistral | None = None,
+        http_client: AsyncHTTPClient | None = None,
+        json_mode_schema_prompt: str = """Answer in JSON Object, respect the format:\n```\n{schema}\n```\n""",
+    ) -> None: ...
 
     def __init__(
         self,
         model_name: MistralModelName,
         *,
+        provider: Literal['mistral'] | Provider[Mistral] | None = None,
         api_key: str | Callable[[], str | None] | None = None,
         client: Mistral | None = None,
         http_client: AsyncHTTPClient | None = None,
@@ -117,6 +148,9 @@ class MistralModel(Model):
         """Initialize a Mistral model.
 
         Args:
+            provider: The provider to use for authentication and API access. Can be either the string
+                'mistral' or an instance of `Provider[Mistral]`. If not provided, a new provider will be
+                created using the other parameters.
             model_name: The name of the model to use.
             api_key: The API key to use for authentication, if unset uses `MISTRAL_API_KEY` environment variable.
             client: An existing `Mistral` client to use, if provided, `api_key` and `http_client` must be `None`.
@@ -126,16 +160,22 @@ class MistralModel(Model):
         self._model_name = model_name
         self.json_mode_schema_prompt = json_mode_schema_prompt
 
-        if client is not None:
+        if provider is not None:
+            if isinstance(provider, str):
+                # TODO(Marcelo): We should add an integration test with VCR when I get the API key.
+                provider = infer_provider(provider)  # pragma: no cover
+            self.client = provider.client
+        elif client is not None:
             assert http_client is None, 'Cannot provide both `mistral_client` and `http_client`'
             assert api_key is None, 'Cannot provide both `mistral_client` and `api_key`'
             self.client = client
         else:
-            api_key = os.getenv('MISTRAL_API_KEY') if api_key is None else api_key
+            api_key = api_key or os.getenv('MISTRAL_API_KEY')
             self.client = Mistral(api_key=api_key, async_client=http_client or cached_async_http_client())
 
-    def name(self) -> str:
-        return f'mistral:{self._model_name}'
+    @property
+    def base_url(self) -> str:
+        return self.client.sdk_configuration.get_server_details()[0]
 
     async def request(
         self,
@@ -165,6 +205,16 @@ class MistralModel(Model):
         async with response:
             yield await self._process_streamed_response(model_request_parameters.result_tools, response)
 
+    @property
+    def model_name(self) -> MistralModelName:
+        """The model name."""
+        return self._model_name
+
+    @property
+    def system(self) -> str:
+        """The system / model provider."""
+        return self._system
+
     async def _completions_create(
         self,
         messages: list[ModelMessage],
@@ -172,19 +222,25 @@ class MistralModel(Model):
         model_request_parameters: ModelRequestParameters,
     ) -> MistralChatCompletionResponse:
         """Make a non-streaming request to the model."""
-        response = await self.client.chat.complete_async(
-            model=str(self._model_name),
-            messages=list(chain(*(self._map_message(m) for m in messages))),
-            n=1,
-            tools=self._map_function_and_result_tools_definition(model_request_parameters) or UNSET,
-            tool_choice=self._get_tool_choice(model_request_parameters),
-            stream=False,
-            max_tokens=model_settings.get('max_tokens', UNSET),
-            temperature=model_settings.get('temperature', UNSET),
-            top_p=model_settings.get('top_p', 1),
-            timeout_ms=self._get_timeout_ms(model_settings.get('timeout')),
-            random_seed=model_settings.get('seed', UNSET),
-        )
+        try:
+            response = await self.client.chat.complete_async(
+                model=str(self._model_name),
+                messages=list(chain(*(self._map_message(m) for m in messages))),
+                n=1,
+                tools=self._map_function_and_result_tools_definition(model_request_parameters) or UNSET,
+                tool_choice=self._get_tool_choice(model_request_parameters),
+                stream=False,
+                max_tokens=model_settings.get('max_tokens', UNSET),
+                temperature=model_settings.get('temperature', UNSET),
+                top_p=model_settings.get('top_p', 1),
+                timeout_ms=self._get_timeout_ms(model_settings.get('timeout')),
+                random_seed=model_settings.get('seed', UNSET),
+            )
+        except SDKError as e:
+            if (status_code := e.status_code) >= 400:
+                raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
+            raise
+
         assert response, 'A unexpected empty response from Mistral.'
         return response
 
@@ -416,7 +472,7 @@ class MistralModel(Model):
             if isinstance(part, SystemPromptPart):
                 yield MistralSystemMessage(content=part.content)
             elif isinstance(part, UserPromptPart):
-                yield MistralUserMessage(content=part.content)
+                yield cls._map_user_prompt(part)
             elif isinstance(part, ToolReturnPart):
                 yield MistralToolMessage(
                     tool_call_id=part.tool_call_id,
@@ -453,6 +509,31 @@ class MistralModel(Model):
         else:
             assert_never(message)
 
+    @staticmethod
+    def _map_user_prompt(part: UserPromptPart) -> MistralUserMessage:
+        content: str | list[MistralContentChunk]
+        if isinstance(part.content, str):
+            content = part.content
+        else:
+            content = []
+            for item in part.content:
+                if isinstance(item, str):
+                    content.append(MistralTextChunk(text=item))
+                elif isinstance(item, ImageUrl):
+                    content.append(MistralImageURLChunk(image_url=MistralImageURL(url=item.url)))
+                elif isinstance(item, BinaryContent):
+                    base64_encoded = base64.b64encode(item.data).decode('utf-8')
+                    if item.is_image:
+                        image_url = MistralImageURL(url=f'data:{item.media_type};base64,{base64_encoded}')
+                        content.append(MistralImageURLChunk(image_url=image_url, type='image_url'))
+                    else:
+                        raise RuntimeError('Only image binary content is supported for Mistral.')
+                elif isinstance(item, DocumentUrl):
+                    raise RuntimeError('DocumentUrl is not supported in Mistral.')
+                else:  # pragma: no cover
+                    raise RuntimeError(f'Unsupported content type: {type(item)}')
+        return MistralUserMessage(content=content)
+
 
 MistralToolCallId = Union[str, None]
 
@@ -461,6 +542,7 @@ MistralToolCallId = Union[str, None]
 class MistralStreamedResponse(StreamedResponse):
     """Implementation of `StreamedResponse` for Mistral models."""
 
+    _model_name: MistralModelName
     _response: AsyncIterable[MistralCompletionEvent]
     _timestamp: datetime
     _result_tools: dict[str, ToolDefinition]
@@ -502,7 +584,14 @@ class MistralStreamedResponse(StreamedResponse):
                     vendor_part_id=index, tool_name=dtc.function.name, args=dtc.function.arguments, tool_call_id=dtc.id
                 )
 
+    @property
+    def model_name(self) -> MistralModelName:
+        """Get the model name of the response."""
+        return self._model_name
+
+    @property
     def timestamp(self) -> datetime:
+        """Get the timestamp of the response."""
         return self._timestamp
 
     @staticmethod

@@ -1,0 +1,107 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '111'
+      content-type:
+      - application/json
+      host:
+      - pydanticai7521574644.openai.azure.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is the capital of France?
+        role: user
+      model: gpt-4o
+      n: 1
+      stream: false
+    uri: https://pydanticai7521574644.openai.azure.com/openai/deployments/gpt-4o/chat/completions?api-version=2024-12-01-preview
+  response:
+    headers:
+      apim-request-id:
+      - 1d93fae1-cb8e-4789-8fb6-d26577a3cb77
+      azureml-model-session:
+      - v20250225-1-161802030
+      cmp-upstream-response-duration:
+      - '235'
+      content-length:
+      - '1223'
+      content-type:
+      - application/json
+      ms-azureml-model-time:
+      - '315'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+    parsed_body:
+      choices:
+      - content_filter_results:
+          hate:
+            filtered: false
+            severity: safe
+          protected_material_code:
+            detected: false
+            filtered: false
+          protected_material_text:
+            detected: false
+            filtered: false
+          self_harm:
+            filtered: false
+            severity: safe
+          sexual:
+            filtered: false
+            severity: safe
+          violence:
+            filtered: false
+            severity: safe
+        finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          content: The capital of France is **Paris**.
+          refusal: null
+          role: assistant
+      created: 1741880483
+      id: chatcmpl-BAeyRj7gU6aCNSSAskAFbupBWYMIT
+      model: gpt-4o-2024-11-20
+      object: chat.completion
+      prompt_filter_results:
+      - content_filter_results:
+          hate:
+            filtered: false
+            severity: safe
+          jailbreak:
+            detected: false
+            filtered: false
+          self_harm:
+            filtered: false
+            severity: safe
+          sexual:
+            filtered: false
+            severity: safe
+          violence:
+            filtered: false
+            severity: safe
+        prompt_index: 0
+      system_fingerprint: fp_ded0d14823
+      usage:
+        completion_tokens: 9
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          audio_tokens: 0
+          reasoning_tokens: 0
+          rejected_prediction_tokens: 0
+        prompt_tokens: 14
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+        total_tokens: 23
+    status:
+      code: 200
+      message: OK
+version: 1
