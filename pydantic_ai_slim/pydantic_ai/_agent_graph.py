@@ -223,6 +223,7 @@ async def _prepare_request_parameters(
         if not server.is_running:
             raise exceptions.UserError(f'MCP server is not running: {server}')
         tool_defs = await server.list_tools()
+        # TODO(Marcelo): We should check if the tool names are unique. If not, we should raise an error.
         function_tool_defs.extend(tool_defs)
 
     await asyncio.gather(
