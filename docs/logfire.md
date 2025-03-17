@@ -151,7 +151,7 @@ agent = Agent('openai:gpt-4o', instrument=instrumentation_settings)
 Agent.instrument_all(instrumentation_settings)
 ```
 
-For now, this won't look as good in the Logfire UI, but we're working on it. **Once the UI supports it, `event_mode='logs'` will become the default.**
+For now, this won't look as good in the Logfire UI, but we're working on it.
 
 If you have very long conversations, the `events` span attribute may be truncated. Using `event_mode='logs'` will help avoid this issue.
 
