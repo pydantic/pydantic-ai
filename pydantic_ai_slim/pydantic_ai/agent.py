@@ -984,7 +984,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
             docstring_format: The format of the docstring, see [`DocstringFormat`][pydantic_ai.tools.DocstringFormat].
                 Defaults to `'auto'`, such that the format is inferred from the structure of the docstring.
             require_parameter_descriptions: If True, raise an error if a parameter description is missing. Defaults to False.
-            schema_generator: The JSON schema generator class to use for this tool. Defaults to `GenerateJsonSchema`.
+            schema_generator: The JSON schema generator class to use for this tool. Defaults to `GenerateToolJsonSchema`.
         """
         if func is None:
 
@@ -1080,7 +1080,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
             docstring_format: The format of the docstring, see [`DocstringFormat`][pydantic_ai.tools.DocstringFormat].
                 Defaults to `'auto'`, such that the format is inferred from the structure of the docstring.
             require_parameter_descriptions: If True, raise an error if a parameter description is missing. Defaults to False.
-            schema_generator: The JSON schema generator class to use for this tool. Defaults to `GenerateJsonSchema`.
+            schema_generator: The JSON schema generator class to use for this tool. Defaults to `GenerateToolJsonSchema`.
         """
         if func is None:
 
