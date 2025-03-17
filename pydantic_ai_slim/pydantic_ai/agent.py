@@ -9,6 +9,7 @@ from types import FrameType
 from typing import TYPE_CHECKING, Any, Callable, ClassVar, Generic, cast, final, overload
 
 from opentelemetry.trace import NoOpTracer, use_span
+from pydantic.json_schema import GenerateJsonSchema
 from typing_extensions import TypeGuard, TypeVar, deprecated
 
 from pydantic_graph import End, Graph, GraphRun, GraphRunContext
@@ -31,6 +32,7 @@ from .settings import ModelSettings, merge_model_settings
 from .tools import (
     AgentDepsT,
     DocstringFormat,
+    GenerateToolJsonSchema,
     RunContext,
     Tool,
     ToolFuncContext,
@@ -936,6 +938,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         prepare: ToolPrepareFunc[AgentDepsT] | None = None,
         docstring_format: DocstringFormat = 'auto',
         require_parameter_descriptions: bool = False,
+        schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
     ) -> Callable[[ToolFuncContext[AgentDepsT, ToolParams]], ToolFuncContext[AgentDepsT, ToolParams]]: ...
 
     def tool(
@@ -948,6 +951,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         prepare: ToolPrepareFunc[AgentDepsT] | None = None,
         docstring_format: DocstringFormat = 'auto',
         require_parameter_descriptions: bool = False,
+        schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
     ) -> Any:
         """Decorator to register a tool function which takes [`RunContext`][pydantic_ai.tools.RunContext] as its first argument.
 
@@ -989,6 +993,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
             docstring_format: The format of the docstring, see [`DocstringFormat`][pydantic_ai.tools.DocstringFormat].
                 Defaults to `'auto'`, such that the format is inferred from the structure of the docstring.
             require_parameter_descriptions: If True, raise an error if a parameter description is missing. Defaults to False.
+            schema_generator: The JSON schema generator class to use for this tool. Defaults to `GenerateToolJsonSchema`.
         """
         if func is None:
 
@@ -997,7 +1002,14 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
             ) -> ToolFuncContext[AgentDepsT, ToolParams]:
                 # noinspection PyTypeChecker
                 self._register_function(
-                    func_, True, name, retries, prepare, docstring_format, require_parameter_descriptions
+                    func_,
+                    True,
+                    name,
+                    retries,
+                    prepare,
+                    docstring_format,
+                    require_parameter_descriptions,
+                    schema_generator,
                 )
                 return func_
 
@@ -1005,7 +1017,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         else:
             # noinspection PyTypeChecker
             self._register_function(
-                func, True, name, retries, prepare, docstring_format, require_parameter_descriptions
+                func, True, name, retries, prepare, docstring_format, require_parameter_descriptions, schema_generator
             )
             return func
 
@@ -1022,6 +1034,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         prepare: ToolPrepareFunc[AgentDepsT] | None = None,
         docstring_format: DocstringFormat = 'auto',
         require_parameter_descriptions: bool = False,
+        schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
     ) -> Callable[[ToolFuncPlain[ToolParams]], ToolFuncPlain[ToolParams]]: ...
 
     def tool_plain(
@@ -1034,6 +1047,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         prepare: ToolPrepareFunc[AgentDepsT] | None = None,
         docstring_format: DocstringFormat = 'auto',
         require_parameter_descriptions: bool = False,
+        schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
     ) -> Any:
         """Decorator to register a tool function which DOES NOT take `RunContext` as an argument.
 
@@ -1075,20 +1089,28 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
             docstring_format: The format of the docstring, see [`DocstringFormat`][pydantic_ai.tools.DocstringFormat].
                 Defaults to `'auto'`, such that the format is inferred from the structure of the docstring.
             require_parameter_descriptions: If True, raise an error if a parameter description is missing. Defaults to False.
+            schema_generator: The JSON schema generator class to use for this tool. Defaults to `GenerateToolJsonSchema`.
         """
         if func is None:
 
             def tool_decorator(func_: ToolFuncPlain[ToolParams]) -> ToolFuncPlain[ToolParams]:
                 # noinspection PyTypeChecker
                 self._register_function(
-                    func_, False, name, retries, prepare, docstring_format, require_parameter_descriptions
+                    func_,
+                    False,
+                    name,
+                    retries,
+                    prepare,
+                    docstring_format,
+                    require_parameter_descriptions,
+                    schema_generator,
                 )
                 return func_
 
             return tool_decorator
         else:
             self._register_function(
-                func, False, name, retries, prepare, docstring_format, require_parameter_descriptions
+                func, False, name, retries, prepare, docstring_format, require_parameter_descriptions, schema_generator
             )
             return func
 
@@ -1101,6 +1123,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         prepare: ToolPrepareFunc[AgentDepsT] | None,
         docstring_format: DocstringFormat,
         require_parameter_descriptions: bool,
+        schema_generator: type[GenerateJsonSchema],
     ) -> None:
         """Private utility to register a function as a tool."""
         retries_ = retries if retries is not None else self._default_retries
@@ -1112,6 +1135,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
             prepare=prepare,
             docstring_format=docstring_format,
             require_parameter_descriptions=require_parameter_descriptions,
+            schema_generator=schema_generator,
         )
         self._register_tool(tool)
 

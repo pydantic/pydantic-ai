@@ -44,6 +44,7 @@ def function_schema(  # noqa: C901
     takes_ctx: bool,
     docstring_format: DocstringFormat,
     require_parameter_descriptions: bool,
+    schema_generator: type[GenerateJsonSchema],
 ) -> FunctionSchema:
     """Build a Pydantic validator and JSON schema from a tool function.
 
@@ -52,6 +53,7 @@ def function_schema(  # noqa: C901
         takes_ctx: Whether the function takes a `RunContext` first argument.
         docstring_format: The docstring format to use.
         require_parameter_descriptions: Whether to require descriptions for all tool function parameters.
+        schema_generator: The JSON schema generator class to use.
 
     Returns:
         A `FunctionSchema` instance.
@@ -150,14 +152,12 @@ def function_schema(  # noqa: C901
     )
     # PluggableSchemaValidator is api compatible with SchemaValidator
     schema_validator = cast(SchemaValidator, schema_validator)
-    json_schema = GenerateJsonSchema().generate(schema)
+    json_schema = schema_generator().generate(schema)
 
     # workaround for https://github.com/pydantic/pydantic/issues/10785
-    # if we build a custom TypeDict schema (matches when `single_arg_name is None`), we manually set
+    # if we build a custom TypedDict schema (matches when `single_arg_name is None`), we manually set
     # `additionalProperties` in the JSON Schema
-    if single_arg_name is None:
-        json_schema['additionalProperties'] = bool(var_kwargs_schema)
-    elif not description:
+    if single_arg_name is not None and not description:
         # if the tool description is not set, and we have a single parameter, take the description from that
         # and set it on the tool
         description = json_schema.pop('description', None)
@@ -218,6 +218,7 @@ def _build_schema(
     td_schema = core_schema.typed_dict_schema(
         fields,
         config=core_config,
+        total=var_kwargs_schema is None,
         extras_schema=gen_schema.generate_schema(var_kwargs_schema) if var_kwargs_schema else None,
     )
     return td_schema, None
