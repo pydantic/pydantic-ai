@@ -7,8 +7,8 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Callable, Generic, Literal, Union, cast
 
 from pydantic import ValidationError
-from pydantic.json_schema import GenerateJsonSchema
-from pydantic_core import SchemaValidator
+from pydantic.json_schema import GenerateJsonSchema, JsonSchemaValue
+from pydantic_core import SchemaValidator, core_schema
 from typing_extensions import Concatenate, ParamSpec, TypeAlias, TypeVar
 
 from . import _pydantic, _utils, messages as _messages, models
@@ -143,6 +143,22 @@ DocstringFormat = Literal['google', 'numpy', 'sphinx', 'auto']
 A = TypeVar('A')
 
 
+class GenerateToolJsonSchema(GenerateJsonSchema):
+    def typed_dict_schema(self, schema: core_schema.TypedDictSchema) -> JsonSchemaValue:
+        s = super().typed_dict_schema(schema)
+        total = schema.get('total')
+        if total is not None:
+            s['additionalProperties'] = not total
+        return s
+
+    def _named_required_fields_schema(self, named_required_fields: Sequence[tuple[str, bool, Any]]) -> JsonSchemaValue:
+        # Remove largely-useless property titles
+        s = super()._named_required_fields_schema(named_required_fields)
+        for p in s.get('properties', {}):
+            s['properties'][p].pop('title', None)
+        return s
+
+
 @dataclass(init=False)
 class Tool(Generic[AgentDepsT]):
     """A tool function for an agent."""
@@ -155,7 +171,6 @@ class Tool(Generic[AgentDepsT]):
     prepare: ToolPrepareFunc[AgentDepsT] | None
     docstring_format: DocstringFormat
     require_parameter_descriptions: bool
-    schema_generator: type[GenerateJsonSchema]
     _is_async: bool = field(init=False)
     _single_arg_name: str | None = field(init=False)
     _positional_fields: list[str] = field(init=False)
@@ -178,7 +193,7 @@ class Tool(Generic[AgentDepsT]):
         prepare: ToolPrepareFunc[AgentDepsT] | None = None,
         docstring_format: DocstringFormat = 'auto',
         require_parameter_descriptions: bool = False,
-        schema_generator: type[GenerateJsonSchema] = GenerateJsonSchema,
+        schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
     ):
         """Create a new tool instance.
 

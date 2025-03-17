@@ -157,12 +157,7 @@ def function_schema(  # noqa: C901
     # workaround for https://github.com/pydantic/pydantic/issues/10785
     # if we build a custom TypedDict schema (matches when `single_arg_name is None`), we manually set
     # `additionalProperties` in the JSON Schema
-    if single_arg_name is None:
-        if schema_generator is GenerateJsonSchema:
-            # If you are overriding the GenerateJsonSchema, you should handle this yourself
-            # TODO: It might make sense to instead use a custom subclass of GenerateJsonSchema that does this..
-            json_schema['additionalProperties'] = bool(var_kwargs_schema)
-    elif not description:
+    if single_arg_name is not None and not description:
         # if the tool description is not set, and we have a single parameter, take the description from that
         # and set it on the tool
         description = json_schema.pop('description', None)
@@ -223,6 +218,7 @@ def _build_schema(
     td_schema = core_schema.typed_dict_schema(
         fields,
         config=core_config,
+        total=var_kwargs_schema is None,
         extras_schema=gen_schema.generate_schema(var_kwargs_schema) if var_kwargs_schema else None,
     )
     return td_schema, None

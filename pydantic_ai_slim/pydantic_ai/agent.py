@@ -32,6 +32,7 @@ from .settings import ModelSettings, merge_model_settings
 from .tools import (
     AgentDepsT,
     DocstringFormat,
+    GenerateToolJsonSchema,
     RunContext,
     Tool,
     ToolFuncContext,
@@ -928,7 +929,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         prepare: ToolPrepareFunc[AgentDepsT] | None = None,
         docstring_format: DocstringFormat = 'auto',
         require_parameter_descriptions: bool = False,
-        schema_generator: type[GenerateJsonSchema] = GenerateJsonSchema,
+        schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
     ) -> Callable[[ToolFuncContext[AgentDepsT, ToolParams]], ToolFuncContext[AgentDepsT, ToolParams]]: ...
 
     def tool(
@@ -941,7 +942,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         prepare: ToolPrepareFunc[AgentDepsT] | None = None,
         docstring_format: DocstringFormat = 'auto',
         require_parameter_descriptions: bool = False,
-        schema_generator: type[GenerateJsonSchema] = GenerateJsonSchema,
+        schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
     ) -> Any:
         """Decorator to register a tool function which takes [`RunContext`][pydantic_ai.tools.RunContext] as its first argument.
 
@@ -1024,7 +1025,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         prepare: ToolPrepareFunc[AgentDepsT] | None = None,
         docstring_format: DocstringFormat = 'auto',
         require_parameter_descriptions: bool = False,
-        schema_generator: type[GenerateJsonSchema] = GenerateJsonSchema,
+        schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
     ) -> Callable[[ToolFuncPlain[ToolParams]], ToolFuncPlain[ToolParams]]: ...
 
     def tool_plain(
@@ -1037,7 +1038,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         prepare: ToolPrepareFunc[AgentDepsT] | None = None,
         docstring_format: DocstringFormat = 'auto',
         require_parameter_descriptions: bool = False,
-        schema_generator: type[GenerateJsonSchema] = GenerateJsonSchema,
+        schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
     ) -> Any:
         """Decorator to register a tool function which DOES NOT take `RunContext` as an argument.
 
