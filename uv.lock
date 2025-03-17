@@ -1698,6 +1698,12 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/e8/0e/885f156ade60108e67bf044fada5269da68e29d758a10b0c513f4d85dd76/mcp-1.4.1-py3-none-any.whl", hash = "sha256:a7716b1ec1c054e76f49806f7d96113b99fc1166fc9244c2c6f19867cb75b593", size = 72448 },
 ]
 
+[package.optional-dependencies]
+cli = [
+    { name = "python-dotenv", marker = "python_full_version >= '3.10'" },
+    { name = "typer", marker = "python_full_version >= '3.10'" },
+]
+
 [[package]]
 name = "mcp-run-python"
 version = "0.0.1"
@@ -1727,31 +1733,6 @@ dev = [
     { name = "micropip", marker = "python_full_version >= '3.12'", specifier = ">=0.9.0" },
     { name = "pytest", specifier = ">=8.3.3" },
     { name = "pytest-pretty", specifier = ">=1.2.0" },
-]
-
-[[package]]
-name = "mcp"
-version = "1.4.1"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "anyio", marker = "python_full_version >= '3.10'" },
-    { name = "httpx", marker = "python_full_version >= '3.10'" },
-    { name = "httpx-sse", marker = "python_full_version >= '3.10'" },
-    { name = "pydantic", marker = "python_full_version >= '3.10'" },
-    { name = "pydantic-settings", marker = "python_full_version >= '3.10'" },
-    { name = "sse-starlette", marker = "python_full_version >= '3.10'" },
-    { name = "starlette", marker = "python_full_version >= '3.10'" },
-    { name = "uvicorn", marker = "python_full_version >= '3.10'" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/50/cc/5c5bb19f1a0f8f89a95e25cb608b0b07009e81fd4b031e519335404e1422/mcp-1.4.1.tar.gz", hash = "sha256:b9655d2de6313f9d55a7d1df62b3c3fe27a530100cc85bf23729145b0dba4c7a", size = 154942 }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/e8/0e/885f156ade60108e67bf044fada5269da68e29d758a10b0c513f4d85dd76/mcp-1.4.1-py3-none-any.whl", hash = "sha256:a7716b1ec1c054e76f49806f7d96113b99fc1166fc9244c2c6f19867cb75b593", size = 72448 },
-]
-
-[package.optional-dependencies]
-cli = [
-    { name = "python-dotenv", marker = "python_full_version >= '3.10'" },
-    { name = "typer", marker = "python_full_version >= '3.10'" },
 ]
 
 [[package]]
