@@ -265,19 +265,18 @@ def print_schema(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse
     print(tool.parameters_json_schema)
     """
     {
+        'additionalProperties': False,
         'properties': {
-            'a': {'description': 'apple pie', 'title': 'A', 'type': 'integer'},
-            'b': {'description': 'banana cake', 'title': 'B', 'type': 'string'},
+            'a': {'description': 'apple pie', 'type': 'integer'},
+            'b': {'description': 'banana cake', 'type': 'string'},
             'c': {
                 'additionalProperties': {'items': {'type': 'number'}, 'type': 'array'},
                 'description': 'carrot smoothie',
-                'title': 'C',
                 'type': 'object',
             },
         },
         'required': ['a', 'b', 'c'],
         'type': 'object',
-        'additionalProperties': False,
     }
     """
     return ModelResponse(parts=[TextPart('foobar')])
@@ -328,9 +327,9 @@ print(test_model.last_model_request_parameters.function_tools)
         description='This is a Foobar',
         parameters_json_schema={
             'properties': {
-                'x': {'title': 'X', 'type': 'integer'},
-                'y': {'title': 'Y', 'type': 'string'},
-                'z': {'default': 3.14, 'title': 'Z', 'type': 'number'},
+                'x': {'type': 'integer'},
+                'y': {'type': 'string'},
+                'z': {'default': 3.14, 'type': 'number'},
             },
             'required': ['x', 'y'],
             'title': 'Foobar',
@@ -432,16 +431,12 @@ print(test_model.last_model_request_parameters.function_tools)
         name='greet',
         description='',
         parameters_json_schema={
+            'additionalProperties': False,
             'properties': {
-                'name': {
-                    'title': 'Name',
-                    'type': 'string',
-                    'description': 'Name of the human to greet.',
-                }
+                'name': {'type': 'string', 'description': 'Name of the human to greet.'}
             },
             'required': ['name'],
             'type': 'object',
-            'additionalProperties': False,
         },
         outer_typed_dict_key=None,
     )

@@ -6,8 +6,9 @@ import pydantic_core
 import pytest
 from _pytest.logging import LogCaptureFixture
 from inline_snapshot import snapshot
-from pydantic import BaseModel, Field
-from pydantic_core import PydanticSerializationError
+from pydantic import BaseModel, Field, WithJsonSchema
+from pydantic.json_schema import GenerateJsonSchema, JsonSchemaValue
+from pydantic_core import PydanticSerializationError, core_schema
 
 from pydantic_ai import Agent, RunContext, Tool, UserError, _pydantic
 from pydantic_ai.messages import (
@@ -20,7 +21,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.tools import GenerateToolJsonSchema, ToolDefinition
 
 
 def test_tool_no_ctx():
@@ -100,8 +101,8 @@ def test_docstring_google(docstring_format: Literal['google', 'auto']):
             'description': 'Do foobar stuff, a lot.',
             'parameters_json_schema': {
                 'properties': {
-                    'foo': {'description': 'The foo thing.', 'title': 'Foo', 'type': 'integer'},
-                    'bar': {'description': 'The bar thing.', 'title': 'Bar', 'type': 'string'},
+                    'foo': {'description': 'The foo thing.', 'type': 'integer'},
+                    'bar': {'description': 'The bar thing.', 'type': 'string'},
                 },
                 'required': ['foo', 'bar'],
                 'type': 'object',
@@ -138,7 +139,7 @@ def test_docstring_sphinx(docstring_format: Literal['sphinx', 'auto']):
             'name': 'sphinx_style_docstring',
             'description': 'Sphinx style docstring.',
             'parameters_json_schema': {
-                'properties': {'foo': {'description': 'The foo thing.', 'title': 'Foo', 'type': 'integer'}},
+                'properties': {'foo': {'description': 'The foo thing.', 'type': 'integer'}},
                 'required': ['foo'],
                 'type': 'object',
                 'additionalProperties': False,
@@ -174,8 +175,8 @@ def test_docstring_numpy(docstring_format: Literal['numpy', 'auto']):
             'description': 'Numpy style docstring.',
             'parameters_json_schema': {
                 'properties': {
-                    'foo': {'description': 'The foo thing.', 'title': 'Foo', 'type': 'integer'},
-                    'bar': {'description': 'The bar thing.', 'title': 'Bar', 'type': 'string'},
+                    'foo': {'description': 'The foo thing.', 'type': 'integer'},
+                    'bar': {'description': 'The bar thing.', 'type': 'string'},
                 },
                 'required': ['foo', 'bar'],
                 'type': 'object',
@@ -234,8 +235,8 @@ def test_docstring_google_no_body(docstring_format: Literal['google', 'auto']):
             'description': '',
             'parameters_json_schema': {
                 'properties': {
-                    'foo': {'description': 'The foo thing.', 'title': 'Foo', 'type': 'integer'},
-                    'bar': {'description': 'from fields', 'title': 'Bar', 'type': 'string'},
+                    'foo': {'description': 'The foo thing.', 'type': 'integer'},
+                    'bar': {'description': 'from fields', 'type': 'string'},
                 },
                 'required': ['foo', 'bar'],
                 'type': 'object',
@@ -266,8 +267,8 @@ def test_takes_just_model():
             'description': None,
             'parameters_json_schema': {
                 'properties': {
-                    'x': {'title': 'X', 'type': 'integer'},
-                    'y': {'title': 'Y', 'type': 'string'},
+                    'x': {'type': 'integer'},
+                    'y': {'type': 'string'},
                 },
                 'required': ['x', 'y'],
                 'title': 'Foo',
@@ -298,8 +299,8 @@ def test_takes_model_and_int():
                 '$defs': {
                     'Foo': {
                         'properties': {
-                            'x': {'title': 'X', 'type': 'integer'},
-                            'y': {'title': 'Y', 'type': 'string'},
+                            'x': {'type': 'integer'},
+                            'y': {'type': 'string'},
                         },
                         'required': ['x', 'y'],
                         'title': 'Foo',
@@ -308,7 +309,7 @@ def test_takes_model_and_int():
                 },
                 'properties': {
                     'model': {'$ref': '#/$defs/Foo'},
-                    'z': {'title': 'Z', 'type': 'integer'},
+                    'z': {'type': 'integer'},
                 },
                 'required': ['model', 'z'],
                 'type': 'object',
@@ -353,7 +354,11 @@ def test_init_tool_with_function_schema():
         raise NotImplementedError
 
     y_fs = _pydantic.function_schema(
-        y_tool, takes_ctx=False, docstring_format='auto', require_parameter_descriptions=False
+        y_tool,
+        takes_ctx=False,
+        docstring_format='auto',
+        require_parameter_descriptions=False,
+        schema_generator=GenerateToolJsonSchema,
     )
     agent = Agent('test', tools=[Tool(x_tool, function_schema=y_fs)])
 
@@ -376,7 +381,11 @@ def test_init_tool_ctx_with_function_schema():
         raise NotImplementedError
 
     y_fs = _pydantic.function_schema(
-        y_tool, takes_ctx=True, docstring_format='auto', require_parameter_descriptions=False
+        y_tool,
+        takes_ctx=True,
+        docstring_format='auto',
+        require_parameter_descriptions=False,
+        schema_generator=GenerateToolJsonSchema,
     )
     agent = Agent('test', tools=[Tool(x_tool, function_schema=y_fs, takes_ctx=True)], deps_type=int)
 
@@ -690,7 +699,7 @@ def test_json_schema_required_parameters(set_event_loop: None):
                 'outer_typed_dict_key': None,
                 'parameters_json_schema': {
                     'additionalProperties': False,
-                    'properties': {'a': {'title': 'A', 'type': 'integer'}, 'b': {'title': 'B', 'type': 'integer'}},
+                    'properties': {'a': {'type': 'integer'}, 'b': {'type': 'integer'}},
                     'required': ['a'],
                     'type': 'object',
                 },
@@ -701,7 +710,7 @@ def test_json_schema_required_parameters(set_event_loop: None):
                 'outer_typed_dict_key': None,
                 'parameters_json_schema': {
                     'additionalProperties': False,
-                    'properties': {'a': {'title': 'A', 'type': 'integer'}, 'b': {'title': 'B', 'type': 'integer'}},
+                    'properties': {'a': {'type': 'integer'}, 'b': {'type': 'integer'}},
                     'required': ['b'],
                     'type': 'object',
                 },
@@ -751,3 +760,47 @@ def test_call_tool_without_unrequired_parameters(set_event_loop: None):
         ]
     )
     assert tool_returns == snapshot([15, 17, 51, 68])
+
+
+def test_schema_generator():
+    class MyGenerateJsonSchema(GenerateJsonSchema):
+        def typed_dict_schema(self, schema: core_schema.TypedDictSchema) -> JsonSchemaValue:
+            # Add useless property titles just to show we can
+            s = super().typed_dict_schema(schema)
+            for p in s.get('properties', {}):
+                s['properties'][p]['title'] = f'{s["properties"][p].get("title")} title'
+            return s
+
+    agent = Agent(FunctionModel(get_json_schema))
+
+    def my_tool(x: Annotated[Union[str, None], WithJsonSchema({'type': 'string'})] = None, **kwargs: Any):
+        return x  # pragma: no cover
+
+    agent.tool_plain(name='my_tool_1')(my_tool)
+    agent.tool_plain(name='my_tool_2', schema_generator=MyGenerateJsonSchema)(my_tool)
+
+    result = agent.run_sync('Hello')
+    json_schema = json.loads(result.data)
+    assert json_schema == snapshot(
+        [
+            {
+                'description': '',
+                'name': 'my_tool_1',
+                'outer_typed_dict_key': None,
+                'parameters_json_schema': {
+                    'additionalProperties': True,
+                    'properties': {'x': {'type': 'string'}},
+                    'type': 'object',
+                },
+            },
+            {
+                'description': '',
+                'name': 'my_tool_2',
+                'outer_typed_dict_key': None,
+                'parameters_json_schema': {
+                    'properties': {'x': {'type': 'string', 'title': 'X title'}},
+                    'type': 'object',
+                },
+            },
+        ]
+    )
