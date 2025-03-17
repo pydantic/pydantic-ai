@@ -53,9 +53,10 @@ logfire = ["logfire>=2.3"]
 pydantic-ai-slim = { workspace = true }
 pydantic-graph = { workspace = true }
 pydantic-ai-examples = { workspace = true }
+mcp-run-python = { workspace = true }
 
 [tool.uv.workspace]
-members = ["pydantic_ai_slim", "pydantic_graph", "examples"]
+members = ["pydantic_ai_slim", "pydantic_graph", "examples", "mcp-run-python"]
 
 [dependency-groups]
 # dev dependencies are defined in `pydantic-ai-slim/pyproject.toml` to allow for minimal testing
@@ -82,6 +83,7 @@ line-length = 120
 target-version = "py39"
 include = [
     "pydantic_ai_slim/**/*.py",
+    "mcp-run-python/**/*.py",
     "pydantic_graph/**/*.py",
     "examples/**/*.py",
     "tests/**/*.py",
@@ -116,18 +118,21 @@ quote-style = "single"
 "tests/**/*.py" = ["D"]
 "docs/**/*.py" = ["D"]
 "examples/**/*.py" = ["D101", "D103"]
+"mcp-run-python/**/*.py" = ["D", "TID251"]
 
 [tool.pyright]
 typeCheckingMode = "strict"
 reportMissingTypeStubs = false
 reportUnnecessaryIsInstance = false
 reportUnnecessaryTypeIgnoreComment = true
-include = ["pydantic_ai_slim", "pydantic_graph", "tests", "examples"]
+reportMissingModuleSource = false
+include = ["pydantic_ai_slim", "mcp-run-python", "pydantic_graph", "tests", "examples"]
 venvPath = ".venv"
 # see https://github.com/microsoft/pyright/issues/7771 - we don't want to error on decorated functions in tests
 # which are not otherwise used
 executionEnvironments = [{ root = "tests", reportUnusedFunction = false }]
-exclude = ["examples/pydantic_ai_examples/weather_agent_gradio.py"]
+exclude = ["examples/pydantic_ai_examples/weather_agent_gradio.py", "mcp-run-python/node_modules"]
+extraPaths = ["mcp-run-python/stubs"]
 
 [tool.mypy]
 files = "tests/typed_agent.py,tests/typed_graph.py"

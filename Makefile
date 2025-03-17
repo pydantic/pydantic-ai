@@ -27,6 +27,10 @@ lint: ## Lint the code
 	uv run ruff format --check
 	uv run ruff check
 
+.PHONY: lint-js
+lint-js: ## Lint JS and TS code
+	cd mcp-run-python && npm run lint
+
 .PHONY: typecheck-pyright
 typecheck-pyright:
 	@# PYRIGHT_PYTHON_IGNORE_WARNINGS avoids the overhead of making a request to github on every invocation
@@ -61,6 +65,11 @@ test-all-python: ## Run tests on Python 3.9 to 3.13
 testcov: test ## Run tests and generate a coverage report
 	@echo "building coverage html"
 	@uv run coverage html
+
+.PHONY: test-mrp
+test-mrp: ## Build and  tests of mcp-run-python
+	cd mcp-run-python && npm run prepare
+	uv run --package mcp-run-python pytest mcp-run-python -v
 
 .PHONY: update-examples
 update-examples: ## Update documentation examples
