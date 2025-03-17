@@ -723,7 +723,7 @@ def test_schema_generator():
 
     agent = Agent(FunctionModel(get_json_schema))
 
-    def my_tool(x: Annotated[str | None, WithJsonSchema({'type': 'string'})] = None, **kwargs: Any):
+    def my_tool(x: Annotated[Union[str, None], WithJsonSchema({'type': 'string'})] = None, **kwargs: Any):
         return x
 
     agent.tool_plain(name='my_tool_1')(my_tool)
