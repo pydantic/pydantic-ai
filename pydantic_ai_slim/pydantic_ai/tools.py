@@ -2,17 +2,24 @@ from __future__ import annotations as _annotations
 
 import dataclasses
 import inspect
-from collections.abc import Awaitable, Sequence
+from collections.abc import Awaitable, Iterator, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Callable, Generic, Literal, Union, cast
 
+from opentelemetry.trace import Tracer
 from pydantic import ValidationError
 from pydantic.json_schema import GenerateJsonSchema, JsonSchemaValue
-from pydantic_core import SchemaValidator, core_schema
+from pydantic_core import SchemaValidator, core_schema, to_json
 from typing_extensions import Concatenate, ParamSpec, TypeAlias, TypeVar
 
 from . import _pydantic, _utils, messages as _messages, models
 from .exceptions import ModelRetry, UnexpectedModelBehavior
+
+try:
+    import logfire
+except ImportError:
+    logfire = None
 
 if TYPE_CHECKING:
     from .result import Usage
@@ -286,7 +293,7 @@ class Tool(Generic[AgentDepsT]):
             return tool_def
 
     async def run(
-        self, message: _messages.ToolCallPart, run_context: RunContext[AgentDepsT]
+        self, message: _messages.ToolCallPart, run_context: RunContext[AgentDepsT], tracer: Tracer
     ) -> _messages.ToolReturnPart | _messages.RetryPromptPart:
         """Run the tool function asynchronously."""
         try:
@@ -299,12 +306,13 @@ class Tool(Generic[AgentDepsT]):
 
         args, kwargs = self._call_args(args_dict, message, run_context)
         try:
-            if self._is_async:
-                function = cast(Callable[[Any], Awaitable[str]], self.function)
-                response_content = await function(*args, **kwargs)
-            else:
-                function = cast(Callable[[Any], str], self.function)
-                response_content = await _utils.run_in_executor(function, *args, **kwargs)
+            with self._run_span(args_dict, tracer):
+                if self._is_async:
+                    function = cast(Callable[[Any], Awaitable[str]], self.function)
+                    response_content = await function(*args, **kwargs)
+                else:
+                    function = cast(Callable[[Any], str], self.function)
+                    response_content = await _utils.run_in_executor(function, *args, **kwargs)
         except ModelRetry as e:
             return self._on_error(e, message)
 
@@ -337,6 +345,27 @@ class Tool(Generic[AgentDepsT]):
             args.extend(args_dict.pop(self._var_positional_field))
 
         return args, args_dict
+
+    @contextmanager
+    def _run_span(self, args_dict: dict[str, Any], tracer: Tracer) -> Iterator[None]:
+        """Create a span around the tool function call.
+
+        If installed, we want to use logfire for the span so it can take care of formatting arguments nicely
+        otherwise we call back to using opentelemetry directly.
+        """
+        span_attributes: dict[str, str | float | int] = {'pydantic_ai.tool': self.name}
+        if logfire:
+            with logfire.span('running tool: {pydantic_ai.tool}', **span_attributes, **args_dict):
+                yield
+        else:
+            for key, value in args_dict.items():
+                if isinstance(value, (str, int, float)):
+                    span_attributes[key] = value
+                else:
+                    span_attributes[key] = to_json(value, fallback=repr).decode()
+
+            with tracer.start_as_current_span('running tool', attributes=span_attributes):
+                yield
 
     def _on_error(
         self, exc: ValidationError | ModelRetry, call_message: _messages.ToolCallPart
