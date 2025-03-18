@@ -72,4 +72,6 @@ class GroqProvider(Provider[AsyncGroq]):
             elif http_client is not None:
                 self._client = AsyncGroq(base_url=self.base_url, api_key=api_key, http_client=http_client)
             else:
-                self._client = AsyncGroq(base_url=self.base_url, api_key=api_key, http_client=cached_async_http_client())
+                self._client = AsyncGroq(
+                    base_url=self.base_url, api_key=api_key, http_client=cached_async_http_client()
+                )
