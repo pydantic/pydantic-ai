@@ -358,11 +358,8 @@ class Tool(Generic[AgentDepsT]):
             with logfire.span('running tool: {pydantic_ai.tool}', **span_attributes, **args_dict):
                 yield
         else:
-            for key, value in args_dict.items():
-                if isinstance(value, (str, int, float)):
-                    span_attributes[key] = value
-                else:
-                    span_attributes[key] = to_json(value, fallback=repr).decode()
+            for k, v in args_dict.items():
+                span_attributes[k] = v if isinstance(v, (str, int, float)) else to_json(v, fallback=repr).decode()
 
             with tracer.start_as_current_span('running tool', attributes=span_attributes):
                 yield
