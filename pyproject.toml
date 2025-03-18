@@ -126,7 +126,7 @@ reportMissingTypeStubs = false
 reportUnnecessaryIsInstance = false
 reportUnnecessaryTypeIgnoreComment = true
 reportMissingModuleSource = false
-include = ["pydantic_ai_slim", "mcp-run-python", "pydantic_graph", "tests", "examples"]
+include = ["pydantic_ai_slim", "pydantic_graph", "tests", "examples"]
 venvPath = ".venv"
 # see https://github.com/microsoft/pyright/issues/7771 - we don't want to error on decorated functions in tests
 # which are not otherwise used
