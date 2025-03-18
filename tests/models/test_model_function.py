@@ -339,7 +339,7 @@ def test_call_all():
         [
             ModelRequest(
                 parts=[
-                    SystemPromptPart(content='foobar'),
+                    SystemPromptPart(content='foobar', timestamp=IsNow(tz=timezone.utc)),
                     UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc)),
                 ]
             ),

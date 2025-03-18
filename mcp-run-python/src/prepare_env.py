@@ -64,7 +64,7 @@ async def prepare_env(files: list[File]) -> Success | Error:
 
         with _micropip_logging() as logs_filename:
             try:
-                await micropip.install(dependencies, keep_going=True)
+                await micropip.install(dependencies, keep_going=True)  # type: ignore
                 importlib.invalidate_caches()
             except Exception:
                 with open(logs_filename) as f:
@@ -126,9 +126,9 @@ def _add_extra_dependencies(dependencies: list[str]) -> list[str]:
 
 @contextmanager
 def _micropip_logging() -> Iterator[str]:
-    from micropip import logging as micropip_logging
+    from micropip import logging as micropip_logging  # type: ignore
 
-    micropip_logging.setup_logging()
+    micropip_logging.setup_logging()  # type: ignore
     logger = logging.getLogger('micropip')
     logger.handlers.clear()
     logger.setLevel(logging.INFO)

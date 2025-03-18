@@ -45,6 +45,7 @@ print(result.all_messages())
             SystemPromptPart(
                 content='Be a helpful assistant.',
                 dynamic_ref=None,
+                timestamp=datetime.datetime(...),
                 part_kind='system-prompt',
             ),
             UserPromptPart(
@@ -90,6 +91,7 @@ async def main():
                     SystemPromptPart(
                         content='Be a helpful assistant.',
                         dynamic_ref=None,
+                        timestamp=datetime.datetime(...),
                         part_kind='system-prompt',
                     ),
                     UserPromptPart(
@@ -119,6 +121,7 @@ async def main():
                     SystemPromptPart(
                         content='Be a helpful assistant.',
                         dynamic_ref=None,
+                        timestamp=datetime.datetime(...),
                         part_kind='system-prompt',
                     ),
                     UserPromptPart(
@@ -176,6 +179,7 @@ print(result2.all_messages())
             SystemPromptPart(
                 content='Be a helpful assistant.',
                 dynamic_ref=None,
+                timestamp=datetime.datetime(...),
                 part_kind='system-prompt',
             ),
             UserPromptPart(
@@ -301,6 +305,7 @@ print(result2.all_messages())
             SystemPromptPart(
                 content='Be a helpful assistant.',
                 dynamic_ref=None,
+                timestamp=datetime.datetime(...),
                 part_kind='system-prompt',
             ),
             UserPromptPart(
