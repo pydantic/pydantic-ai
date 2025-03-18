@@ -138,9 +138,8 @@ class GroqModel(Model):
 
         if provider is not None:
             if isinstance(provider, str):
-                self.client = infer_provider(provider).client
-            else:
-                self.client = provider.client
+                provider = infer_provider(provider)
+            self.client = provider.client
         elif groq_client is not None:
             assert http_client is None, 'Cannot provide both `groq_client` and `http_client`'
             assert api_key is None, 'Cannot provide both `groq_client` and `api_key`'

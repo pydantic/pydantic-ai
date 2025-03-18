@@ -32,6 +32,14 @@ repos:
         types: [python]
         language: system
         pass_filenames: false
+      - id: lint-js
+        name: Lint JS
+        entry: make
+        args: [lint-js]
+        language: system
+        types_or: [javascript, ts, json]
+        files: '^mcp-run-python/'
+        pass_filenames: false
       - id: typecheck
         name: Typecheck
         entry: make

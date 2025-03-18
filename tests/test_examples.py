@@ -78,6 +78,10 @@ def test_docs_examples(
     mocker.patch('random.randint', return_value=4)
     mocker.patch('rich.prompt.Prompt.ask', side_effect=rich_prompt_ask)
 
+    if sys.version_info >= (3, 10):
+        mocker.patch('pydantic_ai.mcp.MCPServerSSE', return_value=MockMCPServer())
+        mocker.patch('mcp.server.fastmcp.FastMCP')
+
     env.set('OPENAI_API_KEY', 'testing')
     env.set('GEMINI_API_KEY', 'testing')
     env.set('GROQ_API_KEY', 'testing')
@@ -182,7 +186,22 @@ def rich_prompt_ask(prompt: str, *_args: Any, **_kwargs: Any) -> str:
         raise ValueError(f'Unexpected prompt: {prompt}')
 
 
+class MockMCPServer:
+    is_running = True
+
+    async def __aenter__(self) -> MockMCPServer:
+        return self
+
+    async def __aexit__(self, *args: Any) -> None:
+        pass
+
+    @staticmethod
+    async def list_tools() -> list[None]:
+        return []
+
+
 text_responses: dict[str, str | ToolCallPart] = {
+    'Can you convert 30 degrees celsius to fahrenheit?': '30 degrees Celsius is equal to 86 degrees Fahrenheit.',
     'What is the weather like in West London and in Wiltshire?': (
         'The weather in West London is raining, while in Wiltshire it is sunny.'
     ),
