@@ -7,7 +7,7 @@ from collections.abc import AsyncIterator, Iterator, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from dataclasses import field
-from typing import Any, Generic, Literal, Union, cast
+from typing import TYPE_CHECKING, Any, Generic, Literal, Union, cast
 
 from opentelemetry.trace import Span, Tracer
 from typing_extensions import TypeGuard, TypeVar, assert_never
@@ -27,11 +27,10 @@ from . import (
 from .models.instrumented import InstrumentedModel
 from .result import ResultDataT
 from .settings import ModelSettings, merge_model_settings
-from .tools import (
-    RunContext,
-    Tool,
-    ToolDefinition,
-)
+from .tools import RunContext, Tool, ToolDefinition
+
+if TYPE_CHECKING:
+    from .mcp import MCPServer
 
 __all__ = (
     'GraphAgentState',
@@ -94,6 +93,7 @@ class GraphAgentDeps(Generic[DepsT, ResultDataT]):
     result_validators: list[_result.ResultValidator[DepsT, ResultDataT]]
 
     function_tools: dict[str, Tool[DepsT]] = dataclasses.field(repr=False)
+    mcp_servers: Sequence[MCPServer] = dataclasses.field(repr=False)
 
     run_span: Span
     tracer: Tracer
@@ -219,7 +219,17 @@ async def _prepare_request_parameters(
         if tool_def := await tool.prepare_tool_def(ctx):
             function_tool_defs.append(tool_def)
 
-    await asyncio.gather(*map(add_tool, ctx.deps.function_tools.values()))
+    async def add_mcp_server_tools(server: MCPServer) -> None:
+        if not server.is_running:
+            raise exceptions.UserError(f'MCP server is not running: {server}')
+        tool_defs = await server.list_tools()
+        # TODO(Marcelo): We should check if the tool names are unique. If not, we should raise an error.
+        function_tool_defs.extend(tool_defs)
+
+    await asyncio.gather(
+        *map(add_tool, ctx.deps.function_tools.values()),
+        *map(add_mcp_server_tools, ctx.deps.mcp_servers),
+    )
 
     result_schema = ctx.deps.result_schema
     return models.ModelRequestParameters(
@@ -594,6 +604,21 @@ async def process_function_tools(
                 yield event
                 call_index_to_event_id[len(calls_to_run)] = event.call_id
                 calls_to_run.append((tool, call))
+        elif mcp_tool := await _tool_from_mcp_server(call.tool_name, ctx):
+            if stub_function_tools:
+                # TODO(Marcelo): We should add coverage for this part of the code.
+                output_parts.append(  # pragma: no cover
+                    _messages.ToolReturnPart(
+                        tool_name=call.tool_name,
+                        content='Tool not executed - a final result was already processed.',
+                        tool_call_id=call.tool_call_id,
+                    )
+                )
+            else:
+                event = _messages.FunctionToolCallEvent(call)
+                yield event
+                call_index_to_event_id[len(calls_to_run)] = event.call_id
+                calls_to_run.append((mcp_tool, call))
         elif result_schema is not None and call.tool_name in result_schema.tools:
             # if tool_name is in _result_schema, it means we found a result tool but an error occurred in
             # validation, we don't add another part here
@@ -639,6 +664,35 @@ async def process_function_tools(
     # This is mostly just to simplify testing
     for k in sorted(results_by_index):
         output_parts.append(results_by_index[k])
+
+
+async def _tool_from_mcp_server(
+    tool_name: str,
+    ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
+) -> Tool[DepsT] | None:
+    """Call each MCP server to find the tool with the given name.
+
+    Args:
+        tool_name: The name of the tool to find.
+        ctx: The current run context.
+
+    Returns:
+        The tool with the given name, or `None` if no tool with the given name is found.
+    """
+
+    async def run_tool(ctx: RunContext[DepsT], **args: Any) -> Any:
+        # There's no normal situation where the server will not be running at this point, we check just in case
+        # some weird edge case occurs.
+        if not server.is_running:  # pragma: no cover
+            raise exceptions.UserError(f'MCP server is not running: {server}')
+        result = await server.call_tool(tool_name, args)
+        return result
+
+    for server in ctx.deps.mcp_servers:
+        tools = await server.list_tools()
+        if tool_name in {tool.name for tool in tools}:
+            return Tool(name=tool_name, function=run_tool, takes_ctx=True)
+    return None
 
 
 def _unknown_tool(

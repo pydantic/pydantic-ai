@@ -1,0 +1,51 @@
+{
+  "name": "@pydantic/mcp-run-python",
+  "version": "0.0.3",
+  "description": "MCP server to run Python code in a sandbox.",
+  "author": "Samuel Colvin",
+  "homepage": "https://github.com/pydantic/pydantic-ai/tree/main/mcp-run-python",
+  "bugs": "https://github.com/pydantic/pydantic-ai/issues",
+  "keywords": [
+    "python",
+    "pydantic",
+    "sandbox",
+    "modelcontextprotocol",
+    "mcp"
+  ],
+  "main": "dist/index.js",
+  "license": "MIT",
+  "scripts": {
+    "format": "prettier --write -- .",
+    "lint": "eslint --max-warnings=0 src && prettier --check -- . && tsc --noEmit",
+    "prepare": "rm -rf dist && tsc && node inline_python.js",
+    "dev-sse": "npm run prepare && npx . sse",
+    "dev-stdio": "npm run prepare && npx . stdio",
+    "dev-warmup": "npm run prepare && npx . warmup"
+  },
+  "bin": "./cli.js",
+  "files": [
+    "cli.js",
+    "dist"
+  ],
+  "prettier": {
+    "singleQuote": true,
+    "semi": false,
+    "trailingComma": "all",
+    "tabWidth": 2,
+    "printWidth": 119,
+    "bracketSpacing": true
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.7.0",
+    "pyodide": "^0.27.2",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.13.10",
+    "eslint": "^9.22.0",
+    "prettier": "^3.5.3",
+    "typescript": "^5.8.2",
+    "typescript-eslint": "^8.26.1"
+  }
+}

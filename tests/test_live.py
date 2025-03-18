@@ -57,8 +57,9 @@ def groq(http_client: httpx.AsyncClient, _tmp_path: Path) -> Model:
 
 def anthropic(http_client: httpx.AsyncClient, _tmp_path: Path) -> Model:
     from pydantic_ai.models.anthropic import AnthropicModel
+    from pydantic_ai.providers.anthropic import AnthropicProvider
 
-    return AnthropicModel('claude-3-5-sonnet-latest', http_client=http_client)
+    return AnthropicModel('claude-3-5-sonnet-latest', provider=AnthropicProvider(http_client=http_client))
 
 
 def ollama(http_client: httpx.AsyncClient, _tmp_path: Path) -> Model:
@@ -72,8 +73,9 @@ def ollama(http_client: httpx.AsyncClient, _tmp_path: Path) -> Model:
 
 def mistral(http_client: httpx.AsyncClient, _tmp_path: Path) -> Model:
     from pydantic_ai.models.mistral import MistralModel
+    from pydantic_ai.providers.mistral import MistralProvider
 
-    return MistralModel('mistral-small-latest', http_client=http_client)
+    return MistralModel('mistral-small-latest', provider=MistralProvider(http_client=http_client))
 
 
 # TODO(Marcelo): We've surpassed the limit of our API key on Cohere.

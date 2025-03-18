@@ -7,7 +7,8 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Callable, Generic, Literal, Union, cast
 
 from pydantic import ValidationError
-from pydantic_core import SchemaValidator
+from pydantic.json_schema import GenerateJsonSchema, JsonSchemaValue
+from pydantic_core import SchemaValidator, core_schema
 from typing_extensions import Concatenate, ParamSpec, TypeAlias, TypeVar
 
 from . import _pydantic, _utils, messages as _messages, models
@@ -142,6 +143,22 @@ DocstringFormat = Literal['google', 'numpy', 'sphinx', 'auto']
 A = TypeVar('A')
 
 
+class GenerateToolJsonSchema(GenerateJsonSchema):
+    def typed_dict_schema(self, schema: core_schema.TypedDictSchema) -> JsonSchemaValue:
+        s = super().typed_dict_schema(schema)
+        total = schema.get('total')
+        if total is not None:
+            s['additionalProperties'] = not total
+        return s
+
+    def _named_required_fields_schema(self, named_required_fields: Sequence[tuple[str, bool, Any]]) -> JsonSchemaValue:
+        # Remove largely-useless property titles
+        s = super()._named_required_fields_schema(named_required_fields)
+        for p in s.get('properties', {}):
+            s['properties'][p].pop('title', None)
+        return s
+
+
 @dataclass(init=False)
 class Tool(Generic[AgentDepsT]):
     """A tool function for an agent."""
@@ -176,6 +193,7 @@ class Tool(Generic[AgentDepsT]):
         prepare: ToolPrepareFunc[AgentDepsT] | None = None,
         docstring_format: DocstringFormat = 'auto',
         require_parameter_descriptions: bool = False,
+        schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
     ):
         """Create a new tool instance.
 
@@ -225,11 +243,14 @@ class Tool(Generic[AgentDepsT]):
             docstring_format: The format of the docstring, see [`DocstringFormat`][pydantic_ai.tools.DocstringFormat].
                 Defaults to `'auto'`, such that the format is inferred from the structure of the docstring.
             require_parameter_descriptions: If True, raise an error if a parameter description is missing. Defaults to False.
+            schema_generator: The JSON schema generator class to use. Defaults to `GenerateToolJsonSchema`.
         """
         if takes_ctx is None:
             takes_ctx = _pydantic.takes_ctx(function)
 
-        f = _pydantic.function_schema(function, takes_ctx, docstring_format, require_parameter_descriptions)
+        f = _pydantic.function_schema(
+            function, takes_ctx, docstring_format, require_parameter_descriptions, schema_generator
+        )
         self.function = function
         self.takes_ctx = takes_ctx
         self.max_retries = max_retries

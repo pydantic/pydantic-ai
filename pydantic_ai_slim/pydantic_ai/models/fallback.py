@@ -70,14 +70,9 @@ class FallbackModel(Model):
                     exceptions.append(exc)
                     continue
                 raise exc
-            else:
-                with suppress(Exception):
-                    span = get_current_span()
-                    if span.is_recording():
-                        attributes = getattr(span, 'attributes', {})
-                        if attributes.get('gen_ai.request.model') == self.model_name:
-                            span.set_attributes(InstrumentedModel.model_attributes(model))
-                return response, usage
+
+            self._set_span_attributes(model)
+            return response, usage
 
         raise FallbackExceptionGroup('All models from FallbackModel failed', exceptions)
 
@@ -102,10 +97,20 @@ class FallbackModel(Model):
                         exceptions.append(exc)
                         continue
                     raise exc
+
+                self._set_span_attributes(model)
                 yield response
                 return
 
         raise FallbackExceptionGroup('All models from FallbackModel failed', exceptions)
+
+    def _set_span_attributes(self, model: Model):
+        with suppress(Exception):
+            span = get_current_span()
+            if span.is_recording():
+                attributes = getattr(span, 'attributes', {})
+                if attributes.get('gen_ai.request.model') == self.model_name:
+                    span.set_attributes(InstrumentedModel.model_attributes(model))
 
     @property
     def model_name(self) -> str:
