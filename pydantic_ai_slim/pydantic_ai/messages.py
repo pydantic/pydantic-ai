@@ -32,6 +32,9 @@ class SystemPromptPart:
     Only set if system prompt is dynamic, see [`system_prompt`][pydantic_ai.Agent.system_prompt] for more information.
     """
 
+    timestamp: datetime = field(default_factory=_now_utc)
+    """The timestamp of the prompt."""
+
     part_kind: Literal['system-prompt'] = 'system-prompt'
     """Part type identifier, this is available on all parts as a discriminator."""
 
