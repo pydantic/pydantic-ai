@@ -57,17 +57,21 @@ class GroqProvider(Provider[AsyncGroq]):
                 client to use. If provided, `api_key` and `http_client` must be `None`.
             http_client: An existing `AsyncHTTPClient` to use for making HTTP requests.
         """
-        api_key = api_key or os.environ.get('GROQ_API_KEY')
-
-        if api_key is None and groq_client is None:
-            raise ValueError(
-                'Set the `GROQ_API_KEY` environment variable or pass it via `GroqProvider(api_key=...)`'
-                'to use the Groq provider.'
-            )
-
         if groq_client is not None:
+            assert http_client is None, 'Cannot provide both `groq_client` and `http_client`'
+            assert api_key is None, 'Cannot provide both `groq_client` and `api_key`'
             self._client = groq_client
-        elif http_client is not None:
-            self._client = AsyncGroq(base_url=self.base_url, api_key=api_key, http_client=http_client)
         else:
-            self._client = AsyncGroq(base_url=self.base_url, api_key=api_key, http_client=cached_async_http_client())
+            api_key = api_key or os.environ.get('GROQ_API_KEY')
+
+            if api_key is None:
+                raise ValueError(
+                    'Set the `GROQ_API_KEY` environment variable or pass it via `GroqProvider(api_key=...)`'
+                    'to use the Groq provider.'
+                )
+            elif http_client is not None:
+                self._client = AsyncGroq(base_url=self.base_url, api_key=api_key, http_client=http_client)
+            else:
+                self._client = AsyncGroq(
+                    base_url=self.base_url, api_key=api_key, http_client=cached_async_http_client()
+                )
