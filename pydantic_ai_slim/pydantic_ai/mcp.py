@@ -1,8 +1,3 @@
-"""This module implements the MCP server interface between the agent and the LLM.
-
-See <https://docs.cursor.com/context/model-context-protocol> for more information.
-"""
-
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
@@ -29,13 +24,13 @@ except ImportError as _import_error:
         "you can use the `mcp` optional group — `pip install 'pydantic-ai-slim[mcp]'`"
     ) from _import_error
 
-__all__ = ('MCPServer', 'MCPServerStdio', 'MCPServerSSE')
+__all__ = 'MCPServer', 'MCPServerStdio', 'MCPServerHTTP'
 
 
 class MCPServer(ABC):
-    """Base class for MCP servers that can be used to run a command or connect to an SSE server.
+    """Base class for attaching agents to MCP servers.
 
-    See <https://modelcontextprotocol.io/introduction> for more information.
+    See <https://modelcontextprotocol.io> for more information.
     """
 
     is_running: bool = False
@@ -105,19 +100,30 @@ class MCPServer(ABC):
 
 @dataclass
 class MCPServerStdio(MCPServer):
-    """An MCP server that runs a subprocess.
+    """Runs an MCP server in a subprocess and communicates with it over stdin/stdout.
 
     This class implements the stdio transport from the MCP specification.
-    See <https://modelcontextprotocol.io/docs/concepts/transports#standard-input%2Foutput-stdio> for more information.
+    See <https://spec.modelcontextprotocol.io/specification/2024-11-05/basic/transports/#stdio> for more information.
+
+    !!! note
+        Using this class as an async context manager will start the server as a subprocess when entering the context,
+        and stop it when exiting the context.
 
     Example:
     ```python {py="3.10"}
     from pydantic_ai import Agent
     from pydantic_ai.mcp import MCPServerStdio
 
-    server = MCPServerStdio('python', ['-m', 'pydantic_ai_examples.mcp_server'])
+    server = MCPServerStdio('npx', ['-y', '@pydantic/mcp-run-python', 'stdio'])  # (1)!
     agent = Agent('openai:gpt-4o', mcp_servers=[server])
+
+    async def main():
+        async with agent.run_mcp_servers():  # (2)!
+            ...
     ```
+
+    1. See [MCP Run Python](../mcp/run-python.md) for more information.
+    2. This will start the server as a subprocess and connect to it.
     """
 
     command: str
@@ -127,7 +133,11 @@ class MCPServerStdio(MCPServer):
     """The arguments to pass to the command."""
 
     env: dict[str, str] | None = None
-    """The environment variables the CLI server will have access to."""
+    """The environment variables the CLI server will have access to.
+
+    By default the subprocess will not inherit any environment variables from the parent process.
+    If you want to inherit the environment variables from the parent process, use `env=os.environ`.
+    """
 
     @asynccontextmanager
     async def client_streams(
@@ -141,15 +151,42 @@ class MCPServerStdio(MCPServer):
 
 
 @dataclass
-class MCPServerSSE(MCPServer):
-    """An MCP server that connects to a remote server.
+class MCPServerHTTP(MCPServer):
+    """An MCP server that connects over streamable HTTP connections.
 
     This class implements the SSE transport from the MCP specification.
-    See <https://modelcontextprotocol.io/docs/concepts/transports#server-sent-events-sse> for more information.
+    See <https://spec.modelcontextprotocol.io/specification/2024-11-05/basic/transports/#http-with-sse> for more information.
+
+    The name "HTTP" is used since this implemented will be adapted in future to use the new
+    [Streamable HTTP](https://github.com/modelcontextprotocol/specification/pull/206) currently in development.
+
+    !!! note
+        Using this class as an async context manager will create a new pool of HTTP connections to connect
+        to a server which should already be running.
+
+    Example:
+    ```python {py="3.10"}
+    from pydantic_ai import Agent
+    from pydantic_ai.mcp import MCPServerHTTP
+
+    server = MCPServerStdio('http://localhost:3001/sse')  # (1)!
+    agent = Agent('openai:gpt-4o', mcp_servers=[server])
+
+    async def main():
+        async with agent.run_mcp_servers():  # (2)!
+            ...
+    ```
+
+    1. E.g. you might be connecting to a server run with `npx @pydantic/mcp-run-python sse`,
+      see [MCP Run Python](../mcp/run-python.md) for more information.
+    2. This will connect to a server running on `localhost:3001`.
     """
 
     url: str
-    """The URL of the remote server."""
+    """The URL of the SSE endpoint on the MCP server.
+
+    For example for a server running locally, this might be `http://localhost:3001/sse`.
+    """
 
     @asynccontextmanager
     async def client_streams(
