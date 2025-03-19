@@ -169,7 +169,7 @@ class MCPServerHTTP(MCPServer):
     from pydantic_ai import Agent
     from pydantic_ai.mcp import MCPServerHTTP
 
-    server = MCPServerStdio('http://localhost:3001/sse')  # (1)!
+    server = MCPServerHTTP('http://localhost:3001/sse')  # (1)!
     agent = Agent('openai:gpt-4o', mcp_servers=[server])
 
     async def main():
