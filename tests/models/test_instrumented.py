@@ -152,6 +152,8 @@ async def test_instrumented_model(capfire: CaptureLogfire):
                     'gen_ai.request.model': 'my_model',
                     'server.address': 'example.com',
                     'server.port': 8000,
+                    'model_request_parameters': '{"function_tools": [], "allow_text_result": true, "result_tools": []}',
+                    'logfire.json_schema': '{"type": "object", "properties": {"model_request_parameters": {"type": "object"}}}',
                     'gen_ai.request.temperature': 1,
                     'logfire.msg': 'chat my_model',
                     'logfire.span_type': 'span',
@@ -374,6 +376,8 @@ async def test_instrumented_model_stream(capfire: CaptureLogfire):
                     'gen_ai.request.model': 'my_model',
                     'server.address': 'example.com',
                     'server.port': 8000,
+                    'model_request_parameters': '{"function_tools": [], "allow_text_result": true, "result_tools": []}',
+                    'logfire.json_schema': '{"type": "object", "properties": {"model_request_parameters": {"type": "object"}}}',
                     'gen_ai.request.temperature': 1,
                     'logfire.msg': 'chat my_model',
                     'logfire.span_type': 'span',
@@ -457,6 +461,8 @@ async def test_instrumented_model_stream_break(capfire: CaptureLogfire):
                     'gen_ai.request.model': 'my_model',
                     'server.address': 'example.com',
                     'server.port': 8000,
+                    'model_request_parameters': '{"function_tools": [], "allow_text_result": true, "result_tools": []}',
+                    'logfire.json_schema': '{"type": "object", "properties": {"model_request_parameters": {"type": "object"}}}',
                     'gen_ai.request.temperature': 1,
                     'logfire.msg': 'chat my_model',
                     'logfire.span_type': 'span',
@@ -559,6 +565,7 @@ async def test_instrumented_model_attributes_mode(capfire: CaptureLogfire):
                     'gen_ai.request.model': 'my_model',
                     'server.address': 'example.com',
                     'server.port': 8000,
+                    'model_request_parameters': '{"function_tools": [], "allow_text_result": true, "result_tools": []}',
                     'gen_ai.request.temperature': 1,
                     'logfire.msg': 'chat my_model',
                     'logfire.span_type': 'span',
@@ -652,7 +659,7 @@ Fix the errors and try again.\
                             ]
                         )
                     ),
-                    'logfire.json_schema': '{"type": "object", "properties": {"events": {"type": "array"}}}',
+                    'logfire.json_schema': '{"type": "object", "properties": {"events": {"type": "array"}, "model_request_parameters": {"type": "object"}}}',
                 },
             },
         ]
