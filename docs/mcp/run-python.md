@@ -20,8 +20,8 @@ npx @pydantic/mcp-run-python [stdio|sse]
 
 Where:
 
-* `stdio`: Runs the server with [stdin/stdout transport](https://modelcontextprotocol.io/docs/concepts/transports#standard-input%2Foutput-stdio) (for subprocess usage)
-* `sse`: Runs the server with [HTTP Server-Sent Events transport](https://modelcontextprotocol.io/docs/concepts/transports#server-sent-events-sse) (for remote connections)
+* `stdio`: Runs the server with [stdin/stdout transport](https://spec.modelcontextprotocol.io/specification/2024-11-05/basic/transports/#stdio) (for subprocess usage)
+* `sse`: Runs the server with [HTTP Server-Sent Events transport](https://spec.modelcontextprotocol.io/specification/2024-11-05/basic/transports/#http-with-sse) (for remote connections)
 
 Usage of `@pydantic/mcp-run-python` with PydanticAI is described in the [client](client.md#mcp-stdio-server) documentation.
 
@@ -74,6 +74,9 @@ async def main():
             </return_value>
             """
 ```
+
+If an exception occurs, `status` will be `install-error` or `run-error` and `return_value` will be replaced
+by `error` which will include the traceback and exception message.
 
 ## Dependencies
 
