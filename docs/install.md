@@ -18,7 +18,7 @@ PydanticAI has an excellent (but completely optional) integration with [Pydantic
 To use Logfire with PydanticAI, install `pydantic-ai` or `pydantic-ai-slim` with the `logfire` optional group:
 
 ```bash
-pip/uv-add 'pydantic-ai[logfire]'
+pip/uv-add "pydantic-ai[logfire]"
 ```
 
 From there, follow the [Logfire setup docs](logfire.md#using-logfire) to configure Logfire.
@@ -30,7 +30,7 @@ We distribute the [`pydantic_ai_examples`](https://github.com/pydantic/pydantic-
 To install examples, use the `examples` optional group:
 
 ```bash
-pip/uv-add 'pydantic-ai[examples]'
+pip/uv-add "pydantic-ai[examples]"
 ```
 
 To run the examples, follow instructions in the [examples docs](examples/index.md).
@@ -41,7 +41,7 @@ If you know which model you're going to use and want to avoid installing superfl
 For example, if you're using just [`OpenAIModel`][pydantic_ai.models.openai.OpenAIModel], you would run:
 
 ```bash
-pip/uv-add 'pydantic-ai-slim[openai]'
+pip/uv-add "pydantic-ai-slim[openai]"
 ```
 
 `pydantic-ai-slim` has the following optional groups:
@@ -61,5 +61,5 @@ See the [models](models.md) documentation for information on which optional depe
 You can also install dependencies for multiple models and use cases, for example:
 
 ```bash
-pip/uv-add 'pydantic-ai-slim[openai,vertexai,logfire]'
+pip/uv-add "pydantic-ai-slim[openai,vertexai,logfire]"
 ```
