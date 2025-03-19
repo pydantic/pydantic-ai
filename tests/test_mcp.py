@@ -13,7 +13,7 @@ from .conftest import IsDatetime, try_import
 with try_import() as imports_successful:
     from mcp.types import CallToolResult, TextContent
 
-    from pydantic_ai.mcp import MCPServerSSE, MCPServerStdio
+    from pydantic_ai.mcp import MCPServerHTTP, MCPServerStdio
     from pydantic_ai.models.openai import OpenAIModel
     from pydantic_ai.providers.openai import OpenAIProvider
 
@@ -39,7 +39,7 @@ async def test_stdio_server():
 
 
 def test_sse_server():
-    sse_server = MCPServerSSE(url='http://localhost:8000/sse')
+    sse_server = MCPServerHTTP(url='http://localhost:8000/sse')
     assert sse_server.url == 'http://localhost:8000/sse'
 
 
