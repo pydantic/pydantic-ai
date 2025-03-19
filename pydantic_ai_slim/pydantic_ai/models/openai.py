@@ -282,7 +282,7 @@ class OpenAIModel(Model):
                 frequency_penalty=model_settings.get('frequency_penalty', NOT_GIVEN),
                 logit_bias=model_settings.get('logit_bias', NOT_GIVEN),
                 reasoning_effort=model_settings.get('openai_reasoning_effort', NOT_GIVEN),
-                user=model_settings.get('user', NOT_GIVEN)
+                user=model_settings.get('user', NOT_GIVEN),
             )
         except APIStatusError as e:
             if (status_code := e.status_code) >= 400:
