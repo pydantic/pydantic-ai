@@ -28,7 +28,11 @@ nav:
       - multi-agent-applications.md
       - graph.md
       - input.md
-      - mcp_servers.md
+      - MCP:
+        - mcp/index.md
+        - mcp/client.md
+        - mcp/server.md
+        - mcp/run-python.md
       - cli.md
   - Examples:
       - examples/index.md
@@ -51,6 +55,7 @@ nav:
       - api/exceptions.md
       - api/settings.md
       - api/usage.md
+      - api/mcp.md
       - api/format_as_xml.md
       - api/models/base.md
       - api/models/openai.md
@@ -65,7 +70,6 @@ nav:
       - api/models/function.md
       - api/models/fallback.md
       - api/providers.md
-      - api/mcp.md
       - api/pydantic_graph/graph.md
       - api/pydantic_graph/nodes.md
       - api/pydantic_graph/persistence.md

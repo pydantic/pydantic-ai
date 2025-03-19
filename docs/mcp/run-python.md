@@ -1,0 +1,149 @@
+# MCP Run Python
+
+The **MCP Run Python** package is an MCP server that allows agents to execute Python code in a secure, sandboxed environment. It uses [Pyodide](https://pyodide.org/) to run Python code in a JavaScript environment, isolating execution from the host system.
+
+## Features
+
+* **Secure Execution**: Run Python code in a sandboxed WebAssembly environment
+* **Package Management**: Automatically detects and installs required dependencies
+* **Complete Results**: Captures standard output, standard error, and return values
+* **Asynchronous Support**: Runs async code properly
+* **Error Handling**: Provides detailed error reports for debugging
+
+## Installation
+
+The MCP Run Python server is distributed as an [NPM package](https://www.npmjs.com/package/@pydantic/mcp-run-python) and can be run directly using [`npx`](https://docs.npmjs.com/cli/v8/commands/npx):
+
+```bash
+npx @pydantic/mcp-run-python [stdio|sse]
+```
+
+Where:
+
+* `stdio`: Runs the server with [stdin/stdout transport](https://spec.modelcontextprotocol.io/specification/2024-11-05/basic/transports/#stdio) (for subprocess usage)
+* `sse`: Runs the server with [HTTP Server-Sent Events transport](https://spec.modelcontextprotocol.io/specification/2024-11-05/basic/transports/#http-with-sse) (for remote connections)
+
+Usage of `@pydantic/mcp-run-python` with PydanticAI is described in the [client](client.md#mcp-stdio-server) documentation.
+
+## Direct Usage
+
+As well as using this server with PydanticAI, it can be connected to other MCP clients. For clarity, in this example we connect directly using the [Python MCP client](https://github.com/modelcontextprotocol/python-sdk).
+
+```python {title="mcp_run_python.py" py="3.10"}
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.stdio import stdio_client
+
+code = """
+import numpy
+a = numpy.array([1, 2, 3])
+print(a)
+a
+"""
+
+
+async def main():
+    server_params = StdioServerParameters(
+        command='npx', args=['-y', '@pydantic/mcp-run-python', 'stdio']
+    )
+    async with stdio_client(server_params) as (read, write):
+        async with ClientSession(read, write) as session:
+            await session.initialize()
+            tools = await session.list_tools()
+            print(len(tools.tools))
+            #> 1
+            print(repr(tools.tools[0].name))
+            #> 'run_python_code'
+            print(repr(tools.tools[0].inputSchema))
+            """
+            {'type': 'object', 'properties': {'python_code': {'type': 'string', 'description': 'Python code to run'}}, 'required': ['python_code'], 'additionalProperties': False, '$schema': 'http://json-schema.org/draft-07/schema#'}
+            """
+            result = await session.call_tool('run_python_code', {'python_code': code})
+            print(result.content[0].text)
+            """
+            <status>success</status>
+            <dependencies>["numpy"]</dependencies>
+            <output>
+            [1 2 3]
+            </output>
+            <return_value>
+            [
+              1,
+              2,
+              3
+            ]
+            </return_value>
+            """
+```
+
+If an exception occurs, `status` will be `install-error` or `run-error` and `return_value` will be replaced
+by `error` which will include the traceback and exception message.
+
+## Dependencies
+
+Dependencies are installed when code is run.
+
+Dependencies can be defined in one of two ways:
+
+### Inferred from imports
+
+If there's no metadata, dependencies are inferred from imports in the code,
+as shown in the example [above](#direct-usage).
+
+### Inline script metadata
+
+As introduced in PEP 723, explained [here](https://packaging.python.org/en/latest/specifications/inline-script-metadata/#inline-script-metadata), and popularized by [uv](https://docs.astral.sh/uv/guides/scripts/#declaring-script-dependencies) — dependencies can be defined in a comment at the top of the file.
+
+This allows use of dependencies that aren't imported in the code, and is more explicit.
+
+```py {title="inline_script_metadata.py" py="3.10"}
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.stdio import stdio_client
+
+code = """\
+# /// script
+# dependencies = ["pydantic", "email-validator"]
+# ///
+import pydantic
+
+class Model(pydantic.BaseModel):
+    email: pydantic.EmailStr
+
+print(Model(email='hello@pydantic.dev'))
+"""
+
+
+async def main():
+    server_params = StdioServerParameters(
+        command='npx', args=['-y', '@pydantic/mcp-run-python', 'stdio']
+    )
+    async with stdio_client(server_params) as (read, write):
+        async with ClientSession(read, write) as session:
+            await session.initialize()
+            result = await session.call_tool('run_python_code', {'python_code': code})
+            print(result.content[0].text)
+            """
+            <status>success</status>
+            <dependencies>["pydantic","email-validator"]</dependencies>
+            <output>
+            email='hello@pydantic.dev'
+            </output>
+            """
+```
+
+It also allows versions to be pinned for non-binary packages (Pyodide only supports a single version for the binary packages it supports, like `pydantic` and `numpy`).
+
+E.g. you could set the dependencies to
+
+```python
+# /// script
+# dependencies = ["rich<13"]
+# ///
+```
+
+## Logging
+
+MCP Run Python supports emitting stdout and stderr from the python execution as [MCP logging messages](https://github.com/modelcontextprotocol/specification/blob/eb4abdf2bb91e0d5afd94510741eadd416982350/docs/specification/draft/server/utilities/logging.md?plain=1).
+
+For logs to be emitted you must set the logging level when connecting to the server. By default, the log level is set to the highest level, `emergency`.
+
+Currently, it's not possible to demonstrate this due to a bug in the Python MCP Client, see [modelcontextprotocol/python-sdk#201](https://github.com/modelcontextprotocol/python-sdk/issues/201#issuecomment-2727663121).
