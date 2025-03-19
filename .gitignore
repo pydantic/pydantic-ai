@@ -1,5 +1,4 @@
 site
-.python-version
 .venv
 dist
 __pycache__

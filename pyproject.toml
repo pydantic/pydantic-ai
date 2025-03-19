@@ -121,6 +121,7 @@ quote-style = "single"
 "mcp-run-python/**/*.py" = ["D", "TID251"]
 
 [tool.pyright]
+pythonVersion = "3.12"
 typeCheckingMode = "strict"
 reportMissingTypeStubs = false
 reportUnnecessaryIsInstance = false
