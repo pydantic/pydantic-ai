@@ -59,7 +59,7 @@ def find_filter_examples() -> Iterable[CodeExample]:
 
 
 @pytest.mark.parametrize('example', find_filter_examples(), ids=str)
-def test_docs_examples(
+def test_docs_examples(  # noqa: C901
     example: CodeExample,
     eval_example: EvalExample,
     mocker: MockerFixture,
@@ -140,11 +140,13 @@ def test_docs_examples(
     if opt_test.startswith('skip'):
         print(opt_test[4:].lstrip(' -') or 'running code skipped')
     else:
-        globals = {'__name__': '__test__'}
+        test_globals: dict[str, str] = {}
+        if opt_title == 'mcp_client.py':
+            test_globals['__name__'] = '__test__'
         if eval_example.update_examples:  # pragma: no cover
-            module_dict = eval_example.run_print_update(example, call=call_name, module_globals=globals)
+            module_dict = eval_example.run_print_update(example, call=call_name, module_globals=test_globals)
         else:
-            module_dict = eval_example.run_print_check(example, call=call_name, module_globals=globals)
+            module_dict = eval_example.run_print_check(example, call=call_name, module_globals=test_globals)
 
         os.chdir(cwd)
         if title := opt_title:
