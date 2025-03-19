@@ -30,9 +30,12 @@ Examples of both are shown below; [mcp-run-python](run-python.md) is used as the
 !!! note
     [`MCPServerHTTP`][pydantic_ai.mcp.MCPServerHTTP] requires an MCP server to be running and accepting HTTP connections before calling [`agent.run_mcp_servers()`][pydantic_ai.Agent.run_mcp_servers]. Running the server is not managed by PydanticAI.
 
+The name "HTTP" is used since this implemented will be adapted in future to use the new
+[Streamable HTTP](https://github.com/modelcontextprotocol/specification/pull/206) currently in development.
+
 Before creating the SSE client, we need to run the server (docs [here](run-python.md)):
 
-```bash {title="run_sse_server.py"}
+```bash {title="terminal (run sse server)"}
 npx @pydantic/mcp-run-python sse
 ```
 
