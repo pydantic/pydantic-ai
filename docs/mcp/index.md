@@ -8,9 +8,9 @@ PydanticAI supports [Model Context Protocol (MCP)](https://modelcontextprotocol.
 
 ## What is MCP?
 
-The Model Context Protocol is a standardized protocol that allow AI applications (including programmatic agents like PydanticAI, coding agents like [cursor](https://www.cursor.com/) and desktop applications like [Claude Desktop](https://claude.ai/download)) to connect to external tools and services using a common interface.
+The Model Context Protocol is a standardized protocol that allow AI applications (including programmatic agents like PydanticAI, coding agents like [cursor](https://www.cursor.com/), and desktop applications like [Claude Desktop](https://claude.ai/download)) to connect to external tools and services using a common interface.
 
-As with other protocol's the dream of MCP is that a wide range of applications can speak to each other without the need for specific integrations.
+As with other protocols, the dream of MCP is that a wide range of applications can speak to each other without the need for specific integrations.
 
 There is a great list of MCP servers at [github.com/modelcontextprotocol/servers](https://github.com/modelcontextprotocol/servers).
 
@@ -22,8 +22,8 @@ Some examples of what this means:
 
 ## MCP Servers
 
-To add functionality to PydanticAI while making it as whilely usable as possible, we're implementing some functionality as MCP servers.
+To add functionality to PydanticAI while making it as widely usable as possible, we're implementing some functionality as MCP servers.
 
-So far, we've only implement one MCP server as part of PydanticAI:
+So far, we've only implemented one MCP server as part of PydanticAI:
 
 * [Run Python](run-python.md): A sandboxed Python interpreter that can run arbitrary code, with a focus on security and safety.

@@ -27,7 +27,7 @@ Usage of `@pydantic/mcp-run-python` with PydanticAI is described in the [client]
 
 ## Direct Usage
 
-As well as using this server with PydanticAI, it can be connected to other MCP clients, for clarity in this example we connect directly using the [Python MCP client](https://github.com/modelcontextprotocol/python-sdk).
+As well as using this server with PydanticAI, it can be connected to other MCP clients. For clarity, in this example we connect directly using the [Python MCP client](https://github.com/modelcontextprotocol/python-sdk).
 
 ```python {title="mcp_run_python.py" py="3.10"}
 from mcp import ClientSession, StdioServerParameters
@@ -88,7 +88,7 @@ as shown in the example [above](#direct-usage).
 
 ### Inline script metadata
 
-As introduced in PEP 723, explained [here](https://packaging.python.org/en/latest/specifications/inline-script-metadata/#inline-script-metadata), and popularised by [uv](https://docs.astral.sh/uv/guides/scripts/#declaring-script-dependencies) — dependencies can be defined in a comment at the top of the file.
+As introduced in PEP 723, explained [here](https://packaging.python.org/en/latest/specifications/inline-script-metadata/#inline-script-metadata), and popularized by [uv](https://docs.astral.sh/uv/guides/scripts/#declaring-script-dependencies) — dependencies can be defined in a comment at the top of the file.
 
 This allows use of dependencies that aren't imported in the code, and is more explicit.
 
@@ -127,9 +127,9 @@ async def main():
             """
 ```
 
-It also allows version to be pinned for non-binary packages (Pyodide only supports a single version for the binary packages it supports, like `pydantic` and `numpy`).
+It also allows versions to be pinned for non-binary packages (Pyodide only supports a single version for the binary packages it supports, like `pydantic` and `numpy`).
 
-E.g. you could set th dependencies to
+E.g. you could set the dependencies to
 
 ```python
 # /// script
@@ -141,6 +141,6 @@ E.g. you could set th dependencies to
 
 MCP Run Python supports emitting stdout and stderr from the python execution as [MCP logging messages](https://github.com/modelcontextprotocol/specification/blob/eb4abdf2bb91e0d5afd94510741eadd416982350/docs/specification/draft/server/utilities/logging.md?plain=1).
 
-For logs to be emitted you must set the logging level when connecting to the server, by default the log level is set to the highest level, `emergency`.
+For logs to be emitted you must set the logging level when connecting to the server. By default, the log level is set to the highest level, `emergency`.
 
 Currently, it's not possible to demonstrate this due to a bug in the Python MCP Client, see [modelcontextprotocol/python-sdk#201](https://github.com/modelcontextprotocol/python-sdk/issues/201#issuecomment-2727663121).

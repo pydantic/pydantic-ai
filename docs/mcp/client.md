@@ -21,7 +21,7 @@ PydanticAI comes with two ways to connect to MCP servers:
 - [`MCPServerSSE`][pydantic_ai.mcp.MCPServerSSE] which connects to an MCP server using the [HTTP SSE](https://modelcontextprotocol.io/docs/concepts/transports#server-sent-events-sse) transport
 - [`MCPServerStdio`][pydantic_ai.mcp.MCPServerStdio] which runs the server as a subprocess and connects to it using the [stdio](https://modelcontextprotocol.io/docs/concepts/transports#standard-input%2Foutput-stdio) transport
 
-Examples of both are shown below, [mcp-run-python](run-python.md) is used as the MCP server in both examples.
+Examples of both are shown below; [mcp-run-python](run-python.md) is used as the MCP server in both examples.
 
 ### SSE Client
 

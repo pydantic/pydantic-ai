@@ -2,7 +2,7 @@
 
 PydanticAI models can also be used within MCP Servers.
 
-Here's a simple example of a [Python MCP server](https://github.com/modelcontextprotocol/python-sdk) using PydanticAI within a tool call
+Here's a simple example of a [Python MCP server](https://github.com/modelcontextprotocol/python-sdk) using PydanticAI within a tool call:
 
 ```py {title="mcp_server.py" py="3.10"}
 from mcp.server.fastmcp import FastMCP
@@ -26,7 +26,7 @@ if __name__ == '__main__':
     server.run()
 ```
 
-Which could then be queried with any MCP client, e.g. here using a direct Python client:
+This server can be queried with any MCP client. Here is an example using a direct Python client:
 
 ```py {title="mcp_client.py" py="3.10"}
 import asyncio
@@ -57,4 +57,4 @@ if __name__ == '__main__':
     asyncio.run(client())
 ```
 
-Note: [sampling](https://modelcontextprotocol.io/docs/concepts/sampling#sampling) whereby servers may request LLM completions from the client is not yet supported as a model implementation in PydanticAI.
+Note: [sampling](https://modelcontextprotocol.io/docs/concepts/sampling#sampling), whereby servers may request LLM completions from the client, is not yet supported in PydanticAI.
