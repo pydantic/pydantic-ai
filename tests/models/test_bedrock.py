@@ -73,7 +73,10 @@ async def test_bedrock_model(allow_model_requests: None, bedrock_provider: Bedro
         [
             ModelRequest(
                 parts=[
-                    SystemPromptPart(content='You are a chatbot.'),
+                    SystemPromptPart(
+                        content='You are a chatbot.',
+                        timestamp=IsDatetime(),
+                    ),
                     UserPromptPart(
                         content='Hello!',
                         timestamp=IsDatetime(),
@@ -122,7 +125,10 @@ async def test_bedrock_model_structured_response(allow_model_requests: None, bed
         [
             ModelRequest(
                 parts=[
-                    SystemPromptPart(content='You are a helpful chatbot.'),
+                    SystemPromptPart(
+                        content='You are a helpful chatbot.',
+                        timestamp=IsDatetime(),
+                    ),
                     UserPromptPart(
                         content='What was the temperature in London 1st January 2022?',
                         timestamp=IsDatetime(),
@@ -242,7 +248,10 @@ async def test_bedrock_model_retry(allow_model_requests: None, bedrock_provider:
         [
             ModelRequest(
                 parts=[
-                    SystemPromptPart(content='You are a helpful chatbot.'),
+                    SystemPromptPart(
+                        content='You are a helpful chatbot.',
+                        timestamp=IsDatetime(),
+                    ),
                     UserPromptPart(
                         content='What is the capital of France?',
                         timestamp=IsDatetime(),
