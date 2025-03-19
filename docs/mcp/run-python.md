@@ -92,7 +92,7 @@ As introduced in PEP 723, explained [here](https://packaging.python.org/en/lates
 
 This allows use of dependencies that aren't imported in the code, and is more explicit.
 
-```py
+```py {title="inline_script_metadata.py" py="3.10"}
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
