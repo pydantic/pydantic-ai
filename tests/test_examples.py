@@ -140,10 +140,11 @@ def test_docs_examples(
     if opt_test.startswith('skip'):
         print(opt_test[4:].lstrip(' -') or 'running code skipped')
     else:
+        globals = {'__name__': '__test__'}
         if eval_example.update_examples:  # pragma: no cover
-            module_dict = eval_example.run_print_update(example, call=call_name)
+            module_dict = eval_example.run_print_update(example, call=call_name, module_globals=globals)
         else:
-            module_dict = eval_example.run_print_check(example, call=call_name)
+            module_dict = eval_example.run_print_check(example, call=call_name, module_globals=globals)
 
         os.chdir(cwd)
         if title := opt_title:
