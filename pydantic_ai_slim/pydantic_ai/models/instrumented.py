@@ -53,6 +53,8 @@ class InstrumentationSettings:
     - `Agent(instrument=...)`
     - [`Agent.instrument_all()`][pydantic_ai.agent.Agent.instrument_all]
     - [`InstrumentedModel`][pydantic_ai.models.instrumented.InstrumentedModel]
+
+    See the [Debugging and Monitoring guide](https://ai.pydantic.dev/logfire/) for more info.
     """
 
     tracer: Tracer = field(repr=False)
@@ -94,7 +96,10 @@ GEN_AI_REQUEST_MODEL_ATTRIBUTE = 'gen_ai.request.model'
 
 @dataclass
 class InstrumentedModel(WrapperModel):
-    """Model which wraps another model so that requests are instrumented with OpenTelemetry."""
+    """Model which wraps another model so that requests are instrumented with OpenTelemetry.
+
+    See the [Debugging and Monitoring guide](https://ai.pydantic.dev/logfire/) for more info.
+    """
 
     settings: InstrumentationSettings
     """Configuration for instrumenting requests."""
