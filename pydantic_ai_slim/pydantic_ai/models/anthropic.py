@@ -65,7 +65,7 @@ try:
 except ImportError as _import_error:
     raise ImportError(
         'Please install `anthropic` to use the Anthropic model, '
-        "you can use the `anthropic` optional group — `pip install 'pydantic-ai-slim[anthropic]'`"
+        'you can use the `anthropic` optional group — `pip install "pydantic-ai-slim[anthropic]"`'
     ) from _import_error
 
 LatestAnthropicModelNames = Literal[

@@ -11,7 +11,7 @@ try:
 except ImportError as _import_error:
     raise ImportError(
         'Please install `tavily-python` to use the Tavily search tool, '
-        "you can use the `tavily` optional group — `pip install 'pydantic-ai-slim[tavily]'`"
+        'you can use the `tavily` optional group — `pip install "pydantic-ai-slim[tavily]"`'
     ) from _import_error
 
 __all__ = ('tavily_search_tool',)

@@ -13,7 +13,7 @@ To use [`duckduckgo_search_tool`][pydantic_ai.common_tools.duckduckgo.duckduckgo
 [`pydantic-ai-slim`](install.md#slim-install) with the `duckduckgo` optional group:
 
 ```bash
-pip/uv-add 'pydantic-ai-slim[duckduckgo]'
+pip/uv-add "pydantic-ai-slim[duckduckgo]"
 ```
 
 ### Usage
@@ -96,7 +96,7 @@ To use [`tavily_search_tool`][pydantic_ai.common_tools.tavily.tavily_search_tool
 [`pydantic-ai-slim`](install.md#slim-install) with the `tavily` optional group:
 
 ```bash
-pip/uv-add 'pydantic-ai-slim[tavily]'
+pip/uv-add "pydantic-ai-slim[tavily]"
 ```
 
 ### Usage

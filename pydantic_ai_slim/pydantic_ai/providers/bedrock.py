@@ -11,7 +11,7 @@ try:
 except ImportError as _import_error:
     raise ImportError(
         'Please install the `boto3` package to use the Bedrock provider, '
-        "you can use the `bedrock` optional group — `pip install 'pydantic-ai-slim[bedrock]'`"
+        'you can use the `bedrock` optional group — `pip install "pydantic-ai-slim[bedrock]"`'
     ) from _import_error
 
 

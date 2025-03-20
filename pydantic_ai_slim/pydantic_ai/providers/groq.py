@@ -12,7 +12,7 @@ try:
 except ImportError as _import_error:  # pragma: no cover
     raise ImportError(
         'Please install the `groq` package to use the Groq provider, '
-        "you can use the `groq` optional group — `pip install 'pydantic-ai-slim[groq]'`"
+        'you can use the `groq` optional group — `pip install "pydantic-ai-slim[groq]"`'
     ) from _import_error
 
 
