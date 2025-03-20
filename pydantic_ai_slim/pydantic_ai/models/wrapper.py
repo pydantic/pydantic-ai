@@ -13,9 +13,13 @@ from . import KnownModelName, Model, ModelRequestParameters, StreamedResponse, i
 
 @dataclass(init=False)
 class WrapperModel(Model):
-    """Model which wraps another model."""
+    """Model which wraps another model.
+
+    Does nothing on its own, used as a base class.
+    """
 
     wrapped: Model
+    """The underlying model being wrapped."""
 
     def __init__(self, wrapped: Model | KnownModelName):
         self.wrapped = infer_model(wrapped)

@@ -445,7 +445,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         usage_limits = usage_limits or _usage.UsageLimits()
 
         if isinstance(model_used, InstrumentedModel):
-            tracer = model_used.options.tracer
+            tracer = model_used.settings.tracer
         else:
             tracer = NoOpTracer()
         agent_name = self.name or 'agent'
