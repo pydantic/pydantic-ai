@@ -2,7 +2,6 @@ from __future__ import annotations as _annotations
 
 import functools
 from collections.abc import AsyncGenerator, Mapping
-from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Literal, overload
 
@@ -27,9 +26,6 @@ except ImportError as _import_error:
 
 
 __all__ = ('GoogleVertexProvider',)
-
-# default expiry is 3600 seconds
-MAX_TOKEN_AGE = timedelta(seconds=3000)
 
 
 class GoogleVertexProvider(Provider[httpx.AsyncClient]):
@@ -131,19 +127,19 @@ class _VertexAIAuth(httpx.Auth):
         self.region = region
 
         self.credentials = None
-        self.token_created: datetime | None = None
 
     async def async_auth_flow(self, request: httpx.Request) -> AsyncGenerator[httpx.Request, httpx.Response]:
         if self.credentials is None:
             self.credentials = await self._get_credentials()
-        if self.credentials.token is None or self._token_expired():  # type: ignore[reportUnknownMemberType]
-            await anyio.to_thread.run_sync(self._refresh_token)
-            self.token_created = datetime.now()
         request.headers['Authorization'] = f'Bearer {self.credentials.token}'  # type: ignore[reportUnknownMemberType]
-
         # NOTE: This workaround is in place because we might get the project_id from the credentials.
         request.url = httpx.URL(str(request.url).replace('projects/None', f'projects/{self.project_id}'))
-        yield request
+        response = yield request
+
+        if response.status_code == 401:
+            await anyio.to_thread.run_sync(self._refresh_token)
+            request.headers['Authorization'] = f'Bearer {self.credentials.token}'  # type: ignore[reportUnknownMemberType]
+            yield request
 
     async def _get_credentials(self) -> BaseCredentials | ServiceAccountCredentials:
         if self.service_account_file is not None:
@@ -165,12 +161,6 @@ class _VertexAIAuth(httpx.Auth):
                 raise UserError(f'No project_id provided and none found in {creds_source}')
             self.project_id = creds_project_id
         return creds
-
-    def _token_expired(self) -> bool:
-        if self.token_created is None:
-            return True
-        else:
-            return (datetime.now() - self.token_created) > MAX_TOKEN_AGE
 
     def _refresh_token(self) -> str:  # pragma: no cover
         assert self.credentials is not None
