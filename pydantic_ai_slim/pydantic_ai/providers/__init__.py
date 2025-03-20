@@ -69,5 +69,13 @@ def infer_provider(provider: str) -> Provider[Any]:
         from .groq import GroqProvider
 
         return GroqProvider()
+    elif provider == 'anthropic':
+        from .anthropic import AnthropicProvider
+
+        return AnthropicProvider()
+    elif provider == 'mistral':
+        from .mistral import MistralProvider
+
+        return MistralProvider()
     else:  # pragma: no cover
         raise ValueError(f'Unknown provider: {provider}')

@@ -27,6 +27,10 @@ lint: ## Lint the code
 	uv run ruff format --check
 	uv run ruff check
 
+.PHONY: lint-js
+lint-js: ## Lint JS and TS code
+	cd mcp-run-python && npm run lint
+
 .PHONY: typecheck-pyright
 typecheck-pyright:
 	@# PYRIGHT_PYTHON_IGNORE_WARNINGS avoids the overhead of making a request to github on every invocation
@@ -49,11 +53,11 @@ test: ## Run tests and collect coverage data
 
 .PHONY: test-all-python
 test-all-python: ## Run tests on Python 3.9 to 3.13
-	UV_PROJECT_ENVIRONMENT=.venv39 uv run --python 3.9 --all-extras coverage run -p -m pytest
-	UV_PROJECT_ENVIRONMENT=.venv310 uv run --python 3.10 --all-extras coverage run -p -m pytest
-	UV_PROJECT_ENVIRONMENT=.venv311 uv run --python 3.11 --all-extras coverage run -p -m pytest
-	UV_PROJECT_ENVIRONMENT=.venv312 uv run --python 3.12 --all-extras coverage run -p -m pytest
-	UV_PROJECT_ENVIRONMENT=.venv313 uv run --python 3.13 --all-extras coverage run -p -m pytest
+	UV_PROJECT_ENVIRONMENT=.venv39 uv run --python 3.9 --all-extras --all-packages coverage run -p -m pytest
+	UV_PROJECT_ENVIRONMENT=.venv310 uv run --python 3.10 --all-extras --all-packages coverage run -p -m pytest
+	UV_PROJECT_ENVIRONMENT=.venv311 uv run --python 3.11 --all-extras --all-packages coverage run -p -m pytest
+	UV_PROJECT_ENVIRONMENT=.venv312 uv run --python 3.12 --all-extras --all-packages coverage run -p -m pytest
+	UV_PROJECT_ENVIRONMENT=.venv313 uv run --python 3.13 --all-extras --all-packages coverage run -p -m pytest
 	@uv run coverage combine
 	@uv run coverage report
 
@@ -61,6 +65,11 @@ test-all-python: ## Run tests on Python 3.9 to 3.13
 testcov: test ## Run tests and generate a coverage report
 	@echo "building coverage html"
 	@uv run coverage html
+
+.PHONY: test-mrp
+test-mrp: ## Build and  tests of mcp-run-python
+	cd mcp-run-python && npm run prepare
+	uv run --package mcp-run-python pytest mcp-run-python -v
 
 .PHONY: update-examples
 update-examples: ## Update documentation examples

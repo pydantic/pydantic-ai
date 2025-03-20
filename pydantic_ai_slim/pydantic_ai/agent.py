@@ -3,12 +3,13 @@ from __future__ import annotations as _annotations
 import dataclasses
 import inspect
 from collections.abc import AsyncIterator, Awaitable, Iterator, Sequence
-from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
+from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager, contextmanager
 from copy import deepcopy
 from types import FrameType
-from typing import Any, Callable, ClassVar, Generic, cast, final, overload
+from typing import TYPE_CHECKING, Any, Callable, ClassVar, Generic, cast, final, overload
 
 from opentelemetry.trace import NoOpTracer, use_span
+from pydantic.json_schema import GenerateJsonSchema
 from typing_extensions import TypeGuard, TypeVar, deprecated
 
 from pydantic_graph import End, Graph, GraphRun, GraphRunContext
@@ -31,6 +32,7 @@ from .settings import ModelSettings, merge_model_settings
 from .tools import (
     AgentDepsT,
     DocstringFormat,
+    GenerateToolJsonSchema,
     RunContext,
     Tool,
     ToolFuncContext,
@@ -46,6 +48,9 @@ EndStrategy = _agent_graph.EndStrategy
 CallToolsNode = _agent_graph.CallToolsNode
 ModelRequestNode = _agent_graph.ModelRequestNode
 UserPromptNode = _agent_graph.UserPromptNode
+
+if TYPE_CHECKING:
+    from pydantic_ai.mcp import MCPServer
 
 __all__ = (
     'Agent',
@@ -129,6 +134,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         repr=False
     )
     _function_tools: dict[str, Tool[AgentDepsT]] = dataclasses.field(repr=False)
+    _mcp_servers: Sequence[MCPServer] = dataclasses.field(repr=False)
     _default_retries: int = dataclasses.field(repr=False)
     _max_result_retries: int = dataclasses.field(repr=False)
     _override_deps: _utils.Option[AgentDepsT] = dataclasses.field(default=None, repr=False)
@@ -148,6 +154,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         result_tool_description: str | None = None,
         result_retries: int | None = None,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
+        mcp_servers: Sequence[MCPServer] = (),
         defer_model_check: bool = False,
         end_strategy: EndStrategy = 'early',
         instrument: InstrumentationSettings | bool | None = None,
@@ -173,6 +180,8 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
             result_retries: The maximum number of retries to allow for result validation, defaults to `retries`.
             tools: Tools to register with the agent, you can also register tools via the decorators
                 [`@agent.tool`][pydantic_ai.Agent.tool] and [`@agent.tool_plain`][pydantic_ai.Agent.tool_plain].
+            mcp_servers: MCP servers to register with the agent. You should register a [`MCPServer`][pydantic_ai.mcp.MCPServer]
+                for each server you want the agent to connect to.
             defer_model_check: by default, if you provide a [named][pydantic_ai.models.KnownModelName] model,
                 it's evaluated to create a [`Model`][pydantic_ai.models.Model] instance immediately,
                 which checks for the necessary environment variables. Set this to `false`
@@ -215,6 +224,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
 
         self._default_retries = retries
         self._max_result_retries = result_retries if result_retries is not None else retries
+        self._mcp_servers = mcp_servers
         for tool in tools:
             if isinstance(tool, Tool):
                 self._register_tool(tool)
@@ -461,6 +471,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
             result_tools=self._result_schema.tool_defs() if self._result_schema else [],
             result_validators=result_validators,
             function_tools=self._function_tools,
+            mcp_servers=self._mcp_servers,
             run_span=run_span,
             tracer=tracer,
         )
@@ -475,8 +486,8 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
             start_node,
             state=state,
             deps=graph_deps,
-            infer_name=False,
             span=use_span(run_span, end_on_exit=True),
+            infer_name=False,
         ) as graph_run:
             yield AgentRun(graph_run)
 
@@ -927,6 +938,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         prepare: ToolPrepareFunc[AgentDepsT] | None = None,
         docstring_format: DocstringFormat = 'auto',
         require_parameter_descriptions: bool = False,
+        schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
     ) -> Callable[[ToolFuncContext[AgentDepsT, ToolParams]], ToolFuncContext[AgentDepsT, ToolParams]]: ...
 
     def tool(
@@ -939,6 +951,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         prepare: ToolPrepareFunc[AgentDepsT] | None = None,
         docstring_format: DocstringFormat = 'auto',
         require_parameter_descriptions: bool = False,
+        schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
     ) -> Any:
         """Decorator to register a tool function which takes [`RunContext`][pydantic_ai.tools.RunContext] as its first argument.
 
@@ -980,6 +993,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
             docstring_format: The format of the docstring, see [`DocstringFormat`][pydantic_ai.tools.DocstringFormat].
                 Defaults to `'auto'`, such that the format is inferred from the structure of the docstring.
             require_parameter_descriptions: If True, raise an error if a parameter description is missing. Defaults to False.
+            schema_generator: The JSON schema generator class to use for this tool. Defaults to `GenerateToolJsonSchema`.
         """
         if func is None:
 
@@ -988,7 +1002,14 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
             ) -> ToolFuncContext[AgentDepsT, ToolParams]:
                 # noinspection PyTypeChecker
                 self._register_function(
-                    func_, True, name, retries, prepare, docstring_format, require_parameter_descriptions
+                    func_,
+                    True,
+                    name,
+                    retries,
+                    prepare,
+                    docstring_format,
+                    require_parameter_descriptions,
+                    schema_generator,
                 )
                 return func_
 
@@ -996,7 +1017,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         else:
             # noinspection PyTypeChecker
             self._register_function(
-                func, True, name, retries, prepare, docstring_format, require_parameter_descriptions
+                func, True, name, retries, prepare, docstring_format, require_parameter_descriptions, schema_generator
             )
             return func
 
@@ -1013,6 +1034,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         prepare: ToolPrepareFunc[AgentDepsT] | None = None,
         docstring_format: DocstringFormat = 'auto',
         require_parameter_descriptions: bool = False,
+        schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
     ) -> Callable[[ToolFuncPlain[ToolParams]], ToolFuncPlain[ToolParams]]: ...
 
     def tool_plain(
@@ -1025,6 +1047,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         prepare: ToolPrepareFunc[AgentDepsT] | None = None,
         docstring_format: DocstringFormat = 'auto',
         require_parameter_descriptions: bool = False,
+        schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
     ) -> Any:
         """Decorator to register a tool function which DOES NOT take `RunContext` as an argument.
 
@@ -1066,20 +1089,28 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
             docstring_format: The format of the docstring, see [`DocstringFormat`][pydantic_ai.tools.DocstringFormat].
                 Defaults to `'auto'`, such that the format is inferred from the structure of the docstring.
             require_parameter_descriptions: If True, raise an error if a parameter description is missing. Defaults to False.
+            schema_generator: The JSON schema generator class to use for this tool. Defaults to `GenerateToolJsonSchema`.
         """
         if func is None:
 
             def tool_decorator(func_: ToolFuncPlain[ToolParams]) -> ToolFuncPlain[ToolParams]:
                 # noinspection PyTypeChecker
                 self._register_function(
-                    func_, False, name, retries, prepare, docstring_format, require_parameter_descriptions
+                    func_,
+                    False,
+                    name,
+                    retries,
+                    prepare,
+                    docstring_format,
+                    require_parameter_descriptions,
+                    schema_generator,
                 )
                 return func_
 
             return tool_decorator
         else:
             self._register_function(
-                func, False, name, retries, prepare, docstring_format, require_parameter_descriptions
+                func, False, name, retries, prepare, docstring_format, require_parameter_descriptions, schema_generator
             )
             return func
 
@@ -1092,6 +1123,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         prepare: ToolPrepareFunc[AgentDepsT] | None,
         docstring_format: DocstringFormat,
         require_parameter_descriptions: bool,
+        schema_generator: type[GenerateJsonSchema],
     ) -> None:
         """Private utility to register a function as a tool."""
         retries_ = retries if retries is not None else self._default_retries
@@ -1103,6 +1135,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
             prepare=prepare,
             docstring_format=docstring_format,
             require_parameter_descriptions=require_parameter_descriptions,
+            schema_generator=schema_generator,
         )
         self._register_tool(tool)
 
@@ -1252,6 +1285,20 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         This method preserves the generic parameters while narrowing the type, unlike a direct call to `isinstance`.
         """
         return isinstance(node, End)
+
+    @asynccontextmanager
+    async def run_mcp_servers(self) -> AsyncIterator[None]:
+        """Run [`MCPServerStdio`s][pydantic_ai.mcp.MCPServerStdio] so they can be used by the agent.
+
+        Returns: a context manager to start and shutdown the servers.
+        """
+        exit_stack = AsyncExitStack()
+        try:
+            for mcp_server in self._mcp_servers:
+                await exit_stack.enter_async_context(mcp_server)
+            yield
+        finally:
+            await exit_stack.aclose()
 
 
 @dataclasses.dataclass(repr=False)

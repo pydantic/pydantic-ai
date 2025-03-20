@@ -7,11 +7,11 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from itertools import chain
-from typing import Any, Callable, Literal, Union, cast
+from typing import Any, Callable, Literal, Union, cast, overload
 
 import pydantic_core
 from httpx import AsyncClient as AsyncHTTPClient, Timeout
-from typing_extensions import assert_never
+from typing_extensions import assert_never, deprecated
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils
 from .._utils import now_utc as _now_utc
@@ -31,6 +31,7 @@ from ..messages import (
     ToolReturnPart,
     UserPromptPart,
 )
+from ..providers import Provider, infer_provider
 from ..result import Usage
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
@@ -110,12 +111,35 @@ class MistralModel(Model):
     json_mode_schema_prompt: str = """Answer in JSON Object, respect the format:\n```\n{schema}\n```\n"""
 
     _model_name: MistralModelName = field(repr=False)
-    _system: str | None = field(default='mistral', repr=False)
+    _system: str = field(default='mistral_ai', repr=False)
+
+    @overload
+    def __init__(
+        self,
+        model_name: MistralModelName,
+        *,
+        provider: Literal['mistral'] | Provider[Mistral] = 'mistral',
+        json_mode_schema_prompt: str = """Answer in JSON Object, respect the format:\n```\n{schema}\n```\n""",
+    ) -> None: ...
+
+    @overload
+    @deprecated('Use the `provider` parameter instead of `api_key`, `client` and `http_client`.')
+    def __init__(
+        self,
+        model_name: MistralModelName,
+        *,
+        provider: None = None,
+        api_key: str | Callable[[], str | None] | None = None,
+        client: Mistral | None = None,
+        http_client: AsyncHTTPClient | None = None,
+        json_mode_schema_prompt: str = """Answer in JSON Object, respect the format:\n```\n{schema}\n```\n""",
+    ) -> None: ...
 
     def __init__(
         self,
         model_name: MistralModelName,
         *,
+        provider: Literal['mistral'] | Provider[Mistral] | None = None,
         api_key: str | Callable[[], str | None] | None = None,
         client: Mistral | None = None,
         http_client: AsyncHTTPClient | None = None,
@@ -124,6 +148,9 @@ class MistralModel(Model):
         """Initialize a Mistral model.
 
         Args:
+            provider: The provider to use for authentication and API access. Can be either the string
+                'mistral' or an instance of `Provider[Mistral]`. If not provided, a new provider will be
+                created using the other parameters.
             model_name: The name of the model to use.
             api_key: The API key to use for authentication, if unset uses `MISTRAL_API_KEY` environment variable.
             client: An existing `Mistral` client to use, if provided, `api_key` and `http_client` must be `None`.
@@ -133,17 +160,22 @@ class MistralModel(Model):
         self._model_name = model_name
         self.json_mode_schema_prompt = json_mode_schema_prompt
 
-        if client is not None:
+        if provider is not None:
+            if isinstance(provider, str):
+                # TODO(Marcelo): We should add an integration test with VCR when I get the API key.
+                provider = infer_provider(provider)  # pragma: no cover
+            self.client = provider.client
+        elif client is not None:
             assert http_client is None, 'Cannot provide both `mistral_client` and `http_client`'
             assert api_key is None, 'Cannot provide both `mistral_client` and `api_key`'
             self.client = client
         else:
-            api_key = os.getenv('MISTRAL_API_KEY') if api_key is None else api_key
+            api_key = api_key or os.getenv('MISTRAL_API_KEY')
             self.client = Mistral(api_key=api_key, async_client=http_client or cached_async_http_client())
 
     @property
     def base_url(self) -> str:
-        return str(self.client.sdk_configuration.get_server_details()[0])
+        return self.client.sdk_configuration.get_server_details()[0]
 
     async def request(
         self,
@@ -179,7 +211,7 @@ class MistralModel(Model):
         return self._model_name
 
     @property
-    def system(self) -> str | None:
+    def system(self) -> str:
         """The system / model provider."""
         return self._system
 

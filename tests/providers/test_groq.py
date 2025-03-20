@@ -55,12 +55,3 @@ def test_groq_provider_with_env_base_url(monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.setenv('GROQ_BASE_URL', 'https://custom.groq.com/v1')
     provider = GroqProvider(api_key='api-key')
     assert provider.base_url == 'https://custom.groq.com/v1'
-
-
-def test_infer_groq_provider():
-    with patch.dict(os.environ, {'GROQ_API_KEY': 'test-api-key'}, clear=False):
-        from pydantic_ai.providers import infer_provider
-
-        provider = infer_provider('groq')
-        assert provider.name == 'groq'
-        assert isinstance(provider, GroqProvider)

@@ -11,7 +11,7 @@ from typing import Any, Literal, Union, cast, overload
 
 from anthropic.types import DocumentBlockParam
 from httpx import AsyncClient as AsyncHTTPClient
-from typing_extensions import assert_never
+from typing_extensions import assert_never, deprecated
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._utils import guard_tool_call_id as _guard_tool_call_id
@@ -31,15 +31,10 @@ from ..messages import (
     ToolReturnPart,
     UserPromptPart,
 )
+from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
-from . import (
-    Model,
-    ModelRequestParameters,
-    StreamedResponse,
-    cached_async_http_client,
-    check_allow_model_requests,
-)
+from . import Model, ModelRequestParameters, StreamedResponse, cached_async_http_client, check_allow_model_requests
 
 try:
     from anthropic import NOT_GIVEN, APIStatusError, AsyncAnthropic, AsyncStream
@@ -115,12 +110,33 @@ class AnthropicModel(Model):
     client: AsyncAnthropic = field(repr=False)
 
     _model_name: AnthropicModelName = field(repr=False)
-    _system: str | None = field(default='anthropic', repr=False)
+    _system: str = field(default='anthropic', repr=False)
+
+    @overload
+    def __init__(
+        self,
+        model_name: AnthropicModelName,
+        *,
+        provider: Literal['anthropic'] | Provider[AsyncAnthropic] = 'anthropic',
+    ) -> None: ...
+
+    @deprecated('Use the `provider` parameter instead of `api_key`, `anthropic_client`, and `http_client`.')
+    @overload
+    def __init__(
+        self,
+        model_name: AnthropicModelName,
+        *,
+        provider: None = None,
+        api_key: str | None = None,
+        anthropic_client: AsyncAnthropic | None = None,
+        http_client: AsyncHTTPClient | None = None,
+    ) -> None: ...
 
     def __init__(
         self,
         model_name: AnthropicModelName,
         *,
+        provider: Literal['anthropic'] | Provider[AsyncAnthropic] | None = None,
         api_key: str | None = None,
         anthropic_client: AsyncAnthropic | None = None,
         http_client: AsyncHTTPClient | None = None,
@@ -130,6 +146,8 @@ class AnthropicModel(Model):
         Args:
             model_name: The name of the Anthropic model to use. List of model names available
                 [here](https://docs.anthropic.com/en/docs/about-claude/models).
+            provider: The provider to use for the Anthropic API. Can be either the string 'anthropic' or an
+                instance of `Provider[AsyncAnthropic]`. If not provided, the other parameters will be used.
             api_key: The API key to use for authentication, if not provided, the `ANTHROPIC_API_KEY` environment variable
                 will be used if available.
             anthropic_client: An existing
@@ -138,7 +156,12 @@ class AnthropicModel(Model):
             http_client: An existing `httpx.AsyncClient` to use for making HTTP requests.
         """
         self._model_name = model_name
-        if anthropic_client is not None:
+
+        if provider is not None:
+            if isinstance(provider, str):
+                provider = infer_provider(provider)
+            self.client = provider.client
+        elif anthropic_client is not None:
             assert http_client is None, 'Cannot provide both `anthropic_client` and `http_client`'
             assert api_key is None, 'Cannot provide both `anthropic_client` and `api_key`'
             self.client = anthropic_client
@@ -183,7 +206,7 @@ class AnthropicModel(Model):
         return self._model_name
 
     @property
-    def system(self) -> str | None:
+    def system(self) -> str:
         """The system / model provider."""
         return self._system
 
@@ -355,8 +378,17 @@ class AnthropicModel(Model):
                             source={'data': io.BytesIO(item.data), 'media_type': item.media_type, 'type': 'base64'},  # type: ignore
                             type='image',
                         )
+                    elif item.media_type == 'application/pdf':
+                        yield DocumentBlockParam(
+                            source=Base64PDFSourceParam(
+                                data=io.BytesIO(item.data),
+                                media_type='application/pdf',
+                                type='base64',
+                            ),
+                            type='document',
+                        )
                     else:
-                        raise RuntimeError('Only images are supported for binary content')
+                        raise RuntimeError('Only images and PDFs are supported for binary content')
                 elif isinstance(item, ImageUrl):
                     try:
                         response = await cached_async_http_client().get(item.url)

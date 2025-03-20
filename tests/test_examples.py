@@ -59,7 +59,7 @@ def find_filter_examples() -> Iterable[CodeExample]:
 
 
 @pytest.mark.parametrize('example', find_filter_examples(), ids=str)
-def test_docs_examples(
+def test_docs_examples(  # noqa: C901
     example: CodeExample,
     eval_example: EvalExample,
     mocker: MockerFixture,
@@ -77,6 +77,10 @@ def test_docs_examples(
     mocker.patch('httpx.AsyncClient.post', side_effect=async_http_request)
     mocker.patch('random.randint', return_value=4)
     mocker.patch('rich.prompt.Prompt.ask', side_effect=rich_prompt_ask)
+
+    if sys.version_info >= (3, 10):
+        mocker.patch('pydantic_ai.mcp.MCPServerHTTP', return_value=MockMCPServer())
+        mocker.patch('mcp.server.fastmcp.FastMCP')
 
     env.set('OPENAI_API_KEY', 'testing')
     env.set('GEMINI_API_KEY', 'testing')
@@ -107,6 +111,8 @@ def test_docs_examples(
         examples = [{'request': f'sql prompt {i}', 'sql': f'SELECT {i}'} for i in range(15)]
         with (tmp_path / 'examples.json').open('w') as f:
             json.dump(examples, f)
+    elif opt_title in {'ai_q_and_a_run.py', 'count_down_from_persistence.py'}:
+        os.chdir(tmp_path)
 
     ruff_ignore: list[str] = ['D', 'Q001']
     # `from bank_database import DatabaseConn` wrongly sorted in imports
@@ -134,10 +140,13 @@ def test_docs_examples(
     if opt_test.startswith('skip'):
         print(opt_test[4:].lstrip(' -') or 'running code skipped')
     else:
+        test_globals: dict[str, str] = {}
+        if opt_title == 'mcp_client.py':
+            test_globals['__name__'] = '__test__'
         if eval_example.update_examples:  # pragma: no cover
-            module_dict = eval_example.run_print_update(example, call=call_name)
+            module_dict = eval_example.run_print_update(example, call=call_name, module_globals=test_globals)
         else:
-            module_dict = eval_example.run_print_check(example, call=call_name)
+            module_dict = eval_example.run_print_check(example, call=call_name, module_globals=test_globals)
 
         os.chdir(cwd)
         if title := opt_title:
@@ -180,7 +189,22 @@ def rich_prompt_ask(prompt: str, *_args: Any, **_kwargs: Any) -> str:
         raise ValueError(f'Unexpected prompt: {prompt}')
 
 
+class MockMCPServer:
+    is_running = True
+
+    async def __aenter__(self) -> MockMCPServer:
+        return self
+
+    async def __aexit__(self, *args: Any) -> None:
+        pass
+
+    @staticmethod
+    async def list_tools() -> list[None]:
+        return []
+
+
 text_responses: dict[str, str | ToolCallPart] = {
+    'How many days between 2000-01-01 and 2025-03-18?': 'There are 9,208 days between January 1, 2000, and March 18, 2025.',
     'What is the weather like in West London and in Wiltshire?': (
         'The weather in West London is raining, while in Wiltshire it is sunny.'
     ),

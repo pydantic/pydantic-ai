@@ -175,11 +175,7 @@ class InstrumentedModel(WrapperModel):
                         )
                     )
                 new_attributes: dict[str, AttributeValue] = usage.opentelemetry_attributes()  # type: ignore
-                if model_used := getattr(response, 'model_used', None):
-                    # FallbackModel sets model_used on the response so that we can report the attributes
-                    # of the model that was actually used.
-                    new_attributes.update(self.model_attributes(model_used))
-                    attributes.update(new_attributes)
+                attributes.update(getattr(span, 'attributes', {}))
                 request_model = attributes[GEN_AI_REQUEST_MODEL_ATTRIBUTE]
                 new_attributes['gen_ai.response.model'] = response.model_name or request_model
                 span.set_attributes(new_attributes)
@@ -213,10 +209,8 @@ class InstrumentedModel(WrapperModel):
 
     @staticmethod
     def model_attributes(model: Model):
-        system = getattr(model, 'system', '') or model.__class__.__name__.removesuffix('Model').lower()
-        system = {'google-gla': 'gemini', 'google-vertex': 'vertex_ai', 'mistral': 'mistral_ai'}.get(system, system)
         attributes: dict[str, AttributeValue] = {
-            GEN_AI_SYSTEM_ATTRIBUTE: system,
+            GEN_AI_SYSTEM_ATTRIBUTE: model.system,
             GEN_AI_REQUEST_MODEL_ATTRIBUTE: model.model_name,
         }
         if base_url := model.base_url:

@@ -88,7 +88,7 @@ class GroqModel(Model):
     client: AsyncGroq = field(repr=False)
 
     _model_name: GroqModelName = field(repr=False)
-    _system: str | None = field(default='groq', repr=False)
+    _system: str = field(default='groq', repr=False)
 
     @overload
     def __init__(
@@ -138,9 +138,8 @@ class GroqModel(Model):
 
         if provider is not None:
             if isinstance(provider, str):
-                self.client = infer_provider(provider).client
-            else:
-                self.client = provider.client
+                provider = infer_provider(provider)
+            self.client = provider.client
         elif groq_client is not None:
             assert http_client is None, 'Cannot provide both `groq_client` and `http_client`'
             assert api_key is None, 'Cannot provide both `groq_client` and `api_key`'
@@ -186,7 +185,7 @@ class GroqModel(Model):
         return self._model_name
 
     @property
-    def system(self) -> str | None:
+    def system(self) -> str:
         """The system / model provider."""
         return self._system
 

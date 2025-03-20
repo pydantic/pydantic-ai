@@ -98,7 +98,7 @@ class CohereModel(Model):
     client: AsyncClientV2 = field(repr=False)
 
     _model_name: CohereModelName = field(repr=False)
-    _system: str | None = field(default='cohere', repr=False)
+    _system: str = field(default='cohere', repr=False)
 
     def __init__(
         self,
@@ -148,7 +148,7 @@ class CohereModel(Model):
         return self._model_name
 
     @property
-    def system(self) -> str | None:
+    def system(self) -> str:
         """The system / model provider."""
         return self._system
 
