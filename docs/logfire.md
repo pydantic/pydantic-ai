@@ -32,7 +32,7 @@ Here's an example showing details of running the [Weather Agent](examples/weathe
 To use logfire, you'll need a logfire [account](https://logfire.pydantic.dev), and logfire installed:
 
 ```bash
-pip/uv-add 'pydantic-ai[logfire]'
+pip/uv-add "pydantic-ai[logfire]"
 ```
 
 Then authenticate your local environment with logfire:
