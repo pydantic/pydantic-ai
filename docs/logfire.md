@@ -176,8 +176,8 @@ instrumentation_settings = InstrumentationSettings(
 ## Instrumenting a specific `Model`
 
 ```python {title="instrumented_model_example.py"}
-from pydantic_ai.models.instrumented import InstrumentedModel, InstrumentationSettings
 from pydantic_ai import Agent
+from pydantic_ai.models.instrumented import InstrumentationSettings, InstrumentedModel
 
 settings = InstrumentationSettings()
 model = InstrumentedModel('gpt-4o', settings)
