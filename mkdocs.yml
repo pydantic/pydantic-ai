@@ -65,10 +65,12 @@ nav:
       - api/models/gemini.md
       - api/models/vertexai.md
       - api/models/groq.md
+      - api/models/instrumented.md
       - api/models/mistral.md
       - api/models/test.md
       - api/models/function.md
       - api/models/fallback.md
+      - api/models/wrapper.md
       - api/providers.md
       - api/pydantic_graph/graph.md
       - api/pydantic_graph/nodes.md
