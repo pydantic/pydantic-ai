@@ -12,7 +12,7 @@ try:
 except ImportError as e:  # pragma: no cover
     raise ImportError(
         'Please install the `mistral` package to use the Mistral provider, '
-        "you can use the `mistral` optional group — `pip install 'pydantic-ai-slim[mistral]'`"
+        'you can use the `mistral` optional group — `pip install "pydantic-ai-slim[mistral]"`'
     ) from e
 
 

@@ -13,7 +13,7 @@ try:
 except ImportError as _import_error:
     raise ImportError(
         'Please install `duckduckgo-search` to use the DuckDuckGo search tool, '
-        "you can use the `duckduckgo` optional group — `pip install 'pydantic-ai-slim[duckduckgo]'`"
+        'you can use the `duckduckgo` optional group — `pip install "pydantic-ai-slim[duckduckgo]"`'
     ) from _import_error
 
 __all__ = ('duckduckgo_search_tool',)

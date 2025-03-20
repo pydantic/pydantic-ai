@@ -22,7 +22,7 @@ try:
 except ImportError as _import_error:
     raise ImportError(
         'Please install the `google-auth` package to use the Google Vertex AI provider, '
-        "you can use the `vertexai` optional group — `pip install 'pydantic-ai-slim[vertexai]'`"
+        'you can use the `vertexai` optional group — `pip install "pydantic-ai-slim[vertexai]"`'
     ) from _import_error
 
 
