@@ -172,3 +172,14 @@ instrumentation_settings = InstrumentationSettings(
     event_logger_provider=EventLoggerProvider(),
 )
 ```
+
+## Instrumenting a specific `Model`
+
+```python {title="instrumented_model_example.py"}
+from pydantic_ai.models.instrumented import InstrumentedModel, InstrumentationSettings
+from pydantic_ai import Agent
+
+settings = InstrumentationSettings()
+model = InstrumentedModel('gpt-4o', settings)
+agent = Agent(model)
+```
