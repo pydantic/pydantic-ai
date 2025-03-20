@@ -195,6 +195,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
                 If this isn't set, then the last value set by
                 [`Agent.instrument_all()`][pydantic_ai.Agent.instrument_all]
                 will be used, which defaults to False.
+                See the [Debugging and Monitoring guide](https://ai.pydantic.dev/logfire/) for more info.
         """
         if model is None or defer_model_check:
             self.model = model
