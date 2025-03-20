@@ -52,7 +52,7 @@ class InstrumentationSettings:
 
     - `Agent(instrument=...)`
     - [`Agent.instrument_all()`][pydantic_ai.agent.Agent.instrument_all]
-    - `InstrumentedModel`
+    - [`InstrumentedModel`][pydantic_ai.models.instrumented.InstrumentedModel]
     """
 
     tracer: Tracer = field(repr=False)
