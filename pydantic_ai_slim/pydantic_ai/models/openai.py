@@ -57,7 +57,7 @@ try:
 except ImportError as _import_error:
     raise ImportError(
         'Please install `openai` to use the OpenAI model, '
-        "you can use the `openai` optional group — `pip install 'pydantic-ai-slim[openai]'`"
+        'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`'
     ) from _import_error
 
 OpenAIModelName = Union[str, ChatModel]

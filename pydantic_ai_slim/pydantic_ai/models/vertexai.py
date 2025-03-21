@@ -27,7 +27,7 @@ try:
 except ImportError as _import_error:
     raise ImportError(
         'Please install `google-auth` to use the VertexAI model, '
-        "you can use the `vertexai` optional group — `pip install 'pydantic-ai-slim[vertexai]'`"
+        'you can use the `vertexai` optional group — `pip install "pydantic-ai-slim[vertexai]"`'
     ) from _import_error
 
 VERTEX_AI_URL_TEMPLATE = (

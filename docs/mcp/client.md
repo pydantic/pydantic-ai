@@ -8,7 +8,7 @@ to use their tools.
 You need to either install [`pydantic-ai`](../install.md), or[`pydantic-ai-slim`](../install.md#slim-install) with the `mcp` optional group:
 
 ```bash
-pip/uv-add 'pydantic-ai-slim[mcp]'
+pip/uv-add "pydantic-ai-slim[mcp]"
 ```
 
 !!! note
