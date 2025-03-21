@@ -1,12 +1,13 @@
 from threading import Thread
 
-from pydantic_graph._utils import get_event_loop
+from pydantic_graph._utils import run_until_complete
 
 
-def test_get_event_loop_in_thread():
+def test_run_until_complete_in_thread():
+    async def run(): ...
+
     def get_and_close_event_loop():
-        event_loop = get_event_loop()
-        event_loop.close()
+        run_until_complete(run())
 
     thread = Thread(target=get_and_close_event_loop)
     thread.start()
