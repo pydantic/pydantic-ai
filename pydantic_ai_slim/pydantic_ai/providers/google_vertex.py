@@ -131,13 +131,15 @@ class _VertexAIAuth(httpx.Auth):
     async def async_auth_flow(self, request: httpx.Request) -> AsyncGenerator[httpx.Request, httpx.Response]:
         if self.credentials is None:
             self.credentials = await self._get_credentials()
+        if self.credentials.token is None:  # type: ignore[reportUnknownMemberType]
+            await self._refresh_token()
         request.headers['Authorization'] = f'Bearer {self.credentials.token}'  # type: ignore[reportUnknownMemberType]
         # NOTE: This workaround is in place because we might get the project_id from the credentials.
         request.url = httpx.URL(str(request.url).replace('projects/None', f'projects/{self.project_id}'))
         response = yield request
 
         if response.status_code == 401:
-            await anyio.to_thread.run_sync(self._refresh_token)
+            await self._refresh_token()
             request.headers['Authorization'] = f'Bearer {self.credentials.token}'  # type: ignore[reportUnknownMemberType]
             yield request
 
@@ -162,9 +164,9 @@ class _VertexAIAuth(httpx.Auth):
             self.project_id = creds_project_id
         return creds
 
-    def _refresh_token(self) -> str:  # pragma: no cover
+    async def _refresh_token(self) -> str:  # pragma: no cover
         assert self.credentials is not None
-        self.credentials.refresh(Request())  # type: ignore[reportUnknownMemberType]
+        await anyio.to_thread.run_sync(self.credentials.refresh, Request())  # type: ignore[reportUnknownMemberType]
         assert isinstance(self.credentials.token, str), f'Expected token to be a string, got {self.credentials.token}'  # type: ignore[reportUnknownMemberType]
         return self.credentials.token
 
