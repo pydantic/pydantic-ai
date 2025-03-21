@@ -514,7 +514,7 @@ def test_run_with_history_new():
         [
             ModelRequest(
                 parts=[
-                    SystemPromptPart(content='Foobar'),
+                    SystemPromptPart(content='Foobar', timestamp=IsNow(tz=timezone.utc)),
                     UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc)),
                 ]
             ),
@@ -538,7 +538,7 @@ def test_run_with_history_new():
         [
             ModelRequest(
                 parts=[
-                    SystemPromptPart(content='Foobar'),
+                    SystemPromptPart(content='Foobar', timestamp=IsNow(tz=timezone.utc)),
                     UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc)),
                 ]
             ),
@@ -586,7 +586,7 @@ def test_run_with_history_new():
         [
             ModelRequest(
                 parts=[
-                    SystemPromptPart(content='Foobar'),
+                    SystemPromptPart(content='Foobar', timestamp=IsNow(tz=timezone.utc)),
                     UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc)),
                 ]
             ),
@@ -632,7 +632,7 @@ def test_run_with_history_new_structured():
         [
             ModelRequest(
                 parts=[
-                    SystemPromptPart(content='Foobar'),
+                    SystemPromptPart(content='Foobar', timestamp=IsNow(tz=timezone.utc)),
                     UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc)),
                 ]
             ),
@@ -670,7 +670,7 @@ def test_run_with_history_new_structured():
         [
             ModelRequest(
                 parts=[
-                    SystemPromptPart(content='Foobar'),
+                    SystemPromptPart(content='Foobar', timestamp=IsNow(tz=timezone.utc)),
                     UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc)),
                 ],
             ),
@@ -1374,8 +1374,10 @@ def test_dynamic_false_no_reevaluate():
         [
             ModelRequest(
                 parts=[
-                    SystemPromptPart(content='Foobar', part_kind='system-prompt'),
-                    SystemPromptPart(content=dynamic_value, part_kind='system-prompt'),
+                    SystemPromptPart(content='Foobar', part_kind='system-prompt', timestamp=IsNow(tz=timezone.utc)),
+                    SystemPromptPart(
+                        content=dynamic_value, part_kind='system-prompt', timestamp=IsNow(tz=timezone.utc)
+                    ),
                     UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc), part_kind='user-prompt'),
                 ],
                 kind='request',
@@ -1397,10 +1399,11 @@ def test_dynamic_false_no_reevaluate():
         [
             ModelRequest(
                 parts=[
-                    SystemPromptPart(content='Foobar', part_kind='system-prompt'),
+                    SystemPromptPart(content='Foobar', part_kind='system-prompt', timestamp=IsNow(tz=timezone.utc)),
                     SystemPromptPart(
                         content='A',  # Remains the same
                         part_kind='system-prompt',
+                        timestamp=IsNow(tz=timezone.utc),
                     ),
                     UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc), part_kind='user-prompt'),
                 ],
@@ -1446,11 +1449,12 @@ def test_dynamic_true_reevaluate_system_prompt():
         [
             ModelRequest(
                 parts=[
-                    SystemPromptPart(content='Foobar', part_kind='system-prompt'),
+                    SystemPromptPart(content='Foobar', part_kind='system-prompt', timestamp=IsNow(tz=timezone.utc)),
                     SystemPromptPart(
                         content=dynamic_value,
                         part_kind='system-prompt',
                         dynamic_ref=func.__qualname__,
+                        timestamp=IsNow(tz=timezone.utc),
                     ),
                     UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc), part_kind='user-prompt'),
                 ],
@@ -1473,11 +1477,12 @@ def test_dynamic_true_reevaluate_system_prompt():
         [
             ModelRequest(
                 parts=[
-                    SystemPromptPart(content='Foobar', part_kind='system-prompt'),
+                    SystemPromptPart(content='Foobar', part_kind='system-prompt', timestamp=IsNow(tz=timezone.utc)),
                     SystemPromptPart(
                         content='B',
                         part_kind='system-prompt',
                         dynamic_ref=func.__qualname__,
+                        timestamp=IsNow(tz=timezone.utc),
                     ),
                     UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc), part_kind='user-prompt'),
                 ],

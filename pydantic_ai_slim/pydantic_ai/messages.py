@@ -26,6 +26,9 @@ class SystemPromptPart:
     content: str
     """The content of the prompt."""
 
+    timestamp: datetime = field(default_factory=_now_utc)
+    """The timestamp of the prompt."""
+
     dynamic_ref: str | None = None
     """The ref of the dynamic system prompt function that generated this part.
 

@@ -13,7 +13,7 @@ Either way you'll need to install extra dependencies to run some examples, you j
 If you've installed `pydantic-ai` via pip/uv, you can install the extra dependencies with:
 
 ```bash
-pip/uv-add 'pydantic-ai[examples]'
+pip/uv-add "pydantic-ai[examples]"
 ```
 
 If you clone the repo, you should instead use `uv sync --extra examples` to install extra dependencies.
@@ -54,7 +54,7 @@ If you like one-liners and you're using uv, you can run a pydantic-ai example wi
 
 ```bash
 OPENAI_API_KEY='your-api-key' \
-  uv run --with 'pydantic-ai[examples]' \
+  uv run --with "pydantic-ai[examples]" \
   -m pydantic_ai_examples.pydantic_model
 ```
 

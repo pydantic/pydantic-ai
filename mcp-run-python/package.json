@@ -1,6 +1,6 @@
 {
   "name": "@pydantic/mcp-run-python",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "description": "MCP server to run Python code in a sandbox.",
   "author": "Samuel Colvin",
   "homepage": "https://github.com/pydantic/pydantic-ai/tree/main/mcp-run-python",

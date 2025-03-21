@@ -2782,7 +2782,7 @@ wheels = [
 
 [[package]]
 name = "pydantic-ai"
-version = "0.0.41"
+version = "0.0.43"
 source = { editable = "." }
 dependencies = [
     { name = "pydantic-ai-slim", extra = ["anthropic", "bedrock", "cli", "cohere", "groq", "mcp", "mistral", "openai", "vertexai"] },
@@ -2846,7 +2846,7 @@ lint = [
 
 [[package]]
 name = "pydantic-ai-examples"
-version = "0.0.41"
+version = "0.0.43"
 source = { editable = "examples" }
 dependencies = [
     { name = "asyncpg" },
@@ -2877,7 +2877,7 @@ requires-dist = [
 
 [[package]]
 name = "pydantic-ai-slim"
-version = "0.0.41"
+version = "0.0.43"
 source = { editable = "pydantic_ai_slim" }
 dependencies = [
     { name = "eval-type-backport" },
@@ -3091,7 +3091,7 @@ wheels = [
 
 [[package]]
 name = "pydantic-graph"
-version = "0.0.41"
+version = "0.0.43"
 source = { editable = "pydantic_graph" }
 dependencies = [
     { name = "httpx" },

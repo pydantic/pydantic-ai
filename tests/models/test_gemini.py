@@ -560,7 +560,7 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
         [
             ModelRequest(
                 parts=[
-                    SystemPromptPart(content='this is the system prompt'),
+                    SystemPromptPart(content='this is the system prompt', timestamp=IsNow(tz=timezone.utc)),
                     UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc)),
                 ]
             ),
