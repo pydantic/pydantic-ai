@@ -25,6 +25,7 @@ def doc_descriptions(
     Returns:
         A tuple of (main function description, parameter descriptions).
     """
+    # TODO(Marcelo): Modify the docstring above.
     doc = func.__doc__
     if doc is None:
         return '', {}
@@ -44,6 +45,14 @@ def doc_descriptions(
     main_desc = ''
     if main := next((p for p in sections if p.kind == DocstringSectionKind.text), None):
         main_desc = main.value
+
+    # TODO(Marcelo): How should we append the return docstring part to the description?
+    if return_ := next((p for p in sections if p.kind == DocstringSectionKind.returns), None):
+        return_statement = return_.value[0]
+        return_desc = return_statement.description
+        if return_type := return_statement.name:
+            return_desc = f'Returns: {return_desc} ({return_type})'
+        main_desc = '\n'.join((main_desc, return_desc))
 
     return main_desc, params
 
