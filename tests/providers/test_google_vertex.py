@@ -59,6 +59,10 @@ async def test_google_vertex_provider_auth(allow_model_requests: None, http_clie
     assert getattr(provider.client.auth, 'project_id') == 'my-project-id'
 
 
+async def mock_refresh_token():
+    return 'my-token'
+
+
 async def test_google_vertex_provider_service_account_file(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, allow_model_requests: None
 ):
@@ -66,7 +70,7 @@ async def test_google_vertex_provider_service_account_file(
     save_service_account(service_account_path, 'my-project-id')
 
     provider = GoogleVertexProvider(service_account_file=service_account_path)
-    monkeypatch.setattr(provider.client.auth, '_refresh_token', lambda: 'my-token')
+    monkeypatch.setattr(provider.client.auth, '_refresh_token', mock_refresh_token)
     await provider.client.post('/gemini-1.0-pro:generateContent')
     assert provider.region == 'us-central1'
     assert getattr(provider.client.auth, 'project_id') == 'my-project-id'
@@ -78,7 +82,7 @@ async def test_google_vertex_provider_service_account_file_info(
     account_info = prepare_service_account_contents('my-project-id')
 
     provider = GoogleVertexProvider(service_account_info=account_info)
-    monkeypatch.setattr(provider.client.auth, '_refresh_token', lambda: 'my-token')
+    monkeypatch.setattr(provider.client.auth, '_refresh_token', mock_refresh_token)
     await provider.client.post('/gemini-1.0-pro:generateContent')
     assert provider.region == 'us-central1'
     assert getattr(provider.client.auth, 'project_id') == 'my-project-id'
