@@ -12,7 +12,7 @@ try:
 except ImportError as _import_error:  # pragma: no cover
     raise ImportError(
         'Please install the `anthropic` package to use the Anthropic provider, '
-        "you can use the `anthropic` optional group — `pip install 'pydantic-ai-slim[anthropic]'`"
+        'you can use the `anthropic` optional group — `pip install "pydantic-ai-slim[anthropic]"`'
     ) from _import_error
 
 

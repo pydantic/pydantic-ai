@@ -47,7 +47,7 @@ connection and authentication to the underlying service.
 To use OpenAI models, you need to either install [`pydantic-ai`](install.md), or install [`pydantic-ai-slim`](install.md#slim-install) with the `openai` optional group:
 
 ```bash
-pip/uv-add 'pydantic-ai-slim[openai]'
+pip/uv-add "pydantic-ai-slim[openai]"
 ```
 
 ### Configuration
@@ -135,7 +135,7 @@ agent = Agent(model)
 To use [`AnthropicModel`][pydantic_ai.models.anthropic.AnthropicModel] models, you need to either install [`pydantic-ai`](install.md), or install [`pydantic-ai-slim`](install.md#slim-install) with the `anthropic` optional group:
 
 ```bash
-pip/uv-add 'pydantic-ai-slim[anthropic]'
+pip/uv-add "pydantic-ai-slim[anthropic]"
 ```
 
 ### Configuration
@@ -298,7 +298,7 @@ To use the `google-vertex` provider with [`GeminiModel`][pydantic_ai.models.gemi
 [`pydantic-ai`](install.md), or install [`pydantic-ai-slim`](install.md#slim-install) with the `vertexai` optional group:
 
 ```bash
-pip/uv-add 'pydantic-ai-slim[vertexai]'
+pip/uv-add "pydantic-ai-slim[vertexai]"
 ```
 
 ### Configuration
@@ -420,7 +420,7 @@ agent = Agent(model)
 To use [`GroqModel`][pydantic_ai.models.groq.GroqModel], you need to either install [`pydantic-ai`](install.md), or install [`pydantic-ai-slim`](install.md#slim-install) with the `groq` optional group:
 
 ```bash
-pip/uv-add 'pydantic-ai-slim[groq]'
+pip/uv-add "pydantic-ai-slim[groq]"
 ```
 
 ### Configuration
@@ -500,7 +500,7 @@ agent = Agent(model)
 To use [`MistralModel`][pydantic_ai.models.mistral.MistralModel], you need to either install [`pydantic-ai`](install.md), or install [`pydantic-ai-slim`](install.md#slim-install) with the `mistral` optional group:
 
 ```bash
-pip/uv-add 'pydantic-ai-slim[mistral]'
+pip/uv-add "pydantic-ai-slim[mistral]"
 ```
 
 ### Configuration
@@ -579,7 +579,7 @@ agent = Agent(model)
 To use [`CohereModel`][pydantic_ai.models.cohere.CohereModel], you need to either install [`pydantic-ai`](install.md), or install [`pydantic-ai-slim`](install.md#slim-install) with the `cohere` optional group:
 
 ```bash
-pip/uv-add 'pydantic-ai-slim[cohere]'
+pip/uv-add "pydantic-ai-slim[cohere]"
 ```
 
 ### Configuration
@@ -636,7 +636,7 @@ agent = Agent(model)
 To use [`BedrockConverseModel`][pydantic_ai.models.bedrock.BedrockConverseModel], you need to either install [`pydantic-ai`](install.md), or install [`pydantic-ai-slim`](install.md#slim-install) with the `bedrock` optional group:
 
 ```bash
-pip/uv-add 'pydantic-ai-slim[bedrock]'
+pip/uv-add "pydantic-ai-slim[bedrock]"
 ```
 
 ### Configuration

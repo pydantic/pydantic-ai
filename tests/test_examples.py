@@ -59,7 +59,7 @@ def find_filter_examples() -> Iterable[CodeExample]:
 
 
 @pytest.mark.parametrize('example', find_filter_examples(), ids=str)
-def test_docs_examples(
+def test_docs_examples(  # noqa: C901
     example: CodeExample,
     eval_example: EvalExample,
     mocker: MockerFixture,
@@ -79,7 +79,7 @@ def test_docs_examples(
     mocker.patch('rich.prompt.Prompt.ask', side_effect=rich_prompt_ask)
 
     if sys.version_info >= (3, 10):
-        mocker.patch('pydantic_ai.mcp.MCPServerSSE', return_value=MockMCPServer())
+        mocker.patch('pydantic_ai.mcp.MCPServerHTTP', return_value=MockMCPServer())
         mocker.patch('mcp.server.fastmcp.FastMCP')
 
     env.set('OPENAI_API_KEY', 'testing')
@@ -140,10 +140,13 @@ def test_docs_examples(
     if opt_test.startswith('skip'):
         print(opt_test[4:].lstrip(' -') or 'running code skipped')
     else:
+        test_globals: dict[str, str] = {}
+        if opt_title == 'mcp_client.py':
+            test_globals['__name__'] = '__test__'
         if eval_example.update_examples:  # pragma: no cover
-            module_dict = eval_example.run_print_update(example, call=call_name)
+            module_dict = eval_example.run_print_update(example, call=call_name, module_globals=test_globals)
         else:
-            module_dict = eval_example.run_print_check(example, call=call_name)
+            module_dict = eval_example.run_print_check(example, call=call_name, module_globals=test_globals)
 
         os.chdir(cwd)
         if title := opt_title:
@@ -201,7 +204,7 @@ class MockMCPServer:
 
 
 text_responses: dict[str, str | ToolCallPart] = {
-    'Can you convert 30 degrees celsius to fahrenheit?': '30 degrees Celsius is equal to 86 degrees Fahrenheit.',
+    'How many days between 2000-01-01 and 2025-03-18?': 'There are 9,208 days between January 1, 2000, and March 18, 2025.',
     'What is the weather like in West London and in Wiltshire?': (
         'The weather in West London is raining, while in Wiltshire it is sunny.'
     ),

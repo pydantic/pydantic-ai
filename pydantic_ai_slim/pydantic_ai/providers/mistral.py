@@ -12,7 +12,7 @@ try:
 except ImportError as e:  # pragma: no cover
     raise ImportError(
         'Please install the `mistral` package to use the Mistral provider, '
-        "you can use the `mistral` optional group — `pip install 'pydantic-ai-slim[mistral]'`"
+        'you can use the `mistral` optional group — `pip install "pydantic-ai-slim[mistral]"`'
     ) from e
 
 
@@ -55,19 +55,19 @@ class MistralProvider(Provider[Mistral]):
             mistral_client: An existing `Mistral` client to use, if provided, `api_key` and `http_client` must be `None`.
             http_client: An existing async client to use for making HTTP requests.
         """
-        api_key = api_key or os.environ.get('MISTRAL_API_KEY')
-
-        if api_key is None and mistral_client is None:
-            raise ValueError(
-                'Set the `MISTRAL_API_KEY` environment variable or pass it via `MistralProvider(api_key=...)`'
-                'to use the Mistral provider.'
-            )
-
         if mistral_client is not None:
             assert http_client is None, 'Cannot provide both `mistral_client` and `http_client`'
             assert api_key is None, 'Cannot provide both `mistral_client` and `api_key`'
             self._client = mistral_client
-        elif http_client is not None:
-            self._client = Mistral(api_key=api_key, async_client=http_client)
         else:
-            self._client = Mistral(api_key=api_key, async_client=cached_async_http_client())
+            api_key = api_key or os.environ.get('MISTRAL_API_KEY')
+
+            if api_key is None:
+                raise ValueError(
+                    'Set the `MISTRAL_API_KEY` environment variable or pass it via `MistralProvider(api_key=...)`'
+                    'to use the Mistral provider.'
+                )
+            elif http_client is not None:
+                self._client = Mistral(api_key=api_key, async_client=http_client)
+            else:
+                self._client = Mistral(api_key=api_key, async_client=cached_async_http_client())

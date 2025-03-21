@@ -195,6 +195,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
                 If this isn't set, then the last value set by
                 [`Agent.instrument_all()`][pydantic_ai.Agent.instrument_all]
                 will be used, which defaults to False.
+                See the [Debugging and Monitoring guide](https://ai.pydantic.dev/logfire/) for more info.
         """
         if model is None or defer_model_check:
             self.model = model
@@ -445,7 +446,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         usage_limits = usage_limits or _usage.UsageLimits()
 
         if isinstance(model_used, InstrumentedModel):
-            tracer = model_used.options.tracer
+            tracer = model_used.settings.tracer
         else:
             tracer = NoOpTracer()
         agent_name = self.name or 'agent'
