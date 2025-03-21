@@ -212,7 +212,9 @@ async def test_request_simple_usage(allow_model_requests: None):
 
     result = await agent.run('Hello')
     assert result.data == 'world'
-    assert result.usage() == snapshot(Usage(requests=1, request_tokens=2, response_tokens=1, total_tokens=3))
+    assert result.usage() == snapshot(
+        Usage(requests=1, request_tokens=2, response_tokens=1, cached_tokens=0, total_tokens=3)
+    )
 
 
 async def test_request_structured_response(allow_model_requests: None):
@@ -380,6 +382,7 @@ async def test_request_tool_call(allow_model_requests: None):
             requests=3,
             request_tokens=5,
             response_tokens=3,
+            cached_tokens=3,
             total_tokens=9,
             details={'cached_tokens': 3},
         )
@@ -416,7 +419,9 @@ async def test_stream_text(allow_model_requests: None):
         assert not result.is_complete
         assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(['hello ', 'hello world'])
         assert result.is_complete
-        assert result.usage() == snapshot(Usage(requests=1, request_tokens=6, response_tokens=3, total_tokens=9))
+        assert result.usage() == snapshot(
+            Usage(requests=1, request_tokens=6, response_tokens=3, cached_tokens=0, total_tokens=9)
+        )
 
 
 async def test_stream_text_finish_reason(allow_model_requests: None):
@@ -487,7 +492,9 @@ async def test_stream_structured(allow_model_requests: None):
             ]
         )
         assert result.is_complete
-        assert result.usage() == snapshot(Usage(requests=1, request_tokens=20, response_tokens=10, total_tokens=30))
+        assert result.usage() == snapshot(
+            Usage(requests=1, request_tokens=20, response_tokens=10, cached_tokens=0, total_tokens=30)
+        )
         # double check usage matches stream count
         assert result.usage().response_tokens == len(stream)
 
@@ -543,7 +550,9 @@ async def test_no_delta(allow_model_requests: None):
         assert not result.is_complete
         assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(['hello ', 'hello world'])
         assert result.is_complete
-        assert result.usage() == snapshot(Usage(requests=1, request_tokens=6, response_tokens=3, total_tokens=9))
+        assert result.usage() == snapshot(
+            Usage(requests=1, request_tokens=6, response_tokens=3, cached_tokens=0, total_tokens=9)
+        )
 
 
 @pytest.mark.parametrize('system_prompt_role', ['system', 'developer', 'user', None])
