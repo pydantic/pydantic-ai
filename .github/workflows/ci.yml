@@ -108,6 +108,7 @@ jobs:
       - run: >
           uv run
           --package pydantic-ai-slim
+          --extra pydantic-evals
           --extra openai
           --extra vertexai
           --extra groq

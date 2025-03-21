@@ -70,7 +70,7 @@ Special prompt:
         nargs='?',
         help='Model to use, it should be "<provider>:<model>" e.g. "openai:gpt-4o". If omitted it will default to "openai:gpt-4o"',
         default='openai:gpt-4o',
-    ).completer = argcomplete.ChoicesCompleter(list(get_literal_values(KnownModelName)))  # type: ignore[reportPrivateUsage]
+    ).completer = argcomplete.ChoicesCompleter(list(get_literal_values(KnownModelName.__value__)))  # type: ignore[reportPrivateUsage]
     parser.add_argument('--no-stream', action='store_true', help='Whether to stream responses from OpenAI')
     parser.add_argument('--version', action='store_true', help='Show version and exit')
 
