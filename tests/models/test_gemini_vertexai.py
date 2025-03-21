@@ -44,6 +44,10 @@ def example_usage() -> _GeminiUsageMetaData:
     return _GeminiUsageMetaData(prompt_token_count=1, candidates_token_count=2, total_token_count=3)
 
 
+async def mock_refresh_token():
+    return 'my-token'
+
+
 async def test_file_url_input(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -74,7 +78,7 @@ async def test_file_url_input(
 
     gemini_client = client_with_handler(handler)
     provider = GoogleVertexProvider(http_client=gemini_client, service_account_file=service_account_path)
-    monkeypatch.setattr(provider.client.auth, '_refresh_token', lambda: 'my-token')
+    monkeypatch.setattr(provider.client.auth, '_refresh_token', mock_refresh_token)
 
     m = GeminiModel('gemini-1.5-flash', provider=provider)
     agent = Agent(m)
