@@ -96,16 +96,12 @@ async def run_in_executor(func: Callable[_P, _R], *args: _P.args, **kwargs: _P.k
 
 
 def run_until_complete(coro: Coroutine[None, None, _R]) -> _R:
-    try:
-        loop = asyncio.get_running_loop()
-        return loop.run_until_complete(coro)
-    except RuntimeError:
-        if sys.version_info < (3, 11):
-            try:
-                loop = asyncio.new_event_loop()
-                return loop.run_until_complete(coro)
-            finally:
-                loop.close()
-        else:
-            with asyncio.runners.Runner(loop_factory=asyncio.new_event_loop) as runner:
-                return runner.run(coro)
+    if sys.version_info < (3, 11):
+        try:
+            loop = asyncio.new_event_loop()
+            return loop.run_until_complete(coro)
+        finally:
+            loop.close()
+    else:
+        with asyncio.runners.Runner(loop_factory=asyncio.new_event_loop) as runner:
+            return runner.run(coro)
