@@ -8,7 +8,7 @@ Demonstrates:
 - [agent dependencies](../dependencies.md)
 - [structured `result_type`](../results.md#structured-result-validation)
 - [result validation](../results.md#result-validators-functions)
-- Permit.io [AI Access Control] (https://www.permit.io/ai-access-control)
+- Permit.io [AI Access Control](https://www.permit.io/ai-access-control)
 
 In this `Financial Advisor` agent example, the user can ask for financial advice, and the agent will use the `validate_financial_query` and `validate_financial_response` tools to check permissions and validate responses.
 The raw user query is transformed into a `FinancialQuery` object that includes user context (such as their permission tier).
@@ -47,7 +47,7 @@ docker run -it \\
 Run the following command to set up our Permit.io financial advisor policy configuration:
 
 ```bash
-python/uv-run -m pydantic_ai_examples.secure-ai-config
+python/uv-run -m pydantic_ai_examples.ai-access-control-config
 ```
 
 ### Run the Example
@@ -55,19 +55,35 @@ python/uv-run -m pydantic_ai_examples.secure-ai-config
 With [dependencies installed and environment variables set](./index.md#usage), run the following command to run the example:
 
 ```bash
-python/uv-run -m pydantic_ai_examples.secure-ai-agent
+python/uv-run -m pydantic_ai_examples.ai-access-control
 ```
 
 ## Example code
 
-```python {title="pydantic_ai_examples/secure-ai-agent.py"}
-#! examples/pydantic_ai_examples/secure-ai-agent.py
+```python {title="pydantic_ai_examples/ai-access-control.py"}
+#! examples/pydantic_ai_examples/ai-access-control.py
 ```
 
 ## Configuration code
 
-```python {title="pydantic_ai_examples/secure-ai-config.py"}
-#! examples/pydantic_ai_examples/secure-ai-config.py
+The following script will set the following fine-grained Attribute-Based Access Control (ABAC) policy in Permit.io
+
+1. **User Tiers**:
+   - `opted_in_user`: Users who have explicitly consented to AI advice
+   - `premium_user`: Users with access to all features and advanced financial advice
+2. **Resources and Actions**:
+   - `financial_advice`: Controls who can receive investment recommendations
+     - Attributes: `is_ai_generated` (boolean)
+     - Actions: `receive`
+   - `financial_response`: Controls content and disclaimers in responses
+     - Attributes: `contains_advice` (boolean)
+     - Actions: `requires_disclaimer`
+3. **Decision Logic**:
+   - Only `opted_in_user` can receive AI-generated advice
+   - AI generated responses require disclaimers for regulatory compliance
+
+```python {title="pydantic_ai_examples/ai-access-control-config.py"}
+#! examples/pydantic_ai_examples/ai-access-control-config.py
 ```
 
 ## Demo
