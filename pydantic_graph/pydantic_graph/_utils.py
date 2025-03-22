@@ -101,8 +101,11 @@ def run_until_complete(coro: Coroutine[None, None, _R]) -> _R:
         return loop.run_until_complete(coro)
     except RuntimeError:
         if sys.version_info < (3, 11):
-            loop = asyncio.new_event_loop()
-            return loop.run_until_complete(coro)
+            try:
+                loop = asyncio.new_event_loop()
+                return loop.run_until_complete(coro)
+            finally:
+                loop.close()
         else:
             with asyncio.runners.Runner(loop_factory=asyncio.new_event_loop) as runner:
                 return runner.run(coro)
