@@ -49,9 +49,9 @@ def doc_descriptions(
     # TODO(Marcelo): How should we append the return docstring part to the description?
     if return_ := next((p for p in sections if p.kind == DocstringSectionKind.returns), None):
         return_statement = return_.value[0]
-        return_desc = return_statement.description
+        return_desc = f'Returns {return_statement.description}'
         if return_type := return_statement.name:
-            return_desc = f'Returns: {return_desc} ({return_type})'
+            return_desc = f'{return_desc} ({return_type})'
         main_desc = '\n'.join((main_desc, return_desc))
 
     return main_desc, params
