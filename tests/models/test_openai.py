@@ -28,7 +28,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.result import Usage
 from pydantic_ai.settings import ModelSettings
 
-from ..conftest import IsNow, TestEnv, raise_if_exception, try_import
+from ..conftest import IsNow, IsStr, TestEnv, raise_if_exception, try_import
 from .mock_async_stream import MockAsyncStream
 
 with try_import() as imports_successful:
@@ -684,3 +684,13 @@ def test_model_status_error(allow_model_requests: None) -> None:
     with pytest.raises(ModelHTTPError) as exc_info:
         agent.run_sync('hello')
     assert str(exc_info.value) == snapshot("status_code: 500, model_name: gpt-4o, body: {'error': 'test error'}")
+
+
+@pytest.mark.vcr()
+@pytest.mark.parametrize('model_name', ['o3-mini', 'gpt-4o-mini', 'gpt-4.5-preview'])
+async def test_max_completion_tokens(allow_model_requests: None, model_name: str, openai_api_key: str):
+    m = OpenAIModel(model_name, provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(m, model_settings=ModelSettings(max_tokens=100))
+
+    result = await agent.run('hello')
+    assert result.data == IsStr()
