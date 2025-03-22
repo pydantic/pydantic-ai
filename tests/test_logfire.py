@@ -167,7 +167,7 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary], instrument: 
     )
     chat_span_attributes = summary.attributes[2]
     if instrument is True or instrument.event_mode == 'attributes':
-        attribute_mode_attributes = {k: chat_span_attributes.pop(k) for k in ['events', 'logfire.json_schema']}
+        attribute_mode_attributes = {k: chat_span_attributes.pop(k) for k in ['events']}
         assert attribute_mode_attributes == snapshot(
             {
                 'events': IsJson(
@@ -198,7 +198,6 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary], instrument: 
                         ]
                     )
                 ),
-                'logfire.json_schema': '{"type": "object", "properties": {"events": {"type": "array"}}}',
             }
         )
 
@@ -207,6 +206,28 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary], instrument: 
             'gen_ai.operation.name': 'chat',
             'gen_ai.system': 'test',
             'gen_ai.request.model': 'test',
+            'model_request_parameters': IsJson(
+                snapshot(
+                    {
+                        'function_tools': [
+                            {
+                                'name': 'my_ret',
+                                'description': '',
+                                'parameters_json_schema': {
+                                    'additionalProperties': False,
+                                    'properties': {'x': {'type': 'integer'}},
+                                    'required': ['x'],
+                                    'type': 'object',
+                                },
+                                'outer_typed_dict_key': None,
+                            }
+                        ],
+                        'allow_text_result': True,
+                        'result_tools': [],
+                    }
+                )
+            ),
+            'logfire.json_schema': IsJson(),
             'logfire.span_type': 'span',
             'logfire.msg': 'chat test',
             'gen_ai.response.model': 'test',
@@ -230,14 +251,14 @@ def test_instrument_all():
     m = get_model()
     assert isinstance(m, InstrumentedModel)
     assert m.wrapped is model
-    assert m.options.event_mode == InstrumentationSettings().event_mode
+    assert m.settings.event_mode == InstrumentationSettings().event_mode
 
     options = InstrumentationSettings(event_mode='logs')
     Agent.instrument_all(options)
     m = get_model()
     assert isinstance(m, InstrumentedModel)
     assert m.wrapped is model
-    assert m.options is options
+    assert m.settings is options
 
     Agent.instrument_all(False)
     assert get_model() is model

@@ -50,7 +50,7 @@ try:
 except ImportError as _import_error:
     raise ImportError(
         'Please install `cohere` to use the Cohere model, '
-        "you can use the `cohere` optional group — `pip install 'pydantic-ai-slim[cohere]'`"
+        'you can use the `cohere` optional group — `pip install "pydantic-ai-slim[cohere]"`'
     ) from _import_error
 
 LatestCohereModelNames = Literal[

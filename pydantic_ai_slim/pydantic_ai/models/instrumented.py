@@ -52,7 +52,9 @@ class InstrumentationSettings:
 
     - `Agent(instrument=...)`
     - [`Agent.instrument_all()`][pydantic_ai.agent.Agent.instrument_all]
-    - `InstrumentedModel`
+    - [`InstrumentedModel`][pydantic_ai.models.instrumented.InstrumentedModel]
+
+    See the [Debugging and Monitoring guide](https://ai.pydantic.dev/logfire/) for more info.
     """
 
     tracer: Tracer = field(repr=False)
@@ -94,9 +96,13 @@ GEN_AI_REQUEST_MODEL_ATTRIBUTE = 'gen_ai.request.model'
 
 @dataclass
 class InstrumentedModel(WrapperModel):
-    """Model which is instrumented with OpenTelemetry."""
+    """Model which wraps another model so that requests are instrumented with OpenTelemetry.
 
-    options: InstrumentationSettings
+    See the [Debugging and Monitoring guide](https://ai.pydantic.dev/logfire/) for more info.
+    """
+
+    settings: InstrumentationSettings
+    """Configuration for instrumenting requests."""
 
     def __init__(
         self,
@@ -104,7 +110,7 @@ class InstrumentedModel(WrapperModel):
         options: InstrumentationSettings | None = None,
     ) -> None:
         super().__init__(wrapped)
-        self.options = options or InstrumentationSettings()
+        self.settings = options or InstrumentationSettings()
 
     async def request(
         self,
@@ -112,7 +118,7 @@ class InstrumentedModel(WrapperModel):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> tuple[ModelResponse, Usage]:
-        with self._instrument(messages, model_settings) as finish:
+        with self._instrument(messages, model_settings, model_request_parameters) as finish:
             response, usage = await super().request(messages, model_settings, model_request_parameters)
             finish(response, usage)
             return response, usage
@@ -124,7 +130,7 @@ class InstrumentedModel(WrapperModel):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> AsyncIterator[StreamedResponse]:
-        with self._instrument(messages, model_settings) as finish:
+        with self._instrument(messages, model_settings, model_request_parameters) as finish:
             response_stream: StreamedResponse | None = None
             try:
                 async with super().request_stream(
@@ -140,6 +146,7 @@ class InstrumentedModel(WrapperModel):
         self,
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
     ) -> Iterator[Callable[[ModelResponse, Usage], None]]:
         operation = 'chat'
         span_name = f'{operation} {self.model_name}'
@@ -149,6 +156,13 @@ class InstrumentedModel(WrapperModel):
         attributes: dict[str, AttributeValue] = {
             'gen_ai.operation.name': operation,
             **self.model_attributes(self.wrapped),
+            'model_request_parameters': json.dumps(InstrumentedModel.serialize_any(model_request_parameters)),
+            'logfire.json_schema': json.dumps(
+                {
+                    'type': 'object',
+                    'properties': {'model_request_parameters': {'type': 'object'}},
+                }
+            ),
         }
 
         if model_settings:
@@ -156,7 +170,7 @@ class InstrumentedModel(WrapperModel):
                 if isinstance(value := model_settings.get(key), (float, int)):
                     attributes[f'gen_ai.request.{key}'] = value
 
-        with self.options.tracer.start_as_current_span(span_name, attributes=attributes) as span:
+        with self.settings.tracer.start_as_current_span(span_name, attributes=attributes) as span:
 
             def finish(response: ModelResponse, usage: Usage):
                 if not span.is_recording():
@@ -190,9 +204,9 @@ class InstrumentedModel(WrapperModel):
             yield finish
 
     def _emit_events(self, span: Span, events: list[Event]) -> None:
-        if self.options.event_mode == 'logs':
+        if self.settings.event_mode == 'logs':
             for event in events:
-                self.options.event_logger.emit(event)
+                self.settings.event_logger.emit(event)
         else:
             attr_name = 'events'
             span.set_attributes(
@@ -201,7 +215,10 @@ class InstrumentedModel(WrapperModel):
                     'logfire.json_schema': json.dumps(
                         {
                             'type': 'object',
-                            'properties': {attr_name: {'type': 'array'}},
+                            'properties': {
+                                attr_name: {'type': 'array'},
+                                'model_request_parameters': {'type': 'object'},
+                            },
                         }
                     ),
                 }

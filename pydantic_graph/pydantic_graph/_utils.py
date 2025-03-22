@@ -1,22 +1,15 @@
 from __future__ import annotations as _annotations
 
 import asyncio
+import sys
 import types
+from collections.abc import Coroutine
 from functools import partial
 from typing import Any, Callable, TypeVar
 
 from typing_extensions import ParamSpec, TypeIs, get_args, get_origin
 from typing_inspection import typing_objects
 from typing_inspection.introspection import is_union_origin
-
-
-def get_event_loop():
-    try:
-        event_loop = asyncio.get_event_loop()
-    except RuntimeError:
-        event_loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(event_loop)
-    return event_loop
 
 
 def get_union_args(tp: Any) -> tuple[Any, ...]:
@@ -100,3 +93,15 @@ async def run_in_executor(func: Callable[_P, _R], *args: _P.args, **kwargs: _P.k
         return await asyncio.get_running_loop().run_in_executor(None, partial(func, *args, **kwargs))
     else:
         return await asyncio.get_running_loop().run_in_executor(None, func, *args)  # type: ignore
+
+
+def run_until_complete(coro: Coroutine[None, None, _R]) -> _R:
+    if sys.version_info < (3, 11):
+        try:
+            loop = asyncio.new_event_loop()
+            return loop.run_until_complete(coro)
+        finally:
+            loop.close()
+    else:
+        with asyncio.runners.Runner(loop_factory=asyncio.new_event_loop) as runner:
+            return runner.run(coro)

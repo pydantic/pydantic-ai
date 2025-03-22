@@ -13,7 +13,7 @@ To use the CLI, you need to either install [`pydantic-ai`](install.md), or insta
 [`pydantic-ai-slim`](install.md#slim-install) with the `cli` optional group:
 
 ```bash
-pip/uv-add 'pydantic-ai[cli]'
+pip/uv-add "pydantic-ai[cli]"
 ```
 
 To enable command-line argument autocompletion, run:
