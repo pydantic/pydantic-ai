@@ -10,7 +10,7 @@ Sets up the complete ABAC (Attribute-Based Access Control) model including:
 
 import asyncio
 import os
-from typing import TypedDict
+from typing_extensions import TypedDict
 
 from permit import (
     ConditionSetCreate,
