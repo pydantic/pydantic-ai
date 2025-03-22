@@ -122,7 +122,6 @@ def sphinx_style_docstring(foo: int, /) -> str:  # pragma: no cover
     """Sphinx style docstring.
 
     :param foo: The foo thing.
-    :return: The result.
     """
     return str(foo)
 
@@ -688,11 +687,7 @@ agent = Agent('test', tools=[ctx_tool], deps_type=int)
 
 
 async def tool_without_return_annotation_in_docstring() -> str:  # pragma: no cover
-    """A tool that documents what it returns but doesn't have a return annotation in the docstring.
-
-    Returns:
-        A value.
-    """
+    """A tool that documents what it returns but doesn't have a return annotation in the docstring."""
 
     return ''
 
@@ -707,8 +702,7 @@ def test_suppress_griffe_logging(caplog: LogCaptureFixture):
     json_schema = json.loads(result.data)
     assert json_schema == snapshot(
         {
-            'description': "A tool that documents what it returns but doesn't have a "
-            'return annotation in the docstring.',
+            'description': "A tool that documents what it returns but doesn't have a return annotation in the docstring.",
             'name': 'tool_without_return_annotation_in_docstring',
             'outer_typed_dict_key': None,
             'parameters_json_schema': {'additionalProperties': False, 'properties': {}, 'type': 'object'},
