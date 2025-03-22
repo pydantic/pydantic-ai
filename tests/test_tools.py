@@ -189,7 +189,7 @@ def test_docstring_numpy(docstring_format: Literal['numpy', 'auto']):
 def test_google_style_with_returns():
     agent = Agent(FunctionModel(get_json_schema))
 
-    def my_tool(x: int) -> str:
+    def my_tool(x: int) -> str:  # pragma: no cover
         """A function that does something.
 
         Args:
@@ -227,7 +227,7 @@ def test_google_style_with_returns():
 def test_sphinx_style_with_returns():
     agent = Agent(FunctionModel(get_json_schema))
 
-    def my_tool(x: int) -> str:
+    def my_tool(x: int) -> str:  # pragma: no cover
         """A sphinx function with returns.
 
         :param x: The input value.
@@ -263,7 +263,7 @@ def test_sphinx_style_with_returns():
 def test_numpy_style_with_returns():
     agent = Agent(FunctionModel(get_json_schema))
 
-    def my_tool(x: int) -> str:
+    def my_tool(x: int) -> str:  # pragma: no cover
         """A numpy function with returns.
 
         Parameters
@@ -297,6 +297,36 @@ def test_numpy_style_with_returns():
                 'required': ['x'],
                 'type': 'object',
             },
+            'outer_typed_dict_key': None,
+        }
+    )
+
+
+def only_returns_type() -> str:  # pragma: no cover
+    """
+
+    Returns:
+        str: The result as a string.
+    """
+    return 'foo'
+
+
+def test_only_returns_type():
+    agent = Agent(FunctionModel(get_json_schema))
+    agent.tool_plain(only_returns_type)
+
+    result = agent.run_sync('Hello')
+    json_schema = json.loads(result.data)
+    assert json_schema == snapshot(
+        {
+            'name': 'only_returns_type',
+            'description': """\
+<returns>
+<type>str</type>
+<description>The result as a string.</description>
+</returns>\
+""",
+            'parameters_json_schema': {'additionalProperties': False, 'properties': {}, 'type': 'object'},
             'outer_typed_dict_key': None,
         }
     )

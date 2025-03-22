@@ -41,7 +41,14 @@ def doc_descriptions(
     parent = cast(GriffeObject, sig)
 
     docstring_style = _infer_docstring_style(doc) if docstring_format == 'auto' else docstring_format
-    docstring = Docstring(doc, lineno=1, parser=docstring_style, parent=parent)
+    docstring = Docstring(
+        doc,
+        lineno=1,
+        parser=docstring_style,
+        parent=parent,
+        # https://mkdocstrings.github.io/griffe/reference/docstrings/#google-options
+        parser_options={'returns_named_value': False, 'returns_multiple_items': False},
+    )
     with _disable_griffe_logging():
         sections = docstring.parse()
 
@@ -56,13 +63,8 @@ def doc_descriptions(
     if return_ := next((p for p in sections if p.kind == DocstringSectionKind.returns), None):
         return_statement = return_.value[0]
         return_desc = return_statement.description
-
-        if docstring_style == 'google':
-            return_type = return_statement.name
-            type_tag = f'<type>{return_type}</type>\n' if return_type else ''
-        else:
-            return_type = return_statement.annotation
-            type_tag = f'<type>{return_type}</type>\n' if return_type else ''
+        return_type = return_statement.annotation
+        type_tag = f'<type>{return_type}</type>\n' if return_type else ''
         return_xml = f'<returns>\n{type_tag}<description>{return_desc}</description>\n</returns>'
 
         if main_desc:
