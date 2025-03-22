@@ -394,6 +394,20 @@ class TextPart:
 
 
 @dataclass
+class ThinkingPart:
+    """A thinking response from a model."""
+
+    content: str
+    """The thinking content of the response."""
+
+    signature: str | None = None
+    """The signature of the thinking."""
+
+    part_kind: Literal['thinking'] = 'thinking'
+    """Part type identifier, this is available on all parts as a discriminator."""
+
+
+@dataclass
 class ToolCallPart:
     """A tool call from a model."""
 
@@ -442,7 +456,7 @@ class ToolCallPart:
             return bool(self.args)
 
 
-ModelResponsePart = Annotated[Union[TextPart, ToolCallPart], pydantic.Discriminator('part_kind')]
+ModelResponsePart = Annotated[Union[TextPart, ToolCallPart, ThinkingPart], pydantic.Discriminator('part_kind')]
 """A message part returned by a model."""
 
 
