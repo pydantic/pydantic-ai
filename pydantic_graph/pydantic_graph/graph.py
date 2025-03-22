@@ -202,7 +202,7 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
         if infer_name and self.name is None:
             self._infer_name(inspect.currentframe())
 
-        return _utils.get_event_loop().run_until_complete(
+        return _utils.run_until_complete(
             self.run(start_node, state=state, deps=deps, persistence=persistence, infer_name=False)
         )
 
