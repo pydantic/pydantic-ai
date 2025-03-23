@@ -504,7 +504,7 @@ async def test_request_result_type_with_arguments_str_response(allow_model_reque
         [
             ModelRequest(
                 parts=[
-                    SystemPromptPart(content='System prompt value'),
+                    SystemPromptPart(content='System prompt value', timestamp=IsNow(tz=timezone.utc)),
                     UserPromptPart(content='User prompt value', timestamp=IsNow(tz=timezone.utc)),
                 ]
             ),
@@ -1070,7 +1070,7 @@ async def test_request_tool_call(allow_model_requests: None):
         [
             ModelRequest(
                 parts=[
-                    SystemPromptPart(content='this is the system prompt'),
+                    SystemPromptPart(content='this is the system prompt', timestamp=IsNow(tz=timezone.utc)),
                     UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc)),
                 ]
             ),
@@ -1207,7 +1207,7 @@ async def test_request_tool_call_with_result_type(allow_model_requests: None):
         [
             ModelRequest(
                 parts=[
-                    SystemPromptPart(content='this is the system prompt'),
+                    SystemPromptPart(content='this is the system prompt', timestamp=IsNow(tz=timezone.utc)),
                     UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc)),
                 ]
             ),
@@ -1347,7 +1347,7 @@ async def test_stream_tool_call_with_return_type(allow_model_requests: None):
         [
             ModelRequest(
                 parts=[
-                    SystemPromptPart(content='this is the system prompt'),
+                    SystemPromptPart(content='this is the system prompt', timestamp=IsNow(tz=timezone.utc)),
                     UserPromptPart(content='User prompt value', timestamp=IsNow(tz=timezone.utc)),
                 ]
             ),
@@ -1447,7 +1447,7 @@ async def test_stream_tool_call(allow_model_requests: None):
         [
             ModelRequest(
                 parts=[
-                    SystemPromptPart(content='this is the system prompt'),
+                    SystemPromptPart(content='this is the system prompt', timestamp=IsNow(tz=timezone.utc)),
                     UserPromptPart(content='User prompt value', timestamp=IsNow(tz=timezone.utc)),
                 ]
             ),
@@ -1550,7 +1550,7 @@ async def test_stream_tool_call_with_retry(allow_model_requests: None):
         [
             ModelRequest(
                 parts=[
-                    SystemPromptPart(content='this is the system prompt'),
+                    SystemPromptPart(content='this is the system prompt', timestamp=IsNow(tz=timezone.utc)),
                     UserPromptPart(content='User prompt value', timestamp=IsNow(tz=timezone.utc)),
                 ]
             ),

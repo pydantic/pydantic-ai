@@ -2139,7 +2139,7 @@ wheels = [
 
 [[package]]
 name = "openai"
-version = "1.65.1"
+version = "1.68.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
@@ -2151,9 +2151,9 @@ dependencies = [
     { name = "tqdm" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/5b/99/b7c99aaf4ab0b433556ece264d2295232704f7eebdef37d7fe3fd276f114/openai-1.65.1.tar.gz", hash = "sha256:9d9370a20d2b8c3ce319fd2194c2eef5eab59effbcc5b04ff480977edc530fba", size = 357529 }
+sdist = { url = "https://files.pythonhosted.org/packages/3f/6b/6b002d5d38794645437ae3ddb42083059d556558493408d39a0fcea608bc/openai-1.68.2.tar.gz", hash = "sha256:b720f0a95a1dbe1429c0d9bb62096a0d98057bcda82516f6e8af10284bdd5b19", size = 413429 }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/97/0a/405970c3dad0ef5f1b2bbf770d91c4f27b883f1e3f144dca4962da09900f/openai-1.65.1-py3-none-any.whl", hash = "sha256:396652a6452dd42791b3ad8a3aab09b1feb7c1c4550a672586fb300760a8e204", size = 472817 },
+    { url = "https://files.pythonhosted.org/packages/fd/34/cebce15f64eb4a3d609a83ac3568d43005cc9a1cba9d7fde5590fd415423/openai-1.68.2-py3-none-any.whl", hash = "sha256:24484cb5c9a33b58576fdc5acf0e5f92603024a4e39d0b99793dfa1eb14c2b36", size = 606073 },
 ]
 
 [[package]]
@@ -2782,7 +2782,7 @@ wheels = [
 
 [[package]]
 name = "pydantic-ai"
-version = "0.0.41"
+version = "0.0.43"
 source = { editable = "." }
 dependencies = [
     { name = "pydantic-ai-slim", extra = ["anthropic", "bedrock", "cli", "cohere", "groq", "mcp", "mistral", "openai", "vertexai"] },
@@ -2846,7 +2846,7 @@ lint = [
 
 [[package]]
 name = "pydantic-ai-examples"
-version = "0.0.41"
+version = "0.0.43"
 source = { editable = "examples" }
 dependencies = [
     { name = "asyncpg" },
@@ -2877,7 +2877,7 @@ requires-dist = [
 
 [[package]]
 name = "pydantic-ai-slim"
-version = "0.0.41"
+version = "0.0.43"
 source = { editable = "pydantic_ai_slim" }
 dependencies = [
     { name = "eval-type-backport" },
@@ -2964,7 +2964,7 @@ requires-dist = [
     { name = "logfire", marker = "extra == 'logfire'", specifier = ">=2.3" },
     { name = "mcp", marker = "python_full_version >= '3.10' and extra == 'mcp'", specifier = ">=1.4.1" },
     { name = "mistralai", marker = "extra == 'mistral'", specifier = ">=1.2.5" },
-    { name = "openai", marker = "extra == 'openai'", specifier = ">=1.65.1" },
+    { name = "openai", marker = "extra == 'openai'", specifier = ">=1.66.0" },
     { name = "opentelemetry-api", specifier = ">=1.28.0" },
     { name = "prompt-toolkit", marker = "extra == 'cli'", specifier = ">=3" },
     { name = "pydantic", specifier = ">=2.10" },
@@ -3091,7 +3091,7 @@ wheels = [
 
 [[package]]
 name = "pydantic-graph"
-version = "0.0.41"
+version = "0.0.43"
 source = { editable = "pydantic_graph" }
 dependencies = [
     { name = "httpx" },

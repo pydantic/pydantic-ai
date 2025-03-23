@@ -130,6 +130,7 @@ async def test_forecast():
             parts=[
                 SystemPromptPart(
                     content='Providing a weather forecast at the locations the user provides.',
+                    timestamp=IsNow(tz=timezone.utc),
                 ),
                 UserPromptPart(
                     content='What will the weather be like in London on 2024-11-28?',

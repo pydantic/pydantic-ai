@@ -31,7 +31,7 @@ try:
 except ImportError as _import_error:
     raise ImportError(
         'Please install `rich`, `prompt-toolkit` and `argcomplete` to use the PydanticAI CLI, '
-        "you can use the `cli` optional group — `pip install 'pydantic-ai-slim[cli]'`"
+        'you can use the `cli` optional group — `pip install "pydantic-ai-slim[cli]"`'
     ) from _import_error
 
 from pydantic_ai.agent import Agent

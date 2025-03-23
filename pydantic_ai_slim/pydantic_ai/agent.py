@@ -13,7 +13,7 @@ from pydantic.json_schema import GenerateJsonSchema
 from typing_extensions import TypeGuard, TypeVar, deprecated
 
 from pydantic_graph import End, Graph, GraphRun, GraphRunContext
-from pydantic_graph._utils import get_event_loop
+from pydantic_graph._utils import run_until_complete
 
 from . import (
     _agent_graph,
@@ -195,6 +195,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
                 If this isn't set, then the last value set by
                 [`Agent.instrument_all()`][pydantic_ai.Agent.instrument_all]
                 will be used, which defaults to False.
+                See the [Debugging and Monitoring guide](https://ai.pydantic.dev/logfire/) for more info.
         """
         if model is None or defer_model_check:
             self.model = model
@@ -445,7 +446,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         usage_limits = usage_limits or _usage.UsageLimits()
 
         if isinstance(model_used, InstrumentedModel):
-            tracer = model_used.options.tracer
+            tracer = model_used.settings.tracer
         else:
             tracer = NoOpTracer()
         agent_name = self.name or 'agent'
@@ -566,7 +567,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         """
         if infer_name and self.name is None:
             self._infer_name(inspect.currentframe())
-        return get_event_loop().run_until_complete(
+        return run_until_complete(
             self.run(
                 user_prompt,
                 result_type=result_type,

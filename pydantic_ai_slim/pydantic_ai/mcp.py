@@ -21,7 +21,7 @@ try:
 except ImportError as _import_error:
     raise ImportError(
         'Please install the `mcp` package to use the MCP server, '
-        "you can use the `mcp` optional group — `pip install 'pydantic-ai-slim[mcp]'`"
+        'you can use the `mcp` optional group — `pip install "pydantic-ai-slim[mcp]"`'
     ) from _import_error
 
 __all__ = 'MCPServer', 'MCPServerStdio', 'MCPServerHTTP'
