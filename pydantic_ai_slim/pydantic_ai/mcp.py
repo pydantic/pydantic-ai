@@ -188,11 +188,22 @@ class MCPServerHTTP(MCPServer):
     For example for a server running locally, this might be `http://localhost:3001/sse`.
     """
 
+    headers: dict[str, Any] | None = None
+    """The headers passed to httpx.AsyncClient used within MCP sdk sse_client."""
+
+    timeout: float = 5
+    """The timeout used for httpx.Timeout config within MCP sdk sse_client."""
+
+    sse_read_timeout: float = 60 * 5
+    """The read timeout used for httpx.Timeout config within MCP sdk sse_client."""
+
     @asynccontextmanager
     async def client_streams(
         self,
     ) -> AsyncIterator[
         tuple[MemoryObjectReceiveStream[JSONRPCMessage | Exception], MemoryObjectSendStream[JSONRPCMessage]]
     ]:  # pragma: no cover
-        async with sse_client(url=self.url) as (read_stream, write_stream):
+        async with sse_client(
+            url=self.url, headers=self.headers, timeout=self.timeout, sse_read_timeout=self.sse_read_timeout
+        ) as (read_stream, write_stream):
             yield read_stream, write_stream
