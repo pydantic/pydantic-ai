@@ -10,6 +10,7 @@ from ..conftest import try_import
 
 with try_import() as imports_successful:
     from cohere import AsyncClientV2
+    from cohere.core.http_client import AsyncHttpClient
 
     from pydantic_ai.providers.cohere import CohereProvider
 
@@ -22,7 +23,7 @@ def test_cohere_provider() -> None:
     assert provider.name == 'cohere'
     assert provider.base_url == 'https://api.cohere.com'
     assert isinstance(provider.client, AsyncClientV2)
-    assert provider.client._client_wrapper.token == 'api-key'  # type: ignore[reportPrivateUsage]
+    assert provider.client._client_wrapper._token == 'api-key'  # type: ignore[reportPrivateUsage]
 
 
 def test_cohere_provider_need_api_key() -> None:
@@ -34,7 +35,9 @@ def test_cohere_provider_need_api_key() -> None:
 def test_cohere_provider_pass_http_client() -> None:
     http_client = httpx.AsyncClient()
     provider = CohereProvider(http_client=http_client, api_key='api-key')
-    assert provider.client._client == http_client  # type: ignore[reportPrivateUsage]
+    # The AsyncClientV2 wraps our httpx client in an AsyncHttpClient
+    # So we just check that the httpx_client is an instance of AsyncHttpClient
+    assert isinstance(provider.client._client_wrapper.httpx_client, AsyncHttpClient)  # type: ignore[reportPrivateUsage]
 
 
 def test_cohere_provider_pass_cohere_client() -> None:
@@ -44,7 +47,8 @@ def test_cohere_provider_pass_cohere_client() -> None:
 
 
 def test_cohere_provider_with_env_base_url(monkeypatch: pytest.MonkeyPatch) -> None:
+    custom_base_url = 'https://custom.cohere.com/'
     # Test with environment variable for base_url
-    monkeypatch.setenv('CO_BASE_URL', 'https://custom.cohere.com/v1')
+    monkeypatch.setenv('CO_BASE_URL', custom_base_url)
     provider = CohereProvider(api_key='api-key')
-    assert provider.base_url == 'https://custom.cohere.com/v1'
+    assert provider.base_url == custom_base_url

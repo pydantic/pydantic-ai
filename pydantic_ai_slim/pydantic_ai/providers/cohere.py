@@ -63,7 +63,10 @@ class CohereProvider(Provider[AsyncClientV2]):
                     'to use the Cohere provider.'
                 )
 
+            base_url = os.environ.get('CO_BASE_URL')
             if http_client is not None:
-                self._client = AsyncClientV2(api_key=api_key, httpx_client=http_client)
+                self._client = AsyncClientV2(api_key=api_key, httpx_client=http_client, base_url=base_url)
             else:
-                self._client = AsyncClientV2(api_key=api_key, httpx_client=cached_async_http_client())
+                self._client = AsyncClientV2(
+                    api_key=api_key, httpx_client=cached_async_http_client(), base_url=base_url
+                )

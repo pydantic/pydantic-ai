@@ -625,9 +625,7 @@ from pydantic_ai import Agent
 from pydantic_ai.models.cohere import CohereModel
 from pydantic_ai.providers.cohere import CohereProvider
 
-model = CohereModel(
-    'command', provider=CohereProvider(api_key='your-api-key')
-)
+model = CohereModel('command', provider=CohereProvider(api_key='your-api-key'))
 agent = Agent(model)
 ...
 ```
