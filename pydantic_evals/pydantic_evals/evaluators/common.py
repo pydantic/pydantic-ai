@@ -1,7 +1,6 @@
 from __future__ import annotations as _annotations
 
 from collections.abc import Mapping
-from dataclasses import asdict
 from datetime import timedelta
 from typing import Any, cast
 
@@ -159,18 +158,14 @@ evaluator_output_adapter = TypeAdapter[EvaluatorOutputValue | dict[str, Evaluato
 
 # TODO: Consider moving this to docs rather than providing it with the library, given the security implications
 async def python(
-    ctx: EvaluatorContext[object, object, object], condition: str, name: str | None = None
+    ctx: EvaluatorContext[object, object, object], expression: str, name: str | None = None
 ) -> Mapping[str, EvaluatorOutputValue | EvaluatorResult]:
-    """Check if the output satisfies a simple Python condition expression.
-
-    The condition should be a valid Python expression that returns a boolean.
-    The output is available as the variable 'output' in the expression.
+    """Return the result of evaluating a Python expression, to be used as an evaluator's output.
 
     ***WARNING***: this evaluator runs arbitrary Python code, so you should ***NEVER*** use it with untrusted inputs.
     """
-    # Evaluate the condition
-    namespace = asdict(ctx)  # allow referencing any field in the EvaluatorContext
-    result = eval(condition, {}, namespace)
+    # Evaluate the condition, exposing access to the evaluator context as `ctx`.
+    result = eval(expression, {}, {'ctx': ctx})
 
     try:
         result = evaluator_output_adapter.validate_python(result)
@@ -185,7 +180,7 @@ async def python(
         name = 'python'
         operator = 'is' if isinstance(result, bool) else '=='
         rendered = repr(result) if isinstance(result, str) else str(result)  # "True" for bool; "'abc'" for 'abc'
-        result = EvaluatorResult(result, reason=f'({condition}) {operator} {rendered}')
+        result = EvaluatorResult(result, reason=f'({expression}) {operator} {rendered}')
     return {name: result}
 
 
@@ -197,5 +192,5 @@ DEFAULT_EVALUATORS: tuple[EvaluatorFunction[object, object, object], ...] = (
     max_duration,
     llm_judge,
     span_query,
-    # python,
+    # python,  # not included by default for security reasons
 )

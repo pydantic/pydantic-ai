@@ -25,7 +25,8 @@ from ._utils import get_unwrapped_function_name
 from .evaluators.common import DEFAULT_EVALUATORS
 from .evaluators.context import EvaluatorContext
 from .evaluators.spec import BoundEvaluatorFunction, Evaluator, EvaluatorFunction, EvaluatorSpec, SourcedEvaluatorOutput
-from .otel.context_in_memory_span_exporter import context_subtree
+from .otel import SpanTree
+from .otel._context_in_memory_span_exporter_with_deps import context_subtree
 from .reporting import EvaluationReport, ReportCase, ReportCaseAggregate
 
 if sys.version_info < (3, 11):
@@ -531,21 +532,22 @@ async def _run_task(
     finally:
         _CURRENT_TASK_RUN.reset(token)
 
-    # TODO: Question: Should we make this metric-attributes functionality more user-configurable in some way before merging?
-    #   Note: the use of otel for collecting these metrics is the main reason why I think we should require at least otel as a dependency, if not logfire;
-    #   otherwise, we don't have a great way to get usage data from arbitrary frameworks.
-    #   Ideally we wouldn't need to hard-code the specific logic here, but I'm not sure a great way to expose it to
-    #   users. Maybe via an argument of type Callable[[SpanTree], dict[str, int | float]] or similar?
-    for node in span_tree.flattened():
-        if node.attributes.get('gen_ai.operation.name') == 'chat':
-            task_run.increment_metric('requests', 1)
-        for k, v in node.attributes.items():
-            if not isinstance(v, (int, float)):
-                continue
-            if k.startswith('gen_ai.usage.details.'):
-                task_run.increment_metric(k[21:], v)
-            if k.startswith('gen_ai.usage.'):
-                task_run.increment_metric(k[13:], v)
+    if isinstance(span_tree, SpanTree):
+        # TODO: Question: Should we make this metric-attributes functionality more user-configurable in some way before merging?
+        #   Note: the use of otel for collecting these metrics is the main reason why I think we should require at least otel as a dependency, if not logfire;
+        #   otherwise, we don't have a great way to get usage data from arbitrary frameworks.
+        #   Ideally we wouldn't need to hard-code the specific logic here, but I'm not sure a great way to expose it to
+        #   users. Maybe via an argument of type Callable[[SpanTree], dict[str, int | float]] or similar?
+        for node in span_tree.flattened():
+            if node.attributes.get('gen_ai.operation.name') == 'chat':
+                task_run.increment_metric('requests', 1)
+            for k, v in node.attributes.items():
+                if not isinstance(v, (int, float)):
+                    continue
+                if k.startswith('gen_ai.usage.details.'):
+                    task_run.increment_metric(k[21:], v)
+                if k.startswith('gen_ai.usage.'):
+                    task_run.increment_metric(k[13:], v)
 
     return EvaluatorContext[InputsT, OutputT, MetadataT](
         name=case.name,
@@ -554,7 +556,7 @@ async def _run_task(
         expected_output=case.expected_output,
         output=task_output,
         duration=_get_span_duration(task_span),
-        span_tree=span_tree,
+        _span_tree=span_tree,
         attributes=task_run.attributes,
         metrics=task_run.metrics,
     )

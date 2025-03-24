@@ -43,7 +43,7 @@ def test_context() -> EvaluatorContext[TaskInput, TaskOutput, TaskMetadata]:
         expected_output=TaskOutput(answer='4'),
         metadata=TaskMetadata(difficulty='easy'),
         duration=0.1,
-        span_tree=SpanTree(),
+        _span_tree=SpanTree(),
         attributes={},
         metrics={},
     )
@@ -138,7 +138,7 @@ async def test_is_instance_evaluator():
         expected_output=None,
         metadata=None,
         duration=0.1,
-        span_tree=SpanTree(),
+        _span_tree=SpanTree(),
         attributes={},
         metrics={},
     )
@@ -160,7 +160,7 @@ async def test_is_instance_evaluator():
         expected_output=None,
         metadata=None,
         duration=0.1,
-        span_tree=SpanTree(),
+        _span_tree=SpanTree(),
         attributes={},
         metrics={},
     )
@@ -218,7 +218,7 @@ async def test_evaluator_with_null_values():
         expected_output=None,
         metadata=None,
         duration=0.1,
-        span_tree=SpanTree(),
+        _span_tree=SpanTree(),
         attributes={},
         metrics={},
     )
@@ -264,7 +264,7 @@ async def test_equals_expected_evaluator(test_context: EvaluatorContext[TaskInpu
         expected_output=TaskOutput(answer='5'),  # Different expected output
         metadata=TaskMetadata(difficulty='easy'),
         duration=0.1,
-        span_tree=SpanTree(),
+        _span_tree=SpanTree(),
         attributes={},
         metrics={},
     )
@@ -280,7 +280,7 @@ async def test_equals_expected_evaluator(test_context: EvaluatorContext[TaskInpu
         expected_output=None,  # No expected output
         metadata=TaskMetadata(difficulty='easy'),
         duration=0.1,
-        span_tree=SpanTree(),
+        _span_tree=SpanTree(),
         attributes={},
         metrics={},
     )
@@ -298,7 +298,7 @@ async def test_contains_evaluator():
         expected_output=None,
         metadata=None,
         duration=0.1,
-        span_tree=SpanTree(),
+        _span_tree=SpanTree(),
         attributes={},
         metrics={},
     )
@@ -328,7 +328,7 @@ async def test_contains_evaluator():
         expected_output=None,
         metadata=None,
         duration=0.1,
-        span_tree=SpanTree(),
+        _span_tree=SpanTree(),
         attributes={},
         metrics={},
     )
@@ -349,7 +349,7 @@ async def test_contains_evaluator():
         expected_output=None,
         metadata=None,
         duration=0.1,
-        span_tree=SpanTree(),
+        _span_tree=SpanTree(),
         attributes={},
         metrics={},
     )
@@ -393,7 +393,7 @@ async def test_span_query_evaluator(
     """Test the span_query evaluator."""
     import logfire
 
-    from pydantic_evals.otel.context_in_memory_span_exporter import context_subtree
+    from pydantic_evals.otel._context_in_memory_span_exporter_with_deps import context_subtree
     from pydantic_evals.otel.span_tree import SpanQuery
 
     # Create a span tree with a known structure
@@ -410,7 +410,7 @@ async def test_span_query_evaluator(
         expected_output=None,
         metadata=None,
         duration=0.1,
-        span_tree=tree,
+        _span_tree=tree,
         attributes={},
         metrics={},
     )
@@ -429,40 +429,40 @@ async def test_span_query_evaluator(
 async def test_python_evaluator(test_context: EvaluatorContext[TaskInput, TaskOutput, TaskMetadata]):
     """Test the python evaluator."""
     # Test with a simple condition
-    assert await python(test_context, "output.answer == '4'") == snapshot(
-        {'python': EvaluatorResult(value=True, reason="(output.answer == '4') is True")}
+    assert await python(test_context, "ctx.output.answer == '4'") == snapshot(
+        {'python': EvaluatorResult(value=True, reason="(ctx.output.answer == '4') is True")}
     )
 
     # Test type sensitivity
-    assert await python(test_context, 'output.answer == 4') == snapshot(
-        {'python': EvaluatorResult(value=False, reason='(output.answer == 4) is False')}
+    assert await python(test_context, 'ctx.output.answer == 4') == snapshot(
+        {'python': EvaluatorResult(value=False, reason='(ctx.output.answer == 4) is False')}
     )
 
     # Test with a named condition
-    assert await python(test_context, "output.answer == '4'", name='correct_answer') == snapshot(
+    assert await python(test_context, "ctx.output.answer == '4'", name='correct_answer') == snapshot(
         {'correct_answer': True}
     )
 
     # Test with a condition that returns false
-    assert await python(test_context, "output.answer == '5'") == snapshot(
-        {'python': EvaluatorResult(value=False, reason="(output.answer == '5') is False")}
+    assert await python(test_context, "ctx.output.answer == '5'") == snapshot(
+        {'python': EvaluatorResult(value=False, reason="(ctx.output.answer == '5') is False")}
     )
 
     # Test with a condition that accesses context properties
-    assert await python(test_context, "output.answer == '4' and metadata.difficulty == 'easy'") == snapshot(
+    assert await python(test_context, "ctx.output.answer == '4' and ctx.metadata.difficulty == 'easy'") == snapshot(
         {
             'python': EvaluatorResult(
-                value=True, reason="(output.answer == '4' and metadata.difficulty == 'easy') is True"
+                value=True, reason="(ctx.output.answer == '4' and ctx.metadata.difficulty == 'easy') is True"
             )
         }
     )
 
     # Test reason rendering for strings
-    assert await python(test_context, 'output.answer') == snapshot(
-        {'python': EvaluatorResult(value='4', reason="(output.answer) == '4'")}
+    assert await python(test_context, 'ctx.output.answer') == snapshot(
+        {'python': EvaluatorResult(value='4', reason="(ctx.output.answer) == '4'")}
     )
 
     # Test with a condition that returns a dict
     assert await python(
-        test_context, "{'is_correct': output.answer == '4', 'is_easy': metadata.difficulty == 'easy'}"
+        test_context, "{'is_correct': ctx.output.answer == '4', 'is_easy': ctx.metadata.difficulty == 'easy'}"
     ) == snapshot({'is_correct': True, 'is_easy': True})

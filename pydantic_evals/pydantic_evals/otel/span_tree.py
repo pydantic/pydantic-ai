@@ -5,14 +5,17 @@ from collections.abc import Mapping
 from datetime import datetime, timedelta, timezone
 from functools import partial
 from textwrap import indent
-from typing import Any, Callable, NotRequired
+from typing import TYPE_CHECKING, Any, Callable, NotRequired
 
-from opentelemetry.sdk.trace import ReadableSpan
-from opentelemetry.trace import SpanContext
-from opentelemetry.util.types import AttributeValue
 from typing_extensions import TypedDict
 
 __all__ = 'SpanNode', 'SpanTree'
+
+if TYPE_CHECKING:
+    # Since opentelemetry isn't a required dependency, don't actually import these at runtime
+    from opentelemetry.sdk.trace import ReadableSpan
+    from opentelemetry.trace import SpanContext
+    from opentelemetry.util.types import AttributeValue
 
 
 class SpanNode:

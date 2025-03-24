@@ -4,7 +4,7 @@ import logfire
 import pytest
 from logfire.testing import CaptureLogfire
 
-from pydantic_evals.otel.context_in_memory_span_exporter import (
+from pydantic_evals.otel._context_in_memory_span_exporter_with_deps import (
     context_subtree,
 )
 from pydantic_evals.otel.span_tree import SpanTree
@@ -41,6 +41,8 @@ async def test_context_subtree_concurrent():
 
     # Execute tasks concurrently
     tree1, tree2 = await asyncio.gather(task1(), task2())
+    assert isinstance(tree1, SpanTree)
+    assert isinstance(tree2, SpanTree)
 
     # Verify that tree1 only contains spans from task1
     assert len(tree1.roots) == 1, 'tree1 should have exactly one root span'
@@ -91,6 +93,7 @@ async def span_tree() -> SpanTree:
             with logfire.span('child2', level='1', type='normal'):
                 with logfire.span('grandchild3', level='2', type='normal'):
                     pass
+    assert isinstance(tree, SpanTree)
     return tree
 
 
@@ -217,6 +220,7 @@ async def test_span_tree_ancestors_methods():
                         with logfire.span('leaf', depth=4):
                             # Add a log message to test nested logs
                             logfire.info('This is a leaf node log message')
+    assert isinstance(tree, SpanTree)
 
     # Get the leaf node
     leaf_node = tree.find_first(lambda node: node.name == 'leaf')
@@ -258,6 +262,7 @@ async def test_log_levels_and_exceptions():
                     raise ValueError('Test exception')
                 except ValueError as e:
                     error_span.record_exception(e)
+    assert isinstance(tree, SpanTree)
 
     # Verify log levels are preserved
     parent_span = tree.find_first(lambda node: node.name == 'parent_span')
@@ -325,6 +330,7 @@ async def test_span_query_negation():
                 pass
             with logfire.span('child2', category='normal'):
                 pass
+    assert isinstance(tree, SpanTree)
 
     # Test negation of name attribute
     not_query: SpanQuery = {'not_': {'name_equals': 'child1'}}
@@ -358,6 +364,7 @@ async def test_span_query_logical_combinations():
                 pass
             with logfire.span('special', level='1', category='important', priority='high'):
                 pass
+    assert isinstance(tree, SpanTree)
 
     # Test AND logic
     and_query: SpanQuery = {'and_': [{'name_contains': '1'}, {'has_attributes': {'level': '1'}}]}
@@ -401,6 +408,7 @@ async def test_span_query_timing_conditions():
         with logfire.span('slow_operation'):
             logfire.info('add a wait')
             logfire.info('add a wait')
+    assert isinstance(tree, SpanTree)
 
     durations = sorted([node.duration for node in tree.flattened() if node.duration > timedelta(seconds=0)])
     fast_threshold = (durations[0] + durations[1]) / 2
@@ -444,6 +452,7 @@ async def test_span_query_descendant_conditions():
                 pass
             with logfire.span('child4', type='normal'):
                 pass
+    assert isinstance(tree, SpanTree)
 
     # Test some_child_has condition
     some_child_query: SpanQuery = {'some_child_has': {'has_attributes': {'type': 'important'}}}
@@ -480,6 +489,7 @@ async def test_span_query_complex_hierarchical_conditions():
                     pass
                 with logfire.span('notification', channel='email'):
                     pass
+    assert isinstance(tree, SpanTree)
 
     # Find the app span that has a POST request with a notification child
     complex_query: SpanQuery = {
@@ -513,6 +523,7 @@ async def test_span_query_as_predicate_conversion():
     with context_subtree() as tree:
         with logfire.span('test_span', category='test'):
             pass
+    assert isinstance(tree, SpanTree)
 
     test_node = tree.roots[0]
     assert test_node.name == 'test_span'
@@ -546,6 +557,7 @@ async def test_matches_function_directly():
                 pass
             with logfire.span('child2', level='2', category='normal'):
                 pass
+    assert isinstance(tree, SpanTree)
 
     parent_node = tree.roots[0]
     child1_node = parent_node.children[0]
@@ -596,6 +608,7 @@ async def test_span_query_child_count():
                 pass
             with logfire.span('child6'):
                 pass
+    assert isinstance(tree, SpanTree)
 
     # Test min_child_count
     min_2_query: SpanQuery = {'min_child_count': 2}

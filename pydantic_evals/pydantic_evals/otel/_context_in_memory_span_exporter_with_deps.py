@@ -6,37 +6,61 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from weakref import WeakValueDictionary
 
-from logfire._internal.tracer import ProxyTracerProvider as LogfireProxyTracerProvider
 from opentelemetry.sdk.trace import ReadableSpan
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor, SpanExporter, SpanExportResult
 from opentelemetry.trace import ProxyTracerProvider, get_tracer_provider
 
-from .span_tree import SpanTree
+try:
+    from logfire._internal.tracer import (
+        ProxyTracerProvider as LogfireProxyTracerProvider,  # pyright: ignore[reportAssignmentType]
+    )
 
-__all__ = 'context_subtree', 'context_subtree_spans'
+    _LOGFIRE_IS_INSTALLED = True
+except ImportError:
+    _LOGFIRE_IS_INSTALLED = False  # pyright: ignore[reportConstantRedefinition]
+
+    # Ensure that we can do an isinstance check without erroring
+    class LogfireProxyTracerProvider:
+        @property
+        def provider(self):
+            return None
+
+
+from ._errors import SpanTreeRecordingError
+from .span_tree import SpanTree
 
 _EXPORTER_CONTEXT_ID = ContextVar[str | None]('_EXPORTER_CONTEXT_ID', default=None)
 
 
 @contextmanager
-def context_subtree() -> typing.Iterator[SpanTree]:
+def context_subtree() -> typing.Iterator[SpanTree | SpanTreeRecordingError]:
     """Context manager that yields a `SpanTree` containing all spans collected during the context.
 
     The tree will be empty until the context is exited.
+
+    If no TracerProvider has been configured, a `SpanTreeRecordingError` will be yielded instead of the SpanTree.
     """
     tree = SpanTree()
-    with context_subtree_spans() as spans:
+    with _context_subtree_spans() as spans:
+        if isinstance(spans, SpanTreeRecordingError):
+            yield spans
+            return
         yield tree
     tree.add_spans(spans)
 
 
 @contextmanager
-def context_subtree_spans() -> typing.Iterator[list[ReadableSpan]]:
+def _context_subtree_spans() -> typing.Iterator[list[ReadableSpan] | SpanTreeRecordingError]:
     """Context manager that yields a list of spans that are collected during the context.
 
     The list will be empty until the context is exited.
     """
     exporter = _add_context_span_exporter()
+
+    if isinstance(exporter, SpanTreeRecordingError):
+        yield exporter
+        return
+
     spans: list[ReadableSpan] = []
     with _set_exporter_context_id() as context_id:
         yield spans
@@ -106,7 +130,7 @@ class _ContextInMemorySpanExporter(SpanExporter):
 _context_in_memory_providers: WeakValueDictionary[int, _ContextInMemorySpanExporter] = WeakValueDictionary()
 
 
-def _add_context_span_exporter() -> _ContextInMemorySpanExporter:
+def _add_context_span_exporter() -> _ContextInMemorySpanExporter | SpanTreeRecordingError:
     tracer_provider = get_tracer_provider()
     if isinstance(tracer_provider, LogfireProxyTracerProvider):
         cache_id = id(tracer_provider.provider)
@@ -119,14 +143,22 @@ def _add_context_span_exporter() -> _ContextInMemorySpanExporter:
     # `logfire._internal.tracer.ProxyTracerProvider`, in which case the `add_span_processor` method will be present
     if not hasattr(tracer_provider, 'add_span_processor'):
         if isinstance(tracer_provider, ProxyTracerProvider):
-            # TODO: Question: Are we okay requiring opentelemetry and/or logfire as dependencies?
-            raise TypeError(
-                'A tracer provider has not been set. You need to call `logfire.configure(...)` or `opentelemetry.trace.set_tracer_provider(...)` before reaching this point'
+            required_call = (
+                'logfire.configure(...)' if _LOGFIRE_IS_INSTALLED else 'opentelemetry.trace.set_tracer_provider(...)'
+            )
+            return SpanTreeRecordingError(
+                f'To make use of the `span_tree` in an evaluator, you need to call `{required_call}` before running an'
+                f' evaluation. For more information, see appropriate documentation at https://ai.pydantic.dev/.'
+                # TODO: Add a link to appropriate documentation
             )
         else:
+            # In this case, the user is using some kind of custom OpenTelemetry TracerProvider. It may or may not
+            # be easy to handle this better, but given it's hard to know, we just raise an error telling the user
+            # to notify us if they want help.
             raise TypeError(
-                'Expected `tracer_provider` to have an `add_span_processor` method; '
-                f'got an instance of {type(tracer_provider)}.'
+                'Expected `tracer_provider` to have an `add_span_processor` method;'
+                f' got an instance of {type(tracer_provider)}.'
+                f' For help resolving this, please create an issue at https://github.com/pydantic/pydantic-ai/issues.'
             )
 
     exporter = _ContextInMemorySpanExporter()
