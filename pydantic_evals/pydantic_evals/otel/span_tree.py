@@ -91,7 +91,8 @@ class SpanNode:
 
     @property
     def attributes(self) -> Mapping[str, AttributeValue]:
-        # TODO: Should expose the non-JSON-serialized versions of attributes with nesting
+        # Note: It would be nice to expose the non-JSON-serialized versions of (logfire-recorded) attributes with
+        # nesting etc. This just exposes the JSON-serialized version, but doing more would be difficult.
         return self._span.attributes or {}
 
     def add_child(self, child: SpanNode) -> None:
