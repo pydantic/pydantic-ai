@@ -647,12 +647,12 @@ To use [AWS Bedrock](https://aws.amazon.com/bedrock/), you'll need an AWS accoun
 
 ### Environment variables
 
-You can set your AWS credentials as environment variables:
+You can set your AWS credentials as environment variables ([among other options](https://boto3.amazonaws.com/v1/documentation/api/latest/guide/configuration.html#using-environment-variables):
 
 ```bash
 export AWS_ACCESS_KEY_ID='your-access-key'
 export AWS_SECRET_ACCESS_KEY='your-secret-key'
-export AWS_REGION='us-east-1'  # or your preferred region
+export AWS_DEFAULT_REGION='us-east-1'  # or your preferred region
 ```
 
 You can then use [`BedrockConverseModel`][pydantic_ai.models.bedrock.BedrockConverseModel] by name:
