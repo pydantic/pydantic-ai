@@ -24,9 +24,9 @@ from pydantic_graph._utils import run_until_complete
 from ._utils import get_unwrapped_function_name
 from .evaluators.common import DEFAULT_EVALUATORS
 from .evaluators.context import EvaluatorContext
-from .evaluators.spec import BoundEvaluatorFunction, Evaluator, EvaluatorFunction, EvaluatorSpec, SourcedEvaluatorOutput
+from .evaluators.spec import Evaluator, EvaluatorDetails, EvaluatorFunction, EvaluatorSpec, SourcedEvaluatorOutput
 from .otel import SpanTree
-from .otel._context_in_memory_span_exporter_with_deps import context_subtree
+from .otel._context_in_memory_span_exporter import context_subtree
 from .reporting import EvaluationReport, ReportCase, ReportCaseAggregate
 
 if sys.version_info < (3, 11):
@@ -85,7 +85,7 @@ class Case(Generic[InputsT, OutputT, MetadataT]):
     """
     expected_output: OutputT | None
     """Expected output of the task. This is the expected output of the task that will be evaluated."""
-    evaluators: list[Evaluator[InputsT, OutputT, MetadataT]]
+    evaluators: list[EvaluatorDetails[InputsT, OutputT, MetadataT]]
     """Evaluators to be used just on this case."""
 
     def __init__(
@@ -96,7 +96,7 @@ class Case(Generic[InputsT, OutputT, MetadataT]):
         metadata: MetadataT | None = None,
         expected_output: OutputT | None = None,
         evaluators: tuple[
-            BoundEvaluatorFunction[InputsT, OutputT, MetadataT] | Evaluator[InputsT, OutputT, MetadataT], ...
+            Evaluator[InputsT, OutputT, MetadataT] | EvaluatorDetails[InputsT, OutputT, MetadataT], ...
         ] = (),
     ):
         # Note: `evaluators` must be a tuple instead of Sequence due to misbehavior with pyright's generic parameter
@@ -106,7 +106,7 @@ class Case(Generic[InputsT, OutputT, MetadataT]):
         self.metadata = metadata
         self.expected_output = expected_output
         self.evaluators = [
-            e if isinstance(e, Evaluator) else Evaluator[InputsT, OutputT, MetadataT].from_function(e)
+            e if isinstance(e, EvaluatorDetails) else EvaluatorDetails[InputsT, OutputT, MetadataT].from_function(e)
             for e in evaluators
         ]
 
@@ -121,7 +121,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
 
     cases: list[Case[InputsT, OutputT, MetadataT]]
     """List of test cases in the dataset."""
-    evaluators: list[Evaluator[InputsT, OutputT, MetadataT]] = []
+    evaluators: list[EvaluatorDetails[InputsT, OutputT, MetadataT]] = []
     """List of evaluators to be used on all cases in the dataset."""
 
     def __init__(
@@ -129,13 +129,13 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         *,
         cases: Sequence[Case[InputsT, OutputT, MetadataT]],
         evaluators: Sequence[
-            BoundEvaluatorFunction[InputsT, OutputT, MetadataT] | Evaluator[InputsT, OutputT, MetadataT]
+            Evaluator[InputsT, OutputT, MetadataT] | EvaluatorDetails[InputsT, OutputT, MetadataT]
         ] = (),
     ):
         super().__init__(
             cases=cases,
             evaluators=[
-                a if isinstance(a, Evaluator) else Evaluator[InputsT, OutputT, MetadataT].from_function(a)
+                a if isinstance(a, EvaluatorDetails) else EvaluatorDetails[InputsT, OutputT, MetadataT].from_function(a)
                 for a in evaluators
             ],
         )
@@ -192,7 +192,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         metadata: MetadataT | None = None,
         expected_output: OutputT | None = None,
         evaluators: tuple[
-            BoundEvaluatorFunction[InputsT, OutputT, MetadataT] | Evaluator[InputsT, OutputT, MetadataT], ...
+            Evaluator[InputsT, OutputT, MetadataT] | EvaluatorDetails[InputsT, OutputT, MetadataT], ...
         ] = (),
     ) -> None:
         """Adds a case to the evaluation."""
@@ -207,7 +207,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
 
     def add_evaluator(
         self,
-        evaluator: BoundEvaluatorFunction[InputsT, OutputT, MetadataT] | Evaluator[InputsT, OutputT, MetadataT],
+        evaluator: Evaluator[InputsT, OutputT, MetadataT] | EvaluatorDetails[InputsT, OutputT, MetadataT],
         specific_case: str | None = None,
     ) -> None:
         """Adds an evaluator to the dataset or to a specific case.
@@ -218,8 +218,8 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         """
         evaluator = (
             evaluator
-            if isinstance(evaluator, Evaluator)
-            else Evaluator[InputsT, OutputT, MetadataT].from_function(evaluator)
+            if isinstance(evaluator, EvaluatorDetails)
+            else EvaluatorDetails[InputsT, OutputT, MetadataT].from_function(evaluator)
         )
         if specific_case is None:
             # Add the evaluator to the dataset itself
@@ -301,20 +301,22 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
 
         cases: list[Case[InputsT, OutputT, MetadataT]] = []
         errors: list[ValueError] = []
-        dataset_evaluators: list[Evaluator[Any, Any, Any]] = []
+        dataset_evaluators: list[EvaluatorDetails[Any, Any, Any]] = []
         for evaluator in dataset_model.evaluators:
             try:
-                dataset_evaluator = Evaluator[InputsT, OutputT, MetadataT].from_registry(registry, None, evaluator)
+                dataset_evaluator = EvaluatorDetails[InputsT, OutputT, MetadataT].from_registry(
+                    registry, None, evaluator
+                )
             except ValueError as e:
                 errors.append(e)
                 continue
             dataset_evaluators.append(dataset_evaluator)
 
         for row in dataset_model.cases:
-            evaluators: list[Evaluator[Any, Any, Any]] = []
+            evaluators: list[EvaluatorDetails[Any, Any, Any]] = []
             for spec in row.evaluators:
                 try:
-                    evaluator = Evaluator[InputsT, OutputT, MetadataT].from_registry(registry, row.name, spec)
+                    evaluator = EvaluatorDetails[InputsT, OutputT, MetadataT].from_registry(registry, row.name, spec)
                 except ValueError as e:
                     errors.append(e)
                     continue
@@ -566,7 +568,7 @@ async def _run_task_and_evaluators(
     task: Callable[[InputsT], Awaitable[OutputT]],
     case: Case[InputsT, OutputT, MetadataT],
     report_case_name: str,
-    dataset_evaluators: list[Evaluator[InputsT, OutputT, MetadataT]],
+    dataset_evaluators: list[EvaluatorDetails[InputsT, OutputT, MetadataT]],
 ) -> ReportCase:
     with _logfire.span(
         '{task_name}: {case_name}',

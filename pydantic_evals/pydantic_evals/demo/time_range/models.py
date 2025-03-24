@@ -8,7 +8,7 @@ from typing_extensions import TypedDict
 
 from pydantic_evals.dataset import Dataset
 from pydantic_evals.evaluators.common import is_instance, llm_judge
-from pydantic_evals.evaluators.spec import Evaluator
+from pydantic_evals.evaluators.spec import EvaluatorDetails
 
 
 class TimeRangeBuilderSuccess(BaseModel, use_attribute_docstrings=True):
@@ -75,7 +75,7 @@ if __name__ == '__main__':
 
         path = Path(__file__).parent / 'test_cases.yaml'
         if not path.exists():
-            evaluator = Evaluator.from_function(partial(llm_judge, rubric='abc'))
+            evaluator = EvaluatorDetails.from_function(partial(llm_judge, rubric='abc'))
             TimeRangeDataset(cases=[], evaluators=[evaluator]).to_file(path, custom_evaluators=[llm_judge, is_instance])
 
     main()

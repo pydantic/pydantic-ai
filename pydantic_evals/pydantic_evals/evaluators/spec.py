@@ -174,17 +174,17 @@ EvaluatorFunction = Callable[
     EvaluatorFunctionResult | Awaitable[EvaluatorFunctionResult],
 ]
 EvaluatorRegistry = Mapping[str, EvaluatorFunction[InputsT, OutputT, MetadataT]]
-BoundEvaluatorFunction = Callable[
+Evaluator = Callable[
     [EvaluatorContext[InputsT, OutputT, MetadataT]], EvaluatorFunctionResult | Awaitable[EvaluatorFunctionResult]
 ]
 
 
 @dataclass
-class Evaluator(Generic[InputsT, OutputT, MetadataT]):
+class EvaluatorDetails(Generic[InputsT, OutputT, MetadataT]):
     """An evaluator to be run on a scoring context."""
 
     spec: EvaluatorSpec
-    function: BoundEvaluatorFunction[InputsT, OutputT, MetadataT]
+    function: Evaluator[InputsT, OutputT, MetadataT]
 
     @model_serializer(mode='plain')
     def serialize(self) -> Any:
@@ -193,7 +193,7 @@ class Evaluator(Generic[InputsT, OutputT, MetadataT]):
     @classmethod
     def from_function(
         cls,
-        function: BoundEvaluatorFunction[InputsT, OutputT, MetadataT],
+        function: Evaluator[InputsT, OutputT, MetadataT],
     ) -> Self:
         def _get_partial_kwargs() -> dict[str, Any]:
             if isinstance(function, partial):
@@ -209,7 +209,7 @@ class Evaluator(Generic[InputsT, OutputT, MetadataT]):
     def from_registry(
         cls, registry: EvaluatorRegistry[InputsT, OutputT, MetadataT], case_name: str | None, spec: EvaluatorSpec
     ) -> Self:
-        function = Evaluator[InputsT, OutputT, MetadataT]._validate_against_registry(registry, case_name, spec)
+        function = EvaluatorDetails[InputsT, OutputT, MetadataT]._validate_against_registry(registry, case_name, spec)
         bound_function = _bind_evaluator_function(function, spec.args, spec.kwargs)
         return cls(spec=spec, function=bound_function)
 
@@ -284,7 +284,7 @@ class Evaluator(Generic[InputsT, OutputT, MetadataT]):
 
 def _bind_evaluator_function(
     function: EvaluatorFunction[InputsT, OutputT, MetadataT], args: list[Any], kwargs: dict[str, Any]
-) -> BoundEvaluatorFunction[InputsT, OutputT, MetadataT]:
+) -> Evaluator[InputsT, OutputT, MetadataT]:
     """Bind spec.args and spec.kwargs to `function` without using functools.partial.
 
     Returns a function (sync or async) that, when called,

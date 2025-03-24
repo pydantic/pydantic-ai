@@ -16,7 +16,7 @@ from pydantic_evals.evaluators.common import (
     span_query,
 )
 from pydantic_evals.evaluators.context import EvaluatorContext
-from pydantic_evals.evaluators.spec import Evaluator, EvaluatorResult, EvaluatorSpec
+from pydantic_evals.evaluators.spec import EvaluatorDetails, EvaluatorResult, EvaluatorSpec
 from pydantic_evals.otel.span_tree import SpanTree
 
 pytestmark = pytest.mark.anyio
@@ -104,7 +104,7 @@ async def test_evaluator_from_function():
     async def test_evaluator_func(ctx: EvaluatorContext[TaskInput, TaskOutput, TaskMetadata]) -> dict[str, Any]:
         return {'result': 'test'}
 
-    evaluator = Evaluator[TaskInput, TaskOutput, TaskMetadata].from_function(test_evaluator_func)
+    evaluator = EvaluatorDetails[TaskInput, TaskOutput, TaskMetadata].from_function(test_evaluator_func)
 
     assert evaluator.function is not None
     assert evaluator.spec.call == 'test_evaluator_func'
@@ -120,7 +120,7 @@ async def test_evaluator_call(test_context: EvaluatorContext[TaskInput, TaskOutp
         assert ctx.metadata and ctx.metadata.difficulty == 'easy'
         return {'result': 'passed'}
 
-    evaluator = Evaluator[TaskInput, TaskOutput, TaskMetadata].from_function(test_evaluator_func)
+    evaluator = EvaluatorDetails[TaskInput, TaskOutput, TaskMetadata].from_function(test_evaluator_func)
 
     results = await evaluator.execute(test_context)
     # results is a list of SourcedEvaluatorOutput, so we need to get the value from it
@@ -202,7 +202,7 @@ async def test_evaluator_error_handling(test_context: EvaluatorContext[TaskInput
     async def failing_evaluator(ctx: EvaluatorContext[TaskInput, TaskOutput, TaskMetadata]) -> dict[str, Any]:
         raise ValueError('Simulated error')
 
-    evaluator = Evaluator[TaskInput, TaskOutput, TaskMetadata].from_function(failing_evaluator)
+    evaluator = EvaluatorDetails[TaskInput, TaskOutput, TaskMetadata].from_function(failing_evaluator)
 
     # When called directly, it should raise an error
     with pytest.raises(ValueError, match='Simulated error'):
@@ -393,7 +393,7 @@ async def test_span_query_evaluator(
     """Test the span_query evaluator."""
     import logfire
 
-    from pydantic_evals.otel._context_in_memory_span_exporter_with_deps import context_subtree
+    from pydantic_evals.otel._context_in_memory_span_exporter import context_subtree
     from pydantic_evals.otel.span_tree import SpanQuery
 
     # Create a span tree with a known structure

@@ -4,7 +4,7 @@ import logfire
 import pytest
 from logfire.testing import CaptureLogfire
 
-from pydantic_evals.otel._context_in_memory_span_exporter_with_deps import (
+from pydantic_evals.otel._context_in_memory_span_exporter import (
     context_subtree,
 )
 from pydantic_evals.otel.span_tree import SpanTree
