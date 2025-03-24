@@ -429,38 +429,26 @@ async def test_span_query_evaluator(
 async def test_python_evaluator(test_context: EvaluatorContext[TaskInput, TaskOutput, TaskMetadata]):
     """Test the python evaluator."""
     # Test with a simple condition
-    assert await python(test_context, "ctx.output.answer == '4'") == snapshot(
-        {'python': EvaluatorResult(value=True, reason="(ctx.output.answer == '4') is True")}
-    )
+    assert await python(test_context, "ctx.output.answer == '4'") == snapshot(True)
 
     # Test type sensitivity
-    assert await python(test_context, 'ctx.output.answer == 4') == snapshot(
-        {'python': EvaluatorResult(value=False, reason='(ctx.output.answer == 4) is False')}
-    )
+    assert await python(test_context, 'ctx.output.answer == 4') == snapshot(False)
 
     # Test with a named condition
-    assert await python(test_context, "ctx.output.answer == '4'", name='correct_answer') == snapshot(
+    assert await python(test_context, "{'correct_answer': ctx.output.answer == '4'}") == snapshot(
         {'correct_answer': True}
     )
 
     # Test with a condition that returns false
-    assert await python(test_context, "ctx.output.answer == '5'") == snapshot(
-        {'python': EvaluatorResult(value=False, reason="(ctx.output.answer == '5') is False")}
-    )
+    assert await python(test_context, "ctx.output.answer == '5'") == snapshot(False)
 
     # Test with a condition that accesses context properties
     assert await python(test_context, "ctx.output.answer == '4' and ctx.metadata.difficulty == 'easy'") == snapshot(
-        {
-            'python': EvaluatorResult(
-                value=True, reason="(ctx.output.answer == '4' and ctx.metadata.difficulty == 'easy') is True"
-            )
-        }
+        True
     )
 
     # Test reason rendering for strings
-    assert await python(test_context, 'ctx.output.answer') == snapshot(
-        {'python': EvaluatorResult(value='4', reason="(ctx.output.answer) == '4'")}
-    )
+    assert await python(test_context, 'ctx.output.answer') == snapshot('4')
 
     # Test with a condition that returns a dict
     assert await python(

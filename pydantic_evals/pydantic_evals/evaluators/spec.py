@@ -222,7 +222,7 @@ class Evaluator(Generic[InputsT, OutputT, MetadataT]):
         try:
             results = _EVALUATOR_FUNCTION_RESULT_ADAPTER.validate_python(raw_results)
         except ValidationError as e:
-            raise ValueError(f'Evaluator {self.function} returned a value of an invalid type: {raw_results!r}') from e
+            raise ValueError(f'{self.spec!r} returned a value of an invalid type: {raw_results!r}.') from e
 
         results = _convert_to_mapping(results, scalar_name=self.spec.call)
 

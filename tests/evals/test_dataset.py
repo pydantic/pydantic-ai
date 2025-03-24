@@ -1,5 +1,6 @@
 import json
 import sys
+from functools import partial
 from pathlib import Path
 
 import pytest
@@ -10,6 +11,7 @@ from pydantic import BaseModel
 
 from pydantic_evals import Case, Dataset
 from pydantic_evals.dataset import increment_eval_metric, set_eval_attribute
+from pydantic_evals.evaluators import python
 from pydantic_evals.evaluators.context import EvaluatorContext
 from pydantic_evals.reporting import ReportCase
 
@@ -347,3 +349,40 @@ async def test_from_text(example_dataset: Dataset[TaskInput, TaskOutput, TaskMet
             evaluators=(),
         )
     ]
+
+
+async def test_invalid_evaluator_result_type(example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata]):
+    """Test that an invalid evaluator result type raises an error."""
+    invalid_evaluator = partial(python, expression='...')
+    example_dataset.add_evaluator(invalid_evaluator)
+
+    async def mock_task(inputs: TaskInput) -> TaskOutput:
+        return TaskOutput(answer='4')
+
+    with pytest.raises(ExceptionGroup) as exc_info:
+        await example_dataset.evaluate(mock_task)
+    assert exc_info.value == HasRepr(
+        repr(
+            ExceptionGroup(
+                'unhandled errors in a TaskGroup',
+                [
+                    ExceptionGroup(
+                        'unhandled errors in a TaskGroup',
+                        [
+                            ValueError(
+                                "EvaluatorSpec(call='python', args=[], kwargs={'expression': '...'}) returned a value of an invalid type: Ellipsis."
+                            )
+                        ],
+                    ),
+                    ExceptionGroup(
+                        'unhandled errors in a TaskGroup',
+                        [
+                            ValueError(
+                                "EvaluatorSpec(call='python', args=[], kwargs={'expression': '...'}) returned a value of an invalid type: Ellipsis."
+                            )
+                        ],
+                    ),
+                ],
+            )
+        )
+    )
