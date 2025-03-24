@@ -77,5 +77,9 @@ def infer_provider(provider: str) -> Provider[Any]:
         from .mistral import MistralProvider
 
         return MistralProvider()
+    elif provider == 'cohere':
+        from .cohere import CohereProvider
+
+        return CohereProvider()
     else:  # pragma: no cover
         raise ValueError(f'Unknown provider: {provider}')

@@ -401,8 +401,7 @@ def infer_model(model: Model | KnownModelName) -> Model:
     if provider == 'cohere':
         from .cohere import CohereModel
 
-        # TODO(Marcelo): Missing provider API.
-        return CohereModel(model_name)
+        return CohereModel(model_name, provider='cohere')
     elif provider in ('deepseek', 'openai'):
         from .openai import OpenAIModel
 
