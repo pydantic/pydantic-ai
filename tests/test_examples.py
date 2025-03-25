@@ -86,6 +86,8 @@ def test_docs_examples(  # noqa: C901
     env.set('GEMINI_API_KEY', 'testing')
     env.set('GROQ_API_KEY', 'testing')
     env.set('CO_API_KEY', 'testing')
+    env.set('MISTRAL_API_KEY', 'testing')
+    env.set('ANTHROPIC_API_KEY', 'testing')
 
     sys.path.append('tests/example_modules')
 
