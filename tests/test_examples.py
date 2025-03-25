@@ -222,6 +222,7 @@ text_responses: dict[str, str | ToolCallPart] = {
     'What is the date?': 'Hello Frank, the date today is 2032-01-02.',
     'Put my money on square eighteen': ToolCallPart(tool_name='roulette_wheel', args={'square': 18}),
     'I bet five is the winner': ToolCallPart(tool_name='roulette_wheel', args={'square': 5}),
+    'My guess is 6': ToolCallPart(tool_name='roll_die', args={}),
     'My guess is 4': ToolCallPart(tool_name='roll_die', args={}),
     'Send a message to John Doe asking for coffee next week': ToolCallPart(
         tool_name='get_user_by_name', args={'name': 'John'}
@@ -348,7 +349,10 @@ async def model_logic(messages: list[ModelMessage], info: AgentInfo) -> ModelRes
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'roll_die':
         return ModelResponse(parts=[ToolCallPart(tool_name='get_player_name', args={})])
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_player_name':
-        return ModelResponse(parts=[TextPart("Congratulations Anne, you guessed correctly! You're a winner!")])
+        if 'Anne' in m.content:
+            return ModelResponse(parts=[TextPart("Congratulations Anne, you guessed correctly! You're a winner!")])
+        elif 'Yashar' in m.content:
+            return ModelResponse(parts=[TextPart('Tough luck, Yashar, you rolled a 4. Better luck next time.')])
     if (
         isinstance(m, RetryPromptPart)
         and isinstance(m.content, str)
