@@ -906,7 +906,7 @@ def _group_evaluator_outputs_by_type(
     return assertions, scores, labels
 
 
-_CURRENT_TASK_RUN = ContextVar[_TaskRun | None]('_CURRENT_TASK_RUN', default=None)
+_CURRENT_TASK_RUN = ContextVar['_TaskRun | None']('_CURRENT_TASK_RUN', default=None)
 
 
 def set_eval_attribute(name: str, value: Any) -> None:

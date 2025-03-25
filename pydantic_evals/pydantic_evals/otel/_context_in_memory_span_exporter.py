@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import threading
 import typing
 import uuid
@@ -29,7 +31,7 @@ except ImportError:
 from ._errors import SpanTreeRecordingError
 from .span_tree import SpanTree
 
-_EXPORTER_CONTEXT_ID = ContextVar[str | None]('_EXPORTER_CONTEXT_ID', default=None)
+_EXPORTER_CONTEXT_ID = ContextVar['str | None']('_EXPORTER_CONTEXT_ID', default=None)
 
 
 # Note: It may be a good idea to upstream this whole file to `logfire`

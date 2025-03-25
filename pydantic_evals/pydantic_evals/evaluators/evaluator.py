@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import MISSING, dataclass, fields
-from typing import Any, Generic, cast
+from typing import Any, Generic, Union, cast
 
 from pydantic import (
     TypeAdapter,
@@ -17,7 +17,7 @@ from .._utils import run_until_complete
 from ._spec import EvaluatorSpec
 from .context import EvaluatorContext
 
-EvaluationScalar = bool | int | float | str
+EvaluationScalar = Union[bool, int, float, str]
 """The most primitive output allowed as an output from an Evaluator.
 
 `int` and `float` are treated as scores, `str` as labels, and `bool` as assertions.
@@ -39,7 +39,7 @@ class EvaluationReason:
     reason: str | None = None
 
 
-EvaluatorOutput = EvaluationScalar | EvaluationReason | Mapping[str, EvaluationScalar | EvaluationReason]
+EvaluatorOutput = Union[EvaluationScalar, EvaluationReason, Mapping[str, Union[EvaluationScalar, EvaluationReason]]]
 """Type for the output of an evaluator, which can be a scalar, an EvaluationReason, or a mapping of names to either."""
 
 
