@@ -263,7 +263,6 @@ class GeminiModel(Model):
             url = f'/{self._model_name}:{"streamGenerateContent" if streamed else "generateContent"}'
 
         request_json = _gemini_request_ta.dump_json(request_data, by_alias=True)
-
         async with self.client.stream(
             'POST',
             url,
@@ -603,12 +602,7 @@ def _process_response_from_parts(
         if 'text' in part:
             items.append(TextPart(content=part['text']))
         elif 'function_call' in part:
-            items.append(
-                ToolCallPart(
-                    tool_name=part['function_call']['name'],
-                    args=part['function_call']['args'],
-                )
-            )
+            items.append(ToolCallPart(tool_name=part['function_call']['name'], args=part['function_call']['args']))
         elif 'function_response' in part:
             raise UnexpectedModelBehavior(
                 f'Unsupported response from Gemini, expected all parts to be function calls or text, got: {part!r}'

@@ -326,7 +326,7 @@ class AnthropicModel(Model):
                             user_content_params.append(content)
                     elif isinstance(request_part, ToolReturnPart):
                         tool_result_block_param = ToolResultBlockParam(
-                            tool_use_id=_guard_tool_call_id(t=request_part, model_source='Anthropic'),
+                            tool_use_id=_guard_tool_call_id(t=request_part),
                             type='tool_result',
                             content=request_part.model_response_str(),
                             is_error=False,
@@ -337,7 +337,7 @@ class AnthropicModel(Model):
                             retry_param = TextBlockParam(type='text', text=request_part.model_response())
                         else:
                             retry_param = ToolResultBlockParam(
-                                tool_use_id=_guard_tool_call_id(t=request_part, model_source='Anthropic'),
+                                tool_use_id=_guard_tool_call_id(t=request_part),
                                 type='tool_result',
                                 content=request_part.model_response(),
                                 is_error=True,
@@ -351,7 +351,7 @@ class AnthropicModel(Model):
                         assistant_content_params.append(TextBlockParam(text=response_part.content, type='text'))
                     else:
                         tool_use_block_param = ToolUseBlockParam(
-                            id=_guard_tool_call_id(t=response_part, model_source='Anthropic'),
+                            id=_guard_tool_call_id(t=response_part),
                             type='tool_use',
                             name=response_part.tool_name,
                             input=response_part.args_as_dict(),

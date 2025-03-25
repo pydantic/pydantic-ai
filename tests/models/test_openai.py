@@ -25,6 +25,8 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai.models.gemini import GeminiModel
+from pydantic_ai.providers.google_gla import GoogleGLAProvider
 from pydantic_ai.result import Usage
 from pydantic_ai.settings import ModelSettings
 
@@ -694,3 +696,33 @@ async def test_max_completion_tokens(allow_model_requests: None, model_name: str
 
     result = await agent.run('hello')
     assert result.data == IsStr()
+
+
+@pytest.mark.vcr()
+async def test_multiple_agent_tool_calls(allow_model_requests: None, gemini_api_key: str, openai_api_key: str):
+    gemini_model = GeminiModel('gemini-2.0-flash-exp', provider=GoogleGLAProvider(api_key=gemini_api_key))
+    openai_model = OpenAIModel('gpt-4o-mini', provider=OpenAIProvider(api_key=openai_api_key))
+
+    agent = Agent(model=gemini_model)
+
+    @agent.tool_plain
+    async def get_capital(country: str) -> str:
+        """Get the capital of a country.
+
+        Args:
+            country: The country name.
+        """
+        if country == 'France':
+            return 'Paris'
+        elif country == 'England':
+            return 'London'
+        else:
+            raise ValueError(f'Country {country} not supported.')  # pragma: no cover
+
+    result = await agent.run('What is the capital of France?')
+    assert result.data == snapshot('The capital of France is Paris.\n')
+
+    result = await agent.run(
+        'What is the capital of England?', model=openai_model, message_history=result.all_messages()
+    )
+    assert result.data == snapshot('The capital of England is London.')

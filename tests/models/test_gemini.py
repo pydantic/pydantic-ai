@@ -50,7 +50,7 @@ from pydantic_ai.providers.google_gla import GoogleGLAProvider
 from pydantic_ai.result import Usage
 from pydantic_ai.tools import ToolDefinition
 
-from ..conftest import ClientWithHandler, IsNow, TestEnv
+from ..conftest import ClientWithHandler, IsNow, IsStr, TestEnv
 
 pytestmark = pytest.mark.anyio
 
@@ -503,19 +503,17 @@ async def test_request_structured_response(get_gemini_client: GetGeminiClient):
         [
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
-                parts=[
-                    ToolCallPart(
-                        tool_name='final_result',
-                        args={'response': [1, 2, 123]},
-                    )
-                ],
+                parts=[ToolCallPart(tool_name='final_result', args={'response': [1, 2, 123]}, tool_call_id=IsStr())],
                 model_name='gemini-1.5-flash-123',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
                 parts=[
                     ToolReturnPart(
-                        tool_name='final_result', content='Final result processed.', timestamp=IsNow(tz=timezone.utc)
+                        tool_name='final_result',
+                        content='Final result processed.',
+                        timestamp=IsNow(tz=timezone.utc),
+                        tool_call_id=IsStr(),
                     )
                 ]
             ),
@@ -565,10 +563,7 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
             ),
             ModelResponse(
                 parts=[
-                    ToolCallPart(
-                        tool_name='get_location',
-                        args={'loc_name': 'San Fransisco'},
-                    )
+                    ToolCallPart(tool_name='get_location', args={'loc_name': 'San Fransisco'}, tool_call_id=IsStr())
                 ],
                 model_name='gemini-1.5-flash-123',
                 timestamp=IsNow(tz=timezone.utc),
@@ -578,20 +573,15 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
                     RetryPromptPart(
                         content='Wrong location, please try again',
                         tool_name='get_location',
+                        tool_call_id=IsStr(),
                         timestamp=IsNow(tz=timezone.utc),
                     )
                 ]
             ),
             ModelResponse(
                 parts=[
-                    ToolCallPart(
-                        tool_name='get_location',
-                        args={'loc_name': 'London'},
-                    ),
-                    ToolCallPart(
-                        tool_name='get_location',
-                        args={'loc_name': 'New York'},
-                    ),
+                    ToolCallPart(tool_name='get_location', args={'loc_name': 'London'}, tool_call_id=IsStr()),
+                    ToolCallPart(tool_name='get_location', args={'loc_name': 'New York'}, tool_call_id=IsStr()),
                 ],
                 model_name='gemini-1.5-flash-123',
                 timestamp=IsNow(tz=timezone.utc),
@@ -599,10 +589,16 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
             ModelRequest(
                 parts=[
                     ToolReturnPart(
-                        tool_name='get_location', content='{"lat": 51, "lng": 0}', timestamp=IsNow(tz=timezone.utc)
+                        tool_name='get_location',
+                        content='{"lat": 51, "lng": 0}',
+                        timestamp=IsNow(tz=timezone.utc),
+                        tool_call_id=IsStr(),
                     ),
                     ToolReturnPart(
-                        tool_name='get_location', content='{"lat": 41, "lng": -74}', timestamp=IsNow(tz=timezone.utc)
+                        tool_name='get_location',
+                        content='{"lat": 41, "lng": -74}',
+                        timestamp=IsNow(tz=timezone.utc),
+                        tool_call_id=IsStr(),
                     ),
                 ]
             ),
@@ -768,24 +764,8 @@ async def test_stream_structured_tool_calls(get_gemini_client: GetGeminiClient):
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[
-                    ToolCallPart(tool_name='foo', args={'x': 'a'}),
-                    ToolCallPart(tool_name='bar', args={'y': 'b'}),
-                ],
-                model_name='gemini-1.5-flash',
-                timestamp=IsNow(tz=timezone.utc),
-            ),
-            ModelRequest(
-                parts=[
-                    ToolReturnPart(tool_name='foo', content='a', timestamp=IsNow(tz=timezone.utc)),
-                    ToolReturnPart(tool_name='bar', content='b', timestamp=IsNow(tz=timezone.utc)),
-                ]
-            ),
-            ModelResponse(
-                parts=[
-                    ToolCallPart(
-                        tool_name='final_result',
-                        args={'response': [1, 2]},
-                    )
+                    ToolCallPart(tool_name='foo', args={'x': 'a'}, tool_call_id=IsStr()),
+                    ToolCallPart(tool_name='bar', args={'y': 'b'}, tool_call_id=IsStr()),
                 ],
                 model_name='gemini-1.5-flash',
                 timestamp=IsNow(tz=timezone.utc),
@@ -793,7 +773,25 @@ async def test_stream_structured_tool_calls(get_gemini_client: GetGeminiClient):
             ModelRequest(
                 parts=[
                     ToolReturnPart(
-                        tool_name='final_result', content='Final result processed.', timestamp=IsNow(tz=timezone.utc)
+                        tool_name='foo', content='a', timestamp=IsNow(tz=timezone.utc), tool_call_id=IsStr()
+                    ),
+                    ToolReturnPart(
+                        tool_name='bar', content='b', timestamp=IsNow(tz=timezone.utc), tool_call_id=IsStr()
+                    ),
+                ]
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='final_result', args={'response': [1, 2]}, tool_call_id=IsStr())],
+                model_name='gemini-1.5-flash',
+                timestamp=IsNow(tz=timezone.utc),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='final_result',
+                        content='Final result processed.',
+                        timestamp=IsNow(tz=timezone.utc),
+                        tool_call_id=IsStr(),
                     )
                 ]
             ),
@@ -833,12 +831,7 @@ async def test_stream_text_heterogeneous(get_gemini_client: GetGeminiClient):
 
 async def test_empty_text_ignored():
     content = _content_model_response(
-        ModelResponse(
-            parts=[
-                ToolCallPart('final_result', {'response': [1, 2, 123]}),
-                TextPart(content='xxx'),
-            ]
-        )
+        ModelResponse(parts=[ToolCallPart('final_result', {'response': [1, 2, 123]}), TextPart(content='xxx')])
     )
     # text included
     assert content == snapshot(
@@ -852,12 +845,7 @@ async def test_empty_text_ignored():
     )
 
     content = _content_model_response(
-        ModelResponse(
-            parts=[
-                ToolCallPart('final_result', {'response': [1, 2, 123]}),
-                TextPart(content=''),
-            ]
-        )
+        ModelResponse(parts=[ToolCallPart('final_result', {'response': [1, 2, 123]}), TextPart(content='')])
     )
     # text skipped
     assert content == snapshot(

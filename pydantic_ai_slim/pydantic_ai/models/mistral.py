@@ -14,7 +14,7 @@ from httpx import AsyncClient as AsyncHTTPClient, Timeout
 from typing_extensions import assert_never, deprecated
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils
-from .._utils import now_utc as _now_utc
+from .._utils import generate_tool_call_id as _generate_tool_call_id, now_utc as _now_utc
 from ..messages import (
     BinaryContent,
     DocumentUrl,
@@ -380,16 +380,16 @@ class MistralModel(Model):
     @staticmethod
     def _map_mistral_to_pydantic_tool_call(tool_call: MistralToolCall) -> ToolCallPart:
         """Maps a MistralToolCall to a ToolCall."""
-        tool_call_id = tool_call.id or None
+        tool_call_id = tool_call.id or _generate_tool_call_id()
         func_call = tool_call.function
 
         return ToolCallPart(func_call.name, func_call.arguments, tool_call_id)
 
     @staticmethod
-    def _map_pydantic_to_mistral_tool_call(t: ToolCallPart) -> MistralToolCall:
+    def _map_tool_call(t: ToolCallPart) -> MistralToolCall:
         """Maps a pydantic-ai ToolCall to a MistralToolCall."""
         return MistralToolCall(
-            id=t.tool_call_id,
+            id=_utils.guard_tool_call_id(t=t),
             type='function',
             function=MistralFunctionCall(name=t.tool_name, arguments=t.args),
         )
@@ -502,7 +502,7 @@ class MistralModel(Model):
                 if isinstance(part, TextPart):
                     content_chunks.append(MistralTextChunk(text=part.content))
                 elif isinstance(part, ToolCallPart):
-                    tool_calls.append(cls._map_pydantic_to_mistral_tool_call(part))
+                    tool_calls.append(cls._map_tool_call(part))
                 else:
                     assert_never(part)
             yield MistralAssistantMessage(content=content_chunks, tool_calls=tool_calls)
