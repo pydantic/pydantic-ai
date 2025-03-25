@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 import asyncio
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 from inline_snapshot import snapshot
@@ -86,31 +86,31 @@ def test_strict_abc_meta():
     assert 'evaluate' in str(exc_info.value)
 
 
-@dataclass
-class SimpleEvaluator(Evaluator[Any, Any, Any]):
-    value: Any = True
-    reason: str | None = None
+if TYPE_CHECKING or imports_successful():
 
-    def evaluate(self, ctx: EvaluatorContext) -> bool | EvaluationReason:
-        if self.reason is not None:
-            return EvaluationReason(value=self.value, reason=self.reason)
-        return self.value
+    @dataclass
+    class SimpleEvaluator(Evaluator[Any, Any, Any]):
+        value: Any = True
+        reason: str | None = None
 
+        def evaluate(self, ctx: EvaluatorContext) -> bool | EvaluationReason:
+            if self.reason is not None:
+                return EvaluationReason(value=self.value, reason=self.reason)
+            return self.value
 
-@dataclass
-class AsyncEvaluator(Evaluator[Any, Any, Any]):
-    value: Any = True
-    delay: float = 0.1
+    @dataclass
+    class AsyncEvaluator(Evaluator[Any, Any, Any]):
+        value: Any = True
+        delay: float = 0.1
 
-    async def evaluate(self, ctx: EvaluatorContext) -> bool:
-        await asyncio.sleep(self.delay)
-        return self.value
+        async def evaluate(self, ctx: EvaluatorContext) -> bool:
+            await asyncio.sleep(self.delay)
+            return self.value
 
-
-@dataclass
-class MultiEvaluator(Evaluator[Any, Any, Any]):
-    def evaluate(self, ctx: EvaluatorContext) -> dict[str, bool]:
-        return {'test1': True, 'test2': False}
+    @dataclass
+    class MultiEvaluator(Evaluator[Any, Any, Any]):
+        def evaluate(self, ctx: EvaluatorContext) -> dict[str, bool]:
+            return {'test1': True, 'test2': False}
 
 
 async def test_evaluator_sync():

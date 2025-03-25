@@ -1,7 +1,7 @@
 from __future__ import annotations as _annotations
 
 from datetime import timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 from pytest_mock import MockerFixture
@@ -29,15 +29,16 @@ with try_import() as imports_successful:
 pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed'), pytest.mark.anyio]
 
 
-# if TYPE_CHECKING:
-#     MockContext = EvaluatorContext
-# else:
-class MockContext(EvaluatorContext[Any, Any, Any]):
-    def __init__(self, output: Any = None, expected_output: Any = None, inputs: Any = None, duration: float = 0.0):
-        self.output = output
-        self.expected_output = expected_output
-        self.inputs = inputs
-        self.duration = duration
+if TYPE_CHECKING or imports_successful():
+
+    class MockContext(EvaluatorContext[Any, Any, Any]):
+        def __init__(self, output: Any = None, expected_output: Any = None, inputs: Any = None, duration: float = 0.0):
+            self.output = output
+            self.expected_output = expected_output
+            self.inputs = inputs
+            self.duration = duration
+else:
+    MockContext = object
 
 
 async def test_equals():
