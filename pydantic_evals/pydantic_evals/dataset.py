@@ -947,12 +947,10 @@ def _get_span_duration(span: logfire_api.LogfireSpan, fallback: float) -> float:
     Returns:
         The duration of the span in seconds.
     """
-    end_time = span.end_time
-    start_time = span.start_time
-    if not isinstance(start_time, int) or not isinstance(end_time, int):
-        # This will happen if using logfire_api because logfire is not installed.
+    try:
+        return (span.end_time - span.start_time) / 1_000_000_000  # type: ignore
+    except (AttributeError, TypeError):  #
         return fallback
-    return (end_time - start_time) / 1_000_000_000
 
 
 def _get_registry(
