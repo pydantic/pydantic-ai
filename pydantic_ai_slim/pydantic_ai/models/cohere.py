@@ -3,11 +3,11 @@ from __future__ import annotations as _annotations
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from itertools import chain
-from typing import Literal, Union, cast
+from typing import Literal, Union, cast, overload
 
 from cohere import TextAssistantMessageContentItem
 from httpx import AsyncClient as AsyncHTTPClient
-from typing_extensions import assert_never
+from typing_extensions import assert_never, deprecated
 
 from .. import ModelHTTPError, result
 from .._utils import guard_tool_call_id as _guard_tool_call_id
@@ -23,11 +23,13 @@ from ..messages import (
     ToolReturnPart,
     UserPromptPart,
 )
+from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from . import (
     Model,
     ModelRequestParameters,
+    cached_async_http_client,
     check_allow_model_requests,
 )
 
@@ -100,10 +102,34 @@ class CohereModel(Model):
     _model_name: CohereModelName = field(repr=False)
     _system: str = field(default='cohere', repr=False)
 
+    @overload
     def __init__(
         self,
         model_name: CohereModelName,
         *,
+        provider: Literal['cohere'] | Provider[AsyncClientV2] = 'cohere',
+        api_key: None = None,
+        cohere_client: None = None,
+        http_client: None = None,
+    ) -> None: ...
+
+    @deprecated('Use the `provider` parameter instead of `api_key`, `cohere_client`, and `http_client`.')
+    @overload
+    def __init__(
+        self,
+        model_name: CohereModelName,
+        *,
+        provider: None = None,
+        api_key: str | None = None,
+        cohere_client: AsyncClientV2 | None = None,
+        http_client: AsyncHTTPClient | None = None,
+    ) -> None: ...
+
+    def __init__(
+        self,
+        model_name: CohereModelName,
+        *,
+        provider: Literal['cohere'] | Provider[AsyncClientV2] | None = None,
         api_key: str | None = None,
         cohere_client: AsyncClientV2 | None = None,
         http_client: AsyncHTTPClient | None = None,
@@ -113,6 +139,9 @@ class CohereModel(Model):
         Args:
             model_name: The name of the Cohere model to use. List of model names
                 available [here](https://docs.cohere.com/docs/models#command).
+            provider: The provider to use for authentication and API access. Can be either the string
+                'cohere' or an instance of `Provider[AsyncClientV2]`. If not provided, a new provider will be
+                created using the other parameters.
             api_key: The API key to use for authentication, if not provided, the
                 `CO_API_KEY` environment variable will be used if available.
             cohere_client: An existing Cohere async client to use. If provided,
@@ -120,12 +149,17 @@ class CohereModel(Model):
             http_client: An existing `httpx.AsyncClient` to use for making HTTP requests.
         """
         self._model_name: CohereModelName = model_name
-        if cohere_client is not None:
+
+        if provider is not None:
+            if isinstance(provider, str):
+                provider = infer_provider(provider)
+            self.client = provider.client
+        elif cohere_client is not None:
             assert http_client is None, 'Cannot provide both `cohere_client` and `http_client`'
             assert api_key is None, 'Cannot provide both `cohere_client` and `api_key`'
             self.client = cohere_client
         else:
-            self.client = AsyncClientV2(api_key=api_key, httpx_client=http_client)
+            self.client = AsyncClientV2(api_key=api_key, httpx_client=http_client or cached_async_http_client())
 
     @property
     def base_url(self) -> str:
