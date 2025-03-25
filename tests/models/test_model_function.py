@@ -6,7 +6,6 @@ from datetime import timezone
 
 import pydantic_core
 import pytest
-from dirty_equals import IsStr
 from inline_snapshot import snapshot
 from pydantic import BaseModel
 
@@ -25,7 +24,7 @@ from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.result import Usage
 
-from ..conftest import IsNow
+from ..conftest import IsNow, IsStr
 
 pytestmark = pytest.mark.anyio
 
@@ -226,7 +225,7 @@ def test_var_args():
             'tool_name': 'get_var_args',
             'content': '{"args": [1, 2, 3]}',
             'tool_call_id': IsStr(),
-            'timestamp': IsStr() & IsNow(iso_string=True, tz=timezone.utc),
+            'timestamp': IsStr() & IsNow(iso_string=True, tz=timezone.utc),  # type: ignore[reportUnknownMemberType]
             'part_kind': 'tool-return',
         }
     )
