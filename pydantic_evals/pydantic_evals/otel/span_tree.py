@@ -5,9 +5,9 @@ from collections.abc import Mapping
 from datetime import datetime, timedelta, timezone
 from functools import partial
 from textwrap import indent
-from typing import TYPE_CHECKING, Any, Callable, NotRequired
+from typing import TYPE_CHECKING, Any, Callable
 
-from typing_extensions import TypedDict
+from typing_extensions import NotRequired, TypedDict
 
 __all__ = 'SpanNode', 'SpanTree', 'SpanQuery', 'as_predicate'
 

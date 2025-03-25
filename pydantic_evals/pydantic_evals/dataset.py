@@ -20,14 +20,14 @@ from contextlib import nullcontext
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Generic, Literal, NotRequired, Self, Union
+from typing import Any, Callable, Generic, Literal, Union
 
 import logfire_api
 import yaml
 from pydantic import BaseModel, Field, TypeAdapter, ValidationError
 from pydantic._internal import _typing_extra
 from pydantic_core import to_json, to_jsonable_python
-from typing_extensions import TypedDict, TypeVar
+from typing_extensions import NotRequired, Self, TypedDict, TypeVar
 
 from pydantic_graph._utils import run_until_complete
 
