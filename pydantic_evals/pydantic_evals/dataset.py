@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Generic, Literal, Union
 
+import anyio
 import logfire_api
 import yaml
 from pydantic import BaseModel, Field, TypeAdapter, ValidationError
@@ -232,19 +233,19 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         """
         name = name or get_unwrapped_function_name(task)
 
-        limiter = asyncio.Semaphore(max_concurrency) if max_concurrency is not None else nullcontext()
+        limiter = anyio.Semaphore(max_concurrency) if max_concurrency is not None else nullcontext()
         with _logfire.span('evaluate {name}', name=name) as eval_span:
+            cases: list[ReportCase] = []
 
-            async def _handle_case(case: Case[InputsT, OutputT, MetadataT], report_case_name: str) -> ReportCase:
+            async def _handle_case(case: Case[InputsT, OutputT, MetadataT], report_case_name: str):
                 async with limiter:
-                    return await _run_task_and_evaluators(task, case, report_case_name, self.evaluators)
+                    cases.append(await _run_task_and_evaluators(task, case, report_case_name, self.evaluators))
 
-            async_tasks: list[asyncio.Task[ReportCase]] = []
-            async with asyncio.TaskGroup() as group:
+            async with anyio.create_task_group() as group:
                 for i, case in enumerate(self.cases, 1):
-                    async_tasks.append(group.create_task(_handle_case(case, case.name or f'Case {i}')))
+                    group.start_soon(_handle_case, case, case.name or f'Case {i}')
 
-            report = EvaluationReport(name=name, cases=[x.result() for x in async_tasks])
+            report = EvaluationReport(name=name, cases=cases)
             # TODO(DavidM): This attribute will be too big in general; remove it once we can use child spans in details panel:
             eval_span.set_attribute('cases', report.cases)
             # TODO(DavidM): Remove this 'averages' attribute once we compute it in the details panel
