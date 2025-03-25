@@ -7,8 +7,8 @@ from typing_extensions import TypeVar
 
 from pydantic_ai import Agent, models
 from pydantic_evals import Dataset
-from pydantic_evals.evaluators.common import is_instance, llm_judge
-from pydantic_evals.evaluators.spec import EvaluatorFunction
+from pydantic_evals.evaluators.common import IsInstance, LlmJudge
+from pydantic_evals.evaluators.evaluator import Evaluator
 
 InputsT = TypeVar('InputsT', default=Any)
 OutputT = TypeVar('OutputT', default=Any)
@@ -21,7 +21,7 @@ async def generate_dataset(
     inputs_type: type[InputsT],
     output_type: type[OutputT],
     metadata_type: type[MetadataT],
-    custom_evaluators: Sequence[EvaluatorFunction[InputsT, OutputT, MetadataT]] = (),
+    custom_evaluators: Sequence[type[Evaluator[InputsT, OutputT, MetadataT]]] = (),
     model: models.Model | models.KnownModelName = 'gpt-4o',
     n_examples: int = 3,
     extra_instructions: str | None = None,
@@ -58,7 +58,7 @@ if __name__ == '__main__':
         """Usage example."""
         from pydantic_evals.demo.time_range.models import TimeRangeInputs, TimeRangeResponse
 
-        custom_evaluators = (llm_judge, is_instance)
+        custom_evaluators = (LlmJudge, IsInstance)
         await generate_dataset(
             path='test_cases.yaml',
             inputs_type=TimeRangeInputs,

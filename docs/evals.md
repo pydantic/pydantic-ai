@@ -44,14 +44,12 @@ Evaluators are the components that analyze and score the results of your task wh
 Pydantic Evals includes several built-in evaluators and allows you to create custom evaluators:
 
 ```python {title="simple_eval_evaluator.py"}
-from functools import partial
-
 from simple_eval_dataset import dataset
 
-from pydantic_evals.evaluators.common import is_instance  # (1)!
+from pydantic_evals.evaluators.common import IsInstance  # (1)!
 from pydantic_evals.evaluators.context import EvaluatorContext
 
-dataset.add_evaluator(partial(is_instance, type_name='str'))  # (2)!
+dataset.add_evaluator(IsInstance(type_name='str'))  # (2)!
 
 
 async def my_evaluator(ctx: EvaluatorContext[str, str]) -> float:  # (3)!
@@ -79,12 +77,11 @@ The evaluation process involves running a task against all cases in a dataset:
 Putting the above two examples together and using the more declarative `evaluators` kwarg to `Dataset`:
 
 ```python {title="simple_eval_complete.py"}
-from functools import partial
-
 import logfire
 
 from pydantic_evals import Case, Dataset
-from pydantic_evals.evaluators.common import is_instance
+from pydantic_evals.evaluators import Evaluator
+from pydantic_evals.evaluators.common import IsInstance
 from pydantic_evals.evaluators.context import EvaluatorContext
 
 logfire.configure()
@@ -97,21 +94,22 @@ case1 = Case(  # (1)!
 )
 
 
-def my_evaluator(ctx: EvaluatorContext[str, str]) -> float:  # (2)!
-    if ctx.output == ctx.expected_output:
-        return 1.0
-    elif (
-        isinstance(ctx.output, str)
-        and ctx.expected_output.lower() in ctx.output.lower()
-    ):
-        return 0.8
-    else:
-        return 0.0
+class MyEvaluator(Evaluator[str, str]):
+    def evaluate(self, ctx: EvaluatorContext[str, str]) -> float:
+        if ctx.output == ctx.expected_output:
+            return 1.0
+        elif (
+            isinstance(ctx.output, str)
+            and ctx.expected_output.lower() in ctx.output.lower()
+        ):
+            return 0.8
+        else:
+            return 0.0
 
 
 dataset = Dataset(
     cases=[case1],
-    evaluators=[partial(is_instance, type_name='str'), my_evaluator],  # (3)!
+    evaluators=[IsInstance(type_name='str'), MyEvaluator()],  # (3)!
 )
 
 
@@ -123,13 +121,15 @@ report = dataset.evaluate_sync(guess_city)  # (5)!
 report.print(include_input=True, include_output=True)  # (6)!
 """
                                     Evaluation Summary: guess_city
-┏━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━┓
-┃ Case ID     ┃ Inputs                         ┃ Outputs ┃ Scores             ┃ Assertions ┃ Duration ┃
-┡━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━┩
-│ simple_case │ What is the capital of France? │ Paris   │ my_evaluator: 1.00 │ ✔          │    123µs │
-├─────────────┼────────────────────────────────┼─────────┼────────────────────┼────────────┼──────────┤
-│ Averages    │                                │         │ my_evaluator: 1.00 │ 100.0% ✔   │    123µs │
-└─────────────┴────────────────────────────────┴─────────┴────────────────────┴────────────┴──────────┘
+┏━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━┓
+┃ Case ID     ┃ Inputs                         ┃ Outputs ┃ Scores            ┃ Assertions ┃ Duration ┃
+┡━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━┩
+│ simple_case │ What is the capital of France? │ Paris   │ IsInstance: True  │ ✔          │    123µs │
+│             │                                │         │ MyEvaluator: 1.00 │            │          │
+├─────────────┼────────────────────────────────┼─────────┼───────────────────┼────────────┼──────────┤
+│ Averages    │                                │         │ IsInstance: 1.00  │ 100.0% ✔   │    123µs │
+│             │                                │         │ MyEvaluator: 1.00 │            │          │
+└─────────────┴────────────────────────────────┴─────────┴───────────────────┴────────────┴──────────┘
 """
 ```
 
@@ -160,12 +160,14 @@ async def judge_case(inputs, output):
 
 Pydantic Evals allows you to generate test datasets using LLMs:
 
+# TODO: Make the following self-contained, in particular, it needs to define MyInputs and MyOutput
+# It should also make use of extra_instructions as appropriate
 ```python
 from pydantic_evals.examples import generate_dataset
 
 async def main():
-    dataset = await generate_dataset(
-        path="my_test_cases.yaml",
+    await generate_dataset(
+        path='my_test_cases.yaml',
         inputs_type=MyInputs,
         output_type=MyOutput,
         metadata_type=dict,
@@ -179,41 +181,36 @@ async def main():
 
 Datasets can be saved to and loaded from files (YAML or JSON format):
 
-```python
-# Save dataset to file
-dataset.to_file("test_cases.yaml")
+# TODO: Add full, self-contained example
 
-# Load dataset from file
-loaded_dataset = Dataset.from_file("test_cases.yaml", custom_evaluators=[my_evaluator])
-```
 
 ### Parallel Evaluation
 
 You can control concurrency during evaluation:
 
-```python
-# Run evaluation with limited concurrency
-report = await dataset.evaluate(my_task, max_concurrency=10)
-```
+# TODO: Add full, self-contained example
 
 ### OpenTelemetry Integration
 
 Pydantic Evals integrates with OpenTelemetry for tracing and metrics:
 
-```python
-# Evaluation is automatically traced with spans
-# Metrics are collected and can be exported
-```
+# TODO: Add full, self-contained example
 
 ## Example: Time Range Evaluation
 
-Here's a complete example of using Pydantic Evals for evaluating a time range inference function:
+Here's a complete example of using Pydantic Evals for evaluating a function used to select a time range based on a user prompt:
 
+# TODO: Make the following a full, self-contained example; in particular, it should not depend on external files.
+# (It could use the from_text method rather than from_file..)
+# It should also actually implement an example function for inferring the time range...
 ```python
+from typing import Any
+
 from pydantic import BaseModel
 
 from pydantic_evals import Dataset
-from pydantic_evals.evaluators.common import is_instance, llm_judge
+from pydantic_evals.evaluators import Evaluator, EvaluatorContext, EvaluatorOutput
+from pydantic_evals.evaluators.common import IsInstance, LlmJudge
 from pydantic_evals.evaluators.llm_as_a_judge import judge_input_output
 
 
@@ -229,30 +226,26 @@ class TimeRangeResponse(BaseModel):
     error: str | None = None
 
 
-# Create judge function
-async def judge_time_range_case(inputs, output):
-    rubric = (
-        'The output should be a reasonable time range to select for the given inputs.'
-    )
-    return await judge_input_output(inputs, output, rubric)
-
-
 # Load dataset
-dataset = Dataset.from_file(
-    'test_cases.yaml', custom_evaluators=[is_instance, llm_judge]
+dataset = Dataset[TimeRangeInputs, TimeRangeResponse, Any].from_file(
+    'test_cases.yaml', custom_evaluators=[IsInstance, LlmJudge]
 )
 
 
-# Add custom evaluator
-async def time_range_evaluator(ctx):
-    result = await judge_time_range_case(inputs=ctx.inputs, output=ctx.output)
-    return {
-        'is_reasonable': 'yes' if result.pass_ else 'no',
-        'accuracy': result.score,
-    }
+# Create a custom evaluator
+class TimeRangeEvaluator(Evaluator[TimeRangeInputs, TimeRangeResponse]):
+    async def evaluate(
+        self, ctx: EvaluatorContext[TimeRangeInputs, TimeRangeResponse]
+    ) -> EvaluatorOutput:
+        rubric = 'The output should be a reasonable time range to select for the given inputs.'
+        result = await judge_input_output(ctx.inputs, ctx.output, rubric)
+        return {
+            'is_reasonable': 'yes' if result.pass_ else 'no',
+            'accuracy': result.score,
+        }
 
 
-dataset.add_evaluator(time_range_evaluator)
+dataset.add_evaluator(TimeRangeEvaluator())
 
 
 # Define function to test
@@ -265,26 +258,3 @@ async def infer_time_range(inputs: TimeRangeInputs) -> TimeRangeResponse:
 report = dataset.evaluate_sync(infer_time_range)
 report.print(include_input=True, include_output=True)
 ```
-
-## Best Practices
-
-### Creating Effective Test Cases
-
-- Include a diverse range of inputs covering both common and edge cases
-- Provide clear expected outputs for deterministic evaluation
-- Include metadata to help categorize and filter test cases
-- Use descriptive names for test cases
-
-### Designing Robust Evaluators
-
-- Combine multiple evaluation metrics for a comprehensive assessment
-- Consider both objective metrics and subjective quality when appropriate
-- Customize evaluators for your specific domain
-- Use LLM-based evaluators for complex semantic judgments
-
-### Interpreting Results
-
-- Look beyond aggregate scores to understand individual case failures
-- Use the detailed reports to identify patterns in errors
-- Compare results across multiple model versions or implementations
-- Pay attention to both precision and recall in your evaluation metrics

@@ -1,8 +1,13 @@
 from __future__ import annotations as _annotations
 
+import asyncio
 import inspect
+import sys
+from collections.abc import Coroutine
 from functools import partial
-from typing import Any, Callable
+from typing import Any, Callable, TypeVar
+
+from typing_extensions import ParamSpec, TypeIs
 
 
 class Unset:
@@ -15,6 +20,11 @@ class Unset:
 
 
 UNSET = Unset()
+T = TypeVar('T')
+
+
+def is_set(t_or_unset: T | Unset) -> TypeIs[T]:
+    return t_or_unset is not UNSET
 
 
 def get_unwrapped_function_name(func: Callable[..., Any]) -> str:
@@ -32,3 +42,19 @@ def get_unwrapped_function_name(func: Callable[..., Any]) -> str:
             return f'{type(func).__qualname__}.__call__'
         else:
             raise e
+
+
+_P = ParamSpec('_P')
+_R = TypeVar('_R')
+
+
+def run_until_complete(coro: Coroutine[None, None, _R]) -> _R:
+    if sys.version_info < (3, 11):
+        try:
+            loop = asyncio.new_event_loop()
+            return loop.run_until_complete(coro)
+        finally:
+            loop.close()
+    else:
+        with asyncio.runners.Runner(loop_factory=asyncio.new_event_loop) as runner:
+            return runner.run(coro)

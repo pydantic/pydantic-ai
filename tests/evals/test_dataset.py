@@ -1,6 +1,5 @@
 import json
 import sys
-from functools import partial
 from pathlib import Path
 
 import pytest
@@ -11,7 +10,7 @@ from pydantic import BaseModel
 
 from pydantic_evals import Case, Dataset
 from pydantic_evals.dataset import increment_eval_metric, set_eval_attribute
-from pydantic_evals.evaluators import python
+from pydantic_evals.evaluators import Evaluator, Python
 from pydantic_evals.evaluators.context import EvaluatorContext
 from pydantic_evals.reporting import ReportCase
 
@@ -67,26 +66,27 @@ def example_dataset(
     return Dataset[TaskInput, TaskOutput, TaskMetadata](cases=example_cases)
 
 
-async def simple_evaluator(ctx: EvaluatorContext[TaskInput, TaskOutput, TaskMetadata]):
-    """Simple evaluator that checks if the output matches the expected output."""
-    if ctx.expected_output is None:
-        return {'result': 'no_expected_output'}
+class SimpleEvaluator(Evaluator[TaskInput, TaskOutput, TaskMetadata]):
+    def evaluate(self, ctx: EvaluatorContext[TaskInput, TaskOutput, TaskMetadata]):
+        if ctx.expected_output is None:
+            return {'result': 'no_expected_output'}
 
-    return {
-        'correct': ctx.output.answer == ctx.expected_output.answer,
-        'confidence': ctx.output.confidence,
-    }
+        return {
+            'correct': ctx.output.answer == ctx.expected_output.answer,
+            'confidence': ctx.output.confidence,
+        }
 
 
-async def metadata_evaluator(ctx: EvaluatorContext[TaskInput, TaskOutput, TaskMetadata]):
-    """Evaluator that uses metadata."""
-    if ctx.metadata is None:
-        return {'result': 'no_metadata'}
+class MetadataEvaluator(Evaluator[TaskInput, TaskOutput, TaskMetadata]):
+    def evaluate(self, ctx: EvaluatorContext[TaskInput, TaskOutput, TaskMetadata]):
+        """Evaluator that uses metadata."""
+        if ctx.metadata is None:
+            return {'result': 'no_metadata'}
 
-    return {
-        'difficulty': ctx.metadata.difficulty,
-        'category': ctx.metadata.category,
-    }
+        return {
+            'difficulty': ctx.metadata.difficulty,
+            'category': ctx.metadata.category,
+        }
 
 
 async def test_case_init():
@@ -96,7 +96,7 @@ async def test_case_init():
         inputs=TaskInput(query='What is 2+2?'),
         expected_output=TaskOutput(answer='4'),
         metadata=TaskMetadata(difficulty='easy'),
-        evaluators=(simple_evaluator,),
+        evaluators=(SimpleEvaluator(),),
     )
 
     assert case.name == 'test'
@@ -110,7 +110,7 @@ async def test_case_init():
 
 async def test_dataset_init(example_cases: list[Case[TaskInput, TaskOutput, TaskMetadata]]):
     """Test Dataset initialization."""
-    dataset = Dataset(cases=example_cases, evaluators=[simple_evaluator])
+    dataset = Dataset(cases=example_cases, evaluators=[SimpleEvaluator()])
 
     assert len(dataset.cases) == 2
     assert dataset.cases[0].name == 'case1'
@@ -122,16 +122,16 @@ async def test_add_evaluator(example_dataset: Dataset[TaskInput, TaskOutput, Tas
     """Test adding evaluators to a dataset."""
     assert len(example_dataset.evaluators) == 0
 
-    example_dataset.add_evaluator(simple_evaluator)
+    example_dataset.add_evaluator(SimpleEvaluator())
     assert len(example_dataset.evaluators) == 1
 
-    example_dataset.add_evaluator(metadata_evaluator)
+    example_dataset.add_evaluator(MetadataEvaluator())
     assert len(example_dataset.evaluators) == 2
 
 
 async def test_evaluate(example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata]):
     """Test evaluating a dataset."""
-    example_dataset.add_evaluator(simple_evaluator)
+    example_dataset.add_evaluator(SimpleEvaluator())
 
     async def mock_task(inputs: TaskInput) -> TaskOutput:
         if inputs.query == 'What is 2+2?':
@@ -169,7 +169,7 @@ async def test_evaluate(example_dataset: Dataset[TaskInput, TaskOutput, TaskMeta
 
 async def test_evaluate_with_concurrency(example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata]):
     """Test evaluating a dataset with concurrency limits."""
-    example_dataset.add_evaluator(simple_evaluator)
+    example_dataset.add_evaluator(SimpleEvaluator())
 
     async def mock_task(inputs: TaskInput) -> TaskOutput:
         if inputs.query == 'What is 2+2?':
@@ -207,7 +207,7 @@ async def test_evaluate_with_concurrency(example_dataset: Dataset[TaskInput, Tas
 
 async def test_evaluate_with_failing_task(example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata]):
     """Test evaluating a dataset with a failing task."""
-    example_dataset.add_evaluator(simple_evaluator)
+    example_dataset.add_evaluator(SimpleEvaluator())
 
     async def failing_task(inputs: TaskInput) -> TaskOutput:
         if inputs.query == 'What is 2+2?':
@@ -225,10 +225,11 @@ async def test_evaluate_with_failing_task(example_dataset: Dataset[TaskInput, Ta
 async def test_evaluate_with_failing_evaluator(example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata]):
     """Test evaluating a dataset with a failing evaluator."""
 
-    async def failing_evaluator(ctx: EvaluatorContext[TaskInput, TaskOutput, TaskMetadata]):
-        raise ValueError('Evaluator error')
+    class FailingEvaluator(Evaluator[TaskInput, TaskOutput, TaskMetadata]):
+        def evaluate(self, ctx: EvaluatorContext[TaskInput, TaskOutput, TaskMetadata]):
+            raise ValueError('Evaluator error')
 
-    example_dataset.add_evaluator(failing_evaluator)
+    example_dataset.add_evaluator(FailingEvaluator())
 
     async def mock_task(inputs: TaskInput) -> TaskOutput:
         return TaskOutput(answer='4')
@@ -353,7 +354,7 @@ async def test_from_text(example_dataset: Dataset[TaskInput, TaskOutput, TaskMet
 
 async def test_invalid_evaluator_result_type(example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata]):
     """Test that an invalid evaluator result type raises an error."""
-    invalid_evaluator = partial(python, expression='...')
+    invalid_evaluator = Python(expression='...')
     example_dataset.add_evaluator(invalid_evaluator)
 
     async def mock_task(inputs: TaskInput) -> TaskOutput:
@@ -370,7 +371,7 @@ async def test_invalid_evaluator_result_type(example_dataset: Dataset[TaskInput,
                         'unhandled errors in a TaskGroup',
                         [
                             ValueError(
-                                "EvaluatorSpec(call='python', args=[], kwargs={'expression': '...'}) returned a value of an invalid type: Ellipsis."
+                                "Python(expression='...').evaluate returned a value of an invalid type: Ellipsis."
                             )
                         ],
                     ),
@@ -378,7 +379,7 @@ async def test_invalid_evaluator_result_type(example_dataset: Dataset[TaskInput,
                         'unhandled errors in a TaskGroup',
                         [
                             ValueError(
-                                "EvaluatorSpec(call='python', args=[], kwargs={'expression': '...'}) returned a value of an invalid type: Ellipsis."
+                                "Python(expression='...').evaluate returned a value of an invalid type: Ellipsis."
                             )
                         ],
                     ),

@@ -13,7 +13,7 @@ from typing_extensions import TypedDict
 
 from pydantic_evals._utils import UNSET, Unset
 
-from ..evaluators.spec import SourcedEvaluatorOutput
+from ..evaluators import EvaluationResult
 from .render_numbers import (
     default_render_duration,
     default_render_duration_diff,
@@ -53,9 +53,9 @@ class ReportCase(BaseModel):
     metrics: dict[str, float | int]
     attributes: dict[str, Any]
 
-    scores: dict[str, SourcedEvaluatorOutput[int | float]] = field(init=False)
-    labels: dict[str, SourcedEvaluatorOutput[str]] = field(init=False)
-    assertions: dict[str, SourcedEvaluatorOutput[bool]] = field(init=False)
+    scores: dict[str, EvaluationResult[int | float]] = field(init=False)
+    labels: dict[str, EvaluationResult[str]] = field(init=False)
+    assertions: dict[str, EvaluationResult[bool]] = field(init=False)
 
     task_duration: float
     total_duration: float  # includes evaluator execution time
@@ -66,15 +66,15 @@ class ReportCase(BaseModel):
 
     @staticmethod
     def group_evaluator_outputs(
-        evaluator_outputs: list[SourcedEvaluatorOutput],
+        evaluator_outputs: list[EvaluationResult],
     ) -> tuple[
-        dict[str, SourcedEvaluatorOutput[int | float]],
-        dict[str, SourcedEvaluatorOutput[str]],
-        dict[str, SourcedEvaluatorOutput[bool]],
+        dict[str, EvaluationResult[int | float]],
+        dict[str, EvaluationResult[str]],
+        dict[str, EvaluationResult[bool]],
     ]:
-        scores: dict[str, SourcedEvaluatorOutput[int | float]] = {}
-        labels: dict[str, SourcedEvaluatorOutput[str]] = {}
-        assertions: dict[str, SourcedEvaluatorOutput[bool]] = {}
+        scores: dict[str, EvaluationResult[int | float]] = {}
+        labels: dict[str, EvaluationResult[str]] = {}
+        assertions: dict[str, EvaluationResult[bool]] = {}
 
         seen_names = set[str]()
         for eo in evaluator_outputs:
@@ -737,7 +737,7 @@ class ReportCaseRenderer:
 
     @staticmethod
     def _render_assertions(
-        assertions: list[SourcedEvaluatorOutput[bool]],
+        assertions: list[EvaluationResult[bool]],
     ) -> str:
         if not assertions:
             return EMPTY_CELL_STR
@@ -755,7 +755,7 @@ class ReportCaseRenderer:
 
     @staticmethod
     def _render_assertions_diff(
-        assertions: list[SourcedEvaluatorOutput[bool]], new_assertions: list[SourcedEvaluatorOutput[bool]]
+        assertions: list[EvaluationResult[bool]], new_assertions: list[EvaluationResult[bool]]
     ) -> str:
         if not assertions and not new_assertions:
             return EMPTY_CELL_STR

@@ -10,12 +10,6 @@ TODO(DavidM): Implement a CLI with some pytest-like filtering API to make it eas
 #  E.g., could use some kind of `eval_function` decorator, which ensures that calls to the function send eval-review-compatible data to logfire
 #  Basically we need to record the inputs and output. @logfire.instrument might be enough if we make it possible to record the output
 
-# TODO: Rework so that:
-#   * EvaluatorFunction becomes EvaluatorFactory, which returns what is currently called a BoundEvaluatorFunction
-#       * the EvaluatorSpec "call" is used to look up the EvaluatorFactory, and its kwargs are used to call it and produce the BoundEvaluatorFunction
-#   * BoundEvaluatorFunction gets renamed to Evaluator
-#   * The EvaluatorSpec class becomes purely a (private?) means for serializing/deserializing Evaluator instances (with registered EvaluatorFactories)
-#   * The thing currently called Evaluator goes away and we assume that serializing/deserializing between Evaluator and EvaluatorSpec is idempotent
 from .dataset import Case, Dataset, increment_eval_metric
 from .reporting import RenderNumberConfig, RenderValueConfig
 

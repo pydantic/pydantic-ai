@@ -60,12 +60,6 @@
               },
               {
                 "$ref": "#/$defs/short_evaluator_span_query"
-              },
-              {
-                "$ref": "#/$defs/short_evaluator_python"
-              },
-              {
-                "$ref": "#/$defs/evaluator_python"
               }
             ]
           },
@@ -188,8 +182,6 @@
         "gpt-4-turbo-2024-04-09",
         "gpt-4-turbo-preview",
         "gpt-4-vision-preview",
-        "gpt-4.5-preview",
-        "gpt-4.5-preview-2025-02-27",
         "gpt-4o",
         "gpt-4o-2024-05-13",
         "gpt-4o-2024-08-06",
@@ -201,6 +193,10 @@
         "gpt-4o-mini-2024-07-18",
         "gpt-4o-mini-audio-preview",
         "gpt-4o-mini-audio-preview-2024-12-17",
+        "gpt-4o-mini-search-preview",
+        "gpt-4o-mini-search-preview-2025-03-11",
+        "gpt-4o-search-preview",
+        "gpt-4o-search-preview-2025-03-11",
         "groq:gemma2-9b-it",
         "groq:llama-3.1-8b-instant",
         "groq:llama-3.2-11b-vision-preview",
@@ -244,8 +240,6 @@
         "openai:gpt-4-turbo-2024-04-09",
         "openai:gpt-4-turbo-preview",
         "openai:gpt-4-vision-preview",
-        "openai:gpt-4.5-preview",
-        "openai:gpt-4.5-preview-2025-02-27",
         "openai:gpt-4o",
         "openai:gpt-4o-2024-05-13",
         "openai:gpt-4o-2024-08-06",
@@ -257,6 +251,10 @@
         "openai:gpt-4o-mini-2024-07-18",
         "openai:gpt-4o-mini-audio-preview",
         "openai:gpt-4o-mini-audio-preview-2024-12-17",
+        "openai:gpt-4o-mini-search-preview",
+        "openai:gpt-4o-mini-search-preview-2025-03-11",
+        "openai:gpt-4o-search-preview",
+        "openai:gpt-4o-search-preview-2025-03-11",
         "openai:o1",
         "openai:o1-2024-12-17",
         "openai:o1-mini",
@@ -344,6 +342,14 @@
         },
         "no_child_has": {
           "$ref": "#/$defs/SpanQuery"
+        },
+        "min_child_count": {
+          "title": "Min Child Count",
+          "type": "integer"
+        },
+        "max_child_count": {
+          "title": "Max Child Count",
+          "type": "integer"
         },
         "some_descendant_has": {
           "$ref": "#/$defs/SpanQuery"
@@ -496,44 +502,6 @@
       "title": "evaluator_params_llm_judge",
       "type": "object"
     },
-    "evaluator_params_python": {
-      "additionalProperties": false,
-      "properties": {
-        "condition": {
-          "title": "Condition",
-          "type": "string"
-        },
-        "name": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "title": "Name"
-        }
-      },
-      "required": [
-        "condition"
-      ],
-      "title": "evaluator_params_python",
-      "type": "object"
-    },
-    "evaluator_python": {
-      "additionalProperties": false,
-      "properties": {
-        "python": {
-          "$ref": "#/$defs/evaluator_params_python"
-        }
-      },
-      "required": [
-        "python"
-      ],
-      "title": "evaluator_python",
-      "type": "object"
-    },
     "short_evaluator_contains": {
       "additionalProperties": false,
       "properties": {
@@ -610,20 +578,6 @@
       "title": "short_evaluator_max_duration",
       "type": "object"
     },
-    "short_evaluator_python": {
-      "additionalProperties": false,
-      "properties": {
-        "python": {
-          "title": "Python",
-          "type": "string"
-        }
-      },
-      "required": [
-        "python"
-      ],
-      "title": "short_evaluator_python",
-      "type": "object"
-    },
     "short_evaluator_span_query": {
       "additionalProperties": false,
       "properties": {
@@ -678,12 +632,6 @@
           },
           {
             "$ref": "#/$defs/short_evaluator_span_query"
-          },
-          {
-            "$ref": "#/$defs/short_evaluator_python"
-          },
-          {
-            "$ref": "#/$defs/evaluator_python"
           }
         ]
       },

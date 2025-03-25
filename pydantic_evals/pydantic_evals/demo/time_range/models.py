@@ -1,14 +1,12 @@
 from __future__ import annotations as _annotations
 
-from functools import partial
 from typing import Any
 
 from pydantic import AwareDatetime, BaseModel
 from typing_extensions import TypedDict
 
 from pydantic_evals.dataset import Dataset
-from pydantic_evals.evaluators.common import is_instance, llm_judge
-from pydantic_evals.evaluators.spec import EvaluatorDetails
+from pydantic_evals.evaluators.common import IsInstance, LlmJudge
 
 
 class TimeRangeBuilderSuccess(BaseModel, use_attribute_docstrings=True):
@@ -75,7 +73,8 @@ if __name__ == '__main__':
 
         path = Path(__file__).parent / 'test_cases.yaml'
         if not path.exists():
-            evaluator = EvaluatorDetails.from_function(partial(llm_judge, rubric='abc'))
-            TimeRangeDataset(cases=[], evaluators=[evaluator]).to_file(path, custom_evaluators=[llm_judge, is_instance])
+            TimeRangeDataset(cases=[], evaluators=[LlmJudge(rubric='abc')]).to_file(
+                path, custom_evaluators=[LlmJudge, IsInstance]
+            )
 
     main()

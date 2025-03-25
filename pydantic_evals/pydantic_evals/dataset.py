@@ -5,7 +5,7 @@ import functools
 import inspect
 import sys
 import warnings
-from collections.abc import Awaitable, Sequence
+from collections.abc import Awaitable, Mapping, Sequence
 from contextlib import nullcontext
 from contextvars import ContextVar
 from dataclasses import dataclass, field
@@ -22,9 +22,10 @@ from typing_extensions import TypedDict, TypeVar
 from pydantic_graph._utils import run_until_complete
 
 from ._utils import get_unwrapped_function_name
+from .evaluators import EvaluationResult, Evaluator, run_evaluator
+from .evaluators._spec import EvaluatorSpec
 from .evaluators.common import DEFAULT_EVALUATORS
 from .evaluators.context import EvaluatorContext
-from .evaluators.spec import Evaluator, EvaluatorDetails, EvaluatorFunction, EvaluatorSpec, SourcedEvaluatorOutput
 from .otel import SpanTree
 from .otel._context_in_memory_span_exporter import context_subtree
 from .reporting import EvaluationReport, ReportCase, ReportCaseAggregate
@@ -85,7 +86,7 @@ class Case(Generic[InputsT, OutputT, MetadataT]):
     """
     expected_output: OutputT | None
     """Expected output of the task. This is the expected output of the task that will be evaluated."""
-    evaluators: list[EvaluatorDetails[InputsT, OutputT, MetadataT]]
+    evaluators: list[Evaluator[InputsT, OutputT, MetadataT]]
     """Evaluators to be used just on this case."""
 
     def __init__(
@@ -95,9 +96,7 @@ class Case(Generic[InputsT, OutputT, MetadataT]):
         inputs: InputsT,
         metadata: MetadataT | None = None,
         expected_output: OutputT | None = None,
-        evaluators: tuple[
-            Evaluator[InputsT, OutputT, MetadataT] | EvaluatorDetails[InputsT, OutputT, MetadataT], ...
-        ] = (),
+        evaluators: tuple[Evaluator[InputsT, OutputT, MetadataT], ...] = (),
     ):
         # Note: `evaluators` must be a tuple instead of Sequence due to misbehavior with pyright's generic parameter
         # inference if it has type `Sequence`
@@ -105,13 +104,10 @@ class Case(Generic[InputsT, OutputT, MetadataT]):
         self.inputs = inputs
         self.metadata = metadata
         self.expected_output = expected_output
-        self.evaluators = [
-            e if isinstance(e, EvaluatorDetails) else EvaluatorDetails[InputsT, OutputT, MetadataT].from_function(e)
-            for e in evaluators
-        ]
+        self.evaluators = list(evaluators)
 
 
-# TODO: Consider making the following changes to this type:
+# TODO: Consider making one or more of the following changes to this type:
 #  * Add `task: Callable[[InputsT], Awaitable[OutputT]` as a field
 #  * Add `inputs_type`, `output_type`, etc. as kwargs on `__init__`
 #  * Rename to `Evaluation`
@@ -121,23 +117,18 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
 
     cases: list[Case[InputsT, OutputT, MetadataT]]
     """List of test cases in the dataset."""
-    evaluators: list[EvaluatorDetails[InputsT, OutputT, MetadataT]] = []
+    evaluators: list[Evaluator[InputsT, OutputT, MetadataT]] = []
     """List of evaluators to be used on all cases in the dataset."""
 
     def __init__(
         self,
         *,
         cases: Sequence[Case[InputsT, OutputT, MetadataT]],
-        evaluators: Sequence[
-            Evaluator[InputsT, OutputT, MetadataT] | EvaluatorDetails[InputsT, OutputT, MetadataT]
-        ] = (),
+        evaluators: Sequence[Evaluator[InputsT, OutputT, MetadataT]] = (),
     ):
         super().__init__(
             cases=cases,
-            evaluators=[
-                a if isinstance(a, EvaluatorDetails) else EvaluatorDetails[InputsT, OutputT, MetadataT].from_function(a)
-                for a in evaluators
-            ],
+            evaluators=list(evaluators),
         )
 
     async def evaluate(
@@ -191,9 +182,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         inputs: InputsT,
         metadata: MetadataT | None = None,
         expected_output: OutputT | None = None,
-        evaluators: tuple[
-            Evaluator[InputsT, OutputT, MetadataT] | EvaluatorDetails[InputsT, OutputT, MetadataT], ...
-        ] = (),
+        evaluators: tuple[Evaluator[InputsT, OutputT, MetadataT], ...] = (),
     ) -> None:
         """Adds a case to the evaluation."""
         case = Case[InputsT, OutputT, MetadataT](
@@ -207,7 +196,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
 
     def add_evaluator(
         self,
-        evaluator: Evaluator[InputsT, OutputT, MetadataT] | EvaluatorDetails[InputsT, OutputT, MetadataT],
+        evaluator: Evaluator[InputsT, OutputT, MetadataT],
         specific_case: str | None = None,
     ) -> None:
         """Adds an evaluator to the dataset or to a specific case.
@@ -216,11 +205,6 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             evaluator: The evaluator to add, TODO.
             specific_case: Specific case to add the evaluator to. If `None`, the evaluator is added to all cases.
         """
-        evaluator = (
-            evaluator
-            if isinstance(evaluator, EvaluatorDetails)
-            else EvaluatorDetails[InputsT, OutputT, MetadataT].from_function(evaluator)
-        )
         if specific_case is None:
             # Add the evaluator to the dataset itself
             self.evaluators.append(evaluator)
@@ -255,7 +239,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         cls,
         path: Path | str,
         fmt: Literal['yaml', 'json'] | None = None,
-        custom_evaluators: Sequence[EvaluatorFunction[InputsT, OutputT, MetadataT]] = (),
+        custom_evaluators: Sequence[type[Evaluator[InputsT, OutputT, MetadataT]]] = (),
     ) -> Self:
         path = Path(path)
         fmt = cls._infer_fmt(path, fmt)
@@ -271,7 +255,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         cls,
         contents: str,
         fmt: Literal['yaml', 'json'] = 'yaml',
-        custom_evaluators: Sequence[EvaluatorFunction[InputsT, OutputT, MetadataT]] = (),
+        custom_evaluators: Sequence[type[Evaluator[InputsT, OutputT, MetadataT]]] = (),
     ) -> Self:
         if fmt == 'yaml':
             loaded = yaml.safe_load(contents)
@@ -285,7 +269,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
     def from_dict(
         cls,
         data: dict[str, Any],
-        custom_evaluators: Sequence[EvaluatorFunction[InputsT, OutputT, MetadataT]] = (),
+        custom_evaluators: Sequence[type[Evaluator[InputsT, OutputT, MetadataT]]] = (),
     ) -> Self:
         dataset_model_type = cls._serialization_type()
         dataset_model = dataset_model_type.model_validate(data)
@@ -295,28 +279,26 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
     def _from_dataset_model(
         cls,
         dataset_model: _DatasetModel[InputsT, OutputT, MetadataT],
-        custom_evaluators: Sequence[EvaluatorFunction[InputsT, OutputT, MetadataT]] = (),
+        custom_evaluators: Sequence[type[Evaluator[InputsT, OutputT, MetadataT]]] = (),
     ) -> Self:
         registry = _get_registry(custom_evaluators)
 
         cases: list[Case[InputsT, OutputT, MetadataT]] = []
         errors: list[ValueError] = []
-        dataset_evaluators: list[EvaluatorDetails[Any, Any, Any]] = []
-        for evaluator in dataset_model.evaluators:
+        dataset_evaluators: list[Evaluator[Any, Any, Any]] = []
+        for spec in dataset_model.evaluators:
             try:
-                dataset_evaluator = EvaluatorDetails[InputsT, OutputT, MetadataT].from_registry(
-                    registry, None, evaluator
-                )
+                dataset_evaluator = _load_evaluator_from_registry(registry, None, spec)
             except ValueError as e:
                 errors.append(e)
                 continue
             dataset_evaluators.append(dataset_evaluator)
 
         for row in dataset_model.cases:
-            evaluators: list[EvaluatorDetails[Any, Any, Any]] = []
+            evaluators: list[Evaluator[Any, Any, Any]] = []
             for spec in row.evaluators:
                 try:
-                    evaluator = EvaluatorDetails[InputsT, OutputT, MetadataT].from_registry(registry, row.name, spec)
+                    evaluator = _load_evaluator_from_registry(registry, row.name, spec)
                 except ValueError as e:
                     errors.append(e)
                     continue
@@ -340,7 +322,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         path: Path | str,
         fmt: Literal['yaml', 'json'] | None = None,
         schema_path: Path | str | None = DEFAULT_SCHEMA_PATH_TEMPLATE,
-        custom_evaluators: Sequence[EvaluatorFunction[InputsT, OutputT, MetadataT]] = (),
+        custom_evaluators: Sequence[type[Evaluator[InputsT, OutputT, MetadataT]]] = (),
     ):
         path = Path(path)
         fmt = self._infer_fmt(path, fmt)
@@ -360,34 +342,31 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             self._save_schema(schema_path, custom_evaluators)
 
         if fmt == 'yaml':
-            dumped_data = self.model_dump(context={'use_short_forms': True}, mode='json', exclude_defaults=True)
+            dumped_data = self.model_dump(mode='json', exclude_defaults=True)
             content = yaml.dump(dumped_data, sort_keys=False)
             if schema_ref:
                 yaml_language_server_line = f'# yaml-language-server: $schema={schema_ref}'
                 content = f'{yaml_language_server_line}\n{content}'
             path.write_text(content)
         else:
-            json_data = self.model_dump_json(context={'use_short_forms': True}, indent=2, exclude_defaults=True)
+            json_data = self.model_dump_json(indent=2, exclude_defaults=True)
             path.write_text(json_data + '\n')
 
     @classmethod
     def model_json_schema_with_evaluators(
         cls,
-        custom_evaluators: Sequence[EvaluatorFunction[InputsT, OutputT, MetadataT]] = (),
+        custom_evaluators: Sequence[type[Evaluator[InputsT, OutputT, MetadataT]]] = (),
     ) -> dict[str, Any]:
+        # Note: this function could probably be simplified now that Evaluators are always dataclasses
         registry = _get_registry(custom_evaluators)
 
-        evaluator_types: list[Any] = []
-        for name, function in registry.items():
-            signature = inspect.signature(function)
-
-            scoring_context_param, *other_params = signature.parameters.values()
-            type_hints = _typing_extra.get_function_type_hints(function)
-            type_hints.pop(scoring_context_param.name, None)
+        evaluator_schema_types: list[Any] = []
+        for name, evaluator_class in registry.items():
+            type_hints = _typing_extra.get_function_type_hints(evaluator_class)
             type_hints.pop('return', None)
             required_type_hints: dict[str, Any] = {}
 
-            for p in other_params:
+            for p in inspect.signature(evaluator_class).parameters.values():
                 type_hints.setdefault(p.name, Any)
                 if p.default is not p.empty:
                     type_hints[p.name] = NotRequired[type_hints[p.name]]
@@ -396,27 +375,27 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
 
             if len(type_hints) == 0 or not required_type_hints:
                 # Shortest option: just the call name
-                evaluator_types.append(Literal[name])
+                evaluator_schema_types.append(Literal[name])
             if len(type_hints) == 1:
                 # Short option: only have one parameter, so we can drop the nesting
                 [type_hint_type] = type_hints.values()  # pyright: ignore
                 td = TypedDict(f'short_evaluator_{name}', {name: type_hint_type})  # pyright: ignore
                 td.__pydantic_config__ = {'extra': 'forbid'}  # pyright: ignore
-                evaluator_types.append(td)
+                evaluator_schema_types.append(td)
             if len(type_hints) > 1:
                 if len(required_type_hints) == 1:
                     # Short option: only have one required parameter, so we can drop the nesting
                     type_hint_type = next(iter(required_type_hints.values()))  # pyright: ignore
                     td = TypedDict(f'short_evaluator_{name}', {name: type_hint_type})  # pyright: ignore
                     td.__pydantic_config__ = {'extra': 'forbid'}  # pyright: ignore
-                    evaluator_types.append(td)
+                    evaluator_schema_types.append(td)
 
                 # Long form: multiple parameters, or multiple required parameters
                 params_td = TypedDict(f'evaluator_params_{name}', type_hints)  # pyright: ignore
                 params_td.__pydantic_config__ = {'extra': 'forbid'}  # pyright: ignore
                 td = TypedDict(f'evaluator_{name}', {name: params_td})  # pyright: ignore
                 td.__pydantic_config__ = {'extra': 'forbid'}  # pyright: ignore
-                evaluator_types.append(td)
+                evaluator_schema_types.append(td)
             # Note: We might want to also generate the JSON schema for the format `call: '...', args: [...], kwargs: {...}`.
             #   It would be a bit complex to implement but not impossible.
 
@@ -427,17 +406,15 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             inputs: in_type
             metadata: meta_type
             expected_output: out_type | None = None
-            if evaluator_types:
-                # TODO: Add some default evaluator_types that are always included and remove this conditional
-                evaluators: list[Union[tuple(evaluator_types)]] = []  # pyright: ignore  # noqa UP007
+            if evaluator_schema_types:
+                evaluators: list[Union[tuple(evaluator_schema_types)]] = []  # pyright: ignore  # noqa UP007
 
         ClsDatasetRow.__name__ = cls.__name__ + 'Row'
 
         class ClsDataset(BaseModel, extra='forbid'):
             cases: list[ClsDatasetRow]
-            if evaluator_types:
-                # TODO: Add some default evaluator_types that are always included and remove this conditional
-                evaluators: list[Union[tuple(evaluator_types)]] = []  # pyright: ignore  # noqa UP007
+            if evaluator_schema_types:
+                evaluators: list[Union[tuple(evaluator_schema_types)]] = []  # pyright: ignore  # noqa UP007
 
         ClsDataset.__name__ = cls.__name__
 
@@ -445,7 +422,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
 
     @classmethod
     def _save_schema(
-        cls, path: Path | str, custom_evaluators: Sequence[EvaluatorFunction[InputsT, OutputT, MetadataT]] = ()
+        cls, path: Path | str, custom_evaluators: Sequence[type[Evaluator[InputsT, OutputT, MetadataT]]] = ()
     ):
         path = Path(path)
         json_schema = cls.model_json_schema_with_evaluators(custom_evaluators)
@@ -457,23 +434,6 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
     @functools.cache
     def _serialization_type(cls) -> type[_DatasetModel[InputsT, OutputT, MetadataT]]:
         return _DatasetModel[cls._params()]  # type: ignore
-
-    @classmethod
-    def _get_relative_path(cls, path: Path | str) -> Path:
-        """Resolve relative paths as relative to the module in which the subclass is defined."""
-        path = Path(path)
-
-        if path.is_absolute():
-            return path
-
-        # TODO: Should we use the cwd instead of the module path? Then it would work for non-proper-subclasses..
-        module_path = sys.modules[cls.__module__].__file__
-        if module_path == __file__:
-            raise ValueError(f'You should only call this method from a proper subclass of `{cls.__name__}`')
-
-        assert module_path is not None, 'Module must be a file-based module'
-        root = Path(module_path).parent
-        return root / path
 
     @classmethod
     def _infer_fmt(cls, path: Path, fmt: Literal['yaml', 'json'] | None) -> Literal['yaml', 'json']:
@@ -568,7 +528,7 @@ async def _run_task_and_evaluators(
     task: Callable[[InputsT], Awaitable[OutputT]],
     case: Case[InputsT, OutputT, MetadataT],
     report_case_name: str,
-    dataset_evaluators: list[EvaluatorDetails[InputsT, OutputT, MetadataT]],
+    dataset_evaluators: list[Evaluator[InputsT, OutputT, MetadataT]],
 ) -> ReportCase:
     with _logfire.span(
         '{task_name}: {case_name}',
@@ -585,12 +545,12 @@ async def _run_task_and_evaluators(
         case_span.set_attribute('attributes', scoring_context.attributes)
 
         evaluators = case.evaluators + dataset_evaluators
-        evaluator_outputs: list[SourcedEvaluatorOutput] = []
+        evaluator_outputs: list[EvaluationResult] = []
         if evaluators:
             async with asyncio.TaskGroup() as tg:
-                tasks: list[asyncio.Task[list[SourcedEvaluatorOutput]]] = []
+                tasks: list[asyncio.Task[list[EvaluationResult]]] = []
                 for evaluator in evaluators:
-                    tasks.append(tg.create_task(evaluator.execute(scoring_context)))
+                    tasks.append(tg.create_task(run_evaluator(evaluator, scoring_context)))
             for t in tasks:
                 evaluator_outputs.extend(t.result())
 
@@ -626,16 +586,16 @@ async def _run_task_and_evaluators(
 
 
 def _group_evaluator_outputs_by_type(
-    evaluators: Sequence[SourcedEvaluatorOutput],
+    evaluators: Sequence[EvaluationResult],
 ) -> tuple[
-    dict[str, SourcedEvaluatorOutput[bool]],
-    dict[str, SourcedEvaluatorOutput[int | float]],
-    dict[str, SourcedEvaluatorOutput[str]],
+    dict[str, EvaluationResult[bool]],
+    dict[str, EvaluationResult[int | float]],
+    dict[str, EvaluationResult[str]],
 ]:
     """Groups evaluators by value type."""
-    assertions: dict[str, SourcedEvaluatorOutput[bool]] = {}
-    scores: dict[str, SourcedEvaluatorOutput[int | float]] = {}
-    labels: dict[str, SourcedEvaluatorOutput[str]] = {}
+    assertions: dict[str, EvaluationResult[bool]] = {}
+    scores: dict[str, EvaluationResult[int | float]] = {}
+    labels: dict[str, EvaluationResult[str]] = {}
     seen_names = set[str]()
     for a in evaluators:
         name = a.name
@@ -681,6 +641,41 @@ def _get_span_duration(span: logfire.LogfireSpan) -> float:
 
 
 def _get_registry(
-    custom_evaluators: Sequence[EvaluatorFunction[InputsT, OutputT, MetadataT]],
-) -> dict[str, EvaluatorFunction[InputsT, OutputT, MetadataT]]:
-    return {get_unwrapped_function_name(f): f for f in tuple(custom_evaluators) + DEFAULT_EVALUATORS}
+    custom_evaluators: Sequence[type[Evaluator[InputsT, OutputT, MetadataT]]],
+) -> Mapping[str, type[Evaluator[InputsT, OutputT, MetadataT]]]:
+    registry: dict[str, type[Evaluator[InputsT, OutputT, MetadataT]]] = {}
+
+    for evaluator_class in custom_evaluators:
+        if not issubclass(evaluator_class, Evaluator):
+            raise ValueError(
+                f'All custom evaluator classes must be subclasses of Evaluator, but {evaluator_class} is not'
+            )
+        if '__dataclass_fields__' not in evaluator_class.__dict__:
+            raise ValueError(f'All custom evaluator must be decorated with `@dataclass`, but {evaluator_class} is not')
+        name = evaluator_class.name()
+        if name in registry:
+            raise ValueError(f'Duplicate evaluator class name: {name}')
+        registry[name] = evaluator_class
+
+    for evaluator_class in DEFAULT_EVALUATORS:
+        # Allow overriding the default evaluators with custom evaluators raising an error
+        registry.setdefault(evaluator_class.name(), evaluator_class)
+
+    return registry
+
+
+def _load_evaluator_from_registry(
+    registry: Mapping[str, type[Evaluator[InputsT, OutputT, MetadataT]]],
+    case_name: str | None,
+    spec: EvaluatorSpec,
+) -> Evaluator[InputsT, OutputT, MetadataT]:
+    evaluator_class = registry.get(spec.name)
+    if evaluator_class is None:
+        raise ValueError(
+            f'Evaluator {spec.name!r} is not in the provided registry. Registered choices: {list(registry.keys())}'
+        )
+    try:
+        return evaluator_class(*spec.args, **spec.kwargs)
+    except Exception as e:
+        case_detail = f'case {case_name!r}' if case_name is not None else 'dataset'
+        raise ValueError(f'Failed to instantiate evaluator {spec.name!r} for {case_detail}: {e}') from e

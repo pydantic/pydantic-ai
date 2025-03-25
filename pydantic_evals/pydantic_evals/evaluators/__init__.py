@@ -1,16 +1,24 @@
-from .common import contains, equals, equals_expected, is_instance, llm_judge, max_duration, python, span_query
+from .common import Contains, Equals, EqualsExpected, IsInstance, LlmJudge, MaxDuration, Python, SpanQuery
 from .context import EvaluatorContext
+from .evaluator import EvaluationReason, EvaluationResult, EvaluationScalar, Evaluator, EvaluatorOutput, run_evaluator
 
 __all__ = (
     # common
-    'equals',
-    'equals_expected',
-    'contains',
-    'is_instance',
-    'max_duration',
-    'llm_judge',
-    'span_query',
-    'python',
+    'Equals',
+    'EqualsExpected',
+    'Contains',
+    'IsInstance',
+    'MaxDuration',
+    'LlmJudge',
+    'SpanQuery',
+    'Python',
     # context
     'EvaluatorContext',
+    # evaluator
+    'Evaluator',
+    'EvaluationScalar',
+    'EvaluationReason',
+    'EvaluatorOutput',
+    'EvaluationResult',
+    'run_evaluator',
 )
