@@ -2782,7 +2782,7 @@ wheels = [
 
 [[package]]
 name = "pydantic-ai"
-version = "0.0.43"
+version = "0.0.44"
 source = { editable = "." }
 dependencies = [
     { name = "pydantic-ai-slim", extra = ["anthropic", "bedrock", "cli", "cohere", "groq", "mcp", "mistral", "openai", "vertexai"] },
@@ -2846,7 +2846,7 @@ lint = [
 
 [[package]]
 name = "pydantic-ai-examples"
-version = "0.0.43"
+version = "0.0.44"
 source = { editable = "examples" }
 dependencies = [
     { name = "asyncpg" },
@@ -2877,7 +2877,7 @@ requires-dist = [
 
 [[package]]
 name = "pydantic-ai-slim"
-version = "0.0.43"
+version = "0.0.44"
 source = { editable = "pydantic_ai_slim" }
 dependencies = [
     { name = "eval-type-backport" },
@@ -2964,7 +2964,7 @@ requires-dist = [
     { name = "logfire", marker = "extra == 'logfire'", specifier = ">=2.3" },
     { name = "mcp", marker = "python_full_version >= '3.10' and extra == 'mcp'", specifier = ">=1.4.1" },
     { name = "mistralai", marker = "extra == 'mistral'", specifier = ">=1.2.5" },
-    { name = "openai", marker = "extra == 'openai'", specifier = ">=1.66.0" },
+    { name = "openai", marker = "extra == 'openai'", specifier = ">=1.67.0" },
     { name = "opentelemetry-api", specifier = ">=1.28.0" },
     { name = "prompt-toolkit", marker = "extra == 'cli'", specifier = ">=3" },
     { name = "pydantic", specifier = ">=2.10" },
@@ -3091,7 +3091,7 @@ wheels = [
 
 [[package]]
 name = "pydantic-graph"
-version = "0.0.43"
+version = "0.0.44"
 source = { editable = "pydantic_graph" }
 dependencies = [
     { name = "httpx" },

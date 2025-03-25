@@ -75,7 +75,7 @@ allows this model to be used more easily with other model types (ie, Ollama, Dee
 OpenAISystemPromptRole = Literal['system', 'developer', 'user']
 
 
-class OpenAIModelSettings(ModelSettings):
+class OpenAIModelSettings(ModelSettings, total=False):
     """Settings used for an OpenAI model request."""
 
     openai_reasoning_effort: chat.ChatCompletionReasoningEffort
@@ -83,6 +83,12 @@ class OpenAIModelSettings(ModelSettings):
     Constrains effort on reasoning for [reasoning models](https://platform.openai.com/docs/guides/reasoning).
     Currently supported values are `low`, `medium`, and `high`. Reducing reasoning effort can
     result in faster responses and fewer tokens used on reasoning in a response.
+    """
+
+    user: str
+    """A unique identifier representing the end-user, which can help OpenAI monitor and detect abuse.
+
+    See [OpenAI's safety best practices](https://platform.openai.com/docs/guides/safety-best-practices#end-user-ids) for more details.
     """
 
 
@@ -99,7 +105,7 @@ class OpenAIModel(Model):
     system_prompt_role: OpenAISystemPromptRole | None = field(default=None)
 
     _model_name: OpenAIModelName = field(repr=False)
-    _system: str = field(repr=False)
+    _system: str = field(default='openai', repr=False)
 
     @overload
     def __init__(
@@ -108,7 +114,6 @@ class OpenAIModel(Model):
         *,
         provider: Literal['openai', 'deepseek', 'azure'] | Provider[AsyncOpenAI] = 'openai',
         system_prompt_role: OpenAISystemPromptRole | None = None,
-        system: str = 'openai',
     ) -> None: ...
 
     @deprecated('Use the `provider` parameter instead of `base_url`, `api_key`, `openai_client` and `http_client`.')
@@ -123,7 +128,6 @@ class OpenAIModel(Model):
         openai_client: AsyncOpenAI | None = None,
         http_client: AsyncHTTPClient | None = None,
         system_prompt_role: OpenAISystemPromptRole | None = None,
-        system: str = 'openai',
     ) -> None: ...
 
     def __init__(
@@ -136,7 +140,6 @@ class OpenAIModel(Model):
         openai_client: AsyncOpenAI | None = None,
         http_client: AsyncHTTPClient | None = None,
         system_prompt_role: OpenAISystemPromptRole | None = None,
-        system: str = 'openai',
     ):
         """Initialize an OpenAI model.
 
@@ -155,8 +158,6 @@ class OpenAIModel(Model):
             http_client: An existing `httpx.AsyncClient` to use for making HTTP requests.
             system_prompt_role: The role to use for the system prompt message. If not provided, defaults to `'system'`.
                 In the future, this may be inferred from the model name.
-            system: The model provider used, defaults to `openai`. This is for observability purposes, you must
-                customize the `base_url` and `api_key` to use a different provider.
         """
         self._model_name = model_name
 
@@ -185,7 +186,6 @@ class OpenAIModel(Model):
             else:
                 self.client = AsyncOpenAI(base_url=base_url, api_key=api_key, http_client=cached_async_http_client())
         self.system_prompt_role = system_prompt_role
-        self._system = system
 
     @property
     def base_url(self) -> str:
@@ -288,6 +288,7 @@ class OpenAIModel(Model):
                 frequency_penalty=model_settings.get('frequency_penalty', NOT_GIVEN),
                 logit_bias=model_settings.get('logit_bias', NOT_GIVEN),
                 reasoning_effort=model_settings.get('openai_reasoning_effort', NOT_GIVEN),
+                user=model_settings.get('user', NOT_GIVEN),
             )
         except APIStatusError as e:
             if (status_code := e.status_code) >= 400:
@@ -354,7 +355,7 @@ class OpenAIModel(Model):
     @staticmethod
     def _map_tool_call(t: ToolCallPart) -> chat.ChatCompletionMessageToolCallParam:
         return chat.ChatCompletionMessageToolCallParam(
-            id=_guard_tool_call_id(t=t, model_source='OpenAI'),
+            id=_guard_tool_call_id(t=t),
             type='function',
             function={'name': t.tool_name, 'arguments': t.args_as_json_str()},
         )
@@ -384,7 +385,7 @@ class OpenAIModel(Model):
             elif isinstance(part, ToolReturnPart):
                 yield chat.ChatCompletionToolMessageParam(
                     role='tool',
-                    tool_call_id=_guard_tool_call_id(t=part, model_source='OpenAI'),
+                    tool_call_id=_guard_tool_call_id(t=part),
                     content=part.model_response_str(),
                 )
             elif isinstance(part, RetryPromptPart):
@@ -393,7 +394,7 @@ class OpenAIModel(Model):
                 else:
                     yield chat.ChatCompletionToolMessageParam(
                         role='tool',
-                        tool_call_id=_guard_tool_call_id(t=part, model_source='OpenAI'),
+                        tool_call_id=_guard_tool_call_id(t=part),
                         content=part.model_response(),
                     )
             else:

@@ -611,20 +611,39 @@ Or initialise the model directly with just the model name:
 from pydantic_ai import Agent
 from pydantic_ai.models.cohere import CohereModel
 
-model = CohereModel('command', api_key='your-api-key')
+model = CohereModel('command')
 agent = Agent(model)
 ...
 ```
 
-### `api_key` argument
+### `provider` argument
 
-If you don't want to or can't set the environment variable, you can pass it at runtime via the [`api_key` argument][pydantic_ai.models.cohere.CohereModel.__init__]:
+You can provide a custom [`Provider`][pydantic_ai.providers.Provider] via the [`provider` argument][pydantic_ai.models.cohere.CohereModel.__init__]:
 
-```python {title="cohere_model_api_key.py"}
+```python {title="cohere_model_provider.py"}
 from pydantic_ai import Agent
 from pydantic_ai.models.cohere import CohereModel
+from pydantic_ai.providers.cohere import CohereProvider
 
-model = CohereModel('command', api_key='your-api-key')
+model = CohereModel('command', provider=CohereProvider(api_key='your-api-key'))
+agent = Agent(model)
+...
+```
+
+You can also customize the `CohereProvider` with a custom `http_client`:
+
+```python {title="cohere_model_custom_provider.py"}
+from httpx import AsyncClient
+
+from pydantic_ai import Agent
+from pydantic_ai.models.cohere import CohereModel
+from pydantic_ai.providers.cohere import CohereProvider
+
+custom_http_client = AsyncClient(timeout=30)
+model = CohereModel(
+    'command',
+    provider=CohereProvider(api_key='your-api-key', http_client=custom_http_client),
+)
 agent = Agent(model)
 ...
 ```
@@ -647,12 +666,12 @@ To use [AWS Bedrock](https://aws.amazon.com/bedrock/), you'll need an AWS accoun
 
 ### Environment variables
 
-You can set your AWS credentials as environment variables:
+You can set your AWS credentials as environment variables ([among other options](https://boto3.amazonaws.com/v1/documentation/api/latest/guide/configuration.html#using-environment-variables):
 
 ```bash
 export AWS_ACCESS_KEY_ID='your-access-key'
 export AWS_SECRET_ACCESS_KEY='your-secret-key'
-export AWS_REGION='us-east-1'  # or your preferred region
+export AWS_DEFAULT_REGION='us-east-1'  # or your preferred region
 ```
 
 You can then use [`BedrockConverseModel`][pydantic_ai.models.bedrock.BedrockConverseModel] by name:

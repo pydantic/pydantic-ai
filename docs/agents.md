@@ -748,7 +748,7 @@ with capture_run_messages() as messages:  # (2)!
                     ToolCallPart(
                         tool_name='calc_volume',
                         args={'size': 6},
-                        tool_call_id=None,
+                        tool_call_id='pyd_ai_tool_call_id',
                         part_kind='tool-call',
                     )
                 ],
@@ -761,7 +761,7 @@ with capture_run_messages() as messages:  # (2)!
                     RetryPromptPart(
                         content='Please try again.',
                         tool_name='calc_volume',
-                        tool_call_id=None,
+                        tool_call_id='pyd_ai_tool_call_id',
                         timestamp=datetime.datetime(...),
                         part_kind='retry-prompt',
                     )
@@ -773,7 +773,7 @@ with capture_run_messages() as messages:  # (2)!
                     ToolCallPart(
                         tool_name='calc_volume',
                         args={'size': 6},
-                        tool_call_id=None,
+                        tool_call_id='pyd_ai_tool_call_id',
                         part_kind='tool-call',
                     )
                 ],

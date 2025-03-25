@@ -25,6 +25,8 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai.models.gemini import GeminiModel
+from pydantic_ai.providers.google_gla import GoogleGLAProvider
 from pydantic_ai.result import Usage
 from pydantic_ai.settings import ModelSettings
 
@@ -45,7 +47,7 @@ with try_import() as imports_successful:
     from openai.types.chat.chat_completion_message_tool_call import Function
     from openai.types.completion_usage import CompletionUsage, PromptTokensDetails
 
-    from pydantic_ai.models.openai import OpenAIModel, OpenAISystemPromptRole
+    from pydantic_ai.models.openai import OpenAIModel, OpenAIModelSettings, OpenAISystemPromptRole
     from pydantic_ai.providers.openai import OpenAIProvider
 
     # note: we use Union here so that casting works with Python 3.9
@@ -694,3 +696,42 @@ async def test_max_completion_tokens(allow_model_requests: None, model_name: str
 
     result = await agent.run('hello')
     assert result.data == IsStr()
+
+
+@pytest.mark.vcr()
+async def test_multiple_agent_tool_calls(allow_model_requests: None, gemini_api_key: str, openai_api_key: str):
+    gemini_model = GeminiModel('gemini-2.0-flash-exp', provider=GoogleGLAProvider(api_key=gemini_api_key))
+    openai_model = OpenAIModel('gpt-4o-mini', provider=OpenAIProvider(api_key=openai_api_key))
+
+    agent = Agent(model=gemini_model)
+
+    @agent.tool_plain
+    async def get_capital(country: str) -> str:
+        """Get the capital of a country.
+
+        Args:
+            country: The country name.
+        """
+        if country == 'France':
+            return 'Paris'
+        elif country == 'England':
+            return 'London'
+        else:
+            raise ValueError(f'Country {country} not supported.')  # pragma: no cover
+
+    result = await agent.run('What is the capital of France?')
+    assert result.data == snapshot('The capital of France is Paris.\n')
+
+    result = await agent.run(
+        'What is the capital of England?', model=openai_model, message_history=result.all_messages()
+    )
+    assert result.data == snapshot('The capital of England is London.')
+
+
+@pytest.mark.vcr()
+async def test_user_id(allow_model_requests: None, openai_api_key: str):
+    # This test doesn't do anything, it's just here to ensure that calls with `user` don't cause errors, including type.
+    # Since we use VCR, creating tests with an `httpx.Transport` is not possible.
+    m = OpenAIModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(m, model_settings=OpenAIModelSettings(user='user_id'))
+    await agent.run('hello')

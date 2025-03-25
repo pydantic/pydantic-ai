@@ -27,7 +27,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.test import TestModel, _chars, _JsonSchemaTestData  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.usage import Usage
 
-from ..conftest import IsNow
+from ..conftest import IsNow, IsStr
 
 
 def test_call_one():
@@ -100,21 +100,32 @@ def test_tool_retry():
         [
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
-                parts=[ToolCallPart(tool_name='my_ret', args={'x': 0})],
+                parts=[ToolCallPart(tool_name='my_ret', args={'x': 0}, tool_call_id=IsStr())],
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(content='First call failed', tool_name='my_ret', timestamp=IsNow(tz=timezone.utc))
+                    RetryPromptPart(
+                        content='First call failed',
+                        tool_name='my_ret',
+                        timestamp=IsNow(tz=timezone.utc),
+                        tool_call_id=IsStr(),
+                    )
                 ]
             ),
             ModelResponse(
-                parts=[ToolCallPart(tool_name='my_ret', args={'x': 0})],
+                parts=[ToolCallPart(tool_name='my_ret', args={'x': 0}, tool_call_id=IsStr())],
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
             ),
-            ModelRequest(parts=[ToolReturnPart(tool_name='my_ret', content='1', timestamp=IsNow(tz=timezone.utc))]),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='my_ret', content='1', tool_call_id=IsStr(), timestamp=IsNow(tz=timezone.utc)
+                    )
+                ]
+            ),
             ModelResponse(
                 parts=[TextPart(content='{"my_ret":"1"}')],
                 model_name='test',

@@ -17,7 +17,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import Usage, UsageLimits
 
-from .conftest import IsNow
+from .conftest import IsNow, IsStr
 
 pytestmark = pytest.mark.anyio
 
@@ -88,12 +88,25 @@ async def test_streamed_text_limits() -> None:
                 [
                     ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
                     ModelResponse(
-                        parts=[ToolCallPart(tool_name='ret_a', args={'x': 'a'})],
+                        parts=[
+                            ToolCallPart(
+                                tool_name='ret_a',
+                                args={'x': 'a'},
+                                tool_call_id=IsStr(),
+                            )
+                        ],
                         model_name='test',
                         timestamp=IsNow(tz=timezone.utc),
                     ),
                     ModelRequest(
-                        parts=[ToolReturnPart(tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc))]
+                        parts=[
+                            ToolReturnPart(
+                                tool_name='ret_a',
+                                content='a-apple',
+                                timestamp=IsNow(tz=timezone.utc),
+                                tool_call_id=IsStr(),
+                            )
+                        ]
                     ),
                 ]
             )

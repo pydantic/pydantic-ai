@@ -93,7 +93,7 @@ Here's how we would write tests using [`TestModel`][pydantic_ai.models.test.Test
 from datetime import timezone
 import pytest
 
-from dirty_equals import IsNow
+from dirty_equals import IsNow, IsStr
 
 from pydantic_ai import models, capture_run_messages
 from pydantic_ai.models.test import TestModel
@@ -146,7 +146,7 @@ async def test_forecast():
                         'location': 'a',
                         'forecast_date': '2024-01-01',  # (8)!
                     },
-                    tool_call_id=None,
+                    tool_call_id=IsStr(),
                 )
             ],
             model_name='test',
@@ -157,7 +157,7 @@ async def test_forecast():
                 ToolReturnPart(
                     tool_name='weather_forecast',
                     content='Sunny with a chance of rain',
-                    tool_call_id=None,
+                    tool_call_id=IsStr(),
                     timestamp=IsNow(tz=timezone.utc),
                 ),
             ],
