@@ -116,7 +116,7 @@ async def guess_city(question: str) -> str:  # (4)!
 
 
 report = dataset.evaluate_sync(guess_city)  # (5)!
-report.print(include_input=True, include_output=True)  # (6)!
+report.print(include_input=True, include_output=True, width=120)  # (6)!
 """
                                     Evaluation Summary: guess_city
 ┏━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━┓
@@ -532,7 +532,7 @@ dataset = Dataset(
 report = dataset.evaluate_sync(process_text)
 
 # Print the report
-report.print(include_input=True, include_output=True)
+report.print(include_input=True, include_output=True, width=120)
 """
                                                     Evaluation Summary: process_text
 ┏━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━┓
