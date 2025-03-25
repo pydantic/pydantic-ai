@@ -15,6 +15,7 @@ from typing_extensions import TypedDict
 from pydantic_ai import Agent, ModelHTTPError, ModelRetry, UnexpectedModelBehavior
 from pydantic_ai.messages import (
     BinaryContent,
+    ChatCompletionTokenLogprob as MessageTokenLogprob,
     ImageUrl,
     ModelRequest,
     ModelResponse,
@@ -34,7 +35,7 @@ from .mock_async_stream import MockAsyncStream
 with try_import() as imports_successful:
     from openai import NOT_GIVEN, APIStatusError, AsyncOpenAI, OpenAIError
     from openai.types import chat
-    from openai.types.chat.chat_completion import Choice
+    from openai.types.chat.chat_completion import Choice, ChoiceLogprobs
     from openai.types.chat.chat_completion_chunk import (
         Choice as ChunkChoice,
         ChoiceDelta,
@@ -43,6 +44,7 @@ with try_import() as imports_successful:
     )
     from openai.types.chat.chat_completion_message import ChatCompletionMessage
     from openai.types.chat.chat_completion_message_tool_call import Function
+    from openai.types.chat.chat_completion_token_logprob import ChatCompletionTokenLogprob
     from openai.types.completion_usage import CompletionUsage, PromptTokensDetails
 
     from pydantic_ai.models.openai import OpenAIModel, OpenAISystemPromptRole
@@ -144,10 +146,15 @@ def get_mock_chat_completion_kwargs(async_open_ai: AsyncOpenAI) -> list[dict[str
         raise RuntimeError('Not a MockOpenAI instance')
 
 
-def completion_message(message: ChatCompletionMessage, *, usage: CompletionUsage | None = None) -> chat.ChatCompletion:
+def completion_message(
+    message: ChatCompletionMessage, *, usage: CompletionUsage | None = None, logprobs: ChoiceLogprobs | None = None
+) -> chat.ChatCompletion:
+    choices = [Choice(finish_reason='stop', index=0, message=message)]
+    if logprobs:
+        choices = [Choice(finish_reason='stop', index=0, message=message, logprobs=logprobs)]
     return chat.ChatCompletion(
         id='123',
-        choices=[Choice(finish_reason='stop', index=0, message=message)],
+        choices=choices,
         created=1704067200,  # 2024-01-01
         model='gpt-4o-123',
         object='chat.completion',
@@ -156,7 +163,12 @@ def completion_message(message: ChatCompletionMessage, *, usage: CompletionUsage
 
 
 async def test_request_simple_success(allow_model_requests: None):
-    c = completion_message(ChatCompletionMessage(content='world', role='assistant'))
+    c = completion_message(
+        ChatCompletionMessage(content='world', role='assistant'),
+        logprobs=ChoiceLogprobs(
+            content=[ChatCompletionTokenLogprob(token='world', logprob=-0.6931, top_logprobs=[], bytes=[])],
+        ),
+    )
     mock_client = MockOpenAI.create_mock(c)
     m = OpenAIModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
     agent = Agent(m)
@@ -178,12 +190,14 @@ async def test_request_simple_success(allow_model_requests: None):
                 parts=[TextPart(content='world')],
                 model_name='gpt-4o-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                logprobs=[MessageTokenLogprob(token='world', logprob=-0.6931, top_logprobs=[], bytes=[])],
             ),
             ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[TextPart(content='world')],
                 model_name='gpt-4o-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                logprobs=[MessageTokenLogprob(token='world', logprob=-0.6931, top_logprobs=[], bytes=[])],
             ),
         ]
     )

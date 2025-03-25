@@ -66,6 +66,7 @@ print(result.all_messages())
         model_name='gpt-4o',
         timestamp=datetime.datetime(...),
         kind='response',
+        logprobs=[],
     ),
 ]
 """
@@ -142,6 +143,7 @@ async def main():
                 model_name='gpt-4o',
                 timestamp=datetime.datetime(...),
                 kind='response',
+                logprobs=[],
             ),
         ]
         """
@@ -200,6 +202,7 @@ print(result2.all_messages())
         model_name='gpt-4o',
         timestamp=datetime.datetime(...),
         kind='response',
+        logprobs=[],
     ),
     ModelRequest(
         parts=[
@@ -221,6 +224,7 @@ print(result2.all_messages())
         model_name='gpt-4o',
         timestamp=datetime.datetime(...),
         kind='response',
+        logprobs=[],
     ),
 ]
 """
@@ -326,6 +330,7 @@ print(result2.all_messages())
         model_name='gpt-4o',
         timestamp=datetime.datetime(...),
         kind='response',
+        logprobs=[],
     ),
     ModelRequest(
         parts=[
@@ -347,6 +352,7 @@ print(result2.all_messages())
         model_name='gemini-1.5-pro',
         timestamp=datetime.datetime(...),
         kind='response',
+        logprobs=[],
     ),
 ]
 """
