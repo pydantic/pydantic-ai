@@ -36,9 +36,8 @@ from pydantic_ai.models import KnownModelName, Model, infer_model
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_evals.reporting import EvaluationReport
 
-from .conftest import ClientWithHandler, TestEnv
+from .conftest import ClientWithHandler, TestEnv, try_import
 
 try:
     from pydantic_ai.providers.google_vertex import GoogleVertexProvider
@@ -52,9 +51,14 @@ except ImportError:
     logfire = None
 
 
-pytestmark = pytest.mark.skipif(
-    GoogleVertexProvider is None or logfire is None, reason='google-auth or logfire not installed'
-)
+with try_import() as imports_successful:
+    from pydantic_evals.reporting import EvaluationReport
+
+
+pytestmark = [
+    pytest.mark.skipif(not imports_successful(), reason='extras not installed'),
+    pytest.mark.skipif(GoogleVertexProvider is None or logfire is None, reason='google-auth or logfire not installed'),
+]
 
 
 def find_filter_examples() -> Iterable[ParameterSet]:
@@ -86,6 +90,14 @@ def test_docs_examples(  # noqa: C901
     mocker.patch('httpx.AsyncClient.post', side_effect=async_http_request)
     mocker.patch('random.randint', return_value=4)
     mocker.patch('rich.prompt.Prompt.ask', side_effect=rich_prompt_ask)
+
+    class CustomEvaluationReport(EvaluationReport):
+        def print(self, *args: Any, **kwargs: Any) -> None:
+            table = self.console_table(*args, **kwargs)
+            io_file = StringIO()
+            Console(file=io_file).print(table)
+            print(io_file.getvalue())
+
     mocker.patch('pydantic_evals.dataset.EvaluationReport', side_effect=CustomEvaluationReport)
 
     if sys.version_info >= (3, 10):
@@ -209,14 +221,6 @@ def rich_prompt_ask(prompt: str, *_args: Any, **_kwargs: Any) -> str:
         return '2'
     else:  # pragma: no cover
         raise ValueError(f'Unexpected prompt: {prompt}')
-
-
-class CustomEvaluationReport(EvaluationReport):
-    def print(self, *args: Any, **kwargs: Any) -> None:
-        table = self.console_table(*args, **kwargs)
-        io_file = StringIO()
-        Console(file=io_file).print(table)
-        print(io_file.getvalue())
 
 
 class MockMCPServer:
