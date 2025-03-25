@@ -19,7 +19,7 @@ pip/uv-add pydantic-evals
 The foundation of Pydantic Evals is the concept of datasets and test cases:
 
 - [`Case`][pydantic_evals.Case]: A single test scenario consisting of inputs, expected outputs, metadata, and optional evaluators.
-- [`Dataset`][pydantic_evals.Case]: A collection of test cases designed to evaluate a specific task or function.
+- [`Dataset`][pydantic_evals.Dataset]: A collection of test cases designed to evaluate a specific task or function.
 
 ```python {title="simple_eval_dataset.py"}
 from pydantic_evals import Case, Dataset
@@ -74,15 +74,13 @@ dataset.add_evaluator(my_evaluator)
 
 The evaluation process involves running a task against all cases in a dataset:
 
-Putting the above two examples together and using the more declarative `evaluators` kwarg to `Dataset`:
+Putting the above two examples together and using the more declarative `evaluators` kwarg to [`Dataset`][pydantic_evals.Dataset]:
 
 ```python {title="simple_eval_complete.py"}
 import logfire
 
 from pydantic_evals import Case, Dataset
-from pydantic_evals.evaluators import Evaluator
-from pydantic_evals.evaluators.common import IsInstance
-from pydantic_evals.evaluators.context import EvaluatorContext
+from pydantic_evals.evaluators import Evaluator, EvaluatorContext, IsInstance
 
 logfire.configure()
 
@@ -138,100 +136,63 @@ report.print(include_input=True, include_output=True)  # (6)!
 5. Run the evaluation with [`evaluate_sync`][pydantic_evals.Dataset.evaluate_sync], which runs the function against all test cases in the dataset, and returns an [`EvaluationReport`][pydantic_evals.reporting.EvaluationReport] object.
 6. Print the report with [`print`][pydantic_evals.reporting.EvaluationReport.print], which shows the results of the evaluation, including input and output.
 
-## LLM as a Judge
+## Evaluation with `LlmJudge`
 
-Pydantic Evals integrates seamlessly with LLMs for both evaluation and dataset generation:
-
-### Evaluation with `LlmJudge`
+In this example we evaluate a method for generating recipes based on customer orders.
 
 ```python {title="judge_recipes.py"}
 from typing import Any
 
 from pydantic import BaseModel
 
+from pydantic_ai import Agent
+from pydantic_ai.format_as_xml import format_as_xml
 from pydantic_evals import Case, Dataset
-from pydantic_evals.evaluators.common import IsInstance, LlmJudge
+from pydantic_evals.evaluators import IsInstance, LlmJudge
 
 
-# Define models for our task
-class RecipeInput(BaseModel):
-    """Input for recipe transformation task."""
-
+class CustomerOrder(BaseModel):  # (1)!
     dish_name: str
     dietary_restriction: str | None = None
 
 
-class RecipeOutput(BaseModel):
-    """Output for recipe transformation task."""
-
-    title: str
+class Recipe(BaseModel):
     ingredients: list[str]
     steps: list[str]
 
 
-# Define our recipe transformation function
-async def transform_recipe(inputs: RecipeInput) -> RecipeOutput:
-    """Function that transforms recipes based on dietary restrictions."""
-    # In a real implementation, this would call an LLM or use a recipe database
-    if inputs.dietary_restriction == 'vegetarian':
-        return RecipeOutput(
-            title=f'Vegetarian {inputs.dish_name}',
-            ingredients=[
-                'Vegetable stock',
-                'Plant-based protein',
-                'Vegetables',
-                'Herbs',
-                'Spices',
-            ],
-            steps=[
-                'Prepare ingredients',
-                'Cook according to vegetarian recipe',
-                'Serve hot',
-            ],
-        )
-    elif inputs.dietary_restriction == 'gluten-free':
-        return RecipeOutput(
-            title=f'Gluten-Free {inputs.dish_name}',
-            ingredients=[
-                'Gluten-free alternatives',
-                'Regular ingredients',
-                'Gluten-free thickener',
-            ],
-            steps=[
-                'Prepare ingredients',
-                'Ensure no cross-contamination',
-                'Cook as normal',
-                'Serve',
-            ],
-        )
-    else:
-        return RecipeOutput(
-            title=inputs.dish_name,
-            ingredients=['Standard ingredients', 'Optional additions'],
-            steps=['Prepare ingredients', 'Follow standard recipe', 'Serve'],
-        )
+recipe_agent = Agent(
+    'groq:llama-3.3-70b-versatile',
+    result_type=Recipe,
+    system_prompt=(
+        'Generate a recipe to cook the dish that meets the dietary restrictions.'
+    ),
+)
 
 
-# Create a dataset with different test cases and different rubrics
-recipe_dataset = Dataset[RecipeInput, RecipeOutput, Any](
+async def transform_recipe(customer_order: CustomerOrder) -> Recipe:  # (2)!
+    r = await recipe_agent.run(format_as_xml(customer_order))
+    return r.data
+
+
+recipe_dataset = Dataset[CustomerOrder, Recipe, Any](  # (3)!
     cases=[
         Case(
             name='vegetarian_recipe',
-            inputs=RecipeInput(
-                dish_name='Pasta Bolognese', dietary_restriction='vegetarian'
+            inputs=CustomerOrder(
+                dish_name='Spaghetti Bolognese', dietary_restriction='vegetarian'
             ),
-            expected_output=None,  # We'll let the LLM judge the quality
+            expected_output=None,  # (4)
             metadata={'focus': 'vegetarian'},
-            # Case-specific evaluator with a focused rubric
             evaluators=(
-                LlmJudge(
+                LlmJudge(  # (5)!
                     rubric='Recipe should not contain meat or animal products',
                 ),
             ),
         ),
         Case(
             name='gluten_free_recipe',
-            inputs=RecipeInput(
+            inputs=CustomerOrder(
                 dish_name='Chocolate Cake', dietary_restriction='gluten-free'
             ),
             expected_output=None,
@@ -244,38 +205,44 @@ recipe_dataset = Dataset[RecipeInput, RecipeOutput, Any](
             ),
         ),
     ],
-    # Dataset-level evaluators that apply to all cases
-    evaluators=[
-        IsInstance(type_name='RecipeOutput'),
-        # A general quality rubric for all recipes
+    evaluators=[  # (6)!
+        IsInstance(type_name='Recipe'),
         LlmJudge(
             rubric='Recipe should have clear steps and relevant ingredients',
             include_input=True,
+            model='anthropic:claude-3-7-sonnet-latest',  # (7)!
         ),
     ],
 )
 
 
-async def run_evaluation():
-    """Run the evaluation and display results."""
-    report = await recipe_dataset.evaluate(transform_recipe)
-
-    # Print a detailed report
-    report.print(include_input=True, include_output=True)
+report = recipe_dataset.evaluate_sync(transform_recipe)
+print(report)
+"""
+     Evaluation Summary: transform_recipe
+┏━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━┓
+┃ Case ID            ┃ Assertions ┃ Duration ┃
+┡━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━┩
+│ vegetarian_recipe  │ ✔✔✔        │    123µs │
+├────────────────────┼────────────┼──────────┤
+│ gluten_free_recipe │ ✔✔✔        │    123µs │
+├────────────────────┼────────────┼──────────┤
+│ Averages           │ 100.0% ✔   │    123µs │
+└────────────────────┴────────────┴──────────┘
+"""
 ```
 
-This example demonstrates:
-
-1. **Different evaluation criteria per case** - Each case uses a focused rubric specific to its dietary requirement
-2. **Concise, targeted rubrics** - Each rubric only specifies what's unique to that case
-3. **Common dataset-level criteria** - All recipes share a basic quality standard
-4. **Using `evaluate` for streamlined testing** - No need to manually call judge functions
-
-When executed, this will provide a detailed evaluation report that includes both dataset-level and case-specific LLM judgments for each test case.
+1. Define models for our task — Input for recipe generation task and output of the task.
+2. Define our recipe generation function - this is the task we want to evaluate.
+3. Create a dataset with different test cases and different rubrics.
+4. No expected output, we'll let the LLM judge the quality.
+5. Case-specific evaluator with a focused rubric using [`LlmJudge`][pydantic_evals.evaluators.LlmJudge].
+6. Dataset-level evaluators that apply to all cases, including a general quality rubric for all recipes
+7. By default `LlmJudge` uses `openai:gpt-4o`, here we use a specific Anthropic model.
 
 ### Generating Test Datasets
 
-Pydantic Evals allows you to generate test datasets using LLMs:
+Pydantic Evals allows you to generate test datasets using LLMs with [`generate_dataset`][pydantic_evals.examples.generate_dataset]:
 
 ```python {title="generate_dataset_example.py"}
 from pydantic import BaseModel, Field
@@ -286,27 +253,26 @@ from pydantic_evals.examples import generate_dataset
 class QuestionInputs(BaseModel):
     """Model for question inputs."""
 
-    question: str = Field(..., description='A question to answer')
+    question: str = Field(description='A question to answer')
     context: str | None = Field(None, description='Optional context for the question')
 
 
 class AnswerOutput(BaseModel):
     """Model for expected answer outputs."""
 
-    answer: str = Field(..., description='The answer to the question')
-    confidence: float = Field(..., description='Confidence level (0-1)', ge=0, le=1)
+    answer: str = Field(description='The answer to the question')
+    confidence: float = Field(description='Confidence level (0-1)', ge=0, le=1)
 
 
 class MetadataType(BaseModel):
     """Metadata model for test cases."""
 
-    difficulty: str = Field(..., description='Difficulty level (easy, medium, hard)')
-    category: str = Field(..., description='Question category')
+    difficulty: str = Field(description='Difficulty level (easy, medium, hard)')
+    category: str = Field(description='Question category')
 
 
-async def save_generated_dataset():
+async def xmain():
     dataset = await generate_dataset(
-        # path='my_test_cases.yaml',  # Uncomment to save to file
         inputs_type=QuestionInputs,
         output_type=AnswerOutput,
         metadata_type=MetadataType,
@@ -328,7 +294,7 @@ Datasets can be saved to and loaded from files (YAML or JSON format):
 ```python {title="save_load_dataset_example.py"}
 from pathlib import Path
 
-from judge_recipes import RecipeInput, RecipeOutput, recipe_dataset
+from judge_recipes import CustomerOrder, Recipe, recipe_dataset
 
 from pydantic_evals import Dataset
 
@@ -357,7 +323,7 @@ cases:
   evaluators:
   - LlmJudge: Recipe should not contain gluten or wheat products
 evaluators:
-- IsInstance: RecipeOutput
+- IsInstance: Recipe
 - LlmJudge:
     rubric: Recipe should have clear steps and relevant ingredients
     include_input: true
@@ -365,7 +331,7 @@ evaluators:
 
 # Load dataset from file
 # In a real scenario, you'd specify the actual file path
-loaded_dataset = Dataset[RecipeInput, RecipeOutput, dict].from_text(serialized)
+loaded_dataset = Dataset[CustomerOrder, Recipe, dict].from_text(serialized)
 
 print(f'Loaded dataset with {len(loaded_dataset.cases)} cases')
 #> Loaded dataset with 2 cases

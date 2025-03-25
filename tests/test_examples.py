@@ -188,7 +188,7 @@ def print_callback(s: str) -> str:
     s = re.sub(r'\d\.\d{4,}e-0\d', '0.0...', s)
 
     # Replace durations below 100ms with 123µs
-    s = re.sub(r'\b(:?\d+µs:|\d{1,2}\.\d+ms)', r'123µs', s)
+    s = re.sub(r'\b(:?\d+µs|\d{1,2}\.\d+ms)', r'123µs', s)
     # Replace durations above 100ms with 101.0ms
     s = re.sub(r'\b(:?\d{3,}\.\d+ms)', r'101.0ms', s)
     return re.sub(r'datetime.date\(', 'date(', s)
@@ -334,6 +334,30 @@ text_responses: dict[str, str | ToolCallPart] = {
         tool_name='final_result',
         args={'correct': True, 'comment': 'Well done, 1 + 1 = 2'},
     ),
+    (
+        '<examples>\n'
+        '  <dish_name>Spaghetti Bolognese</dish_name>\n'
+        '  <dietary_restriction>vegetarian</dietary_restriction>\n'
+        '</examples>'
+    ): ToolCallPart(
+        tool_name='final_result',
+        args={
+            'ingredients': ['spaghetti', 'tomato sauce', 'vegetarian mince', 'onions', 'garlic'],
+            'steps': ['Cook the spaghetti in boiling water', '...'],
+        },
+    ),
+    (
+        '<examples>\n'
+        '  <dish_name>Chocolate Cake</dish_name>\n'
+        '  <dietary_restriction>gluten-free</dietary_restriction>\n'
+        '</examples>'
+    ): ToolCallPart(
+        tool_name='final_result',
+        args={
+            'ingredients': ['gluten-free flour', 'cocoa powder', 'sugar', 'eggs'],
+            'steps': ['Mix the ingredients', 'Bake at 350°F for 30 minutes'],
+        },
+    ),
 }
 
 tool_responses: dict[tuple[str, str], str] = {
@@ -372,6 +396,10 @@ async def model_logic(messages: list[ModelMessage], info: AgentInfo) -> ModelRes
             return ModelResponse(parts=[ToolCallPart(tool_name='final_result_EmailOk', args={})])
         elif m.content == 'Ask a simple question with a single correct answer.' and len(messages) > 2:
             return ModelResponse(parts=[TextPart('what is 1 + 1?')])
+        elif '<Rubric>\n' in m.content:
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name='final_result', args={'reason': '-', 'pass': True, 'score': 1.0})]
+            )
         elif response := text_responses.get(m.content):
             if isinstance(response, str):
                 return ModelResponse(parts=[TextPart(response)])
