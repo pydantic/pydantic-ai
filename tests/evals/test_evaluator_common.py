@@ -6,9 +6,6 @@ from typing import Any
 import pytest
 from pytest_mock import MockerFixture
 
-from pydantic_evals.otel._context_in_memory_span_exporter import context_subtree
-from pydantic_evals.otel._errors import SpanTreeRecordingError
-
 from ..conftest import try_import
 
 with try_import() as imports_successful:
@@ -26,6 +23,8 @@ with try_import() as imports_successful:
         Python,
         SpanQuery,
     )
+    from pydantic_evals.otel._context_in_memory_span_exporter import context_subtree
+    from pydantic_evals.otel._errors import SpanTreeRecordingError
 
 pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed'), pytest.mark.anyio]
 

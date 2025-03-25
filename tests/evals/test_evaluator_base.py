@@ -8,8 +8,6 @@ import pytest
 from inline_snapshot import snapshot
 from pydantic import TypeAdapter
 
-from pydantic_evals.otel._errors import SpanTreeRecordingError
-
 from ..conftest import try_import
 
 with try_import() as imports_successful:
@@ -20,6 +18,7 @@ with try_import() as imports_successful:
         Evaluator,
         run_evaluator,
     )
+    from pydantic_evals.otel._errors import SpanTreeRecordingError
 
 pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed'), pytest.mark.anyio]
 

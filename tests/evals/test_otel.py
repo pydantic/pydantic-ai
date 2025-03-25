@@ -13,7 +13,7 @@ with try_import() as imports_successful:
     from pydantic_evals.otel._context_in_memory_span_exporter import (
         context_subtree,
     )
-    from pydantic_evals.otel.span_tree import SpanTree
+    from pydantic_evals.otel.span_tree import SpanQuery, SpanTree, as_predicate, matches
 
 pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed'), pytest.mark.anyio]
 
@@ -290,8 +290,6 @@ async def test_log_levels_and_exceptions():
 
 async def test_span_query_basics(span_tree: SpanTree):
     """Test basic SpanQuery conditions on a span tree."""
-    from pydantic_evals.otel.span_tree import SpanQuery, as_predicate
-
     # Test name equality condition
     name_equals_query: SpanQuery = {'name_equals': 'child1'}
     matched_node = span_tree.find_first(as_predicate(name_equals_query))
@@ -327,7 +325,6 @@ async def test_span_query_basics(span_tree: SpanTree):
 
 async def test_span_query_negation():
     """Test negation in SpanQuery."""
-    from pydantic_evals.otel.span_tree import SpanQuery, as_predicate, matches
 
     # Create a simple tree for testing negation
     with context_subtree() as tree:
@@ -360,7 +357,6 @@ async def test_span_query_negation():
 
 async def test_span_query_logical_combinations():
     """Test logical combinations (AND/OR) in SpanQuery."""
-    from pydantic_evals.otel.span_tree import SpanQuery, as_predicate
 
     with context_subtree() as tree:
         with logfire.span('root1', level='0'):
@@ -402,8 +398,6 @@ async def test_span_query_timing_conditions():
     """Test timing-related conditions in SpanQuery."""
     from datetime import timedelta
 
-    from pydantic_evals.otel.span_tree import SpanQuery, as_predicate
-
     with context_subtree() as tree:
         with logfire.span('fast_operation'):
             pass
@@ -444,7 +438,6 @@ async def test_span_query_timing_conditions():
 
 async def test_span_query_descendant_conditions():
     """Test descendant-related conditions in SpanQuery."""
-    from pydantic_evals.otel.span_tree import SpanQuery, as_predicate
 
     with context_subtree() as tree:
         with logfire.span('parent1'):
@@ -481,7 +474,6 @@ async def test_span_query_descendant_conditions():
 
 async def test_span_query_complex_hierarchical_conditions():
     """Test complex hierarchical queries with nested structures."""
-    from pydantic_evals.otel.span_tree import SpanQuery, as_predicate
 
     with context_subtree() as tree:
         with logfire.span('app', service='web'):
@@ -523,7 +515,6 @@ async def test_span_query_complex_hierarchical_conditions():
 
 async def test_span_query_as_predicate_conversion():
     """Test that as_predicate correctly converts SpanQuery to a callable predicate."""
-    from pydantic_evals.otel.span_tree import SpanQuery, as_predicate, matches
 
     # Create a simple test span
     with context_subtree() as tree:
@@ -554,7 +545,6 @@ async def test_span_query_as_predicate_conversion():
 
 async def test_matches_function_directly():
     """Test the matches function directly with various SpanQuery combinations."""
-    from pydantic_evals.otel.span_tree import SpanQuery, matches
 
     # Create a test span tree
     with context_subtree() as tree:
@@ -590,7 +580,6 @@ async def test_matches_function_directly():
 
 async def test_span_query_child_count():
     """Test min_child_count and max_child_count conditions in SpanQuery."""
-    from pydantic_evals.otel.span_tree import SpanQuery, as_predicate, matches
 
     # Create a tree with varying numbers of children
     with context_subtree() as tree:
