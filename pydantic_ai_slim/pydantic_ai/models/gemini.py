@@ -264,7 +264,6 @@ class GeminiModel(Model):
             url = f'/{self._model_name}:{"streamGenerateContent" if streamed else "generateContent"}'
 
         request_json = _gemini_request_ta.dump_json(request_data, by_alias=True)
-        print(request_json)
         async with self.client.stream(
             'POST',
             url,
