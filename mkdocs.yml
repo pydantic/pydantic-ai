@@ -82,6 +82,7 @@ nav:
       - api/pydantic_evals/evaluators.md
       - api/pydantic_evals/reporting.md
       - api/pydantic_evals/otel.md
+      - api/pydantic_evals/examples.md
 
 extra:
   # hide the "Made with Material for MkDocs" message
