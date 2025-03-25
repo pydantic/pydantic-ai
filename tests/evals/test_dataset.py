@@ -356,6 +356,11 @@ async def test_serialization_to_json(example_dataset: Dataset[TaskInput, TaskOut
     assert loaded_dataset.cases[0].name == 'case1'
     assert loaded_dataset.cases[0].inputs.query == 'What is 2+2?'
 
+    raw = json.loads(json_path.read_text())
+    schema = raw['$schema']
+    assert isinstance(schema, str)
+    assert (tmp_path / schema).exists()
+
 
 async def test_from_text(example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata]):
     """Test creating a dataset from text."""

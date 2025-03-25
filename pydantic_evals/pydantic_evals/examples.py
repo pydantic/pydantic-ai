@@ -74,11 +74,11 @@ async def generate_dataset(
         retries=1,
     )
 
-    raw_response = (await agent.run(extra_instructions or 'Please generate the object.')).data
+    result = await agent.run(extra_instructions or 'Please generate the object.')
     try:
-        result = dataset_type.from_text(raw_response, fmt='json', custom_evaluator_types=custom_evaluator_types)
+        result = dataset_type.from_text(result.data, fmt='json', custom_evaluator_types=custom_evaluator_types)
     except ValidationError as e:
-        print(f'Raw response from model:\n{raw_response}')
+        print(f'Raw response from model:\n{result.data}')
         raise e
     if path is not None:
         result.to_file(path, custom_evaluator_types=custom_evaluator_types)

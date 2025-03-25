@@ -240,56 +240,9 @@ print(report)
 6. Dataset-level evaluators that apply to all cases, including a general quality rubric for all recipes
 7. By default `LlmJudge` uses `openai:gpt-4o`, here we use a specific Anthropic model.
 
-### Generating Test Datasets
+## Saving and Loading Datasets
 
-Pydantic Evals allows you to generate test datasets using LLMs with [`generate_dataset`][pydantic_evals.examples.generate_dataset]:
-
-```python {title="generate_dataset_example.py"}
-from pydantic import BaseModel, Field
-
-from pydantic_evals.examples import generate_dataset
-
-
-class QuestionInputs(BaseModel):
-    """Model for question inputs."""
-
-    question: str = Field(description='A question to answer')
-    context: 'str | None' = Field(None, description='Optional context for the question')
-
-
-class AnswerOutput(BaseModel):
-    """Model for expected answer outputs."""
-
-    answer: str = Field(description='The answer to the question')
-    confidence: float = Field(description='Confidence level (0-1)', ge=0, le=1)
-
-
-class MetadataType(BaseModel):
-    """Metadata model for test cases."""
-
-    difficulty: str = Field(description='Difficulty level (easy, medium, hard)')
-    category: str = Field(description='Question category')
-
-
-async def xmain():
-    dataset = await generate_dataset(
-        inputs_type=QuestionInputs,
-        output_type=AnswerOutput,
-        metadata_type=MetadataType,
-        n_examples=2,
-        extra_instructions="""
-        Generate question-answer pairs about world capitals and landmarks.
-        Make sure to include both easy and challenging questions.
-        """,
-    )
-    dataset.to_file('questions_cases.yaml')
-```
-
-## Advanced Usage
-
-### Saving and Loading Datasets
-
-Datasets can be saved to and loaded from files (YAML or JSON format):
+Datasets can be saved to and loaded from YAML or JSON files.
 
 ```python {title="save_load_dataset_example.py"}
 from pathlib import Path
@@ -298,9 +251,9 @@ from judge_recipes import CustomerOrder, Recipe, recipe_dataset
 
 from pydantic_evals import Dataset
 
-recipe_dataset.to_file('recipe_transform_tests.yaml')
-serialized = Path('recipe_transform_tests.yaml').read_text()
-print(serialized)
+recipe_transforms_file = Path('recipe_transform_tests.yaml')
+recipe_dataset.to_file(recipe_transforms_file)  # (1)!
+print(recipe_transforms_file.read_text())
 """
 # yaml-language-server: $schema=recipe_transform_tests_schema.json
 cases:
@@ -331,18 +284,13 @@ evaluators:
 """
 
 # Load dataset from file
-# In a real scenario, you'd specify the actual file path
-loaded_dataset = Dataset[CustomerOrder, Recipe, dict].from_text(serialized)
+loaded_dataset = Dataset[CustomerOrder, Recipe, dict].from_file(recipe_transforms_file)
 
 print(f'Loaded dataset with {len(loaded_dataset.cases)} cases')
 #> Loaded dataset with 2 cases
-
-# Clean up
-Path('recipe_transform_tests.yaml').unlink()
-Path('recipe_transform_tests_schema.json').unlink()
 ```
 
-### Parallel Evaluation
+## Parallel Evaluation
 
 You can control concurrency during evaluation (this might be useful to prevent exceeding a rate limit):
 
@@ -425,7 +373,7 @@ report_limited.print()
 """
 ```
 
-### OpenTelemetry Integration
+## OpenTelemetry Integration
 
 Pydantic Evals integrates with OpenTelemetry for tracing.
 
@@ -441,8 +389,6 @@ evaluation.
 There are two main ways this is useful.
 
 TODO: Finish this
-
-
 
 ```python {title="opentelemetry_example.py"}
 import asyncio
@@ -545,4 +491,81 @@ report.print(include_input=True, include_output=True)
 │ Averages        │                       │                                         │ performance_score: 0.500 │ 75.0% ✔    │  101.0ms │
 └─────────────────┴───────────────────────┴─────────────────────────────────────────┴──────────────────────────┴────────────┴──────────┘
 """
+```
+
+## Generating Test Datasets
+
+Pydantic Evals allows you to generate test datasets using LLMs with [`generate_dataset`][pydantic_evals.examples.generate_dataset].
+
+Datasets can be generated in either JSON or YAML format, in both cases a JSON schema file is generated alongside the dataset and referenced in the dataset, so you should get type checking and auto-completion in your editor.
+
+```python {title="generate_dataset_example.py"}
+from pathlib import Path
+
+from pydantic import BaseModel, Field
+
+from pydantic_evals.examples import generate_dataset
+
+
+class QuestionInputs(BaseModel):
+    """Model for question inputs."""
+
+    question: str = Field(description='A question to answer')
+    context: str | None = Field(None, description='Optional context for the question')
+
+
+class AnswerOutput(BaseModel):
+    """Model for expected answer outputs."""
+
+    answer: str = Field(description='The answer to the question')
+    confidence: float = Field(description='Confidence level (0-1)', ge=0, le=1)
+
+
+class MetadataType(BaseModel):
+    """Metadata model for test cases."""
+
+    difficulty: str = Field(description='Difficulty level (easy, medium, hard)')
+    category: str = Field(description='Question category')
+
+
+async def main():
+    dataset = await generate_dataset(
+        inputs_type=QuestionInputs,
+        output_type=AnswerOutput,
+        metadata_type=MetadataType,
+        n_examples=2,
+        extra_instructions="""
+        Generate question-answer pairs about world capitals and landmarks.
+        Make sure to include both easy and challenging questions.
+        """,
+    )
+    output_file = Path('questions_cases.yaml')
+    dataset.to_file(output_file)
+    print(output_file.read_text())
+    """
+    # yaml-language-server: $schema=questions_cases_schema.json
+    cases:
+    - name: Easy Capital Question
+      inputs:
+        question: What is the capital of France?
+      metadata:
+        difficulty: easy
+        category: Geography
+      expected_output:
+        answer: Paris
+        confidence: 0.95
+      evaluators:
+      - EqualsExpected
+    - name: Challenging Landmark Question
+      inputs:
+        question: Which world-famous landmark is located on the banks of the Seine River?
+      metadata:
+        difficulty: hard
+        category: Landmarks
+      expected_output:
+        answer: Eiffel Tower
+        confidence: 0.9
+      evaluators:
+      - EqualsExpected
+    """
 ```

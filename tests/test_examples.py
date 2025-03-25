@@ -139,7 +139,12 @@ def test_docs_examples(  # noqa: C901
         examples = [{'request': f'sql prompt {i}', 'sql': f'SELECT {i}'} for i in range(15)]
         with (tmp_path / 'examples.json').open('w') as f:
             json.dump(examples, f)
-    elif opt_title in {'ai_q_and_a_run.py', 'count_down_from_persistence.py'}:
+    elif opt_title in {
+        'ai_q_and_a_run.py',
+        'count_down_from_persistence.py',
+        'generate_dataset_example.py',
+        'save_load_dataset_example.py',
+    }:
         os.chdir(tmp_path)
 
     ruff_ignore: list[str] = ['D', 'Q001']
@@ -401,6 +406,36 @@ async def model_logic(messages: list[ModelMessage], info: AgentInfo) -> ModelRes
         elif '<Rubric>\n' in m.content:
             return ModelResponse(
                 parts=[ToolCallPart(tool_name='final_result', args={'reason': '-', 'pass': True, 'score': 1.0})]
+            )
+        elif 'Generate question-answer pairs about world capitals and landmarks.' in m.content:
+            return ModelResponse(
+                parts=[
+                    TextPart(
+                        content=json.dumps(
+                            {
+                                'cases': [
+                                    {
+                                        'name': 'Easy Capital Question',
+                                        'inputs': {'question': 'What is the capital of France?'},
+                                        'metadata': {'difficulty': 'easy', 'category': 'Geography'},
+                                        'expected_output': {'answer': 'Paris', 'confidence': 0.95},
+                                        'evaluators': ['EqualsExpected'],
+                                    },
+                                    {
+                                        'name': 'Challenging Landmark Question',
+                                        'inputs': {
+                                            'question': 'Which world-famous landmark is located on the banks of the Seine River?',
+                                        },
+                                        'metadata': {'difficulty': 'hard', 'category': 'Landmarks'},
+                                        'expected_output': {'answer': 'Eiffel Tower', 'confidence': 0.9},
+                                        'evaluators': ['EqualsExpected'],
+                                    },
+                                ],
+                                'evaluators': [],
+                            }
+                        )
+                    )
+                ]
             )
         elif response := text_responses.get(m.content):
             if isinstance(response, str):

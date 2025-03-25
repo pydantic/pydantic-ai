@@ -19,14 +19,15 @@ from contextlib import AsyncExitStack
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Generic, Literal, Union
+from typing import Any, Callable, Generic, Literal, Union, cast
 
 import anyio
 import logfire_api
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError, model_serializer
 from pydantic._internal import _typing_extra
 from pydantic_core import to_json, to_jsonable_python
+from pydantic_core.core_schema import SerializationInfo, SerializerFunctionWrapHandler
 from typing_extensions import NotRequired, Self, TypedDict, TypeVar
 
 from pydantic_graph._utils import run_until_complete
@@ -83,6 +84,8 @@ class _CaseModel(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid'
 class _DatasetModel(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid'):
     """Internal model for a dataset, used for serialization/deserialization."""
 
+    # $schema is included to avoid validation fails from the `$schema` key, see `_add_json_schema` below for context
+    json_schema_path: str | None = Field(default=None, alias='$schema')
     cases: list[_CaseModel[InputsT, OutputT, MetadataT]]
     evaluators: list[EvaluatorSpec] = Field(default_factory=list)
 
@@ -521,15 +524,17 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
                 schema_ref = str(schema_path)
             self._save_schema(schema_path, custom_evaluator_types)
 
+        context: dict[str, Any] = {'use_short_form': True}
         if fmt == 'yaml':
-            dumped_data = self.model_dump(mode='json', exclude_defaults=True, context={'use_short_form': True})
+            dumped_data = self.model_dump(mode='json', by_alias=True, exclude_defaults=True, context=context)
             content = yaml.dump(dumped_data, sort_keys=False)
             if schema_ref:
                 yaml_language_server_line = f'# yaml-language-server: $schema={schema_ref}'
                 content = f'{yaml_language_server_line}\n{content}'
             path.write_text(content)
         else:
-            json_data = self.model_dump_json(indent=2, exclude_defaults=True, context={'use_short_form': True})
+            context['$schema'] = schema_ref
+            json_data = self.model_dump_json(indent=2, by_alias=True, exclude_defaults=True, context=context)
             path.write_text(json_data + '\n')
 
     @classmethod
@@ -610,7 +615,10 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
 
         ClsDataset.__name__ = cls.__name__
 
-        return ClsDataset.model_json_schema()
+        json_schema = ClsDataset.model_json_schema()
+        # See `_add_json_schema` below, since `$schema` is added to the JSON, it has to be supported in the JSON
+        json_schema['properties']['$schema'] = {'type': 'string'}
+        return json_schema
 
     @classmethod
     def _save_schema(
@@ -661,6 +669,19 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         elif suffix == '.json':
             return 'json'
         raise ValueError(f'Could not infer format from path {path}. Use the `fmt` argument to specify the format.')
+
+    @model_serializer(mode='wrap')
+    def _add_json_schema(self, nxt: SerializerFunctionWrapHandler, info: SerializationInfo) -> dict[str, Any]:
+        """Add the JSON schema path to the serialized output.
+
+        See <https://github.com/json-schema-org/json-schema-spec/issues/828> for context, that seems to be the nearest
+        there is to a spec for this.
+        """
+        context = cast(dict[str, Any] | None, info.context)
+        if isinstance(context, dict) and (schema := context.get('$schema')):
+            return {'$schema': schema} | nxt(self)
+        else:
+            return nxt(self)
 
 
 def _get_relative_path_reference(target: Path, source: Path, _prefix: str = '') -> Path:
