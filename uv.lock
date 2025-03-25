@@ -2964,7 +2964,7 @@ requires-dist = [
     { name = "logfire", marker = "extra == 'logfire'", specifier = ">=2.3" },
     { name = "mcp", marker = "python_full_version >= '3.10' and extra == 'mcp'", specifier = ">=1.4.1" },
     { name = "mistralai", marker = "extra == 'mistral'", specifier = ">=1.2.5" },
-    { name = "openai", marker = "extra == 'openai'", specifier = ">=1.66.0" },
+    { name = "openai", marker = "extra == 'openai'", specifier = ">=1.67.0" },
     { name = "opentelemetry-api", specifier = ">=1.28.0" },
     { name = "prompt-toolkit", marker = "extra == 'cli'", specifier = ">=3" },
     { name = "pydantic", specifier = ">=2.10" },
