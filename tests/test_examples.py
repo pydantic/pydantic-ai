@@ -58,6 +58,8 @@ pytestmark = pytest.mark.skipif(
 
 
 def find_filter_examples() -> Iterable[ParameterSet]:
+    # TODO: need to add pydantic_evals to the following list, but some of those examples are broken
+    # for ex in find_examples('docs', 'pydantic_ai_slim', 'pydantic_graph', 'pydantic_evals'):
     for ex in find_examples('docs', 'pydantic_ai_slim', 'pydantic_graph'):
         if ex.path.name != '_utils.py':
             prefix_settings = ex.prefix_settings()
