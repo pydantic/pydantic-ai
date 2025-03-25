@@ -95,9 +95,11 @@ def test_docs_examples(  # noqa: C901
 
     class CustomEvaluationReport(EvaluationReport):
         def print(self, *args: Any, **kwargs: Any) -> None:
+            if 'width' in kwargs:  # pragma: no cover
+                raise ValueError('width should not be passed to CustomEvaluationReport')
             table = self.console_table(*args, **kwargs)
             io_file = StringIO()
-            Console(file=io_file).print(table)
+            Console(file=io_file, width=150).print(table)
             print(io_file.getvalue())
 
     mocker.patch('pydantic_evals.dataset.EvaluationReport', side_effect=CustomEvaluationReport)
