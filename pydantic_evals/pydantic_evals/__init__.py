@@ -1,4 +1,9 @@
-"""Pydantic evals module.
+"""A toolkit for evaluating the execution of arbitrary "stochastic functions", such as LLM calls.
+
+This package provides functionality for:
+- Creating and loading test datasets with structured inputs and outputs
+- Evaluating model performance using various metrics and evaluators
+- Generating reports for evaluation results
 
 TODO(DavidM): Implement serialization of reports for later comparison, and add git hashes etc.
   Note: I made pydantic_ai.evals.reports.EvalReport a BaseModel specifically to make this easier

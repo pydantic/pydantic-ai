@@ -74,7 +74,7 @@ if __name__ == '__main__':
         path = Path(__file__).parent / 'test_cases.yaml'
         if not path.exists():
             TimeRangeDataset(cases=[], evaluators=[LlmJudge(rubric='abc')]).to_file(
-                path, custom_evaluators=[LlmJudge, IsInstance]
+                path, custom_evaluator_types=[LlmJudge, IsInstance]
             )
 
     main()

@@ -163,16 +163,16 @@ Pydantic Evals allows you to generate test datasets using LLMs:
 # TODO: Make the following self-contained, in particular, it needs to define MyInputs and MyOutput
 # It should also make use of extra_instructions as appropriate
 ```python
-from pydantic_evals.examples import generate_dataset
-
-async def main():
-    await generate_dataset(
-        path='my_test_cases.yaml',
-        inputs_type=MyInputs,
-        output_type=MyOutput,
-        metadata_type=dict,
-        n_examples=5
-    )
+# from pydantic_evals.examples import generate_dataset
+#
+# async def main():
+#     await generate_dataset(
+#         path='my_test_cases.yaml',
+#         inputs_type=MyInputs,
+#         output_type=MyOutput,
+#         metadata_type=dict,
+#         n_examples=5
+#     )
 ```
 
 ## Advanced Usage
@@ -204,57 +204,57 @@ Here's a complete example of using Pydantic Evals for evaluating a function used
 # (It could use the from_text method rather than from_file..)
 # It should also actually implement an example function for inferring the time range...
 ```python
-from typing import Any
-
-from pydantic import BaseModel
-
-from pydantic_evals import Dataset
-from pydantic_evals.evaluators import Evaluator, EvaluatorContext, EvaluatorOutput
-from pydantic_evals.evaluators.common import IsInstance, LlmJudge
-from pydantic_evals.evaluators.llm_as_a_judge import judge_input_output
-
-
-# Define input and output models
-class TimeRangeInputs(BaseModel):
-    query: str
-    context: str | None = None
-
-
-class TimeRangeResponse(BaseModel):
-    start_time: str | None = None
-    end_time: str | None = None
-    error: str | None = None
-
-
-# Load dataset
-dataset = Dataset[TimeRangeInputs, TimeRangeResponse, Any].from_file(
-    'test_cases.yaml', custom_evaluators=[IsInstance, LlmJudge]
-)
-
-
-# Create a custom evaluator
-class TimeRangeEvaluator(Evaluator[TimeRangeInputs, TimeRangeResponse]):
-    async def evaluate(
-        self, ctx: EvaluatorContext[TimeRangeInputs, TimeRangeResponse]
-    ) -> EvaluatorOutput:
-        rubric = 'The output should be a reasonable time range to select for the given inputs.'
-        result = await judge_input_output(ctx.inputs, ctx.output, rubric)
-        return {
-            'is_reasonable': 'yes' if result.pass_ else 'no',
-            'accuracy': result.score,
-        }
-
-
-dataset.add_evaluator(TimeRangeEvaluator())
-
-
-# Define function to test
-async def infer_time_range(inputs: TimeRangeInputs) -> TimeRangeResponse:
-    # Your implementation here
-    pass
-
-
-# Run evaluation
-report = dataset.evaluate_sync(infer_time_range)
-report.print(include_input=True, include_output=True)
+# from typing import Any
+#
+# from pydantic import BaseModel
+#
+# from pydantic_evals import Dataset
+# from pydantic_evals.evaluators import Evaluator, EvaluatorContext, EvaluatorOutput
+# from pydantic_evals.evaluators.common import IsInstance, LlmJudge
+# from pydantic_evals.evaluators.llm_as_a_judge import judge_input_output
+#
+#
+# # Define input and output models
+# class TimeRangeInputs(BaseModel):
+#     query: str
+#     context: str | None = None
+#
+#
+# class TimeRangeResponse(BaseModel):
+#     start_time: str | None = None
+#     end_time: str | None = None
+#     error: str | None = None
+#
+#
+# # Load dataset
+# dataset = Dataset[TimeRangeInputs, TimeRangeResponse, Any].from_file(
+#     'test_cases.yaml', custom_evaluator_types=[IsInstance, LlmJudge]
+# )
+#
+#
+# # Create a custom evaluator
+# class TimeRangeEvaluator(Evaluator[TimeRangeInputs, TimeRangeResponse]):
+#     async def evaluate(
+#         self, ctx: EvaluatorContext[TimeRangeInputs, TimeRangeResponse]
+#     ) -> EvaluatorOutput:
+#         rubric = 'The output should be a reasonable time range to select for the given inputs.'
+#         result = await judge_input_output(ctx.inputs, ctx.output, rubric)
+#         return {
+#             'is_reasonable': 'yes' if result.pass_ else 'no',
+#             'accuracy': result.score,
+#         }
+#
+#
+# dataset.add_evaluator(TimeRangeEvaluator())
+#
+#
+# # Define function to test
+# async def infer_time_range(inputs: TimeRangeInputs) -> TimeRangeResponse:
+#     # Your implementation here
+#     pass
+#
+#
+# # Run evaluation
+# report = dataset.evaluate_sync(infer_time_range)
+# report.print(include_input=True, include_output=True)
 ```

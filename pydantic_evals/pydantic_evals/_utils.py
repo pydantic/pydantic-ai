@@ -13,6 +13,8 @@ from typing_extensions import ParamSpec, TypeIs
 class Unset:
     """A singleton to represent an unset value.
 
+    Used to distinguish between explicitly set `None` values and values that were never set.
+
     Copied from pydantic_ai/_utils.py.
     """
 
@@ -20,16 +22,38 @@ class Unset:
 
 
 UNSET = Unset()
+"""Singleton instance of the [`Unset`][pydantic_evals._utils.Unset] class to represent unset values."""
+
 T = TypeVar('T')
 
 
 def is_set(t_or_unset: T | Unset) -> TypeIs[T]:
+    """Check if a value is set (not the UNSET singleton).
+
+    Args:
+        t_or_unset: The value to check, which may be the UNSET singleton or a regular value.
+
+    Returns:
+        True if the value is not UNSET, narrowing the type to T in a type-aware way.
+    """
     return t_or_unset is not UNSET
 
 
 def get_unwrapped_function_name(func: Callable[..., Any]) -> str:
+    """Get the name of a function, unwrapping partials and decorators.
+
+    Args:
+        func: The function to get the name of.
+
+    Returns:
+        The name of the function.
+
+    Raises:
+        AttributeError: If the function doesn't have a __name__ attribute and isn't a method.
+    """
+
     def _unwrap(f: Callable[..., Any]) -> Callable[..., Any]:
-        # Unwraps f, also unwrapping partials, for the sake of getting f's name
+        """Unwraps f, also unwrapping partials, for the sake of getting f's name."""
         if isinstance(f, partial):
             return _unwrap(f.func)
         return inspect.unwrap(f)
@@ -49,6 +73,17 @@ _R = TypeVar('_R')
 
 
 def run_until_complete(coro: Coroutine[None, None, _R]) -> _R:
+    """Run a coroutine to completion in a new event loop.
+
+    This is a utility function to run async code from synchronous contexts.
+    It creates a new event loop, runs the coroutine, and then closes the loop.
+
+    Args:
+        coro: The coroutine to run.
+
+    Returns:
+        The result of the coroutine.
+    """
     if sys.version_info < (3, 11):
         try:
             loop = asyncio.new_event_loop()

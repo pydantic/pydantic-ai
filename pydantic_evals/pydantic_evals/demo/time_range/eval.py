@@ -25,7 +25,7 @@ async def main():
 
     logfire.configure(send_to_logfire='if-token-present', console=logfire.ConsoleOptions(verbose=True))
     dataset = TimeRangeDataset.from_file(
-        Path(__file__).parent / 'test_cases.yaml', custom_evaluators=(IsInstance, LlmJudge)
+        Path(__file__).parent / 'test_cases.yaml', custom_evaluator_types=(IsInstance, LlmJudge)
     )
 
     class MyEvaluator(Evaluator[TimeRangeInputs, TimeRangeResponse]):

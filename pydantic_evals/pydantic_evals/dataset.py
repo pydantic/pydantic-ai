@@ -1,9 +1,19 @@
+"""Dataset management for pydantic evals.
+
+This module provides functionality for creating, loading, saving, and evaluating datasets of test cases.
+Each case must have inputs, and can optionally have a name, expected output, metadata, and case-specific evaluators.
+
+Datasets can be loaded from and saved to YAML or JSON files, and can be evaluated against
+a task function to produce an evaluation report.
+"""
+
 from __future__ import annotations as _annotations
 
 import asyncio
 import functools
 import inspect
 import sys
+import time
 import warnings
 from collections.abc import Awaitable, Mapping, Sequence
 from contextlib import nullcontext
@@ -12,7 +22,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Generic, Literal, NotRequired, Self, Union
 
-import logfire
+import logfire_api
 import yaml
 from pydantic import BaseModel, Field, ValidationError
 from pydantic._internal import _typing_extra
@@ -45,7 +55,7 @@ else:
 
     logfire._internal.stack_info.NON_USER_CODE_PREFIXES += (str(Path(__file__).parent.absolute()),)
 
-_logfire = logfire.Logfire(otel_scope='pydantic-evals')
+_logfire = logfire_api.Logfire(otel_scope='pydantic-evals')
 
 InputsT = TypeVar('InputsT', default=Any)
 """Generic type for the inputs to the task being evaluated."""
@@ -55,10 +65,14 @@ MetadataT = TypeVar('MetadataT', default=Any)
 """Generic type for the metadata associated with the task being evaluated."""
 
 DEFAULT_DATASET_PATH = './test_cases.yaml'
+"""Default path for saving/loading datasets."""
 DEFAULT_SCHEMA_PATH_TEMPLATE = './{stem}_schema.json'
+"""Default template for schema file paths, where {stem} is replaced with the dataset filename stem."""
 
 
 class _CaseModel(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid'):
+    """Internal model for a case, used for serialization/deserialization."""
+
     name: str | None = None
     inputs: InputsT
     metadata: MetadataT | None = None
@@ -67,13 +81,31 @@ class _CaseModel(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid'
 
 
 class _DatasetModel(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid'):
+    """Internal model for a dataset, used for serialization/deserialization."""
+
     cases: list[_CaseModel[InputsT, OutputT, MetadataT]]
     evaluators: list[EvaluatorSpec] = Field(default_factory=list)
 
 
 @dataclass(init=False)
 class Case(Generic[InputsT, OutputT, MetadataT]):
-    """A single row of a [`Dataset`][pydantic_evals.Dataset], consisting of input, expected output, and metadata."""
+    """A single row of a [`Dataset`][pydantic_evals.Dataset].
+
+    Each case represents a single test scenario with inputs to test. A case may optionally specify a name, expected
+    outputs to compare against, and arbitrary metadata.
+
+    Cases can also have their own specific evaluators which are run in addition to dataset-level evaluators.
+
+    Example:
+    ```python
+    case = Case(
+        name="Simple addition",
+        inputs={"a": 1, "b": 2},
+        expected_output=3,
+        metadata={"description": "Tests basic addition"}
+    )
+    ```
+    """
 
     name: str | None
     """Name of the case. This is used to identify the case in the report and can be used to filter cases."""
@@ -98,6 +130,17 @@ class Case(Generic[InputsT, OutputT, MetadataT]):
         expected_output: OutputT | None = None,
         evaluators: tuple[Evaluator[InputsT, OutputT, MetadataT], ...] = (),
     ):
+        """Initialize a new test case.
+
+        Args:
+            name: Optional name for the case. If not provided, a generic name will be assigned when added to a dataset.
+            inputs: The inputs to the task being evaluated.
+            metadata: Optional metadata for the case, which can be used by evaluators.
+            expected_output: Optional expected output of the task, used for comparison in evaluators.
+            evaluators: Tuple of evaluators specific to this case. These are in addition to any
+                dataset-level evaluators.
+
+        """
         # Note: `evaluators` must be a tuple instead of Sequence due to misbehavior with pyright's generic parameter
         # inference if it has type `Sequence`
         self.name = name
@@ -111,9 +154,32 @@ class Case(Generic[InputsT, OutputT, MetadataT]):
 #  * Add `task: Callable[[InputsT], Awaitable[OutputT]` as a field
 #  * Add `inputs_type`, `output_type`, etc. as kwargs on `__init__`
 #  * Rename to `Evaluation`
-#  * Allow `task` to be sync _or_ async
+# TODO: Allow `task` to be sync _or_ async
 class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', arbitrary_types_allowed=True):
-    """A dataset of test [cases][pydantic_evals.Case]."""
+    """A dataset of test [cases][pydantic_evals.Case].
+
+    Datasets allow you to organize a collection of test cases and evaluate them against a task function.
+    They can be loaded from and saved to YAML or JSON files, and can have dataset-level evaluators that
+    apply to all cases.
+
+    Example:
+    ```python
+    # Create a dataset with two test cases
+    dataset = Dataset(
+        cases=[
+            Case(name="test1", inputs={"text": "Hello"}, expected_output="HELLO"),
+            Case(name="test2", inputs={"text": "World"}, expected_output="WORLD"),
+        ],
+        evaluators=[ExactMatch()]
+    )
+
+    # Evaluate the dataset against a task function
+    async def uppercase(inputs: dict) -> str:
+        return inputs["text"].upper()
+
+    report = await dataset.evaluate(uppercase)
+    ```
+    """
 
     cases: list[Case[InputsT, OutputT, MetadataT]]
     """List of test cases in the dataset."""
@@ -126,6 +192,20 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         cases: Sequence[Case[InputsT, OutputT, MetadataT]],
         evaluators: Sequence[Evaluator[InputsT, OutputT, MetadataT]] = (),
     ):
+        """Initialize a new dataset with test cases and optional evaluators.
+
+        Args:
+            cases: Sequence of test cases to include in the dataset.
+            evaluators: Optional sequence of evaluators to apply to all cases in the dataset.
+        """
+        case_names = set[str]()
+        for case in cases:
+            if case.name is None:
+                continue
+            if case.name in case_names:
+                raise ValueError(f'Duplicate case name: {case.name}')
+            case_names.add(case.name)
+
         super().__init__(
             cases=cases,
             evaluators=list(evaluators),
@@ -136,14 +216,19 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
     ) -> EvaluationReport:
         """Evaluates the test cases in the dataset using the given task.
 
+        This method runs the task on each case in the dataset, applies evaluators,
+        and collects results into a report. Cases are run concurrently, limited by `max_concurrency` if specified.
+
         Args:
             task: The task to evaluate. This should be a callable that takes the inputs of the case
                 and returns the output.
             name: The name of the task being evaluated, this is used to identify the task in the report.
                 If omitted, the name of the task function will be used.
             max_concurrency: The maximum number of concurrent evaluations of the task to allow.
+                If None, all cases will be evaluated concurrently.
 
-        Returns: A report containing the results of the evaluation.
+        Returns:
+            A report containing the results of the evaluation.
         """
         name = name or get_unwrapped_function_name(task)
 
@@ -171,7 +256,18 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
     ) -> EvaluationReport:
         """Evaluates the test cases in the dataset using the given task.
 
-        This is just a synchronous wrapper around `evaluate` provided for convenience.
+        This is a synchronous wrapper around [`evaluate`][pydantic_evals.Dataset.evaluate] provided for convenience.
+
+        Args:
+            task: The task to evaluate. This should be a callable that takes the inputs of the case
+                and returns the output.
+            name: The name of the task being evaluated, this is used to identify the task in the report.
+                If omitted, the name of the task function will be used.
+            max_concurrency: The maximum number of concurrent evaluations of the task to allow.
+                If None, all cases will be evaluated concurrently.
+
+        Returns:
+            A report containing the results of the evaluation.
         """
         return run_until_complete(self.evaluate(task, name=name, max_concurrency=max_concurrency))
 
@@ -184,7 +280,17 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         expected_output: OutputT | None = None,
         evaluators: tuple[Evaluator[InputsT, OutputT, MetadataT], ...] = (),
     ) -> None:
-        """Adds a case to the evaluation."""
+        """Adds a case to the dataset.
+
+        This is a convenience method for creating a [`Case`][pydantic_evals.Case] and adding it to the dataset.
+
+        Args:
+            name: Optional name for the case. If not provided, a generic name will be assigned.
+            inputs: The inputs to the task being evaluated.
+            metadata: Optional metadata for the case, which can be used by evaluators.
+            expected_output: The expected output of the task, used for comparison in evaluators.
+            evaluators: Tuple of evaluators specific to this case, in addition to dataset-level evaluators.
+        """
         case = Case[InputsT, OutputT, MetadataT](
             name=name,
             inputs=inputs,
@@ -199,29 +305,37 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         evaluator: Evaluator[InputsT, OutputT, MetadataT],
         specific_case: str | None = None,
     ) -> None:
-        """Adds an evaluator to the dataset or to a specific case.
+        """Adds an evaluator to the dataset or a specific case.
 
         Args:
-            evaluator: The evaluator to add, TODO.
-            specific_case: Specific case to add the evaluator to. If `None`, the evaluator is added to all cases.
+            evaluator: The evaluator to add.
+            specific_case: If provided, the evaluator will only be added to the case with this name.
+                If None, the evaluator will be added to all cases in the dataset.
+
+        Raises:
+            ValueError: If `specific_case` is provided but no case with that name exists in the dataset.
         """
         if specific_case is None:
-            # Add the evaluator to the dataset itself
             self.evaluators.append(evaluator)
-            return
-
-        # Add the evaluator to rows with the given name (generally there should only be one), but error if none found
-        added = False
-        for case in self.cases:
-            if case.name == specific_case:
-                case.evaluators.append(evaluator)
-                added = True
-        if not added:
-            raise ValueError(f'Case {specific_case!r} not found in the dataset')
+        else:
+            # If this is too slow, we could try to add a case lookup dict.
+            # Note that if we do that, we'd need to make the cases list private to prevent modification.
+            added = False
+            for case in self.cases:
+                if case.name == specific_case:
+                    case.evaluators.append(evaluator)
+                    added = True
+            if not added:
+                raise ValueError(f'Case {specific_case!r} not found in the dataset')
 
     @classmethod
     @functools.cache
     def _params(cls) -> tuple[type[InputsT], type[OutputT], type[MetadataT]]:
+        """Get the type parameters for the Dataset class.
+
+        Returns:
+            A tuple of (InputsT, OutputT, MetadataT) types.
+        """
         for c in cls.__mro__:
             metadata = getattr(c, '__pydantic_generic_metadata__', {})
             if len(args := (metadata.get('args', ()) or getattr(c, '__args__', ()))) == 3:
@@ -239,14 +353,30 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         cls,
         path: Path | str,
         fmt: Literal['yaml', 'json'] | None = None,
-        custom_evaluators: Sequence[type[Evaluator[InputsT, OutputT, MetadataT]]] = (),
+        custom_evaluator_types: Sequence[type[Evaluator[InputsT, OutputT, MetadataT]]] = (),
     ) -> Self:
+        """Load a dataset from a file.
+
+        Args:
+            path: Path to the file to load.
+            fmt: Format of the file. If None, the format will be inferred from the file extension.
+                Must be either 'yaml' or 'json'.
+            custom_evaluator_types: Custom evaluator classes to use when deserializing the dataset.
+                These are additional evaluators beyond the default ones.
+
+        Returns:
+            A new Dataset instance loaded from the file.
+
+        Raises:
+            ValidationError: If the file cannot be parsed as a valid dataset.
+            ValueError: If the format cannot be inferred from the file extension.
+        """
         path = Path(path)
         fmt = cls._infer_fmt(path, fmt)
 
         raw = Path(path).read_text()
         try:
-            return cls.from_text(raw, fmt=fmt, custom_evaluators=custom_evaluators)
+            return cls.from_text(raw, fmt=fmt, custom_evaluator_types=custom_evaluator_types)
         except ValidationError as e:
             raise ValueError(f'{path} contains data that does not match the schema for {cls.__name__}:\n{e}.') from e
 
@@ -255,33 +385,69 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         cls,
         contents: str,
         fmt: Literal['yaml', 'json'] = 'yaml',
-        custom_evaluators: Sequence[type[Evaluator[InputsT, OutputT, MetadataT]]] = (),
+        custom_evaluator_types: Sequence[type[Evaluator[InputsT, OutputT, MetadataT]]] = (),
     ) -> Self:
+        """Load a dataset from a string.
+
+        Args:
+            contents: The string content to parse.
+            fmt: Format of the content. Must be either 'yaml' or 'json'.
+            custom_evaluator_types: Custom evaluator classes to use when deserializing the dataset.
+                These are additional evaluators beyond the default ones.
+
+        Returns:
+            A new Dataset instance parsed from the string.
+
+        Raises:
+            ValidationError: If the content cannot be parsed as a valid dataset.
+        """
         if fmt == 'yaml':
             loaded = yaml.safe_load(contents)
-            return cls.from_dict(loaded, custom_evaluators)
+            return cls.from_dict(loaded, custom_evaluator_types)
         else:
             dataset_model_type = cls._serialization_type()
             dataset_model = dataset_model_type.model_validate_json(contents)
-            return cls._from_dataset_model(dataset_model, custom_evaluators)
+            return cls._from_dataset_model(dataset_model, custom_evaluator_types)
 
     @classmethod
     def from_dict(
         cls,
         data: dict[str, Any],
-        custom_evaluators: Sequence[type[Evaluator[InputsT, OutputT, MetadataT]]] = (),
+        custom_evaluator_types: Sequence[type[Evaluator[InputsT, OutputT, MetadataT]]] = (),
     ) -> Self:
+        """Load a dataset from a dictionary.
+
+        Args:
+            data: Dictionary representation of the dataset.
+            custom_evaluator_types: Custom evaluator classes to use when deserializing the dataset.
+                These are additional evaluators beyond the default ones.
+
+        Returns:
+            A new Dataset instance created from the dictionary.
+
+        Raises:
+            ValidationError: If the dictionary cannot be converted to a valid dataset.
+        """
         dataset_model_type = cls._serialization_type()
         dataset_model = dataset_model_type.model_validate(data)
-        return cls._from_dataset_model(dataset_model, custom_evaluators)
+        return cls._from_dataset_model(dataset_model, custom_evaluator_types)
 
     @classmethod
     def _from_dataset_model(
         cls,
         dataset_model: _DatasetModel[InputsT, OutputT, MetadataT],
-        custom_evaluators: Sequence[type[Evaluator[InputsT, OutputT, MetadataT]]] = (),
+        custom_evaluator_types: Sequence[type[Evaluator[InputsT, OutputT, MetadataT]]] = (),
     ) -> Self:
-        registry = _get_registry(custom_evaluators)
+        """Create a Dataset from a _DatasetModel.
+
+        Args:
+            dataset_model: The _DatasetModel to convert.
+            custom_evaluator_types: Custom evaluator classes to register for deserialization.
+
+        Returns:
+            A new Dataset instance created from the _DatasetModel.
+        """
+        registry = _get_registry(custom_evaluator_types)
 
         cases: list[Case[InputsT, OutputT, MetadataT]] = []
         errors: list[ValueError] = []
@@ -322,8 +488,18 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         path: Path | str,
         fmt: Literal['yaml', 'json'] | None = None,
         schema_path: Path | str | None = DEFAULT_SCHEMA_PATH_TEMPLATE,
-        custom_evaluators: Sequence[type[Evaluator[InputsT, OutputT, MetadataT]]] = (),
+        custom_evaluator_types: Sequence[type[Evaluator[InputsT, OutputT, MetadataT]]] = (),
     ):
+        """Save the dataset to a file.
+
+        Args:
+            path: Path to save the dataset to.
+            fmt: Format to use. If None, the format will be inferred from the file extension.
+                Must be either 'yaml' or 'json'.
+            schema_path: Path to save the JSON schema to. If None, no schema will be saved.
+                Can be a string template with {stem} which will be replaced with the dataset filename stem.
+            custom_evaluator_types: Custom evaluator classes to include in the schema.
+        """
         path = Path(path)
         fmt = self._infer_fmt(path, fmt)
 
@@ -339,7 +515,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
                 schema_ref = str(_get_relative_path_reference(schema_path, path))
             else:
                 schema_ref = str(schema_path)
-            self._save_schema(schema_path, custom_evaluators)
+            self._save_schema(schema_path, custom_evaluator_types)
 
         if fmt == 'yaml':
             dumped_data = self.model_dump(mode='json', exclude_defaults=True)
@@ -355,10 +531,20 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
     @classmethod
     def model_json_schema_with_evaluators(
         cls,
-        custom_evaluators: Sequence[type[Evaluator[InputsT, OutputT, MetadataT]]] = (),
+        custom_evaluator_types: Sequence[type[Evaluator[InputsT, OutputT, MetadataT]]] = (),
     ) -> dict[str, Any]:
-        # Note: this function could probably be simplified now that Evaluators are always dataclasses
-        registry = _get_registry(custom_evaluators)
+        """Generate a JSON schema for this dataset type, including evaluator details.
+
+        This is useful for generating a schema that can be used to validate YAML-format dataset files.
+
+        Args:
+            custom_evaluator_types: Custom evaluator classes to include in the schema.
+
+        Returns:
+            A dictionary representing the JSON schema.
+        """
+        # Note: this function could maybe be simplified now that Evaluators are always dataclasses
+        registry = _get_registry(custom_evaluator_types)
 
         evaluator_schema_types: list[Any] = []
         for name, evaluator_class in registry.items():
@@ -422,10 +608,16 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
 
     @classmethod
     def _save_schema(
-        cls, path: Path | str, custom_evaluators: Sequence[type[Evaluator[InputsT, OutputT, MetadataT]]] = ()
+        cls, path: Path | str, custom_evaluator_types: Sequence[type[Evaluator[InputsT, OutputT, MetadataT]]] = ()
     ):
+        """Save the JSON schema for this dataset type to a file.
+
+        Args:
+            path: Path to save the schema to.
+            custom_evaluator_types: Custom evaluator classes to include in the schema.
+        """
         path = Path(path)
-        json_schema = cls.model_json_schema_with_evaluators(custom_evaluators)
+        json_schema = cls.model_json_schema_with_evaluators(custom_evaluator_types)
         schema_content = to_json(json_schema, indent=2).decode() + '\n'
         if not path.exists() or path.read_text() != schema_content:
             path.write_text(schema_content)
@@ -433,20 +625,56 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
     @classmethod
     @functools.cache
     def _serialization_type(cls) -> type[_DatasetModel[InputsT, OutputT, MetadataT]]:
-        return _DatasetModel[cls._params()]  # type: ignore
+        """Get the serialization type for this dataset class.
+
+        Returns:
+            A _DatasetModel type with the same generic parameters as this Dataset class.
+        """
+        input_type, output_type, metadata_type = cls._params()
+        return _DatasetModel[input_type, output_type, metadata_type]
 
     @classmethod
     def _infer_fmt(cls, path: Path, fmt: Literal['yaml', 'json'] | None) -> Literal['yaml', 'json']:
+        """Infer the format to use for a file based on its extension.
+
+        Args:
+            path: The path to infer the format for.
+            fmt: The explicitly provided format, if any.
+
+        Returns:
+            The inferred format ('yaml' or 'json').
+
+        Raises:
+            ValueError: If the format cannot be inferred from the file extension.
+        """
         if fmt is not None:
             return fmt
-        if path.suffix in {'.yaml', '.yml'}:
+        suffix = path.suffix.lower()
+        if suffix in {'.yaml', '.yml'}:
             return 'yaml'
-        if path.suffix == '.json':
+        elif suffix == '.json':
             return 'json'
-        raise ValueError(f'Unrecognized file format: {path.suffix}. Use the `fmt` argument to specify the format.')
+        raise ValueError(f'Could not infer format from path {path}. Use the `fmt` argument to specify the format.')
 
 
 def _get_relative_path_reference(target: Path, source: Path, _prefix: str = '') -> Path:
+    """Get a relative path reference from source to target.
+
+    Recursively resolve a relative path to target from source, adding '..' as needed.
+    This is useful for creating a relative path reference from a source file to a target file.
+
+    Args:
+        target: The target path to reference.
+        source: The source path to reference from.
+        _prefix: Internal prefix used during recursion.
+
+    Returns:
+        A Path object representing the relative path from source to target.
+
+    Example:
+        If source is '/a/b/c.py' and target is '/a/d/e.py', the relative path reference
+        would be '../../d/e.py'.
+    """
     # Recursively resolve a relative path to target from source, adding '..' as needed.
     # This is useful for creating a relative path reference from a source file to a target file.
     # For example, if source is '/a/b/c.py' and target is '/a/d/e.py', the relative path reference
@@ -461,13 +689,30 @@ def _get_relative_path_reference(target: Path, source: Path, _prefix: str = '') 
 
 @dataclass
 class _TaskRun:
+    """Internal class to track metrics and attributes for a task run."""
+
     attributes: dict[str, Any] = field(init=False, default_factory=dict)
     metrics: dict[str, int | float] = field(init=False, default_factory=dict)
 
     def record_metric(self, name: str, value: int | float) -> None:
+        """Record a metric value.
+
+        Args:
+            name: The name of the metric.
+            value: The value of the metric.
+        """
         self.metrics[name] = value
 
     def increment_metric(self, name: str, amount: int | float) -> None:
+        """Increment a metric value.
+
+        Args:
+            name: The name of the metric.
+            amount: The amount to increment by.
+
+        Note:
+            If the current value is 0 and the increment amount is 0, no metric will be recorded.
+        """
         current_value = self.metrics.get(name, 0)
         incremented_value = current_value + amount
         if current_value == 0 and incremented_value == 0:
@@ -475,12 +720,30 @@ class _TaskRun:
         self.record_metric(name, incremented_value)
 
     def record_attribute(self, name: str, value: Any) -> None:
+        """Record an attribute value.
+
+        Args:
+            name: The name of the attribute.
+            value: The value of the attribute.
+        """
         self.attributes[name] = value
 
 
 async def _run_task(
     task: Callable[[InputsT], Awaitable[OutputT]], case: Case[InputsT, OutputT, MetadataT]
 ) -> EvaluatorContext[InputsT, OutputT, MetadataT]:
+    """Run a task on a case and return the context for evaluators.
+
+    Args:
+        task: The task to run.
+        case: The case to run the task on.
+
+    Returns:
+        An EvaluatorContext containing the inputs, actual output, expected output, and metadata.
+
+    Raises:
+        Exception: Any exception raised by the task.
+    """
     task_run = _TaskRun()
     if _CURRENT_TASK_RUN.get() is not None:
         raise RuntimeError('A task run has already been entered. Task runs should not be nested')
@@ -490,7 +753,9 @@ async def _run_task(
     try:
         with _logfire.span('execute {task}', task=get_unwrapped_function_name(task)) as task_span:
             with context_subtree() as span_tree:
+                t0 = time.time()
                 task_output = await task(case.inputs)
+                fallback_duration = time.time() - t0
     finally:
         _CURRENT_TASK_RUN.reset(token)
 
@@ -517,7 +782,7 @@ async def _run_task(
         metadata=case.metadata,
         expected_output=case.expected_output,
         output=task_output,
-        duration=_get_span_duration(task_span),
+        duration=_get_span_duration(task_span, fallback_duration),
         _span_tree=span_tree,
         attributes=task_run.attributes,
         metrics=task_run.metrics,
@@ -530,6 +795,17 @@ async def _run_task_and_evaluators(
     report_case_name: str,
     dataset_evaluators: list[Evaluator[InputsT, OutputT, MetadataT]],
 ) -> ReportCase:
+    """Run a task on a case and evaluate the results.
+
+    Args:
+        task: The task to run.
+        case: The case to run the task on.
+        report_case_name: The name to use for this case in the report.
+        dataset_evaluators: Evaluators from the dataset to apply to this case.
+
+    Returns:
+        A ReportCase containing the evaluation results.
+    """
     with _logfire.span(
         '{task_name}: {case_name}',
         task_name=get_unwrapped_function_name(task),
@@ -537,6 +813,7 @@ async def _run_task_and_evaluators(
         inputs=case.inputs,
         metadata=case.metadata,
     ) as case_span:
+        t0 = time.time()
         scoring_context = await _run_task(task, case)
 
         case_span.set_attribute('output', scoring_context.output)
@@ -560,9 +837,13 @@ async def _run_task_and_evaluators(
         case_span.set_attribute('labels', labels)
 
         context = case_span.context
-        assert context is not None
-        trace_id = f'{context.trace_id:032x}'
-        span_id = f'{context.span_id:016x}'
+        if context is None:
+            trace_id = ''
+            span_id = ''
+        else:
+            trace_id = f'{context.trace_id:032x}'
+            span_id = f'{context.span_id:016x}'
+        fallback_duration = time.time() - t0
 
     report_inputs = to_jsonable_python(case.inputs)
 
@@ -579,7 +860,7 @@ async def _run_task_and_evaluators(
         labels=labels,
         assertions=assertions,
         task_duration=scoring_context.duration,
-        total_duration=_get_span_duration(case_span),
+        total_duration=_get_span_duration(case_span, fallback_duration),
         trace_id=trace_id,
         span_id=span_id,
     )
@@ -592,7 +873,15 @@ def _group_evaluator_outputs_by_type(
     dict[str, EvaluationResult[int | float]],
     dict[str, EvaluationResult[str]],
 ]:
-    """Groups evaluators by value type."""
+    """Group evaluator outputs by their result type.
+
+    Args:
+        evaluators: Sequence of evaluation results to group.
+
+    Returns:
+        A tuple of dictionaries mapping evaluator names to their results, grouped by result type:
+        (success_evaluations, metric_evaluations, string_evaluations)
+    """
     assertions: dict[str, EvaluationResult[bool]] = {}
     scores: dict[str, EvaluationResult[int | float]] = {}
     labels: dict[str, EvaluationResult[str]] = {}
@@ -619,33 +908,65 @@ _CURRENT_TASK_RUN = ContextVar[_TaskRun | None]('_CURRENT_TASK_RUN', default=Non
 
 
 def set_eval_attribute(name: str, value: Any) -> None:
-    """Set the named attribute for the current eval task run. Do nothing if not in an eval task run."""
+    """Set an attribute on the current task run.
+
+    Args:
+        name: The name of the attribute.
+        value: The value of the attribute.
+    """
     current_case = _CURRENT_TASK_RUN.get()
     if current_case is not None:
         current_case.record_attribute(name, value)
 
 
 def increment_eval_metric(name: str, amount: int | float) -> None:
-    """Increment the named metric for the current eval task run. Do nothing if not in an eval task run."""
+    """Increment a metric on the current task run.
+
+    Args:
+        name: The name of the metric.
+        amount: The amount to increment by.
+    """
     current_case = _CURRENT_TASK_RUN.get()
     if current_case is not None:
         current_case.increment_metric(name, amount)
 
 
-def _get_span_duration(span: logfire.LogfireSpan) -> float:
+def _get_span_duration(span: logfire_api.LogfireSpan, fallback: float) -> float:
+    """Calculate the duration of a span in seconds.
+
+    We prefer to obtain the duration from a span for the sake of consistency with observability and to make
+    the values more reliable during testing. However, if the span is not available (e.g. when using logfire_api
+    without logfire installed), we fall back to the provided duration.
+
+    Args:
+        span: The span to calculate the duration for.
+        fallback: The fallback duration to use if unable to obtain the duration from the span.
+
+    Returns:
+        The duration of the span in seconds.
+    """
     end_time = span.end_time
     start_time = span.start_time
-    assert isinstance(start_time, int), 'span is not started'
-    assert isinstance(end_time, int), 'span is not finished'
+    if not isinstance(start_time, int) or not isinstance(end_time, int):
+        # This will happen if using logfire_api because logfire is not installed.
+        return fallback
     return (end_time - start_time) / 1_000_000_000
 
 
 def _get_registry(
-    custom_evaluators: Sequence[type[Evaluator[InputsT, OutputT, MetadataT]]],
+    custom_evaluator_types: Sequence[type[Evaluator[InputsT, OutputT, MetadataT]]],
 ) -> Mapping[str, type[Evaluator[InputsT, OutputT, MetadataT]]]:
+    """Create a registry of evaluator types from default and custom evaluators.
+
+    Args:
+        custom_evaluator_types: Additional evaluator classes to include in the registry.
+
+    Returns:
+        A mapping from evaluator names to evaluator classes.
+    """
     registry: dict[str, type[Evaluator[InputsT, OutputT, MetadataT]]] = {}
 
-    for evaluator_class in custom_evaluators:
+    for evaluator_class in custom_evaluator_types:
         if not issubclass(evaluator_class, Evaluator):
             raise ValueError(
                 f'All custom evaluator classes must be subclasses of Evaluator, but {evaluator_class} is not'
@@ -669,6 +990,19 @@ def _load_evaluator_from_registry(
     case_name: str | None,
     spec: EvaluatorSpec,
 ) -> Evaluator[InputsT, OutputT, MetadataT]:
+    """Load an evaluator from the registry based on a specification.
+
+    Args:
+        registry: Mapping from evaluator names to evaluator classes.
+        case_name: Name of the case this evaluator will be used for, or None for dataset-level evaluators.
+        spec: Specification of the evaluator to load.
+
+    Returns:
+        An initialized evaluator instance.
+
+    Raises:
+        ValueError: If the evaluator name is not found in the registry.
+    """
     evaluator_class = registry.get(spec.name)
     if evaluator_class is None:
         raise ValueError(
