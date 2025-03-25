@@ -9,14 +9,13 @@ a task function to produce an evaluation report.
 
 from __future__ import annotations as _annotations
 
-import asyncio
 import functools
 import inspect
 import sys
 import time
 import warnings
 from collections.abc import Awaitable, Mapping, Sequence
-from contextlib import nullcontext
+from contextlib import AsyncExitStack
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -233,7 +232,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         """
         name = name or get_unwrapped_function_name(task)
 
-        limiter = anyio.Semaphore(max_concurrency) if max_concurrency is not None else nullcontext()
+        limiter = anyio.Semaphore(max_concurrency) if max_concurrency is not None else AsyncExitStack()
         with _logfire.span('evaluate {name}', name=name) as eval_span:
             cases: list[ReportCase] = []
 
@@ -825,12 +824,13 @@ async def _run_task_and_evaluators(
         evaluators = case.evaluators + dataset_evaluators
         evaluator_outputs: list[EvaluationResult] = []
         if evaluators:
-            async with asyncio.TaskGroup() as tg:
-                tasks: list[asyncio.Task[list[EvaluationResult]]] = []
+
+            async def evaluator_task(ev: Evaluator[InputsT, OutputT, MetadataT]):
+                evaluator_outputs.extend(await run_evaluator(ev, scoring_context))
+
+            async with anyio.create_task_group() as tg:
                 for evaluator in evaluators:
-                    tasks.append(tg.create_task(run_evaluator(evaluator, scoring_context)))
-            for t in tasks:
-                evaluator_outputs.extend(t.result())
+                    tg.start_soon(evaluator_task, evaluator)
 
         assertions, scores, labels = _group_evaluator_outputs_by_type(evaluator_outputs)
         case_span.set_attribute('assertions', _evaluation_results_adapter.dump_python(assertions))
