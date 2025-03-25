@@ -717,7 +717,7 @@ async def test_multiple_agent_tool_calls(allow_model_requests: None, gemini_api_
         elif country == 'England':
             return 'London'
         else:
-            raise ValueError(f'Country {country} not supported.')
+            raise ValueError(f'Country {country} not supported.')  # pragma: no cover
 
     result = await agent.run('What is the capital of France?')
     assert result.data == snapshot('The capital of France is Paris.\n')
