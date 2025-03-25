@@ -449,8 +449,8 @@ def _map_usage(message: AnthropicMessage | RawMessageStreamEvent) -> usage.Usage
     request_tokens = getattr(response_usage, 'input_tokens', None)
 
     anthropic_extra = {
-        'cache_creation_input_tokens': int(getattr(response_usage, 'cache_creation_input_tokens', 0)),
-        'cache_read_input_tokens': int(getattr(response_usage, 'cache_read_input_tokens', 0)),
+        'cache_creation_input_tokens': getattr(response_usage, 'cache_creation_input_tokens', None) or 0,
+        'cache_read_input_tokens': getattr(response_usage, 'cache_read_input_tokens', None) or 0,
     }
 
     return usage.Usage(
