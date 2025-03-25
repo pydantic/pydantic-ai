@@ -64,38 +64,6 @@ class ReportCase(BaseModel):
     trace_id: str
     span_id: str
 
-    @staticmethod
-    def group_evaluator_outputs(
-        evaluator_outputs: list[EvaluationResult],
-    ) -> tuple[
-        dict[str, EvaluationResult[int | float]],
-        dict[str, EvaluationResult[str]],
-        dict[str, EvaluationResult[bool]],
-    ]:
-        scores: dict[str, EvaluationResult[int | float]] = {}
-        labels: dict[str, EvaluationResult[str]] = {}
-        assertions: dict[str, EvaluationResult[bool]] = {}
-
-        seen_names = set[str]()
-        for eo in evaluator_outputs:
-            name = eo.name
-            # Dedupe repeated names by adding a numeric suffix
-            if name in seen_names:
-                suffix = 2
-                while f'{name}_{suffix}' in seen_names:
-                    suffix += 1
-                name = f'{name}_{suffix}'
-            # eo = replace(eo, name=name)
-            seen_names.add(name)
-            if score := eo.downcast(int, float):
-                scores[name] = score
-            if label := eo.downcast(str):
-                labels[name] = label
-            if assertion := eo.downcast(bool):
-                assertions[name] = assertion
-
-        return scores, labels, assertions
-
 
 class ReportCaseAggregate(BaseModel):
     """A synthetic case that summarizes a set of cases."""

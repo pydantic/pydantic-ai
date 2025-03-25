@@ -221,7 +221,7 @@ async def run_evaluator(
     except ValidationError as e:
         raise ValueError(f'{evaluator!r}.evaluate returned a value of an invalid type: {raw_results!r}.') from e
 
-    results = _convert_to_mapping(results, scalar_name=type(evaluator).__name__)
+    results = _convert_to_mapping(results, scalar_name=evaluator.name())
 
     details: list[EvaluationResult] = []
     for name, result in results.items():

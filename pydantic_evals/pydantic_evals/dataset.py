@@ -847,7 +847,6 @@ async def _run_task_and_evaluators(
 
     report_inputs = to_jsonable_python(case.inputs)
 
-    scores, labels, assertions = ReportCase.group_evaluator_outputs(evaluator_outputs)
     return ReportCase(
         name=report_case_name,
         inputs=report_inputs,
@@ -867,7 +866,7 @@ async def _run_task_and_evaluators(
 
 
 def _group_evaluator_outputs_by_type(
-    evaluators: Sequence[EvaluationResult],
+    evaluation_results: Sequence[EvaluationResult],
 ) -> tuple[
     dict[str, EvaluationResult[bool]],
     dict[str, EvaluationResult[int | float]],
@@ -876,7 +875,7 @@ def _group_evaluator_outputs_by_type(
     """Group evaluator outputs by their result type.
 
     Args:
-        evaluators: Sequence of evaluation results to group.
+        evaluation_results: Sequence of evaluation results to group.
 
     Returns:
         A tuple of dictionaries mapping evaluator names to their results, grouped by result type:
@@ -886,8 +885,8 @@ def _group_evaluator_outputs_by_type(
     scores: dict[str, EvaluationResult[int | float]] = {}
     labels: dict[str, EvaluationResult[str]] = {}
     seen_names = set[str]()
-    for a in evaluators:
-        name = a.name
+    for er in evaluation_results:
+        name = er.name
         # Dedupe repeated names by adding a numeric suffix
         if name in seen_names:
             suffix = 2
@@ -895,11 +894,11 @@ def _group_evaluator_outputs_by_type(
                 suffix += 1
             name = f'{name}_{suffix}'
         seen_names.add(name)
-        if assertion := a.downcast(bool):
+        if assertion := er.downcast(bool):
             assertions[name] = assertion
-        elif score := a.downcast(int, float):
+        elif score := er.downcast(int, float):
             scores[name] = score
-        elif label := a.downcast(str):
+        elif label := er.downcast(str):
             labels[name] = label
     return assertions, scores, labels
 
