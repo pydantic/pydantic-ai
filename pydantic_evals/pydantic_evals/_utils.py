@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 import asyncio
 import inspect
 import sys
-from collections.abc import Awaitable, Coroutine
+from collections.abc import Awaitable, Coroutine, Sequence
 from functools import partial
 from typing import Any, Callable, TypeVar
 
@@ -96,7 +96,7 @@ def run_until_complete(coro: Coroutine[None, None, _R]) -> _R:
             return runner.run(coro)
 
 
-async def task_group_gather(tasks: list[Callable[[], Awaitable[T]]]) -> list[T]:
+async def task_group_gather(tasks: Sequence[Callable[[], Awaitable[T]]]) -> list[T]:
     """Run multiple awaitable callables concurrently using an AnyIO task group.
 
     Args:

@@ -252,6 +252,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             eval_span.set_attribute('cases', report.cases)
             # TODO(DavidM): Remove this 'averages' attribute once we compute it in the details panel
             eval_span.set_attribute('averages', ReportCaseAggregate.average(report.cases))
+
         return report
 
     def evaluate_sync(

@@ -1,9 +1,11 @@
 from __future__ import annotations as _annotations
 
+import asyncio
 import json
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import pytest
 from dirty_equals import HasRepr
@@ -417,3 +419,178 @@ async def test_invalid_evaluator_result_type(example_dataset: Dataset[TaskInput,
             )
         )
     )
+
+
+async def test_dataset_evaluate_with_failing_task(example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata]):
+    """Test evaluating a dataset with a failing task."""
+
+    async def failing_task(inputs: TaskInput) -> TaskOutput:
+        raise ValueError('Task failed')
+
+    with pytest.raises(ExceptionGroup) as exc_info:
+        await example_dataset.evaluate(failing_task)
+    assert exc_info.value == HasRepr(
+        repr(ExceptionGroup('unhandled errors in a TaskGroup', [ValueError('Task failed'), ValueError('Task failed')]))
+    )
+
+
+async def test_dataset_evaluate_with_failing_evaluator(example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata]):
+    """Test evaluating a dataset with a failing evaluator."""
+
+    class FailingEvaluator(Evaluator[TaskInput, TaskOutput, TaskMetadata]):
+        def evaluate(self, ctx: EvaluatorContext[TaskInput, TaskOutput, TaskMetadata]) -> bool:
+            raise ValueError('Evaluator failed')
+
+    example_dataset.add_evaluator(FailingEvaluator())
+
+    async def task(inputs: TaskInput) -> TaskOutput:
+        return TaskOutput(answer=inputs.query.upper())
+
+    with pytest.raises(ExceptionGroup) as exc_info:
+        await example_dataset.evaluate(task)
+    assert exc_info.value == HasRepr(
+        repr(
+            ExceptionGroup(
+                'unhandled errors in a TaskGroup',
+                [
+                    ExceptionGroup('unhandled errors in a TaskGroup', [ValueError('Evaluator failed')]),
+                    ExceptionGroup('unhandled errors in a TaskGroup', [ValueError('Evaluator failed')]),
+                ],
+            )
+        )
+    )
+
+
+async def test_dataset_evaluate_with_invalid_evaluator_result(
+    example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata],
+):
+    """Test evaluating a dataset with an evaluator that returns an invalid result type."""
+
+    @dataclass
+    class MyObject:
+        pass
+
+    class InvalidEvaluator(Evaluator[TaskInput, TaskOutput, TaskMetadata]):
+        def evaluate(self, ctx: EvaluatorContext[TaskInput, TaskOutput, TaskMetadata]) -> Any:
+            return MyObject()  # Return an invalid type
+
+    example_dataset.add_evaluator(InvalidEvaluator())
+
+    async def task(inputs: TaskInput) -> TaskOutput:
+        return TaskOutput(answer=inputs.query.upper())
+
+    with pytest.raises(ExceptionGroup) as exc_info:
+        await example_dataset.evaluate(task)
+    assert exc_info.value == HasRepr(
+        repr(
+            ExceptionGroup(
+                'unhandled errors in a TaskGroup',
+                [
+                    ExceptionGroup(
+                        'unhandled errors in a TaskGroup',
+                        [
+                            ValueError(
+                                'test_dataset_evaluate_with_invalid_evaluator_result.<locals>.InvalidEvaluator().evaluate returned a value of an invalid type: test_dataset_evaluate_with_invalid_evaluator_result.<locals>.MyObject().'
+                            )
+                        ],
+                    ),
+                    ExceptionGroup(
+                        'unhandled errors in a TaskGroup',
+                        [
+                            ValueError(
+                                'test_dataset_evaluate_with_invalid_evaluator_result.<locals>.InvalidEvaluator().evaluate returned a value of an invalid type: test_dataset_evaluate_with_invalid_evaluator_result.<locals>.MyObject().'
+                            )
+                        ],
+                    ),
+                ],
+            )
+        )
+    )
+
+
+async def test_dataset_evaluate_with_custom_name(example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata]):
+    """Test evaluating a dataset with a custom task name."""
+
+    async def task(inputs: TaskInput) -> TaskOutput:
+        return TaskOutput(answer=inputs.query.upper())
+
+    report = await example_dataset.evaluate(task, name='custom_task')
+    assert report.name == 'custom_task'
+
+
+async def test_dataset_evaluate_with_sync_task(example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata]):
+    """Test evaluating a dataset with a synchronous task."""
+
+    def sync_task(inputs: TaskInput) -> TaskOutput:
+        return TaskOutput(answer=inputs.query.upper())
+
+    report = await example_dataset.evaluate(lambda x: asyncio.sleep(0, sync_task(x)))
+    assert report.name == '<lambda>'
+    assert len(report.cases) == 2
+
+
+async def test_dataset_evaluate_with_no_expected_output(example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata]):
+    """Test evaluating a dataset with no expected output."""
+    case = Case(
+        name='no_output',
+        inputs=TaskInput(query='hello'),
+        metadata=TaskMetadata(difficulty='easy'),
+    )
+    dataset = Dataset(cases=[case])
+
+    async def task(inputs: TaskInput) -> TaskOutput:
+        return TaskOutput(answer=inputs.query.upper())
+
+    report = await dataset.evaluate(task)
+    assert len(report.cases) == 1
+    assert report.cases[0].name == 'no_output'
+
+
+async def test_dataset_evaluate_with_no_metadata(example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata]):
+    """Test evaluating a dataset with no metadata."""
+    case = Case(
+        name='no_metadata',
+        inputs=TaskInput(query='hello'),
+        expected_output=TaskOutput(answer='HELLO'),
+    )
+    dataset = Dataset(cases=[case])
+
+    async def task(inputs: TaskInput) -> TaskOutput:
+        return TaskOutput(answer=inputs.query.upper())
+
+    report = await dataset.evaluate(task)
+    assert len(report.cases) == 1
+    assert report.cases[0].name == 'no_metadata'
+
+
+async def test_dataset_evaluate_with_empty_cases(example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata]):
+    """Test evaluating a dataset with no cases."""
+    dataset = Dataset(cases=[])
+
+    async def task(inputs: TaskInput) -> TaskOutput:
+        return TaskOutput(answer=inputs.query.upper())
+
+    report = await dataset.evaluate(task)
+    assert len(report.cases) == 0
+
+
+async def test_dataset_evaluate_with_multiple_evaluators(example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata]):
+    """Test evaluating a dataset with multiple evaluators."""
+
+    class FirstEvaluator(Evaluator[TaskInput, TaskOutput, TaskMetadata]):
+        def evaluate(self, ctx: EvaluatorContext[TaskInput, TaskOutput, TaskMetadata]) -> int:
+            return len(ctx.output.answer)
+
+    class SecondEvaluator(Evaluator[TaskInput, TaskOutput, TaskMetadata]):
+        def evaluate(self, ctx: EvaluatorContext[TaskInput, TaskOutput, TaskMetadata]) -> int:
+            return len(ctx.output.answer) + 1
+
+    example_dataset.add_evaluator(FirstEvaluator())
+    example_dataset.add_evaluator(SecondEvaluator())
+
+    async def task(inputs: TaskInput) -> TaskOutput:
+        return TaskOutput(answer=inputs.query.upper())
+
+    report = await example_dataset.evaluate(task)
+    assert len(report.cases) == 2
+    assert len(report.cases[0].scores) == 2

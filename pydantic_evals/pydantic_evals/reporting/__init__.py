@@ -82,7 +82,15 @@ class ReportCaseAggregate(BaseModel):
         """Produce a synthetic "summary" case by averaging quantitative attributes."""
         num_cases = len(cases)
         if num_cases == 0:
-            raise ValueError('Cannot summarize an empty list of cases')
+            return ReportCaseAggregate(
+                name='Averages',
+                scores={},
+                labels={},
+                metrics={},
+                assertions=None,
+                task_duration=0.0,
+                total_duration=0.0,
+            )
 
         def _scores_averages(scores_by_name: list[dict[str, int | float | bool]]) -> dict[str, float]:
             counts_by_name: dict[str, int] = defaultdict(int)

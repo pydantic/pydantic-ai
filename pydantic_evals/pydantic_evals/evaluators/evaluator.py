@@ -81,8 +81,13 @@ class EvaluationResult(Generic[EvaluationScalarT]):
             A downcast version of this result if the value is an instance of one of the given types,
             otherwise None.
         """
-        if isinstance(self.value, value_types):
-            return cast(EvaluationResult[T], self)
+        # Check if value matches any of the target types, handling bool as a special case
+        for value_type in value_types:
+            if isinstance(self.value, value_type):
+                # Only match bool with explicit bool type
+                if isinstance(self.value, bool) and value_type is not bool:
+                    continue
+                return cast(EvaluationResult[T], self)
         return None
 
 

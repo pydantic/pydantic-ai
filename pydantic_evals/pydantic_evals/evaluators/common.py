@@ -28,7 +28,7 @@ class Equals(Evaluator[object, object, object]):
 
     value: Any
 
-    def evaluate(self, ctx: EvaluatorContext[object, object, object]) -> EvaluatorOutput:
+    def evaluate(self, ctx: EvaluatorContext[object, object, object]) -> bool:
         return ctx.output == self.value
 
 
@@ -36,7 +36,7 @@ class Equals(Evaluator[object, object, object]):
 class EqualsExpected(Evaluator[object, object, object]):
     """Check if the output exactly equals the expected output."""
 
-    def evaluate(self, ctx: EvaluatorContext[object, object, object]) -> EvaluatorOutput:
+    def evaluate(self, ctx: EvaluatorContext[object, object, object]) -> bool | dict[str, bool]:
         if ctx.expected_output is None:
             return {}  # Only compare if expected output is provided
         return ctx.output == ctx.expected_output
@@ -63,7 +63,7 @@ class Contains(Evaluator[object, object, object]):
     def evaluate(  # noqa C901
         self,
         ctx: EvaluatorContext[object, object, object],
-    ) -> EvaluatorOutput:
+    ) -> EvaluationReason:
         # Convert objects to strings if requested
         failure_reason: str | None = None
         as_strings = self.as_strings or (isinstance(self.value, str) and isinstance(ctx.output, str))
@@ -123,7 +123,7 @@ class IsInstance(Evaluator[object, object, object]):
 
     type_name: str
 
-    def evaluate(self, ctx: EvaluatorContext[object, object, object]) -> EvaluatorOutput:
+    def evaluate(self, ctx: EvaluatorContext[object, object, object]) -> EvaluationReason:
         output = ctx.output
         for cls in type(output).__mro__:
             if cls.__name__ == self.type_name or cls.__qualname__ == self.type_name:
@@ -141,7 +141,7 @@ class MaxDuration(Evaluator[object, object, object]):
 
     seconds: float | timedelta
 
-    def evaluate(self, ctx: EvaluatorContext[object, object, object]) -> EvaluatorOutput:
+    def evaluate(self, ctx: EvaluatorContext[object, object, object]) -> bool:
         duration = timedelta(seconds=ctx.duration)
         seconds = self.seconds
         if not isinstance(seconds, timedelta):
@@ -160,7 +160,7 @@ class LlmJudge(Evaluator[object, object, object]):
     async def evaluate(
         self,
         ctx: EvaluatorContext[object, object, object],
-    ) -> EvaluatorOutput:
+    ) -> EvaluationReason:
         if self.include_input:
             from .llm_as_a_judge import judge_input_output
 
@@ -181,7 +181,7 @@ class SpanQuery(Evaluator[object, object, object]):
     def evaluate(
         self,
         ctx: EvaluatorContext[object, object, object],
-    ) -> EvaluatorOutput:
+    ) -> bool:
         return ctx.span_tree.find_first(as_predicate(self.query)) is not None
 
 

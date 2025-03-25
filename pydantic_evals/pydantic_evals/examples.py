@@ -15,7 +15,6 @@ from typing_extensions import TypeVar
 
 from pydantic_ai import Agent, models
 from pydantic_evals import Dataset
-from pydantic_evals.evaluators.common import IsInstance, LlmJudge
 from pydantic_evals.evaluators.evaluator import Evaluator
 
 InputsT = TypeVar('InputsT', default=Any)
@@ -84,31 +83,3 @@ async def generate_dataset(
     if path is not None:
         result.to_file(path, custom_evaluator_types=custom_evaluator_types)
     return result
-
-
-if __name__ == '__main__':
-
-    async def main():
-        """Usage example for the generate_dataset function.
-
-        This function demonstrates how to generate a dataset for evaluating a time range inference function.
-        """
-        from pydantic_evals.demo.time_range.models import TimeRangeInputs, TimeRangeResponse
-
-        custom_evaluator_types = (LlmJudge, IsInstance)
-        await generate_dataset(
-            path='test_cases.yaml',
-            inputs_type=TimeRangeInputs,
-            output_type=TimeRangeResponse,  # type: ignore  # need to support TypeForm
-            metadata_type=dict[str, Any],
-            custom_evaluator_types=custom_evaluator_types,
-            extra_instructions=(
-                'Include some case-specific evaluators, including some LlmJudge calls that might not be'
-                ' expected to pass for a naive implementation (note LlmJudge can see both the case inputs and outputs).'
-                ' Do not use the `model` or `include_input` kwargs to LlmJudge.'
-            ),
-        )
-
-    import asyncio
-
-    asyncio.run(main())

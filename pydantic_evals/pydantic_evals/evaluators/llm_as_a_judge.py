@@ -13,7 +13,7 @@ class GradingOutput(BaseModel, populate_by_name=True):
     """The output of a grading operation."""
 
     reason: str
-    pass_: bool = Field(alias='pass')
+    pass_: bool = Field(validation_alias='pass', serialization_alias='pass')
     score: float
 
 
