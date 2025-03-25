@@ -4,7 +4,7 @@ from typing import Any, cast
 import pytest
 from inline_snapshot import snapshot
 from logfire.testing import CaptureLogfire
-from pydantic import BaseModel
+from pydantic import BaseModel, TypeAdapter
 
 from pydantic_evals.evaluators._spec import EvaluatorSpec
 from pydantic_evals.evaluators.common import (
@@ -84,20 +84,20 @@ async def test_evaluator_spec_serialization():
     # Create a spec
     spec = EvaluatorSpec(name='MyEvaluator', arguments={'key1': 'value1'})
 
-    # Serialize it
-    serialized = spec.serialize()
-
-    # Check the serialized form
-    assert serialized == {'MyEvaluator': {'key1': 'value1'}}
+    adapter = TypeAdapter(EvaluatorSpec)
+    assert adapter.dump_python(spec) == snapshot({'name': 'MyEvaluator', 'arguments': {'key1': 'value1'}})
+    assert adapter.dump_python(spec, context={'use_short_form': True}) == snapshot({'MyEvaluator': {'key1': 'value1'}})
 
     # Test string serialization
     spec_simple = EvaluatorSpec(name='MyEvaluator', arguments=None)
-    assert spec_simple.serialize() == 'MyEvaluator'
+    assert adapter.dump_python(spec_simple) == snapshot({'name': 'MyEvaluator', 'arguments': None})
+    assert adapter.dump_python(spec_simple, context={'use_short_form': True}) == snapshot('MyEvaluator')
 
     # Test single arg serialization
     single_arg = cast(tuple[Any], ('value1',))
     spec_single_arg = EvaluatorSpec(name='MyEvaluator', arguments=single_arg)
-    assert spec_single_arg.serialize() == {'MyEvaluator': 'value1'}
+    assert adapter.dump_python(spec_single_arg) == snapshot({'name': 'MyEvaluator', 'arguments': ('value1',)})
+    assert adapter.dump_python(spec_single_arg, context={'use_short_form': True}) == snapshot({'MyEvaluator': 'value1'})
 
 
 @dataclass
@@ -125,8 +125,8 @@ async def test_evaluator_call(test_context: EvaluatorContext[TaskInput, TaskOutp
 
 
 async def test_is_instance_evaluator():
-    """Test the is_instance evaluator."""
-    # Create a context with the correct object typing for is_instance
+    """Test the IsInstance evaluator."""
+    # Create a context with the correct object typing for IsInstance
     object_context = EvaluatorContext[object, object, object](
         name='test_case',
         inputs=TaskInput(query='What is 2+2?'),
@@ -168,7 +168,7 @@ async def test_is_instance_evaluator():
 
 
 async def test_llm_judge_evaluator():
-    """Test the llm_judge evaluator."""
+    """Test the LlmJudge evaluator."""
     # We can't easily test this without mocking the LLM, so we'll just check that it's importable
     assert LlmJudge
 

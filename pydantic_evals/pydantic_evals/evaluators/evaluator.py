@@ -9,8 +9,8 @@ from pydantic import (
     ValidationError,
     model_serializer,
 )
-from pydantic.alias_generators import to_snake
 from pydantic_core import to_jsonable_python
+from pydantic_core.core_schema import SerializationInfo
 from typing_extensions import TypeVar
 
 from .._utils import run_until_complete
@@ -129,7 +129,10 @@ class Evaluator(Generic[InputsT, OutputT, MetadataT]):
         Returns:
             The snake-cased name of the evaluator class.
         """
-        return to_snake(cls.__name__)
+        # If we want to prefer snake_case, could use:
+        # from pydantic.alias_generators import to_snake
+        # return to_snake(cls.__name__)
+        return cls.__name__
 
     def evaluate(self, ctx: EvaluatorContext[InputsT, OutputT, MetadataT]) -> EvaluatorOutput:
         """Evaluate the task output in the given context.
@@ -168,7 +171,7 @@ class Evaluator(Generic[InputsT, OutputT, MetadataT]):
         return self.evaluate(ctx)
 
     @model_serializer(mode='plain')
-    def serialize(self) -> Any:
+    def serialize(self, info: SerializationInfo) -> Any:
         """Serialize this Evaluator to a JSON-serializable form.
 
         Returns:
@@ -193,7 +196,7 @@ class Evaluator(Generic[InputsT, OutputT, MetadataT]):
             arguments = (next(iter(raw_arguments.values())),)
         else:
             arguments = raw_arguments
-        return to_jsonable_python(EvaluatorSpec(name=self.name(), arguments=arguments))
+        return to_jsonable_python(EvaluatorSpec(name=self.name(), arguments=arguments), context=info.context)
 
 
 async def run_evaluator(

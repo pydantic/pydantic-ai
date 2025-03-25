@@ -13,6 +13,7 @@ from pydantic import (
     model_serializer,
     model_validator,
 )
+from pydantic_core.core_schema import SerializationInfo, SerializerFunctionWrapHandler
 
 
 class EvaluatorSpec(BaseModel):
@@ -91,8 +92,8 @@ class EvaluatorSpec(BaseModel):
                 raise exc  # raise the original error
             return deserialized.to_evaluator_spec()
 
-    @model_serializer(mode='plain')
-    def serialize(self) -> Any:
+    @model_serializer(mode='wrap')
+    def serialize(self, handler: SerializerFunctionWrapHandler, info: SerializationInfo) -> Any:
         """Serialize using the appropriate short-form if possible.
 
         Returns:
@@ -101,12 +102,15 @@ class EvaluatorSpec(BaseModel):
             - {name: first_arg} if there's a single positional argument
             - {name: {kwargs}} if there are multiple (keyword) arguments
         """
-        if self.arguments is None:
-            return self.name
-        elif isinstance(self.arguments, tuple):
-            return {self.name: self.arguments[0]}
+        if isinstance(info.context, dict) and info.context.get('use_short_form'):  # pyright: ignore[reportUnknownMemberType]
+            if self.arguments is None:
+                return self.name
+            elif isinstance(self.arguments, tuple):
+                return {self.name: self.arguments[0]}
+            else:
+                return {self.name: self.arguments}
         else:
-            return {self.name: self.arguments}
+            return handler(self)
 
 
 class _SerializedEvaluatorSpec(RootModel[str | dict[str, Any]]):

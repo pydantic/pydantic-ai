@@ -101,9 +101,9 @@ if __name__ == '__main__':
             metadata_type=dict[str, Any],
             custom_evaluator_types=custom_evaluator_types,
             extra_instructions=(
-                'Include some case-specific evaluators, including some llm_judge calls that might not be'
-                ' expected to pass for a naive implementation (note llm_judge can see both the case inputs and outputs).'
-                ' Do not use the `model` or `include_input` kwargs to llm_judge.'
+                'Include some case-specific evaluators, including some LlmJudge calls that might not be'
+                ' expected to pass for a naive implementation (note LlmJudge can see both the case inputs and outputs).'
+                ' Do not use the `model` or `include_input` kwargs to LlmJudge.'
             ),
         )
 

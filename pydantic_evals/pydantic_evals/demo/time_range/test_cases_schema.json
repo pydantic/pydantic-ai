@@ -34,32 +34,32 @@
           "items": {
             "anyOf": [
               {
-                "$ref": "#/$defs/short_evaluator_llm_judge"
+                "$ref": "#/$defs/short_evaluator_LlmJudge"
               },
               {
-                "$ref": "#/$defs/evaluator_llm_judge"
+                "$ref": "#/$defs/evaluator_LlmJudge"
               },
               {
-                "$ref": "#/$defs/short_evaluator_is_instance"
+                "$ref": "#/$defs/short_evaluator_IsInstance"
               },
               {
-                "$ref": "#/$defs/short_evaluator_equals"
+                "$ref": "#/$defs/short_evaluator_Equals"
               },
               {
-                "const": "equals_expected",
+                "const": "EqualsExpected",
                 "type": "string"
               },
               {
-                "$ref": "#/$defs/short_evaluator_contains"
+                "$ref": "#/$defs/short_evaluator_Contains"
               },
               {
-                "$ref": "#/$defs/evaluator_contains"
+                "$ref": "#/$defs/evaluator_Contains"
               },
               {
-                "$ref": "#/$defs/short_evaluator_max_duration"
+                "$ref": "#/$defs/short_evaluator_MaxDuration"
               },
               {
-                "$ref": "#/$defs/short_evaluator_span_query"
+                "$ref": "#/$defs/short_evaluator_SpanQuery"
               }
             ]
           },
@@ -434,33 +434,33 @@
       "title": "TimeRangeInputs",
       "type": "object"
     },
-    "evaluator_contains": {
+    "evaluator_Contains": {
       "additionalProperties": false,
       "properties": {
-        "contains": {
-          "$ref": "#/$defs/evaluator_params_contains"
+        "Contains": {
+          "$ref": "#/$defs/evaluator_params_Contains"
         }
       },
       "required": [
-        "contains"
+        "Contains"
       ],
-      "title": "evaluator_contains",
+      "title": "evaluator_Contains",
       "type": "object"
     },
-    "evaluator_llm_judge": {
+    "evaluator_LlmJudge": {
       "additionalProperties": false,
       "properties": {
-        "llm_judge": {
-          "$ref": "#/$defs/evaluator_params_llm_judge"
+        "LlmJudge": {
+          "$ref": "#/$defs/evaluator_params_LlmJudge"
         }
       },
       "required": [
-        "llm_judge"
+        "LlmJudge"
       ],
-      "title": "evaluator_llm_judge",
+      "title": "evaluator_LlmJudge",
       "type": "object"
     },
-    "evaluator_params_contains": {
+    "evaluator_params_Contains": {
       "additionalProperties": false,
       "properties": {
         "value": {
@@ -478,10 +478,10 @@
       "required": [
         "value"
       ],
-      "title": "evaluator_params_contains",
+      "title": "evaluator_params_Contains",
       "type": "object"
     },
-    "evaluator_params_llm_judge": {
+    "evaluator_params_LlmJudge": {
       "additionalProperties": false,
       "properties": {
         "rubric": {
@@ -499,67 +499,67 @@
       "required": [
         "rubric"
       ],
-      "title": "evaluator_params_llm_judge",
+      "title": "evaluator_params_LlmJudge",
       "type": "object"
     },
-    "short_evaluator_contains": {
+    "short_evaluator_Contains": {
       "additionalProperties": false,
       "properties": {
-        "contains": {
+        "Contains": {
           "title": "Contains"
         }
       },
       "required": [
-        "contains"
+        "Contains"
       ],
-      "title": "short_evaluator_contains",
+      "title": "short_evaluator_Contains",
       "type": "object"
     },
-    "short_evaluator_equals": {
+    "short_evaluator_Equals": {
       "additionalProperties": false,
       "properties": {
-        "equals": {
+        "Equals": {
           "title": "Equals"
         }
       },
       "required": [
-        "equals"
+        "Equals"
       ],
-      "title": "short_evaluator_equals",
+      "title": "short_evaluator_Equals",
       "type": "object"
     },
-    "short_evaluator_is_instance": {
+    "short_evaluator_IsInstance": {
       "additionalProperties": false,
       "properties": {
-        "is_instance": {
-          "title": "Is Instance",
+        "IsInstance": {
+          "title": "Isinstance",
           "type": "string"
         }
       },
       "required": [
-        "is_instance"
+        "IsInstance"
       ],
-      "title": "short_evaluator_is_instance",
+      "title": "short_evaluator_IsInstance",
       "type": "object"
     },
-    "short_evaluator_llm_judge": {
+    "short_evaluator_LlmJudge": {
       "additionalProperties": false,
       "properties": {
-        "llm_judge": {
-          "title": "Llm Judge",
+        "LlmJudge": {
+          "title": "Llmjudge",
           "type": "string"
         }
       },
       "required": [
-        "llm_judge"
+        "LlmJudge"
       ],
-      "title": "short_evaluator_llm_judge",
+      "title": "short_evaluator_LlmJudge",
       "type": "object"
     },
-    "short_evaluator_max_duration": {
+    "short_evaluator_MaxDuration": {
       "additionalProperties": false,
       "properties": {
-        "max_duration": {
+        "MaxDuration": {
           "anyOf": [
             {
               "type": "number"
@@ -569,26 +569,26 @@
               "type": "string"
             }
           ],
-          "title": "Max Duration"
+          "title": "Maxduration"
         }
       },
       "required": [
-        "max_duration"
+        "MaxDuration"
       ],
-      "title": "short_evaluator_max_duration",
+      "title": "short_evaluator_MaxDuration",
       "type": "object"
     },
-    "short_evaluator_span_query": {
+    "short_evaluator_SpanQuery": {
       "additionalProperties": false,
       "properties": {
-        "span_query": {
+        "SpanQuery": {
           "$ref": "#/$defs/SpanQuery"
         }
       },
       "required": [
-        "span_query"
+        "SpanQuery"
       ],
-      "title": "short_evaluator_span_query",
+      "title": "short_evaluator_SpanQuery",
       "type": "object"
     }
   },
@@ -606,32 +606,32 @@
       "items": {
         "anyOf": [
           {
-            "$ref": "#/$defs/short_evaluator_llm_judge"
+            "$ref": "#/$defs/short_evaluator_LlmJudge"
           },
           {
-            "$ref": "#/$defs/evaluator_llm_judge"
+            "$ref": "#/$defs/evaluator_LlmJudge"
           },
           {
-            "$ref": "#/$defs/short_evaluator_is_instance"
+            "$ref": "#/$defs/short_evaluator_IsInstance"
           },
           {
-            "$ref": "#/$defs/short_evaluator_equals"
+            "$ref": "#/$defs/short_evaluator_Equals"
           },
           {
-            "const": "equals_expected",
+            "const": "EqualsExpected",
             "type": "string"
           },
           {
-            "$ref": "#/$defs/short_evaluator_contains"
+            "$ref": "#/$defs/short_evaluator_Contains"
           },
           {
-            "$ref": "#/$defs/evaluator_contains"
+            "$ref": "#/$defs/evaluator_Contains"
           },
           {
-            "$ref": "#/$defs/short_evaluator_max_duration"
+            "$ref": "#/$defs/short_evaluator_MaxDuration"
           },
           {
-            "$ref": "#/$defs/short_evaluator_span_query"
+            "$ref": "#/$defs/short_evaluator_SpanQuery"
           }
         ]
       },

@@ -66,8 +66,8 @@ async def my_evaluator(ctx: EvaluatorContext[str, str]) -> float:  # (3)!
 
 dataset.add_evaluator(my_evaluator)
 ```
-1. Import built-in evaluators, here we import [`is_instance`][pydantic_evals.evaluators.is_instance].
-2. Add built-in evaluators [`is_instance`][pydantic_evals.evaluators.is_instance] to the dataset.
+1. Import built-in evaluators, here we import [`IsInstance`][pydantic_evals.evaluators.IsInstance].
+2. Add built-in evaluators [`IsInstance`][pydantic_evals.evaluators.IsInstance] to the dataset.
 3. Create a custom evaluator function that takes an [`EvaluatorContext`][pydantic_evals.evaluators.context.EvaluatorContext] and returns a simple score.
 
 ## Evaluation Process
@@ -124,11 +124,9 @@ report.print(include_input=True, include_output=True)  # (6)!
 ┏━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━┓
 ┃ Case ID     ┃ Inputs                         ┃ Outputs ┃ Scores            ┃ Assertions ┃ Duration ┃
 ┡━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━┩
-│ simple_case │ What is the capital of France? │ Paris   │ IsInstance: True  │ ✔          │    123µs │
-│             │                                │         │ MyEvaluator: 1.00 │            │          │
+│ simple_case │ What is the capital of France? │ Paris   │ MyEvaluator: 1.00 │ ✔          │    123µs │
 ├─────────────┼────────────────────────────────┼─────────┼───────────────────┼────────────┼──────────┤
-│ Averages    │                                │         │ IsInstance: 1.00  │ 100.0% ✔   │    123µs │
-│             │                                │         │ MyEvaluator: 1.00 │            │          │
+│ Averages    │                                │         │ MyEvaluator: 1.00 │ 100.0% ✔   │    123µs │
 └─────────────┴────────────────────────────────┴─────────┴───────────────────┴────────────┴──────────┘
 """
 ```
@@ -348,7 +346,7 @@ cases:
     focus: vegetarian
   expected_output: null
   evaluators:
-  - llm_judge: Recipe should not contain meat or animal products
+  - LlmJudge: Recipe should not contain meat or animal products
 - name: gluten_free_recipe
   inputs:
     dish_name: Chocolate Cake
@@ -357,10 +355,10 @@ cases:
     focus: gluten-free
   expected_output: null
   evaluators:
-  - llm_judge: Recipe should not contain gluten or wheat products
+  - LlmJudge: Recipe should not contain gluten or wheat products
 evaluators:
-- is_instance: RecipeOutput
-- llm_judge:
+- IsInstance: RecipeOutput
+- LlmJudge:
     rubric: Recipe should have clear steps and relevant ingredients
     include_input: true
 """
@@ -557,17 +555,11 @@ report.print(include_input=True, include_output=True)
 ┏━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━┓
 ┃ Case ID         ┃ Inputs                ┃ Outputs                                 ┃ Scores                   ┃ Assertions ┃ Duration ┃
 ┡━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━┩
-│ normal_text     │ Hello World           │ Processed: hello_world                  │ has_spans: True          │ ✔✗         │  101.0ms │
-│                 │                       │                                         │ has_errors: False        │            │          │
-│                 │                       │                                         │ performance_score: 1.00  │            │          │
+│ normal_text     │ Hello World           │ Processed: hello_world                  │ performance_score: 1.00  │ ✔✗         │  101.0ms │
 ├─────────────────┼───────────────────────┼─────────────────────────────────────────┼──────────────────────────┼────────────┼──────────┤
-│ text_with_error │ Contains error marker │ Error processing: Contains error marker │ has_spans: True          │ ✔✔         │  101.0ms │
-│                 │                       │                                         │ has_errors: True         │            │          │
-│                 │                       │                                         │ performance_score: 0     │            │          │
+│ text_with_error │ Contains error marker │ Error processing: Contains error marker │ performance_score: 0     │ ✔✔         │  101.0ms │
 ├─────────────────┼───────────────────────┼─────────────────────────────────────────┼──────────────────────────┼────────────┼──────────┤
-│ Averages        │                       │                                         │ has_spans: 1.00          │ 75.0% ✔    │  101.0ms │
-│                 │                       │                                         │ has_errors: 0.500        │            │          │
-│                 │                       │                                         │ performance_score: 0.500 │            │          │
+│ Averages        │                       │                                         │ performance_score: 0.500 │ 75.0% ✔    │  101.0ms │
 └─────────────────┴───────────────────────┴─────────────────────────────────────────┴──────────────────────────┴────────────┴──────────┘
 """
 ```

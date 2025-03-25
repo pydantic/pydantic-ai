@@ -146,7 +146,14 @@ async def test_evaluate(example_dataset: Dataset[TaskInput, TaskOutput, TaskMeta
     assert len(report.cases) == 2
     assert report.cases[0].model_dump() == snapshot(
         {
-            'assertions': {'correct': {'name': 'correct', 'reason': None, 'source': 'simple_evaluator', 'value': True}},
+            'assertions': {
+                'correct': {
+                    'name': 'correct',
+                    'reason': None,
+                    'source': {'name': 'SimpleEvaluator', 'arguments': None},
+                    'value': True,
+                }
+            },
             'attributes': {},
             'expected_output': {'answer': '4', 'confidence': 1.0},
             'inputs': {'query': 'What is 2+2?'},
@@ -156,8 +163,12 @@ async def test_evaluate(example_dataset: Dataset[TaskInput, TaskOutput, TaskMeta
             'name': 'case1',
             'output': {'answer': '4', 'confidence': 1.0},
             'scores': {
-                'confidence': {'name': 'confidence', 'reason': None, 'source': 'simple_evaluator', 'value': 1.0},
-                'correct': {'name': 'correct', 'reason': None, 'source': 'simple_evaluator', 'value': True},
+                'confidence': {
+                    'name': 'confidence',
+                    'reason': None,
+                    'source': {'name': 'SimpleEvaluator', 'arguments': None},
+                    'value': 1.0,
+                }
             },
             'span_id': '0000000000000003',
             'task_duration': 1.0,
@@ -184,7 +195,14 @@ async def test_evaluate_with_concurrency(example_dataset: Dataset[TaskInput, Tas
     assert len(report.cases) == 2
     assert report.cases[0].model_dump() == snapshot(
         {
-            'assertions': {'correct': {'name': 'correct', 'reason': None, 'source': 'simple_evaluator', 'value': True}},
+            'assertions': {
+                'correct': {
+                    'name': 'correct',
+                    'reason': None,
+                    'source': {'name': 'SimpleEvaluator', 'arguments': None},
+                    'value': True,
+                }
+            },
             'attributes': {},
             'expected_output': {'answer': '4', 'confidence': 1.0},
             'inputs': {'query': 'What is 2+2?'},
@@ -194,8 +212,12 @@ async def test_evaluate_with_concurrency(example_dataset: Dataset[TaskInput, Tas
             'name': 'case1',
             'output': {'answer': '4', 'confidence': 1.0},
             'scores': {
-                'confidence': {'name': 'confidence', 'reason': None, 'source': 'simple_evaluator', 'value': 1.0},
-                'correct': {'name': 'correct', 'reason': None, 'source': 'simple_evaluator', 'value': True},
+                'confidence': {
+                    'name': 'confidence',
+                    'reason': None,
+                    'source': {'name': 'SimpleEvaluator', 'arguments': None},
+                    'value': 1.0,
+                }
             },
             'span_id': '0000000000000003',
             'task_duration': 1.0,

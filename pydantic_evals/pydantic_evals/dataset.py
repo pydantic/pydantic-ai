@@ -24,7 +24,7 @@ from typing import Any, Callable, Generic, Literal, NotRequired, Self, Union
 
 import logfire_api
 import yaml
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, TypeAdapter, ValidationError
 from pydantic._internal import _typing_extra
 from pydantic_core import to_json, to_jsonable_python
 from typing_extensions import TypedDict, TypeVar
@@ -518,14 +518,14 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             self._save_schema(schema_path, custom_evaluator_types)
 
         if fmt == 'yaml':
-            dumped_data = self.model_dump(mode='json', exclude_defaults=True)
+            dumped_data = self.model_dump(mode='json', exclude_defaults=True, context={'use_short_form': True})
             content = yaml.dump(dumped_data, sort_keys=False)
             if schema_ref:
                 yaml_language_server_line = f'# yaml-language-server: $schema={schema_ref}'
                 content = f'{yaml_language_server_line}\n{content}'
             path.write_text(content)
         else:
-            json_data = self.model_dump_json(indent=2, exclude_defaults=True)
+            json_data = self.model_dump_json(indent=2, exclude_defaults=True, context={'use_short_form': True})
             path.write_text(json_data + '\n')
 
     @classmethod
@@ -832,9 +832,9 @@ async def _run_task_and_evaluators(
                 evaluator_outputs.extend(t.result())
 
         assertions, scores, labels = _group_evaluator_outputs_by_type(evaluator_outputs)
-        case_span.set_attribute('assertions', assertions)
-        case_span.set_attribute('scores', scores)
-        case_span.set_attribute('labels', labels)
+        case_span.set_attribute('assertions', _evaluation_results_adapter.dump_python(assertions))
+        case_span.set_attribute('scores', _evaluation_results_adapter.dump_python(scores))
+        case_span.set_attribute('labels', _evaluation_results_adapter.dump_python(labels))
 
         context = case_span.context
         if context is None:
@@ -863,6 +863,9 @@ async def _run_task_and_evaluators(
         trace_id=trace_id,
         span_id=span_id,
     )
+
+
+_evaluation_results_adapter = TypeAdapter(Mapping[str, EvaluationResult])
 
 
 def _group_evaluator_outputs_by_type(
