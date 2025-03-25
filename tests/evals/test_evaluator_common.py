@@ -4,7 +4,6 @@ from datetime import timedelta
 from typing import Any
 
 import pytest
-from logfire.testing import CaptureLogfire
 from pytest_mock import MockerFixture
 
 from pydantic_evals.otel._context_in_memory_span_exporter import context_subtree
@@ -13,6 +12,8 @@ from pydantic_evals.otel._errors import SpanTreeRecordingError
 from ..conftest import try_import
 
 with try_import() as imports_successful:
+    from logfire.testing import CaptureLogfire
+
     from pydantic_evals.evaluators import EvaluationReason, EvaluatorContext
     from pydantic_evals.evaluators.common import (
         DEFAULT_EVALUATORS,
