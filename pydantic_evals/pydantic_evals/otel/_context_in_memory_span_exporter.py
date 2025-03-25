@@ -151,8 +151,8 @@ def _add_context_span_exporter() -> _ContextInMemorySpanExporter | SpanTreeRecor
             )
             return SpanTreeRecordingError(
                 f'To make use of the `span_tree` in an evaluator, you need to call `{required_call}` before running an'
-                f' evaluation. For more information, see appropriate documentation at https://ai.pydantic.dev/.'
-                # TODO: Add a link to appropriate documentation
+                f' evaluation.'
+                f' For more information, refer to the documentation at https://ai.pydantic.dev/evals/#opentelemetry-integration.'
             )
         else:
             # In this case, the user is using some kind of custom OpenTelemetry TracerProvider. It may or may not

@@ -5,6 +5,7 @@ from dataclasses import MISSING, dataclass, fields
 from typing import Any, Generic, Union, cast
 
 from pydantic import (
+    ConfigDict,
     TypeAdapter,
     ValidationError,
     model_serializer,
@@ -110,6 +111,8 @@ class Evaluator(Generic[InputsT, OutputT, MetadataT]):
             return ctx.actual_output == ctx.expected_output
     ```
     """
+
+    __pydantic_config__ = ConfigDict(arbitrary_types_allowed=True)
 
     def __post_init__(self):
         if type(self) is Evaluator:  # pragma: no cover

@@ -24,7 +24,7 @@ from typing import Any, Callable, Generic, Literal, Union
 import anyio
 import logfire_api
 import yaml
-from pydantic import BaseModel, Field, TypeAdapter, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 from pydantic._internal import _typing_extra
 from pydantic_core import to_json, to_jsonable_python
 from typing_extensions import NotRequired, Self, TypedDict, TypeVar
@@ -562,6 +562,8 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
                 else:
                     required_type_hints[p.name] = type_hints[p.name]
 
+            config = ConfigDict(extra='forbid', arbitrary_types_allowed=True)
+
             if len(type_hints) == 0 or not required_type_hints:
                 # Shortest option: just the call name
                 evaluator_schema_types.append(Literal[name])
@@ -569,21 +571,21 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
                 # Short option: only have one parameter, so we can drop the nesting
                 [type_hint_type] = type_hints.values()  # pyright: ignore
                 td = TypedDict(f'short_evaluator_{name}', {name: type_hint_type})  # pyright: ignore
-                td.__pydantic_config__ = {'extra': 'forbid'}  # pyright: ignore
+                td.__pydantic_config__ = config  # pyright: ignore
                 evaluator_schema_types.append(td)
             if len(type_hints) > 1:
                 if len(required_type_hints) == 1:
                     # Short option: only have one required parameter, so we can drop the nesting
                     type_hint_type = next(iter(required_type_hints.values()))  # pyright: ignore
                     td = TypedDict(f'short_evaluator_{name}', {name: type_hint_type})  # pyright: ignore
-                    td.__pydantic_config__ = {'extra': 'forbid'}  # pyright: ignore
+                    td.__pydantic_config__ = config  # pyright: ignore
                     evaluator_schema_types.append(td)
 
                 # Long form: multiple parameters, or multiple required parameters
                 params_td = TypedDict(f'evaluator_params_{name}', type_hints)  # pyright: ignore
-                params_td.__pydantic_config__ = {'extra': 'forbid'}  # pyright: ignore
+                params_td.__pydantic_config__ = config  # pyright: ignore
                 td = TypedDict(f'evaluator_{name}', {name: params_td})  # pyright: ignore
-                td.__pydantic_config__ = {'extra': 'forbid'}  # pyright: ignore
+                td.__pydantic_config__ = config  # pyright: ignore
                 evaluator_schema_types.append(td)
             # Note: We might want to also generate the JSON schema for the format `call: '...', args: [...], kwargs: {...}`.
             #   It would be a bit complex to implement but not impossible.

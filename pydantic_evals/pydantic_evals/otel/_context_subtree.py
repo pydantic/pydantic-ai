@@ -20,8 +20,8 @@ except ImportError as e:
         exc = SpanTreeRecordingError(
             'To make use of the `span_tree` in an evaluator, you must install `logfire` or'
             ' `opentelemetry-sdk`,  configure appropriate instrumentations, and set a tracer provider (e.g. by calling'
-            ' `logfire.configure()`). For more information, see appropriate documentation at https://ai.pydantic.dev/.'
-            # TODO: add a section to the pydantic-ai docs about SpanTree and related evaluators, and link to it here.
+            ' `logfire.configure()`).'
+            ' For more information, refer to the documentation at https://ai.pydantic.dev/evals/#opentelemetry-integration.'
         )
         exc.__context__ = _IMPORT_ERROR
         yield exc

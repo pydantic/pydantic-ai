@@ -426,7 +426,22 @@ report_limited.print()
 
 ### OpenTelemetry Integration
 
-Pydantic Evals integrates with OpenTelemetry for tracing and metrics:
+Pydantic Evals integrates with OpenTelemetry for tracing.
+
+The [`EvaluatorContext`][pydantic_evals.evaluators.context.EvaluatorContext] includes a property called `span_tree`
+which returns a [`SpanTree`][pydantic_evals.otel.span_tree.SpanTree]. The `SpanTree` provides a way to query and analyze
+the spans generated during function execution. This provides a way to access the results of instrumentation during
+evaluation.
+
+!!! note
+    If you just want to write unit tests that ensure that specific spans are produced during calls to your evaluation
+    task, it's usually better to just use the `logfire.testing.capfire` fixture directly.
+
+There are two main ways this is useful.
+
+TODO: Finish this
+
+
 
 ```python {title="opentelemetry_example.py"}
 import asyncio
@@ -439,8 +454,9 @@ from pydantic_evals.evaluators import Evaluator
 from pydantic_evals.evaluators.context import EvaluatorContext
 from pydantic_evals.otel.span_tree import SpanQuery, as_predicate
 
-# Configure logfire for OpenTelemetry integration
-logfire.configure()
+logfire.configure(  # ensure that an OpenTelemetry tracer is configured
+    send_to_logfire='if-token-present'
+)
 
 
 class SpanTracingEvaluator(Evaluator[str, str]):
