@@ -500,6 +500,8 @@ Pydantic Evals allows you to generate test datasets using LLMs with [`generate_d
 Datasets can be generated in either JSON or YAML format, in both cases a JSON schema file is generated alongside the dataset and referenced in the dataset, so you should get type checking and auto-completion in your editor.
 
 ```python {title="generate_dataset_example.py"}
+from __future__ import annotations
+
 from pathlib import Path
 
 from pydantic import BaseModel, Field

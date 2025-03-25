@@ -116,7 +116,7 @@ async def test_add_evaluator(
 
     @dataclass
     class MetadataEvaluator(Evaluator[TaskInput, TaskOutput, TaskMetadata]):
-        def evaluate(self, ctx: EvaluatorContext[TaskInput, TaskOutput, TaskMetadata]):
+        def evaluate(self, ctx: EvaluatorContext[TaskInput, TaskOutput, TaskMetadata]):  # pragma: no cover
             """Evaluator that uses metadata."""
             if ctx.metadata is None:
                 return {'result': 'no_metadata'}
@@ -128,6 +128,41 @@ async def test_add_evaluator(
 
     example_dataset.add_evaluator(MetadataEvaluator())
     assert len(example_dataset.evaluators) == 2
+
+    dataset = Dataset[TaskInput, TaskOutput, TaskMetadata](
+        cases=[
+            Case(
+                name='My Case 1',
+                inputs=TaskInput(query='What is 1+1?'),
+            ),
+            Case(
+                name='My Case 2',
+                inputs=TaskInput(query='What is 2+2?'),
+            ),
+        ]
+    )
+    dataset.add_evaluator(Python('ctx.output > 0'))
+    dataset.add_evaluator(Python('ctx.output == 2'), specific_case='My Case 1')
+    dataset.add_evaluator(Python('ctx.output == 4'), specific_case='My Case 2')
+    assert dataset.model_dump(mode='json', exclude_defaults=True, context={'use_short_form': True}) == {
+        'cases': [
+            {
+                'evaluators': [{'Python': 'ctx.output == 2'}],
+                'expected_output': None,
+                'inputs': {'query': 'What is 1+1?'},
+                'metadata': None,
+                'name': 'My Case 1',
+            },
+            {
+                'evaluators': [{'Python': 'ctx.output == 4'}],
+                'expected_output': None,
+                'inputs': {'query': 'What is 2+2?'},
+                'metadata': None,
+                'name': 'My Case 2',
+            },
+        ],
+        'evaluators': [{'Python': 'ctx.output > 0'}],
+    }
 
 
 async def test_evaluate(
@@ -664,44 +699,6 @@ async def test_duplicate_case_names():
             inputs=TaskInput(query='What is 1+2?'),
         )
     assert str(exc_info.value) == "Duplicate case name: 'My Case'"
-
-
-@pytest.mark.anyio
-async def test_add_evaluator():
-    dataset = Dataset[TaskInput, TaskOutput, TaskMetadata](
-        cases=[
-            Case(
-                name='My Case 1',
-                inputs=TaskInput(query='What is 1+1?'),
-            ),
-            Case(
-                name='My Case 2',
-                inputs=TaskInput(query='What is 2+2?'),
-            ),
-        ]
-    )
-    dataset.add_evaluator(Python('ctx.output > 0'))
-    dataset.add_evaluator(Python('ctx.output == 2'), specific_case='My Case 1')
-    dataset.add_evaluator(Python('ctx.output == 4'), specific_case='My Case 2')
-    assert dataset.model_dump(mode='json', exclude_defaults=True, context={'use_short_form': True}) == {
-        'cases': [
-            {
-                'evaluators': [{'Python': 'ctx.output == 2'}],
-                'expected_output': None,
-                'inputs': {'query': 'What is 1+1?'},
-                'metadata': None,
-                'name': 'My Case 1',
-            },
-            {
-                'evaluators': [{'Python': 'ctx.output == 4'}],
-                'expected_output': None,
-                'inputs': {'query': 'What is 2+2?'},
-                'metadata': None,
-                'name': 'My Case 2',
-            },
-        ],
-        'evaluators': [{'Python': 'ctx.output > 0'}],
-    }
 
 
 def test_add_invalid_evaluator():
