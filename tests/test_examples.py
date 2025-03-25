@@ -69,7 +69,6 @@ def test_docs_examples(  # noqa: C901
 ):
     mocker.patch('pydantic_ai.agent.models.infer_model', side_effect=mock_infer_model)
     mocker.patch('pydantic_ai._utils.group_by_temporal', side_effect=mock_group_by_temporal)
-    mocker.patch('pydantic_ai.models.vertexai._creds_from_file', return_value=MockCredentials())
 
     mocker.patch('httpx.Client.get', side_effect=http_request)
     mocker.patch('httpx.Client.post', side_effect=http_request)

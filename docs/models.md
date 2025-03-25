@@ -1022,7 +1022,7 @@ from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.openai import OpenAIModel
 
-openai_model = OpenAIModel('gpt-4o', api_key='not-valid')
+openai_model = OpenAIModel('gpt-4o')
 anthropic_model = AnthropicModel('claude-3-5-sonnet-latest')
 fallback_model = FallbackModel(openai_model, anthropic_model)
 
@@ -1072,8 +1072,8 @@ contains all the exceptions encountered during the `run` execution.
     from pydantic_ai.models.fallback import FallbackModel
     from pydantic_ai.models.openai import OpenAIModel
 
-    openai_model = OpenAIModel('gpt-4o', api_key='not-valid')
-    anthropic_model = AnthropicModel('claude-3-5-sonnet-latest', api_key='not-valid')
+    openai_model = OpenAIModel('gpt-4o')
+    anthropic_model = AnthropicModel('claude-3-5-sonnet-latest')
     fallback_model = FallbackModel(openai_model, anthropic_model)
 
     agent = Agent(fallback_model)
@@ -1105,8 +1105,8 @@ contains all the exceptions encountered during the `run` execution.
             print(exc)
 
 
-    openai_model = OpenAIModel('gpt-4o', api_key='not-valid')
-    anthropic_model = AnthropicModel('claude-3-5-sonnet-latest', api_key='not-valid')
+    openai_model = OpenAIModel('gpt-4o')
+    anthropic_model = AnthropicModel('claude-3-5-sonnet-latest')
     fallback_model = FallbackModel(openai_model, anthropic_model)
 
     agent = Agent(fallback_model)

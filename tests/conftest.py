@@ -251,6 +251,11 @@ def co_api_key() -> str:
     return os.getenv('CO_API_KEY', 'mock-api-key')
 
 
+@pytest.fixture(scope='session')
+def mistral_api_key() -> str:
+    return os.getenv('MISTRAL_API_KEY', 'mock-api-key')
+
+
 @pytest.fixture
 def mock_snapshot_id(mocker: MockerFixture):
     i = 0
