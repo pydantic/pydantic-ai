@@ -12,7 +12,7 @@ from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
 from functools import cache
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import httpx
 from typing_extensions import Literal
@@ -383,6 +383,7 @@ def infer_model(model: Model | KnownModelName) -> Model:
 
     try:
         provider, model_name = model.split(':', maxsplit=1)
+        provider = cast(str, provider)
     except ValueError:
         model_name = model
         # TODO(Marcelo): We should deprecate this way.
@@ -413,22 +414,19 @@ def infer_model(model: Model | KnownModelName) -> Model:
     elif provider == 'groq':
         from .groq import GroqModel
 
-        # TODO(Marcelo): Missing provider API.
-        return GroqModel(model_name)
+        return GroqModel(model_name, provider=provider)
     elif provider == 'mistral':
         from .mistral import MistralModel
 
-        # TODO(Marcelo): Missing provider API.
-        return MistralModel(model_name)
+        return MistralModel(model_name, provider=provider)
     elif provider == 'anthropic':
         from .anthropic import AnthropicModel
 
-        # TODO(Marcelo): Missing provider API.
-        return AnthropicModel(model_name)
+        return AnthropicModel(model_name, provider=provider)
     elif provider == 'bedrock':
         from .bedrock import BedrockConverseModel
 
-        return BedrockConverseModel(model_name)
+        return BedrockConverseModel(model_name, provider=provider)
     else:
         raise UserError(f'Unknown model: {model}')
 
