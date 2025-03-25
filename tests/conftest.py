@@ -246,6 +246,11 @@ def anthropic_api_key() -> str:
     return os.getenv('ANTHROPIC_API_KEY', 'mock-api-key')
 
 
+@pytest.fixture(scope='session')
+def co_api_key() -> str:
+    return os.getenv('CO_API_KEY', 'mock-api-key')
+
+
 @pytest.fixture
 def mock_snapshot_id(mocker: MockerFixture):
     i = 0

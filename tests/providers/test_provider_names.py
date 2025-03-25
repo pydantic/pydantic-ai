@@ -12,6 +12,7 @@ from ..conftest import try_import
 
 with try_import() as imports_successful:
     from pydantic_ai.providers.anthropic import AnthropicProvider
+    from pydantic_ai.providers.cohere import CohereProvider
     from pydantic_ai.providers.deepseek import DeepSeekProvider
     from pydantic_ai.providers.google_gla import GoogleGLAProvider
     from pydantic_ai.providers.google_vertex import GoogleVertexProvider
@@ -21,6 +22,7 @@ with try_import() as imports_successful:
 
     test_infer_provider_params = [
         ('anthropic', AnthropicProvider, 'ANTHROPIC_API_KEY'),
+        ('cohere', CohereProvider, 'CO_API_KEY'),
         ('deepseek', DeepSeekProvider, 'DEEPSEEK_API_KEY'),
         ('openai', OpenAIProvider, None),
         ('google-vertex', GoogleVertexProvider, None),
