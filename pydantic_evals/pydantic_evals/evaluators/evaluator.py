@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+import inspect
+from abc import ABCMeta, abstractmethod
+from collections.abc import Awaitable, Mapping
 from dataclasses import MISSING, dataclass, fields
 from typing import Any, Generic, Union, cast
 
@@ -95,13 +97,26 @@ MetadataT = TypeVar('MetadataT', default=Any, contravariant=True)
 """Type variable for the metadata type of the task being evaluated."""
 
 
+class _StrictABCMeta(ABCMeta):
+    """An ABC-like metaclass that goes further and disallows even defining abstract subclasses."""
+
+    def __new__(mcls, name: str, bases: tuple[type, ...], namespace: dict[str, Any], /, **kwargs: Any):
+        result = super().__new__(mcls, name, bases, namespace, **kwargs)
+        # Check if this class is a proper subclass of a _StrictABC instance
+        is_proper_subclass = any(isinstance(c, _StrictABCMeta) for c in result.__mro__[1:])
+        if is_proper_subclass and result.__abstractmethods__:
+            abstractmethods = ', '.join([f'{m!r}' for m in result.__abstractmethods__])
+            raise TypeError(f'{name} must implement all abstract methods: {abstractmethods}')
+        return result
+
+
 @dataclass
-class Evaluator(Generic[InputsT, OutputT, MetadataT]):
+class Evaluator(Generic[InputsT, OutputT, MetadataT], metaclass=_StrictABCMeta):
     """Base class for all evaluators.
 
     Evaluators can assess the performance of a task in a variety of ways, as a function of the EvaluatorContext.
 
-    Subclasses must implement either `evaluate` or `evaluate_async` (or both).
+    Subclasses must implement the `evaluate` method. Note it can be defined with either `def` or `async def`.
 
     Example:
     ```python
@@ -114,34 +129,42 @@ class Evaluator(Generic[InputsT, OutputT, MetadataT]):
 
     __pydantic_config__ = ConfigDict(arbitrary_types_allowed=True)
 
-    def __post_init__(self):
-        if type(self) is Evaluator:  # pragma: no cover
-            raise TypeError('You should not instantiate Evaluator directly.')
-
-    def __init_subclass__(cls):
-        # Ensure that at least one of `evaluate` and `evaluate_async` is implemented on this class
-        # and not inherited from the base class.
-        # It's okay if it's on a parent class as long as the class isn't BaseEvaluator.
-        if cls.evaluate is Evaluator.evaluate and cls.evaluate_async is Evaluator.evaluate_async:
-            raise TypeError(f'{cls.__name__} must implement either `evaluate` or `evaluate_async`')
-
     @classmethod
     def name(cls) -> str:
         """Return the 'name' of this Evaluator to use during serialization.
 
         Returns:
-            The snake-cased name of the evaluator class.
+            The name of the Evaluator, which is typically the class name.
         """
-        # If we want to prefer snake_case, could use:
+        # Note: if we wanted to prefer snake_case, we could use:
         # from pydantic.alias_generators import to_snake
         # return to_snake(cls.__name__)
         return cls.__name__
 
-    def evaluate(self, ctx: EvaluatorContext[InputsT, OutputT, MetadataT]) -> EvaluatorOutput:
+    @abstractmethod
+    def evaluate(
+        self, ctx: EvaluatorContext[InputsT, OutputT, MetadataT]
+    ) -> EvaluatorOutput | Awaitable[EvaluatorOutput]:
         """Evaluate the task output in the given context.
 
-        This is a synchronous method that calls `evaluate_async` and runs it to completion.
-        Subclasses should either override this method or `evaluate_async`, but not both.
+        This is the main evaluation method that subclasses must implement. It can be either synchronous
+        or asynchronous, returning either an EvaluatorOutput directly or an Awaitable[EvaluatorOutput].
+
+        Args:
+            ctx: The context containing the inputs, outputs, and metadata for evaluation.
+
+        Returns:
+            The evaluation result, which can be a scalar value, an EvaluationReason, or a mapping
+            of evaluation names to either of those. Can be returned either synchronously or as an
+            awaitable for asynchronous evaluation.
+        """
+        raise NotImplementedError('You must implement `evaluate`.')
+
+    def evaluate_sync(self, ctx: EvaluatorContext[InputsT, OutputT, MetadataT]) -> EvaluatorOutput:
+        """Run the evaluator synchronously, handling both sync and async implementations.
+
+        This method ensures synchronous execution by running any async evaluate implementation
+        to completion using run_until_complete.
 
         Args:
             ctx: The context containing the inputs, outputs, and metadata for evaluation.
@@ -150,13 +173,17 @@ class Evaluator(Generic[InputsT, OutputT, MetadataT]):
             The evaluation result, which can be a scalar value, an EvaluationReason, or a mapping
             of evaluation names to either of those.
         """
-        return run_until_complete(self.evaluate_async(ctx))
+        output = self.evaluate(ctx)
+        if inspect.iscoroutine(output):
+            return run_until_complete(output)
+        else:
+            return cast(EvaluatorOutput, output)
 
     async def evaluate_async(self, ctx: EvaluatorContext[InputsT, OutputT, MetadataT]) -> EvaluatorOutput:
-        """Evaluate the task output in the given context asynchronously.
+        """Run the evaluator asynchronously, handling both sync and async implementations.
 
-        This is an asynchronous method that by default calls `evaluate`. Subclasses should
-        either override this method or `evaluate`, but not both.
+        This method ensures asynchronous execution by properly awaiting any async evaluate
+        implementation. For synchronous implementations, it returns the result directly.
 
         Args:
             ctx: The context containing the inputs, outputs, and metadata for evaluation.
@@ -164,14 +191,14 @@ class Evaluator(Generic[InputsT, OutputT, MetadataT]):
         Returns:
             The evaluation result, which can be a scalar value, an EvaluationReason, or a mapping
             of evaluation names to either of those.
-
-        Note:
-            If you need to prevent this from blocking, you can override this with:
-            `return await anyio.to_thread.run_sync(self.evaluate, ctx)`
         """
-        # If you need to prevent this from blocking, you can override this with:
+        # Note: If self.evaluate is synchronous, but you need to prevent this from blocking, override this method with:
         # return await anyio.to_thread.run_sync(self.evaluate, ctx)
-        return self.evaluate(ctx)
+        output = self.evaluate(ctx)
+        if inspect.iscoroutine(output):
+            return await output
+        else:
+            return cast(EvaluatorOutput, output)
 
     @model_serializer(mode='plain')
     def serialize(self, info: SerializationInfo) -> Any:

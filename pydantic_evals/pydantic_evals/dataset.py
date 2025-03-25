@@ -830,7 +830,7 @@ async def _run_task_and_evaluators(
         evaluator_outputs: list[EvaluationResult] = []
         if evaluators:
             evaluator_outputs_by_task = await task_group_gather(
-                [lambda: run_evaluator(ev, scoring_context) for ev in evaluators]
+                [lambda ev=ev: run_evaluator(ev, scoring_context) for ev in evaluators]
             )
             evaluator_outputs += [out for outputs in evaluator_outputs_by_task for out in outputs]
 

@@ -29,7 +29,7 @@ async def main():
     )
 
     class MyEvaluator(Evaluator[TimeRangeInputs, TimeRangeResponse]):
-        async def evaluate_async(self, ctx: EvaluatorContext[TimeRangeInputs, TimeRangeResponse]):
+        async def evaluate(self, ctx: EvaluatorContext[TimeRangeInputs, TimeRangeResponse]):
             result = await judge_time_range_case(inputs=ctx.inputs, output=ctx.output)
             return {
                 'is_reasonable': 'yes' if result.pass_ else 'no',

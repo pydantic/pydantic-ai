@@ -4,8 +4,6 @@ from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any, cast
 
-from pydantic import ConfigDict
-
 from pydantic_ai import models
 
 from ..otel.span_tree import SpanQuery as SpanNodeQuery, as_predicate
@@ -155,13 +153,11 @@ class MaxDuration(Evaluator[object, object, object]):
 class LlmJudge(Evaluator[object, object, object]):
     """Judge whether the output of a language model meets the criteria of a provided rubric."""
 
-    __pydantic_config__ = ConfigDict(arbitrary_types_allowed=True)
-
     rubric: str
     model: models.Model | models.KnownModelName = 'openai:gpt-4o'
     include_input: bool = False
 
-    async def evaluate_async(
+    async def evaluate(
         self,
         ctx: EvaluatorContext[object, object, object],
     ) -> EvaluatorOutput:

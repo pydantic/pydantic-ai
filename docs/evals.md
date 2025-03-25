@@ -306,7 +306,7 @@ print(serialized)
 cases:
 - name: vegetarian_recipe
   inputs:
-    dish_name: Pasta Bolognese
+    dish_name: Spaghetti Bolognese
     dietary_restriction: vegetarian
   metadata:
     focus: vegetarian
@@ -326,6 +326,7 @@ evaluators:
 - IsInstance: Recipe
 - LlmJudge:
     rubric: Recipe should have clear steps and relevant ingredients
+    model: anthropic:claude-3-7-sonnet-latest
     include_input: true
 """
 
