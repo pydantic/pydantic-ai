@@ -18,6 +18,7 @@ from typing_extensions import NotRequired, TypedDict, assert_never, deprecated
 from pydantic_ai.providers import Provider, infer_provider
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, UserError, _utils, usage
+from .._utils import generate_tool_call_id as _generate_tool_call_id
 from ..messages import (
     AudioUrl,
     BinaryContent,
@@ -263,7 +264,7 @@ class GeminiModel(Model):
             url = f'/{self._model_name}:{"streamGenerateContent" if streamed else "generateContent"}'
 
         request_json = _gemini_request_ta.dump_json(request_data, by_alias=True)
-
+        print(request_json)
         async with self.client.stream(
             'POST',
             url,
@@ -607,6 +608,7 @@ def _process_response_from_parts(
                 ToolCallPart(
                     tool_name=part['function_call']['name'],
                     args=part['function_call']['args'],
+                    tool_call_id=_generate_tool_call_id(),
                 )
             )
         elif 'function_response' in part:

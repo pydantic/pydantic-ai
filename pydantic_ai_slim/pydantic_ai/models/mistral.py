@@ -14,7 +14,7 @@ from httpx import AsyncClient as AsyncHTTPClient, Timeout
 from typing_extensions import assert_never, deprecated
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils
-from .._utils import now_utc as _now_utc
+from .._utils import generate_tool_call_id as _generate_tool_call_id, now_utc as _now_utc
 from ..messages import (
     BinaryContent,
     DocumentUrl,
@@ -386,10 +386,10 @@ class MistralModel(Model):
         return ToolCallPart(func_call.name, func_call.arguments, tool_call_id)
 
     @staticmethod
-    def _map_pydantic_to_mistral_tool_call(t: ToolCallPart) -> MistralToolCall:
+    def _map_tool_call(t: ToolCallPart) -> MistralToolCall:
         """Maps a pydantic-ai ToolCall to a MistralToolCall."""
         return MistralToolCall(
-            id=t.tool_call_id,
+            id=_utils.guard_tool_call_id(t=t, model_source='Mistral'),
             type='function',
             function=MistralFunctionCall(name=t.tool_name, arguments=t.args),
         )
@@ -502,7 +502,7 @@ class MistralModel(Model):
                 if isinstance(part, TextPart):
                     content_chunks.append(MistralTextChunk(text=part.content))
                 elif isinstance(part, ToolCallPart):
-                    tool_calls.append(cls._map_pydantic_to_mistral_tool_call(part))
+                    tool_calls.append(cls._map_tool_call(part))
                 else:
                     assert_never(part)
             yield MistralAssistantMessage(content=content_chunks, tool_calls=tool_calls)
@@ -608,7 +608,7 @@ class MistralStreamedResponse(StreamedResponse):
                     continue
 
                 # The following part_id will be thrown away
-                return ToolCallPart(tool_name=result_tool.name, args=output_json)
+                return ToolCallPart(tool_name=result_tool.name, args=output_json, tool_call_id=_generate_tool_call_id())
 
     @staticmethod
     def _validate_required_json_schema(json_dict: dict[str, Any], json_schema: dict[str, Any]) -> bool:

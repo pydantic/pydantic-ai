@@ -394,10 +394,9 @@ class BedrockConverseModel(Model):
 
     @staticmethod
     def _map_tool_call(t: ToolCallPart) -> ContentBlockOutputTypeDef:
-        assert t.tool_call_id is not None
         return {
             'toolUse': {
-                'toolUseId': t.tool_call_id,
+                'toolUseId': _utils.guard_tool_call_id(t=t, model_source='Bedrock'),
                 'name': t.tool_name,
                 'input': t.args_as_dict(),
             }

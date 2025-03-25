@@ -10,7 +10,7 @@ from httpx import AsyncClient as AsyncHTTPClient
 from typing_extensions import assert_never
 
 from .. import ModelHTTPError, result
-from .._utils import guard_tool_call_id as _guard_tool_call_id
+from .._utils import generate_tool_call_id as _generate_tool_call_id, guard_tool_call_id as _guard_tool_call_id
 from ..messages import (
     ModelMessage,
     ModelRequest,
@@ -191,7 +191,7 @@ class CohereModel(Model):
                     ToolCallPart(
                         tool_name=c.function.name,
                         args=c.function.arguments,
-                        tool_call_id=c.id,
+                        tool_call_id=c.id or _generate_tool_call_id(),
                     )
                 )
         return ModelResponse(parts=parts, model_name=self._model_name)

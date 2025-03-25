@@ -12,7 +12,7 @@ import pydantic_core
 from opentelemetry._events import Event
 from typing_extensions import TypeAlias
 
-from ._utils import now_utc as _now_utc
+from ._utils import generate_tool_call_id as _generate_tool_call_id, now_utc as _now_utc
 from .exceptions import UnexpectedModelBehavior
 
 
@@ -268,8 +268,8 @@ class ToolReturnPart:
     content: Any
     """The return value."""
 
-    tool_call_id: str | None = None
-    """Optional tool call identifier, this is used by some models including OpenAI."""
+    tool_call_id: str
+    """The tool call identifier, this is used by some models including OpenAI."""
 
     timestamp: datetime = field(default_factory=_now_utc)
     """The timestamp, when the tool returned."""
@@ -328,7 +328,7 @@ class RetryPromptPart:
     tool_name: str | None = None
     """The name of the tool that was called, if any."""
 
-    tool_call_id: str | None = None
+    tool_call_id: str = field(default_factory=_generate_tool_call_id)
     """Optional tool call identifier, this is used by some models including OpenAI."""
 
     timestamp: datetime = field(default_factory=_now_utc)
@@ -406,8 +406,8 @@ class ToolCallPart:
     This is stored either as a JSON string or a Python dictionary depending on how data was received.
     """
 
-    tool_call_id: str | None = None
-    """Optional tool call identifier, this is used by some models including OpenAI."""
+    tool_call_id: str = field(default_factory=_generate_tool_call_id)
+    """The tool call identifier, this is used by some models including OpenAI."""
 
     part_kind: Literal['tool-call'] = 'tool-call'
     """Part type identifier, this is available on all parts as a discriminator."""
@@ -564,11 +564,7 @@ class ToolCallPartDelta:
         if self.tool_name_delta is None or self.args_delta is None:
             return None
 
-        return ToolCallPart(
-            self.tool_name_delta,
-            self.args_delta,
-            self.tool_call_id,
-        )
+        return ToolCallPart(self.tool_name_delta, self.args_delta, self.tool_call_id or _generate_tool_call_id())
 
     @overload
     def apply(self, part: ModelResponsePart) -> ToolCallPart: ...
@@ -620,20 +616,11 @@ class ToolCallPartDelta:
             delta = replace(delta, args_delta=updated_args_delta)
 
         if self.tool_call_id:
-            # Set the tool_call_id if it wasn't present, otherwise error if it has changed
-            if delta.tool_call_id is not None and delta.tool_call_id != self.tool_call_id:
-                raise UnexpectedModelBehavior(
-                    f'Cannot apply a new tool_call_id to a ToolCallPartDelta that already has one ({delta=}, {self=})'
-                )
             delta = replace(delta, tool_call_id=self.tool_call_id)
 
         # If we now have enough data to create a full ToolCallPart, do so
         if delta.tool_name_delta is not None and delta.args_delta is not None:
-            return ToolCallPart(
-                delta.tool_name_delta,
-                delta.args_delta,
-                delta.tool_call_id,
-            )
+            return ToolCallPart(delta.tool_name_delta, delta.args_delta, delta.tool_call_id or _generate_tool_call_id())
 
         return delta
 
@@ -656,11 +643,6 @@ class ToolCallPartDelta:
             part = replace(part, args=updated_dict)
 
         if self.tool_call_id:
-            # Replace the tool_call_id entirely if given
-            if part.tool_call_id is not None and part.tool_call_id != self.tool_call_id:
-                raise UnexpectedModelBehavior(
-                    f'Cannot apply a new tool_call_id to a ToolCallPartDelta that already has one ({part=}, {self=})'
-                )
             part = replace(part, tool_call_id=self.tool_call_id)
         return part
 
