@@ -380,7 +380,7 @@ class MistralModel(Model):
     @staticmethod
     def _map_mistral_to_pydantic_tool_call(tool_call: MistralToolCall) -> ToolCallPart:
         """Maps a MistralToolCall to a ToolCall."""
-        tool_call_id = tool_call.id or None
+        tool_call_id = tool_call.id or _generate_tool_call_id()
         func_call = tool_call.function
 
         return ToolCallPart(func_call.name, func_call.arguments, tool_call_id)
@@ -389,7 +389,7 @@ class MistralModel(Model):
     def _map_tool_call(t: ToolCallPart) -> MistralToolCall:
         """Maps a pydantic-ai ToolCall to a MistralToolCall."""
         return MistralToolCall(
-            id=_utils.guard_tool_call_id(t=t, model_source='Mistral'),
+            id=_utils.guard_tool_call_id(t=t),
             type='function',
             function=MistralFunctionCall(name=t.tool_name, arguments=t.args),
         )
@@ -608,7 +608,7 @@ class MistralStreamedResponse(StreamedResponse):
                     continue
 
                 # The following part_id will be thrown away
-                return ToolCallPart(tool_name=result_tool.name, args=output_json, tool_call_id=_generate_tool_call_id())
+                return ToolCallPart(tool_name=result_tool.name, args=output_json)
 
     @staticmethod
     def _validate_required_json_schema(json_dict: dict[str, Any], json_schema: dict[str, Any]) -> bool:

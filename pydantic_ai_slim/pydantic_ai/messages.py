@@ -329,7 +329,10 @@ class RetryPromptPart:
     """The name of the tool that was called, if any."""
 
     tool_call_id: str = field(default_factory=_generate_tool_call_id)
-    """Optional tool call identifier, this is used by some models including OpenAI."""
+    """The tool call identifier, this is used by some models including OpenAI.
+
+    In case the tool call id is not provided by the model, PydanticAI will generate a random one.
+    """
 
     timestamp: datetime = field(default_factory=_now_utc)
     """The timestamp, when the retry was triggered."""
@@ -407,7 +410,10 @@ class ToolCallPart:
     """
 
     tool_call_id: str = field(default_factory=_generate_tool_call_id)
-    """The tool call identifier, this is used by some models including OpenAI."""
+    """The tool call identifier, this is used by some models including OpenAI.
+
+    In case the tool call id is not provided by the model, PydanticAI will generate a random one.
+    """
 
     part_kind: Literal['tool-call'] = 'tool-call'
     """Part type identifier, this is available on all parts as a discriminator."""

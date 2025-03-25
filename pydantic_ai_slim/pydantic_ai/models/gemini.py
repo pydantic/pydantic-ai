@@ -18,7 +18,6 @@ from typing_extensions import NotRequired, TypedDict, assert_never, deprecated
 from pydantic_ai.providers import Provider, infer_provider
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, UserError, _utils, usage
-from .._utils import generate_tool_call_id as _generate_tool_call_id
 from ..messages import (
     AudioUrl,
     BinaryContent,
@@ -603,13 +602,7 @@ def _process_response_from_parts(
         if 'text' in part:
             items.append(TextPart(content=part['text']))
         elif 'function_call' in part:
-            items.append(
-                ToolCallPart(
-                    tool_name=part['function_call']['name'],
-                    args=part['function_call']['args'],
-                    tool_call_id=_generate_tool_call_id(),
-                )
-            )
+            items.append(ToolCallPart(tool_name=part['function_call']['name'], args=part['function_call']['args']))
         elif 'function_response' in part:
             raise UnexpectedModelBehavior(
                 f'Unsupported response from Gemini, expected all parts to be function calls or text, got: {part!r}'

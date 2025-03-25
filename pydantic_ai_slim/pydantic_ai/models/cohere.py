@@ -228,7 +228,7 @@ class CohereModel(Model):
     @staticmethod
     def _map_tool_call(t: ToolCallPart) -> ToolCallV2:
         return ToolCallV2(
-            id=_guard_tool_call_id(t=t, model_source='Cohere'),
+            id=_guard_tool_call_id(t=t),
             type='function',
             function=ToolCallV2Function(
                 name=t.tool_name,
@@ -260,7 +260,7 @@ class CohereModel(Model):
             elif isinstance(part, ToolReturnPart):
                 yield ToolChatMessageV2(
                     role='tool',
-                    tool_call_id=_guard_tool_call_id(t=part, model_source='Cohere'),
+                    tool_call_id=_guard_tool_call_id(t=part),
                     content=part.model_response_str(),
                 )
             elif isinstance(part, RetryPromptPart):
@@ -269,7 +269,7 @@ class CohereModel(Model):
                 else:
                     yield ToolChatMessageV2(
                         role='tool',
-                        tool_call_id=_guard_tool_call_id(t=part, model_source='Cohere'),
+                        tool_call_id=_guard_tool_call_id(t=part),
                         content=part.model_response(),
                     )
             else:

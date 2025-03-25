@@ -14,7 +14,6 @@ from pydantic import BaseModel, Field
 from typing_extensions import Literal, TypeAlias
 
 from pydantic_ai import Agent, ModelRetry, UnexpectedModelBehavior, UserError
-from pydantic_ai._utils import generate_tool_call_id
 from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.messages import (
     BinaryContent,
@@ -492,11 +491,7 @@ async def test_text_success(get_gemini_client: GetGeminiClient):
 
 async def test_request_structured_response(get_gemini_client: GetGeminiClient):
     response = gemini_response(
-        _content_model_response(
-            ModelResponse(
-                parts=[ToolCallPart('final_result', {'response': [1, 2, 123]}, tool_call_id=generate_tool_call_id())]
-            )
-        )
+        _content_model_response(ModelResponse(parts=[ToolCallPart('final_result', {'response': [1, 2, 123]})]))
     )
     gemini_client = get_gemini_client(response)
     m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(http_client=gemini_client))
@@ -529,22 +524,14 @@ async def test_request_structured_response(get_gemini_client: GetGeminiClient):
 async def test_request_tool_call(get_gemini_client: GetGeminiClient):
     responses = [
         gemini_response(
-            _content_model_response(
-                ModelResponse(
-                    parts=[
-                        ToolCallPart(
-                            'get_location', {'loc_name': 'San Fransisco'}, tool_call_id=generate_tool_call_id()
-                        )
-                    ]
-                )
-            )
+            _content_model_response(ModelResponse(parts=[ToolCallPart('get_location', {'loc_name': 'San Fransisco'})]))
         ),
         gemini_response(
             _content_model_response(
                 ModelResponse(
                     parts=[
-                        ToolCallPart('get_location', {'loc_name': 'London'}, tool_call_id=generate_tool_call_id()),
-                        ToolCallPart('get_location', {'loc_name': 'New York'}, tool_call_id=generate_tool_call_id()),
+                        ToolCallPart('get_location', {'loc_name': 'London'}),
+                        ToolCallPart('get_location', {'loc_name': 'New York'}),
                     ]
                 )
             )
@@ -718,11 +705,7 @@ async def test_stream_text_no_data(get_gemini_client: GetGeminiClient):
 async def test_stream_structured(get_gemini_client: GetGeminiClient):
     responses = [
         gemini_response(
-            _content_model_response(
-                ModelResponse(
-                    parts=[ToolCallPart('final_result', {'response': [1, 2]}, tool_call_id=generate_tool_call_id())]
-                )
-            ),
+            _content_model_response(ModelResponse(parts=[ToolCallPart('final_result', {'response': [1, 2]})])),
         ),
     ]
     json_data = _gemini_streamed_response_ta.dump_json(responses, by_alias=True)
@@ -740,14 +723,10 @@ async def test_stream_structured(get_gemini_client: GetGeminiClient):
 async def test_stream_structured_tool_calls(get_gemini_client: GetGeminiClient):
     first_responses = [
         gemini_response(
-            _content_model_response(
-                ModelResponse(parts=[ToolCallPart('foo', {'x': 'a'}, tool_call_id=generate_tool_call_id())])
-            ),
+            _content_model_response(ModelResponse(parts=[ToolCallPart('foo', {'x': 'a'})])),
         ),
         gemini_response(
-            _content_model_response(
-                ModelResponse(parts=[ToolCallPart('bar', {'y': 'b'}, tool_call_id=generate_tool_call_id())])
-            ),
+            _content_model_response(ModelResponse(parts=[ToolCallPart('bar', {'y': 'b'})])),
         ),
     ]
     d1 = _gemini_streamed_response_ta.dump_json(first_responses, by_alias=True)
@@ -755,11 +734,7 @@ async def test_stream_structured_tool_calls(get_gemini_client: GetGeminiClient):
 
     second_responses = [
         gemini_response(
-            _content_model_response(
-                ModelResponse(
-                    parts=[ToolCallPart('final_result', {'response': [1, 2]}, tool_call_id=generate_tool_call_id())]
-                )
-            ),
+            _content_model_response(ModelResponse(parts=[ToolCallPart('final_result', {'response': [1, 2]})])),
         ),
     ]
     d2 = _gemini_streamed_response_ta.dump_json(second_responses, by_alias=True)
@@ -856,12 +831,7 @@ async def test_stream_text_heterogeneous(get_gemini_client: GetGeminiClient):
 
 async def test_empty_text_ignored():
     content = _content_model_response(
-        ModelResponse(
-            parts=[
-                ToolCallPart('final_result', {'response': [1, 2, 123]}, tool_call_id=generate_tool_call_id()),
-                TextPart(content='xxx'),
-            ]
-        )
+        ModelResponse(parts=[ToolCallPart('final_result', {'response': [1, 2, 123]}), TextPart(content='xxx')])
     )
     # text included
     assert content == snapshot(
@@ -875,12 +845,7 @@ async def test_empty_text_ignored():
     )
 
     content = _content_model_response(
-        ModelResponse(
-            parts=[
-                ToolCallPart('final_result', {'response': [1, 2, 123]}, tool_call_id=generate_tool_call_id()),
-                TextPart(content=''),
-            ]
-        )
+        ModelResponse(parts=[ToolCallPart('final_result', {'response': [1, 2, 123]}), TextPart(content='')])
     )
     # text skipped
     assert content == snapshot(
