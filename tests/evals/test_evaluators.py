@@ -1,3 +1,5 @@
+from __future__ import annotations as _annotations
+
 from dataclasses import dataclass
 from typing import Any, cast
 
@@ -6,27 +8,30 @@ from inline_snapshot import snapshot
 from logfire.testing import CaptureLogfire
 from pydantic import BaseModel, TypeAdapter
 
-from pydantic_evals.evaluators._spec import EvaluatorSpec
-from pydantic_evals.evaluators.common import (
-    Contains,
-    Equals,
-    EqualsExpected,
-    IsInstance,
-    LlmJudge,
-    MaxDuration,
-    Python,
-    SpanQuery,
-)
-from pydantic_evals.evaluators.context import EvaluatorContext
-from pydantic_evals.evaluators.evaluator import (
-    EvaluationReason,
-    Evaluator,
-    EvaluatorOutput,
-    run_evaluator,
-)
-from pydantic_evals.otel.span_tree import SpanTree
+from ..conftest import try_import
 
-pytestmark = pytest.mark.anyio
+with try_import() as imports_successful:
+    from pydantic_evals.evaluators._spec import EvaluatorSpec
+    from pydantic_evals.evaluators.common import (
+        Contains,
+        Equals,
+        EqualsExpected,
+        IsInstance,
+        LlmJudge,
+        MaxDuration,
+        Python,
+        SpanQuery,
+    )
+    from pydantic_evals.evaluators.context import EvaluatorContext
+    from pydantic_evals.evaluators.evaluator import (
+        EvaluationReason,
+        Evaluator,
+        EvaluatorOutput,
+        run_evaluator,
+    )
+    from pydantic_evals.otel.span_tree import SpanTree
+
+pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed'), pytest.mark.anyio]
 
 
 class TaskInput(BaseModel):
@@ -100,20 +105,20 @@ async def test_evaluator_spec_serialization():
     assert adapter.dump_python(spec_single_arg, context={'use_short_form': True}) == snapshot({'MyEvaluator': 'value1'})
 
 
-@dataclass
-class ExampleEvaluator(Evaluator[TaskInput, TaskOutput, TaskMetadata]):
-    """A test evaluator for testing purposes."""
-
-    def evaluate(self, ctx: EvaluatorContext[TaskInput, TaskOutput, TaskMetadata]) -> EvaluatorOutput:
-        assert ctx.inputs.query == 'What is 2+2?'
-        assert ctx.output.answer == '4'
-        assert ctx.expected_output and ctx.expected_output.answer == '4'
-        assert ctx.metadata and ctx.metadata.difficulty == 'easy'
-        return {'result': 'passed'}
-
-
 async def test_evaluator_call(test_context: EvaluatorContext[TaskInput, TaskOutput, TaskMetadata]):
     """Test calling an Evaluator."""
+
+    @dataclass
+    class ExampleEvaluator(Evaluator[TaskInput, TaskOutput, TaskMetadata]):
+        """A test evaluator for testing purposes."""
+
+        def evaluate(self, ctx: EvaluatorContext[TaskInput, TaskOutput, TaskMetadata]) -> EvaluatorOutput:
+            assert ctx.inputs.query == 'What is 2+2?'
+            assert ctx.output.answer == '4'
+            assert ctx.expected_output and ctx.expected_output.answer == '4'
+            assert ctx.metadata and ctx.metadata.difficulty == 'easy'
+            return {'result': 'passed'}
+
     evaluator = ExampleEvaluator()
     results = await run_evaluator(evaluator, test_context)
 
@@ -173,23 +178,23 @@ async def test_llm_judge_evaluator():
     assert LlmJudge
 
 
-@dataclass
-class CustomEvaluator(Evaluator[TaskInput, TaskOutput, TaskMetadata]):
-    def evaluate(self, ctx: EvaluatorContext[TaskInput, TaskOutput, TaskMetadata]) -> EvaluatorOutput:
-        # Check if the answer is correct based on expected output
-        is_correct = ctx.output.answer == ctx.expected_output.answer if ctx.expected_output else False
-
-        # Use metadata if available
-        difficulty = ctx.metadata.difficulty if ctx.metadata else 'unknown'
-
-        return {
-            'is_correct': is_correct,
-            'difficulty': difficulty,
-        }
-
-
 async def test_custom_evaluator(test_context: EvaluatorContext[TaskInput, TaskOutput, TaskMetadata]):
     """Test a custom evaluator."""
+
+    @dataclass
+    class CustomEvaluator(Evaluator[TaskInput, TaskOutput, TaskMetadata]):
+        def evaluate(self, ctx: EvaluatorContext[TaskInput, TaskOutput, TaskMetadata]) -> EvaluatorOutput:
+            # Check if the answer is correct based on expected output
+            is_correct = ctx.output.answer == ctx.expected_output.answer if ctx.expected_output else False
+
+            # Use metadata if available
+            difficulty = ctx.metadata.difficulty if ctx.metadata else 'unknown'
+
+            return {
+                'is_correct': is_correct,
+                'difficulty': difficulty,
+            }
+
     evaluator = CustomEvaluator()
     result = evaluator.evaluate(test_context)
     assert isinstance(result, dict)
@@ -197,14 +202,14 @@ async def test_custom_evaluator(test_context: EvaluatorContext[TaskInput, TaskOu
     assert result['difficulty'] == 'easy'
 
 
-@dataclass
-class FailingEvaluator(Evaluator[TaskInput, TaskOutput, TaskMetadata]):
-    def evaluate(self, ctx: EvaluatorContext[TaskInput, TaskOutput, TaskMetadata]) -> EvaluatorOutput:
-        raise ValueError('Simulated error')
-
-
 async def test_evaluator_error_handling(test_context: EvaluatorContext[TaskInput, TaskOutput, TaskMetadata]):
     """Test error handling in evaluators."""
+
+    @dataclass
+    class FailingEvaluator(Evaluator[TaskInput, TaskOutput, TaskMetadata]):
+        def evaluate(self, ctx: EvaluatorContext[TaskInput, TaskOutput, TaskMetadata]) -> EvaluatorOutput:
+            raise ValueError('Simulated error')
+
     evaluator = FailingEvaluator()
 
     # When called directly, it should raise an error
@@ -212,17 +217,18 @@ async def test_evaluator_error_handling(test_context: EvaluatorContext[TaskInput
         await run_evaluator(evaluator, test_context)
 
 
-@dataclass
-class NullValueEvaluator(Evaluator[TaskInput, TaskOutput, TaskMetadata]):
-    def evaluate(self, ctx: EvaluatorContext[TaskInput, TaskOutput, TaskMetadata]) -> EvaluatorOutput:
-        return {
-            'has_expected_output': ctx.expected_output is not None,
-            'has_metadata': ctx.metadata is not None,
-        }
-
-
 async def test_evaluator_with_null_values():
     """Test evaluator with null expected_output and metadata."""
+
+    @dataclass
+    class NullValueEvaluator(Evaluator[TaskInput, TaskOutput, TaskMetadata]):
+        def evaluate(self, ctx: EvaluatorContext[TaskInput, TaskOutput, TaskMetadata]) -> EvaluatorOutput:
+            return {
+                'has_expected_output': ctx.expected_output is not None,
+                'has_metadata': ctx.metadata is not None,
+            }
+
+    evaluator = NullValueEvaluator()
     context = EvaluatorContext[TaskInput, TaskOutput, TaskMetadata](
         name=None,
         inputs=TaskInput(query='What is 2+2?'),
@@ -235,7 +241,6 @@ async def test_evaluator_with_null_values():
         metrics={},
     )
 
-    evaluator = NullValueEvaluator()
     result = evaluator.evaluate(context)
     assert isinstance(result, dict)
     assert result['has_expected_output'] is False

@@ -1,15 +1,20 @@
+from __future__ import annotations as _annotations
+
 import asyncio
 
 import logfire
 import pytest
 from logfire.testing import CaptureLogfire
 
-from pydantic_evals.otel._context_in_memory_span_exporter import (
-    context_subtree,
-)
-from pydantic_evals.otel.span_tree import SpanTree
+from ..conftest import try_import
 
-pytestmark = pytest.mark.anyio
+with try_import() as imports_successful:
+    from pydantic_evals.otel._context_in_memory_span_exporter import (
+        context_subtree,
+    )
+    from pydantic_evals.otel.span_tree import SpanTree
+
+pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed'), pytest.mark.anyio]
 
 
 @pytest.fixture(autouse=True)
