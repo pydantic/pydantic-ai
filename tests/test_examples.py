@@ -170,7 +170,11 @@ def test_docs_examples(  # noqa: C901
 def print_callback(s: str) -> str:
     s = re.sub(r'datetime\.datetime\(.+?\)', 'datetime.datetime(...)', s, flags=re.DOTALL)
     s = re.sub(r'\d\.\d{4,}e-0\d', '0.0...', s)
-    s = re.sub(r'(:?\d+µs:|\d+(:?\.\d+)ms)', r'123µs', s)
+
+    # Replace durations below 100ms with 123µs
+    s = re.sub(r'\b(:?\d+µs:|\d{1,2}\.\d+ms)', r'123µs', s)
+    # Replace durations above 100ms with 101.0ms
+    s = re.sub(r'\b(:?\d{3,}\.\d+ms)', r'101.0ms', s)
     return re.sub(r'datetime.date\(', 'date(', s)
 
 

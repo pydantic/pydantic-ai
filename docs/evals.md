@@ -147,27 +147,27 @@ Pydantic Evals integrates seamlessly with LLMs for both evaluation and dataset g
 You can use LLMs to evaluate the quality of outputs:
 
 ```python {title="llm_judge_example.py"}
-import asyncio
-from typing import Any
-
-from pydantic_evals.evaluators.llm_as_a_judge import judge_input_output
-
-
-async def judge_case(inputs: Any, output: Any):
-    """Judge the output based on a rubric."""
-    rubric = 'The output should be accurate, complete, and relevant to the inputs.'
-    return await judge_input_output(inputs, output, rubric)
-
-
-async def main():
-    inputs = 'What is the capital of France?'
-    output = 'Paris is the capital of France.'
-    result = await judge_case(inputs, output)
-    print(f'Judge result: {result}')
-
-
-if __name__ == '__main__':
-    asyncio.run(main())
+# import asyncio
+# from typing import Any
+#
+# from pydantic_evals.evaluators.llm_as_a_judge import judge_input_output
+#
+#
+# async def judge_case(inputs: Any, output: Any):
+#     """Judge the output based on a rubric."""
+#     rubric = 'The output should be accurate, complete, and relevant to the inputs.'
+#     return await judge_input_output(inputs, output, rubric)
+#
+#
+# async def main():
+#     inputs = 'What is the capital of France?'
+#     output = 'Paris is the capital of France.'
+#     result = await judge_case(inputs, output)
+#     print(f'Judge result: {result}')
+#
+#
+# if __name__ == '__main__':
+#     asyncio.run(main())
 ```
 
 ### Generating Test Datasets
@@ -175,9 +175,6 @@ if __name__ == '__main__':
 Pydantic Evals allows you to generate test datasets using LLMs:
 
 ```python {title="generate_dataset_example.py"}
-import asyncio
-from typing import Optional
-
 from pydantic import BaseModel, Field
 
 from pydantic_evals.examples import generate_dataset
@@ -187,9 +184,7 @@ class QuestionInputs(BaseModel):
     """Model for question inputs."""
 
     question: str = Field(..., description='A question to answer')
-    context: Optional[str] = Field(
-        None, description='Optional context for the question'
-    )
+    context: str | None = Field(None, description='Optional context for the question')
 
 
 class AnswerOutput(BaseModel):
@@ -206,8 +201,7 @@ class MetadataType(BaseModel):
     category: str = Field(..., description='Question category')
 
 
-async def main():
-    # In a real scenario, you'd typically save this to a file
+async def save_generated_dataset():
     dataset = await generate_dataset(
         # path='my_test_cases.yaml',  # Uncomment to save to file
         inputs_type=QuestionInputs,
@@ -219,18 +213,7 @@ async def main():
         Make sure to include both easy and challenging questions.
         """,
     )
-
-    # For demonstration, print the generated dataset
-    for case in dataset.cases:
-        print(f'Case: {case.name}')
-        print(f'Inputs: {case.inputs}')
-        print(f'Expected output: {case.expected_output}')
-        print(f'Metadata: {case.metadata}')
-        print('---')
-
-
-if __name__ == '__main__':
-    asyncio.run(main())
+    dataset.to_file('questions_cases.yaml')
 ```
 
 ## Advanced Usage
@@ -240,7 +223,8 @@ if __name__ == '__main__':
 Datasets can be saved to and loaded from files (YAML or JSON format):
 
 ```python {title="save_load_dataset_example.py"}
-from typing import List, Optional
+from pathlib import Path
+from typing import Any
 
 from pydantic import BaseModel
 
@@ -251,73 +235,87 @@ from pydantic_evals.evaluators.common import IsInstance
 # Define input and output types
 class QueryInput(BaseModel):
     query: str
-    filters: Optional[List[str]] = None
+    filters: list[str] | None = None
 
 
 class QueryResult(BaseModel):
-    results: List[str]
+    results: list[str]
     total_count: int
 
 
 # Create a dataset
-dataset = Dataset(
+dataset = Dataset[QueryInput, QueryResult, dict[str, Any]](
     cases=[
         Case(
-            name="basic_search",
-            inputs=QueryInput(query="python", filters=["programming"]),
-            expected_output=QueryResult(results=["Python tutorial", "Python basics"], total_count=2),
-            metadata={"importance": "high"}
+            name='basic_search',
+            inputs=QueryInput(query='python', filters=['programming']),
+            expected_output=QueryResult(
+                results=['Python tutorial', 'Python basics'], total_count=2
+            ),
+            metadata={'importance': 'high'},
         ),
         Case(
-            name="filtered_search",
-            inputs=QueryInput(query="python", filters=["books"]),
-            expected_output=QueryResult(results=["Python cookbook"], total_count=1),
-            metadata={"importance": "medium"}
+            name='filtered_search',
+            inputs=QueryInput(query='python', filters=['books']),
+            expected_output=QueryResult(results=['Python cookbook'], total_count=1),
+            metadata={'importance': 'medium'},
         ),
     ],
-    evaluators=[IsInstance(type_name="QueryResult")]
+    evaluators=[IsInstance(type_name='QueryResult')],
 )
 
 # Save dataset to file
 # In a real scenario, you'd save to an actual file path
-dataset.to_file("search_tests.yaml")
-print("Dataset saved to search_tests.yaml")
-
-# Load dataset from file
-# In a real scenario, you'd specify the actual file path
-loaded_dataset = Dataset[QueryInput, QueryResult, dict].from_text("""
+dataset.to_file('search_tests.yaml')
+serialized = Path('search_tests.yaml').read_text()
+print(serialized)
+"""
+# yaml-language-server: $schema=search_tests_schema.json
 cases:
 - name: basic_search
   inputs:
     query: python
     filters:
     - programming
+  metadata:
+    importance: high
   expected_output:
     results:
     - Python tutorial
     - Python basics
     total_count: 2
-  metadata:
-    importance: high
+  evaluators: []
 - name: filtered_search
   inputs:
     query: python
     filters:
     - books
+  metadata:
+    importance: medium
   expected_output:
     results:
     - Python cookbook
     total_count: 1
-  metadata:
-    importance: medium
-""")
+  evaluators: []
+evaluators:
+- is_instance: QueryResult
+"""
 
-print(f"Loaded dataset with {len(loaded_dataset.cases)} cases")
+# Load dataset from file
+# In a real scenario, you'd specify the actual file path
+loaded_dataset = Dataset[QueryInput, QueryResult, dict].from_text(serialized)
+
+print(f'Loaded dataset with {len(loaded_dataset.cases)} cases')
+#> Loaded dataset with 2 cases
+
+# Clean up
+Path('search_tests.yaml').unlink()
+Path('search_tests_schema.json').unlink()
 ```
 
 ### Parallel Evaluation
 
-You can control concurrency during evaluation:
+You can control concurrency during evaluation (this might be useful to prevent exceeding a rate limit):
 
 ```python {title="parallel_evaluation_example.py"}
 import asyncio
@@ -333,42 +331,69 @@ dataset = Dataset(
             inputs=i,
             expected_output=i * 2,
         )
-        for i in range(10)
+        for i in range(5)
     ]
 )
 
 
 async def double_number(input_value: int) -> int:
     """Function that simulates work by sleeping for a second before returning double the input."""
-    await asyncio.sleep(1)  # Simulate work
+    await asyncio.sleep(0.1)  # Simulate work
     return input_value * 2
 
 
-async def main():
-    # Run evaluation with default concurrency (usually based on CPU count)
-    start_default = time.time()
-    report_default = await dataset.evaluate(double_number)
-    duration_default = time.time() - start_default
+# Run evaluation with unlimited concurrency
+t0 = time.time()
+report_default = dataset.evaluate_sync(double_number)
+print(f'Evaluation took less than 0.2s: {time.time() - t0 < 0.2}')
+#> Evaluation took less than 0.2s: True
+report_default.print()
+"""
+  Evaluation Summary:
+     double_number
+┏━━━━━━━━━━┳━━━━━━━━━━┓
+┃ Case ID  ┃ Duration ┃
+┡━━━━━━━━━━╇━━━━━━━━━━┩
+│ case_0   │  101.0ms │
+├──────────┼──────────┤
+│ case_1   │  101.0ms │
+├──────────┼──────────┤
+│ case_2   │  101.0ms │
+├──────────┼──────────┤
+│ case_3   │  101.0ms │
+├──────────┼──────────┤
+│ case_4   │  101.0ms │
+├──────────┼──────────┤
+│ Averages │  101.0ms │
+└──────────┴──────────┘
+"""
 
-    # Run evaluation with limited concurrency
-    start_limited = time.time()
-    report_limited = await dataset.evaluate(double_number, concurrency=2)
-    duration_limited = time.time() - start_limited
+# Run evaluation with limited concurrency
+t0 = time.time()
+report_limited = dataset.evaluate_sync(double_number, max_concurrency=1)
+print(f'Evaluation took more than 0.5s: {time.time() - t0 > 0.5}')
+#> Evaluation took more than 0.5s: True
 
-    # Print results
-    print(f'Default concurrency completed in {duration_default:.2f} seconds')
-    print(f'Limited concurrency (2) completed in {duration_limited:.2f} seconds')
-
-    # Print summary reports
-    print('\nDefault concurrency report:')
-    report_default.print()
-
-    print('\nLimited concurrency report:')
-    report_limited.print()
-
-
-if __name__ == '__main__':
-    asyncio.run(main())
+report_limited.print()
+"""
+  Evaluation Summary:
+     double_number
+┏━━━━━━━━━━┳━━━━━━━━━━┓
+┃ Case ID  ┃ Duration ┃
+┡━━━━━━━━━━╇━━━━━━━━━━┩
+│ case_0   │  101.0ms │
+├──────────┼──────────┤
+│ case_1   │  101.0ms │
+├──────────┼──────────┤
+│ case_2   │  101.0ms │
+├──────────┼──────────┤
+│ case_3   │  101.0ms │
+├──────────┼──────────┤
+│ case_4   │  101.0ms │
+├──────────┼──────────┤
+│ Averages │  101.0ms │
+└──────────┴──────────┘
+"""
 ```
 
 ### OpenTelemetry Integration
@@ -377,15 +402,14 @@ Pydantic Evals integrates with OpenTelemetry for tracing and metrics:
 
 ```python {title="opentelemetry_example.py"}
 import asyncio
+from typing import Any
+
 import logfire
-from typing import Dict, Any
 
 from pydantic_evals import Case, Dataset
 from pydantic_evals.evaluators import Evaluator
 from pydantic_evals.evaluators.context import EvaluatorContext
-from pydantic_evals.otel.span_tree import SpanTree, SpanQuery, as_predicate
-from pydantic_evals.otel import context_subtree
-
+from pydantic_evals.otel.span_tree import SpanQuery, as_predicate
 
 # Configure logfire for OpenTelemetry integration
 logfire.configure()
@@ -393,93 +417,99 @@ logfire.configure()
 
 class SpanTracingEvaluator(Evaluator[str, str]):
     """Evaluator that analyzes the span tree generated during function execution."""
-    
-    def evaluate(self, ctx: EvaluatorContext[str, str]) -> Dict[str, Any]:
+
+    def evaluate(self, ctx: EvaluatorContext[str, str]) -> dict[str, Any]:
         # Get the span tree from the context
         span_tree = ctx.span_tree
         if span_tree is None:
-            return {"has_spans": False, "performance_score": 0.0}
-        
+            return {'has_spans': False, 'performance_score': 0.0}
+
         # Find all spans with "processing" in the name
-        processing_spans = span_tree.find_all(
-            lambda node: "processing" in node.name
-        )
-        
+        processing_spans = span_tree.find_all(lambda node: 'processing' in node.name)
+
         # Calculate total processing time
         total_processing_time = sum(
-            (span.duration.total_seconds() for span in processing_spans),
-            0.0
+            (span.duration.total_seconds() for span in processing_spans), 0.0
         )
-        
+
         # Check for error spans
-        error_query: SpanQuery = {"name_contains": "error"}
+        error_query: SpanQuery = {'name_contains': 'error'}
         has_errors = span_tree.any(as_predicate(error_query))
-        
+
         # Calculate a performance score (lower is better)
         performance_score = 1.0 if total_processing_time < 0.5 else 0.5
-        
+
         return {
-            "has_spans": True,
-            "processing_time": total_processing_time,
-            "has_errors": has_errors,
-            "performance_score": 0 if has_errors else performance_score
+            'has_spans': True,
+            'processing_time': total_processing_time,
+            'has_errors': has_errors,
+            'performance_score': 0 if has_errors else performance_score,
         }
 
 
 async def process_text(text: str) -> str:
     """Function that processes text with OpenTelemetry instrumentation."""
-    with logfire.span("process_text"):
+    with logfire.span('process_text'):
         # Simulate initial processing
-        with logfire.span("text_processing"):
+        with logfire.span('text_processing'):
             await asyncio.sleep(0.1)
             processed = text.strip().lower()
-        
+
         # Simulate additional processing
-        with logfire.span("additional_processing"):
-            if "error" in processed:
-                with logfire.span("error_handling"):
-                    logfire.error(f"Error detected in text: {text}")
-                    return f"Error processing: {text}"
+        with logfire.span('additional_processing'):
+            if 'error' in processed:
+                with logfire.span('error_handling'):
+                    logfire.error(f'Error detected in text: {text}')
+                    return f'Error processing: {text}'
             await asyncio.sleep(0.2)
-            processed = processed.replace(" ", "_")
-        
-        return f"Processed: {processed}"
+            processed = processed.replace(' ', '_')
+
+        return f'Processed: {processed}'
 
 
-async def main():
-    # Create test cases
-    dataset = Dataset(
-        cases=[
-            Case(
-                name="normal_text",
-                inputs="Hello World",
-                expected_output="Processed: hello_world",
-            ),
-            Case(
-                name="text_with_error",
-                inputs="Contains error marker",
-                expected_output="Error processing: Contains error marker",
-            ),
-        ],
-        evaluators=[SpanTracingEvaluator()]
-    )
-    
-    # Track spans during evaluation
-    async def traced_process_text(input_text: str) -> str:
-        with context_subtree() as tree:
-            result = await process_text(input_text)
-        ctx.span_tree = tree  # Store the span tree in the context
-        return result
-    
-    # Run evaluation
-    report = await dataset.evaluate(traced_process_text)
-    
-    # Print the report
-    report.print(include_input=True, include_output=True)
+# Create test cases
+dataset = Dataset(
+    cases=[
+        Case(
+            name='normal_text',
+            inputs='Hello World',
+            expected_output='Processed: hello_world',
+        ),
+        Case(
+            name='text_with_error',
+            inputs='Contains error marker',
+            expected_output='Error processing: Contains error marker',
+        ),
+    ],
+    evaluators=[SpanTracingEvaluator()],
+)
 
+# Run evaluation - spans are automatically captured since logfire is configured
+report = dataset.evaluate_sync(process_text)
 
-if __name__ == "__main__":
-    asyncio.run(main())
+# Print the report
+report.print(include_input=True, include_output=True)
+"""
+                                                    Evaluation Summary: process_text
+┏━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━┓
+┃ Case ID         ┃ Inputs                ┃ Outputs                                 ┃ Scores                   ┃ Assertions ┃ Duration ┃
+┡━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━┩
+│ normal_text     │ Hello World           │ Processed: hello_world                  │ has_spans: True          │ ✔✗         │  101.0ms │
+│                 │                       │                                         │ processing_time: 0.315   │            │          │
+│                 │                       │                                         │ has_errors: False        │            │          │
+│                 │                       │                                         │ performance_score: 1.00  │            │          │
+├─────────────────┼───────────────────────┼─────────────────────────────────────────┼──────────────────────────┼────────────┼──────────┤
+│ text_with_error │ Contains error marker │ Error processing: Contains error marker │ has_spans: True          │ ✔✔         │  101.0ms │
+│                 │                       │                                         │ processing_time: 0.125   │            │          │
+│                 │                       │                                         │ has_errors: True         │            │          │
+│                 │                       │                                         │ performance_score: 0     │            │          │
+├─────────────────┼───────────────────────┼─────────────────────────────────────────┼──────────────────────────┼────────────┼──────────┤
+│ Averages        │                       │                                         │ has_spans: 1.00          │ 75.0% ✔    │  101.0ms │
+│                 │                       │                                         │ processing_time: 0.220   │            │          │
+│                 │                       │                                         │ has_errors: 0.500        │            │          │
+│                 │                       │                                         │ performance_score: 0.500 │            │          │
+└─────────────────┴───────────────────────┴─────────────────────────────────────────┴──────────────────────────┴────────────┴──────────┘
+"""
 ```
 
 ## Example: Time Range Evaluation
@@ -487,136 +517,130 @@ if __name__ == "__main__":
 Here's a complete example of using Pydantic Evals for evaluating a function used to select a time range based on a user prompt:
 
 ```python {title="time_range_evaluation_example.py"}
-import asyncio
-import datetime
-from typing import Any
-
-from pydantic import BaseModel
-
-from pydantic_evals import Case, Dataset
-from pydantic_evals.evaluators import Evaluator, EvaluatorContext
-from pydantic_evals.evaluators.common import IsInstance
-from pydantic_evals.evaluators.llm_as_a_judge import judge_input_output
-
-
-# Define input and output models
-class TimeRangeInputs(BaseModel):
-    query: str
-    context: str | None = None
-
-
-class TimeRangeResponse(BaseModel):
-    start_time: str | None = None
-    end_time: str | None = None
-    error: str | None = None
-
-
-# Create a custom evaluator
-class TimeRangeEvaluator(Evaluator[TimeRangeInputs, TimeRangeResponse]):
-    async def evaluate(
-        self, ctx: EvaluatorContext[TimeRangeInputs, TimeRangeResponse]
-    ) -> dict[str, Any]:
-        rubric = """
-        Evaluate the time range based on:
-        1. Whether it reasonably matches the user query
-        2. Whether the format is valid (ISO format preferred)
-        3. Whether start_time is before end_time
-        4. Whether an appropriate error is returned when the input is unclear
-        """
-        result = await judge_input_output(ctx.inputs, ctx.output, rubric)
-        
-        # Perform additional checks
-        valid_format = True
-        valid_range = True
-        
-        if ctx.output.start_time and ctx.output.end_time:
-            try:
-                start = datetime.datetime.fromisoformat(ctx.output.start_time)
-                end = datetime.datetime.fromisoformat(ctx.output.end_time)
-                valid_range = start <= end
-            except ValueError:
-                valid_format = False
-        
-        return {
-            "llm_score": result.score,
-            "valid_format": valid_format,
-            "valid_range": valid_range,
-            "overall_score": result.score * 0.7 + (0.3 if valid_format and valid_range else 0)
-        }
-
-
-# Define function to test
-async def infer_time_range(inputs: TimeRangeInputs) -> TimeRangeResponse:
-    """Infer a time range from a natural language query."""
-    query = inputs.query.lower()
-    now = datetime.datetime.now()
-    
-    if "today" in query:
-        start = datetime.datetime(now.year, now.month, now.day, 0, 0, 0)
-        end = start + datetime.timedelta(days=1) - datetime.timedelta(seconds=1)
-        return TimeRangeResponse(
-            start_time=start.isoformat(),
-            end_time=end.isoformat()
-        )
-    elif "yesterday" in query:
-        start = datetime.datetime(now.year, now.month, now.day, 0, 0, 0) - datetime.timedelta(days=1)
-        end = start + datetime.timedelta(days=1) - datetime.timedelta(seconds=1)
-        return TimeRangeResponse(
-            start_time=start.isoformat(),
-            end_time=end.isoformat()
-        )
-    elif "last week" in query:
-        end = datetime.datetime(now.year, now.month, now.day, 0, 0, 0)
-        start = end - datetime.timedelta(days=7)
-        return TimeRangeResponse(
-            start_time=start.isoformat(),
-            end_time=end.isoformat()
-        )
-    else:
-        return TimeRangeResponse(
-            error="Could not determine time range from query"
-        )
-
-
-async def main():
-    # Create test dataset
-    dataset = Dataset(
-        cases=[
-            Case(
-                name="today_query",
-                inputs=TimeRangeInputs(query="Show me data for today"),
-                expected_output=None,  # We'll let the evaluator judge correctness
-                metadata={"expected": "today"}
-            ),
-            Case(
-                name="yesterday_query",
-                inputs=TimeRangeInputs(query="What happened yesterday?"),
-                expected_output=None,
-                metadata={"expected": "yesterday"}
-            ),
-            Case(
-                name="last_week_query",
-                inputs=TimeRangeInputs(query="Show stats from last week"),
-                expected_output=None,
-                metadata={"expected": "last_week"}
-            ),
-            Case(
-                name="ambiguous_query",
-                inputs=TimeRangeInputs(query="Show me some data"),
-                expected_output=TimeRangeResponse(error="Could not determine time range from query"),
-                metadata={"expected": "error"}
-            ),
-        ],
-        evaluators=[IsInstance(type_name="TimeRangeResponse"), TimeRangeEvaluator()]
-    )
-    
-    # Run evaluation
-    report = await dataset.evaluate(infer_time_range)
-    
-    # Print the report
-    report.print(include_input=True, include_output=True)
-
-
-if __name__ == "__main__":
-    asyncio.run(main())
+# import asyncio
+# import datetime
+# from typing import Any
+#
+# from pydantic import BaseModel
+#
+# from pydantic_evals import Case, Dataset
+# from pydantic_evals.evaluators import Evaluator, EvaluatorContext
+# from pydantic_evals.evaluators.common import IsInstance
+# from pydantic_evals.evaluators.llm_as_a_judge import judge_input_output
+#
+#
+# # Define input and output models
+# class TimeRangeInputs(BaseModel):
+#     query: str
+#     context: str | None = None
+#
+#
+# class TimeRangeResponse(BaseModel):
+#     start_time: str | None = None
+#     end_time: str | None = None
+#     error: str | None = None
+#
+#
+# # Create a custom evaluator
+# class TimeRangeEvaluator(Evaluator[TimeRangeInputs, TimeRangeResponse]):
+#     async def evaluate_async(
+#         self, ctx: EvaluatorContext[TimeRangeInputs, TimeRangeResponse]
+#     ) -> dict[str, Any]:
+#         rubric = """
+#         Evaluate the time range based on:
+#         1. Whether it reasonably matches the user query
+#         2. Whether the format is valid (ISO format preferred)
+#         3. Whether start_time is before end_time
+#         4. Whether an appropriate error is returned when the input is unclear
+#         """
+#         result = await judge_input_output(ctx.inputs, ctx.output, rubric)
+#
+#         # Perform additional checks
+#         valid_format = True
+#         valid_range = True
+#
+#         if ctx.output.start_time and ctx.output.end_time:
+#             try:
+#                 start = datetime.datetime.fromisoformat(ctx.output.start_time)
+#                 end = datetime.datetime.fromisoformat(ctx.output.end_time)
+#                 valid_range = start <= end
+#             except ValueError:
+#                 valid_format = False
+#
+#         return {
+#             'llm_score': result.score,
+#             'valid_format': valid_format,
+#             'valid_range': valid_range,
+#             'overall_score': result.score * 0.7
+#             + (0.3 if valid_format and valid_range else 0),
+#         }
+#
+#
+# # Define function to test
+# async def infer_time_range(inputs: TimeRangeInputs) -> TimeRangeResponse:
+#     """Infer a time range from a natural language query."""
+#     query = inputs.query.lower()
+#     now = datetime.datetime.now()
+#
+#     if 'today' in query:
+#         start = datetime.datetime(now.year, now.month, now.day, 0, 0, 0)
+#         end = start + datetime.timedelta(days=1) - datetime.timedelta(seconds=1)
+#         return TimeRangeResponse(start_time=start.isoformat(), end_time=end.isoformat())
+#     elif 'yesterday' in query:
+#         start = datetime.datetime(
+#             now.year, now.month, now.day, 0, 0, 0
+#         ) - datetime.timedelta(days=1)
+#         end = start + datetime.timedelta(days=1) - datetime.timedelta(seconds=1)
+#         return TimeRangeResponse(start_time=start.isoformat(), end_time=end.isoformat())
+#     elif 'last week' in query:
+#         end = datetime.datetime(now.year, now.month, now.day, 0, 0, 0)
+#         start = end - datetime.timedelta(days=7)
+#         return TimeRangeResponse(start_time=start.isoformat(), end_time=end.isoformat())
+#     else:
+#         return TimeRangeResponse(error='Could not determine time range from query')
+#
+#
+# async def main():
+#     # Create test dataset
+#     dataset = Dataset(
+#         cases=[
+#             Case(
+#                 name='today_query',
+#                 inputs=TimeRangeInputs(query='Show me data for today'),
+#                 expected_output=None,  # We'll let the evaluator judge correctness
+#                 metadata={'expected': 'today'},
+#             ),
+#             Case(
+#                 name='yesterday_query',
+#                 inputs=TimeRangeInputs(query='What happened yesterday?'),
+#                 expected_output=None,
+#                 metadata={'expected': 'yesterday'},
+#             ),
+#             Case(
+#                 name='last_week_query',
+#                 inputs=TimeRangeInputs(query='Show stats from last week'),
+#                 expected_output=None,
+#                 metadata={'expected': 'last_week'},
+#             ),
+#             Case(
+#                 name='ambiguous_query',
+#                 inputs=TimeRangeInputs(query='Show me some data'),
+#                 expected_output=TimeRangeResponse(
+#                     error='Could not determine time range from query'
+#                 ),
+#                 metadata={'expected': 'error'},
+#             ),
+#         ],
+#         evaluators=[IsInstance(type_name='TimeRangeResponse'), TimeRangeEvaluator()],
+#     )
+#
+#     # Run evaluation
+#     report = await dataset.evaluate(infer_time_range)
+#
+#     # Print the report
+#     report.print(include_input=True, include_output=True)
+#
+#
+# if __name__ == '__main__':
+#     asyncio.run(main())
 ```
