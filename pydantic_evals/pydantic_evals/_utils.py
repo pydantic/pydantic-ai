@@ -3,10 +3,11 @@ from __future__ import annotations as _annotations
 import asyncio
 import inspect
 import sys
-from collections.abc import Coroutine
+from collections.abc import Awaitable, Coroutine
 from functools import partial
 from typing import Any, Callable, TypeVar
 
+import anyio
 from typing_extensions import ParamSpec, TypeIs
 
 
@@ -93,3 +94,25 @@ def run_until_complete(coro: Coroutine[None, None, _R]) -> _R:
     else:
         with asyncio.runners.Runner(loop_factory=asyncio.new_event_loop) as runner:
             return runner.run(coro)
+
+
+async def task_group_gather(tasks: list[Callable[[], Awaitable[T]]]) -> list[T]:
+    """Run multiple awaitable callables concurrently using an AnyIO task group.
+
+    Args:
+        tasks: A list of no-argument callables that return awaitable objects.
+
+    Returns:
+        A list of results in the same order as the input tasks.
+    """
+    results: list[T] = [None] * len(tasks)  # type: ignore
+
+    async def _run_task(tsk: Callable[[], Awaitable[T]], index: int) -> None:
+        """Helper function to run a task and store the result in the correct index."""
+        results[index] = await tsk()
+
+    async with anyio.create_task_group() as tg:
+        for i, task in enumerate(tasks):
+            tg.start_soon(_run_task, task, i)
+
+    return results

@@ -31,7 +31,7 @@ from typing_extensions import NotRequired, Self, TypedDict, TypeVar
 
 from pydantic_graph._utils import run_until_complete
 
-from ._utils import get_unwrapped_function_name
+from ._utils import get_unwrapped_function_name, task_group_gather
 from .evaluators import EvaluationResult, Evaluator, run_evaluator
 from .evaluators._spec import EvaluatorSpec
 from .evaluators.common import DEFAULT_EVALUATORS
@@ -234,17 +234,20 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
 
         limiter = anyio.Semaphore(max_concurrency) if max_concurrency is not None else AsyncExitStack()
         with _logfire.span('evaluate {name}', name=name) as eval_span:
-            cases: list[ReportCase] = []
 
             async def _handle_case(case: Case[InputsT, OutputT, MetadataT], report_case_name: str):
                 async with limiter:
-                    cases.append(await _run_task_and_evaluators(task, case, report_case_name, self.evaluators))
+                    return await _run_task_and_evaluators(task, case, report_case_name, self.evaluators)
 
-            async with anyio.create_task_group() as group:
-                for i, case in enumerate(self.cases, 1):
-                    group.start_soon(_handle_case, case, case.name or f'Case {i}')
-
-            report = EvaluationReport(name=name, cases=cases)
+            report = EvaluationReport(
+                name=name,
+                cases=await task_group_gather(
+                    [
+                        lambda case=case, i=i: _handle_case(case, case.name or f'Case {i}')
+                        for i, case in enumerate(self.cases, 1)
+                    ]
+                ),
+            )
             # TODO(DavidM): This attribute will be too big in general; remove it once we can use child spans in details panel:
             eval_span.set_attribute('cases', report.cases)
             # TODO(DavidM): Remove this 'averages' attribute once we compute it in the details panel
@@ -824,13 +827,10 @@ async def _run_task_and_evaluators(
         evaluators = case.evaluators + dataset_evaluators
         evaluator_outputs: list[EvaluationResult] = []
         if evaluators:
-
-            async def evaluator_task(ev: Evaluator[InputsT, OutputT, MetadataT]):
-                evaluator_outputs.extend(await run_evaluator(ev, scoring_context))
-
-            async with anyio.create_task_group() as tg:
-                for evaluator in evaluators:
-                    tg.start_soon(evaluator_task, evaluator)
+            evaluator_outputs_by_task = await task_group_gather(
+                [lambda: run_evaluator(ev, scoring_context) for ev in evaluators]
+            )
+            evaluator_outputs += [out for outputs in evaluator_outputs_by_task for out in outputs]
 
         assertions, scores, labels = _group_evaluator_outputs_by_type(evaluator_outputs)
         case_span.set_attribute('assertions', _evaluation_results_adapter.dump_python(assertions))
