@@ -3100,6 +3100,7 @@ version = "0.0.41"
 source = { editable = "pydantic_evals" }
 dependencies = [
     { name = "anyio" },
+    { name = "eval-type-backport", marker = "python_full_version < '3.11'" },
     { name = "logfire-api" },
     { name = "pydantic" },
     { name = "rich" },
@@ -3134,6 +3135,7 @@ requires-dist = [
     { name = "anthropic", marker = "extra == 'anthropic'", specifier = ">=0.40.0" },
     { name = "anyio", specifier = ">=0" },
     { name = "cohere", marker = "extra == 'cohere'", specifier = ">=5.13.11" },
+    { name = "eval-type-backport", marker = "python_full_version < '3.11'", specifier = ">=0" },
     { name = "google-auth", marker = "extra == 'vertexai'", specifier = ">=2.36.0" },
     { name = "groq", marker = "extra == 'groq'", specifier = ">=0.12.0" },
     { name = "logfire", marker = "extra == 'logfire'", specifier = ">=2.3" },

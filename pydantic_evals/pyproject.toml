@@ -38,6 +38,7 @@ dependencies = [
     "logfire-api>=1.2.0",
     "pydantic>=2.10",
     "anyio>=0",
+    "eval-type-backport>=0; python_version < '3.11'",
 ]
 
 [project.optional-dependencies]

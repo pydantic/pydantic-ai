@@ -153,7 +153,7 @@ from pydantic_evals.evaluators import IsInstance, LlmJudge
 
 class CustomerOrder(BaseModel):  # (1)!
     dish_name: str
-    dietary_restriction: str | None = None
+    dietary_restriction: 'str | None' = None
 
 
 class Recipe(BaseModel):
@@ -254,7 +254,7 @@ class QuestionInputs(BaseModel):
     """Model for question inputs."""
 
     question: str = Field(description='A question to answer')
-    context: str | None = Field(None, description='Optional context for the question')
+    context: 'str | None' = Field(None, description='Optional context for the question')
 
 
 class AnswerOutput(BaseModel):
