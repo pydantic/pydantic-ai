@@ -49,7 +49,7 @@ else:
 # while waiting for https://github.com/pydantic/logfire/issues/745
 try:
     import logfire._internal.stack_info
-except ImportError:
+except ImportError:  # pragma: no cover
     pass
 else:
     from pathlib import Path
@@ -206,7 +206,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             if case.name is None:
                 continue
             if case.name in case_names:
-                raise ValueError(f'Duplicate case name: {case.name}')
+                raise ValueError(f'Duplicate case name: {case.name!r}')
             case_names.add(case.name)
 
         super().__init__(
@@ -298,6 +298,9 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             expected_output: The expected output of the task, used for comparison in evaluators.
             evaluators: Tuple of evaluators specific to this case, in addition to dataset-level evaluators.
         """
+        if name in {case.name for case in self.cases}:
+            raise ValueError(f'Duplicate case name: {name!r}')
+
         case = Case[InputsT, OutputT, MetadataT](
             name=name,
             inputs=inputs,
@@ -347,13 +350,14 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             metadata = getattr(c, '__pydantic_generic_metadata__', {})
             if len(args := (metadata.get('args', ()) or getattr(c, '__args__', ()))) == 3:
                 return args
-        warnings.warn(
-            f'Could not determine the generic parameters for {cls}; using `Any` for each. '
-            f'You should explicitly set the generic parameters via `Dataset[MyInputs, MyOutput, MyMetadata]`'
-            f'when serializing or deserializing.',
-            UserWarning,
-        )
-        return Any, Any, Any  # type: ignore
+        else:  # pragma: no cover
+            warnings.warn(
+                f'Could not determine the generic parameters for {cls}; using `Any` for each. '
+                f'You should explicitly set the generic parameters via `Dataset[MyInputs, MyOutput, MyMetadata]`'
+                f'when serializing or deserializing.',
+                UserWarning,
+            )
+            return Any, Any, Any  # type: ignore
 
     @classmethod
     def from_file(
@@ -997,7 +1001,9 @@ def _get_registry(
                 f'All custom evaluator classes must be subclasses of Evaluator, but {evaluator_class} is not'
             )
         if '__dataclass_fields__' not in evaluator_class.__dict__:
-            raise ValueError(f'All custom evaluator must be decorated with `@dataclass`, but {evaluator_class} is not')
+            raise ValueError(
+                f'All custom evaluator classes must be decorated with `@dataclass`, but {evaluator_class} is not'
+            )
         name = evaluator_class.name()
         if name in registry:
             raise ValueError(f'Duplicate evaluator class name: {name}')

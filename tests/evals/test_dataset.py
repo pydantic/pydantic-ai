@@ -599,3 +599,125 @@ async def test_dataset_evaluate_with_multiple_evaluators(example_dataset: Datase
     report = await example_dataset.evaluate(task)
     assert len(report.cases) == 2
     assert len(report.cases[0].scores) == 2
+
+
+@pytest.mark.anyio
+async def test_unnamed_cases():
+    dataset = Dataset[TaskInput, TaskOutput, TaskMetadata](
+        cases=[
+            Case(
+                name=None,
+                inputs=TaskInput(query='What is 1+1?'),
+            ),
+            Case(
+                name='My Case',
+                inputs=TaskInput(query='What is 2+2?'),
+            ),
+            Case(
+                name=None,
+                inputs=TaskInput(query='What is 1+2?'),
+            ),
+        ]
+    )
+
+    async def task(inputs: TaskInput) -> TaskOutput:
+        return TaskOutput(answer='4')
+
+    result = await dataset.evaluate(task)
+    assert [case.name for case in dataset.cases] == [None, 'My Case', None]
+    assert [case.name for case in result.cases] == ['Case 1', 'My Case', 'Case 3']
+
+
+@pytest.mark.anyio
+async def test_duplicate_case_names():
+    with pytest.raises(ValueError) as exc_info:
+        Dataset[TaskInput, TaskOutput, TaskMetadata](
+            cases=[
+                Case(
+                    name='My Case',
+                    inputs=TaskInput(query='What is 1+1?'),
+                ),
+                Case(
+                    name='My Case',
+                    inputs=TaskInput(query='What is 2+2?'),
+                ),
+            ]
+        )
+    assert str(exc_info.value) == "Duplicate case name: 'My Case'"
+
+    dataset = Dataset[TaskInput, TaskOutput, TaskMetadata](
+        cases=[
+            Case(
+                name='My Case',
+                inputs=TaskInput(query='What is 1+1?'),
+            ),
+        ]
+    )
+    dataset.add_case(
+        name='My Other Case',
+        inputs=TaskInput(query='What is 2+2?'),
+    )
+
+    with pytest.raises(ValueError) as exc_info:
+        dataset.add_case(
+            name='My Case',
+            inputs=TaskInput(query='What is 1+2?'),
+        )
+    assert str(exc_info.value) == "Duplicate case name: 'My Case'"
+
+
+@pytest.mark.anyio
+async def test_add_evaluator():
+    dataset = Dataset[TaskInput, TaskOutput, TaskMetadata](
+        cases=[
+            Case(
+                name='My Case 1',
+                inputs=TaskInput(query='What is 1+1?'),
+            ),
+            Case(
+                name='My Case 2',
+                inputs=TaskInput(query='What is 2+2?'),
+            ),
+        ]
+    )
+    dataset.add_evaluator(Python('ctx.output > 0'))
+    dataset.add_evaluator(Python('ctx.output == 2'), specific_case='My Case 1')
+    dataset.add_evaluator(Python('ctx.output == 4'), specific_case='My Case 2')
+    assert dataset.model_dump(mode='json', exclude_defaults=True, context={'use_short_form': True}) == {
+        'cases': [
+            {
+                'evaluators': [{'Python': 'ctx.output == 2'}],
+                'expected_output': None,
+                'inputs': {'query': 'What is 1+1?'},
+                'metadata': None,
+                'name': 'My Case 1',
+            },
+            {
+                'evaluators': [{'Python': 'ctx.output == 4'}],
+                'expected_output': None,
+                'inputs': {'query': 'What is 2+2?'},
+                'metadata': None,
+                'name': 'My Case 2',
+            },
+        ],
+        'evaluators': [{'Python': 'ctx.output > 0'}],
+    }
+
+
+def test_add_invalid_evaluator():
+    class NotAnEvaluator:
+        pass
+
+    class SimpleEvaluator(Evaluator[TaskInput, TaskOutput, TaskMetadata]):
+        def evaluate(self, ctx: EvaluatorContext[TaskInput, TaskOutput, TaskMetadata]):
+            return False
+
+    dataset = Dataset[TaskInput, TaskOutput, TaskMetadata](cases=[])
+
+    with pytest.raises(ValueError) as exc_info:
+        dataset.model_json_schema_with_evaluators((NotAnEvaluator,))  # type: ignore
+    assert str(exc_info.value).startswith('All custom evaluator classes must be subclasses of Evaluator')
+
+    with pytest.raises(ValueError) as exc_info:
+        dataset.model_json_schema_with_evaluators((SimpleEvaluator,))
+    assert str(exc_info.value).startswith('All custom evaluator classes must be decorated with `@dataclass`')

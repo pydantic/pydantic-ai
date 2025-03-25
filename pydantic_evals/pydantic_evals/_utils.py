@@ -73,7 +73,7 @@ _P = ParamSpec('_P')
 _R = TypeVar('_R')
 
 
-def run_until_complete(coro: Coroutine[None, None, _R]) -> _R:
+def run_until_complete(coro: Coroutine[None, None, _R]) -> _R:  # pragma: no cover
     """Run a coroutine to completion in a new event loop.
 
     This is a utility function to run async code from synchronous contexts.
