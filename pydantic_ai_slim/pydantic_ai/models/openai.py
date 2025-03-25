@@ -75,7 +75,7 @@ allows this model to be used more easily with other model types (ie, Ollama, Dee
 OpenAISystemPromptRole = Literal['system', 'developer', 'user']
 
 
-class OpenAIModelSettings(ModelSettings):
+class OpenAIModelSettings(ModelSettings, total=False):
     """Settings used for an OpenAI model request."""
 
     openai_reasoning_effort: chat.ChatCompletionReasoningEffort
@@ -83,6 +83,12 @@ class OpenAIModelSettings(ModelSettings):
     Constrains effort on reasoning for [reasoning models](https://platform.openai.com/docs/guides/reasoning).
     Currently supported values are `low`, `medium`, and `high`. Reducing reasoning effort can
     result in faster responses and fewer tokens used on reasoning in a response.
+    """
+
+    user: str
+    """A unique identifier representing the end-user, which can help OpenAI monitor and detect abuse.
+
+    See [OpenAI's safety best practices](https://platform.openai.com/docs/guides/safety-best-practices#end-user-ids) for more details.
     """
 
 
