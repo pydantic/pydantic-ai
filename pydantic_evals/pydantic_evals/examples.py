@@ -33,7 +33,7 @@ async def generate_dataset(
     output_type: type[OutputT],
     metadata_type: type[MetadataT],
     custom_evaluator_types: Sequence[type[Evaluator[InputsT, OutputT, MetadataT]]] = (),
-    model: models.Model | models.KnownModelName = 'gpt-4o',
+    model: models.Model | models.KnownModelName = 'openai:gpt-4o',
     n_examples: int = 3,
     extra_instructions: str | None = None,
 ) -> Dataset[InputsT, OutputT, MetadataT]:

@@ -154,7 +154,7 @@ class LlmJudge(Evaluator[object, object, object]):
     """Judge whether the output of a language model meets the criteria of a provided rubric."""
 
     rubric: str
-    model: models.KnownModelName = 'gpt-4o'
+    model: models.Model | models.KnownModelName = 'openai:gpt-4o'
     include_input: bool = False
 
     async def evaluate_async(

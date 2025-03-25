@@ -71,7 +71,7 @@ async def judge_input_output(
     inputs: Any, output: Any, rubric: str, model: models.Model | models.KnownModelName = 'openai:gpt-4o'
 ) -> GradingOutput:
     """Judge the output of a model based on the inputs and a rubric."""
-    user_prompt = f'<Input>\n{_stringify(inputs)}\n</Input><Output>\n{_stringify(output)}\n</Output>\n<Rubric>\n{rubric}\n</Rubric>'
+    user_prompt = f'<Input>\n{_stringify(inputs)}\n</Input>\n<Output>\n{_stringify(output)}\n</Output>\n<Rubric>\n{rubric}\n</Rubric>'
     return (await _judge_input_output_agent.run(user_prompt, model=model)).data
 
 
