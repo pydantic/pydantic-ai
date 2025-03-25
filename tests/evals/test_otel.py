@@ -3,12 +3,12 @@ from __future__ import annotations as _annotations
 import asyncio
 
 import pytest
-from logfire.testing import CaptureLogfire
 
 from ..conftest import try_import
 
 with try_import() as imports_successful:
     import logfire
+    from logfire.testing import CaptureLogfire
 
     from pydantic_evals.otel._context_in_memory_span_exporter import (
         context_subtree,
