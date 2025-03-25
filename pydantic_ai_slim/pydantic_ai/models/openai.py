@@ -75,7 +75,7 @@ allows this model to be used more easily with other model types (ie, Ollama, Dee
 OpenAISystemPromptRole = Literal['system', 'developer', 'user']
 
 
-class OpenAIModelSettings(ModelSettings):
+class OpenAIModelSettings(ModelSettings, total=False):
     """Settings used for an OpenAI model request."""
 
     openai_reasoning_effort: chat.ChatCompletionReasoningEffort
@@ -83,6 +83,12 @@ class OpenAIModelSettings(ModelSettings):
     Constrains effort on reasoning for [reasoning models](https://platform.openai.com/docs/guides/reasoning).
     Currently supported values are `low`, `medium`, and `high`. Reducing reasoning effort can
     result in faster responses and fewer tokens used on reasoning in a response.
+    """
+
+    user: str
+    """A unique identifier representing the end-user, which can help OpenAI monitor and detect abuse.
+
+    See [OpenAI's safety best practices](https://platform.openai.com/docs/guides/safety-best-practices#end-user-ids) for more details.
     """
 
 
@@ -282,6 +288,7 @@ class OpenAIModel(Model):
                 frequency_penalty=model_settings.get('frequency_penalty', NOT_GIVEN),
                 logit_bias=model_settings.get('logit_bias', NOT_GIVEN),
                 reasoning_effort=model_settings.get('openai_reasoning_effort', NOT_GIVEN),
+                user=model_settings.get('user', NOT_GIVEN),
             )
         except APIStatusError as e:
             if (status_code := e.status_code) >= 400:
@@ -348,7 +355,7 @@ class OpenAIModel(Model):
     @staticmethod
     def _map_tool_call(t: ToolCallPart) -> chat.ChatCompletionMessageToolCallParam:
         return chat.ChatCompletionMessageToolCallParam(
-            id=_guard_tool_call_id(t=t, model_source='OpenAI'),
+            id=_guard_tool_call_id(t=t),
             type='function',
             function={'name': t.tool_name, 'arguments': t.args_as_json_str()},
         )
@@ -378,7 +385,7 @@ class OpenAIModel(Model):
             elif isinstance(part, ToolReturnPart):
                 yield chat.ChatCompletionToolMessageParam(
                     role='tool',
-                    tool_call_id=_guard_tool_call_id(t=part, model_source='OpenAI'),
+                    tool_call_id=_guard_tool_call_id(t=part),
                     content=part.model_response_str(),
                 )
             elif isinstance(part, RetryPromptPart):
@@ -387,7 +394,7 @@ class OpenAIModel(Model):
                 else:
                     yield chat.ChatCompletionToolMessageParam(
                         role='tool',
-                        tool_call_id=_guard_tool_call_id(t=part, model_source='OpenAI'),
+                        tool_call_id=_guard_tool_call_id(t=part),
                         content=part.model_response(),
                     )
             else:

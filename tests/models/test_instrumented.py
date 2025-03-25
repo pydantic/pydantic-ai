@@ -676,23 +676,19 @@ def test_messages_to_otel_events_serialization_errors():
             raise ValueError('error!')
 
     messages = [
-        ModelResponse(parts=[ToolCallPart('tool', {'arg': Foo()})]),
-        ModelRequest(parts=[ToolReturnPart('tool', Bar())]),
+        ModelResponse(parts=[ToolCallPart('tool', {'arg': Foo()}, tool_call_id='tool_call_id')]),
+        ModelRequest(parts=[ToolReturnPart('tool', Bar(), tool_call_id='return_tool_call_id')]),
     ]
 
-    assert [
-        InstrumentedModel.event_to_dict(e) for e in InstrumentedModel.messages_to_otel_events(messages)
-    ] == snapshot(
-        [
-            {
-                'body': "{'role': 'assistant', 'tool_calls': [{'id': None, 'type': 'function', 'function': {'name': 'tool', 'arguments': {'arg': Foo()}}}]}",
-                'gen_ai.message.index': 0,
-                'event.name': 'gen_ai.assistant.message',
-            },
-            {
-                'body': 'Unable to serialize: error!',
-                'gen_ai.message.index': 1,
-                'event.name': 'gen_ai.tool.message',
-            },
-        ]
-    )
+    assert [InstrumentedModel.event_to_dict(e) for e in InstrumentedModel.messages_to_otel_events(messages)] == [
+        {
+            'body': "{'role': 'assistant', 'tool_calls': [{'id': 'tool_call_id', 'type': 'function', 'function': {'name': 'tool', 'arguments': {'arg': Foo()}}}]}",
+            'gen_ai.message.index': 0,
+            'event.name': 'gen_ai.assistant.message',
+        },
+        {
+            'body': 'Unable to serialize: error!',
+            'gen_ai.message.index': 1,
+            'event.name': 'gen_ai.tool.message',
+        },
+    ]

@@ -10,7 +10,7 @@ from httpx import AsyncClient as AsyncHTTPClient
 from typing_extensions import assert_never, deprecated
 
 from .. import ModelHTTPError, result
-from .._utils import guard_tool_call_id as _guard_tool_call_id
+from .._utils import generate_tool_call_id as _generate_tool_call_id, guard_tool_call_id as _guard_tool_call_id
 from ..messages import (
     ModelMessage,
     ModelRequest,
@@ -225,7 +225,7 @@ class CohereModel(Model):
                     ToolCallPart(
                         tool_name=c.function.name,
                         args=c.function.arguments,
-                        tool_call_id=c.id,
+                        tool_call_id=c.id or _generate_tool_call_id(),
                     )
                 )
         return ModelResponse(parts=parts, model_name=self._model_name)
@@ -262,7 +262,7 @@ class CohereModel(Model):
     @staticmethod
     def _map_tool_call(t: ToolCallPart) -> ToolCallV2:
         return ToolCallV2(
-            id=_guard_tool_call_id(t=t, model_source='Cohere'),
+            id=_guard_tool_call_id(t=t),
             type='function',
             function=ToolCallV2Function(
                 name=t.tool_name,
@@ -294,7 +294,7 @@ class CohereModel(Model):
             elif isinstance(part, ToolReturnPart):
                 yield ToolChatMessageV2(
                     role='tool',
-                    tool_call_id=_guard_tool_call_id(t=part, model_source='Cohere'),
+                    tool_call_id=_guard_tool_call_id(t=part),
                     content=part.model_response_str(),
                 )
             elif isinstance(part, RetryPromptPart):
@@ -303,7 +303,7 @@ class CohereModel(Model):
                 else:
                     yield ToolChatMessageV2(
                         role='tool',
-                        tool_call_id=_guard_tool_call_id(t=part, model_source='Cohere'),
+                        tool_call_id=_guard_tool_call_id(t=part),
                         content=part.model_response(),
                     )
             else:

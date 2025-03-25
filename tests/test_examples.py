@@ -263,13 +263,19 @@ text_responses: dict[str, str | ToolCallPart] = {
     'Who was Albert Einstein?': 'Albert Einstein was a German-born theoretical physicist.',
     'What was his most famous equation?': "Albert Einstein's most famous equation is (E = mc^2).",
     'What is the date?': 'Hello Frank, the date today is 2032-01-02.',
-    'Put my money on square eighteen': ToolCallPart(tool_name='roulette_wheel', args={'square': 18}),
-    'I bet five is the winner': ToolCallPart(tool_name='roulette_wheel', args={'square': 5}),
-    'My guess is 4': ToolCallPart(tool_name='roll_die', args={}),
+    'Put my money on square eighteen': ToolCallPart(
+        tool_name='roulette_wheel', args={'square': 18}, tool_call_id='pyd_ai_tool_call_id'
+    ),
+    'I bet five is the winner': ToolCallPart(
+        tool_name='roulette_wheel', args={'square': 5}, tool_call_id='pyd_ai_tool_call_id'
+    ),
+    'My guess is 4': ToolCallPart(tool_name='roll_die', args={}, tool_call_id='pyd_ai_tool_call_id'),
     'Send a message to John Doe asking for coffee next week': ToolCallPart(
         tool_name='get_user_by_name', args={'name': 'John'}
     ),
-    'Please get me the volume of a box with size 6.': ToolCallPart(tool_name='calc_volume', args={'size': 6}),
+    'Please get me the volume of a box with size 6.': ToolCallPart(
+        tool_name='calc_volume', args={'size': 6}, tool_call_id='pyd_ai_tool_call_id'
+    ),
     'Where does "hello world" come from?': (
         'The first known use of "hello, world" was in a 1974 textbook about the C programming language.'
     ),
@@ -313,33 +319,41 @@ text_responses: dict[str, str | ToolCallPart] = {
             'dob': '1990-01-28',
             'bio': 'Likes the chain the dog and the pyramid',
         },
+        tool_call_id='pyd_ai_tool_call_id',
     ),
     'What is the capital of Italy? Answer with just the city.': 'Rome',
     'What is the capital of Italy? Answer with a paragraph.': (
         'The capital of Italy is Rome (Roma, in Italian), which has been a cultural and political center for centuries.'
         'Rome is known for its rich history, stunning architecture, and delicious cuisine.'
     ),
-    'Begin infinite retry loop!': ToolCallPart(tool_name='infinite_retry_tool', args={}),
+    'Begin infinite retry loop!': ToolCallPart(
+        tool_name='infinite_retry_tool', args={}, tool_call_id='pyd_ai_tool_call_id'
+    ),
     'Please generate 5 jokes.': ToolCallPart(
         tool_name='final_result',
         args={'response': []},
+        tool_call_id='pyd_ai_tool_call_id',
     ),
     'SFO to ANC': ToolCallPart(
         tool_name='flight_search',
         args={'origin': 'SFO', 'destination': 'ANC'},
+        tool_call_id='pyd_ai_tool_call_id',
     ),
     'window seat with leg room': ToolCallPart(
         tool_name='final_result_SeatPreference',
         args={'row': 1, 'seat': 'A'},
+        tool_call_id='pyd_ai_tool_call_id',
     ),
     'Ask a simple question with a single correct answer.': 'What is the capital of France?',
     '<examples>\n  <question>What is the capital of France?</question>\n  <answer>Vichy</answer>\n</examples>': ToolCallPart(
         tool_name='final_result',
         args={'correct': False, 'comment': 'Vichy is no longer the capital of France.'},
+        tool_call_id='pyd_ai_tool_call_id',
     ),
     '<examples>\n  <question>what is 1 + 1?</question>\n  <answer>2</answer>\n</examples>': ToolCallPart(
         tool_name='final_result',
         args={'correct': True, 'comment': 'Well done, 1 + 1 = 2'},
+        tool_call_id='pyd_ai_tool_call_id',
     ),
     (
         '<examples>\n'
@@ -380,9 +394,13 @@ async def model_logic(messages: list[ModelMessage], info: AgentInfo) -> ModelRes
     if isinstance(m, UserPromptPart):
         assert isinstance(m.content, str)
         if m.content == 'Tell me a joke.' and any(t.name == 'joke_factory' for t in info.function_tools):
-            return ModelResponse(parts=[ToolCallPart(tool_name='joke_factory', args={'count': 5})])
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name='joke_factory', args={'count': 5}, tool_call_id='pyd_ai_tool_call_id')]
+            )
         elif m.content == 'Please generate 5 jokes.' and any(t.name == 'get_jokes' for t in info.function_tools):
-            return ModelResponse(parts=[ToolCallPart(tool_name='get_jokes', args={'count': 5})])
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name='get_jokes', args={'count': 5}, tool_call_id='pyd_ai_tool_call_id')]
+            )
         elif re.fullmatch(r'sql prompt \d+', m.content):
             return ModelResponse(parts=[TextPart('SELECT 1')])
         elif m.content.startswith('Write a welcome email for the user:'):
@@ -394,13 +412,16 @@ async def model_logic(messages: list[ModelMessage], info: AgentInfo) -> ModelRes
                             'subject': 'Welcome to our tech blog!',
                             'body': 'Hello John, Welcome to our tech blog! ...',
                         },
+                        tool_call_id='pyd_ai_tool_call_id',
                     )
                 ]
             )
         elif m.content.startswith('Write a list of 5 very rude things that I might say'):
             raise UnexpectedModelBehavior('Safety settings triggered', body='<safety settings details>')
         elif m.content.startswith('<examples>\n  <user>'):
-            return ModelResponse(parts=[ToolCallPart(tool_name='final_result_EmailOk', args={})])
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name='final_result_EmailOk', args={}, tool_call_id='pyd_ai_tool_call_id')]
+            )
         elif m.content == 'Ask a simple question with a single correct answer.' and len(messages) > 2:
             return ModelResponse(parts=[TextPart('what is 1 + 1?')])
         elif '<Rubric>\n' in m.content:
@@ -445,9 +466,13 @@ async def model_logic(messages: list[ModelMessage], info: AgentInfo) -> ModelRes
 
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'roulette_wheel':
         win = m.content == 'winner'
-        return ModelResponse(parts=[ToolCallPart(tool_name='final_result', args={'response': win})])
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name='final_result', args={'response': win}, tool_call_id='pyd_ai_tool_call_id')]
+        )
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'roll_die':
-        return ModelResponse(parts=[ToolCallPart(tool_name='get_player_name', args={})])
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name='get_player_name', args={}, tool_call_id='pyd_ai_tool_call_id')]
+        )
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_player_name':
         return ModelResponse(parts=[TextPart("Congratulations Anne, you guessed correctly! You're a winner!")])
     if (
@@ -455,32 +480,50 @@ async def model_logic(messages: list[ModelMessage], info: AgentInfo) -> ModelRes
         and isinstance(m.content, str)
         and m.content.startswith("No user found with name 'Joh")
     ):
-        return ModelResponse(parts=[ToolCallPart(tool_name='get_user_by_name', args={'name': 'John Doe'})])
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name='get_user_by_name', args={'name': 'John Doe'}, tool_call_id='pyd_ai_tool_call_id'
+                )
+            ]
+        )
     elif isinstance(m, RetryPromptPart) and m.tool_name == 'infinite_retry_tool':
-        return ModelResponse(parts=[ToolCallPart(tool_name='infinite_retry_tool', args={})])
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name='infinite_retry_tool', args={}, tool_call_id='pyd_ai_tool_call_id')]
+        )
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_user_by_name':
         args: dict[str, Any] = {
             'message': 'Hello John, would you be free for coffee sometime next week? Let me know what works for you!',
             'user_id': 123,
         }
-        return ModelResponse(parts=[ToolCallPart(tool_name='final_result', args=args)])
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name='final_result', args=args, tool_call_id='pyd_ai_tool_call_id')]
+        )
     elif isinstance(m, RetryPromptPart) and m.tool_name == 'calc_volume':
-        return ModelResponse(parts=[ToolCallPart(tool_name='calc_volume', args={'size': 6})])
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name='calc_volume', args={'size': 6}, tool_call_id='pyd_ai_tool_call_id')]
+        )
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'customer_balance':
         args = {
             'support_advice': 'Hello John, your current account balance, including pending transactions, is $123.45.',
             'block_card': False,
             'risk': 1,
         }
-        return ModelResponse(parts=[ToolCallPart(tool_name='final_result', args=args)])
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name='final_result', args=args, tool_call_id='pyd_ai_tool_call_id')]
+        )
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'joke_factory':
         return ModelResponse(parts=[TextPart('Did you hear about the toothpaste scandal? They called it Colgate.')])
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_jokes':
         args = {'response': []}
-        return ModelResponse(parts=[ToolCallPart(tool_name='final_result', args=args)])
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name='final_result', args=args, tool_call_id='pyd_ai_tool_call_id')]
+        )
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'flight_search':
         args = {'flight_number': m.content.flight_number}  # type: ignore
-        return ModelResponse(parts=[ToolCallPart(tool_name='final_result_FlightDetails', args=args)])
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name='final_result_FlightDetails', args=args, tool_call_id='pyd_ai_tool_call_id')]
+        )
     else:
         sys.stdout.write(str(debug.format(messages, info)))
         raise RuntimeError(f'Unexpected message: {m}')
