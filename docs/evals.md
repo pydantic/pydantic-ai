@@ -144,31 +144,136 @@ report.print(include_input=True, include_output=True)  # (6)!
 
 Pydantic Evals integrates seamlessly with LLMs for both evaluation and dataset generation:
 
-You can use LLMs to evaluate the quality of outputs:
+### Evaluation with `LlmJudge`
 
-```python {title="llm_judge_example.py"}
-# import asyncio
-# from typing import Any
-#
-# from pydantic_evals.evaluators.llm_as_a_judge import judge_input_output
-#
-#
-# async def judge_case(inputs: Any, output: Any):
-#     """Judge the output based on a rubric."""
-#     rubric = 'The output should be accurate, complete, and relevant to the inputs.'
-#     return await judge_input_output(inputs, output, rubric)
-#
-#
-# async def main():
-#     inputs = 'What is the capital of France?'
-#     output = 'Paris is the capital of France.'
-#     result = await judge_case(inputs, output)
-#     print(f'Judge result: {result}')
-#
-#
-# if __name__ == '__main__':
-#     asyncio.run(main())
+```python {title="judge_recipes.py"}
+from typing import Any
+
+from pydantic import BaseModel
+
+from pydantic_evals import Case, Dataset
+from pydantic_evals.evaluators.common import IsInstance, LlmJudge
+
+
+# Define models for our task
+class RecipeInput(BaseModel):
+    """Input for recipe transformation task."""
+
+    dish_name: str
+    dietary_restriction: str | None = None
+
+
+class RecipeOutput(BaseModel):
+    """Output for recipe transformation task."""
+
+    title: str
+    ingredients: list[str]
+    steps: list[str]
+
+
+# Define our recipe transformation function
+async def transform_recipe(inputs: RecipeInput) -> RecipeOutput:
+    """Function that transforms recipes based on dietary restrictions."""
+    # In a real implementation, this would call an LLM or use a recipe database
+    if inputs.dietary_restriction == 'vegetarian':
+        return RecipeOutput(
+            title=f'Vegetarian {inputs.dish_name}',
+            ingredients=[
+                'Vegetable stock',
+                'Plant-based protein',
+                'Vegetables',
+                'Herbs',
+                'Spices',
+            ],
+            steps=[
+                'Prepare ingredients',
+                'Cook according to vegetarian recipe',
+                'Serve hot',
+            ],
+        )
+    elif inputs.dietary_restriction == 'gluten-free':
+        return RecipeOutput(
+            title=f'Gluten-Free {inputs.dish_name}',
+            ingredients=[
+                'Gluten-free alternatives',
+                'Regular ingredients',
+                'Gluten-free thickener',
+            ],
+            steps=[
+                'Prepare ingredients',
+                'Ensure no cross-contamination',
+                'Cook as normal',
+                'Serve',
+            ],
+        )
+    else:
+        return RecipeOutput(
+            title=inputs.dish_name,
+            ingredients=['Standard ingredients', 'Optional additions'],
+            steps=['Prepare ingredients', 'Follow standard recipe', 'Serve'],
+        )
+
+
+# Create a dataset with different test cases and different rubrics
+recipe_dataset = Dataset[RecipeInput, RecipeOutput, Any](
+    cases=[
+        Case(
+            name='vegetarian_recipe',
+            inputs=RecipeInput(
+                dish_name='Pasta Bolognese', dietary_restriction='vegetarian'
+            ),
+            expected_output=None,  # We'll let the LLM judge the quality
+            metadata={'focus': 'vegetarian'},
+            # Case-specific evaluator with a focused rubric
+            evaluators=(
+                LlmJudge(
+                    rubric='Recipe should not contain meat or animal products',
+                ),
+            ),
+        ),
+        Case(
+            name='gluten_free_recipe',
+            inputs=RecipeInput(
+                dish_name='Chocolate Cake', dietary_restriction='gluten-free'
+            ),
+            expected_output=None,
+            metadata={'focus': 'gluten-free'},
+            # Case-specific evaluator with a focused rubric
+            evaluators=(
+                LlmJudge(
+                    rubric='Recipe should not contain gluten or wheat products',
+                ),
+            ),
+        ),
+    ],
+    # Dataset-level evaluators that apply to all cases
+    evaluators=[
+        IsInstance(type_name='RecipeOutput'),
+        # A general quality rubric for all recipes
+        LlmJudge(
+            rubric='Recipe should have clear steps and relevant ingredients',
+            include_input=True,
+        ),
+    ],
+)
+
+
+async def run_evaluation():
+    """Run the evaluation and display results."""
+    report = await recipe_dataset.evaluate(transform_recipe)
+
+    # Print a detailed report
+    report.print(include_input=True, include_output=True)
 ```
+
+This example demonstrates:
+
+1. **Different evaluation criteria per case** - Each case uses a focused rubric specific to its dietary requirement
+2. **Concise, targeted rubrics** - Each rubric only specifies what's unique to that case
+3. **Common dataset-level criteria** - All recipes share a basic quality standard
+4. **Using `evaluate` for streamlined testing** - No need to manually call judge functions
+
+When executed, this will provide a detailed evaluation report that includes both dataset-level and case-specific LLM judgments for each test case.
 
 ### Generating Test Datasets
 
@@ -224,93 +329,52 @@ Datasets can be saved to and loaded from files (YAML or JSON format):
 
 ```python {title="save_load_dataset_example.py"}
 from pathlib import Path
-from typing import Any
 
-from pydantic import BaseModel
+from judge_recipes import RecipeInput, RecipeOutput, recipe_dataset
 
-from pydantic_evals import Case, Dataset
-from pydantic_evals.evaluators.common import IsInstance
+from pydantic_evals import Dataset
 
-
-# Define input and output types
-class QueryInput(BaseModel):
-    query: str
-    filters: list[str] | None = None
-
-
-class QueryResult(BaseModel):
-    results: list[str]
-    total_count: int
-
-
-# Create a dataset
-dataset = Dataset[QueryInput, QueryResult, dict[str, Any]](
-    cases=[
-        Case(
-            name='basic_search',
-            inputs=QueryInput(query='python', filters=['programming']),
-            expected_output=QueryResult(
-                results=['Python tutorial', 'Python basics'], total_count=2
-            ),
-            metadata={'importance': 'high'},
-        ),
-        Case(
-            name='filtered_search',
-            inputs=QueryInput(query='python', filters=['books']),
-            expected_output=QueryResult(results=['Python cookbook'], total_count=1),
-            metadata={'importance': 'medium'},
-        ),
-    ],
-    evaluators=[IsInstance(type_name='QueryResult')],
-)
-
-# Save dataset to file
-# In a real scenario, you'd save to an actual file path
-dataset.to_file('search_tests.yaml')
-serialized = Path('search_tests.yaml').read_text()
+recipe_dataset.to_file('recipe_transform_tests.yaml')
+serialized = Path('recipe_transform_tests.yaml').read_text()
 print(serialized)
 """
-# yaml-language-server: $schema=search_tests_schema.json
+# yaml-language-server: $schema=recipe_transform_tests_schema.json
 cases:
-- name: basic_search
+- name: vegetarian_recipe
   inputs:
-    query: python
-    filters:
-    - programming
+    dish_name: Pasta Bolognese
+    dietary_restriction: vegetarian
   metadata:
-    importance: high
-  expected_output:
-    results:
-    - Python tutorial
-    - Python basics
-    total_count: 2
-  evaluators: []
-- name: filtered_search
+    focus: vegetarian
+  expected_output: null
+  evaluators:
+  - llm_judge: Recipe should not contain meat or animal products
+- name: gluten_free_recipe
   inputs:
-    query: python
-    filters:
-    - books
+    dish_name: Chocolate Cake
+    dietary_restriction: gluten-free
   metadata:
-    importance: medium
-  expected_output:
-    results:
-    - Python cookbook
-    total_count: 1
-  evaluators: []
+    focus: gluten-free
+  expected_output: null
+  evaluators:
+  - llm_judge: Recipe should not contain gluten or wheat products
 evaluators:
-- is_instance: QueryResult
+- is_instance: RecipeOutput
+- llm_judge:
+    rubric: Recipe should have clear steps and relevant ingredients
+    include_input: true
 """
 
 # Load dataset from file
 # In a real scenario, you'd specify the actual file path
-loaded_dataset = Dataset[QueryInput, QueryResult, dict].from_text(serialized)
+loaded_dataset = Dataset[RecipeInput, RecipeOutput, dict].from_text(serialized)
 
 print(f'Loaded dataset with {len(loaded_dataset.cases)} cases')
 #> Loaded dataset with 2 cases
 
 # Clean up
-Path('search_tests.yaml').unlink()
-Path('search_tests_schema.json').unlink()
+Path('recipe_transform_tests.yaml').unlink()
+Path('recipe_transform_tests_schema.json').unlink()
 ```
 
 ### Parallel Evaluation
@@ -441,7 +505,6 @@ class SpanTracingEvaluator(Evaluator[str, str]):
 
         return {
             'has_spans': True,
-            'processing_time': total_processing_time,
             'has_errors': has_errors,
             'performance_score': 0 if has_errors else performance_score,
         }
@@ -495,152 +558,16 @@ report.print(include_input=True, include_output=True)
 ┃ Case ID         ┃ Inputs                ┃ Outputs                                 ┃ Scores                   ┃ Assertions ┃ Duration ┃
 ┡━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━┩
 │ normal_text     │ Hello World           │ Processed: hello_world                  │ has_spans: True          │ ✔✗         │  101.0ms │
-│                 │                       │                                         │ processing_time: 0.315   │            │          │
 │                 │                       │                                         │ has_errors: False        │            │          │
 │                 │                       │                                         │ performance_score: 1.00  │            │          │
 ├─────────────────┼───────────────────────┼─────────────────────────────────────────┼──────────────────────────┼────────────┼──────────┤
 │ text_with_error │ Contains error marker │ Error processing: Contains error marker │ has_spans: True          │ ✔✔         │  101.0ms │
-│                 │                       │                                         │ processing_time: 0.125   │            │          │
 │                 │                       │                                         │ has_errors: True         │            │          │
 │                 │                       │                                         │ performance_score: 0     │            │          │
 ├─────────────────┼───────────────────────┼─────────────────────────────────────────┼──────────────────────────┼────────────┼──────────┤
 │ Averages        │                       │                                         │ has_spans: 1.00          │ 75.0% ✔    │  101.0ms │
-│                 │                       │                                         │ processing_time: 0.220   │            │          │
 │                 │                       │                                         │ has_errors: 0.500        │            │          │
 │                 │                       │                                         │ performance_score: 0.500 │            │          │
 └─────────────────┴───────────────────────┴─────────────────────────────────────────┴──────────────────────────┴────────────┴──────────┘
 """
-```
-
-## Example: Time Range Evaluation
-
-Here's a complete example of using Pydantic Evals for evaluating a function used to select a time range based on a user prompt:
-
-```python {title="time_range_evaluation_example.py"}
-# import asyncio
-# import datetime
-# from typing import Any
-#
-# from pydantic import BaseModel
-#
-# from pydantic_evals import Case, Dataset
-# from pydantic_evals.evaluators import Evaluator, EvaluatorContext
-# from pydantic_evals.evaluators.common import IsInstance
-# from pydantic_evals.evaluators.llm_as_a_judge import judge_input_output
-#
-#
-# # Define input and output models
-# class TimeRangeInputs(BaseModel):
-#     query: str
-#     context: str | None = None
-#
-#
-# class TimeRangeResponse(BaseModel):
-#     start_time: str | None = None
-#     end_time: str | None = None
-#     error: str | None = None
-#
-#
-# # Create a custom evaluator
-# class TimeRangeEvaluator(Evaluator[TimeRangeInputs, TimeRangeResponse]):
-#     async def evaluate_async(
-#         self, ctx: EvaluatorContext[TimeRangeInputs, TimeRangeResponse]
-#     ) -> dict[str, Any]:
-#         rubric = """
-#         Evaluate the time range based on:
-#         1. Whether it reasonably matches the user query
-#         2. Whether the format is valid (ISO format preferred)
-#         3. Whether start_time is before end_time
-#         4. Whether an appropriate error is returned when the input is unclear
-#         """
-#         result = await judge_input_output(ctx.inputs, ctx.output, rubric)
-#
-#         # Perform additional checks
-#         valid_format = True
-#         valid_range = True
-#
-#         if ctx.output.start_time and ctx.output.end_time:
-#             try:
-#                 start = datetime.datetime.fromisoformat(ctx.output.start_time)
-#                 end = datetime.datetime.fromisoformat(ctx.output.end_time)
-#                 valid_range = start <= end
-#             except ValueError:
-#                 valid_format = False
-#
-#         return {
-#             'llm_score': result.score,
-#             'valid_format': valid_format,
-#             'valid_range': valid_range,
-#             'overall_score': result.score * 0.7
-#             + (0.3 if valid_format and valid_range else 0),
-#         }
-#
-#
-# # Define function to test
-# async def infer_time_range(inputs: TimeRangeInputs) -> TimeRangeResponse:
-#     """Infer a time range from a natural language query."""
-#     query = inputs.query.lower()
-#     now = datetime.datetime.now()
-#
-#     if 'today' in query:
-#         start = datetime.datetime(now.year, now.month, now.day, 0, 0, 0)
-#         end = start + datetime.timedelta(days=1) - datetime.timedelta(seconds=1)
-#         return TimeRangeResponse(start_time=start.isoformat(), end_time=end.isoformat())
-#     elif 'yesterday' in query:
-#         start = datetime.datetime(
-#             now.year, now.month, now.day, 0, 0, 0
-#         ) - datetime.timedelta(days=1)
-#         end = start + datetime.timedelta(days=1) - datetime.timedelta(seconds=1)
-#         return TimeRangeResponse(start_time=start.isoformat(), end_time=end.isoformat())
-#     elif 'last week' in query:
-#         end = datetime.datetime(now.year, now.month, now.day, 0, 0, 0)
-#         start = end - datetime.timedelta(days=7)
-#         return TimeRangeResponse(start_time=start.isoformat(), end_time=end.isoformat())
-#     else:
-#         return TimeRangeResponse(error='Could not determine time range from query')
-#
-#
-# async def main():
-#     # Create test dataset
-#     dataset = Dataset(
-#         cases=[
-#             Case(
-#                 name='today_query',
-#                 inputs=TimeRangeInputs(query='Show me data for today'),
-#                 expected_output=None,  # We'll let the evaluator judge correctness
-#                 metadata={'expected': 'today'},
-#             ),
-#             Case(
-#                 name='yesterday_query',
-#                 inputs=TimeRangeInputs(query='What happened yesterday?'),
-#                 expected_output=None,
-#                 metadata={'expected': 'yesterday'},
-#             ),
-#             Case(
-#                 name='last_week_query',
-#                 inputs=TimeRangeInputs(query='Show stats from last week'),
-#                 expected_output=None,
-#                 metadata={'expected': 'last_week'},
-#             ),
-#             Case(
-#                 name='ambiguous_query',
-#                 inputs=TimeRangeInputs(query='Show me some data'),
-#                 expected_output=TimeRangeResponse(
-#                     error='Could not determine time range from query'
-#                 ),
-#                 metadata={'expected': 'error'},
-#             ),
-#         ],
-#         evaluators=[IsInstance(type_name='TimeRangeResponse'), TimeRangeEvaluator()],
-#     )
-#
-#     # Run evaluation
-#     report = await dataset.evaluate(infer_time_range)
-#
-#     # Print the report
-#     report.print(include_input=True, include_output=True)
-#
-#
-# if __name__ == '__main__':
-#     asyncio.run(main())
 ```
