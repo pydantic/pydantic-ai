@@ -8,12 +8,13 @@ from pathlib import Path
 import pytest
 from dirty_equals import HasRepr
 from inline_snapshot import snapshot
-from logfire.testing import CaptureLogfire
 from pydantic import BaseModel
 
 from ..conftest import try_import
 
 with try_import() as imports_successful:
+    from logfire.testing import CaptureLogfire
+
     from pydantic_evals import Case, Dataset
     from pydantic_evals.dataset import increment_eval_metric, set_eval_attribute
     from pydantic_evals.evaluators import Evaluator, Python

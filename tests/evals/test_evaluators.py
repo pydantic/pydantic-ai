@@ -5,12 +5,13 @@ from typing import Any, cast
 
 import pytest
 from inline_snapshot import snapshot
-from logfire.testing import CaptureLogfire
 from pydantic import BaseModel, TypeAdapter
 
 from ..conftest import try_import
 
 with try_import() as imports_successful:
+    from logfire.testing import CaptureLogfire
+
     from pydantic_evals.evaluators._spec import EvaluatorSpec
     from pydantic_evals.evaluators.common import (
         Contains,
