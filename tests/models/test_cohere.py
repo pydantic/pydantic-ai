@@ -353,3 +353,11 @@ def test_model_status_error(allow_model_requests: None) -> None:
     with pytest.raises(ModelHTTPError) as exc_info:
         agent.run_sync('hello')
     assert str(exc_info.value) == snapshot("status_code: 500, model_name: command-r, body: {'error': 'test error'}")
+
+
+@pytest.mark.vcr()
+async def test_request_simple_success_with_vcr(allow_model_requests: None, co_api_key: str):
+    m = CohereModel('command-r7b-12-2024', provider=CohereProvider(api_key=co_api_key))
+    agent = Agent(m)
+    result = await agent.run('hello')
+    assert result.data == snapshot('Hello! How can I assist you today?')
