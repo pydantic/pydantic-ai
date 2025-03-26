@@ -321,28 +321,37 @@ async def test_contains_evaluator():
 
     # String contains - case sensitive
     evaluator = Contains(value='cat in the')
-    result = evaluator.evaluate(string_context)
-    assert isinstance(result, EvaluationReason)
-    assert result.value is True
-    assert result.reason is None
+    assert evaluator.evaluate(string_context) == snapshot(EvaluationReason(value=True))
 
     # String doesn't contain
     evaluator = Contains(value='dog')
-    result = evaluator.evaluate(string_context)
-    assert isinstance(result, EvaluationReason)
-    assert result.value is False
-    assert result.reason is not None
+    assert evaluator.evaluate(string_context) == snapshot(
+        EvaluationReason(
+            value=False,
+            reason="Output string 'There is a cat in the box' does not contain expected string 'dog'",
+        )
+    )
+
+    # Very long strings don't get included in reason
+    evaluator = Contains(value='a' * 1000)
+    assert evaluator.evaluate(string_context) == snapshot(
+        EvaluationReason(
+            value=False,
+            reason="Output string 'There is a cat in the box' does not contain expected string 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa...aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'",
+        )
+    )
 
     # Case sensitivity
     evaluator = Contains(value='CAT', case_sensitive=True)
-    result = evaluator.evaluate(string_context)
-    assert isinstance(result, EvaluationReason)
-    assert result.value is False
+    assert evaluator.evaluate(string_context) == snapshot(
+        EvaluationReason(
+            value=False,
+            reason="Output string 'There is a cat in the box' does not contain expected string 'CAT'",
+        )
+    )
 
     evaluator = Contains(value='CAT', case_sensitive=False)
-    result = evaluator.evaluate(string_context)
-    assert isinstance(result, EvaluationReason)
-    assert result.value is True
+    assert evaluator.evaluate(string_context) == snapshot(EvaluationReason(value=True))
 
     # Test with list output
     list_context = EvaluatorContext[object, list[int], object](
@@ -359,15 +368,13 @@ async def test_contains_evaluator():
 
     # List contains
     evaluator = Contains(value=3)
-    result = evaluator.evaluate(list_context)
-    assert isinstance(result, EvaluationReason)
-    assert result.value is True
+    assert evaluator.evaluate(list_context) == snapshot(EvaluationReason(value=True))
 
     # List doesn't contain
     evaluator = Contains(value=6)
-    result = evaluator.evaluate(list_context)
-    assert isinstance(result, EvaluationReason)
-    assert result.value is False
+    assert evaluator.evaluate(list_context) == snapshot(
+        EvaluationReason(value=False, reason='Output [1, 2, 3, 4, 5] does not contain provided value')
+    )
 
     # Test with dict output
     dict_context = EvaluatorContext[object, dict[str, str], object](
@@ -384,21 +391,46 @@ async def test_contains_evaluator():
 
     # Dict contains key
     evaluator = Contains(value='key1')
-    result = evaluator.evaluate(dict_context)
-    assert isinstance(result, EvaluationReason)
-    assert result.value is True
+    assert evaluator.evaluate(dict_context) == snapshot(EvaluationReason(value=True))
 
     # Dict contains subset
     evaluator = Contains(value={'key1': 'value1'})
-    result = evaluator.evaluate(dict_context)
-    assert isinstance(result, EvaluationReason)
-    assert result.value is True
+    assert evaluator.evaluate(dict_context) == snapshot(EvaluationReason(value=True))
 
     # Dict doesn't contain key-value pair
     evaluator = Contains(value={'key1': 'wrong_value'})
-    result = evaluator.evaluate(dict_context)
-    assert isinstance(result, EvaluationReason)
-    assert result.value is False
+    assert evaluator.evaluate(dict_context) == snapshot(
+        EvaluationReason(
+            value=False,
+            reason="Output dictionary has different value for key 'key1': 'value1' != 'wrong_value'",
+        )
+    )
+
+    # Dict doesn't contain key
+    evaluator = Contains(value='key3')
+    assert evaluator.evaluate(dict_context) == snapshot(
+        EvaluationReason(
+            value=False,
+            reason="Output {'key1': 'value1', 'key2': 'value2'} does not contain provided value as a key",
+        )
+    )
+
+    # Very long keys are truncated
+    evaluator = Contains(value={'key1' * 500: 'wrong_value'})
+    assert evaluator.evaluate(dict_context) == snapshot(
+        EvaluationReason(
+            value=False,
+            reason="Output dictionary does not contain expected key 'key1key1key1ke...y1key1key1key1'",
+        )
+    )
+
+    evaluator = Contains(value={'key1': 'wrong_value_' * 500})
+    assert evaluator.evaluate(dict_context) == snapshot(
+        EvaluationReason(
+            value=False,
+            reason="Output dictionary has different value for key 'key1': 'value1' != 'wrong_value_wrong_value_wrong_value_wrong_value_w..._wrong_value_wrong_value_wrong_value_wrong_value_'",
+        )
+    )
 
 
 async def test_max_duration_evaluator(test_context: EvaluatorContext[TaskInput, TaskOutput, TaskMetadata]):

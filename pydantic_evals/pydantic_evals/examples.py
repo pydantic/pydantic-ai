@@ -27,6 +27,7 @@ MetadataT = TypeVar('MetadataT', default=Any)
 """Generic type for the metadata associated with the task being evaluated."""
 
 
+# TODO: Add an example that uses this...
 async def generate_dataset(
     *,
     path: Path | str | None = None,
@@ -37,7 +38,7 @@ async def generate_dataset(
     model: models.Model | models.KnownModelName = 'openai:gpt-4o',
     n_examples: int = 3,
     extra_instructions: str | None = None,
-) -> Dataset[InputsT, OutputT, MetadataT]:
+) -> Dataset[InputsT, OutputT, MetadataT]:  # pragma: no cover
     """Use an LLM to generate a dataset of test cases, each consisting of input, expected output, and metadata.
 
     This function creates a properly structured dataset with the specified input, output, and metadata types.

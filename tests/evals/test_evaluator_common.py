@@ -4,6 +4,7 @@ from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
 import pytest
+from inline_snapshot import snapshot
 from pytest_mock import MockerFixture
 
 from ..conftest import try_import
@@ -37,7 +38,7 @@ if TYPE_CHECKING or imports_successful():
             self.expected_output = expected_output
             self.inputs = inputs
             self.duration = duration
-else:
+else:  # pragma: no cover
     MockContext = object
 
 
@@ -74,13 +75,15 @@ async def test_contains_string():
     assert evaluator.evaluate(MockContext(output='this is a test')).value is True
 
     # Test string non-containment
-    result = evaluator.evaluate(MockContext(output='no match'))
-    assert result.value is False
-    assert result.reason == "Output string 'no match' does not contain expected string 'test'"
+    assert evaluator.evaluate(MockContext(output='no match')) == snapshot(
+        EvaluationReason(value=False, reason="Output string 'no match' does not contain expected string 'test'")
+    )
 
     # Test case sensitivity
     evaluator_case_insensitive = Contains(value='TEST', case_sensitive=False)
-    assert evaluator_case_insensitive.evaluate(MockContext(output='this is a test')).value is True
+    assert evaluator_case_insensitive.evaluate(MockContext(output='this is a test')) == snapshot(
+        EvaluationReason(value=True)
+    )
 
 
 async def test_contains_dict():
@@ -88,22 +91,26 @@ async def test_contains_dict():
     evaluator = Contains(value={'key': 'value'})
 
     # Test dictionary containment
-    assert evaluator.evaluate(MockContext(output={'key': 'value', 'extra': 'data'})).value is True
+    assert evaluator.evaluate(MockContext(output={'key': 'value', 'extra': 'data'})) == snapshot(
+        EvaluationReason(value=True)
+    )
 
     # Test dictionary key missing
-    result = evaluator.evaluate(MockContext(output={'different': 'value'}))
-    assert result.value is False
-    assert result.reason == "Output dictionary does not contain expected key 'key'"
+    assert evaluator.evaluate(MockContext(output={'different': 'value'})) == snapshot(
+        EvaluationReason(value=False, reason="Output dictionary does not contain expected key 'key'")
+    )
 
     # Test dictionary value mismatch
-    result = evaluator.evaluate(MockContext(output={'key': 'different'}))
-    assert result.value is False
-    assert result.reason == "Output dictionary has different value for key 'key': 'different' != 'value'"
+    assert evaluator.evaluate(MockContext(output={'key': 'different'})) == snapshot(
+        EvaluationReason(
+            value=False,
+            reason="Output dictionary has different value for key 'key': 'different' != 'value'",
+        )
+    )
 
     # Test non-dict value in dict
     evaluator_single = Contains(value='key')
-    result = evaluator_single.evaluate(MockContext(output={'key': 'value'}))
-    assert result.value is True
+    assert evaluator_single.evaluate(MockContext(output={'key': 'value'})) == snapshot(EvaluationReason(value=True))
 
 
 async def test_contains_list():
@@ -111,12 +118,12 @@ async def test_contains_list():
     evaluator = Contains(value=42)
 
     # Test list containment
-    assert evaluator.evaluate(MockContext(output=[1, 42, 3])).value is True
+    assert evaluator.evaluate(MockContext(output=[1, 42, 3])) == snapshot(EvaluationReason(value=True))
 
     # Test list non-containment
-    result = evaluator.evaluate(MockContext(output=[1, 2, 3]))
-    assert result.value is False
-    assert result.reason == 'Output [1, 2, 3] does not contain expected item 42'
+    assert evaluator.evaluate(MockContext(output=[1, 2, 3])) == snapshot(
+        EvaluationReason(value=False, reason='Output [1, 2, 3] does not contain provided value')
+    )
 
 
 async def test_contains_as_strings():

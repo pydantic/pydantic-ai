@@ -9,7 +9,8 @@ import logfire
 from logfire import ConsoleOptions
 
 from pydantic_ai import Agent, RunContext
-from pydantic_evals.demo.time_range.models import TimeRangeInputs, TimeRangeResponse
+
+from .models import TimeRangeInputs, TimeRangeResponse
 
 
 @dataclass
@@ -68,13 +69,19 @@ if __name__ == '__main__':
 
     async def main():
         """Example usage of the time range inference agent."""
-        logfire.configure(send_to_logfire='if-token-present', console=ConsoleOptions(verbose=True))
+        logfire.configure(
+            send_to_logfire='if-token-present', console=ConsoleOptions(verbose=True)
+        )
         user_prompt = 'yesterday from 2-4 ET'
         # user_prompt = 'the last 24 hours'
         # user_prompt = '6 to 9 PM ET on October 8th'
         # user_prompt = 'next week'
         # user_prompt = 'what time is it?'
 
-        print(await infer_time_range(TimeRangeInputs(prompt=user_prompt, now=datetime.now().astimezone())))
+        print(
+            await infer_time_range(
+                TimeRangeInputs(prompt=user_prompt, now=datetime.now().astimezone())
+            )
+        )
 
     asyncio.run(main())

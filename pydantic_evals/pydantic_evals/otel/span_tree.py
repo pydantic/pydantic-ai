@@ -11,7 +11,7 @@ from typing_extensions import NotRequired, TypedDict
 
 __all__ = 'SpanNode', 'SpanTree', 'SpanQuery', 'as_predicate'
 
-if TYPE_CHECKING:
+if TYPE_CHECKING:  # pragma: no cover
     # Since opentelemetry isn't a required dependency, don't actually import these at runtime
     from opentelemetry.sdk.trace import ReadableSpan
     from opentelemetry.trace import SpanContext
@@ -85,9 +85,7 @@ class SpanNode:
     @property
     def duration(self) -> timedelta:
         """Return the span's duration as a timedelta, or None if start/end not set."""
-        assert self._span.start_time is not None and self._span.end_time is not None
-        ns_diff = self._span.end_time - self._span.start_time
-        return timedelta(seconds=ns_diff / 1e9)
+        return self.end_timestamp - self.start_timestamp
 
     @property
     def attributes(self) -> Mapping[str, AttributeValue]:
@@ -211,9 +209,9 @@ class SpanNode:
         if include_trace_id:
             first_line_parts.append(f'trace_id={self.trace_id:032x}')
         if include_start_timestamp:
-            first_line_parts.append(f'start_timestamp={self.start_timestamp!r}')
+            first_line_parts.append(f'start_timestamp={self.start_timestamp.isoformat()!r}')
         if include_duration:
-            first_line_parts.append(f'duration={self.duration!r}')
+            first_line_parts.append(f"duration='{self.duration}'")
 
         extra_lines: list[str] = []
         if include_children and self.children:
@@ -257,7 +255,7 @@ class SpanTree:
     def __init__(self, spans: list[ReadableSpan] | None = None):
         self.nodes_by_id: dict[int, SpanNode] = {}
         self.roots: list[SpanNode] = []
-        if spans:
+        if spans:  # pragma: no cover
             self.add_spans(spans)
 
     def add_spans(self, spans: list[ReadableSpan]) -> None:
@@ -330,6 +328,8 @@ class SpanTree:
         include_duration: bool = False,
     ) -> str:
         """Return an XML-like string representation of the tree, optionally including children, span_id, trace_id, duration, and timestamps."""
+        if not self.roots:
+            return '<SpanTree />'
         repr_parts = [
             '<SpanTree>',
             *[
@@ -402,7 +402,7 @@ def matches(query: SpanQuery, span: SpanNode) -> bool:  # noqa C901
     # Logical combinations
     if or_ := query.get('or_'):
         if len(query) > 1:
-            raise ValueError('Cannot combine OR conditions with other conditions at the same level')
+            raise ValueError("Cannot combine 'or_' conditions with other conditions at the same level")
         return any(matches(q, span) for q in or_)
     if not_ := query.get('not_'):
         if matches(not_, span):

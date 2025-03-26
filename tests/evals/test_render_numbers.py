@@ -20,6 +20,7 @@ pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-eval
     'value,expected',
     [
         (0, snapshot('0')),
+        (0.0, snapshot('0.000')),
         (17348, snapshot('17348')),
         (-17348, snapshot('-17348')),
         (17347.0, snapshot('17,347.0')),
@@ -54,6 +55,7 @@ def test_default_render_number(value: float | int, expected: str):
         (0.02, 25.0, snapshot('+25.0 / 1,250x')),
         (0.02, -25.0, snapshot('-25.0 / -1,250x')),
         (0.001, 25.0, snapshot('+25.0')),
+        (0.0, 25.0, snapshot('+25.0')),
     ],
 )
 def test_default_render_number_diff(old: int | float, new: int | float, expected: str | None):

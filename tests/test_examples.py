@@ -62,6 +62,9 @@ pytestmark = [
 
 
 def find_filter_examples() -> Iterable[ParameterSet]:
+    # Ensure this is run from the package root regardless of where/how the tests are run
+    os.chdir(Path(__file__).parent.parent)
+
     # TODO: need to add pydantic_evals to the following list, but some of those examples are broken
     # for ex in find_examples('docs', 'pydantic_ai_slim', 'pydantic_graph', 'pydantic_evals'):
     for ex in find_examples('docs', 'pydantic_ai_slim', 'pydantic_graph'):

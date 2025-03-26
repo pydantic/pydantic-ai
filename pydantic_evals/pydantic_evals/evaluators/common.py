@@ -42,7 +42,15 @@ class EqualsExpected(Evaluator[object, object, object]):
         return ctx.output == ctx.expected_output
 
 
-_MAX_REASON_LENGTH = 500
+# _MAX_REASON_LENGTH = 500
+# _MAX_REASON_KEY_LENGTH = 30
+
+
+def _truncated_repr(value: Any, max_length: int = 100) -> str:
+    repr_value = repr(value)
+    if len(repr_value) > max_length:
+        repr_value = repr_value[: max_length // 2] + '...' + repr_value[-max_length // 2 :]
+    return repr_value
 
 
 @dataclass
@@ -60,7 +68,7 @@ class Contains(Evaluator[object, object, object]):
     case_sensitive: bool = True
     as_strings: bool = False
 
-    def evaluate(  # noqa C901
+    def evaluate(
         self,
         ctx: EvaluatorContext[object, object, object],
     ) -> EvaluationReason:
@@ -77,11 +85,9 @@ class Contains(Evaluator[object, object, object]):
 
             failure_reason: str | None = None
             if expected_str not in output_str:
-                failure_reason = f'Output string {output_str!r} does not contain expected string {expected_str!r}'
-                if (
-                    len(failure_reason) > _MAX_REASON_LENGTH
-                ):  # Only include the strings in the reason if it doesn't make it too long
-                    failure_reason = 'Output string does not contain expected string'
+                output_trunc = _truncated_repr(output_str, max_length=100)
+                expected_trunc = _truncated_repr(expected_str, max_length=100)
+                failure_reason = f'Output string {output_trunc} does not contain expected string {expected_trunc}'
             return EvaluationReason(value=failure_reason is None, reason=failure_reason)
 
         try:
@@ -93,24 +99,22 @@ class Contains(Evaluator[object, object, object]):
                     expected_dict = cast(dict[Any, Any], self.value)  # pyright: ignore[reportUnknownMemberType]
                     for k in expected_dict:
                         if k not in output_dict:
-                            failure_reason = f'Output dictionary does not contain expected key {k!r}'
+                            k_trunc = _truncated_repr(k, max_length=30)
+                            failure_reason = f'Output dictionary does not contain expected key {k_trunc}'
                             break
                         elif output_dict[k] != expected_dict[k]:
-                            failure_reason = f'Output dictionary has different value for key {k!r}: {output_dict[k]!r} != {expected_dict[k]!r}'
-                            if (
-                                len(failure_reason) > _MAX_REASON_LENGTH
-                            ):  # Only include the strings in the reason if it doesn't make it too long
-                                failure_reason = f'Output dictionary has different value for key {k!r}'
+                            k_trunc = _truncated_repr(k, max_length=30)
+                            output_v_trunc = _truncated_repr(output_dict[k], max_length=100)
+                            expected_v_trunc = _truncated_repr(expected_dict[k], max_length=100)
+                            failure_reason = f'Output dictionary has different value for key {k_trunc}: {output_v_trunc} != {expected_v_trunc}'
                             break
                 else:
                     if self.value not in ctx.output:  # pyright: ignore[reportUnknownMemberType]
-                        failure_reason = f'Output {ctx.output!r} does not contain expected item as key'  # pyright: ignore[reportUnknownMemberType]
-                        if len(failure_reason) > _MAX_REASON_LENGTH:
-                            failure_reason = 'Output does not contain expected item as key'
+                        output_trunc = _truncated_repr(ctx.output, max_length=200)  # pyright: ignore[reportUnknownMemberType]
+                        failure_reason = f'Output {output_trunc} does not contain provided value as a key'
             elif self.value not in ctx.output:  # pyright: ignore[reportOperatorIssue]  # will be handled by except block
-                failure_reason = f'Output {ctx.output!r} does not contain expected item {self.value!r}'
-                if len(failure_reason) > _MAX_REASON_LENGTH:
-                    failure_reason = 'Output does not contain expected item'
+                output_trunc = _truncated_repr(ctx.output, max_length=200)
+                failure_reason = f'Output {output_trunc} does not contain provided value'
         except (TypeError, ValueError) as e:
             failure_reason = f'Containment check failed: {e}'
 

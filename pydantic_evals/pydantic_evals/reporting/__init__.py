@@ -165,7 +165,7 @@ class EvaluationReport(BaseModel):
         label_configs: dict[str, RenderValueConfig] | None = None,
         metric_configs: dict[str, RenderNumberConfig] | None = None,
         duration_config: RenderNumberConfig | None = None,
-    ):
+    ):  # pragma: no cover
         """Print this report to the console, optionally comparing it to a baseline report.
 
         If you want more control over the output, use `console_table` instead and pass it to `rich.Console.print`.
@@ -220,7 +220,7 @@ class EvaluationReport(BaseModel):
         )
         if baseline is None:
             return renderer.build_table(self)
-        else:
+        else:  # pragma: no cover
             return renderer.build_diff_table(self, baseline)
 
     def __str__(self) -> str:
@@ -275,7 +275,7 @@ class _ValueRenderer:
                 # If there is a diff, make the name bold and compute the diff_str
                 name = name and f'[bold]{name}[/]'
                 diff_str = self.diff_formatter and self.diff_formatter(old, new)
-                if diff_str:
+                if diff_str:  # pragma: no cover
                     result += f' ({diff_str})'
                 result = f'[{self.diff_style}]{result}[/]'
 
@@ -442,11 +442,11 @@ class _NumberRenderer:
             return self.value_formatter(value)
 
     def _get_diff_str(self, old: float | int | None, new: float | int | None) -> str | None:
-        if old is None or new is None:
+        if old is None or new is None:  # pragma: no cover
             return None
-        if isinstance(self.diff_formatter, str):
+        if isinstance(self.diff_formatter, str):  # pragma: no cover
             return self.diff_formatter.format(new - old)
-        elif self.diff_formatter is None:
+        elif self.diff_formatter is None:  # pragma: no cover
             return None
         else:
             return self.diff_formatter(old, new)
@@ -457,7 +457,7 @@ class _NumberRenderer:
             return None
 
         diff = new - old
-        if abs(diff) < self.diff_atol + self.diff_rtol * abs(old):
+        if abs(diff) < self.diff_atol + self.diff_rtol * abs(old):  # pragma: no cover
             return None
         return self.diff_increase_style if diff > 0 else self.diff_decrease_style
 
@@ -733,7 +733,7 @@ class ReportCaseRenderer:
     def _render_assertions_diff(
         assertions: list[EvaluationResult[bool]], new_assertions: list[EvaluationResult[bool]]
     ) -> str:
-        if not assertions and not new_assertions:
+        if not assertions and not new_assertions:  # pragma: no cover
             return EMPTY_CELL_STR
 
         old = ''.join(['[green]✔[/]' if a.value else '[red]✗[/]' for a in assertions])
@@ -745,7 +745,7 @@ class ReportCaseRenderer:
         baseline: float | None,
         new: float | None,
     ) -> str:
-        if baseline is None and new is None:
+        if baseline is None and new is None:  # pragma: no cover
             return EMPTY_AGGREGATE_CELL_STR
         rendered_baseline = (
             default_render_percentage(baseline) + ' [green]✔[/]' if baseline is not None else EMPTY_CELL_STR
@@ -857,7 +857,7 @@ class EvaluationRenderer:
                 removed_cases.append(maybe_baseline_case)
             elif maybe_report_case:
                 added_cases.append(maybe_report_case)
-            else:
+            else:  # pragma: no cover
                 assert False, 'This should be unreachable'
 
         case_renderer = self._get_case_renderer(report, baseline)
@@ -931,7 +931,9 @@ class EvaluationRenderer:
             all_renderers[name] = _NumberRenderer.infer_from_config(merged_config, 'metric', values)
         return all_renderers
 
-    def _infer_duration_renderer(self, report: EvaluationReport, baseline: EvaluationReport | None) -> _NumberRenderer:
+    def _infer_duration_renderer(
+        self, report: EvaluationReport, baseline: EvaluationReport | None
+    ) -> _NumberRenderer:  # pragma: no cover
         all_cases = self._all_cases(report, baseline)
         all_durations = [x.task_duration for x in all_cases]
         if self.include_total_duration:

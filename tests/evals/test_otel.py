@@ -3,6 +3,8 @@ from __future__ import annotations as _annotations
 import asyncio
 
 import pytest
+from inline_snapshot import snapshot
+from pytest_mock import MockerFixture
 
 from ..conftest import try_import
 
@@ -10,7 +12,7 @@ with try_import() as imports_successful:
     import logfire
     from logfire.testing import CaptureLogfire
 
-    from pydantic_evals.otel._context_in_memory_span_exporter import (
+    from pydantic_evals.otel._context_subtree import (
         context_subtree,
     )
     from pydantic_evals.otel.span_tree import SpanQuery, SpanTree, as_predicate, matches
@@ -212,6 +214,117 @@ async def test_span_node_matches(span_tree: SpanTree):
     assert not child1_node.matches(name='child1', attributes={'type': 'normal'})
 
 
+async def test_span_tree_repr(span_tree: SpanTree):
+    assert repr(SpanTree()) == snapshot('<SpanTree />')
+    assert str(span_tree) == snapshot('<SpanTree num_roots=1 total_spans=6 />')
+    assert repr(span_tree) == snapshot("""\
+<SpanTree>
+  <SpanNode name='root' >
+    <SpanNode name='child1' >
+      <SpanNode name='grandchild1' />
+      <SpanNode name='grandchild2' />
+    </SpanNode>
+    <SpanNode name='child2' >
+      <SpanNode name='grandchild3' />
+    </SpanNode>
+  </SpanNode>
+</SpanTree>\
+""")
+    assert span_tree.repr_xml(include_children=False) == snapshot("""\
+<SpanTree>
+  <SpanNode name='root' children=... />
+</SpanTree>\
+""")
+    assert span_tree.repr_xml(include_span_id=True) == snapshot("""\
+<SpanTree>
+  <SpanNode name='root' span_id=0000000000000001 >
+    <SpanNode name='child1' span_id=0000000000000003 >
+      <SpanNode name='grandchild1' span_id=0000000000000005 />
+      <SpanNode name='grandchild2' span_id=0000000000000007 />
+    </SpanNode>
+    <SpanNode name='child2' span_id=0000000000000009 >
+      <SpanNode name='grandchild3' span_id=000000000000000b />
+    </SpanNode>
+  </SpanNode>
+</SpanTree>\
+""")
+    assert span_tree.repr_xml(include_trace_id=True) == snapshot("""\
+<SpanTree>
+  <SpanNode name='root' trace_id=00000000000000000000000000000001 >
+    <SpanNode name='child1' trace_id=00000000000000000000000000000001 >
+      <SpanNode name='grandchild1' trace_id=00000000000000000000000000000001 />
+      <SpanNode name='grandchild2' trace_id=00000000000000000000000000000001 />
+    </SpanNode>
+    <SpanNode name='child2' trace_id=00000000000000000000000000000001 >
+      <SpanNode name='grandchild3' trace_id=00000000000000000000000000000001 />
+    </SpanNode>
+  </SpanNode>
+</SpanTree>\
+""")
+    assert span_tree.repr_xml(include_start_timestamp=True) == snapshot("""\
+<SpanTree>
+  <SpanNode name='root' start_timestamp='1970-01-01T00:00:01+00:00' >
+    <SpanNode name='child1' start_timestamp='1970-01-01T00:00:02+00:00' >
+      <SpanNode name='grandchild1' start_timestamp='1970-01-01T00:00:03+00:00' />
+      <SpanNode name='grandchild2' start_timestamp='1970-01-01T00:00:05+00:00' />
+    </SpanNode>
+    <SpanNode name='child2' start_timestamp='1970-01-01T00:00:08+00:00' >
+      <SpanNode name='grandchild3' start_timestamp='1970-01-01T00:00:09+00:00' />
+    </SpanNode>
+  </SpanNode>
+</SpanTree>\
+""")
+    assert span_tree.repr_xml(include_duration=True) == snapshot("""\
+<SpanTree>
+  <SpanNode name='root' duration='0:00:11' >
+    <SpanNode name='child1' duration='0:00:05' >
+      <SpanNode name='grandchild1' duration='0:00:01' />
+      <SpanNode name='grandchild2' duration='0:00:01' />
+    </SpanNode>
+    <SpanNode name='child2' duration='0:00:03' >
+      <SpanNode name='grandchild3' duration='0:00:01' />
+    </SpanNode>
+  </SpanNode>
+</SpanTree>\
+""")
+
+
+async def test_span_node_repr(span_tree: SpanTree):
+    node = span_tree.find_first(as_predicate({'name_equals': 'child2'}))
+    assert node is not None
+
+    leaf_node = span_tree.find_first(as_predicate({'name_equals': 'grandchild1'}))
+    assert str(leaf_node) == snapshot("<SpanNode name='grandchild1' span_id=0000000000000005 />")
+
+    assert str(node) == snapshot("<SpanNode name='child2' span_id=0000000000000009>...</SpanNode>")
+    assert repr(node) == snapshot("""\
+<SpanNode name='child2' >
+  <SpanNode name='grandchild3' />
+</SpanNode>\
+""")
+    assert node.repr_xml(include_children=False) == snapshot("<SpanNode name='child2' children=... />")
+    assert node.repr_xml(include_span_id=True) == snapshot("""\
+<SpanNode name='child2' span_id=0000000000000009 >
+  <SpanNode name='grandchild3' span_id=000000000000000b />
+</SpanNode>\
+""")
+    assert node.repr_xml(include_trace_id=True) == snapshot("""\
+<SpanNode name='child2' trace_id=00000000000000000000000000000001 >
+  <SpanNode name='grandchild3' trace_id=00000000000000000000000000000001 />
+</SpanNode>\
+""")
+    assert node.repr_xml(include_start_timestamp=True) == snapshot("""\
+<SpanNode name='child2' start_timestamp='1970-01-01T00:00:08+00:00' >
+  <SpanNode name='grandchild3' start_timestamp='1970-01-01T00:00:09+00:00' />
+</SpanNode>\
+""")
+    assert node.repr_xml(include_duration=True) == snapshot("""\
+<SpanNode name='child2' duration='0:00:03' >
+  <SpanNode name='grandchild3' duration='0:00:01' />
+</SpanNode>\
+""")
+
+
 async def test_span_tree_ancestors_methods():
     """Test the ancestor traversal methods in SpanNode."""
     # Configure logfire
@@ -246,6 +359,85 @@ async def test_span_tree_ancestors_methods():
     # Test any_ancestor
     assert leaf_node.any_ancestor(lambda node: node.name == 'root')
     assert not leaf_node.any_ancestor(lambda node: node.name == 'non_existent')
+
+
+async def test_span_tree_descendants_methods():
+    """Test the descendant traversal methods in SpanNode."""
+    # Configure logfire
+    logfire.configure()
+
+    # Create spans with a deep structure for testing descendant methods
+    with context_subtree() as tree:
+        with logfire.span('root', depth=0):
+            with logfire.span('level1', depth=1):
+                with logfire.span('level2', depth=2):
+                    with logfire.span('level3', depth=3):
+                        logfire.info('leaf', depth=4)
+    assert isinstance(tree, SpanTree)
+
+    # Get the root node
+    root_node = tree.roots[0]
+    assert root_node.name == 'root'
+
+    # Test find_descendants
+    descendants = root_node.find_descendants(lambda node: True)
+    assert len(descendants) == 4
+    descendant_names = [node.name for node in descendants]
+    assert descendant_names == ['level1', 'level2', 'level3', 'leaf']
+
+    # Test first_descendant
+    level2_descendant = root_node.first_descendant(lambda node: node.name == 'level2')
+    assert level2_descendant is not None
+    assert level2_descendant.name == 'level2'
+
+    # Test any_descendant
+    assert root_node.any_descendant(lambda node: node.name == 'leaf')
+    assert not root_node.any_descendant(lambda node: node.name == 'non_existent')
+
+    # Test descendant-related conditions in matches function
+    # Test some_descendant_has
+    assert matches({'some_descendant_has': {'name_equals': 'leaf'}}, root_node)
+
+    level2_node = root_node.first_descendant(lambda node: node.name == 'level2')
+    assert level2_node is not None
+    assert matches({'some_descendant_has': {'name_equals': 'leaf'}}, level2_node)
+    assert not matches({'some_descendant_has': {'name_equals': 'level1'}}, level2_node)
+
+    # Test all_descendants_have
+    assert matches({'all_descendants_have': {'has_attribute_keys': ['depth']}}, root_node)
+    assert matches({'some_descendant_has': {'has_attributes': {'depth': 3}}}, root_node)
+    assert not matches({'all_descendants_have': {'has_attributes': {'depth': 3}}}, root_node)
+
+    # Test no_descendant_has
+    no_descendant_query: SpanQuery = {'no_descendant_has': {'name_equals': 'non_existent'}}
+    assert matches(no_descendant_query, root_node)
+
+    level1_node = root_node.first_descendant(lambda node: node.name == 'level1')
+    assert level1_node is not None
+    assert matches({'no_descendant_has': {'name_equals': 'level1'}}, level1_node)
+    assert not matches({'no_descendant_has': {'name_equals': 'level2'}}, level1_node)
+
+    # Test complex descendant queries
+    assert matches({'some_descendant_has': {'name_equals': 'leaf', 'has_attributes': {'depth': 4}}}, root_node)
+
+    # Test descendant queries with logical combinations
+    logical_descendant_query: SpanQuery = {
+        'some_descendant_has': {'and_': [{'name_contains': 'level'}, {'has_attributes': {'depth': 2}}]}
+    }
+    assert matches(logical_descendant_query, root_node)
+
+    level3_node = root_node.first_descendant(lambda node: node.name == 'level3')
+    assert level3_node is not None
+    assert not matches(logical_descendant_query, level3_node)
+
+    # Test descendant queries with negation
+    negated_descendant_query: SpanQuery = {'no_descendant_has': {'not_': {'has_attributes': {'depth': 4}}}}
+    assert not matches(negated_descendant_query, root_node)  # Should fail because level3 has depth=3
+
+    leaf_node = root_node.first_descendant(lambda node: node.name == 'leaf')
+    assert leaf_node is not None
+    assert matches(negated_descendant_query, leaf_node)
+    assert matches({'no_descendant_has': {'has_attributes': {'depth': 4}}}, leaf_node)
 
 
 async def test_log_levels_and_exceptions():
@@ -421,10 +613,14 @@ async def test_span_query_timing_conditions():
     assert 'fast_operation' not in [node.name for node in matched_nodes]
 
     # Test max_duration
-    max_duration_query: SpanQuery = {'min_duration': 0.001, 'max_duration': medium_threshold}
-    matched_nodes = tree.find_all(as_predicate(max_duration_query))
-    assert len(matched_nodes) == 2
-    assert 'slow_operation' not in [node.name for node in matched_nodes]
+    max_duration_queries: list[SpanQuery] = [
+        {'min_duration': 0.001, 'max_duration': medium_threshold},
+        {'min_duration': 0.001, 'max_duration': medium_threshold.seconds},
+    ]
+    for max_duration_query in max_duration_queries:
+        matched_nodes = tree.find_all(as_predicate(max_duration_query))
+        assert len(matched_nodes) == 2
+        assert 'slow_operation' not in [node.name for node in matched_nodes]
 
     # Test min and max duration together using timedelta
     duration_range_query: SpanQuery = {
@@ -464,6 +660,14 @@ async def test_span_query_descendant_conditions():
     matched_node = tree.find_first(as_predicate(all_children_query))
     assert matched_node is not None
     assert matched_node.name == 'parent2'
+    # A couple more tests for coverage reasons:
+    assert (
+        tree.find_first(
+            as_predicate({'all_children_have': {'has_attributes': {'type': 'unusual'}}, 'min_child_count': 1})
+        )
+        is None
+    )
+    assert as_predicate({'no_child_has': {'has_attributes': {'type': 'normal'}}})(matched_node) is False
 
     # Test no_child_has condition
     no_child_query: SpanQuery = {'no_child_has': {'has_attributes': {'type': 'important'}}}
@@ -649,3 +853,40 @@ async def test_span_query_child_count():
     assert len(matched_nodes) == 2
     matched_names = {node.name for node in matched_nodes}
     assert matched_names == {'parent_two_children', 'parent_three_children'}
+
+
+async def test_or_cannot_be_mixed(span_tree: SpanTree):
+    with pytest.raises(ValueError) as exc_info:
+        span_tree.find_first(as_predicate({'name_equals': 'child1', 'or_': [SpanQuery(name_equals='child2')]}))
+    assert str(exc_info.value) == snapshot("Cannot combine 'or_' conditions with other conditions at the same level")
+
+
+async def test_context_subtree_invalid_tracer_provider(mocker: MockerFixture):
+    """Test that context_subtree correctly records spans in independent async contexts."""
+    # from opentelemetry import trace
+
+    mocker.patch('pydantic_evals.otel._context_in_memory_span_exporter.get_tracer_provider', return_value=None)
+    with pytest.raises(TypeError) as exc_info:
+        with context_subtree():  # pragma: no cover
+            pass
+    assert str(exc_info.value) == snapshot(
+        "Expected `tracer_provider` to have an `add_span_processor` method; got an instance of <class 'NoneType'>. For help resolving this, please create an issue at https://github.com/pydantic/pydantic-ai/issues."
+    )
+
+
+async def test_context_subtree_not_configured(mocker: MockerFixture):
+    """Test that context_subtree correctly records spans in independent async contexts."""
+    from opentelemetry.trace import ProxyTracerProvider
+
+    # from opentelemetry.sdk.trace import TracerProvider
+    mocker.patch(
+        'pydantic_evals.otel._context_in_memory_span_exporter.get_tracer_provider', return_value=ProxyTracerProvider()
+    )
+    with context_subtree() as span_tree:
+        pass
+    assert str(span_tree) == snapshot(
+        'To make use of the `span_tree` in an evaluator, you need to call '
+        '`logfire.configure(...)` before running an evaluation. For more information, '
+        'refer to the documentation at '
+        'https://ai.pydantic.dev/evals/#opentelemetry-integration.'
+    )

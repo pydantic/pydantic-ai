@@ -5,7 +5,7 @@ import json
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 from dirty_equals import HasRepr
@@ -15,15 +15,27 @@ from pydantic import BaseModel
 from ..conftest import try_import
 
 with try_import() as imports_successful:
-    from logfire.testing import CaptureLogfire
-
     from pydantic_evals import Case, Dataset
     from pydantic_evals.dataset import increment_eval_metric, set_eval_attribute
-    from pydantic_evals.evaluators import Evaluator, Python
+    from pydantic_evals.evaluators import EvaluationResult, Evaluator, EvaluatorOutput, LlmJudge, Python
     from pydantic_evals.evaluators.context import EvaluatorContext
     from pydantic_evals.reporting import ReportCase
 
 pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed'), pytest.mark.anyio]
+
+if TYPE_CHECKING or imports_successful():
+    import logfire
+    from logfire.testing import CaptureLogfire
+
+    @dataclass
+    class MockEvaluator(Evaluator[object, object, object]):
+        """This is just for testing purposes. It just returns the wrapped value."""
+
+        output: EvaluatorOutput
+
+        def evaluate(self, ctx: EvaluatorContext[object, object, object]) -> EvaluatorOutput:
+            return self.output
+
 
 if sys.version_info < (3, 11):
     from exceptiongroup import ExceptionGroup
@@ -80,7 +92,7 @@ def simple_evaluator() -> type[Evaluator[TaskInput, TaskOutput, TaskMetadata]]:
     @dataclass
     class SimpleEvaluator(Evaluator[TaskInput, TaskOutput, TaskMetadata]):
         def evaluate(self, ctx: EvaluatorContext[TaskInput, TaskOutput, TaskMetadata]):
-            if ctx.expected_output is None:
+            if ctx.expected_output is None:  # pragma: no cover
                 return {'result': 'no_expected_output'}
 
             return {
@@ -144,6 +156,10 @@ async def test_add_evaluator(
     dataset.add_evaluator(Python('ctx.output > 0'))
     dataset.add_evaluator(Python('ctx.output == 2'), specific_case='My Case 1')
     dataset.add_evaluator(Python('ctx.output == 4'), specific_case='My Case 2')
+    with pytest.raises(ValueError) as exc_info:
+        dataset.add_evaluator(Python('ctx.output == 4'), specific_case='My Case 3')
+    assert str(exc_info.value) == snapshot("Case 'My Case 3' not found in the dataset")
+
     assert dataset.model_dump(mode='json', exclude_defaults=True, context={'use_short_form': True}) == {
         'cases': [
             {
@@ -177,7 +193,7 @@ async def test_evaluate(
             return TaskOutput(answer='4')
         elif inputs.query == 'What is the capital of France?':
             return TaskOutput(answer='Paris')
-        return TaskOutput(answer='Unknown')
+        return TaskOutput(answer='Unknown')  # pragma: no cover
 
     report = await example_dataset.evaluate(mock_task)
 
@@ -229,7 +245,7 @@ async def test_evaluate_with_concurrency(
             return TaskOutput(answer='4')
         elif inputs.query == 'What is the capital of France?':
             return TaskOutput(answer='Paris')
-        return TaskOutput(answer='Unknown')
+        return TaskOutput(answer='Unknown')  # pragma: no cover
 
     report = await example_dataset.evaluate(mock_task, max_concurrency=1)
 
@@ -324,6 +340,8 @@ async def test_increment_eval_metric(example_dataset: Dataset[TaskInput, TaskOut
         for _ in inputs.query:
             increment_eval_metric('chars', 1)
 
+        increment_eval_metric('phantom', 0)  # doesn't get created due to being zero
+
         set_eval_attribute('is_about_france', 'France' in inputs.query)
         return TaskOutput(answer=f'answer to {inputs.query}')
 
@@ -364,6 +382,129 @@ async def test_increment_eval_metric(example_dataset: Dataset[TaskInput, TaskOut
     ]
 
 
+async def test_repeated_name_outputs(example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata]):
+    """Test the increment_eval_metric function."""
+
+    async def my_task(inputs: TaskInput) -> TaskOutput:
+        return TaskOutput(answer=f'answer to {inputs.query}')
+
+    example_dataset.add_evaluator(MockEvaluator({'output': 'a'}))
+    example_dataset.add_evaluator(MockEvaluator({'output': 'b'}))
+    example_dataset.add_evaluator(MockEvaluator({'output': 'c'}))
+
+    report = await example_dataset.evaluate(my_task)
+    assert report.cases == snapshot(
+        [
+            ReportCase(
+                name='case1',
+                inputs={'query': 'What is 2+2?'},
+                metadata=TaskMetadata(difficulty='easy', category='general'),
+                expected_output=TaskOutput(answer='4', confidence=1.0),
+                output=TaskOutput(answer='answer to What is 2+2?', confidence=1.0),
+                metrics={},
+                attributes={},
+                scores={},
+                labels={
+                    'output': EvaluationResult(
+                        name='output', value='a', reason=None, source=MockEvaluator(output={'output': 'a'})
+                    ),
+                    'output_2': EvaluationResult(
+                        name='output', value='b', reason=None, source=MockEvaluator(output={'output': 'b'})
+                    ),
+                    'output_3': EvaluationResult(
+                        name='output', value='c', reason=None, source=MockEvaluator(output={'output': 'c'})
+                    ),
+                },
+                assertions={},
+                task_duration=1.0,
+                total_duration=6.0,
+                trace_id='00000000000000000000000000000001',
+                span_id='0000000000000003',
+            ),
+            ReportCase(
+                name='case2',
+                inputs={'query': 'What is the capital of France?'},
+                metadata=TaskMetadata(difficulty='medium', category='geography'),
+                expected_output=TaskOutput(answer='Paris', confidence=1.0),
+                output=TaskOutput(answer='answer to What is the capital of France?', confidence=1.0),
+                metrics={},
+                attributes={},
+                scores={},
+                labels={
+                    'output': EvaluationResult(
+                        name='output', value='a', reason=None, source=MockEvaluator(output={'output': 'a'})
+                    ),
+                    'output_2': EvaluationResult(
+                        name='output', value='b', reason=None, source=MockEvaluator(output={'output': 'b'})
+                    ),
+                    'output_3': EvaluationResult(
+                        name='output', value='c', reason=None, source=MockEvaluator(output={'output': 'c'})
+                    ),
+                },
+                assertions={},
+                task_duration=1.0,
+                total_duration=4.0,
+                trace_id='00000000000000000000000000000001',
+                span_id='0000000000000007',
+            ),
+        ]
+    )
+
+
+async def test_genai_attribute_collection(example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata]):
+    async def my_task(inputs: TaskInput) -> TaskOutput:
+        with logfire.span(
+            'my chat span',
+            **{  # type: ignore
+                'gen_ai.operation.name': 'chat',
+                'gen_ai.usage.input_tokens': 1,
+                'gen_ai.usage.details.special_tokens': 2,
+                'other_attribute': 3,
+            },
+        ):
+            with logfire.span('some other span'):
+                pass
+        return TaskOutput(answer=f'answer to {inputs.query}')
+
+    report = await example_dataset.evaluate(my_task)
+    assert report.cases == snapshot(
+        [
+            ReportCase(
+                name='case1',
+                inputs={'query': 'What is 2+2?'},
+                metadata=TaskMetadata(difficulty='easy', category='general'),
+                expected_output=TaskOutput(answer='4', confidence=1.0),
+                output=TaskOutput(answer='answer to What is 2+2?', confidence=1.0),
+                metrics={'requests': 1, 'input_tokens': 1, 'special_tokens': 2},
+                attributes={},
+                scores={},
+                labels={},
+                assertions={},
+                task_duration=5.0,
+                total_duration=7.0,
+                trace_id='00000000000000000000000000000001',
+                span_id='0000000000000003',
+            ),
+            ReportCase(
+                name='case2',
+                inputs={'query': 'What is the capital of France?'},
+                metadata=TaskMetadata(difficulty='medium', category='geography'),
+                expected_output=TaskOutput(answer='Paris', confidence=1.0),
+                output=TaskOutput(answer='answer to What is the capital of France?', confidence=1.0),
+                metrics={'requests': 1, 'input_tokens': 1, 'special_tokens': 2},
+                attributes={},
+                scores={},
+                labels={},
+                assertions={},
+                task_duration=5.0,
+                total_duration=7.0,
+                trace_id='00000000000000000000000000000001',
+                span_id='000000000000000b',
+            ),
+        ]
+    )
+
+
 async def test_serialization_to_yaml(example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata], tmp_path: Path):
     """Test serializing a dataset to YAML."""
     yaml_path = tmp_path / 'test_cases.yaml'
@@ -381,7 +522,7 @@ async def test_serialization_to_yaml(example_dataset: Dataset[TaskInput, TaskOut
 async def test_serialization_to_json(example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata], tmp_path: Path):
     """Test serializing a dataset to JSON."""
     json_path = tmp_path / 'test_cases.json'
-    example_dataset.to_file(json_path)
+    example_dataset.to_file(json_path, fmt='json')  # purposely specify fmt, for coverage reasons
 
     assert json_path.exists()
 
@@ -397,7 +538,59 @@ async def test_serialization_to_json(example_dataset: Dataset[TaskInput, TaskOut
     assert (tmp_path / schema).exists()
 
 
-async def test_from_text(example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata]):
+def test_serialization_errors(tmp_path: Path):
+    with pytest.raises(ValueError) as exc_info:
+        Dataset[TaskInput, TaskOutput, TaskMetadata].from_file(tmp_path / 'test_cases.abc')
+
+    assert str(exc_info.value) == snapshot(
+        "Could not infer format for filename 'test_cases.abc'. Use the `fmt` argument to specify the format."
+    )
+
+
+async def test_from_text():
+    """Test creating a dataset from text."""
+    dataset_dict = {
+        'cases': [
+            {
+                'name': '1',
+                'inputs': {'query': 'What is the capital of Germany?'},
+                'expected_output': {'answer': 'Berlin', 'confidence': 0.9},
+                'metadata': {'difficulty': 'hard', 'category': 'geography'},
+            },
+            {
+                'name': '2',
+                'inputs': {'query': 'What is the capital of Germany?'},
+                'expected_output': {'answer': 'Berlin', 'confidence': 0.9},
+                'metadata': {'difficulty': 'hard', 'category': 'geography'},
+                'evaluators': [{'LlmJudge': 'my rubric'}],
+            },
+        ],
+        'evaluators': [{'LlmJudge': 'my rubric'}],
+    }
+
+    loaded_dataset = Dataset[TaskInput, TaskOutput, TaskMetadata].from_text(json.dumps(dataset_dict))
+    assert loaded_dataset.cases == snapshot(
+        [
+            Case(
+                name='1',
+                inputs=TaskInput(query='What is the capital of Germany?'),
+                metadata=TaskMetadata(difficulty='hard', category='geography'),
+                expected_output=TaskOutput(answer='Berlin', confidence=0.9),
+                evaluators=(),
+            ),
+            Case(
+                name='2',
+                inputs=TaskInput(query='What is the capital of Germany?'),
+                metadata=TaskMetadata(difficulty='hard', category='geography'),
+                expected_output=TaskOutput(answer='Berlin', confidence=0.9),
+                evaluators=(LlmJudge(rubric='my rubric'),),
+            ),
+        ]
+    )
+    assert loaded_dataset.evaluators == snapshot([LlmJudge(rubric='my rubric')])
+
+
+async def test_from_text_failure():
     """Test creating a dataset from text."""
     dataset_dict = {
         'cases': [
@@ -406,22 +599,77 @@ async def test_from_text(example_dataset: Dataset[TaskInput, TaskOutput, TaskMet
                 'inputs': {'query': 'What is the capital of Germany?'},
                 'expected_output': {'answer': 'Berlin', 'confidence': 0.9},
                 'metadata': {'difficulty': 'hard', 'category': 'geography'},
+                'evaluators': ['NotAnEvaluator'],
             }
-        ]
+        ],
+        'evaluators': ['NotAnEvaluator'],
     }
-
-    json_text = json.dumps(dataset_dict)
-
-    loaded_dataset = Dataset[TaskInput, TaskOutput, TaskMetadata].from_text(json_text)
-    assert loaded_dataset.cases == [
-        Case(
-            name='text_case',
-            inputs=TaskInput(query='What is the capital of Germany?'),
-            metadata=TaskMetadata(difficulty='hard', category='geography'),
-            expected_output=TaskOutput(answer='Berlin', confidence=0.9),
-            evaluators=(),
+    with pytest.raises(ExceptionGroup) as exc_info:
+        Dataset[TaskInput, TaskOutput, TaskMetadata].from_text(json.dumps(dataset_dict))
+    assert exc_info.value == HasRepr(
+        repr(
+            ExceptionGroup(
+                '2 error(s) loading evaluators from registry',
+                [
+                    ValueError(
+                        "Evaluator 'NotAnEvaluator' is not in the provided registry. Registered choices: ['Equals', 'EqualsExpected', 'Contains', 'IsInstance', 'MaxDuration', 'LlmJudge', 'SpanQuery']"
+                    ),
+                    ValueError(
+                        "Evaluator 'NotAnEvaluator' is not in the provided registry. Registered choices: ['Equals', 'EqualsExpected', 'Contains', 'IsInstance', 'MaxDuration', 'LlmJudge', 'SpanQuery']"
+                    ),
+                ],
+            )
         )
-    ]
+    )
+
+    dataset_dict = {
+        'cases': [
+            {
+                'name': 'text_case',
+                'inputs': {'query': 'What is the capital of Germany?'},
+                'expected_output': {'answer': 'Berlin', 'confidence': 0.9},
+                'metadata': {'difficulty': 'hard', 'category': 'geography'},
+                'evaluators': ['LlmJudge'],
+            }
+        ],
+        'evaluators': ['LlmJudge'],
+    }
+    with pytest.raises(ExceptionGroup) as exc_info:
+        Dataset[TaskInput, TaskOutput, TaskMetadata].from_text(json.dumps(dataset_dict))
+    assert exc_info.value == HasRepr(
+        repr(
+            ExceptionGroup(
+                '2 error(s) loading evaluators from registry',
+                [
+                    ValueError(
+                        "Failed to instantiate evaluator 'LlmJudge' for dataset: LlmJudge.__init__() missing 1 required positional argument: 'rubric'"
+                    ),
+                    ValueError(
+                        "Failed to instantiate evaluator 'LlmJudge' for case 'text_case': LlmJudge.__init__() missing 1 required positional argument: 'rubric'"
+                    ),
+                ],
+            )
+        )
+    )
+
+
+async def test_duplicate_evaluator_failure(example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata]):
+    @dataclass
+    class FirstEvaluator(Evaluator[TaskInput, TaskOutput, TaskMetadata]):
+        def evaluate(self, ctx: EvaluatorContext[TaskInput, TaskOutput, TaskMetadata]):  # pragma: no cover
+            return False
+
+    @dataclass
+    class SecondEvaluator(Evaluator[TaskInput, TaskOutput, TaskMetadata]):
+        def evaluate(self, ctx: EvaluatorContext[TaskInput, TaskOutput, TaskMetadata]):  # pragma: no cover
+            return False
+
+    SecondEvaluator.__name__ = FirstEvaluator.__name__
+    with pytest.raises(ValueError) as exc_info:
+        Dataset[TaskInput, TaskOutput, TaskMetadata].from_dict(
+            {'cases': []}, custom_evaluator_types=(FirstEvaluator, SecondEvaluator)
+        )
+    assert str(exc_info.value) == snapshot("Duplicate evaluator class name: 'FirstEvaluator'")
 
 
 async def test_invalid_evaluator_result_type(example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata]):
@@ -607,7 +855,7 @@ async def test_dataset_evaluate_with_empty_cases(example_dataset: Dataset[TaskIn
     """Test evaluating a dataset with no cases."""
     dataset = Dataset(cases=[])
 
-    async def task(inputs: TaskInput) -> TaskOutput:
+    async def task(inputs: TaskInput) -> TaskOutput:  # pragma: no cover
         return TaskOutput(answer=inputs.query.upper())
 
     report = await dataset.evaluate(task)
@@ -706,7 +954,7 @@ def test_add_invalid_evaluator():
         pass
 
     class SimpleEvaluator(Evaluator[TaskInput, TaskOutput, TaskMetadata]):
-        def evaluate(self, ctx: EvaluatorContext[TaskInput, TaskOutput, TaskMetadata]):
+        def evaluate(self, ctx: EvaluatorContext[TaskInput, TaskOutput, TaskMetadata]):  # pragma: no cover
             return False
 
     dataset = Dataset[TaskInput, TaskOutput, TaskMetadata](cases=[])
@@ -718,3 +966,12 @@ def test_add_invalid_evaluator():
     with pytest.raises(ValueError) as exc_info:
         dataset.model_json_schema_with_evaluators((SimpleEvaluator,))
     assert str(exc_info.value).startswith('All custom evaluator classes must be decorated with `@dataclass`')
+
+
+def test_import_generate_dataset():
+    # This function is tough to test in an interesting way outside an example...
+    # This at least ensures importing it doesn't fail.
+    # TODO: Add an "example" that actually makes use of this functionality
+    from pydantic_evals.examples import generate_dataset
+
+    assert generate_dataset

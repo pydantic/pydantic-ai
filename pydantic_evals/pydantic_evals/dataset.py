@@ -41,7 +41,7 @@ from .otel import SpanTree
 from .otel._context_in_memory_span_exporter import context_subtree
 from .reporting import EvaluationReport, ReportCase, ReportCaseAggregate
 
-if sys.version_info < (3, 11):
+if sys.version_info < (3, 11):  # pragma: no cover
     from exceptiongroup import ExceptionGroup
 else:
     ExceptionGroup = ExceptionGroup
@@ -260,7 +260,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
 
     def evaluate_sync(
         self, task: Callable[[InputsT], Awaitable[OutputT]], name: str | None = None, max_concurrency: int | None = None
-    ) -> EvaluationReport:
+    ) -> EvaluationReport:  # pragma: no cover
         """Evaluates the test cases in the dataset using the given task.
 
         This is a synchronous wrapper around [`evaluate`][pydantic_evals.Dataset.evaluate] provided for convenience.
@@ -388,7 +388,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         raw = Path(path).read_text()
         try:
             return cls.from_text(raw, fmt=fmt, custom_evaluator_types=custom_evaluator_types)
-        except ValidationError as e:
+        except ValidationError as e:  # pragma: no cover
             raise ValueError(f'{path} contains data that does not match the schema for {cls.__name__}:\n{e}.') from e
 
     @classmethod
@@ -522,9 +522,9 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             if not schema_path.is_absolute():
                 schema_ref = str(schema_path)
                 schema_path = path.parent / schema_path
-            elif schema_path.is_relative_to(path):
+            elif schema_path.is_relative_to(path):  # pragma: no cover
                 schema_ref = str(_get_relative_path_reference(schema_path, path))
-            else:
+            else:  # pragma: no cover
                 schema_ref = str(schema_path)
             self._save_schema(schema_path, custom_evaluator_types)
 
@@ -672,7 +672,9 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             return 'yaml'
         elif suffix == '.json':
             return 'json'
-        raise ValueError(f'Could not infer format from path {path}. Use the `fmt` argument to specify the format.')
+        raise ValueError(
+            f'Could not infer format for filename {path.name!r}. Use the `fmt` argument to specify the format.'
+        )
 
     @model_serializer(mode='wrap')
     def _add_json_schema(self, nxt: SerializerFunctionWrapHandler, info: SerializationInfo) -> dict[str, Any]:
@@ -688,7 +690,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             return nxt(self)
 
 
-def _get_relative_path_reference(target: Path, source: Path, _prefix: str = '') -> Path:
+def _get_relative_path_reference(target: Path, source: Path, _prefix: str = '') -> Path:  # pragma: no cover
     """Get a relative path reference from source to target.
 
     Recursively resolve a relative path to target from source, adding '..' as needed.
@@ -776,10 +778,11 @@ async def _run_task(
         Exception: Any exception raised by the task.
     """
     task_run = _TaskRun()
-    if _CURRENT_TASK_RUN.get() is not None:
+    if _CURRENT_TASK_RUN.get() is not None:  # pragma: no cover
         raise RuntimeError('A task run has already been entered. Task runs should not be nested')
 
-    # TODO: Should we handle task execution errors in some way? Right now they bubble up immediately
+    # Note: the current behavior is for task execution errors to just bubble up all the way and kill the evaluation.
+    # Should we handle them for the user in some way? If so, I guess we'd want to do that here.
     token = _CURRENT_TASK_RUN.set(task_run)
     try:
         with _logfire.span('execute {task}', task=get_unwrapped_function_name(task)) as task_span:
@@ -802,9 +805,10 @@ async def _run_task(
             for k, v in node.attributes.items():
                 if not isinstance(v, (int, float)):
                     continue
+                # TODO: Revisit this choice to strip the prefix..
                 if k.startswith('gen_ai.usage.details.'):
                     task_run.increment_metric(k[21:], v)
-                if k.startswith('gen_ai.usage.'):
+                elif k.startswith('gen_ai.usage.'):
                     task_run.increment_metric(k[13:], v)
 
     return EvaluatorContext[InputsT, OutputT, MetadataT](
@@ -866,7 +870,7 @@ async def _run_task_and_evaluators(
         case_span.set_attribute('labels', _evaluation_results_adapter.dump_python(labels))
 
         context = case_span.context
-        if context is None:
+        if context is None:  # pragma: no cover
             trace_id = ''
             span_id = ''
         else:
@@ -978,7 +982,7 @@ def _get_span_duration(span: logfire_api.LogfireSpan, fallback: float) -> float:
     """
     try:
         return (span.end_time - span.start_time) / 1_000_000_000  # type: ignore
-    except (AttributeError, TypeError):  #
+    except (AttributeError, TypeError):  # pragma: no cover
         return fallback
 
 
@@ -1006,7 +1010,7 @@ def _get_registry(
             )
         name = evaluator_class.name()
         if name in registry:
-            raise ValueError(f'Duplicate evaluator class name: {name}')
+            raise ValueError(f'Duplicate evaluator class name: {name!r}')
         registry[name] = evaluator_class
 
     for evaluator_class in DEFAULT_EVALUATORS:

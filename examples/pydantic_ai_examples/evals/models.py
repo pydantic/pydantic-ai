@@ -3,10 +3,9 @@ from __future__ import annotations as _annotations
 from typing import Any
 
 from pydantic import AwareDatetime, BaseModel
-from typing_extensions import TypedDict
-
 from pydantic_evals.dataset import Dataset
 from pydantic_evals.evaluators.common import IsInstance, LlmJudge
+from typing_extensions import TypedDict
 
 
 class TimeRangeBuilderSuccess(BaseModel, use_attribute_docstrings=True):
@@ -27,8 +26,12 @@ class TimeRangeBuilderSuccess(BaseModel, use_attribute_docstrings=True):
     """
 
     def __str__(self):
-        readable_min_timestamp = self.min_timestamp_with_offset.strftime('%A, %B %d, %Y %H:%M:%S %Z')
-        readable_max_timestamp = self.max_timestamp_with_offset.strftime('%A, %B %d, %Y %H:%M:%S %Z')
+        readable_min_timestamp = self.min_timestamp_with_offset.strftime(
+            '%A, %B %d, %Y %H:%M:%S %Z'
+        )
+        readable_max_timestamp = self.max_timestamp_with_offset.strftime(
+            '%A, %B %d, %Y %H:%M:%S %Z'
+        )
         lines = [
             'TimeRangeBuilderSuccess:',
             f'* min_timestamp_with_offset: {readable_min_timestamp}',
