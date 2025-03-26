@@ -69,4 +69,5 @@ class MistralProvider(Provider[Mistral]):
             elif http_client is not None:
                 self._client = Mistral(api_key=api_key, async_client=http_client)
             else:
-                self._client = Mistral(api_key=api_key, async_client=cached_async_http_client())
+                http_client = cached_async_http_client(provider='mistral')
+                self._client = Mistral(api_key=api_key, async_client=http_client)

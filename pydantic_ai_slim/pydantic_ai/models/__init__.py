@@ -431,30 +431,39 @@ def infer_model(model: Model | KnownModelName) -> Model:
         raise UserError(f'Unknown model: {model}')
 
 
-def cached_async_http_client(timeout: int = 600, connect: int = 5) -> httpx.AsyncClient:
-    """Cached HTTPX async client so multiple agents and calls can share the same client.
+def cached_async_http_client(*, provider: str | None = None, timeout: int = 600, connect: int = 5) -> httpx.AsyncClient:
+    """Cached HTTPX async client that creates a separate client for each provider.
+
+    The client is cached based on the provider parameter. If provider is None, it's used for non-provider specific
+    requests (like downloading images). Multiple agents and calls can share the same client when they use the same provider.
 
     There are good reasons why in production you should use a `httpx.AsyncClient` as an async context manager as
     described in [encode/httpx#2026](https://github.com/encode/httpx/pull/2026), but when experimenting or showing
-    examples, it's very useful not to, this allows multiple Agents to use a single client.
+    examples, it's very useful not to.
 
     The default timeouts match those of OpenAI,
     see <https://github.com/openai/openai-python/blob/v1.54.4/src/openai/_constants.py#L9>.
     """
-    client = _cached_async_http_client(timeout=timeout, connect=connect)
+    client = _cached_async_http_client(provider=provider, timeout=timeout, connect=connect)
     if client.is_closed:
         # This happens if the context manager is used, so we need to create a new client.
         _cached_async_http_client.cache_clear()
-        client = _cached_async_http_client(timeout=timeout, connect=connect)
+        client = _cached_async_http_client(provider=provider, timeout=timeout, connect=connect)
     return client
 
 
 @cache
-def _cached_async_http_client(timeout: int = 600, connect: int = 5) -> httpx.AsyncClient:
+def _cached_async_http_client(provider: str | None, timeout: int = 600, connect: int = 5) -> httpx.AsyncClient:
     return httpx.AsyncClient(
+        transport=_cached_async_http_transport(),
         timeout=httpx.Timeout(timeout=timeout, connect=connect),
         headers={'User-Agent': get_user_agent()},
     )
+
+
+@cache
+def _cached_async_http_transport() -> httpx.AsyncHTTPTransport:
+    return httpx.AsyncHTTPTransport()
 
 
 @cache

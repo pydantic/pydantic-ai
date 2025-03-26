@@ -97,7 +97,7 @@ class AzureProvider(Provider[AsyncOpenAI]):
                     'Must provide one of the `api_version` argument or the `OPENAI_API_VERSION` environment variable'
                 )
 
-            http_client = http_client or cached_async_http_client()
+            http_client = http_client or cached_async_http_client(provider='azure')
             self._client = AsyncAzureOpenAI(
                 azure_endpoint=azure_endpoint,
                 api_key=api_key,
