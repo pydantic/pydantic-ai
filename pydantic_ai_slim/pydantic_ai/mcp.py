@@ -189,13 +189,26 @@ class MCPServerHTTP(MCPServer):
     """
 
     headers: dict[str, Any] | None = None
-    """The headers passed to httpx.AsyncClient used within MCP sdk sse_client."""
+    """Optional HTTP headers to be sent with each request to the SSE endpoint.
+
+    These headers will be passed directly to the underlying `httpx.AsyncClient`.
+    Useful for authentication, custom headers, or other HTTP-specific configurations.
+    """
 
     timeout: float = 5
-    """The timeout used for httpx.Timeout config within MCP sdk sse_client."""
+    """Initial connection timeout in seconds for establishing the SSE connection.
+
+    This timeout applies to the initial connection setup and handshake.
+    If the connection cannot be established within this time, the operation will fail.
+    """
 
     sse_read_timeout: float = 60 * 5
-    """The read timeout used for httpx.Timeout config within MCP sdk sse_client."""
+    """Maximum time in seconds to wait for new SSE messages before timing out.
+
+    This timeout applies to the long-lived SSE connection after it's established.
+    If no new messages are received within this time, the connection will be considered stale
+    and may be closed. Defaults to 5 minutes (300 seconds).
+    """
 
     @asynccontextmanager
     async def client_streams(
