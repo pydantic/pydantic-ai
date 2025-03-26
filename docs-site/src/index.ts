@@ -3,7 +3,6 @@ export default {
     const r = await env.ASSETS.fetch(request)
     if (r.status == 404) {
       const url = new URL(request.url)
-      console.log({url, pathname: url.pathname})
       const redirectPath = redirect(url.pathname)
       if (redirectPath) {
         url.pathname = redirectPath
