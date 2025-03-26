@@ -66,6 +66,5 @@ class CohereProvider(Provider[AsyncClientV2]):
             if http_client is not None:
                 self._client = AsyncClientV2(api_key=api_key, httpx_client=http_client, base_url=base_url)
             else:
-                self._client = AsyncClientV2(
-                    api_key=api_key, httpx_client=cached_async_http_client(), base_url=base_url
-                )
+                http_client = cached_async_http_client(provider='cohere')
+                self._client = AsyncClientV2(api_key=api_key, httpx_client=http_client, base_url=base_url)

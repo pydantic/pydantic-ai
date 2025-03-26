@@ -200,7 +200,18 @@ def vcr_config():
 @pytest.fixture(autouse=True)
 async def close_cached_httpx_client() -> AsyncIterator[None]:
     yield
-    await cached_async_http_client().aclose()
+    for provider in [
+        'openai',
+        'anthropic',
+        'azure',
+        'google-gla',
+        'google-vertex',
+        'groq',
+        'mistral',
+        'cohere',
+        'deepseek',
+    ]:
+        await cached_async_http_client(provider=provider).aclose()
 
 
 @pytest.fixture(scope='session')
