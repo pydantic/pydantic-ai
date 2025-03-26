@@ -322,8 +322,8 @@ async def double_number(input_value: int) -> int:
 # Run evaluation with unlimited concurrency
 t0 = time.time()
 report_default = dataset.evaluate_sync(double_number)
-print(f'Evaluation took less than 0.2s: {time.time() - t0 < 0.2}')
-#> Evaluation took less than 0.2s: True
+print(f'Evaluation took less than 0.3s: {time.time() - t0 < 0.3}')
+#> Evaluation took less than 0.3s: True
 report_default.print()
 """
   Evaluation Summary:

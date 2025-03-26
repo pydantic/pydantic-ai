@@ -636,21 +636,38 @@ async def test_from_text_failure():
     }
     with pytest.raises(ExceptionGroup) as exc_info:
         Dataset[TaskInput, TaskOutput, TaskMetadata].from_text(json.dumps(dataset_dict))
-    assert exc_info.value == HasRepr(
-        repr(
-            ExceptionGroup(
-                '2 error(s) loading evaluators from registry',
-                [
-                    ValueError(
-                        "Failed to instantiate evaluator 'LlmJudge' for dataset: LlmJudge.__init__() missing 1 required positional argument: 'rubric'"
-                    ),
-                    ValueError(
-                        "Failed to instantiate evaluator 'LlmJudge' for case 'text_case': LlmJudge.__init__() missing 1 required positional argument: 'rubric'"
-                    ),
-                ],
+    if sys.version_info >= (3, 10):
+        assert exc_info.value == HasRepr(
+            repr(
+                ExceptionGroup(
+                    '2 error(s) loading evaluators from registry',
+                    [
+                        ValueError(
+                            "Failed to instantiate evaluator 'LlmJudge' for dataset: LlmJudge.__init__() missing 1 required positional argument: 'rubric'"
+                        ),
+                        ValueError(
+                            "Failed to instantiate evaluator 'LlmJudge' for case 'text_case': LlmJudge.__init__() missing 1 required positional argument: 'rubric'"
+                        ),
+                    ],
+                )
             )
         )
-    )
+    else:
+        assert exc_info.value == HasRepr(
+            repr(
+                ExceptionGroup(
+                    '2 error(s) loading evaluators from registry',
+                    [
+                        ValueError(
+                            "Failed to instantiate evaluator 'LlmJudge' for dataset: __init__() missing 1 required positional argument: 'rubric'"
+                        ),
+                        ValueError(
+                            "Failed to instantiate evaluator 'LlmJudge' for case 'text_case': __init__() missing 1 required positional argument: 'rubric'"
+                        ),
+                    ],
+                )
+            )
+        )
 
 
 async def test_duplicate_evaluator_failure(example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata]):
