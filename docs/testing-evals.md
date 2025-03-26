@@ -27,7 +27,7 @@ Unless you're really sure you know better, you'll probably want to follow roughl
 The simplest and fastest way to exercise most of your application code is using [`TestModel`][pydantic_ai.models.test.TestModel], this will (by default) call all tools in the agent, then return either plain text or a structured response depending on the return type of the agent.
 
 !!! note "`TestModel` is not magic"
-    The "clever" (but not too clever) part of `TestModel` is that it will attempt to generate valid structured data for [function tools](tools.md) and [result types](results.md#structured-result-validation) based on the schema of the registered tools.
+    The "clever" (but not too clever) part of `TestModel` is that it will attempt to generate valid structured data for [function tools](tools.md) and [result types](output.md#structured-output) based on the schema of the registered tools.
 
     There's no ML or AI in `TestModel`, it's just plain old procedural Python code that tries to generate data that satisfies the JSON schema of a tool.
 

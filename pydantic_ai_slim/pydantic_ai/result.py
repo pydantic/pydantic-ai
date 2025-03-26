@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import TYPE_CHECKING, Generic, Union, cast
 
-from typing_extensions import TypeVar, assert_type, deprecated
+from typing_extensions import TypeVar, assert_type, deprecated, overload
 
 from . import _utils, exceptions, messages as _messages, models
 from .messages import AgentStreamEvent, FinalResultEvent
@@ -215,17 +215,17 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
     [`stream`][pydantic_ai.result.StreamedRunResult.stream],
     [`stream_text`][pydantic_ai.result.StreamedRunResult.stream_text],
     [`stream_structured`][pydantic_ai.result.StreamedRunResult.stream_structured] or
-    [`get_data`][pydantic_ai.result.StreamedRunResult.get_data] completes.
+    [`get_output`][pydantic_ai.result.StreamedRunResult.get_output] completes.
     """
 
     def __post_init__(self):
         self._initial_run_ctx_usage = copy(self._run_ctx.usage)
 
-    def all_messages(self, *, result_tool_return_content: str | None = None) -> list[_messages.ModelMessage]:
+    def all_messages(self, *, output_tool_return_content: str | None = None) -> list[_messages.ModelMessage]:
         """Return the history of _messages.
 
         Args:
-            result_tool_return_content: The return content of the tool call to set in the last message.
+            output_tool_return_content: The return content of the tool call to set in the last message.
                 This provides a convenient way to modify the content of the result tool call if you want to continue
                 the conversation and want to set the response to the result tool call. If `None`, the last message will
                 not be modified.
@@ -234,56 +234,88 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
             List of messages.
         """
         # this is a method to be consistent with the other methods
-        if result_tool_return_content is not None:
-            raise NotImplementedError('Setting result tool return content is not supported for this result type.')
+        if output_tool_return_content is not None:
+            raise NotImplementedError('Setting output tool return content is not supported for this result type.')
         return self._all_messages
 
-    def all_messages_json(self, *, result_tool_return_content: str | None = None) -> bytes:
+    @overload
+    def all_messages_json(self, *, output_tool_return_content: str | None = None) -> bytes: ...
+
+    @overload
+    @deprecated('`result_tool_return_content` is deprecated, use `output_tool_return_content` instead.')
+    def all_messages_json(self, *, result_tool_return_content: str | None = None) -> bytes: ...
+
+    def all_messages_json(
+        self, *, output_tool_return_content: str | None = None, result_tool_return_content: str | None = None
+    ) -> bytes:
         """Return all messages from [`all_messages`][pydantic_ai.result.StreamedRunResult.all_messages] as JSON bytes.
 
         Args:
-            result_tool_return_content: The return content of the tool call to set in the last message.
+            output_tool_return_content: The return content of the tool call to set in the last message.
                 This provides a convenient way to modify the content of the result tool call if you want to continue
                 the conversation and want to set the response to the result tool call. If `None`, the last message will
                 not be modified.
+            result_tool_return_content: deprecated, use `output_tool_return_content` instead.
 
         Returns:
             JSON bytes representing the messages.
         """
         return _messages.ModelMessagesTypeAdapter.dump_json(
-            self.all_messages(result_tool_return_content=result_tool_return_content)
+            self.all_messages(output_tool_return_content=output_tool_return_content or result_tool_return_content)
         )
 
-    def new_messages(self, *, result_tool_return_content: str | None = None) -> list[_messages.ModelMessage]:
+    @overload
+    def new_messages(self, *, output_tool_return_content: str | None = None) -> list[_messages.ModelMessage]: ...
+
+    @overload
+    @deprecated('`result_tool_return_content` is deprecated, use `output_tool_return_content` instead.')
+    def new_messages(self, *, result_tool_return_content: str | None = None) -> list[_messages.ModelMessage]: ...
+
+    def new_messages(
+        self, *, output_tool_return_content: str | None = None, result_tool_return_content: str | None = None
+    ) -> list[_messages.ModelMessage]:
         """Return new messages associated with this run.
 
         Messages from older runs are excluded.
 
         Args:
-            result_tool_return_content: The return content of the tool call to set in the last message.
+            output_tool_return_content: The return content of the tool call to set in the last message.
                 This provides a convenient way to modify the content of the result tool call if you want to continue
                 the conversation and want to set the response to the result tool call. If `None`, the last message will
                 not be modified.
+            result_tool_return_content: deprecated, use `output_tool_return_content` instead.
 
         Returns:
             List of new messages.
         """
-        return self.all_messages(result_tool_return_content=result_tool_return_content)[self._new_message_index :]
+        return self.all_messages(output_tool_return_content=output_tool_return_content or result_tool_return_content)[
+            self._new_message_index :
+        ]
 
-    def new_messages_json(self, *, result_tool_return_content: str | None = None) -> bytes:
+    @overload
+    def new_messages_json(self, *, output_tool_return_content: str | None = None) -> bytes: ...
+
+    @overload
+    @deprecated('`result_tool_return_content` is deprecated, use `output_tool_return_content` instead.')
+    def new_messages_json(self, *, result_tool_return_content: str | None = None) -> bytes: ...
+
+    def new_messages_json(
+        self, *, output_tool_return_content: str | None = None, result_tool_return_content: str | None = None
+    ) -> bytes:
         """Return new messages from [`new_messages`][pydantic_ai.result.StreamedRunResult.new_messages] as JSON bytes.
 
         Args:
-            result_tool_return_content: The return content of the tool call to set in the last message.
+            output_tool_return_content: The return content of the tool call to set in the last message.
                 This provides a convenient way to modify the content of the result tool call if you want to continue
                 the conversation and want to set the response to the result tool call. If `None`, the last message will
                 not be modified.
+            result_tool_return_content: deprecated, use `output_tool_return_content` instead.
 
         Returns:
             JSON bytes representing the new messages.
         """
         return _messages.ModelMessagesTypeAdapter.dump_json(
-            self.new_messages(result_tool_return_content=result_tool_return_content)
+            self.new_messages(output_tool_return_content=output_tool_return_content or result_tool_return_content)
         )
 
     async def stream(self, *, debounce_by: float | None = 0.1) -> AsyncIterator[OutputDataT]:
@@ -302,8 +334,7 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
             An async iterable of the response data.
         """
         async for structured_message, is_last in self.stream_structured(debounce_by=debounce_by):
-            result = await self.validate_structured_result(structured_message, allow_partial=not is_last)
-            yield result
+            yield await self.validate_structured_output(structured_message, allow_partial=not is_last)
 
     async def stream_text(self, *, delta: bool = False, debounce_by: float | None = 0.1) -> AsyncIterator[str]:
         """Stream the text result as an async iterable.
@@ -326,7 +357,7 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
                 yield text
         else:
             async for text in self._stream_response_text(delta=delta, debounce_by=debounce_by):
-                combined_validated_text = await self._validate_text_result(text)
+                combined_validated_text = await self._validate_text_output(text)
                 yield combined_validated_text
         await self._marked_completed(self._stream_response.get())
 
@@ -358,7 +389,7 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
 
         await self._marked_completed(msg)
 
-    async def get_data(self) -> OutputDataT:
+    async def get_output(self) -> OutputDataT:
         """Stream the whole response, validate and return it."""
         usage_checking_stream = _get_usage_checking_stream_response(
             self._stream_response, self._usage_limits, self.usage
@@ -368,7 +399,11 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
             pass
         message = self._stream_response.get()
         await self._marked_completed(message)
-        return await self.validate_structured_result(message)
+        return await self.validate_structured_output(message)
+
+    @deprecated('`get_data` is deprecated, use `get_output` instead.')
+    async def get_data(self) -> OutputDataT:
+        return await self.get_output()
 
     def usage(self) -> Usage:
         """Return the usage of the whole run.
@@ -382,7 +417,13 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         """Get the timestamp of the response."""
         return self._stream_response.timestamp
 
+    @deprecated('`validate_structured_result` is deprecated, use `validate_structured_output` instead.')
     async def validate_structured_result(
+        self, message: _messages.ModelResponse, *, allow_partial: bool = False
+    ) -> OutputDataT:
+        return await self.validate_structured_output(message, allow_partial=allow_partial)
+
+    async def validate_structured_output(
         self, message: _messages.ModelResponse, *, allow_partial: bool = False
     ) -> OutputDataT:
         """Validate a structured result message."""
@@ -410,7 +451,7 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
             # Since there is no result tool, we can assume that str is compatible with OutputDataT
             return cast(OutputDataT, text)
 
-    async def _validate_text_result(self, text: str) -> str:
+    async def _validate_text_output(self, text: str) -> str:
         for validator in self._result_validators:
             text = await validator.validate(
                 text,

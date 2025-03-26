@@ -1,9 +1,10 @@
-Results are the final values returned from [running an agent](agents.md#running-agents).
-The result values are wrapped in [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] and [`StreamedRunResult`][pydantic_ai.result.StreamedRunResult] so you can access other data like [usage][pydantic_ai.usage.Usage] of the run and [message history](message-history.md#accessing-messages-from-results)
+"Output" refers to the final value returned from [running an agent](agents.md#running-agents) these can be either plain text or structured data.
 
-Both `RunResult` and `StreamedRunResult` are generic in the data they wrap, so typing information about the data returned by the agent is preserved.
+The output is wrapped in [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] or [`StreamedRunResult`][pydantic_ai.result.StreamedRunResult] so you can access other data like [usage][pydantic_ai.usage.Usage] of the run and [message history](message-history.md#accessing-messages-from-results)
 
-```python {title="olympics.py"}
+Both `AgentRunResult` and `StreamedRunResult` are generic in the data they wrap, so typing information about the data returned by the agent is preserved.
+
+```python {title="olympics.py" line_length="90"}
 from pydantic import BaseModel
 
 from pydantic_ai import Agent
@@ -19,24 +20,22 @@ result = agent.run_sync('Where were the olympics held in 2012?')
 print(result.output)
 #> city='London' country='United Kingdom'
 print(result.usage())
-"""
-Usage(requests=1, request_tokens=57, response_tokens=8, total_tokens=65, details=None)
-"""
+#> Usage(requests=1, request_tokens=57, response_tokens=8, total_tokens=65, details=None)
 ```
 
 _(This example is complete, it can be run "as is")_
 
-Runs end when either a plain text response is received or the model calls a tool associated with one of the structured result types. We will add limits to make sure a run doesn't go on indefinitely, see [#70](https://github.com/pydantic/pydantic-ai/issues/70).
+Runs end when either a plain text response is received or the model calls a tool associated with one of the structured result types (run can also be cancelled if usage limits are exceeded, see [Usage Limits](agents.md#usage-limits)).
 
-## Result data {#structured-result-validation}
+## Output data {#structured-output}
 
 When the result type is `str`, or a union including `str`, plain text responses are enabled on the model, and the raw text response from the model is used as the response data.
 
-If the result type is a union with multiple members (after remove `str` from the members), each member is registered as a separate tool with the model in order to reduce the complexity of the tool schemas and maximise the chances a model will respond correctly.
+If the result type is a union with multiple members (after removing `str` from the members), each member is registered as a separate tool with the model in order to reduce the complexity of the tool schemas and maximise the chances a model will respond correctly.
 
-If the result type schema is not of type `"object"`, the result type is wrapped in a single element object, so the schema of all tools registered with the model are object schemas.
+If the result type schema is not of type `"object"` (e.g. it's `int` or `list[int]`), the result type is wrapped in a single element object, so the schema of all tools registered with the model are object schemas.
 
-Structured results (like tools) use Pydantic to build the JSON schema used for the tool, and to validate the data returned by the model.
+Structured outputs (like tools) use Pydantic to build the JSON schema used for the tool, and to validate the data returned by the model.
 
 !!! note "Bring on PEP-747"
     Until [PEP-747](https://peps.python.org/pep-0747/) "Annotating Type Forms" lands, unions are not valid as `type`s in Python.
@@ -80,7 +79,7 @@ print(result.output)
 
 _(This example is complete, it can be run "as is")_
 
-Here's an example of using a union return type which registered multiple tools, and wraps non-object schemas in an object:
+Here's an example of using a union return type which registers multiple tools, and wraps non-object schemas in an object:
 
 ```python {title="colors_or_sizes.py"}
 from typing import Union
@@ -104,7 +103,7 @@ print(result.output)
 
 _(This example is complete, it can be run "as is")_
 
-### Result validators functions
+### Output validator functions
 
 Some validation is inconvenient or impossible to do in Pydantic validators, in particular when the validation requires IO and is asynchronous. PydanticAI provides a way to add validation functions via the [`agent.output_validator`][pydantic_ai.Agent.output_validator] decorator.
 
@@ -127,25 +126,25 @@ class InvalidRequest(BaseModel):
     error_message: str
 
 
-Response = Union[Success, InvalidRequest]
-agent: Agent[DatabaseConn, Response] = Agent(
+Output = Union[Success, InvalidRequest]
+agent: Agent[DatabaseConn, Output] = Agent(
     'google-gla:gemini-1.5-flash',
-    output_type=Response,  # type: ignore
+    output_type=Output,  # type: ignore
     deps_type=DatabaseConn,
     system_prompt='Generate PostgreSQL flavored SQL queries based on user input.',
 )
 
 
 @agent.output_validator
-async def validate_result(ctx: RunContext[DatabaseConn], result: Response) -> Response:
-    if isinstance(result, InvalidRequest):
-        return result
+async def validate_sql(ctx: RunContext[DatabaseConn], output: Output) -> Output:
+    if isinstance(output, InvalidRequest):
+        return output
     try:
-        await ctx.deps.execute(f'EXPLAIN {result.sql_query}')
+        await ctx.deps.execute(f'EXPLAIN {output.sql_query}')
     except QueryError as e:
         raise ModelRetry(f'Invalid query: {e}') from e
     else:
-        return result
+        return output
 
 
 result = agent.run_sync(
@@ -212,15 +211,15 @@ async def main():
             #> programming language.
 ```
 
-1. [`stream_text`][pydantic_ai.result.StreamedRunResult.stream_text] will error if the response is not text
+1. [`stream_text`][pydantic_ai.result.StreamedRunResult.stream_text] will error if the response is not text.
 
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
 
-!!! warning "Result message not included in `messages`"
-    The final result message will **NOT** be added to result messages if you use `.stream_text(delta=True)`,
+!!! warning "Output message not included in `messages`"
+    The final output message will **NOT** be added to result messages if you use `.stream_text(delta=True)`,
     see [Messages and chat history](message-history.md) for more information.
 
-### Streaming Structured Responses
+### Streaming Structured Output
 
 Not all types are supported with partial validation in Pydantic, see [pydantic/pydantic#10748](https://github.com/pydantic/pydantic/pull/10748), generally for model-like structures it's currently best to use `TypeDict`.
 
@@ -288,7 +287,7 @@ async def main():
     async with agent.run_stream(user_input) as result:
         async for message, last in result.stream_structured(debounce_by=0.01):  # (1)!
             try:
-                profile = await result.validate_structured_result(  # (2)!
+                profile = await result.validate_structured_output(  # (2)!
                     message,
                     allow_partial=not last,
                 )
@@ -305,7 +304,7 @@ async def main():
 ```
 
 1. [`stream_structured`][pydantic_ai.result.StreamedRunResult.stream_structured] streams the data as [`ModelResponse`][pydantic_ai.messages.ModelResponse] objects, thus iteration can't fail with a `ValidationError`.
-2. [`validate_structured_result`][pydantic_ai.result.StreamedRunResult.validate_structured_result] validates the data, `allow_partial=True` enables pydantic's [`experimental_allow_partial` flag on `TypeAdapter`][pydantic.type_adapter.TypeAdapter.validate_json].
+2. [`validate_structured_output`][pydantic_ai.result.StreamedRunResult.validate_structured_output] validates the data, `allow_partial=True` enables pydantic's [`experimental_allow_partial` flag on `TypeAdapter`][pydantic.type_adapter.TypeAdapter.validate_json].
 
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
 

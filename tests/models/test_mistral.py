@@ -1381,7 +1381,7 @@ async def test_stream_tool_call_with_return_type(allow_model_requests: None):
         ]
     )
 
-    assert await result.get_data() == {'won': True}
+    assert await result.get_output() == {'won': True}
 
 
 async def test_stream_tool_call(allow_model_requests: None):

@@ -814,7 +814,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
 
         async def main():
             async with agent.run_stream('What is the capital of the UK?') as response:
-                print(await response.get_data())
+                print(await response.get_output())
                 #> London
         ```
 

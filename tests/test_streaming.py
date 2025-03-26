@@ -72,7 +72,7 @@ async def test_streamed_text_response():
                 total_tokens=108,
             )
         )
-        response = await result.get_data()
+        response = await result.get_output()
         assert response == snapshot('{"ret_a":"a-apple"}')
         assert result.is_complete
         assert result.timestamp() == IsNow(tz=timezone.utc)
@@ -116,7 +116,7 @@ async def test_streamed_structured_response():
     async with agent.run_stream('') as result:
         assert agent.name == 'fig_jam'
         assert not result.is_complete
-        response = await result.get_data()
+        response = await result.get_output()
         assert response == snapshot(('a', 'a'))
         assert result.is_complete
 
@@ -136,7 +136,7 @@ async def test_structured_response_iter():
     chunks: list[list[int]] = []
     async with agent.run_stream('') as result:
         async for structured_response, last in result.stream_structured(debounce_by=None):
-            response_data = await result.validate_structured_result(structured_response, allow_partial=not last)
+            response_data = await result.validate_structured_output(structured_response, allow_partial=not last)
             chunks.append(response_data)
 
     assert chunks == snapshot([[1], [1, 2, 3, 4], [1, 2, 3, 4]])
@@ -305,7 +305,7 @@ async def test_call_tool():
                 ),
             ]
         )
-        assert await result.get_data() == snapshot(('hello world', 2))
+        assert await result.get_output() == snapshot(('hello world', 2))
         assert result.all_messages() == snapshot(
             [
                 ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
@@ -422,7 +422,7 @@ async def test_early_strategy_stops_after_first_final_output():
         return y
 
     async with agent.run_stream('test early strategy') as result:
-        response = await result.get_data()
+        response = await result.get_output()
         assert response.value == snapshot('final')
         messages = result.all_messages()
 
@@ -479,7 +479,7 @@ async def test_early_strategy_uses_first_final_output():
     agent = Agent(FunctionModel(stream_function=sf), output_type=ResultType, end_strategy='early')
 
     async with agent.run_stream('test multiple final results') as result:
-        response = await result.get_data()
+        response = await result.get_output()
         assert response.value == snapshot('first')
         messages = result.all_messages()
 
@@ -544,7 +544,7 @@ async def test_exhaustive_strategy_executes_all_tools():
         return y
 
     async with agent.run_stream('test exhaustive strategy') as result:
-        response = await result.get_data()
+        response = await result.get_output()
         assert response.value == snapshot('first')
         messages = result.all_messages()
 
@@ -620,7 +620,7 @@ async def test_early_strategy_with_final_output_in_middle():
         return y
 
     async with agent.run_stream('test early strategy with final result in middle') as result:
-        response = await result.get_data()
+        response = await result.get_output()
         assert response.value == snapshot('final')
         messages = result.all_messages()
 
@@ -723,7 +723,7 @@ async def test_early_strategy_does_not_apply_to_tool_calls_without_final_tool():
         return x
 
     async with agent.run_stream('test early strategy with regular tool calls') as result:
-        response = await result.get_data()
+        response = await result.get_output()
         assert response.value == snapshot('a')
         messages = result.all_messages()
 
@@ -773,11 +773,11 @@ async def test_custom_output_type_default_str() -> None:
     agent = Agent('test')
 
     async with agent.run_stream('test') as result:
-        response = await result.get_data()
+        response = await result.get_output()
         assert response == snapshot('success (no tool calls)')
 
     async with agent.run_stream('test', output_type=ResultType) as result:
-        response = await result.get_data()
+        response = await result.get_output()
         assert response == snapshot(ResultType(value='a'))
 
 
@@ -785,11 +785,11 @@ async def test_custom_output_type_default_structured() -> None:
     agent = Agent('test', output_type=ResultType)
 
     async with agent.run_stream('test') as result:
-        response = await result.get_data()
+        response = await result.get_output()
         assert response == snapshot(ResultType(value='a'))
 
     async with agent.run_stream('test', output_type=str) as result:
-        response = await result.get_data()
+        response = await result.get_output()
         assert response == snapshot('success (no tool calls)')
 
 

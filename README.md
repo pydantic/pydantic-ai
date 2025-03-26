@@ -52,7 +52,7 @@ Leverages Python's familiar control flow and agent composition to build your AI-
 Harnesses the power of [Pydantic](https://docs.pydantic.dev/latest/) to [validate and structure](https://ai.pydantic.dev/results/#structured-result-validation) model outputs, ensuring responses are consistent across runs.
 
 * __Dependency Injection System__
-Offers an optional [dependency injection](https://ai.pydantic.dev/dependencies/) system to provide data and services to your agent's [system prompts](https://ai.pydantic.dev/agents/#system-prompts), [tools](https://ai.pydantic.dev/tools/) and [result validators](https://ai.pydantic.dev/results/#result-validators-functions).
+Offers an optional [dependency injection](https://ai.pydantic.dev/dependencies/) system to provide data and services to your agent's [system prompts](https://ai.pydantic.dev/agents/#system-prompts), [tools](https://ai.pydantic.dev/tools/) and [result validators](https://ai.pydantic.dev/results/#output-validator-functions).
 This is useful for testing and eval-driven iterative development.
 
 * __Streamed Responses__

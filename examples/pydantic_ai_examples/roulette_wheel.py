@@ -54,13 +54,13 @@ async def main():
     async with roulette_agent.run_stream(
         'Put my money on square eighteen', deps=deps
     ) as response:
-        result = await response.get_data()
+        result = await response.get_output()
         print('Bet on 18:', result)
 
     async with roulette_agent.run_stream(
         'I bet five is the winner', deps=deps
     ) as response:
-        result = await response.get_data()
+        result = await response.get_output()
         print('Bet on 5:', result)
 
 

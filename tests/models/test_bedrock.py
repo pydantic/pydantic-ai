@@ -191,7 +191,7 @@ async def test_bedrock_model_stream(allow_model_requests: None, bedrock_provider
     model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
     agent = Agent(model=model, system_prompt='You are a helpful chatbot.', model_settings={'temperature': 0.0})
     async with agent.run_stream('What is the capital of France?') as result:
-        data = await result.get_data()
+        data = await result.get_output()
     assert data == snapshot(
         'The capital of France is Paris. Paris is not only the capital city but also the most populous city in France, known for its significant cultural, political, and economic influence. It is famous for landmarks such as the Eiffel Tower, the Louvre Museum, and Notre-Dame Cathedral, among many other attractions.'
     )

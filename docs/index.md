@@ -26,14 +26,14 @@ Designed to make [type checking](agents.md#static-type-checking) as powerful and
 Leverages Python's familiar control flow and agent composition to build your AI-driven projects, making it easy to apply standard Python best practices you'd use in any other (non-AI) project.
 
 * __Structured Responses__:
-Harnesses the power of [Pydantic](https://docs.pydantic.dev/latest/) to [validate and structure](results.md#structured-result-validation) model outputs, ensuring responses are consistent across runs.
+Harnesses the power of [Pydantic](https://docs.pydantic.dev/latest/) to [validate and structure](output.md#structured-output) model outputs, ensuring responses are consistent across runs.
 
 * __Dependency Injection System__:
-Offers an optional [dependency injection](dependencies.md) system to provide data and services to your agent's [system prompts](agents.md#system-prompts), [tools](tools.md) and [result validators](results.md#result-validators-functions).
+Offers an optional [dependency injection](dependencies.md) system to provide data and services to your agent's [system prompts](agents.md#system-prompts), [tools](tools.md) and [result validators](output.md#output-validator-functions).
 This is useful for testing and eval-driven iterative development.
 
 * __Streamed Responses__:
-Provides the ability to [stream](results.md#streamed-results) LLM outputs continuously, with immediate validation, ensuring rapid and accurate results.
+Provides the ability to [stream](output.md#streamed-results) LLM outputs continuously, with immediate validation, ensuring rapid and accurate results.
 
 * __Graph Support__:
 [Pydantic Graph](graph.md) provides a powerful way to define graphs using typing hints, this is useful in complex applications where standard control flow can degrade to spaghetti code.

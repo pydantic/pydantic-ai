@@ -18,6 +18,7 @@ export default {
 
 const redirect_lookup: Record<string, string> = {
   '/common_tools': '/common-tools/',
+  '/result': '/output/',
 }
 
 function redirect(pathname: string): string | null {

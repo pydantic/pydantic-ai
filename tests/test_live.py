@@ -123,7 +123,7 @@ stream_params = [p for p in params if p.id != 'cohere']
 async def test_stream(http_client: httpx.AsyncClient, tmp_path: Path, get_model: GetModel):
     agent = Agent(get_model(http_client, tmp_path), model_settings={'temperature': 0.0}, retries=2)
     async with agent.run_stream('What is the capital of France?') as result:
-        data = await result.get_data()
+        data = await result.get_output()
     print('Stream response:', data)
     assert 'paris' in data.lower()
     print('Stream usage:', result.usage())

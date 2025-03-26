@@ -436,7 +436,7 @@ async def stream_text_function(_messages: list[ModelMessage], _: AgentInfo) -> A
 async def test_stream_text():
     agent = Agent(FunctionModel(stream_function=stream_text_function))
     async with agent.run_stream('') as result:
-        assert await result.get_data() == snapshot('hello world')
+        assert await result.get_output() == snapshot('hello world')
         assert result.all_messages() == snapshot(
             [
                 ModelRequest(parts=[UserPromptPart(content='', timestamp=IsNow(tz=timezone.utc))]),
@@ -467,7 +467,7 @@ async def test_stream_structure():
 
     agent = Agent(FunctionModel(stream_function=stream_structured_function), output_type=Foo)
     async with agent.run_stream('') as result:
-        assert await result.get_data() == snapshot(Foo(x=1))
+        assert await result.get_output() == snapshot(Foo(x=1))
         assert result.usage() == snapshot(
             Usage(
                 requests=1,

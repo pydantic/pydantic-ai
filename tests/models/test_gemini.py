@@ -729,7 +729,7 @@ async def test_stream_structured_tool_calls(get_gemini_client: GetGeminiClient):
         return y
 
     async with agent.run_stream('Hello') as result:
-        response = await result.get_data()
+        response = await result.get_output()
         assert response == snapshot((1, 2))
     assert result.usage() == snapshot(Usage(requests=2, request_tokens=3, response_tokens=6, total_tokens=9))
     assert result.all_messages() == snapshot(
@@ -797,7 +797,7 @@ async def test_stream_text_heterogeneous(get_gemini_client: GetGeminiClient):
         return f'Location for {loc_name}'
 
     async with agent.run_stream('Hello') as result:
-        data = await result.get_data()
+        data = await result.get_output()
 
     assert data == 'Hello foo'
 

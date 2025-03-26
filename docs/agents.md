@@ -7,14 +7,14 @@ but multiple agents can also interact to embody more complex workflows.
 
 The [`Agent`][pydantic_ai.Agent] class has full API documentation, but conceptually you can think of an agent as a container for:
 
-| **Component**                                   | **Description**                                                                                          |
-|-------------------------------------------------|----------------------------------------------------------------------------------------------------------|
-| [System prompt(s)](#system-prompts)             | A set of instructions for the LLM written by the developer.                                              |
-| [Function tool(s)](tools.md)                    | Functions that the LLM may call to get information while generating a response.                          |
-| [Structured result type](results.md)            | The structured datatype the LLM must return at the end of a run, if specified.                           |
-| [Dependency type constraint](dependencies.md)   | System prompt functions, tools, and result validators may all use dependencies when they're run.         |
-| [LLM model](api/models/base.md)                 | Optional default LLM model associated with the agent. Can also be specified when running the agent.      |
-| [Model Settings](#additional-configuration)     | Optional default model settings to help fine tune requests. Can also be specified when running the agent.|
+| **Component**                                 | **Description**                                                                                          |
+|-----------------------------------------------|----------------------------------------------------------------------------------------------------------|
+| [System prompt(s)](#system-prompts)           | A set of instructions for the LLM written by the developer.                                              |
+| [Function tool(s)](tools.md)                  | Functions that the LLM may call to get information while generating a response.                          |
+| [Structured result type](output.md)           | The structured datatype the LLM must return at the end of a run, if specified.                           |
+| [Dependency type constraint](dependencies.md) | System prompt functions, tools, and result validators may all use dependencies when they're run.         |
+| [LLM model](api/models/base.md)               | Optional default LLM model associated with the agent. Can also be specified when running the agent.      |
+| [Model Settings](#additional-configuration)   | Optional default model settings to help fine tune requests. Can also be specified when running the agent.|
 
 In typing terms, agents are generic in their dependency and result types, e.g., an agent which required dependencies of type `#!python Foobar` and returned results of type `#!python list[str]` would have type `Agent[Foobar, list[str]]`. In practice, you shouldn't need to care about this, it should just mean your IDE can tell you when you have the right type, and if you choose to use [static type checking](#static-type-checking) it should work well with PydanticAI.
 
@@ -81,16 +81,13 @@ print(result_sync.output)
 #> Rome
 
 
-#> Rome
-
-
 async def main():
     result = await agent.run('What is the capital of France?')
     print(result.output)
     #> Paris
 
     async with agent.run_stream('What is the capital of the UK?') as response:
-        print(await response.get_data())
+        print(await response.get_output())
         #> London
 ```
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
@@ -654,9 +651,9 @@ _(This example is complete, it can be run "as is")_
 
 ## Reflection and self-correction
 
-Validation errors from both function tool parameter validation and [structured result validation](results.md#structured-result-validation) can be passed back to the model with a request to retry.
+Validation errors from both function tool parameter validation and [structured result validation](output.md#structured-output) can be passed back to the model with a request to retry.
 
-You can also raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] from within a [tool](tools.md) or [result validator function](results.md#result-validators-functions) to tell the model it should retry generating a response.
+You can also raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] from within a [tool](tools.md) or [result validator function](output.md#output-validator-functions) to tell the model it should retry generating a response.
 
 - The default retry count is **1** but can be altered for the [entire agent][pydantic_ai.Agent.__init__], a [specific tool][pydantic_ai.Agent.tool], or a [result validator][pydantic_ai.Agent.__init__].
 - You can access the current retry count from within a tool or result validator via [`ctx.retry`][pydantic_ai.tools.RunContext].
