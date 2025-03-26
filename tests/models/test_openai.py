@@ -265,6 +265,54 @@ async def test_request_structured_response(allow_model_requests: None):
     )
 
 
+async def test_request_strict_structured_response(allow_model_requests: None):
+    c = completion_message(
+        ChatCompletionMessage(
+            content=None,
+            role='assistant',
+            tool_calls=[
+                chat.ChatCompletionMessageToolCall(
+                    id='123',
+                    function=Function(arguments='{"response": [1, 2, 123]}', name='final_result'),
+                    type='function',
+                )
+            ],
+        )
+    )
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m, result_type=list[int])
+
+    result = await agent.run('Hello', model_settings=OpenAIModelSettings(strict=True))
+    assert result.data == [1, 2, 123]
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='final_result',
+                        args='{"response": [1, 2, 123]}',
+                        tool_call_id='123',
+                    )
+                ],
+                model_name='gpt-4o-123',
+                timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='final_result',
+                        content='Final result processed.',
+                        tool_call_id='123',
+                        timestamp=IsNow(tz=timezone.utc),
+                    )
+                ]
+            ),
+        ]
+    )
+
+
 async def test_request_tool_call(allow_model_requests: None):
     responses = [
         completion_message(

@@ -91,6 +91,14 @@ class OpenAIModelSettings(ModelSettings, total=False):
     See [OpenAI's safety best practices](https://platform.openai.com/docs/guides/safety-best-practices#end-user-ids) for more details.
     """
 
+    strict: bool
+    """Whether to enable strict schema adherence when generating the function call.
+    If set to true, the model will follow the exact schema defined in the parameters field.
+
+    Supported by:
+    * OpenAI
+    """
+
 
 @dataclass(init=False)
 class OpenAIModel(Model):
@@ -254,7 +262,7 @@ class OpenAIModel(Model):
         model_settings: OpenAIModelSettings,
         model_request_parameters: ModelRequestParameters,
     ) -> chat.ChatCompletion | AsyncStream[ChatCompletionChunk]:
-        tools = self._get_tools(model_request_parameters)
+        tools = self._get_tools(model_request_parameters, strict=model_settings.get('strict', False))
 
         # standalone function to make it easier to override
         if not tools:
@@ -320,10 +328,12 @@ class OpenAIModel(Model):
             _timestamp=datetime.fromtimestamp(first_chunk.created, tz=timezone.utc),
         )
 
-    def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[chat.ChatCompletionToolParam]:
-        tools = [self._map_tool_definition(r) for r in model_request_parameters.function_tools]
+    def _get_tools(
+        self, model_request_parameters: ModelRequestParameters, strict: bool
+    ) -> list[chat.ChatCompletionToolParam]:
+        tools = [self._map_tool_definition(r, strict) for r in model_request_parameters.function_tools]
         if model_request_parameters.result_tools:
-            tools += [self._map_tool_definition(r) for r in model_request_parameters.result_tools]
+            tools += [self._map_tool_definition(r, strict) for r in model_request_parameters.result_tools]
         return tools
 
     async def _map_message(self, message: ModelMessage) -> AsyncIterable[chat.ChatCompletionMessageParam]:
@@ -361,13 +371,14 @@ class OpenAIModel(Model):
         )
 
     @staticmethod
-    def _map_tool_definition(f: ToolDefinition) -> chat.ChatCompletionToolParam:
+    def _map_tool_definition(f: ToolDefinition, strict: bool) -> chat.ChatCompletionToolParam:
         return {
             'type': 'function',
             'function': {
                 'name': f.name,
                 'description': f.description,
                 'parameters': f.parameters_json_schema,
+                'strict': strict,
             },
         }
 
