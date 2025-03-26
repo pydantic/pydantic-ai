@@ -858,11 +858,11 @@ fives_graph = Graph(nodes=[DivisibleBy5, Increment])
 async def main():
     with ProcessPoolExecutor() as executor:
         deps = GraphDeps(executor)
-        result = await fives_graph.run(DivisibleBy5(3), deps=deps)
+        result = await fives_graph.run(DivisibleBy5(3), deps=deps, persistence=FullStatePersistence())
     print(result.output)
     #> 5
     # the full history is quite verbose (see below), so we'll just print the summary
-    print([item.data_snapshot() for item in result.history])
+    pprint([item.node for item in result.persistence.history])
     """
     [
         DivisibleBy5(foo=3),
