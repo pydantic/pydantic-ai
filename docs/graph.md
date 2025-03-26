@@ -814,7 +814,7 @@ import asyncio
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
 
-from pydantic_graph import BaseNode, End, Graph, GraphRunContext
+from pydantic_graph import BaseNode, End, Graph, GraphRunContext, FullStatePersistence
 
 
 @dataclass
@@ -862,7 +862,7 @@ async def main():
     print(result.output)
     #> 5
     # the full history is quite verbose (see below), so we'll just print the summary
-    pprint([item.node for item in result.persistence.history])
+    print([item.node for item in result.persistence.history])
     """
     [
         DivisibleBy5(foo=3),
