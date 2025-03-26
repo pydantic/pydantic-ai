@@ -35,7 +35,7 @@ class TaskMetadata(BaseModel):
 def mock_evaluator() -> Evaluator[TaskInput, TaskOutput, TaskMetadata]:
     class MockEvaluator(Evaluator[TaskInput, TaskOutput, TaskMetadata]):
         def evaluate(self, ctx: EvaluatorContext[TaskInput, TaskOutput, TaskMetadata]) -> bool:
-            return ctx.output.answer == '42'  # assert the answer is 42
+            raise NotImplementedError
 
     return MockEvaluator()
 
@@ -273,7 +273,7 @@ async def test_report_case_aggregate_average():
     @dataclass
     class MockEvaluator(Evaluator[TaskInput, TaskOutput, TaskMetadata]):
         def evaluate(self, ctx: EvaluatorContext[TaskInput, TaskOutput, TaskMetadata]) -> float:
-            return 0.8
+            raise NotImplementedError
 
     cases = [
         ReportCase(

@@ -47,7 +47,7 @@ def test_evaluation_result():
     @dataclass
     class DummyEvaluator(Evaluator[Any, Any, Any]):
         def evaluate(self, ctx: EvaluatorContext) -> bool:
-            return True
+            raise NotImplementedError
 
     evaluator = DummyEvaluator()
 
@@ -189,7 +189,7 @@ async def test_evaluator_serialization():
         default_factory_value: list[int] = field(default_factory=list)
 
         def evaluate(self, ctx: EvaluatorContext) -> bool:
-            return True
+            raise NotImplementedError
 
     # Test with default values
     evaluator = ExampleEvaluator()
@@ -215,7 +215,7 @@ async def test_evaluator_serialization():
     @dataclass
     class NoArgsEvaluator(Evaluator[Any, Any, Any]):
         def evaluate(self, ctx: EvaluatorContext) -> bool:
-            return True
+            raise NotImplementedError
 
     evaluator = NoArgsEvaluator()
     assert adapter.dump_python(evaluator, context=None) == snapshot({'arguments': None, 'name': 'NoArgsEvaluator'})

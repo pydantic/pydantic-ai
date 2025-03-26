@@ -54,7 +54,7 @@ def test_get_unwrapped_function_name_partial():
     """Test get_unwrapped_function_name with partial function."""
 
     def test_func(x: int, y: int):
-        return x + y
+        raise NotImplementedError
 
     partial_func = partial(test_func, y=42)
     assert get_unwrapped_function_name(partial_func) == 'test_func'
@@ -66,7 +66,7 @@ def test_get_unwrapped_function_name_decorated():
     def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
         @functools.wraps(func)
         def wrapper(*args: Any, **kwargs: Any) -> Any:
-            return func(*args, **kwargs)
+            raise NotImplementedError
 
         return wrapper
 

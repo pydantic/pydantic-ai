@@ -61,9 +61,6 @@ def test_stringify():
         def __repr__(self):
             return 'NonSerializable()'
 
-        def __str__(self):
-            return 'NonSerializable()'
-
     obj = NonSerializable()
     assert _stringify(obj) == 'NonSerializable()'
 
