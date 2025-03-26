@@ -42,7 +42,7 @@ def sample_evaluator_output() -> dict[str, Any]:
 def mock_evaluator() -> Evaluator[TaskInput, TaskOutput, TaskMetadata]:
     class MockEvaluator(Evaluator[TaskInput, TaskOutput, TaskMetadata]):
         def evaluate(self, ctx: EvaluatorContext[TaskInput, TaskOutput, TaskMetadata]) -> bool:
-            return ctx.output.answer == '42'  # assert the answer is 42
+            raise NotImplementedError
 
     return MockEvaluator()
 
