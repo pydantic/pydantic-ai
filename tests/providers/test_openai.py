@@ -9,7 +9,7 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.openai import OpenAIProvider
 
 pytestmark = [
-    pytest.mark.skipif(not imports_successful, reason='OpenAI client not installed'),
+    pytest.mark.skipif(not imports_successful(), reason='OpenAI client not installed'),
     pytest.mark.anyio,
 ]
 
