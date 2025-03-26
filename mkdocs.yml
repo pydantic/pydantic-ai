@@ -20,7 +20,7 @@ nav:
       - models.md
       - dependencies.md
       - tools.md
-      - common_tools.md
+      - common-tools.md
       - results.md
       - message-history.md
       - testing-evals.md
