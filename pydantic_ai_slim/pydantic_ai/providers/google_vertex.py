@@ -9,9 +9,8 @@ import anyio.to_thread
 import httpx
 
 from pydantic_ai.exceptions import UserError
-
-from ..models import cached_async_http_client
-from . import Provider
+from pydantic_ai.models import cached_async_http_client
+from pydantic_ai.providers import Provider
 
 try:
     import google.auth

@@ -1,12 +1,11 @@
 from __future__ import annotations as _annotations
 
-import os
-from unittest.mock import patch
-
 import httpx
 import pytest
 
-from ..conftest import try_import
+from pydantic_ai.exceptions import UserError
+
+from ..conftest import TestEnv, try_import
 
 with try_import() as imports_successful:
     from anthropic import AsyncAnthropic
@@ -25,13 +24,10 @@ def test_anthropic_provider():
     assert provider.client.api_key == 'api-key'
 
 
-def test_anthropic_provider_need_api_key() -> None:
-    with patch.dict(os.environ, {}, clear=True):
-        with pytest.raises(
-            ValueError,
-            match=r'.*ANTHROPIC_API_KEY.*',
-        ):
-            AnthropicProvider()
+def test_anthropic_provider_need_api_key(env: TestEnv) -> None:
+    env.remove('ANTHROPIC_API_KEY')
+    with pytest.raises(UserError, match=r'.*ANTHROPIC_API_KEY.*'):
+        AnthropicProvider()
 
 
 def test_anthropic_provider_pass_http_client() -> None:

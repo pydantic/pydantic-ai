@@ -4,7 +4,9 @@ import os
 
 from httpx import AsyncClient as AsyncHTTPClient
 
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import cached_async_http_client
+from pydantic_ai.providers import Provider
 
 try:
     from cohere import AsyncClientV2
@@ -13,9 +15,6 @@ except ImportError as _import_error:  # pragma: no cover
         'Please install the `cohere` package to use the Cohere provider, '
         'you can use the `cohere` optional group — `pip install "pydantic-ai-slim[cohere]"`'
     ) from _import_error
-
-
-from . import Provider
 
 
 class CohereProvider(Provider[AsyncClientV2]):
@@ -57,8 +56,8 @@ class CohereProvider(Provider[AsyncClientV2]):
             self._client = cohere_client
         else:
             api_key = api_key or os.environ.get('CO_API_KEY')
-            if api_key is None:
-                raise ValueError(
+            if not api_key:
+                raise UserError(
                     'Set the `CO_API_KEY` environment variable or pass it via `CohereProvider(api_key=...)`'
                     'to use the Cohere provider.'
                 )
