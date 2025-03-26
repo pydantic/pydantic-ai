@@ -13,7 +13,7 @@ from pydantic.json_schema import GenerateJsonSchema
 from typing_extensions import TypeGuard, TypeVar, deprecated
 
 from pydantic_graph import End, Graph, GraphRun, GraphRunContext
-from pydantic_graph._utils import run_until_complete
+from pydantic_graph._utils import get_event_loop
 
 from . import (
     _agent_graph,
@@ -567,7 +567,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         """
         if infer_name and self.name is None:
             self._infer_name(inspect.currentframe())
-        return run_until_complete(
+        return get_event_loop().run_until_complete(
             self.run(
                 user_prompt,
                 result_type=result_type,
