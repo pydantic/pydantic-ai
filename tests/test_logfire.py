@@ -12,6 +12,8 @@ from pydantic_ai import Agent
 from pydantic_ai.models.instrumented import InstrumentationSettings, InstrumentedModel
 from pydantic_ai.models.test import TestModel
 
+from .conftest import IsStr
+
 try:
     from logfire.testing import CaptureLogfire
 except ImportError:
@@ -119,7 +121,7 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary], instrument: 
                             'role': 'assistant',
                             'tool_calls': [
                                 {
-                                    'id': None,
+                                    'id': IsStr(),
                                     'type': 'function',
                                     'function': {
                                         'name': 'my_ret',
@@ -133,7 +135,7 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary], instrument: 
                         {
                             'content': '1',
                             'role': 'tool',
-                            'id': None,
+                            'id': IsStr(),
                             'name': 'my_ret',
                             'gen_ai.message.index': 2,
                             'event.name': 'gen_ai.tool.message',
@@ -187,7 +189,7 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary], instrument: 
                                     'role': 'assistant',
                                     'tool_calls': [
                                         {
-                                            'id': None,
+                                            'id': IsStr(),
                                             'type': 'function',
                                             'function': {'name': 'my_ret', 'arguments': {'x': 0}},
                                         }
